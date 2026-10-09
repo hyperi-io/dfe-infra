@@ -1063,7 +1063,7 @@ def cmd_set_latest(args: argparse.Namespace) -> int:
 def cmd_bump_app(args: argparse.Namespace) -> int:
     """Pin an app to a new image version, in BOTH places that must agree.
 
-    versions.yaml `apps.<name>` and helm/charts/<name>/Chart.yaml `appVersion` are
+    versions.yaml `apps.<name>` and the app chart's Chart.yaml `appVersion` are
     drift-checked against each other (check_versions_drift.py), so bumping one by
     hand and forgetting the other turns the drift check red. This does both, or
     neither: each rewrite asserts it matched EXACTLY once, so a renamed key or a
@@ -1103,7 +1103,11 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     )
     vnew = "".join(lines)
 
-    cpath = REPO_ROOT / "helm" / "charts" / name / "Chart.yaml"
+    # The drift check owns where each chart lives; culvert's is under helm/edge.
+    from check_versions_drift import chart_dir
+
+    crel = f"{chart_dir(name)}/Chart.yaml"
+    cpath = REPO_ROOT / crel
     if not cpath.exists():
         raise SystemExit(f"error: {cpath} not found -- no chart to keep in step with versions.yaml")
     ctext = cpath.read_text()
@@ -1120,7 +1124,7 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     cpath.write_text(cnew)
     print(f"{name} -> {version} (stack {stack})")
     print(f"  versions.yaml apps.{name}")
-    print(f"  helm/charts/{name}/Chart.yaml appVersion")
+    print(f"  {crel} appVersion")
     # An app can be mirrored beyond its own chart -- the engine pin also drives
     # the hyperdx dashboards tag.
     print("  next: check_versions_drift.py --fix, for any other mirror of this pin")

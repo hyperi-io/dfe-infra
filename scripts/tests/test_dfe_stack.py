@@ -588,6 +588,57 @@ def test_the_apps_sub_block_excludes_digests() -> None:
     )
 
 
+def test_bump_app_moves_a_chart_kept_outside_helm_charts() -> None:
+    """culvert's chart is helm/edge/culvert, so a helm/charts/<name> path finds no chart."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        versions = tmp / "versions.yaml"
+        versions.write_text(
+            'current: "2.0.0"\n'
+            "stacks:\n"
+            "  2.0.0:\n"
+            "    apps:\n"
+            '      culvert: "v1.0.0"\n'
+            "    digests:\n"
+            '      culvert: "sha256:aaa"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        chart = tmp / "helm" / "edge" / "culvert" / "Chart.yaml"
+        chart.parent.mkdir(parents=True)
+        chart.write_text('name: culvert\nappVersion: "v1.0.0"\n', encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT
+        stack.REPO_ROOT = tmp
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = stack.cmd_bump_app(
+                    argparse.Namespace(app="culvert", version="v1.0.1", stack=None, dry_run=False)
+                )
+        finally:
+            stack.REPO_ROOT = original
+
+        written = versions.read_text(encoding="utf-8")
+        expect("bump-app exits 0", rc == 0, out.getvalue())
+        expect(
+            "the edge chart's appVersion moves",
+            'appVersion: "v1.0.1"' in chart.read_text(encoding="utf-8"),
+            chart.read_text(encoding="utf-8"),
+        )
+        expect("the stack's apps pin moves with it", 'culvert: "v1.0.1"' in written, written)
+        expect("the digest is left for resolve_pins", 'culvert: "sha256:aaa"' in written, written)
+        expect(
+            "and the report names the chart it wrote",
+            "helm/edge/culvert/Chart.yaml" in out.getvalue(),
+            out.getvalue(),
+        )
+
+
 def _constraints_fixture(tmp: Path, from_name: str) -> dict:
     """A minimal root + on-disk constraints file, rooted at a throwaway tree."""
     (tmp / "constraints").mkdir(parents=True, exist_ok=True)
