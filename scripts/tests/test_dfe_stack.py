@@ -342,6 +342,122 @@ def test_release_gate_never_reads_the_registry_below_release() -> None:
     expect("and says the platforms were not read", "platforms not read" in out, out)
 
 
+# A stack with a thin chart per image, hyperdx's under its own chart name, and a
+# chart not published yet.
+_VERIFY_PINS = (
+    'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n'
+    '    apps:\n      dfe-engine: "v1.22.16"\n'
+    '    content:\n      dfe-hyperdx: "v0.3.1"\n'
+    '    digests:\n      dfe-engine: "sha256:engine-image"\n      dfe-hyperdx: "sha256:hdx-image"\n'
+    "    chart-digests:\n"
+    '      dfe-engine: "sha256:engine-chart"   # 1.22.16\n'
+    '      dfe-ui: "unpublished"\n'
+    '      hyperdx: "sha256:hdx-chart"         # 0.3.1\n'
+)
+
+# What the registry serves for each (package, tag) the pins above name.
+_VERIFY_REGISTRY = {
+    ("dfe-engine", "v1.22.16"): "sha256:engine-image",
+    ("dfe-hyperdx", "v0.3.1"): "sha256:hdx-image",
+    ("charts/dfe-engine", "1.22.16"): "sha256:engine-chart",
+    ("charts/dfe-hyperdx", "0.3.1"): "sha256:hdx-chart",
+}
+
+
+def _verify_over(served: dict) -> tuple[int, str, list[tuple[str, str, str]]]:
+    """verify over _VERIFY_PINS with tag_digest answering from served: (exit, output, reads)."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    asked: list[tuple[str, str, str]] = []
+
+    def tag_digest(org: str, package: str, tag: str, registry: str = "") -> str | None:
+        asked.append((org, package, tag))
+        found = served.get((package, tag))
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "versions.yaml").write_text(_VERIFY_PINS, encoding="utf-8", newline="\n")
+        original_root, original_read = stack.REPO_ROOT, stack.registry_pins.tag_digest
+        out = io.StringIO()
+        try:
+            stack.REPO_ROOT = Path(td)
+            stack.registry_pins.tag_digest = tag_digest
+            with contextlib.redirect_stdout(out):
+                rc = stack.cmd_verify(argparse.Namespace(stack=None, registry="ghcr.io/hyperi-io"))
+        finally:
+            stack.REPO_ROOT, stack.registry_pins.tag_digest = original_root, original_read
+    return rc, out.getvalue(), asked
+
+
+def test_verify_reads_each_thin_chart_under_charts_at_its_image_version() -> None:
+    rc, out, asked = _verify_over(_VERIFY_REGISTRY)
+    expect("every pin matches, so verify exits 0", rc == 0, f"exit {rc}\n{out}")
+    expect(
+        "the engine chart is read at its tag without the v",
+        ("hyperi-io", "charts/dfe-engine", "1.22.16") in asked,
+        f"{asked}",
+    )
+    expect(
+        "hyperdx's chart is read as dfe-hyperdx at the content.dfe-hyperdx version",
+        ("hyperi-io", "charts/dfe-hyperdx", "0.3.1") in asked,
+        f"{asked}",
+    )
+    expect("each chart reports ok", out.count("ok    chart ") == 2, out)
+    expect(
+        "an unpublished chart is skipped, not read",
+        "skip  chart dfe-ui" in out and not any(p == "charts/dfe-ui" for _, p, _ in asked),
+        f"{asked}\n{out}",
+    )
+
+
+def test_verify_fails_a_chart_digest_the_registry_does_not_serve() -> None:
+    wrong = dict(_VERIFY_REGISTRY)
+    wrong[("charts/dfe-engine", "1.22.16")] = "sha256:another-chart"
+    rc, out, _ = _verify_over(wrong)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    expect(
+        "naming the chart and both digests",
+        "DRIFT chart dfe-engine: versions.yaml sha256:engine-chart != registry sha256:another-chart"
+        in out,
+        out,
+    )
+    expect("and the matching chart still reports ok", "ok    chart dfe-hyperdx" in out, out)
+
+
+def test_verify_fails_a_chart_tag_the_registry_does_not_have() -> None:
+    missing = {k: v for k, v in _VERIFY_REGISTRY.items() if k[0] != "charts/dfe-hyperdx"}
+    rc, out, _ = _verify_over(missing)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    expect("the chart reads as not found", "DRIFT chart dfe-hyperdx" in out, out)
+    expect("and says why", "(tag not found)" in out, out)
+
+
+def test_verify_fails_closed_when_a_chart_cannot_be_read() -> None:
+    unreadable = dict(_VERIFY_REGISTRY)
+    forbidden = stack.registry_pins.RegistryError("403 Forbidden")
+    unreadable[("charts/dfe-engine", "1.22.16")] = forbidden
+    rc, out, _ = _verify_over(unreadable)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    expect("with the registry's own words", "ERROR chart dfe-engine: 403 Forbidden" in out, out)
+
+
+def test_the_chart_name_map_matches_the_appset() -> None:
+    """verify and the appset must name the same chart, or verify reads a chart Argo never pulls."""
+    text = (REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml").read_text(encoding="utf-8")
+    for service, chart in stack._CHART_NAMES.items():
+        expect(
+            f"layer2-apps.yaml maps {service} to {chart}",
+            f'eq .deploy.service "{service}" }}}}{chart}{{{{ else }}}}{{{{ .deploy.service }}}}'
+            in text,
+            service,
+        )
+
+
 def _renovate_manager() -> tuple[dict, str]:
     """renovate.json's one custom manager, and the versions.yaml it reads."""
     import json
