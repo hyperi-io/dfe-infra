@@ -63,6 +63,10 @@ def _step(step_id: str) -> dict:
     return next(s for s in _job()["steps"] if s.get("id") == step_id)
 
 
+def _named(name: str) -> dict:
+    return next(s for s in _job()["steps"] if s.get("name") == name)
+
+
 def _session_seconds() -> int:
     return int(_workflow()["env"]["RUNNER_SESSION_SECONDS"])
 
@@ -89,7 +93,7 @@ def _run_script(script: str, env: dict[str, str], tmp_path: Path) -> tuple[subpr
 def test_the_cycle_only_ever_runs_on_dispatch() -> None:
     triggers = _triggers()
     assert set(triggers) == {"workflow_dispatch"}
-    assert set(triggers["workflow_dispatch"]["inputs"]) == {"run_length", "cycle_args"}
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {"run_length", "cycle_args", "preflight_only"}
 
 
 def test_every_action_is_pinned_by_full_commit_sha_with_its_version() -> None:
@@ -157,7 +161,7 @@ def test_the_default_run_length_and_margin_fit_inside_the_credential() -> None:
 
 
 def test_the_cycle_runs_the_guard_against_the_aws_root_with_the_env_file() -> None:
-    run = next(s for s in _job()["steps"] if s.get("name") == "Run one guarded cycle")
+    run = _named("Run one guarded cycle")
     assert "scripts/dfe-ops cloud-cycle --tf-dir terraform/environments/aws --run-length" in run["run"]
     assert '--env-file "${RUNNER_TEMP}/dfe-cycle.env"' in run["run"]
     assert run["env"]["RUN_LENGTH"] == "${{ inputs.run_length }}"
@@ -165,6 +169,65 @@ def test_the_cycle_runs_the_guard_against_the_aws_root_with_the_env_file() -> No
     for name in ("DFE_GUARD_ROLE", "DFE_GUARD_SWEEPER", "DFE_GUARD_BUDGET_ACTION", "DFE_GUARD_PERMISSIONS_BOUNDARY",
                  "DFE_GUARD_IAM_PATH", "DFE_GUARD_S3_BUCKET_PREFIX"):
         assert run["env"][name] == f"${{{{ vars.{name} }}}}"
+
+
+# --- preflight only ----------------------------------------------------------------------------
+
+
+def test_preflight_only_is_a_boolean_that_defaults_to_the_full_cycle() -> None:
+    preflight_only = _triggers()["workflow_dispatch"]["inputs"]["preflight_only"]
+    assert preflight_only["type"] == "boolean"
+    assert preflight_only["default"] is False
+
+
+def test_preflight_only_runs_the_read_only_preflight_as_the_runner_and_never_the_cycle() -> None:
+    preflight, cycle = _named("Run the preflight only"), _named("Run one guarded cycle")
+    assert preflight["if"] == "${{ inputs.preflight_only }}"
+    assert cycle["if"] == "${{ !inputs.preflight_only }}"
+    names = [s.get("name") for s in _job()["steps"]]
+    assert names.index(_step("creds")["name"]) < names.index("Run the preflight only")
+    assert "scripts/dfe-ops cloud-preflight --tf-dir terraform/environments/aws --run-length" in preflight["run"]
+    for word in ("cloud-cycle", "tofu", "--env-file"):
+        assert word not in preflight["run"], word
+
+
+def test_preflight_only_hands_the_guard_everything_the_cycles_own_preflight_reads() -> None:
+    """Only the cycle arguments and the redpanda credential, which preflight never reads, are left out."""
+    preflight, cycle = _named("Run the preflight only"), _named("Run one guarded cycle")
+    not_read = ("CYCLE_ARGS", "REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET")
+    assert preflight["env"] == {k: v for k, v in cycle["env"].items() if k not in not_read}
+
+
+@pytest.mark.parametrize(("preflight_only", "sized"), [("true", False), ("false", True)])
+def test_only_a_cycle_resolves_sizing_and_both_render_the_dial(
+    tmp_path: Path, preflight_only: str, sized: bool
+) -> None:
+    """Preflight reads the dial's provision, state and tags; sizing feeds the apply alone."""
+    render = _named("Render the dial, its sizing and the bootstrap env file")
+    assert render["env"]["PREFLIGHT_ONLY"] == "${{ inputs.preflight_only }}"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "python3"
+    fake.write_text(
+        '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "${CALLS}"\nif [[ "$1" == "-c" ]]; then echo us-west-2; fi\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "CALLS": str(calls),
+        "RUNNER_TEMP": str(tmp_path),
+        "DFE_CYCLE_DIAL": "substrate: k8s",
+        "DFE_CYCLE_ENV_FILE": "",
+        "DFE_CYCLE_AWS_REGION": "us-west-2",
+        "PREFLIGHT_ONLY": preflight_only,
+    }
+    done, _output = _run_script(render["run"], env, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    log = calls.read_text(encoding="utf-8")
+    assert "scripts/render_dial.py" in log
+    assert ("scripts/resolve_sizing.py" in log) is sized
 
 
 # --- the credential's expiry -----------------------------------------------------------------
@@ -183,7 +246,7 @@ def test_no_step_publishes_or_reads_the_credential() -> None:
 def test_the_expiry_is_fixed_before_the_role_is_assumed_and_handed_to_the_guard() -> None:
     ids = [s.get("id") for s in _job()["steps"]]
     assert ids.index("session") < ids.index("creds")
-    run = next(s for s in _job()["steps"] if s.get("name") == "Run one guarded cycle")
+    run = _named("Run one guarded cycle")
     assert run["env"]["AWS_CREDENTIAL_EXPIRATION"] == "${{ steps.session.outputs.expires_at }}"
 
 
