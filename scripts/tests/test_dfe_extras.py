@@ -891,6 +891,34 @@ def test_a_fullname_override_outside_the_project_fails() -> None:
         render_pair("dfe-loader", "mesh", "local", overlay={"fullnameOverride": "loader"}, old=False)
 
 
+@pytest.mark.parametrize(
+    ("infra", "path", "value"),
+    [
+        ({"project": "acme"}, "project", "acme"),
+        ({"global": {"project": "acme"}}, "global.project", "acme"),
+        ({"project": ""}, "project", ""),
+        ({"global": {"project": ""}}, "global.project", ""),
+    ],
+    ids=["project", "global-project", "empty-project", "empty-global-project"],
+)
+@pytest.mark.parametrize("service", COMPONENTS)
+def test_a_project_other_than_dfe_is_refused(service: str, infra: dict, path: str, value: str) -> None:
+    """Every component's names and the engine's prefix assume dfe, so either key refuses a rename."""
+    with pytest.raises(RenderError, match=re.escape(f'dfe-extras: {path} is "{value}"')) as refused:
+        render_pair(service, "scale", "aws", infra=infra, old=False)
+    assert 'assume the project is "dfe"' in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "infra",
+    [None, {"project": "dfe"}, {"global": {"project": "dfe"}}],
+    ids=["default", "project", "global-project"],
+)
+def test_the_project_dfe_renders(infra: dict | None) -> None:
+    """The control: the default, and dfe spelled out under either key, are left alone."""
+    assert render_pair("dfe-loader", "scale", "aws", infra=infra, old=False).extras
+
+
 # ------------------------------------------------------------ self-monitoring telemetry
 
 OTLP = "OTEL_EXPORTER_OTLP_ENDPOINT"

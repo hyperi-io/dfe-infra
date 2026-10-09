@@ -23,6 +23,27 @@ each profile's transport; a profile it does not list is not checked.
 {{- end -}}
 
 {{/*
+dfe-extras.projectGuard -- fail the render when the project is not dfe.
+
+The suite's service names (dfe-receiver, dfe-loader, ...), the engine's dfe- name
+prefix and the push and wait-for-engine addresses all assume it, so a renamed
+project renders objects nothing points at. `project` is the 2.2.0 key and
+`global.project` the thin chart's (argocd/values/common.yaml sets it to dfe), and
+a deployer reaches both from $values/infra/common.yaml or the instance overlay.
+*/}}
+{{- define "dfe-extras.projectGuard" -}}
+{{- $global := .Values.global | default dict -}}
+{{- range $path, $holder := dict "project" .Values "global.project" $global -}}
+{{- if hasKey $holder "project" -}}
+{{- $value := index $holder "project" -}}
+{{- if and (not (kindIs "invalid" $value)) (ne (toString $value) "dfe") -}}
+{{- fail (printf "dfe-extras: %s is %q, but the suite's service names, the engine's dfe- prefix and the push and wait-for-engine addresses all assume the project is \"dfe\" -- leave project and global.project unset in the deploy repo's values, which keeps argocd/values/common.yaml's global.project: dfe" $path (toString $value)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.receiverExposureGuard -- the receiver's internal-mode refusal.
 
 Internal mode routes through the cluster Gateway, and the only gateway path the
