@@ -19,9 +19,9 @@ one of their pods sat in CreateContainerConfigError with no container started.
 
 **#191 and #10 -- the provider table.** kafbat asked for SASL_SSL against a
 broker the same render served on SASL_PLAINTEXT, because the table had no key
-for a DFE-owned broker on its TLS-off listener. The table now lives in
-dfe-common, both `-no-tls` keys are in it, and everything that needs a protocol
-or a mechanism derives from it instead of carrying a literal.
+for a DFE-owned broker on its TLS-off listener. The table lives in dfe-common
+with both `-no-tls` keys, and everything that needs a protocol or a mechanism
+derives from it rather than carrying a literal.
 
 **#9 -- external mode.** Naming the supplied broker's provider gets the same
 credential shape the DFE-owned tiers produce, so a Confluent Cloud target is
