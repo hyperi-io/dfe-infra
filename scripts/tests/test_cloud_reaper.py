@@ -272,8 +272,15 @@ def test_the_reaping_job_is_gated_on_the_role_and_bound_to_its_environment() -> 
     assert reap["if"] == "needs.gate.outputs.enabled == 'true'"
     assert reap["environment"] == "e2e-reaper"
     assert reap["permissions"]["id-token"] == "write"
-    assert "environment" not in jobs["gate"]
     assert "id-token" not in _workflow().get("permissions", {})
+
+
+def test_the_gate_reads_the_role_from_the_reapers_environment() -> None:
+    """A variable scoped to an environment reads as unset in any job outside it, so
+    a gate outside it reports an unconfigured reaper with the role in place."""
+    jobs = _workflow()["jobs"]
+    assert jobs["gate"]["environment"] == jobs["reap"]["environment"]
+    assert "id-token" not in jobs["gate"].get("permissions", {})
 
 
 def _gate_script() -> tuple[str, dict]:

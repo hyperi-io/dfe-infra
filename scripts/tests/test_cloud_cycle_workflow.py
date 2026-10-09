@@ -171,6 +171,87 @@ def test_the_cycle_runs_the_guard_against_the_aws_root_with_the_env_file() -> No
         assert run["env"][name] == f"${{{{ vars.{name} }}}}"
 
 
+def test_the_mode_is_the_dials_so_the_cycle_arguments_carry_no_default(tmp_path: Path) -> None:
+    """A second default beside the dial's profile is how a scale cluster gets a single deploy."""
+    cycle_args = _triggers()["workflow_dispatch"]["inputs"]["cycle_args"]
+    assert cycle_args["default"] == ""
+    assert cycle_args["required"] is False
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "python3"
+    fake.write_text('#!/bin/bash\nprintf \'%s\\n\' "$@" > "${CALLS}"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls), "RUNNER_TEMP": str(tmp_path),
+           "RUN_LENGTH": "150m", "CYCLE_ARGS": ""}
+    done, _output = _run_script(_named("Run one guarded cycle")["run"], env, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    argv = calls.read_text(encoding="utf-8").splitlines()
+    assert argv[argv.index("--"):] == ["--", "--env-file", f"{tmp_path}/dfe-cycle.env"]
+
+
+# --- the runner's own address, the one the cluster API opens to -------------------------------------
+
+
+def _fake_curl(tmp_path: Path, answers: list[tuple[str, int]]) -> dict[str, str]:
+    """A curl on PATH that records its arguments and gives each call its own answer and exit."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "curl"
+    fake.write_text(
+        '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "${CALLS}"\nn=$(( $(wc -l < "${CALLS}") ))\n'
+        'answer="ANSWER_${n}"\ncode="EXIT_${n}"\nprintf \'%s\\n\' "${!answer:-}"\nexit "${!code:-0}"\n',
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(tmp_path / "calls")}
+    for n, (answer, code) in enumerate(answers, start=1):
+        env[f"ANSWER_{n}"] = answer
+        env[f"EXIT_{n}"] = str(code)
+    return env
+
+
+def test_two_services_that_agree_give_the_runner_address_as_a_slash_32(tmp_path: Path) -> None:
+    env = _fake_curl(tmp_path, [("20.1.2.3", 0), ("20.1.2.3", 0)])
+    done, output = _run_script(_step("egress")["run"], env, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "cidr=20.1.2.3/32\n"
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2
+    assert all("-4" in call.split() for call in calls)
+    assert calls[0].split()[-1].split("/")[2] != calls[1].split()[-1].split("/")[2]
+
+
+@pytest.mark.parametrize(("answers", "says"), [
+    ([("20.1.2.3", 0), ("20.9.9.9", 0)], "disagree"),
+    ([("", 22)], "did not answer"),
+    ([("20.1.2.3", 0), ("", 28)], "did not answer"),
+    ([("<html>blocked</html>", 0)], "one IPv4 address"),
+    ([("2600:1f14::1", 0)], "one IPv4 address"),
+    ([("20.1.2.3 20.1.2.4", 0)], "one IPv4 address"),
+])
+def test_expected_fail_an_address_the_services_do_not_agree_on_hands_on_nothing(
+    tmp_path: Path, answers: list[tuple[str, int]], says: str
+) -> None:
+    env = _fake_curl(tmp_path, answers)
+    done, output = _run_script(_step("egress")["run"], env, tmp_path)
+    assert done.returncode == 1
+    assert done.stdout.startswith("::error::")
+    assert says in done.stdout
+    assert output == ""
+
+
+def test_the_address_is_resolved_before_any_tool_installs_and_reaches_the_guard() -> None:
+    """A preflight-only run resolves it too, so it proves the lookup without creating anything."""
+    names = [s.get("name") for s in _job()["steps"]]
+    egress = _step("egress")
+    assert "if" not in egress
+    assert names.index(egress["name"]) < names.index("Install OpenTofu")
+    for step in ("Run the preflight only", "Run one guarded cycle"):
+        # Keyed by the guard's own constant, so renaming either side fails here.
+        assert _named(step)["env"][guard_mod.ENDPOINT_CIDR_ENV] == "${{ steps.egress.outputs.cidr }}"
+
+
 # --- preflight only ----------------------------------------------------------------------------
 
 
