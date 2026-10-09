@@ -6,6 +6,8 @@ extraEnv:
   DFE_TRANSFORM_SOURCE_TOPICS: '{{ .Values.kafka.sourceTopic }}'
   DFE_TRANSFORM_SINK_TOPIC: '{{ .Values.kafka.destTopic }}'
   DFE_TRANSFORM_SOURCE_GROUP_ID: '{{ .Values.kafka.consumerGroup | default (.Values.fullnameOverride | default .Chart.Name) }}'
+  # A protocol naming SSL turns TLS on for source and sink. Any other leaves the config's setting.
+  DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
 
 # Which transport carries the records is this profile's, never the engine's.
 configOverrides:

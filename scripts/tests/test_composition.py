@@ -142,13 +142,46 @@ def test_the_engine_chart_carries_the_current_manifest() -> None:
     assert composition.write_catalogue(check_only=True) == 0
 
 
-def test_the_chart_copy_is_the_manifest_byte_for_byte() -> None:
+@pytest.mark.parametrize(
+    "copy",
+    composition.CATALOGUE_COPIES,
+    ids=[str(p.relative_to(REPO_ROOT)) for p in composition.CATALOGUE_COPIES],
+)
+def test_the_chart_copy_is_the_manifest_byte_for_byte(copy: Path) -> None:
     """Re-serialising it could change a value; only the banner is added."""
-    copy = composition.CHART_MANIFEST.read_text(encoding="utf-8")
-    assert copy.startswith(composition.CATALOGUE_BANNER)
-    assert copy[len(composition.CATALOGUE_BANNER) :] == (
+    text = copy.read_text(encoding="utf-8")
+    assert text.startswith(composition.CATALOGUE_BANNER)
+    assert text[len(composition.CATALOGUE_BANNER) :] == (
         composition.MANIFEST.read_text(encoding="utf-8")
     )
+
+
+def test_the_dfe_extras_copy_is_one_the_catalogue_writes() -> None:
+    """dfe-extras' app-catalogue ConfigMap mounts it, so --write-catalogue owns it."""
+    extras = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "files" / "apps.yaml"
+    assert extras in composition.CATALOGUE_COPIES
+
+
+def test_a_stale_copy_is_named_and_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Each copy is checked on its own, so a stale one cannot hide behind a current one."""
+    current = tmp_path / "current" / "apps.yaml"
+    stale = tmp_path / "stale" / "apps.yaml"
+    current.parent.mkdir()
+    current.write_text(composition.catalogue_copy(), encoding="utf-8")
+    stale.parent.mkdir()
+    stale.write_text("apps: {}\n", encoding="utf-8")
+    monkeypatch.setattr(composition, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(composition, "CATALOGUE_COPIES", (current, stale))
+
+    assert composition.write_catalogue(check_only=True) == 1
+    err = capsys.readouterr().err
+    assert "stale/apps.yaml" in err
+    assert "current/apps.yaml" not in err
+    assert composition.write_catalogue() == 0
+    assert stale.read_text(encoding="utf-8") == composition.catalogue_copy()
+    assert composition.write_catalogue(check_only=True) == 0
 
 
 def test_the_chart_default_carries_no_second_copy_of_the_composition() -> None:

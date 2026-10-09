@@ -12,7 +12,7 @@
 # mounted into the engine pod from this file, then the snapshot bundled in the
 # engine image. A deployment that mounts this file picks up a new app without
 # waiting for an engine release. Helm reads only files inside a chart, so the
-# engine chart carries the copy it mounts -- re-render it after editing here:
+# charts that mount it carry their own copy -- re-render them after editing here:
 #     python3 scripts/composition.py --write-catalogue
 #
 # Multiplicity and replication are INDEPENDENT axes. A transform is both: there
@@ -21,8 +21,10 @@
 # multiplicity
 #   single      One deployment for the whole stack.
 #   per_config  One deployment per config, many side by side. Each carries the
-#               instance in its component name so its Kubernetes objects and its
-#               telemetry stay distinct from its siblings'.
+#               instance in its object names (fullnameOverride, and component
+#               for the dfe-common charts) and its OTel service name, so its
+#               Kubernetes objects and its telemetry stay distinct from its
+#               siblings'.
 #
 # scale_deployed
 #   Whether the app carries CPU, memory and KEDA dials at all. Those dials are
@@ -125,23 +127,56 @@
 #   A family of files the app reads off disk. Content is carried in the instance's
 #   values overlay, because Helm cannot read a raw file out of an Argo $values
 #   source. Fields:
-#     name          identifier used in the API path
-#     values_path   dot-path in the overlay holding the list of {name, content}
+#     name          identifier used in the API path, and the set's key under the
+#                   chart's fileSets
+#     values_path   dot-path in the overlay holding the list of {name, content}:
+#                   fileSets.<name>.files, the list the chart mounts
 #     links_path    dot-path in the overlay holding the library links that produced
-#                   that content. Optional; defaults to values_path + "Links".
+#                   that content. Optional; defaults to values_path + "Links". No
+#                   chart reads it.
+#     mount_path    where the chart mounts the set: the fileSets.<name>.mountPath
+#                   the app's integration values set (argocd/values/apps), which
+#                   scripts/tests/test_deployment_owned.py holds equal to this.
+#                   Without it dfe-engine names no entries_path entries, leaving
+#                   them to the chart that mounts the set.
 #     dir_setting   the app's own config key naming the directory it reads
 #     entries_path  the app's own config key holding one {name, path} entry per
 #                   file, for a set the app names table by table rather than by
 #                   directory. The name is the file name without its extension,
-#                   which is the name a program looks the table up by. Whoever
-#                   owns the mount derives these: the chart on Kubernetes
-#                   (dfe-common.enrichmentTablesConfig), the engine's writer on
-#                   Compose. Set this or dir_setting, never both.
+#                   which is the name a program looks the table up by. The config
+#                   file takes no template, so dfe-engine writes an entry under
+#                   mount_path as it writes each file, and its Compose render
+#                   points those entries at its own mount. An entry the config
+#                   already names is left alone. Set this or dir_setting, never
+#                   both.
 #     suffixes      extensions the app will actually load; anything else is refused
 #     language      editor syntax hint
 #     reload        hot    the app applies a change without a restart
 #                   roll   a pod roll applies it; the chart checksums the files
 #                   restart needs a manual restart
+#
+# deployment_owned
+#   The app's config paths the deployment decides rather than the instance
+#   overlay, each with what decides it, in one of three forms:
+#     <ENV_NAME>                   the env var the app reads, which outranks the
+#                                  config file
+#     configOverrides.<path>       the integration values' configOverrides leaf at
+#                                  the same path, merged over the overlay
+#     contract port <name>         the address a listener binds, whose port the
+#                                  app's contract opens on the Service and probes
+#   The engine reports such a path as the deployment's and refuses a write to it,
+#   naming the supplier. On a target with no chart (Compose) it refuses none: the
+#   deployment's base config sits under the overlay there. Keys are config.
+#   overlay paths. It describes argocd/values/apps, the dfe-extras env ConfigMaps
+#   and the contracts' ports, and scripts/tests/test_deployment_owned.py fails
+#   when they disagree in either direction. A mounted manifest that lacks the key
+#   for an app takes the engine's bundled copy, with a startup warning.
+#
+# deployment_owned_when
+#   The deployment_owned paths the deployment sets only while an instance overlay
+#   value is set, as a Helm `with` reads it: owned path -> that value's overlay
+#   path. A value set for every instance outside the overlay, by a profile or a
+#   cloud file, is not seen.
 #
 # routing
 #   Present when the app's routing block is DERIVED from the source definitions
@@ -288,6 +323,40 @@ apps:
         # Which source a record belongs to, and where a matched record goes.
         routing: config.routing
         destinations: config.destinations
+    # The flat DFE_RECEIVER_* env (dfe-receiver-env and the contract's kafka
+    # group) outranks the config file, and configOverrides merges over it.
+    deployment_owned:
+      config.kafka.brokers: DFE_RECEIVER_KAFKA_BROKERS
+      config.kafka.tls.enabled: DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL
+      config.kafka.sasl.username: DFE_RECEIVER_KAFKA_SASL_USER
+      config.kafka.sasl.password: DFE_RECEIVER_KAFKA_SASL_PASSWORD
+      config.kafka.sasl.mechanism: DFE_RECEIVER_KAFKA_SASL_MECHANISM
+      config.loader.transport: configOverrides.loader.transport
+      # The push listener also opens the contract's grpc port, and the spool
+      # switch also mounts its spool writable path.
+      config.grpc.enabled: configOverrides.grpc.enabled
+      config.grpc.bind_address: configOverrides.grpc.bind_address
+      config.buffer.memory_limit: configOverrides.buffer.memory_limit
+      config.buffer.spillover.enabled: configOverrides.buffer.spillover.enabled
+      config.buffer.spillover.path: configOverrides.buffer.spillover.path
+      config.routing.dlq.enabled: DFE_RECEIVER_DLQ_ENABLED
+      config.routing.dlq.topic: DFE_RECEIVER_DLQ_TOPIC
+      config.routing.dlq.mode: DFE_RECEIVER_DLQ_MODE
+      # Each listener binds the port its contract opens on the Service and the
+      # probes, so moving it takes the listener off that port.
+      config.server.bind_address: contract port http
+      config.otlp.grpc_bind_address: contract port otlp-grpc
+      config.otlp.http_bind_address: contract port otlp-http
+      config.lumberjack.bind_address: contract port beats
+      config.splunk_hec.bind_address: contract port hec
+      config.prometheus_rw.bind_address: contract port prometheus-rw
+      config.webhook.bind_address: contract port webhook
+      config.syslog.tcp_bind_address: contract port syslog
+      config.syslog.udp_bind_address: contract port syslog-udp
+      config.syslog.tls_bind_address: contract port syslog-tls
+      config.fluent.bind_address: contract port fluent
+      config.gelf.bind_address: contract port gelf
+      config.flow.bind_address: contract port netflow
 
   dfe-loader:
     multiplicity: single
@@ -311,6 +380,24 @@ apps:
     # No idle_when: a bound listener always has work, and on the bus an empty
     # topic list is auto-discovery, so a topic appearing gives the loader work
     # with no config change for the gate to wake on.
+    # dfe-loader-env and the contract's kafka and clickhouse groups, which
+    # outrank the config file.
+    deployment_owned:
+      config.transport: DFE_LOADER_TRANSPORT
+      config.grpc.listen: DFE_LOADER_GRPC__LISTEN
+      config.kafka.brokers: DFE_LOADER_KAFKA_BROKERS
+      config.kafka.tls.enabled: DFE_LOADER_KAFKA_SECURITY_PROTOCOL
+      config.kafka.sasl.username: DFE_LOADER__KAFKA__SASL__USERNAME
+      config.kafka.sasl.password: DFE_LOADER__KAFKA__SASL__PASSWORD
+      config.clickhouse.hosts: DFE_LOADER_CLICKHOUSE_HOSTS
+      config.clickhouse.database: DFE_LOADER_CLICKHOUSE_DATABASE
+      config.clickhouse.username: DFE_LOADER_CLICKHOUSE_USERNAME
+      config.clickhouse.password: DFE_LOADER__CLICKHOUSE__PASSWORD
+      # The pinned ClickHouse client has no TCP row fetch, so the deployment
+      # holds this app to http.
+      config.clickhouse.protocol: DFE_LOADER_CLICKHOUSE__PROTOCOL
+      config.routing.dlq.topic: DFE_LOADER_DLQ_TOPIC
+      config.routing.dlq.mode: DFE_LOADER_DLQ_MODE
 
   # Keeps the record as it arrived: on the bus it reads the LANDING topics
   # (discovered, so a source added later is archived without a restart), and on
@@ -350,6 +437,31 @@ apps:
       - config.archive.destination
       - config.kafka.topics
       - config.kafka.topic_include
+    # Bare KAFKA_*, ARCHIVER_*, S3_* and DLQ_*, this app's own flat-env contract
+    # (core config.rs), not a DFE_ARCHIVER_* family.
+    deployment_owned:
+      config.transport: ARCHIVER_TRANSPORT
+      config.grpc.listen: ARCHIVER_GRPC_LISTEN
+      config.kafka.brokers: KAFKA_BROKERS
+      config.kafka.security_protocol: KAFKA_SECURITY_PROTOCOL
+      config.kafka.sasl_username: KAFKA_SASL_USER
+      config.kafka.sasl_password: KAFKA_SASL_PASSWORD
+      config.kafka.sasl_mechanism: KAFKA_SASL_MECHANISM
+      config.archive.destination: ARCHIVER_DESTINATION
+      config.archive.s3.endpoint: S3_ENDPOINT
+      config.archive.s3.bucket: S3_BUCKET
+      config.buffer.spool_dir: ARCHIVER_SPOOL_DIR
+      config.dlq.enabled: DLQ_ENABLED
+      config.dlq.mode: DLQ_MODE
+      # One env var sets both: naming a common topic also pins the routing to it.
+      config.dlq.kafka.common_topic: DLQ_TOPIC
+      config.dlq.kafka.routing: DLQ_TOPIC
+    # Each renders empty, which the app reads as unset, until the deployment
+    # names a local path or a store, so the engine's destination stands until then.
+    deployment_owned_when:
+      config.archive.destination: archive.localPath
+      config.archive.s3.endpoint: s3.endpoint
+      config.archive.s3.bucket: s3.bucket
 
   # A fetcher deployment is 1:1 with one source's fetcher config, so many run side
   # by side, each with its own dedicated settings. It polls its upstream rather
@@ -437,6 +549,21 @@ apps:
       duo: [cisco_duo]
       go_modules: [golang]
       m365: [o365]
+    # The flat DFE_FETCHER_* env, which outranks the config file. The broker list
+    # is not here: its variable renders empty once the overlay names one.
+    deployment_owned:
+      config.kafka.tls.enabled: DFE_FETCHER_KAFKA_SECURITY_PROTOCOL
+      config.kafka.sasl.username: DFE_FETCHER_KAFKA_SASL_USER
+      config.kafka.sasl.password: DFE_FETCHER_KAFKA_SASL_PASSWORD
+      config.kafka.sasl.mechanism: DFE_FETCHER_KAFKA_SASL_MECHANISM
+      config.dlq.enabled: DFE_FETCHER_DLQ_ENABLED
+      config.dlq.mode: DFE_FETCHER_DLQ_MODE
+      # One env var sets both: naming a common topic also pins the routing to it.
+      config.dlq.kafka.common_topic: DFE_FETCHER_DLQ_TOPIC
+      config.dlq.kafka.routing: DFE_FETCHER_DLQ_TOPIC
+      # Each listener binds the port its contract opens.
+      config.ingest.bind_address: contract port ingest
+      config.extractors.vector.grpc_bind_address: contract port vector-grpc
 
   # Compiles every .vrl in its transforms directory into one program at startup
   # and holds it immutable for the process lifetime, so an edit needs a roll.
@@ -473,8 +600,9 @@ apps:
       scope: instance
     files:
       - name: transforms
-        values_path: transformFiles
+        values_path: fileSets.transforms.files
         links_path: transformFileLinks
+        mount_path: /etc/dfe-transform-vrl-transforms
         dir_setting: config.transforms.dir
         suffixes: [".vrl"]
         language: vrl
@@ -485,16 +613,42 @@ apps:
       # roll, not hot: a table is materialised once at load. The background
       # refresh (src/enrichment/refresh.rs:29-42, minimum 60 s, atomic swap) is
       # opt-in per table and only runs for one declaring a `refresh` block, and
-      # the entries this set derives carry {name, path} alone
-      # (dfe-common.enrichmentTablesConfig), so a mounted table needs the roll.
+      # the entries this set derives carry {name, path} alone, so a mounted
+      # table needs the roll.
       - name: enrichment
-        values_path: enrichmentTables
+        values_path: fileSets.enrichment.files
         links_path: enrichmentTableLinks
+        mount_path: /etc/dfe-transform-vrl-enrichment
         dir_setting: ""
         entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
+    # configOverrides carries the transport, and the flat DFE_TRANSFORM_* env
+    # outranks the config file.
+    deployment_owned:
+      config.source.transport: configOverrides.source.transport
+      config.sink.transport: configOverrides.sink.transport
+      config.source.listen: configOverrides.source.listen
+      config.source.brokers: DFE_TRANSFORM_SOURCE_BROKERS
+      config.sink.brokers: DFE_TRANSFORM_SINK_BROKERS
+      config.source.topics: DFE_TRANSFORM_SOURCE_TOPICS
+      config.sink.topic: DFE_TRANSFORM_SINK_TOPIC
+      config.source.group_id: DFE_TRANSFORM_SOURCE_GROUP_ID
+      config.source.sasl.username: DFE_TRANSFORM_SOURCE_SASL_USERNAME
+      config.source.sasl.password: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
+      config.sink.sasl.username: DFE_TRANSFORM_SINK_SASL_USERNAME
+      config.sink.sasl.password: DFE_TRANSFORM_SINK_SASL_PASSWORD
+      config.transforms.dir: DFE_TRANSFORM_TRANSFORMS_DIR
+      # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
+      config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+    # Each of these renders empty, which the app reads as unset, until the
+    # overlay value beside it is set.
+    deployment_owned_when:
+      config.source.topics: kafka.sourceTopic
+      config.sink.topic: kafka.destTopic
+      config.transforms.dir: fileSets.transforms.files
 
   # Supervises a Vector subprocess. It watches the transform files and SIGHUPs
   # Vector when only those changed; any other config difference is a roll.
@@ -521,20 +675,51 @@ apps:
       scope: instance
     files:
       - name: transforms
-        values_path: transformFiles
+        values_path: fileSets.transforms.files
         links_path: transformFileLinks
+        mount_path: /etc/dfe-transform-vector-transforms
         dir_setting: config.transforms.dir
         suffixes: [".yaml", ".yml"]
         language: yaml
         reload: hot
+      # Inside the config directory, where the bundled filebeat pipeline's own
+      # enrichment_tables name its timezones table. Vector reads those entries
+      # from its transform files, never from the app's own config, so this set
+      # names no entries.
       - name: enrichment
-        values_path: enrichmentTables
+        values_path: fileSets.enrichment.files
         links_path: enrichmentTableLinks
+        mount_path: /etc/dfe-transform-vector/data
         dir_setting: ""
-        entries_path: config.enrichment_tables
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
+    # configOverrides carries the transport, and the flat DFE_TRANSFORM_* env
+    # outranks the config file.
+    deployment_owned:
+      config.source.transport: configOverrides.source.transport
+      config.sink.transport: configOverrides.sink.transport
+      config.source.listen: configOverrides.source.listen
+      config.source.brokers: DFE_TRANSFORM_SOURCE_BROKERS
+      config.sink.brokers: DFE_TRANSFORM_SINK_BROKERS
+      config.source.topics: DFE_TRANSFORM_SOURCE_TOPICS
+      config.sink.topic: DFE_TRANSFORM_SINK_TOPIC
+      config.source.group_id: DFE_TRANSFORM_SOURCE_GROUP_ID
+      config.source.sasl.username: DFE_TRANSFORM_SOURCE_SASL_USERNAME
+      config.source.sasl.password: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
+      config.sink.sasl.username: DFE_TRANSFORM_SINK_SASL_USERNAME
+      config.sink.sasl.password: DFE_TRANSFORM_SINK_SASL_PASSWORD
+      config.transforms.dir: DFE_TRANSFORM_TRANSFORMS_DIR
+      config.vector.data_dir: DFE_TRANSFORM_VECTOR_DATA_DIR
+      # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
+      config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+    # Each of these renders empty, which the app reads as unset, until the
+    # overlay value beside it is set.
+    deployment_owned_when:
+      config.source.topics: kafka.sourceTopic
+      config.sink.topic: kafka.destTopic
+      config.transforms.dir: fileSets.transforms.files
 
   # Selects a compiled-in transform by source.name and reads no authored files.
   dfe-transform-elastic:
@@ -588,6 +773,12 @@ apps:
         source: config.source
         sink: config.sink
       scope: instance
+    # The source's broker list, applied after the file is read. The bare KAFKA_*
+    # the bus profiles set reach scalo's KafkaConfig rather than the config file.
+    deployment_owned:
+      config.source.brokers: DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS
+      # The push listener binds the port its contract opens.
+      config.source.listen: contract port push
 
   # The edge-fleet VPN. It carries no records of its own -- it is the door an
   # appliance dials before it posts to the receiver -- so it has no transport,
