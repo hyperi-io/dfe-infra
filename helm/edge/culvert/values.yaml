@@ -13,7 +13,7 @@ image:
   tag: ""            # == Chart.appVersion == versions.yaml apps.culvert
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.culvert (drift-checked).
-  digest: "sha256:6a791a4ba432e03a896a9c503be17f15facae1b49cb5eebf50cb416c8a4711df"
+  digest: "sha256:27666a427c2cf66d8a327874782bb47b108afebbb8c699f76155557bf4598a6e"
   pullPolicy: IfNotPresent
   # Public GHCR image: suppress the fleet-wide imagePullSecrets.
   public: true

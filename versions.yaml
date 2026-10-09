@@ -2570,35 +2570,35 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # check_versions_drift.py holds each chart's appVersion to its pin.
     apps:
-      dfe-engine: "v1.22.14"        # 2026-10-06. scalo-py 2.31.1, dfe-schemas 0.2.9. Apply Defaults changes the deployed tables, and drift reads them.
-      dfe-ui: "v1.7.6"              # 2026-10-06. Defaults drift and Apply Defaults, the services feature removed, and the source view fixes.
-      dfe-receiver: "v1.15.42"      # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-loader: "v1.18.46"        # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64. reqwest stays on 0.12 (dfe-loader#240).
-      dfe-archiver: "v1.7.28"       # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-fetcher: "v1.4.32"        # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-transform-vrl: "v1.1.30"   # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-transform-vector: "v1.0.45"  # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64.
-      dfe-transform-elastic: "v1.1.9" # 2026-10-06. scalo-rs 2.14.1, PGO+BOLT, amd64 and arm64. Idle until a source names it.
+      dfe-engine: "v1.22.15"        # 2026-10-09, amd64 and arm64. The image thin chart 1.22.15 pins.
+      dfe-ui: "v1.7.7"              # 2026-10-09, amd64 and arm64. The image thin chart 1.7.7 pins.
+      dfe-receiver: "v1.15.43"      # 2026-10-09, amd64 and arm64. The image thin chart 1.15.43 pins.
+      dfe-loader: "v1.18.47"        # 2026-10-09, amd64 and arm64. The image thin chart 1.18.47 pins. reqwest stays on 0.12 (dfe-loader#240).
+      dfe-archiver: "v1.7.29"       # 2026-10-09, amd64 and arm64. The image thin chart 1.7.29 pins.
+      dfe-fetcher: "v1.4.33"        # 2026-10-09, amd64 and arm64. The image thin chart 1.4.33 pins.
+      dfe-transform-vrl: "v1.1.31"   # 2026-10-09, amd64 and arm64. The image thin chart 1.1.31 pins.
+      dfe-transform-vector: "v1.0.46"  # 2026-10-09, amd64 and arm64. The image thin chart 1.0.46 pins.
+      dfe-transform-elastic: "v1.1.10" # 2026-10-09, amd64 and arm64. The image thin chart 1.1.10 pins. Idle until a source names it.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
-      culvert: "v2.1.17"            # 2026-10-06. scalo-py 2.31.1, wstunnel 10.7.1.
+      culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:36f4e647053f3ddb6f1997bbbb6e99aaf6dc467ae09c7282639e7d1bc4c50044"
-      dfe-ui: "sha256:b152f9564b3a92f8379efc8c957dfbaa165b9f8995f2a8d8db2fbf87a6de8bb9"
-      dfe-receiver: "sha256:6b2da2ebe3b6ab0d38b6da8ac8709228bdd9a6e5af0f5f1cc2c855053078f6ae"
-      dfe-loader: "sha256:e5138a95c5714cc3cd9895f026db36ceb7908d5f58214c6f6f0bd9e9cf1b682a"
-      dfe-archiver: "sha256:7293f3601aaac634ff187c50e47ed337f38c5eaa4134c067654527fc86e47458"
-      dfe-fetcher: "sha256:1cb24225a027aa06f9fb08289f8df4567e3202bd9c89fb789706c7d7d028bf7d"
-      dfe-transform-vrl: "sha256:07455044dad76fbe7e2e305ea44d2ba071abd7f314f44f230568095c48df562e"
-      dfe-transform-vector: "sha256:baa9ccb150a743c2a0cac08d0fa2172a3238f51e980dea2e6de616be215572b1"
-      dfe-transform-elastic: "sha256:60e0d6891283137d024a99434c4c4231e6271925d460247c0b78b0421151ada4"
+      dfe-engine: "sha256:3720bf69a4622727710eea99f9f0b6783fdc2a016120adfdba27c35dcb89f662"
+      dfe-ui: "sha256:76633eb720e127ed170fa94fba848441164d3424a2eb2a51eb2fd91c1481eb82"
+      dfe-receiver: "sha256:2729443b687bdce058fbfd77fad9eb07573267f260215ea44f807115347b729b"
+      dfe-loader: "sha256:f764250959c84ac5744744f5c8a973c2ed6bee7049762632a0150fd6cf5b9ea7"
+      dfe-archiver: "sha256:01c44c367cac8a1b24b6ca4b58c2dba46ab6c947e4d5123298ef0bb3f35ec9eb"
+      dfe-fetcher: "sha256:cdd45e404e75b5a42faca89fc9b30424894904535376909a8e1f2ffaf4dcb856"
+      dfe-transform-vrl: "sha256:41b035383ed29f9fadc46f638b94d6c2eda1a29f03d85ce3d91acf26f149e5ae"
+      dfe-transform-vector: "sha256:b79bebc159c1de416fb579d02949c0145139dac26c16b362b71bbfe8076ddee6"
+      dfe-transform-elastic: "sha256:0776f6546d4cf49b9270c5c86b04ab53b38e1a9380075c0629adbde171dc831c"
       dfe-hyperdx: "sha256:9ddfc727828b8b97e3aff347c22083a20e317adfa7c5621ec2c563e3b1a79ae6"
-      culvert: "sha256:6a791a4ba432e03a896a9c503be17f15facae1b49cb5eebf50cb416c8a4711df"
+      culvert: "sha256:27666a427c2cf66d8a327874782bb47b108afebbb8c699f76155557bf4598a6e"
       # Tagged by toolbox.dfe-toolbox.
       # Still v1.0.2's index: Toolbox Build publishes v1.0.3 from main, then this and helm/charts/dfe-toolbox/values.yaml image.digest move to it.
       dfe-toolbox-base: "sha256:250999940ec42da4bee512f1d122a613ad2962bf1a7ecdc5a21d5bb50716d0f2"
@@ -2608,16 +2608,16 @@ stacks:
     # and refuse to render a service whose entry is not a sha256 digest: "unpublished" marks a chart
     # not published yet. The chart version is the app tag without its v, so it has no key here.
     chart-digests:
-      culvert: "unpublished"
-      dfe-archiver: "unpublished"
-      dfe-engine: "unpublished"
-      dfe-fetcher: "unpublished"
-      dfe-loader: "unpublished"
-      dfe-receiver: "unpublished"
-      dfe-transform-elastic: "unpublished"
-      dfe-transform-vector: "unpublished"
-      dfe-transform-vrl: "unpublished"
-      dfe-ui: "unpublished"
+      culvert: "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"                # 2.1.18
+      dfe-archiver: "sha256:90f7d9ec8cddb4d18c41caca5e38ab21a96be7159ddceb1fa2899bb726da5aae"           # 1.7.29
+      dfe-engine: "sha256:7727d09c27ebe3535ea93a57d3ee9148559e1ea01db11b8a0fce08a6317759a7"             # 1.22.15
+      dfe-fetcher: "sha256:17b44639cd741115bd8f287b3b959ac86133b7f8fc14e8e1ee389a4856b1235f"            # 1.4.33
+      dfe-loader: "sha256:d08d0416925e7322b4580d54f5226cce340a77c150e39845efe3e2ac910875b3"             # 1.18.47
+      dfe-receiver: "sha256:11a8972d1681aa46a07c1e516c7733a6f1d3688462da33f3c36866ba2ffc46d9"           # 1.15.43
+      dfe-transform-elastic: "sha256:85af7d98187c9fc8a82adb05fbc827316f59e1a795e9b649e44f5aa41036a752"  # 1.1.10
+      dfe-transform-vector: "sha256:124db1bada639381231806a882b525388ec61837c02c85dfb8329b60b3856104"   # 1.0.46
+      dfe-transform-vrl: "sha256:f04ff3cee742d4c3c0f3a33127bc2addd309b89ca87ab151ff0fa517c2849881"      # 1.1.31
+      dfe-ui: "sha256:58adaa98e3d8840a5e81a66b9bef20ff7518e17c5394f6dea11e72b8dff0458c"                 # 1.7.7
       hyperdx: "unpublished"
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
