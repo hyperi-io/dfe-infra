@@ -48,6 +48,8 @@ An unattended cloud cycle runs through `dfe-ops cloud-cycle --tf-dir <root> --ru
 
 Preflight also refuses a session credential (`AWS_SESSION_TOKEN`) whose expiry it cannot read, and every child of a run gets the dial's region as `AWS_REGION`, so a call that names no region never lands outside the run's. `.github/workflows/cloud-cycle.yml` dispatches from the `e2e-runner` environment: the runner role by OIDC for 4h, with the dial and bootstrap env file taken from that environment's variables and secrets, and it refuses at its first step when any is missing. A hosted runner sits outside the VPC, so the run opens the Kubernetes API's public endpoint to the runner's own address alone (`DFE_RUN_ENDPOINT_CIDR`, one /32 that two address services must agree on), in place of the dial's endpoint, and fences the public gateway to that address plus the cluster's NAT addresses. The private endpoint stays on, and the allowance goes with the cluster at teardown.
 
+The run length is a deadline that apply and the cycle share: a cycle still running at it is stopped with its process tree and the run exits 124, leaving the whole margin (`--teardown-margin`, default 45m) to the teardown. The workload teardown gets half of it, so `tofu destroy` always runs.
+
 `dfe-ops cycle --acceptance-suite <suite>` runs `acceptance` as a stage after smoke and before ui, from the deploy's terraform outputs and as its minted admin; a failed stage skips the rest and destroy still runs. The workflow passes `source` unless its `acceptance_suite` input says otherwise (`none` skips it), clones dfe-engine and dfe-transform-vrl at the tags the current stack pins, and keeps screenshots and the step table only from a failed leg. `repeat` (1-3) runs that many legs, one after another, each with its own credential.
 
 ## Upgrading a persistent deploy instead of cycling it
@@ -88,6 +90,8 @@ to say whether the shipped password is in use, so it FAILS outside a dev posture
 and warns inside one.
 
 It then runs `dfe-ops admin-probe`, which fetches every admin UI in the `dfe-admin-links` ConfigMap through the gateway address under its own hostname, following redirects. A redirect loop, a 5xx or no answer FAILS in any posture: a Ready pod behind a looping route is still a UI nobody can open. So does a 4xx other than 401, 403 or 404 at the end of the chain, such as an IdP answering 400 to a redirect URI it has not registered. A redirect off the deployment's domain is a login handed to an IdP and passes. No ConfigMap, no Gateway address, or a gateway this machine cannot reach is a named SKIP, and a failing UI is re-probed for `READINESS_ADMIN_UI_WAIT` seconds (default 120) before it fails the gate.
+
+When the gate times out it runs `dfe-ops readiness-report` once, because a ready count cannot tell a pod with nowhere to schedule from one that cannot pull its image. The report prints, for every pod not Ready in a judged namespace or kube-system, the scheduler's verdict and each container's wait, then the newest Warning events, every node's placement labels, taints and requested-against-allocatable CPU and memory, Karpenter's NodePools, NodeClaims, EC2NodeClasses and controller errors, unbound volume claims, and Argo Applications not Synced and Healthy. It reads and never writes, and it never changes the gate's exit code.
 
 `dfe-ops creds` prints where each minted credential is fetched from, reading both
 Secret names off the live engine Deployment.

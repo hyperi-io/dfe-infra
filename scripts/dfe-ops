@@ -113,6 +113,13 @@ Subcommands:
                loop, a 5xx, a 4xx other than 401/403/404 or no answer, while a
                login handed to an IdP passes.
                The readiness gate runs it once every pod is Ready.
+  readiness-report
+               READ-ONLY. Why each pod is not Ready: its scheduling verdict and
+               each container's wait, the newest Warning events, every node's
+               placement labels, taints and requested-vs-allocatable, Karpenter's
+               NodePools, NodeClaims, EC2NodeClasses and controller errors,
+               unbound volume claims, and Argo Applications not Synced and
+               Healthy. The readiness gate runs it once when it fails.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
@@ -282,6 +289,7 @@ from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
+from dfe_ops_readiness_report import add_readiness_report_subparser  # noqa: E402
 from dfe_ops_upgrade import STRIMZI_CRDS, add_upgrade_subparser, stale_strimzi_crds  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
@@ -4336,6 +4344,11 @@ def build_parser() -> argparse.ArgumentParser:
     # admin-probe -- every admin UI the gateway lists loads through it. The
     # readiness gate runs it; registered from dfe_ops_edge_probe.
     add_admin_probe_subparser(sub)
+
+    # readiness-report -- why each workload is not ready, which a ready count
+    # cannot say. The readiness gate runs it on failure; registered from
+    # dfe_ops_readiness_report.
+    add_readiness_report_subparser(sub)
 
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.

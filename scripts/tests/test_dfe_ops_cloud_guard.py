@@ -4,8 +4,9 @@
 #  Purpose:      Guard `dfe-ops cloud-preflight` and `cloud-cycle`: each of the
 #                four refusals fires on its own cause and nothing is created
 #                after one, the run gets its own state key and tags, and every
-#                way out of a run -- success, failure, exception, SIGTERM --
-#                tears it down, keeping the run record when the destroy fails.
+#                way out of a run -- success, failure, exception, SIGTERM, the
+#                run length running out -- tears it down, keeping the run
+#                record when the destroy fails.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -15,8 +16,8 @@
     python3 -m pytest scripts/tests/test_dfe_ops_cloud_guard.py -q
 
 The cloud is a FakeGuard and every child process a FakeRunner, so no AWS call
-is made and no tofu runs. The one real process is a short python sleep the
-Runner is asked to stop.
+is made and no tofu runs. The real processes are short python children the
+Runner is asked to stop, or stops at a deadline a few seconds out.
 """
 
 import argparse
@@ -25,6 +26,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -111,21 +113,34 @@ class FakeGuard:
 
 
 class FakeRunner:
-    """Records each command; `codes` maps a word in the command to its exit code."""
+    """Records each command; `codes` maps a word in the command to its exit code.
 
-    def __init__(self, codes: dict[str, int] | None = None, on_run: dict | None = None) -> None:
+    A command carrying a word in `stalls` runs past its deadline, so it raises
+    the Runner's DeadlineError once recorded.
+    """
+
+    def __init__(self, codes: dict[str, int] | None = None, on_run: dict | None = None,
+                 stalls: set[str] | None = None) -> None:
         self.commands: list[list[str]] = []
         self.envs: list[dict | None] = []
+        self.sessions: list[bool] = []
+        self.deadlines: list[float | None] = []
         self.codes = codes or {}
         self.on_run = on_run or {}
+        self.stalls = stalls or set()
         self.current = None
 
-    def run(self, cmd: list[str], *, env: dict | None = None, new_session: bool = False) -> int:
+    def run(self, cmd: list[str], *, env: dict | None = None, new_session: bool = False,
+            deadline: float | None = None, stop_timeout: float = 0) -> int:
         self.commands.append(cmd)
         self.envs.append(env)
+        self.sessions.append(new_session)
+        self.deadlines.append(None if deadline is None else deadline - guard_mod.time.monotonic())
         for word, action in self.on_run.items():
             if word in cmd:
                 action()
+        if self.stalls & set(cmd):
+            raise guard_mod.DeadlineError(f"{cmd[0]} ran past its deadline and was stopped")
         for word, code in self.codes.items():
             if word in cmd:
                 return code
@@ -890,6 +905,72 @@ def test_sigterm_during_the_cycle_removes_workloads_then_destroys(root: Path, mo
     assert signal.getsignal(signal.SIGTERM) is not guard_mod._raise_interrupted
 
 
+# --- the run length is a deadline, and the teardown keeps its margin -------------------------------
+# _args sets a 2h run length and a 30m margin.
+
+
+def test_the_cycle_runs_in_a_session_of_its_own_with_the_run_length_as_its_deadline(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == 0
+    cycle = runner.words().index("cycle")
+    assert runner.sessions[cycle] is True
+    assert 2 * 3600 - 60 < runner.deadlines[cycle] <= 2 * 3600
+    assert runner.deadlines[runner.words().index("apply")] is None
+
+
+def test_a_cycle_past_its_run_length_is_stopped_and_torn_down_inside_the_margin(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Run 38026303019: the cycle's own destroy hung for 3.5h and the job limit
+    cancelled it, which gives a teardown seconds. Stopped at the run length, the
+    workloads and the infrastructure both still go, with the margin ahead of them."""
+    guard, runner = FakeGuard(), FakeRunner(stalls={"cycle"})
+    assert _cycle(root, monkeypatch, guard, runner) == guard_mod.DEADLINE_EXIT
+    assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+    assert "reached its 7200s run length" in capsys.readouterr().err
+
+
+def test_the_workload_teardown_is_held_to_half_the_margin_and_tofu_destroy_still_runs(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner(stalls={"cycle", "teardown"})
+    assert _cycle(root, monkeypatch, guard, runner) == guard_mod.DEADLINE_EXIT
+    assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
+    teardown = runner.words().index("teardown")
+    assert runner.sessions[teardown] is True
+    assert 30 * 60 * guard_mod.WORKLOAD_TEARDOWN_SHARE - 60 < runner.deadlines[teardown] <= 900
+    assert runner.deadlines[runner.words().index("destroy")] is None
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+    assert "passed its 900s share of the teardown margin" in capsys.readouterr().err
+
+
+def test_an_apply_that_ends_past_the_run_length_skips_the_cycle(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A killed apply strands its state lock, so the apply is never cut short; the cycle is skipped."""
+    clock = [1000.0]
+    monkeypatch.setattr(guard_mod.time, "monotonic", lambda: clock[0])
+
+    def slow_apply() -> None:
+        clock[0] += 2 * 3600 + 1
+
+    runner = FakeRunner(on_run={"apply": slow_apply})
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == guard_mod.DEADLINE_EXIT
+    assert runner.words() == ["init", "apply", "teardown", "destroy"]
+
+
+def test_a_failed_destroy_after_the_deadline_still_reports_the_destroy(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1}, stalls={"cycle"})
+    assert _cycle(root, monkeypatch, guard, runner) == 1
+    assert "dfe-e2e-runs/run-1/run.json" in guard.records
+
+
 def test_every_child_of_a_run_lands_in_the_dials_region_not_the_shells(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1062,3 +1143,68 @@ def test_the_runner_stops_the_child_in_flight() -> None:
     runner.stop_current(timeout=5)
     assert child.poll() is not None
     assert runner.current is None
+
+
+def _gone(pid: int, within: float = 5.0) -> bool:
+    """Whether `pid` has exited inside `within` seconds; a zombie awaiting its reaper counts as gone."""
+    give_up = time.monotonic() + within
+    stat = Path(f"/proc/{pid}/stat")
+    while time.monotonic() < give_up:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        if stat.is_file() and stat.read_text(encoding="utf-8").rsplit(")", 1)[-1].split()[0] == "Z":
+            return True
+        time.sleep(0.1)
+    return False
+
+
+# The child starts a grandchild, writes its pid, and outlives any deadline a test sets.
+SPAWNS_A_GRANDCHILD = (
+    "import pathlib, subprocess, sys, time\n"
+    "grandchild = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+    "pathlib.Path(sys.argv[1]).write_text(str(grandchild.pid), encoding='utf-8')\n"
+    "time.sleep(60)\n"
+)
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_the_runner_stops_a_child_at_its_deadline_with_its_whole_tree(tmp_path: Path) -> None:
+    """The cycle's stages are its children, so stopping only the cycle would leave
+    a destroy.sh and its kubectl running beside the guard's own teardown."""
+    pid_file = tmp_path / "grandchild.pid"
+    runner = guard_mod.Runner()
+    started = time.monotonic()
+    with pytest.raises(guard_mod.DeadlineError):
+        runner.run([sys.executable, "-c", SPAWNS_A_GRANDCHILD, str(pid_file)], new_session=True,
+                   deadline=time.monotonic() + 2, stop_timeout=10)
+    assert time.monotonic() - started < 15
+    assert runner.current is None
+    assert _gone(int(pid_file.read_text(encoding="utf-8")))
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    ignores = (
+        "import pathlib, signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "pathlib.Path(sys.argv[1]).write_text('ready', encoding='utf-8')\n"
+        "time.sleep(60)\n"
+    )
+    runner = guard_mod.Runner()
+    started = time.monotonic()
+    with pytest.raises(guard_mod.DeadlineError):
+        runner.run([sys.executable, "-c", ignores, str(ready)], new_session=True,
+                   deadline=time.monotonic() + 2, stop_timeout=1)
+    assert ready.exists()
+    assert time.monotonic() - started < 10
+
+
+def test_a_child_that_ends_before_its_deadline_returns_its_own_code() -> None:
+    runner = guard_mod.Runner()
+    code = runner.run([sys.executable, "-c", "raise SystemExit(3)"], new_session=True,
+                      deadline=time.monotonic() + 30)
+    assert code == 3
+    assert (runner.current, runner.group) == (None, None)
