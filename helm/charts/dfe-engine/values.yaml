@@ -22,7 +22,7 @@ image:
   tag: ""
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-engine (drift-checked). Engine, hunt-runner and keda-shim share it.
-  digest: "sha256:43bb478f819b528bf1faa70efdda690c8442fa51d94eb728e1688a328a15f941"
+  digest: "sha256:f2a77524eca93cb3eb299e7e2fea5386883be8aaf190fd0b612d942ded6996d4"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -45,7 +45,7 @@ profile: ""
 # names it. Helm cannot read a sibling chart's appVersion, so this is a second
 # copy of the versions.yaml apps.dfe-ui pin and check_versions_drift.py is what
 # stops the two diverging.
-uiVersion: "v1.7.7"
+uiVersion: "v1.7.9"
 
 # The transport dial is the DEPLOYMENT-WIDE kafka.mode the profile values set,
 # and dfe-common.transport reads a missing map as the bus default. On the bus

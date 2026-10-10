@@ -12,7 +12,7 @@ version: 0.1.0
 # appVersion == versions.yaml `current` (the pin SSoT). Image pins are NOT
 # duplicated here: each component chart's appVersion carries its image tag and
 # is drift-checked against versions.yaml by scripts/check_versions_drift.py.
-appVersion: "2.2.1-rc.3"
+appVersion: "2.2.1-rc.4"
 
 # The dependency set mirrors the SLIM profile's chart set as composed by
 # argocd/appsets/*.yaml (layer2-platform wave 2, layer2-data waves 4-6,
