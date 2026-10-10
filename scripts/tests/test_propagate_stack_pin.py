@@ -22,6 +22,7 @@ No third-party deps and no test runner, matching the tool it tests.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -93,6 +94,76 @@ def test_it_reads_the_committed_current_pointer() -> None:
     proposes moving a consumer onto an empty string."""
     version = propagate.current_stack(propagate.VERSIONS_FILE.read_text(encoding="utf-8"))
     expect("current resolves to a stack version", version.startswith("2."), f"{version!r}")
+
+def _fake_gh(files_changed: int, calls: list[list[str]]):
+    """A stand-in for `gh` answering each call the --open-pr path makes."""
+
+    def fake(args: list[str]) -> str:
+        calls.append(args)
+        url = next(a for a in args if a.startswith("/repos/"))
+        if "/contents/" in url and "--method" not in args:
+            if f"ref={propagate.BRANCH}" in url:
+                return '{"sha": "blob"}'
+            return DIAL
+        if "/commits/" in url:
+            return "base-sha\n"
+        if "/compare/" in url:
+            return f"{files_changed}\n"
+        if url.endswith("/pulls") and "POST" in args:
+            return '{"html_url": "https://example.test/pull/1"}'
+        if "/pulls?" in url:
+            return "[]"
+        return "{}"
+
+    return fake
+
+
+def _run_open_pr(tag_cut: bool, files_changed: int) -> tuple[int, list[list[str]]]:
+    calls: list[list[str]] = []
+    real_gh, real_git = propagate._gh, propagate._git
+    propagate._gh = _fake_gh(files_changed, calls)
+    # git ls-remote --exit-code: 0 when the tag exists, 2 when nothing matched.
+    propagate._git = lambda args: subprocess.CompletedProcess(args, 0 if tag_cut else 2, "", "")
+    try:
+        rc = propagate.main(["--open-pr"])
+    finally:
+        propagate._gh, propagate._git = real_gh, real_git
+    return rc, calls
+
+
+def test_a_tag_lookup_error_is_not_read_as_uncut() -> None:
+    real_git = propagate._git
+    propagate._git = lambda args: subprocess.CompletedProcess(args, 128, "", "fatal: auth failed")
+    try:
+        propagate.tag_exists("2.2.1-rc.1")
+    except propagate.PropagateError as exc:
+        expect("an auth failure raises", "auth failed" in str(exc), str(exc))
+    else:
+        expect("an auth failure raises", False, "tag_exists returned instead of raising")
+    finally:
+        propagate._git = real_git
+
+
+def _opened_pr(calls: list[list[str]]) -> bool:
+    return any("POST" in c and any(a.endswith("/pulls") for a in c) for c in calls)
+
+
+def test_an_uncut_stack_opens_no_pr_and_writes_nothing() -> None:
+    rc, calls = _run_open_pr(tag_cut=False, files_changed=1)
+    expect("exits 0", rc == 0, f"rc={rc}")
+    expect("makes no write call", not any("--method" in c for c in calls), str(calls))
+
+
+def test_a_bump_that_changes_nothing_opens_no_pr() -> None:
+    rc, calls = _run_open_pr(tag_cut=True, files_changed=0)
+    expect("exits 0", rc == 0, f"rc={rc}")
+    expect("opens no PR", not _opened_pr(calls), str(calls))
+
+
+def test_a_real_bump_on_a_cut_stack_opens_the_pr() -> None:
+    rc, calls = _run_open_pr(tag_cut=True, files_changed=1)
+    expect("exits 0", rc == 0, f"rc={rc}")
+    expect("opens the PR", _opened_pr(calls), str(calls))
 
 
 def main() -> int:

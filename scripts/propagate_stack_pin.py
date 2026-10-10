@@ -108,8 +108,33 @@ def read_remote(org: str, repo: str, path: str, ref: str) -> str:
                 "--header", "Accept: application/vnd.github.raw"])
 
 
-def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) -> str:
-    """Land the rewritten dial on a branch and open (or update) the PR."""
+def _git(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
+    )
+
+
+def tag_exists(tag: str) -> bool:
+    """Whether *tag* is cut in this repo -- the consumer pulls that tag's stack manifest.
+
+    Asked through git rather than the API: the PR token is scoped to the
+    consumer alone and cannot see this repo, while the checkout's credentials can.
+    """
+    result = _git(["ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{tag}"])
+    if result.returncode == 0:
+        return True
+    if result.returncode == 2:
+        return False
+    raise PropagateError(result.stderr.strip() or f"git ls-remote for tag {tag} failed")
+
+
+def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) -> str | None:
+    """Land the rewritten dial on a branch and open (or update) the PR.
+
+    Returns None when the commit left the branch identical to *base*, since a
+    PR with no diff only waits to be closed.
+    """
     head = _gh(["api", f"/repos/{org}/{repo}/commits/{base}", "--jq", ".sha"]).strip()
     try:
         _gh(["api", "--method", "POST", f"/repos/{org}/{repo}/git/refs",
@@ -130,6 +155,11 @@ def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) 
          "-f", f"message=fix(stack): pin the stack dial at {version}",
          "-f", f"sha={existing['sha']}",
          "-f", f"content={base64.b64encode(text.encode()).decode()}"])
+
+    changed = int(_gh(["api", f"/repos/{org}/{repo}/compare/{base}...{BRANCH}",
+                       "--jq", ".files | length"]).strip() or "0")
+    if changed == 0:
+        return None
 
     body = (
         f"dfe-infra moved `current` to {version}, so this moves the dial the "
@@ -182,7 +212,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        print(f"PR: {open_pr(args.org, args.repo, args.path, args.base, rewrite(dial, version), version)}")
+        if not tag_exists(version):
+            print(f"SKIP -- {version} is not cut yet (no tag on origin), "
+                  f"and the consumer pulls that tag's stack manifest; no PR opened")
+            return 0
+        url = open_pr(args.org, args.repo, args.path, args.base, rewrite(dial, version), version)
+        if url is None:
+            print(f"SKIP -- the bump left {BRANCH} identical to {args.base}; no PR opened")
+            return 0
+        print(f"PR: {url}")
     except PropagateError as exc:
         print(
             f"FAIL -- could not open the PR: {exc}\n"
