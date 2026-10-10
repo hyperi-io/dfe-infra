@@ -991,6 +991,13 @@ CHECKS += [
     Check(label, key, Path(f), docker_arg_pattern(arg)) for label, key, f, arg in _TOOLBOX_ARGS
 ]
 
+# The workflows that run tofu install it themselves, so each TOFU_VERSION is a
+# mirror of the same pin the toolbox ships -- a CVE fix lands in CI with it.
+CHECKS += [
+    Check(f"{wf} TOFU_VERSION", "toolbox.tofu", Path(f".github/workflows/{wf}"), r'TOFU_VERSION:\s*"([^"]+)"')
+    for wf in ("tf-validate.yml", "cloud-cycle.yml", "cloud-reaper.yml")
+]
+
 # The in-cluster pod chart (helm/charts/dfe-toolbox) ships the base image --
 # no cloud CLI, per the security pass -- so it pins the same family tag rather
 # than a mirror of its own. Both the tag Helm actually renders and the
