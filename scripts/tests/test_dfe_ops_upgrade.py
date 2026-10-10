@@ -31,7 +31,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -2441,9 +2441,140 @@ def test_a_dry_run_names_the_rollouts_each_wait_waits_on(
         "secret/dfe-cluster's dfe.hyperi.io/dfe_namespace names to finish rolling out (timeout 900s)"
     ) == 3
     assert (
-        "wait for Argo Applications to leave 1.0.0, then every Deployment and StatefulSet in dfe-named "
-        "to finish rolling out (timeout 900s)"
+        "wait for Argo Applications to leave 1.0.0, each reconciled after the retarget, then every Deployment "
+        "and StatefulSet in dfe-named to finish rolling out (timeout 900s)"
     ) in named
+
+
+# An Application Argo last compared before any change this suite makes.
+OLD_RECONCILE = "2020-01-01T00:00:00Z"
+
+
+@pytest.fixture
+def pushed_real_git_deploy(real_git_deploy: Path, tmp_path: Path) -> Path:
+    """real_git_deploy with a bare local remote as its upstream, so `git push` and `@{upstream}` are real."""
+    remote = tmp_path / "real-remote.git"
+    assert u._run(["git", "init", "-q", "--bare", str(remote)]).returncode == 0
+    for args in (["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "HEAD"]):
+        assert u._git(real_git_deploy, *args).returncode == 0, args
+    return real_git_deploy
+
+
+def _argo_comparing_after_the_push(monkeypatch: pytest.MonkeyPatch, *, stale_reads: int | None) -> dict[str, int]:
+    """Argo reads the one Application Synced and Healthy throughout, but stamps `reconciledAt` as it would.
+
+    The real wait and the real Application read run, and so does git. Until the deploy repo is pushed the
+    Application carries an old stamp, and after it the next `stale_reads` reads still do, since Argo has not
+    compared the new commit yet. Then it carries a fresh one (never, for `stale_reads=None`). Returns the
+    count of Application reads, and of those made after the first push.
+    """
+    monkeypatch.setattr(u, "wait_for_argo", REAL_WAIT_FOR_ARGO)
+    monkeypatch.setattr(u, "_SYNC_POLL_INTERVAL", 0.0)
+    seen = {"pushes": 0, "reads": 0, "reads_after_push": 0}
+    real_run = u._run
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if cmd[:1] == ["git"] and cmd[-1] == "push":
+            seen["pushes"] += 1
+        if cmd[:1] == ["kubectl"] and "applications.argoproj.io" in cmd:
+            seen["reads"] += 1
+            seen["reads_after_push"] += 1 if seen["pushes"] else 0
+            compared = stale_reads is not None and seen["reads_after_push"] > stale_reads
+            stamp = (datetime.now(UTC) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ") if compared else OLD_RECONCILE
+            return _apps(_reconciled_app("kafka-dfe", stamp))
+        if cmd[:1] == ["kubectl"] and "deployments.apps,statefulsets.apps" in cmd:
+            return _proc(0, stdout=ENGINE_ROLLED)
+        if cmd[:1] in (["kubectl"], ["helm"]):
+            raise AssertionError(f"test reached a real cluster: {cmd}")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(u, "_run", fake_run)
+    return seen
+
+
+def test_apply_does_not_trust_a_healthy_app_argo_has_not_compared_since_the_push(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Both waits passed on the Synced and Healthy Argo reported from before the pushed commit."""
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=2)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    # Stage 1 pushed a commit and read the Application three times, twice on the old stamp.
+    # Stage 2 pushed nothing new, so it asked Argo for nothing and read once.
+    assert seen["pushes"] == 2
+    assert seen["reads"] == 4
+    assert err.count("1 Application(s) Synced and Healthy, each reconciled since this change; 2 rollout(s) finished") == 1
+    assert err.count("1 Application(s) Synced and Healthy; 2 rollout(s) finished") == 1
+
+
+def test_apply_fails_naming_the_app_argo_never_compared_against_the_push(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True, timeout=0.05,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert f"1 app(s) not Synced/Healthy: kafka-dfe (last reconciled {OLD_RECONCILE}, before this change)" in err
+    assert "FAILED at stage 1: Argo and the rollouts did not settle" in err
+    assert "apply OK" not in err
+
+
+def test_apply_without_push_asks_for_no_reconcile_because_argo_has_nothing_new(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert seen == {"pushes": 0, "reads": 2, "reads_after_push": 0}
+    assert "each reconciled" not in err
+
+
+def test_apply_pushes_a_commit_an_earlier_run_left_and_waits_on_the_reconcile(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A rerun commits nothing new, but its push still carries the earlier run's commit."""
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False)) == u.EXIT_OK
+    capsys.readouterr()
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(pushed_real_git_deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False, push=True,
+        timeout=0.05,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert "stage 1 (10-first) changed nothing" in err
+    assert f"kafka-dfe (last reconciled {OLD_RECONCILE}, before this change)" in err
+
+
+def test_a_pushing_dry_run_names_the_reconcile_each_wait_asks_for(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", namespace="dfe-named", push=True)) == u.EXIT_OK
+
+    assert capsys.readouterr().err.count(
+        "wait for Argo Applications in argocd, each reconciled after any change it pushes, then every "
+        "Deployment and StatefulSet in dfe-named to finish rolling out (timeout 900s)"
+    ) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -3301,6 +3432,116 @@ def test_check_argo_apps_without_health_counts_a_synced_app_but_not_a_stale_or_u
 
 
 # ---------------------------------------------------------------------------
+# Reconcile floor: Argo reads Synced and Healthy from the state it last
+# compared, so right after a push or a retarget that is the state from before.
+# ---------------------------------------------------------------------------
+
+CHANGE = datetime(2026, 10, 11, 3, 0, 0, tzinfo=UTC)
+
+
+def _reconciled_app(name: str, reconciled_at: str | None, sync: str = "Synced", health: str = "Healthy") -> dict:
+    """One Application as `kubectl get -o json` lists it, with the `status.reconciledAt` Argo stamped."""
+    status: dict[str, object] = {"sync": {"status": sync}, "health": {"status": health}}
+    if reconciled_at is not None:
+        status["reconciledAt"] = reconciled_at
+    return {"metadata": {"name": name}, "status": status}
+
+
+def _apps(*apps: dict) -> subprocess.CompletedProcess:
+    return _proc(0, stdout=json.dumps({"items": list(apps)}))
+
+
+def test_check_argo_apps_fails_a_healthy_app_reconciled_before_the_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _apps(
+        _reconciled_app("kafka-dfe", "2026-10-11T02:59:59Z"),
+        _reconciled_app("never-compared", None),
+        _reconciled_app("loader", "2026-10-11T03:00:07Z"),
+    ))
+
+    ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
+
+    assert ok is False
+    assert detail == (
+        "2 app(s) not Synced/Healthy: kafka-dfe (last reconciled 2026-10-11T02:59:59Z, before this change), "
+        "never-compared (last reconciled never, before this change)"
+    )
+
+
+def test_check_argo_apps_passes_apps_reconciled_at_or_after_the_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Argo stamps whole seconds, so a reconcile in the second the change landed counts.
+    _mock_run(monkeypatch, _apps(
+        _reconciled_app("kafka-dfe", "2026-10-11T03:00:00Z"), _reconciled_app("loader", "2026-10-11T03:04:12Z"),
+    ))
+    assert u.check_argo_apps("kc", reconciled_after=CHANGE) == (
+        True, "2 Application(s) Synced and Healthy, each reconciled since this change"
+    )
+
+
+def test_check_argo_apps_reads_reconcile_time_only_when_asked_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _apps(_reconciled_app("kafka-dfe", "2020-01-01T00:00:00Z"), _reconciled_app("loader", None)))
+    assert u.check_argo_apps("kc") == (True, "2 Application(s) Synced and Healthy")
+
+
+def test_a_reconciled_app_that_is_still_out_of_sync_fails_on_its_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _apps(_reconciled_app("kafka-dfe", "2026-10-11T03:00:07Z", sync="OutOfSync")))
+    ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
+    assert ok is False
+    assert detail == "1 app(s) not Synced/Healthy: kafka-dfe (sync OutOfSync, health Healthy)"
+
+
+def test_wait_for_argo_holds_on_a_healthy_app_until_it_is_reconciled_after_the_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _apps(_reconciled_app("kafka-dfe", "2026-10-11T02:50:00Z"))
+    fresh = _apps(_reconciled_app("kafka-dfe", "2026-10-11T03:00:09Z"))
+    calls = _mock_run(monkeypatch, stale, stale, fresh)
+    clock, sleeps, fake_sleep = _clock()
+
+    ok, detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=120, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is True
+    assert detail == "1 Application(s) Synced and Healthy, each reconciled since this change"
+    assert len(calls) == 3
+    assert len(sleeps) == 2
+
+
+def test_wait_for_argo_times_out_naming_each_app_still_on_the_state_from_before_the_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stale = _apps(_reconciled_app("kafka-dfe", "2026-10-11T02:50:00Z"), _reconciled_app("loader", "2026-10-11T03:00:01Z"))
+    _mock_run(monkeypatch, *[stale] * 10)
+    clock, _sleeps, fake_sleep = _clock()
+
+    ok, detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=15, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is False
+    assert detail == (
+        "still not converged after 15s -- 1 app(s) not Synced/Healthy: "
+        "kafka-dfe (last reconciled 2026-10-11T02:50:00Z, before this change)"
+    )
+
+
+def test_change_moment_drops_the_fraction_argo_does_not_stamp() -> None:
+    moment = u.change_moment()
+    assert moment.microsecond == 0
+    assert moment.tzinfo is UTC
+    assert timedelta(0) <= datetime.now(UTC) - moment < timedelta(seconds=2)
+
+
+@pytest.mark.parametrize("stamp", [None, "", "not a time", 17, {"at": "2026-10-11T03:00:00Z"}])
+def test_an_unreadable_reconcile_time_counts_as_never_reconciled(stamp: object) -> None:
+    assert u._argo_time(stamp) is None
+
+
+def test_a_reconcile_time_without_an_offset_is_read_as_utc() -> None:
+    assert u._argo_time("2026-10-11T03:00:00") == CHANGE
+
+
+# ---------------------------------------------------------------------------
 # The in-place Strimzi 0.51 -> 1.2.0 path end to end, against a real deploy
 # repo pushed to a real (local) remote: holds, retarget order, version roll,
 # then a finalise after the soak.
@@ -3440,6 +3681,65 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
     assert "kafka:" not in finalised
     assert "services.kafka-version" in u.read_finalised_keys(deploy)
     assert _remote_file(remote, "main", "upgrades/1.0.0-to-2.0.0.finalised").startswith("services.kafka-version ")
+
+
+def test_apply_asks_each_wait_for_a_reconcile_after_the_change_that_started_it(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, _remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"})
+    started = datetime.now(UTC).replace(microsecond=0)
+    waits: list[tuple[str, datetime | None]] = []
+    retargeted: list[datetime] = []
+    argo, retarget = u.wait_for_argo, u.write_target_revision
+
+    def spy_wait(*a: object, stale_revision: str = "", reconciled_after: datetime | None = None, **k: object):
+        waits.append((stale_revision, reconciled_after))
+        return argo(*a, stale_revision=stale_revision, **k)
+
+    def spy_retarget(*a: object) -> tuple[bool, str]:
+        retargeted.append(datetime.now(UTC))
+        return retarget(*a)
+
+    monkeypatch.setattr(u, "wait_for_argo", spy_wait)
+    monkeypatch.setattr(u, "write_target_revision", spy_retarget)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    assert rc == u.EXIT_OK, capsys.readouterr().err
+
+    # Every stage commits and pushes, and the one retarget leaves the old tag.
+    assert [stale for stale, _ in waits] == ["", "", "1.0.0", ""]
+    floors = [floor for _, floor in waits]
+    assert all(floor is not None for floor in floors)
+    assert floors == sorted(floors)
+    assert started <= floors[0]
+    retarget_floor = floors[2]
+    assert len(retargeted) == 1
+    assert floors[1] <= retarget_floor <= retargeted[0]
+
+
+def test_apply_without_push_gives_no_wait_a_reconcile_to_ask_for(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    floors: list[datetime | None] = []
+
+    def wait(*_a: object, reconciled_after: datetime | None = None, **_k: object) -> tuple[bool, str]:
+        floors.append(reconciled_after)
+        return True, "ok"
+
+    monkeypatch.setattr(u, "wait_for_argo", wait)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    assert rc == u.EXIT_OK, capsys.readouterr().err
+    assert floors == [None, None]
 
 
 def test_apply_refuses_a_retarget_without_push_before_anything_moves(

@@ -9,6 +9,8 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The dfe-ops upgrade tests walk it, so an edit to it alone ran none of them.
+      - 'upgrade-order.yaml'
       # The app catalogue is data the composition and profile tests read, so an
       # edit to it alone used to merge with nothing run (dfe-infra#255).
       - 'apps.yaml'
@@ -34,6 +36,8 @@ on:
       - 'argocd/**'
       - 'bootstrap/**'
       - 'versions.yaml'
+      # The dfe-ops upgrade tests walk it, so an edit to it alone ran none of them.
+      - 'upgrade-order.yaml'
       # The app catalogue is data the composition and profile tests read, so an
       # edit to it alone used to merge with nothing run (dfe-infra#255).
       - 'apps.yaml'
