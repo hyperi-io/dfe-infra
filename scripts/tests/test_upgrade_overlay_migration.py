@@ -722,11 +722,11 @@ apps:
 
 @pytest.fixture(autouse=True)
 def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail any test whose kubectl call reaches this host's real cluster, while git runs for real."""
+    """Fail any test whose kubectl or helm call reaches this host's real cluster, while git runs for real."""
     real_run = u._run
 
     def guarded(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if cmd[:1] == ["kubectl"]:
+        if cmd[:1] in (["kubectl"], ["helm"]):
             raise AssertionError(f"test reached a real cluster: {cmd}")
         return real_run(cmd, **kwargs)
 
@@ -750,6 +750,11 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
+    # Every bootstrap release already runs its new pin; test_dfe_ops_upgrade.py covers the check itself.
+    monkeypatch.setattr(
+        u, "check_bootstrap_move", lambda _kc, move: (u.BOOTSTRAP_DONE, f"{move.step.key} runs {move.new}")
+    )
+    monkeypatch.setattr(u, "DEFAULT_PLAN_DIR", tmp_path / "plans")
     manifest = tmp_path / "apps.yaml"
     manifest.write_text(MANIFEST_YAML, encoding="utf-8")
     monkeypatch.setattr(u, "APPS_MANIFEST", manifest)
@@ -923,9 +928,12 @@ def test_a_failed_migration_stops_apply_with_nothing_of_it_committed(
 
 
 def test_plan_lists_the_stage_where_apply_runs_it(stack: Path, capsys: pytest.CaptureFixture) -> None:
-    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
+    args = _Args(
+        deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None,
+        argocd_namespace="argocd", out=None,
+    )
     assert u.cmd_upgrade_plan(args) == u.EXIT_OK
-    written = (stack / "upgrades" / "1.0.0-to-2.0.0.md").read_text(encoding="utf-8")
+    written = (stack.parent / "plans" / "1.0.0-to-2.0.0.md").read_text(encoding="utf-8")
     assert "## overlay vocabulary (stage overlay-vocabulary, before 40-apps)" in written
     assert "Stage enrichment-tables runs after 40-apps" in written
     assert f"{FETCHER} (dfe-fetcher)" in written
@@ -935,7 +943,10 @@ def test_plan_lists_the_stage_where_apply_runs_it(stack: Path, capsys: pytest.Ca
 
 
 def test_plan_has_no_overlay_section_without_the_switch(stack: Path, capsys: pytest.CaptureFixture) -> None:
-    args = _Args(deploy=str(stack), to="1.1.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
+    args = _Args(
+        deploy=str(stack), to="1.1.0", dial=None, fixtures=None, live=False, kubeconfig=None,
+        argocd_namespace="argocd", out=None,
+    )
     assert u.cmd_upgrade_plan(args) == u.EXIT_OK
     assert "overlay vocabulary" not in capsys.readouterr().out
 
@@ -944,7 +955,10 @@ def test_plan_is_blocked_by_an_overlay_the_migration_cannot_read(
     stack: Path, capsys: pytest.CaptureFixture
 ) -> None:
     (stack / "values" / "dfe-fetcher-bad-values.yaml").write_text("x: [\n", encoding="utf-8")
-    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
+    args = _Args(
+        deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None,
+        argocd_namespace="argocd", out=None,
+    )
     assert u.cmd_upgrade_plan(args) == u.EXIT_BLOCKED
     assert "BLOCKED: values/dfe-fetcher-bad-values.yaml is not YAML" in capsys.readouterr().out
 

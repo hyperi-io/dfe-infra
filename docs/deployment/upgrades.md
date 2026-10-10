@@ -64,8 +64,9 @@ The bundled in-cluster deploy repo is seeded without a `pins.yaml`. Against a de
 
 - `plan` diffs FROM -> TO, grouped by stage, each step carrying its
   `before`/`finalise`/`pair`/`rollback` note. Runs `dfe-stack compat-check
-  --strict` for TO and writes the numbered plan to
-  `<deploy>/upgrades/<from>-to-<to>.md`. Pass `--dial <deployment.yaml>` (with
+  --strict` for TO and writes the numbered plan to `--out`, by default
+  `.tmp/upgrades/<from>-to-<to>.md` in the dfe-infra checkout. Never the deploy
+  repo: `preflight` refuses a deploy tree with an untracked file in it. Pass `--dial <deployment.yaml>` (with
   `--fixtures` or `--live`) to also run `resolve_sizing.py`'s locked-change
   classifier against the deploy's committed `sizing/resolved.yaml` -- a
   LOCKED field moving without `--migrate` blocks the plan. Exit 0 clean, 1
@@ -80,6 +81,16 @@ The bundled in-cluster deploy repo is seeded without a `pins.yaml`. Against a de
 One pin, `base.dfe-infra`, selects the whole certified stack, and `apply` sets it to the target at every stage, so the first stage's commit carries the whole pin move. One ref, `target_revision`, selects every chart, and `apply` moves it once, at the first stage that moves an Argo-managed component; every chart and operator converges on the target during that stage's wait. Later stages skip their commit unless they add something, such as dropping a Kafka hold or writing a finalise marker.
 
 The work around the pin still runs in stage order: confirms, `before` checks, `finalise` notes and waits. The Kafka version hold is the one place a component waits for its own stage. `--stop-before` skips a stage's hooks and waits, not its component versions. Staging the pin itself is open in https://github.com/hyperi-io/dfe-infra/issues/508.
+
+The `10-bootstrap` stage is the exception: `bootstrap.sh` installs external-secrets, cert-manager and Argo CD before Argo exists, and Argo never renders them, so their pins move nothing on the cluster. After that stage `apply` reads the chart version each release runs off its Deployment's `helm.sh/chart` label. It prints `[DONE]` where that matches the pin, and otherwise `[PENDING]` with the command that moves the release, for example:
+
+```
+helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.0 --reset-then-reuse-values --wait --timeout 10m
+```
+
+`--reset-then-reuse-values` starts from the new chart's defaults and applies the values `bootstrap.sh` set on the release over them. `apply` never runs it. The walk carries on, and a run with anything still pending ends `NOT complete` with exit 1. Run the printed commands, then re-run `apply` with `--from <stack>` to confirm.
+
+An Argo CD that `bootstrap/argocd_release.py` does not recognise as `bootstrap.sh`'s own reads `[ADOPTED]` and is left to its owner, the same call `bootstrap.sh` makes before it upgrades Argo. Nothing tells a cert-manager or external-secrets `bootstrap.sh` installed from one it adopted, so their command says to run it only where this deploy installed them. A `bootstrap.sh` re-run skips a running install of either unless `DFE_FORCE_INSTALL=true`.
 
 ### Onto the thin charts
 

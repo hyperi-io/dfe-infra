@@ -52,6 +52,12 @@ DEV_POSTURES="dev development local test ci"
 WATCH_NS="${READINESS_WATCH_NS:-argocd cert-manager external-secrets envoy-gateway-system keda strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links dfe-*}"
 [ -n "$DFE_NS" ] && WATCH_NS="$WATCH_NS $DFE_NS"
 
+# Every DFE_NS-scoped check below would otherwise drop out of the run in silence.
+announce_narrowing() {
+  [ -n "$DFE_NS" ] && return 0
+  echo "  [narrow] no DFE_NS: the app namespace is judged only where a READINESS_WATCH_NS glob matches it (default dfe-*), and the workload-presence check does not run"
+}
+
 # True when a namespace matches one of the WATCH_NS globs.
 watched_ns() {
   local ns="$1" pat
@@ -259,6 +265,7 @@ refresh_comparison_errors() {
 }
 
 echo "=== DFE deploy readiness gate (waiting up to ${TIMEOUT}s for convergence) ==="
+announce_narrowing
 SECONDS=0
 while :; do
   refresh_comparison_errors

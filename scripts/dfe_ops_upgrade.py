@@ -36,7 +36,9 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                classifier against the deploy's committed sizing/resolved.yaml.
                Where apply runs the overlay-vocabulary stage, lists what it
                writes into each overlay, what it keeps, and what needs a hand
-               edit. Writes the plan to <deploy>/upgrades/<from>-to-<to>.md.
+               edit. Writes the plan to --out, by default
+               .tmp/upgrades/<from>-to-<to>.md in this checkout -- never the
+               deploy repo, whose untracked files preflight refuses.
                Exit 0 nothing moves (or the plan is clean), 1 the plan is
                BLOCKED (a compat-check failure, a locked sizing change with
                no --migrate evidence, or an overlay the migration cannot
@@ -88,6 +90,17 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                A transform reading those tables cannot start without them, so
                the wait after the retarget asks only that every Application has
                synced, and the tables stage's own wait asks for health.
+
+               bootstrap.sh installs the bootstrap section (external-secrets,
+               cert-manager, Argo CD) and Argo never renders it, so moving its
+               pin changes nothing on the cluster. After such a stage apply
+               reads the chart version each release runs, prints [DONE] where
+               it matches the pin, and otherwise [PENDING] with the helm upgrade
+               that moves it. It never runs that upgrade. An Argo CD that
+               bootstrap/argocd_release.py does not recognise as bootstrap.sh's
+               own reads [ADOPTED] and is left to its owner. A run with anything
+               still pending ends NOT complete with exit 1, and a re-run with
+               --from confirms it.
 
                When the plan moves services.kafka-version on a Strimzi
                cluster, that same stage first writes two holds into the
@@ -147,7 +160,9 @@ import argparse
 import base64
 import io
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -162,6 +177,8 @@ SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
 
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
+import argocd_release  # noqa: E402
 import yaml_subset  # noqa: E402
 
 UPGRADE_ORDER = REPO_ROOT / "upgrade-order.yaml"
@@ -192,6 +209,8 @@ DEFAULT_CLICKHOUSE_CREDENTIALS = "clickhouse-admin-password"
 CLICKHOUSE_USERS = ("default", "admin")
 DEFAULT_TIER = "scale"
 DEFAULT_BACKUP_MARKER = "upgrades/.backup-ok"
+# Outside every deploy repo: preflight refuses a deploy tree carrying an untracked file.
+DEFAULT_PLAN_DIR = REPO_ROOT / ".tmp" / "upgrades"
 DEFAULT_TIMEOUT = 900
 _SYNC_POLL_INTERVAL = 10.0
 
@@ -1379,6 +1398,156 @@ def retarget_command(namespace: str, ref: str, stack: str) -> str:
     )
 
 
+# --- bootstrap-installed components ------------------------------------------
+# Argo never renders the bootstrap section, so a moved pin changes nothing on the
+# cluster until an operator upgrades the release bootstrap.sh installed.
+
+BOOTSTRAP_PREFIX = "bootstrap."
+ARGOCD_KEY = "bootstrap.argocd"
+# check_bootstrap_move's verdicts; only PENDING keeps an apply from reporting OK.
+BOOTSTRAP_DONE, BOOTSTRAP_PENDING, BOOTSTRAP_ADOPTED = "DONE", "PENDING", "ADOPTED"
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapRelease:
+    """The helm release bootstrap.sh installs for one bootstrap-section pin.
+
+    Attributes:
+        release: The helm release name bootstrap.sh installs.
+        namespace: The namespace the release lives in.
+        chart: The chart name, also the prefix of its `helm.sh/chart` label.
+        repo: The chart repository URL bootstrap.sh adds.
+        deployment: A Deployment whose `helm.sh/chart` label names the running chart.
+        timeout: The --timeout bootstrap.sh gives the install.
+    """
+
+    release: str
+    namespace: str
+    chart: str
+    repo: str
+    deployment: str
+    timeout: str
+
+
+# The same release, chart, repository and timeout bootstrap.sh's steps [2/7], [3/7] and [6/7] use.
+BOOTSTRAP_RELEASES: dict[str, BootstrapRelease] = {
+    "bootstrap.external-secrets": BootstrapRelease(
+        "external-secrets", "external-secrets", "external-secrets", "https://charts.external-secrets.io",
+        "external-secrets", "5m",
+    ),
+    "bootstrap.cert-manager": BootstrapRelease(
+        "cert-manager", "cert-manager", "cert-manager", "https://charts.jetstack.io", "cert-manager", "5m",
+    ),
+    ARGOCD_KEY: BootstrapRelease(
+        argocd_release.RELEASE, argocd_release.NAMESPACE, argocd_release.CHART,
+        "https://argoproj.github.io/argo-helm", "argocd-server", "10m",
+    ),
+}
+
+
+def _helm_json(kubeconfig: str | None, *argv: str) -> tuple[object, str]:
+    """(parsed output, error) for one read-only helm call."""
+    cmd = ["helm", *argv, "-o", "json"]
+    if kubeconfig:
+        cmd += ["--kubeconfig", kubeconfig]
+    try:
+        result = _run(cmd)
+    except FileNotFoundError:
+        return None, "helm is not on PATH"
+    if result.returncode != 0:
+        return None, _last_line(result.stderr) or f"helm {argv[0]} exited {result.returncode}"
+    try:
+        return json.loads(result.stdout or "null"), ""
+    except json.JSONDecodeError as exc:
+        return None, f"helm {argv[0]} printed no JSON: {exc}"
+
+
+def argocd_installed_by_bootstrap(kubeconfig: str | None) -> tuple[bool | None, str]:
+    """(bootstrap.sh installed this cluster's Argo CD, why); None when helm cannot say.
+
+    argocd_release.py's own verdict, the one bootstrap.sh's step [6/7] reaches
+    before it upgrades Argo, so an adopted Argo is never handed an upgrade.
+    """
+    scope = ["--namespace", argocd_release.NAMESPACE]
+    releases, error = _helm_json(kubeconfig, "list", *scope, "--filter", f"^{argocd_release.RELEASE}$")
+    if error:
+        return None, f"cannot list helm releases in {argocd_release.NAMESPACE}: {error}"
+    listed = [r for r in releases if isinstance(r, dict)] if isinstance(releases, list) else []
+    cache = os.environ.get("DFE_VALKEY_SERVICE") or argocd_release.DEFAULT_CACHE_SERVICE
+    if not any(r.get("name") == argocd_release.RELEASE for r in listed):
+        return argocd_release.verdict([], None, cache)
+    values, error = _helm_json(kubeconfig, "get", "values", argocd_release.RELEASE, *scope)
+    if error:
+        return None, f"cannot read the values of helm release {argocd_release.RELEASE}: {error}"
+    return argocd_release.verdict(listed, values if isinstance(values, dict) else None, cache)
+
+
+def read_bootstrap_chart(kubeconfig: str | None, release: BootstrapRelease) -> tuple[str, str]:
+    """(the chart version the cluster runs, why it could not be read).
+
+    Read off the Deployment's `helm.sh/chart` label, which the chart stamps with
+    its own version. A Deployment without one for this chart is an operator the
+    deploy adopted rather than installed, which is the host's to upgrade.
+    """
+    rc, doc, err = _kubectl_json(kubeconfig, "-n", release.namespace, "get", "deployment", release.deployment)
+    if rc != 0:
+        return "", f"cannot read deployment/{release.deployment} in {release.namespace}: {err}"
+    label = ((doc.get("metadata") or {}).get("labels") or {}).get("helm.sh/chart", "")
+    prefix = f"{release.chart}-"
+    if not label.startswith(prefix):
+        return "", (
+            f"deployment/{release.deployment} in {release.namespace} carries no helm.sh/chart label for "
+            f"{release.chart} -- an operator this deploy adopted is upgraded by its owner"
+        )
+    return label[len(prefix):], ""
+
+
+def bootstrap_upgrade_command(release: BootstrapRelease, version: str, kubeconfig: str | None) -> str:
+    """The helm upgrade an operator runs to move a bootstrap release to `version`.
+
+    --reset-then-reuse-values starts from the new chart's defaults and applies the
+    values bootstrap.sh set on the release over them. `upgrade` without --install
+    refuses where no such release exists.
+    """
+    cmd = ["helm"]
+    if kubeconfig:
+        cmd += ["--kubeconfig", kubeconfig]
+    cmd += [
+        "-n", release.namespace, "upgrade", release.release, release.chart, "--repo", release.repo,
+        "--version", version, "--reset-then-reuse-values", "--wait", "--timeout", release.timeout,
+    ]
+    return shlex.join(cmd)
+
+
+def check_bootstrap_move(kubeconfig: str | None, move: Move) -> tuple[str, str]:
+    """(BOOTSTRAP_DONE, _PENDING or _ADOPTED, the line saying why).
+
+    A PENDING line ends with the command that moves the release. Argo's owner is
+    decided first, so a host's Argo reads ADOPTED rather than PENDING.
+    """
+    moved = f"{move.step.key} {move.old} -> {move.new}"
+    release = BOOTSTRAP_RELEASES.get(move.step.key)
+    if release is None:
+        return BOOTSTRAP_PENDING, (
+            f"{moved}: bootstrap.sh installs it, not Argo -- re-run bootstrap/bootstrap.sh with "
+            "DFE_STACK_VERSION set to the target stack"
+        )
+    where = ", where this deploy installed it"
+    if move.step.key == ARGOCD_KEY:
+        ours, why = argocd_installed_by_bootstrap(kubeconfig)
+        if ours is False:
+            return BOOTSTRAP_ADOPTED, f"{moved}: {why}, so its owner upgrades it"
+        where = f" ({why}), where this deploy installed it" if ours is None else ""
+    running, why = read_bootstrap_chart(kubeconfig, release)
+    if running == move.new:
+        return BOOTSTRAP_DONE, f"{move.step.key} runs {running} (deployment/{release.deployment} helm.sh/chart)"
+    seen = f"the cluster runs {running}" if running else why
+    return BOOTSTRAP_PENDING, (
+        f"{moved}: bootstrap.sh installs it, not Argo, and {seen}. "
+        f"Run{where}: {bootstrap_upgrade_command(release, move.new, kubeconfig)}"
+    )
+
+
 # --- finalise markers ----------------------------------------------------------
 # The record that a one-way step's `finalise` note actually ran -- the fact
 # `rollback` keys its refusal on, rather than the pin diff alone. A pin move
@@ -1386,10 +1555,10 @@ def retarget_command(namespace: str, ref: str, stack: str) -> str:
 
 
 def _finalise_marker_path(deploy: Path, from_stack: str, to_stack: str) -> Path:
-    """Same `<from>-to-<to>` naming as the plan file
-    (`upgrades/<from>-to-<to>.md`) -- `apply` writes this name in the forward
-    direction it moved, and a rollback checking for it computes the SAME name
-    because a rollback's own FROM/TO are that forward move's TO/FROM, swapped."""
+    """Same `<from>-to-<to>` naming as the plan file -- `apply` writes this name
+    in the forward direction it moved, and a rollback checking for it computes
+    the SAME name because a rollback's own FROM/TO are that forward move's
+    TO/FROM, swapped."""
     return deploy / "upgrades" / f"{from_stack}-to-{to_stack}.finalised"
 
 
@@ -2414,10 +2583,9 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
         sections.append("## sizing locked-change check\n\nskipped: no --dial given\n")
 
     text = "\n".join(sections)
-    out_dir = deploy / "upgrades"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{from_name}-to-{to_name}.md"
-    out_path.write_text(text, encoding="utf-8")
+    out_path = Path(args.out) if args.out else DEFAULT_PLAN_DIR / f"{from_name}-to-{to_name}.md"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text, encoding="utf-8", newline="\n")
 
     print(text)
     print(f"plan written to {out_path}", file=sys.stderr)
@@ -2743,6 +2911,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             return EXIT_BLOCKED
 
+    bootstrap_pending: list[str] = []
     for stage_index, (stage, stage_moves) in enumerate(walk, start=1):
         if args.stop_before and stage == args.stop_before:
             print(
@@ -2750,7 +2919,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 "-- --stop-before",
                 file=sys.stderr,
             )
-            return EXIT_OK
+            return _report_bootstrap_pending(bootstrap_pending, from_name, to_name)
         print(f"\n=== stage {stage_index}/{len(walk)}: {stage} ===", file=sys.stderr)
         if stage in (MIGRATION_STAGE, TABLES_STAGE):
             step = _apply_overlay_migration if stage == MIGRATION_STAGE else _apply_table_naming
@@ -2897,6 +3066,22 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             if not ok:
                 return _stage_failed(stage_index, "Argo did not converge", stage_moves)
 
+        for move in stage_moves:
+            if not move.step.key.startswith(BOOTSTRAP_PREFIX):
+                continue
+            release = BOOTSTRAP_RELEASES.get(move.step.key)
+            if args.dry_run:
+                command = (
+                    bootstrap_upgrade_command(release, move.new, args.kubeconfig)
+                    if release else "re-run bootstrap/bootstrap.sh"
+                )
+                emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
+                continue
+            state, detail = check_bootstrap_move(args.kubeconfig, move)
+            print(f"  [{state}] {detail}", file=sys.stderr)
+            if state == BOOTSTRAP_PENDING:
+                bootstrap_pending.append(move.step.key)
+
         if stage == chart_stage:
             ref = args.target_revision or to_name
             emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
@@ -2958,9 +3143,24 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)
-    else:
-        print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))", file=sys.stderr)
+        return EXIT_OK
+    if bootstrap_pending:
+        return _report_bootstrap_pending(bootstrap_pending, from_name, to_name)
+    print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))", file=sys.stderr)
     return EXIT_OK
+
+
+def _report_bootstrap_pending(pending: list[str], from_name: str, to_name: str) -> int:
+    """EXIT_OK when every bootstrap pin reached runs on the cluster; else say which do not and refuse OK."""
+    if not pending:
+        return EXIT_OK
+    print(
+        f"\ndfe-ops upgrade apply: {from_name} -> {to_name} NOT complete -- {', '.join(pending)} not "
+        f"shown running the pinned chart. Run the PENDING command(s) above, then re-run this apply with "
+        f"--from {from_name} to confirm.",
+        file=sys.stderr,
+    )
+    return EXIT_BLOCKED
 
 
 def _print_rollback(stage_moves: list[Move]) -> None:
@@ -3171,6 +3371,11 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         help="kubeconfig for the target cluster, read only when the deploy repo carries no pins.yaml",
     )
     plan.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
+    plan.add_argument(
+        "--out", default=None, metavar="<file>",
+        help="where the plan is written (default: .tmp/upgrades/<from>-to-<to>.md in this dfe-infra "
+        "checkout, outside the deploy repo, whose untracked files preflight refuses)",
+    )
     plan.set_defaults(func=cmd_upgrade_plan)
 
     preflight = verbs.add_parser(

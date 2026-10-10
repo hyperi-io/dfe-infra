@@ -21,7 +21,9 @@ the Kafka tools and runs no broker, as Strimzi's cruise-control pod does. Every
 exec into one of its pods is counted as `kafka_exec:<pod>`.
 
 `hyperdx_ready` adds a dfe-hyperdx deployment whose node runtime answers /readyz
-with that verdict (the image has node and no wget or curl).
+with that verdict (the image has node and no wget or curl). `engine_schema` adds a
+dfe-engine deployment whose /readyz reports that schema verdict. Each answers only
+an exec naming its thin-chart container (`-c dfe-hyperdx`, `-c dfe-engine`).
 `loader_copies_payload_to_raw` makes the landing table hold the whole payload in
 _raw on every row.
 
@@ -92,6 +94,11 @@ def kafka_pod(name):
     return next((p for p in kafka["pods"] if p["name"] == name), None)
 
 
+def container_is(name):
+    # kubectl refuses a -c naming no container in the pod.
+    return "-c" not in args or args[args.index("-c") + 1] == name
+
+
 def kafka_tool(pod, script):
     broker = pod["role"] == "broker"
     if "kafka-consumer-groups.sh" in script:
@@ -143,8 +150,16 @@ if kafka and args[:2] == ["get", "ns"]:
     sys.exit(0 if args[2] == kafka["namespace"] else 1)
 if "hyperdx_ready" in fixture and args[-3:] == ["get", "deploy", "dfe-hyperdx"]:
     sys.exit(0)
+if "engine_schema" in fixture and args[-3:] == ["get", "deploy", "dfe-engine"]:
+    sys.exit(0)
 
 if "exec" in args:
+    if exec_target() == "deploy/dfe-engine":
+        if not container_is("dfe-engine"):
+            sys.exit(1)
+        checks = {"clickhouse": True, "schema": fixture.get("engine_schema", False)}
+        print(json.dumps({"status": "ready", "checks": checks}))
+        sys.exit(0)
     if "-i" in args:
         posted = sys.stdin.read()
         bump("posted")
@@ -152,7 +167,7 @@ if "exec" in args:
             bump("posted_raw")
         sys.exit(0)
     if "node" in args:
-        sys.exit(0 if fixture.get("hyperdx_ready") else 1)
+        sys.exit(0 if fixture.get("hyperdx_ready") and container_is("dfe-hyperdx") else 1)
     if "mongosh" in args or "wget" in args:
         sys.exit(1)
     query = args[args.index("--query") + 1] if "--query" in args else ""

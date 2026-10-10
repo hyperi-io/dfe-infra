@@ -36,6 +36,8 @@ NS_HYPERDX="${DFE_HYPERDX_NS:-$NS_APP}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 
 HYPERDX_DEPLOY="${DFE_HYPERDX_DEPLOY:-dfe-hyperdx}"
+# The thin chart names the container after the chart, whatever the Deployment is called.
+HYPERDX_CONTAINER="${DFE_HYPERDX_CONTAINER:-dfe-hyperdx}"
 ENGINE_DEPLOY="${DFE_ENGINE_DEPLOY:-dfe-engine}"
 HYPERDX_PORT="${DFE_HYPERDX_PORT:-8080}"
 ENGINE_PORT="${DFE_ENGINE_PORT:-8000}"
@@ -95,8 +97,16 @@ JS
 hdx_probe() {
   local method="$1" url="$2"
   shift 2
-  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c hyperdx -- \
+  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c "$HYPERDX_CONTAINER" -- \
     env "PROBE_METHOD=${method}" "PROBE_URL=${url}" "$@" node -e "$JS_PROBE" 2>/dev/null
+}
+
+# hdx_env NAME: the value HyperDX runs with, from the container's own environment, so
+# it reads the same whether the chart sets it in the Deployment's env or an envFrom
+# ConfigMap. Non-zero when the container cannot be asked, which is not the same as unset.
+hdx_env() {
+  kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c "$HYPERDX_CONTAINER" -- \
+    node -e 'process.stdout.write(process.env[process.argv[1]] || "")' "$1" 2>/dev/null
 }
 
 # 127.0.0.1, never localhost: the frontend binds IPv4 only while the API binds
@@ -124,10 +134,11 @@ echo "=== SEAM 1: auth (engine ES384 JWT verified BY HyperDX) ==="
 # Which identity mode is the fork actually running? oidc-proxy = verify the engine
 # JWT; header-dev = trust identity headers WITHOUT verification, which is a dev-only
 # fallback and must never be what a deployed cluster is doing.
-AUTH_MODE="$(kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="DFE_AUTH_MODE")].value}' 2>/dev/null)"
-
-if [ -z "$AUTH_MODE" ]; then
+if ! AUTH_MODE="$(hdx_env DFE_AUTH_MODE)"; then
+  echo "  [FAIL] read HyperDX's runtime env (exec node in deploy/${HYPERDX_DEPLOY} -c ${HYPERDX_CONTAINER})"
+  FAIL=$((FAIL+1))
+  note "Without it a setting cannot be told from an unset one, so this seam is not judged."
+elif [ -z "$AUTH_MODE" ]; then
   skip "DFE_AUTH_MODE unset -- the fork's DFE middleware is DISABLED and HyperDX is"
   note "running stock upstream auth. Nothing DFE-specific to verify."
 elif [ "$AUTH_MODE" = "header-dev" ]; then
@@ -139,8 +150,7 @@ else
   check "DFE_AUTH_MODE=oidc-proxy (engine JWT is verified, not trusted)" \
     "[ '$AUTH_MODE' = 'oidc-proxy' ]"
 
-  JWKS_URL="$(kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-    -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="DFE_ENGINE_JWKS_URL")].value}' 2>/dev/null)"
+  JWKS_URL="$(hdx_env DFE_ENGINE_JWKS_URL)"
   check "DFE_ENGINE_JWKS_URL configured" "[ -n '$JWKS_URL' ]"
 
   # The JWKS must be REACHABLE FROM the HyperDX pod, not merely configured. A URL
@@ -180,11 +190,6 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== SEAM 2: data (HyperDX queries the DFE ClickHouse) ==="
-
-hdx_env() {
-  kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-    -o jsonpath="{.spec.template.spec.containers[*].env[?(@.name==\"$1\")].value}" 2>/dev/null
-}
 
 # The chart configures the connection as discrete CLICKHOUSE_* vars; the bundled
 # DEFAULT_CONNECTIONS blob is the upstream single-container form.
@@ -234,8 +239,7 @@ else
     "! printf '%s' \"\$HEADERS\" | grep -qi 'x-frame-options'"
 fi
 
-FRAME_ANCESTORS="$(kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" \
-  -o jsonpath='{.spec.template.spec.containers[*].env[?(@.name=="DFE_EMBED_FRAME_ANCESTORS")].value}' 2>/dev/null)"
+FRAME_ANCESTORS="$(hdx_env DFE_EMBED_FRAME_ANCESTORS)"
 if [ -n "$FRAME_ANCESTORS" ]; then
   echo "  [PASS] DFE_EMBED_FRAME_ANCESTORS set (${FRAME_ANCESTORS})"
   PASS=$((PASS+1))

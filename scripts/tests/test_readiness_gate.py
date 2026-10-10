@@ -329,6 +329,18 @@ def test_the_app_namespace_joins_the_allowlist() -> None:
     )
 
 
+def test_an_empty_dfe_ns_says_what_the_gate_stopped_judging() -> None:
+    """dfe-ops verify ran the gate with no DFE_NS, and it passed with two checks gone unannounced."""
+    unset = run_gate(HEALTHY)
+    expect(
+        "the narrowing is printed, naming the presence check",
+        "[narrow] no DFE_NS" in unset.stdout and "workload-presence check does not run" in unset.stdout,
+        f"rc={unset.returncode} {unset.stdout}",
+    )
+    named = run_gate(HEALTHY, DFE_NS="dfe-local")
+    expect("a named namespace prints no narrowing", "[narrow]" not in named.stdout, named.stdout)
+
+
 def test_the_presence_check_still_fires() -> None:
     """A deploy that produced nothing passes every check that judges what exists."""
     out = run_gate({"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, DFE_NS="dfe-local")
