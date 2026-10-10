@@ -514,6 +514,23 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# What the gateway's web routes admit, said here because Argo renders the chart
+# where nobody reads its NOTES. A /0 of either family is every address.
+dfe_edge_fence_notice() {
+  local cidr cidrs=()
+  IFS=',' read -r -a cidrs <<< "${DFE_EDGE_ALLOWED_CIDRS}"
+  for cidr in "${cidrs[@]}"; do
+    cidr="${cidr// /}"
+    if [[ "${cidr}" == */0 ]]; then
+      echo "WARNING: DFE_EDGE_ALLOWED_CIDRS carries ${cidr}, which admits every address -- dfe-ui, HyperDX, the engine API and every admin UI on the gateway are open to the whole internet behind their own logins. Name the ranges that need them instead." >&2
+    fi
+  done
+  if [[ "${DFE_EDGE_ENABLED}" == "true" && -z "${DFE_EDGE_ALLOWED_CIDRS}" ]] && dfe_cloud_programs_loadbalancers; then
+    echo "Public web: CLOSED -- DFE_CLOUD=${DFE_CLOUD} puts the gateway on an internet-facing load balancer and DFE_EDGE_ALLOWED_CIDRS is empty, so every web route answers 403 until it names who may reach it"
+  fi
+}
+dfe_edge_fence_notice
+
 # The dfe-ui Playwright suite's e2e posture (dfe-ops stack-deploy --e2e): the
 # engine runs as DFE_ENV=test with its unauthenticated /api/e2e seed routes, which
 # wipe and reseed every account. Written on every cluster secret, false included,

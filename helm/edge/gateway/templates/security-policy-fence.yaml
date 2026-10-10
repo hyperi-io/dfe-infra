@@ -1,0 +1,45 @@
+{{- if .Values.envoyGateway.service.internetFacing }}
+{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
+# The web fence for an internet-facing gateway. Every route on it is refused
+# unless the client address is on ui.allowed_cidrs, and every route is refused
+# while that list is empty. A SecurityPolicy on a route REPLACES this one for
+# that route rather than merging with it, so each policy this chart attaches to
+# a web route restates the same rule, and a route nothing here knows about --
+# one another namespace attaches -- is held by this default.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: dfe-edge-fence
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    dfe.hyperi.io/edge-fence: {{ include "envoy-gateway-config.webFence" (dict "ctx" .) | quote }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.name }}
+  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+{{- range $key := include "envoy-gateway-config.ingestRoutes" (dict "ctx" $) | fromJsonArray }}
+{{- $r := index $.Values.routes $key }}
+---
+# An ingest door is not a web surface, so the fence above does not reach it.
+# The collector checks its own bearer token, and the Service's
+# loadBalancerSourceRanges is what narrows who may connect.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: dfe-ingest-{{ $r.routeName }}
+  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $r.routeName }}
+  authorization:
+    defaultAction: Allow
+{{- end }}
+{{- end }}

@@ -7,13 +7,38 @@ CIDR allow-listing, rate limiting, WAF and DNS.
 
 ## Internet-facing defaults
 
-On a cloud deploy the Gateway Service is internet-facing, so
-`exposure.infraUisExternal` defaults off rather than on.
-`argocd/values/edge-aws.yaml` sets `exposure.infraUisExternal: false` and
+On a cloud deploy the Gateway Service is internet-facing:
+`envoyGateway.service.internetFacing` is true in `edge-aws.yaml`, `edge-gcp.yaml`
+and `edge-azure.yaml`, because each cloud makes a LoadBalancer public unless told
+otherwise.
+
+**Public web access is default-deny.** Every web route on that Service --
+dfe-ui, HyperDX, the engine API and every admin UI, on the internal names and the
+public ones -- is refused at Envoy unless the client address is on
+`ui.allowed_cidrs`. With the list empty, every address gets a 403.
+
+| `ui.allowed_cidrs` | Web routes | Load balancer | Said by |
+|---|---|---|---|
+| empty | 403 to every address | open, so ingest still reaches its own auth | NOTES, `bootstrap.sh`, `dfe-ops access-summary`, `render_dial.py` |
+| ranges | the ranges only | the ranges, plus `envoyGateway.service.loadBalancerSourceRanges` | NOTES |
+| a `/0` of either family | every address | every address | a WARNING in all four |
+
+One Gateway-wide SecurityPolicy, `dfe-edge-fence`, carries the rule. Envoy Gateway
+applies only the most specific SecurityPolicy to a route, so every route-level
+policy the chart renders restates it. The OIDC ones AND it with their group
+check. Ingest routes (`otel`, `receiver`) carry an explicit allow, since they are
+not web surfaces. A route another namespace attaches inherits the deny.
+
+The load balancer's half fences ingest too. A sender outside the web list goes in
+`envoyGateway.service.loadBalancerSourceRanges`, and Envoy still holds the web
+routes to the list. The Envoy Service carries the state as
+`dfe.hyperi.io/edge-fence: deny | listed | allow-all`.
+
+`exposure.infraUisExternal` defaults off on the same three flavours, and
 `argocd/values/aws.yaml` sets `oidc.enabled: true` -- Argo CD, Kafbat,
-HyperDX, Forgejo, the links page and
-Cruise Control all stay off the public NLB until an operator's overlay opts
-one back on. The chart's own render guard (`envoy-gateway-config.validateUi`)
+Forgejo, the links page and Cruise Control all stay off the public load balancer
+until an operator's overlay opts one back on. HyperDX is class product, beside
+the console that frames it, so the switch never reaches it. The chart's own render guard (`envoy-gateway-config.validateUi`)
 fails the render if a deploy flips the switch back on for an internet-facing
 Service with no edge OIDC provider (`oidc.enabled` and an `oidc.providers`
 entry) and `ui.allowed_cidrs` empty -- so
@@ -38,7 +63,7 @@ dial's own spelling.
 |---|---|---|
 | `ui.public_domain` | `""` | The public zone the UIs answer on. Empty renders no public half. |
 | `ui.public.<name>` | `dfe_ui: true`, admin UIs `false` | Which UIs get a public hostname. |
-| `ui.allowed_cidrs` | `""` (any) | Who may reach one, at Envoy AND at the load balancer. |
+| `ui.allowed_cidrs` | `""` (nobody, internet-facing) | Who may reach a web route, at Envoy AND at the load balancer. |
 | `ui.trusted_proxy_cidrs` | `""` | Proxy ranges Envoy may believe about the client address. |
 | `ui.rate_limit` | on, 300/Minute, `local` | The wall a credential-stuffing run hits before the login. |
 | `ui.waf.mode` | `none` | Only `none` renders. |

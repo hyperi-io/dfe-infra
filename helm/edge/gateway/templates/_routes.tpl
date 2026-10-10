@@ -253,6 +253,11 @@ publicHost    -- the fully qualified public hostname of a route, taken from its
   listener owner so the listener, the certificate and the route share one name.
 publicPaths   -- JSON array of the PathPrefix values a public route matches.
 cidrList      -- a comma-separated dial scalar as a YAML list of trimmed entries.
+webFence      -- who the web routes admit: "deny" (internet-facing, no list),
+  "listed", "allow-all" (an entry is a /0), or "" (not internet-facing, no list).
+fenceAuthorization -- a SecurityPolicy authorization block that denies by
+  default and allows .cidrs; takes (dict "cidrs" <list> "indent" <n>).
+ingestRoutes  -- JSON array of the ingest-class route keys that render.
 validateUi    -- the render guards; templates/validate.yaml runs them.
 */}}
 
@@ -282,6 +287,41 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- end -}}
 {{- $out | toJson -}}
+{{- end -}}
+
+{{- /* A /0 of either family is every address, whatever the address part says. */ -}}
+{{- define "envoy-gateway-config.webFence" -}}
+{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .ctx.Values.ui.allowed_cidrs) | fromJsonArray -}}
+{{- if $allowed -}}
+{{- $state := "listed" -}}
+{{- range $allowed -}}
+{{- if hasSuffix "/0" . -}}
+{{- $state = "allow-all" -}}
+{{- end -}}
+{{- end -}}
+{{- $state -}}
+{{- else if .ctx.Values.envoyGateway.service.internetFacing -}}
+deny
+{{- end -}}
+{{- end -}}
+
+{{- /* No rules with an empty list, so the policy refuses every request. */ -}}
+{{- define "envoy-gateway-config.fenceAuthorization" -}}
+{{- $block := dict "defaultAction" "Deny" -}}
+{{- if .cidrs -}}
+{{- $_ := set $block "rules" (list (dict "name" "allow-listed-cidrs" "action" "Allow" "principal" (dict "clientCIDRs" .cidrs))) -}}
+{{- end -}}
+{{- dict "authorization" $block | toYaml | nindent (int .indent) -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.ingestRoutes" -}}
+{{- $keys := list -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if and (eq ($r.class | default "infra") "ingest") (include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key)) -}}
+{{- $keys = append $keys $key -}}
+{{- end -}}
+{{- end -}}
+{{- $keys | sortAlpha | toJson -}}
 {{- end -}}
 
 {{- define "envoy-gateway-config.publicRoutes" -}}
@@ -383,10 +423,14 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        internetFacing is the chart's own cloud-agnostic signal (see
        values.yaml); it says nothing about ui.public_domain, so this fires
        whether or not any UI is ALSO published on its own public hostname. */ -}}
-{{- if and .ctx.Values.envoyGateway.service.internetFacing .ctx.Values.exposure.infraUisExternal -}}
+{{- $facing := .ctx.Values.envoyGateway.service.internetFacing -}}
+{{- if not (kindIs "bool" $facing) -}}
+{{- fail (printf "envoyGateway.service.internetFacing is %v (a %s), not a bool -- it decides whether every web route is fenced to ui.allowed_cidrs, and a quoted \"false\" is truthy. Write true or false unquoted" $facing (kindOf $facing)) -}}
+{{- end -}}
+{{- if and $facing .ctx.Values.exposure.infraUisExternal -}}
 {{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
 {{- if and (not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers)) (not $ui.allowed_cidrs) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, hyperdx, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
 {{- end -}}
 {{- end -}}
 

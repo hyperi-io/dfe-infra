@@ -1,5 +1,6 @@
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
+{{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
 {{- $edgeRoutes := list }}
 {{- range $route := .Values.oidc.targetRoutes }}
 {{- $edgeRoutes = append $edgeRoutes $route.name }}
@@ -53,10 +54,17 @@ spec:
         extractFrom:
           cookies:
             - dfe-{{ $r.routeName }}-public-access-token
+  {{- /* The jwt block already refuses a request with no valid token, and the
+         CRD rejects a jwt principal naming no claim, so a route with no group
+         check and no address list takes no authorization block at all. */}}
+  {{- if eq $fence "deny" }}
+  authorization:
+    defaultAction: Deny
+  {{- else if or $allowed $r.edgePolicy }}
   authorization:
     defaultAction: Deny
     rules:
-      - name: allow-admin-groups
+      - name: {{ if $r.edgePolicy }}allow-admin-groups{{ else }}allow-listed-cidrs{{ end }}
         action: Allow
         {{- /* Every principal in a rule must match, so naming both the claim and
                the address ANDs them: the right group from the wrong address is
@@ -66,21 +74,22 @@ spec:
           clientCIDRs:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if $r.edgePolicy }}
           jwt:
             provider: {{ $provider.name }}
-            {{- if $r.edgePolicy }}
             claims:
               - name: groups
                 valueType: StringArray
                 values:
                   {{- toYaml $.Values.adminGroups | nindent 18 }}
-            {{- end }}
+          {{- end }}
+  {{- end }}
 {{- end }}
-{{- else if $allowed }}
+{{- else if or $allowed (eq $fence "deny") }}
 ---
 # The login on this route is the app's own, so the only thing the edge can add
 # is where a request may come from. Deny by default; the allow rule is the
-# address list.
+# address list, and with no list on an internet-facing gateway there is none.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -93,13 +102,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: {{ $r.routeName }}-public
-  authorization:
-    defaultAction: Deny
-    rules:
-      - name: allow-listed-cidrs
-        action: Allow
-        principal:
-          clientCIDRs:
-            {{- toYaml $allowed | nindent 12 }}
+  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
 {{- end }}
 {{- end }}

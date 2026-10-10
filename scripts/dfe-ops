@@ -1871,6 +1871,9 @@ def cmd_access_summary(args: argparse.Namespace) -> int:
         for label, (user, password) in logins.items():
             print(f"  {label}: {user} / {password}")
     print(f"==> access summary written to {path} (mode 0600) -- delete it once recorded")
+    notice = edge_fence_notice(kube)
+    if notice:
+        print(notice, file=sys.stderr)
     return 0
 
 
@@ -2113,6 +2116,39 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
             f"an env file sets {EDGE_FENCE_VAR} empty over the terraform output, so no fence was deployed"
         )
     return "; ".join(problems)
+
+
+# The gateway chart's own record of what its web routes admit: deny, listed or allow-all.
+EDGE_FENCE_ANNOTATION = "dfe.hyperi.io/edge-fence"
+
+
+def edge_fence_notice(kube: list[str]) -> str:
+    """One line on what the gateway's web routes admit, read off the live Envoy Service.
+
+    Args:
+        kube: kubectl argv prefix.
+
+    Returns:
+        The line to print, or empty where no Service carries the annotation --
+        a gateway that is not internet-facing and names no list.
+    """
+    rc, doc, _ = _kubectl_json([*kube, "get", "service", "-A", "-l", ENVOY_OWNER_LABEL])
+    if rc != 0:
+        return ""
+    states = {
+        ((item.get("metadata") or {}).get("annotations") or {}).get(EDGE_FENCE_ANNOTATION)
+        for item in doc.get("items") or []
+    }
+    if "allow-all" in states:
+        return ("WARNING: the gateway's allow-list admits every address -- dfe-ui, HyperDX, the "
+                "engine API and every admin UI are open to the whole internet behind their own "
+                "logins. Name the ranges that need them in edge.product.allowed_cidrs")
+    if "deny" in states:
+        return ("==> public web: CLOSED -- the gateway is internet-facing and its allow-list is "
+                "empty, so every web route answers 403. Set edge.product.allowed_cidrs to open it")
+    if "listed" in states:
+        return "==> public web: fenced to edge.product.allowed_cidrs"
+    return ""
 
 
 def _route_hosts(kube: list[str], console: str) -> list[str]:
