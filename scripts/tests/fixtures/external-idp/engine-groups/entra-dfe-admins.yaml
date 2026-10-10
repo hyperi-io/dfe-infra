@@ -1,0 +1,5 @@
+description: Synthetic fixture group, admin role, linked by a recorded object id
+roles: [admin, data_viewer]
+scope: system
+source_id: 00000000-0000-0000-0000-000000000001
+source_provider: entra
