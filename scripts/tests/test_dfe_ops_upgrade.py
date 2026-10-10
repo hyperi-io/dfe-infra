@@ -22,6 +22,7 @@ repo or resolver is touched.
 """
 
 import argparse
+import base64
 import json
 import re
 import subprocess
@@ -637,31 +638,117 @@ def test_check_no_kafka_rebalance_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "rb1" in detail
 
 
-def test_check_clickhouse_merges_pass(monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
+CH_PASSWORD = "s3cr3t-Value"
 
+
+def _ch_pods(*names: str) -> subprocess.CompletedProcess:
+    return _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": n}} for n in names]}))
+
+
+def _ch_password(value: str = CH_PASSWORD) -> subprocess.CompletedProcess:
+    return _proc(0, stdout=base64.b64encode(value.encode()).decode())
+
+
+def _ch_auth(call: list[str]) -> list[str]:
+    """The arguments between clickhouse-client and its -q."""
+    return call[call.index("clickhouse-client") + 1 : call.index("-q")]
+
+
+def test_check_clickhouse_merges_queries_every_server_pod_with_the_resolved_credential(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
     calls = _mock_run(
-        monkeypatch,
-        _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": "ch-0"}}]})),
-        _proc(0, stdout="0\n"),
+        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n"),
     )
     ok, detail = u.check_clickhouse_merges("kc")
-    assert ok is True
-    assert "no merge running" in detail
-    assert "clickhouse-client" in calls[1]
+    assert (ok, detail) == (True, "no merge running longer than 300s on 3 ClickHouse pod(s)")
+    secret = calls[1]
+    assert secret[secret.index("get") + 1 : secret.index("get") + 3] == ["secret", "clickhouse-admin-password"]
+    assert secret[-1] == "jsonpath={.data.password}"
+    queries = calls[3:]
+    assert [c[c.index("exec") + 1] for c in queries] == ["ch-0-0", "ch-0-1", "ch-0-2"]
+    assert all(_ch_auth(c) == ["--user", "default", "--password", CH_PASSWORD] for c in calls[2:])
+    assert CH_PASSWORD not in detail
+    captured = capsys.readouterr()
+    assert CH_PASSWORD not in captured.out + captured.err
 
 
-def test_check_clickhouse_merges_fail(monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
+def test_preflight_and_apply_take_the_clickhouse_credentials_flag() -> None:
+    parser = argparse.ArgumentParser()
+    u.add_upgrade_subparser(parser.add_subparsers())
+    for verb in ("preflight", "apply"):
+        args = parser.parse_args(["upgrade", verb, "--deploy", "d", "--clickhouse-credentials", "ch-admin"])
+        assert args.clickhouse_credentials == "ch-admin"
+        assert parser.parse_args(["upgrade", verb, "--deploy", "d"]).clickhouse_credentials == "clickhouse-admin-password"
 
+
+def test_check_clickhouse_merges_refuses_when_one_pod_of_several_is_merging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(
-        monkeypatch,
-        _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": "ch-0"}}]})),
-        _proc(0, stdout="2\n"),
+        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"), _proc(0, stdout="2\n"), _proc(0, stdout="0\n"),
     )
     ok, detail = u.check_clickhouse_merges("kc", threshold_seconds=300)
     assert ok is False
-    assert "2 merge(s)" in detail
+    assert detail == "1 of 3 ClickHouse pod(s) carry a merge running longer than 300s: ch-0-1 (2)"
+
+
+def test_check_clickhouse_merges_refuses_a_pod_that_does_not_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(
+        monkeypatch, _ch_pods("ch-0-0", "ch-0-1"), _ch_password(), _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"), _proc(1, stderr='error: unable to upgrade connection: container not found ("x")'),
+    )
+    ok, detail = u.check_clickhouse_merges("kc")
+    assert ok is False
+    assert detail == 'ch-0-1: error: unable to upgrade connection: container not found ("x")'
+
+
+def test_check_clickhouse_merges_falls_back_to_the_admin_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(
+        monkeypatch, _ch_pods("ch-0"), _ch_password(), _proc(1, stderr="Code: 516. Authentication failed"),
+        _proc(0, stdout="1\n"), _proc(0, stdout="0\n"),
+    )
+    assert u.check_clickhouse_merges("kc")[0] is True
+    assert _ch_auth(calls[-1]) == ["--user", "admin", "--password", CH_PASSWORD]
+
+
+def test_check_clickhouse_merges_without_the_secret_tries_default_with_no_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _mock_run(
+        monkeypatch, _ch_pods("ch-0"), _proc(1, stderr='secrets "clickhouse-admin-password" not found'),
+        _proc(0, stdout="1\n"), _proc(0, stdout="0\n"),
+    )
+    assert u.check_clickhouse_merges("kc", credentials="clickhouse-admin-password")[0] is True
+    assert _ch_auth(calls[2]) == []
+    assert _ch_auth(calls[3]) == []
+
+
+def test_check_clickhouse_merges_refuses_when_no_credential_answers_and_never_echoes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch, _ch_pods("ch-0"), _ch_password(), *[_proc(1, stderr="Code: 516") for _ in range(3)],
+    )
+    ok, detail = u.check_clickhouse_merges("kc")
+    assert ok is False
+    assert detail == (
+        "no ClickHouse credential answers on ch-0: tried secret/clickhouse-admin-password as default, "
+        "secret/clickhouse-admin-password as admin, default with no password"
+    )
+    assert CH_PASSWORD not in detail
+
+
+def test_check_clickhouse_merges_names_an_unreadable_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _ch_pods("ch-0"), _proc(1, stderr="Error from server (Forbidden): nope"), _proc(1))
+    ok, detail = u.check_clickhouse_merges("kc")
+    assert ok is False
+    assert detail == (
+        "no ClickHouse credential answers on ch-0: secret/clickhouse-admin-password unreadable "
+        "(Error from server (Forbidden): nope), tried default with no password"
+    )
 
 
 def test_check_clickhouse_merges_no_pod(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -952,6 +1039,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -986,6 +1074,7 @@ def test_cmd_upgrade_apply_nothing_to_apply(
         deploy=str(deploy), to="1.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -1005,6 +1094,7 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -1020,6 +1110,7 @@ def _apply_args(**overrides: object) -> _Args:
         dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,

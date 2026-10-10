@@ -773,6 +773,7 @@ def _apply_args(deploy: Path, **overrides: object) -> _Args:
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
         clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=True, push=False, timeout=900, dry_run=False, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,

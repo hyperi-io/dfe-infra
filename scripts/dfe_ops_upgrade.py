@@ -144,6 +144,7 @@ both succeed.
 """
 
 import argparse
+import base64
 import io
 import json
 import re
@@ -185,6 +186,10 @@ DEFAULT_CLICKHOUSE_NAMESPACE = "clickhouse"
 # The server pod in either layout: the chart's single-mode StatefulSet, then the operator's cluster pods.
 DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)"
 DEFAULT_CLICKHOUSE_MERGE_THRESHOLD = 300.0  # seconds
+# The chart's clickhouse.users.admin.secretName, whose `password` key is the deploy layer's credential.
+DEFAULT_CLICKHOUSE_CREDENTIALS = "clickhouse-admin-password"
+# The names that credential has carried across releases, tried in order.
+CLICKHOUSE_USERS = ("default", "admin")
 DEFAULT_TIER = "scale"
 DEFAULT_BACKUP_MARKER = "upgrades/.backup-ok"
 DEFAULT_TIMEOUT = 900
@@ -665,34 +670,85 @@ def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
     return True, f"no KafkaRebalance in progress ({len(items)} total)"
 
 
+def _clickhouse_client(
+    kubeconfig: str | None, namespace: str, pod: str, query: str, login: list[str]
+) -> subprocess.CompletedProcess:
+    return _kubectl(
+        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "exec", pod, "--", "clickhouse-client", *login, "-q", query,
+    )
+
+
+def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: str) -> list[str]:
+    """The clickhouse-client login arguments that answer on `pod` -- raises UpgradeError.
+
+    The `password` key of the `store` Secret as each of CLICKHOUSE_USERS, then
+    `default` with no password, the order bootstrap/smoke-test-integration.sh
+    resolves it in. The password goes into the arguments and nowhere else.
+    """
+    read = _kubectl(
+        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "get", "secret", store, "-o", "jsonpath={.data.password}",
+    )
+    users: tuple[str, ...] = ()
+    unread = ""
+    if read.returncode == 0:
+        try:
+            pw = base64.b64decode((read.stdout or "").strip(), validate=True).decode("utf-8", errors="replace")
+        except ValueError:
+            pw = ""
+        if pw:
+            users = CLICKHOUSE_USERS
+            for user in users:
+                login = ["--user", user, "--password", pw]
+                if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", login).returncode == 0:
+                    return login
+    else:
+        unread = f"secret/{store} unreadable ({_last_line(read.stderr) or 'kubectl failed'}), "
+    if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", []).returncode == 0:
+        return []
+    tried = [f"secret/{store} as {user}" for user in users] + ["default with no password"]
+    raise UpgradeError(f"no ClickHouse credential answers on {pod}: {unread}tried {', '.join(tried)}")
+
+
 def check_clickhouse_merges(
     kubeconfig: str | None,
     namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
     selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
     threshold_seconds: float = DEFAULT_CLICKHOUSE_MERGE_THRESHOLD,
+    credentials: str = DEFAULT_CLICKHOUSE_CREDENTIALS,
 ) -> tuple[bool, str]:
+    """No ClickHouse server pod the selector matches runs a merge past the
+    threshold. system.merges is per server, so every pod is asked."""
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "pods", "-l", selector)
     if rc != 0:
         return False, f"cannot find a ClickHouse pod: {err}"
-    items = doc.get("items") or []
-    if not items:
+    pods = [str((item.get("metadata") or {}).get("name", "")) for item in doc.get("items") or []]
+    if not pods:
         return False, f"no pod matching {selector!r} in {namespace}"
-    pod_name = (items[0].get("metadata") or {}).get("name", "")
-    query = f"SELECT count() FROM system.merges WHERE elapsed > {threshold_seconds}"
-    result = _kubectl(
-        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "exec", pod_name, "--", "clickhouse-client", "-q", query,
-    )
-    if result.returncode != 0:
-        return False, _last_line(result.stderr) or "clickhouse-client query failed"
-    raw = (result.stdout or "0").strip()
     try:
-        count = int(raw)
-    except ValueError:
-        return False, f"unparseable clickhouse-client output: {raw!r}"
-    if count > 0:
-        return False, f"{count} merge(s) running longer than {threshold_seconds:.0f}s"
-    return True, f"no merge running longer than {threshold_seconds:.0f}s"
+        login = _clickhouse_login(kubeconfig, namespace, credentials, pods[0])
+    except UpgradeError as exc:
+        return False, str(exc)
+    query = f"SELECT count() FROM system.merges WHERE elapsed > {threshold_seconds}"
+    merging: list[str] = []
+    for pod in pods:
+        result = _clickhouse_client(kubeconfig, namespace, pod, query, login)
+        if result.returncode != 0:
+            return False, f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}"
+        raw = (result.stdout or "0").strip()
+        try:
+            count = int(raw)
+        except ValueError:
+            return False, f"{pod}: unparseable clickhouse-client output: {raw!r}"
+        if count > 0:
+            merging.append(f"{pod} ({count})")
+    if merging:
+        return False, (
+            f"{len(merging)} of {len(pods)} ClickHouse pod(s) carry a merge running longer than "
+            f"{threshold_seconds:.0f}s: {', '.join(merging)}"
+        )
+    return True, f"no merge running longer than {threshold_seconds:.0f}s on {len(pods)} ClickHouse pod(s)"
 
 
 def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
@@ -949,6 +1005,7 @@ def run_preflight(
     clickhouse_namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
     clickhouse_selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
     clickhouse_merge_threshold: float = DEFAULT_CLICKHOUSE_MERGE_THRESHOLD,
+    clickhouse_credentials: str = DEFAULT_CLICKHOUSE_CREDENTIALS,
     nodes_file: Path | None = None,
     backup_marker: str = DEFAULT_BACKUP_MARKER,
 ) -> list[tuple[str, bool, str]]:
@@ -961,7 +1018,9 @@ def run_preflight(
     checks.append(("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig)))
     checks.append((
         "clickhouse merges under threshold",
-        *check_clickhouse_merges(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold),
+        *check_clickhouse_merges(
+            kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold, clickhouse_credentials
+        ),
     ))
     conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
     if conversion is not None:
@@ -2391,6 +2450,7 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
         clickhouse_namespace=args.clickhouse_namespace,
         clickhouse_selector=args.clickhouse_selector,
         clickhouse_merge_threshold=args.clickhouse_merge_threshold,
+        clickhouse_credentials=args.clickhouse_credentials,
         nodes_file=Path(args.nodes_file) if args.nodes_file else None,
         backup_marker=args.backup_marker,
     )
@@ -2624,6 +2684,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             clickhouse_namespace=args.clickhouse_namespace,
             clickhouse_selector=args.clickhouse_selector,
             clickhouse_merge_threshold=args.clickhouse_merge_threshold,
+        clickhouse_credentials=args.clickhouse_credentials,
             nodes_file=Path(args.nodes_file) if args.nodes_file else None,
             backup_marker=args.backup_marker,
         )
@@ -3078,6 +3139,10 @@ def _add_preflight_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--clickhouse-merge-threshold", type=float, default=DEFAULT_CLICKHOUSE_MERGE_THRESHOLD,
         help="refuse when a merge has run longer than this many seconds",
+    )
+    parser.add_argument(
+        "--clickhouse-credentials", default=DEFAULT_CLICKHOUSE_CREDENTIALS,
+        help="Secret in --clickhouse-namespace whose `password` key logs clickhouse-client in",
     )
     parser.add_argument("--nodes-file", default=None, help="sizing/<tier>.nodes.json (default: <deploy>/sizing/scale.nodes.json)")
     parser.add_argument("--backup-marker", default=DEFAULT_BACKUP_MARKER, help="path (relative to --deploy) proving a backup was taken")

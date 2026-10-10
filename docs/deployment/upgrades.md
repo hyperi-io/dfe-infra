@@ -7,8 +7,9 @@ Four kinds of upgrade share that rule.
 ## Stack upgrade
 
 Bump `pins.yaml` in the deployment repo. One pin selects the certified stack,
-`channel` picks the maturity, and `overrides` move one component with a
-support-drift notice. `dfe-stack resolve` emits the values and Argo CD syncs.
+and `overrides` move one component with a support-drift notice. `channel`
+records the maturity the deployment tracks, and nothing reads it.
+`dfe-stack resolve` emits the values and Argo CD syncs.
 
 The order is data, `upgrade-order.yaml` at the root of this repo: operators
 first, with their stored-version conversions run on the running cluster
@@ -59,7 +60,7 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
 
 The bundled in-cluster deploy repo is seeded without a `pins.yaml`. Against a deploy repo with none, `plan`, `preflight` and `apply` take FROM from the cluster secret's `dfe.hyperi.io/stack_version`, which bootstrap writes and every retarget moves, and say so. `plan` takes `--kubeconfig` for that read. `apply` writes a `pins.yaml` in the dfe-deploy template's shape at its first stage, and from that commit on `pins.yaml` is what FROM is read from. A deploy repo with neither refuses, naming both.
 
-`preflight` and `apply` find ClickHouse by `--clickhouse-selector`, which defaults to `app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)`: the single-mode StatefulSet's pods and the ClickHouse operator's server pods, never its Keeper pods.
+`preflight` and `apply` find ClickHouse by `--clickhouse-selector`, which defaults to `app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)`: the single-mode StatefulSet's pods and the ClickHouse operator's server pods, never its Keeper pods. The merge check asks every pod it matches, because `system.merges` is per server, and refuses when any one carries a long merge or does not answer. It logs in with the `password` key of the `--clickhouse-credentials` Secret (default `clickhouse-admin-password`) as `default`, then `admin`, then as `default` with no password, and never prints the password.
 
 - `plan` diffs FROM -> TO, grouped by stage, each step carrying its
   `before`/`finalise`/`pair`/`rollback` note. Runs `dfe-stack compat-check
