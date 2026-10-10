@@ -957,7 +957,7 @@ def unwire_engine(args: argparse.Namespace) -> int:
                 args.providers_configmap: [provider_key],
                 args.groups_configmap: group_keys,
             },
-            "secret": args.secret_name,
+            "holder": args.secret_name,
             "seeded copies": paths,
         }
         print(json.dumps(plan, indent=2))

@@ -719,7 +719,7 @@ def test_wire_engine_teardown_undoes_a_wire() -> None:
         env = Path(tmp) / "idp.env"
         env.write_text(
             "TESTER_IDP_ISSUER=https://dex.example.com\nTESTER_IDP_CLIENT_ID=dfe-engine\n"
-            "TESTER_IDP_CLIENT_SECRET=" + SECRET + "\n",
+            "TESTER_IDP_CLIENT_SECRET=synthetic-client-value\n",
             encoding="utf-8",
         )
         common = engine_teardown_args(Path(tmp))
