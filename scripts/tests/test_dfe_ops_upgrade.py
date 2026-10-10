@@ -1983,6 +1983,90 @@ def _two_stage(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
     _stub_cluster_facing_calls(monkeypatch)
 
 
+# Both stacks pin cert-manager v1.1.0, so the plan moves ClickHouse alone.
+HELD_BOOTSTRAP_VERSIONS_YAML = TWO_STAGE_VERSIONS_YAML.replace('cert-manager: "v1.0.0"', 'cert-manager: "v1.1.0"')
+
+
+def _held_bootstrap(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    _two_stage(monkeypatch, deploy)
+    versions_path = deploy.parent / "versions.yaml"
+    versions_path.write_text(HELD_BOOTSTRAP_VERSIONS_YAML, encoding="utf-8")
+
+
+def test_a_bootstrap_pin_an_earlier_upgrade_left_uninstalled_still_blocks_ok(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A later plan moving no bootstrap pin reported OK over an Argo CD still on the previous stack's chart."""
+    _held_bootstrap(monkeypatch, real_git_deploy)
+    asked = _bootstrap_runs(monkeypatch, "v1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc",
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert "stage 1/1: 20-second" in err
+    assert asked == ["cert-manager"]
+    assert "=== bootstrap releases this plan does not move ===" in err
+    assert (
+        "[PENDING] bootstrap.cert-manager v1.1.0 (unchanged by this upgrade): bootstrap.sh installs it, not "
+        f"Argo, and the cluster runs v1.0.0. Run, where this deploy installed it: {CERT_MANAGER_UPGRADE}"
+    ) in err
+    assert "NOT complete -- bootstrap.cert-manager" in err
+    assert "apply OK" not in err
+
+
+def test_a_bootstrap_pin_the_plan_does_not_move_and_the_cluster_runs_is_done(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _held_bootstrap(monkeypatch, real_git_deploy)
+    _bootstrap_runs(monkeypatch, "v1.1.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "[DONE] bootstrap.cert-manager runs v1.1.0" in err
+    assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0 (1 stage(s))" in err
+
+
+def test_a_dry_run_names_the_read_of_a_bootstrap_pin_the_plan_does_not_move(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _held_bootstrap(monkeypatch, real_git_deploy)
+    asked = _bootstrap_runs(monkeypatch, "v1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0"))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert asked == []
+    assert (
+        "[dry-run] # bootstrap.cert-manager is installed by bootstrap.sh, not Argo; unless it runs v1.1.0: "
+        "helm -n cert-manager upgrade cert-manager cert-manager"
+    ) in err
+
+
+def test_a_bootstrap_pin_the_target_stack_lacks_is_not_read(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    versions_path = real_git_deploy.parent / "versions.yaml"
+    unpinned = TWO_STAGE_VERSIONS_YAML
+    for version in ("v1.0.0", "v1.1.0"):
+        unpinned = unpinned.replace(f'    bootstrap:\n      cert-manager: "{version}"\n', "")
+    versions_path.write_text(unpinned, encoding="utf-8")
+    asked = _bootstrap_runs(monkeypatch, "v1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert asked == []
+    assert "bootstrap releases this plan does not move" not in err
+
+
 def test_a_bootstrap_pin_the_cluster_does_not_run_ends_not_complete_with_the_command(
     monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
 ) -> None:
