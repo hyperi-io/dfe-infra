@@ -530,6 +530,10 @@ INSTANCE_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:instance/i-1"
 NAT_NOT_FOUND = "An error occurred (NatGatewayNotFound) when calling the DescribeNatGateways operation: nat-1"
 ENDPOINT_NOT_FOUND = "An error occurred (InvalidVpcEndpointId.NotFound) when calling the DescribeVpcEndpoints operation"
 INSTANCE_NOT_FOUND = "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation"
+ENI_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:network-interface/eni-1"
+ENI_NOT_FOUND = (
+    "An error occurred (InvalidNetworkInterfaceID.NotFound) when calling the DescribeNetworkInterfaces operation"
+)
 
 
 def _tagging_hit(arn: str, kind: str = "tagged:ec2") -> cloud_sweep.Resource:
@@ -566,6 +570,12 @@ def _instance(state: str) -> subprocess.CompletedProcess:
         pytest.param(INSTANCE_ARN, _instance("stopped"), False, id="instance-stopped"),
         pytest.param(INSTANCE_ARN, _instance("running"), False, id="instance-running"),
         pytest.param(INSTANCE_ARN, _ok({"Reservations": []}), True, id="instance-no-longer-returned"),
+        pytest.param(ENI_ARN, _fail(ENI_NOT_FOUND), True, id="network-interface-not-found"),
+        pytest.param(ENI_ARN, _ok({"NetworkInterfaces": []}), True, id="network-interface-no-longer-returned"),
+        pytest.param(
+            ENI_ARN, _ok({"NetworkInterfaces": [{"Status": "available"}]}), False, id="network-interface-available"
+        ),
+        pytest.param(ENI_ARN, _ok({"NetworkInterfaces": [{"Status": "in-use"}]}), False, id="network-interface-in-use"),
     ],
 )
 def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
@@ -584,7 +594,7 @@ def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
     assert arn not in call, "the ARN is not an id the describe calls accept"
 
 
-@pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN])
+@pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN, ENI_ARN])
 def test_a_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
     monkeypatch: pytest.MonkeyPatch, arn: str
 ) -> None:
