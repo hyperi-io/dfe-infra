@@ -159,6 +159,28 @@ def run_aws_text(args: list[str], region: str) -> None:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
 
 
+def list_run_record_keys(bucket: str, region: str, prefix: str) -> list[str]:
+    """Every `<prefix>/<run id>/run.json` object in the state bucket.
+
+    A record is deleted only once its run's destroy succeeds, so this is the
+    list of runs that may still own resources -- the guard and the reaper both read it.
+    """
+    keys: list[str] = []
+    token: str | None = None
+    while True:
+        args = ["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", f"{prefix}/"]
+        if token:
+            args += ["--starting-token", token]
+        body = run_aws(args, region)
+        for item in body.get("Contents", []):
+            key = str(item.get("Key", ""))
+            if key.startswith(f"{prefix}/") and key.split("/")[-1] == cloud_run.RECORD_OBJECT:
+                keys.append(key)
+        token = body.get("NextToken") or None
+        if not token:
+            return keys
+
+
 def _tags_from_list(tags: list[dict] | None, key_field: str = "Key", value_field: str = "Value") -> dict:
     return {t[key_field]: t[value_field] for t in (tags or [])}
 

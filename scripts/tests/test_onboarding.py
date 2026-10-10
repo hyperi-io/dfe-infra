@@ -520,3 +520,10 @@ class TestSuiteOrder:
 
     def test_a_named_suite_runs_only_itself(self):
         assert ops.suite_steps("flows") == ("flows",)
+
+
+def test_redact_replaces_every_secret_longest_first() -> None:
+    """A secret containing another is replaced whole, never left half shown."""
+    text = "login as admin with hunter2-new, then hunter2, token tok-1"
+    out = wizard.redact(text, ("hunter2", "hunter2-new", "", "tok-1"))
+    assert out == "login as admin with [redacted], then [redacted], token [redacted]"

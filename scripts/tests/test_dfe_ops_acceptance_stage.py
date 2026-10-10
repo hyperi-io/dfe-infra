@@ -318,6 +318,27 @@ def test_expected_fail_a_service_that_cannot_be_read_fails_rather_than_passing(
     assert said in dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE)
 
 
+def test_a_nodeport_gateway_passes_with_a_note(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """On-prem, no load balancer exists to carry source ranges; Envoy's CIDR filter is the fence."""
+    items = [
+        {"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway"},
+         "spec": {"type": "NodePort"}},
+        {"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-mesh"},
+         "spec": {"type": "ClusterIP"}},
+    ]
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    assert dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE) == ""
+    assert "NodePort" in capsys.readouterr().err
+
+
+def test_expected_fail_only_clusterip_services_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cloud gateway whose load balancer never appeared must not pass as on-prem."""
+    _envoy_services(monkeypatch)
+    assert "no Envoy Gateway LoadBalancer Service" in dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE)
+
+
 def test_expected_fail_an_env_file_line_that_empties_the_fence_stops_acceptance_before_the_browser(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

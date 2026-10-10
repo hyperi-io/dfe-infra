@@ -416,7 +416,8 @@ def run(args: argparse.Namespace) -> int:
     except ImportError:
         print(
             "playwright is not installed: python3 -m pip install -r "
-            "scripts/acceptance/requirements.txt && python3 -m playwright install chrome",
+            "scripts/acceptance/requirements.txt; the browser is the system Chrome "
+            "(--channel chrome), never one playwright downloads",
             file=sys.stderr,
         )
         return 2
@@ -469,6 +470,7 @@ def run(args: argparse.Namespace) -> int:
     first_password = first_user_password(password, new_admin_password)
     shots = Path(args.shots_dir)
     created = ""
+    token = ""
     with sync_playwright() as play:
         # A clean profile every run: a browser carrying a previous session would
         # walk past the login this suite exists to exercise.
@@ -531,8 +533,9 @@ def run(args: argparse.Namespace) -> int:
             )
         )
 
+    held = (password, admin_password, first_password, new_admin_password, token)
     print()
-    print(wizard.report_table(driver.results))
+    print(wizard.redact(wizard.report_table(driver.results), held))
     print(f"\nscreenshots: {shots}")
     return wizard.exit_code(driver.results)
 

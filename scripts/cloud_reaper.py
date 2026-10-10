@@ -118,25 +118,6 @@ def load_config(env: Mapping[str, str]) -> ReaperConfig | None:
 # --- per-run state ---------------------------------------------------------------
 
 
-def list_record_keys(config: ReaperConfig) -> list[str]:
-    """Every `<prefix>/<run id>/run.json` object in the state bucket."""
-    keys: list[str] = []
-    token: str | None = None
-    while True:
-        args = ["s3api", "list-objects-v2", "--bucket", config.state_bucket, "--prefix", f"{config.state_prefix}/"]
-        if token:
-            args += ["--starting-token", token]
-        body = cloud_sweep.run_aws(args, config.state_region)
-        for item in body.get("Contents", []):
-            key = item.get("Key", "")
-            parts = key.split("/")
-            if key.startswith(f"{config.state_prefix}/") and parts[-1] == cloud_run.RECORD_OBJECT:
-                keys.append(key)
-        token = body.get("NextToken") or None
-        if not token:
-            return keys
-
-
 def read_record(config: ReaperConfig, key: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="dfe-reaper-") as scratch:
         out = Path(scratch) / "run.json"
@@ -193,7 +174,7 @@ def destroy_run(record: Mapping[str, object]) -> int:
 def reap_runs(config: ReaperConfig, now: float) -> list[str]:
     """Destroy every expired run with state; one message per run left behind."""
     problems: list[str] = []
-    for key in list_record_keys(config):
+    for key in cloud_sweep.list_run_record_keys(config.state_bucket, config.state_region, config.state_prefix):
         try:
             record = read_record(config, key)
         except (cloud_sweep.CloudSweepError, json.JSONDecodeError) as exc:
