@@ -357,20 +357,6 @@ run "aws_network_object" {
     error_message = "network.public_subnet_ids must carry one subnet per zone"
   }
 
-  // The edge gateway trusts exactly these as load balancer hops.
-  assert {
-    condition = (
-      length(distinct(output.network.public_subnet_cidrs)) == 3
-      && alltrue([for c in output.network.public_subnet_cidrs : cidrcontains(output.network.cidr, c) && c != output.network.cidr])
-    )
-    error_message = "network.public_subnet_cidrs must carry one distinct range per zone, each inside the VPC and narrower than it"
-  }
-
-  assert {
-    condition     = output.network.public_subnet_cidrs == [for az in output.network.azs : aws_subnet.public[az].cidr_block]
-    error_message = "network.public_subnet_cidrs must be the public subnets' own ranges, in the order of azs"
-  }
-
   assert {
     condition     = can(tostring(output.network.vpc_id))
     error_message = "network.vpc_id must be a string"

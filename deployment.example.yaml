@@ -182,10 +182,11 @@ edge:
     ## entire front door, ingest included. A cloud root applies it, adding its
     ## NAT gateways' addresses so the cluster's own callers still get in.
     allowed_cidrs: ""
-    ## The proxy ranges Envoy may believe about the client address, such as a
-    ## CDN in front. A cloud root adds its public subnets' ranges itself; anywhere else,
-    ## name the load balancer's subnets here whenever allowed_cidrs is set, or
-    ## the address comes from a header the caller writes.
+    ## A CDN or other L7 proxy in front of the public hostnames, whose
+    ## X-Forwarded-For then names the client. Empty believes no forwarded header
+    ## from anyone: allowed_cidrs judges the TCP peer, which every flavour's
+    ## load balancer delivers unchanged. Never list a load balancer's subnets,
+    ## since any host in a listed range can claim any address.
     trusted_proxy_cidrs: ""
     ## Every public route already sits behind a login with deny-by-default
     ## authorisation, so managed rules would guard code no unauthenticated

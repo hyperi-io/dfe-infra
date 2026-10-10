@@ -37,7 +37,8 @@ envoyGateway:
       service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
       # Without this the target sees the load balancer's address, every request
       # comes from one IP, and both the CIDR filter and the rate limit become
-      # decorations.
+      # decorations. With it the client is Envoy's TCP peer, which is what the
+      # fence judges: the NLB writes no X-Forwarded-For and none is believed.
       service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
       # NO aws-load-balancer-security-groups here, deliberately. Left absent,
       # the controller creates a frontend security group AT CREATION and opens

@@ -25,10 +25,14 @@ spec:
       name: {{ $.Values.gateway.name }}
       sectionName: https-public-{{ (index $.Values.routes $key).routeName }}
     {{- end }}
+  {{- /* With no clientIPDetection Envoy Gateway sets use_remote_address and no
+         trusted hops (internal/xds/translator/listener.go at v1.9.2), so the
+         client the CIDR filter judges is the TCP peer and a caller's own
+         X-Forwarded-For counts for nothing. Only a CDN or other L7 proxy named
+         in ui.trusted_proxy_cidrs is believed. */}}
   {{- with $trusted }}
-  # What makes the CIDR filter mean anything: X-Forwarded-For is read from the
-  # right, and the first address outside this list is taken as the client. With
-  # no list Envoy believes the leftmost entry, which the caller writes.
+  # X-Forwarded-For is read only when the TCP peer is inside this list: right to
+  # left, the first address outside it is the client.
   clientIPDetection:
     xForwardedFor:
       trustedCIDRs:

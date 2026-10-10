@@ -39,8 +39,8 @@ output "gateway_allowed_cidrs" {
 }
 
 output "gateway_trusted_proxy_cidrs" {
-  description = "The gateway chart's ui.trusted_proxy_cidrs, comma-separated: the public subnets' ranges, where the load balancer sits, plus gateway_trusted_proxy_cidrs, once each. Not the whole VPC, so a pod cannot reach Envoy directly with a forged X-Forwarded-For and pass the fence. Set exactly when gateway_allowed_cidrs is, because the chart refuses either one without the other."
-  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(concat(var.network.public_subnet_cidrs, var.gateway_trusted_proxy_cidrs)))
+  description = "The gateway chart's ui.trusted_proxy_cidrs, comma-separated: gateway_trusted_proxy_cidrs once each, and nothing else. The NLB is L4 with IP targets and preserve_client_ip, so Envoy already sees the client as the TCP peer and no subnet of this VPC is trusted to rewrite it. Empty while gateway_allowed_cidrs is, because bootstrap refuses the ranges with no list."
+  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(var.gateway_trusted_proxy_cidrs))
 }
 
 output "load_balancer_controller_role_arn" {

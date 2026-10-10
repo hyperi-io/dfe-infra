@@ -147,9 +147,9 @@ metadata:
     # one appliance from, on the pod's ethernet side. Blank while no instance
     # is running, and rewritten by `dfe-ops bastion up`.
     ${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}
-    # The public gateway's allow-list and the proxy ranges it trusts, which
+    # The public gateway's allow-list and any CDN ranges in front of it, which
     # layer2-edge.yaml turns into the gateway chart's ui.allowed_cidrs and
-    # ui.trusted_proxy_cidrs. Both blank unless a fence was asked for.
+    # ui.trusted_proxy_cidrs. Blank unless asked for; the CDN ranges never alone.
     ${DFE_EDGE_ALLOWED_CIDRS_ANNOTATION}
     ${DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION}
 type: Opaque

@@ -47,6 +47,19 @@ re-exposing an admin UI on a public load balancer is always a deliberate
 choice with either OIDC or a CIDR fence behind it, never a one-line flip
 that quietly ships with no edge auth.
 
+## The client address the fence judges
+
+The fence judges the TCP peer. No listener believes `X-Forwarded-For` unless `ui.trusted_proxy_cidrs` names the hops in front, so neither a client nor a host beside the load balancer, such as the tunnel forwarder in an AWS public subnet, can claim a listed address. With no client-IP detection, Envoy Gateway v1.9.2 sets `use_remote_address` and trusts no hop (`internal/xds/translator/listener.go`).
+
+| Flavour | Load balancer | Envoy's TCP peer |
+|---|---|---|
+| AWS | NLB with IP targets and `preserve_client_ip.enabled=true` (`edge-aws.yaml`) | the client |
+| GCP | GKE's passthrough Network Load Balancer, `externalTrafficPolicy: Local` (Envoy Gateway's default) | the client |
+| Azure | Azure Load Balancer, `externalTrafficPolicy: Local` | the client |
+| On-prem | MetalLB or another L4 pool, `externalTrafficPolicy: Local` | the client, or a node address where the pool SNATs |
+
+A CDN in front of the public hostnames writes the client into `X-Forwarded-For` and connects from its own ranges. Name those ranges in `ui.trusted_proxy_cidrs` (the dial's `edge.product.trusted_proxy_cidrs`). The public listeners then read the header right to left when the peer is inside the list and take the first address outside it, while every other connection is judged by its own address. The internal listener never reads the header. List only a proxy that writes the header itself: never an L4 load balancer, and never a subnet other hosts share.
+
 ## Public hostnames on a cloud deploy
 
 Everything DFE uses internally is private. The UIs are the exception,
@@ -65,7 +78,7 @@ dial's own spelling.
 | `ui.public_domain` | `""` | The public zone the UIs answer on. Empty renders no public half. |
 | `ui.public.<name>` | `dfe_ui: true`, admin UIs `false` | Which UIs get a public hostname. |
 | `ui.allowed_cidrs` | `""` (nobody, internet-facing) | Who may reach a web route, at Envoy AND at the load balancer. |
-| `ui.trusted_proxy_cidrs` | `""` | Proxy ranges Envoy may believe about the client address. |
+| `ui.trusted_proxy_cidrs` | `""` (no forwarded header believed) | A CDN or other L7 proxy in front of the public hostnames, whose `X-Forwarded-For` names the client. |
 | `ui.rate_limit` | on, 300/Minute, `local` | The wall a credential-stuffing run hits before the login. |
 | `ui.waf.mode` | `none` | Only `none` renders. |
 | `ui.tls` | `"1.2"`, HSTS on | The public TLS floor and `Strict-Transport-Security`. |
@@ -85,9 +98,10 @@ Six things fail the render rather than shipping a weaker edge:
   `oidc.targetRoutes` naming the route, with a provider configured) counts,
   as do the three app-side schemes above -- dfe-ui's NextAuth, Kafbat's own
   OIDC, HyperDX's `dfe_token` cookie. Nothing else does.
-- **`allowed_cidrs` with no `trusted_proxy_cidrs`.** Envoy would take the
-  client address from the leftmost `X-Forwarded-For` entry, which the caller
-  writes.
+- **The receiver route on an internet-facing Service with no caller auth.**
+  The chart cannot read the receiver's `config.server.auth.mode`, so
+  `routes.receiver.authMode` restates it, and only `header` or `bearer`
+  renders. Envoy terminates TLS, so `mtls` never sees a client certificate.
 - **An entry in either list that is not a CIDR range**, such as a bare address.
   Envoy Gateway and the load balancer would refuse it at admission, failing the
   whole gateway sync.

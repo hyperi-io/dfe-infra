@@ -131,7 +131,7 @@ output "DFE_EDGE_ALLOWED_CIDRS" {
 }
 
 output "DFE_EDGE_TRUSTED_PROXY_CIDRS" {
-  description = "The hops in front of Envoy that may vouch for a client address, comma-separated: the public subnets' ranges, where the load balancer sits, plus edge_trusted_proxy_cidrs. Travels with DFE_EDGE_ALLOWED_CIDRS into the gateway chart's ui.trusted_proxy_cidrs, and is empty exactly when that is, because the chart refuses either one without the other."
+  description = "The CDN ranges in front of Envoy whose X-Forwarded-For names the client, comma-separated: edge_trusted_proxy_cidrs and nothing else. Travels with DFE_EDGE_ALLOWED_CIDRS into the gateway chart's ui.trusted_proxy_cidrs, and is empty whenever that is, because bootstrap refuses the ranges with no list."
   value       = join("", module.edge[*].gateway_trusted_proxy_cidrs)
 }
 

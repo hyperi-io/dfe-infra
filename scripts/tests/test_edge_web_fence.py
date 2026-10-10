@@ -3,7 +3,8 @@
 #  Purpose:      Prove every web route on an internet-facing gateway is refused
 #                unless the client is on ui.allowed_cidrs, that an empty list
 #                refuses every address, that an allow-all list renders with a
-#                warning, and that ingest routes and on-prem renders are untouched.
+#                warning, that only a named CDN's X-Forwarded-For is believed,
+#                and that ingest routes and on-prem renders are untouched.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -15,11 +16,17 @@ nothing, so the policy that decides a route is its own when it has one and the
 Gateway-wide dfe-edge-fence otherwise. Each case renders the chart, works out
 that effective policy for every HTTPRoute, and asserts what it admits.
 
+The forwarded-header cases go one step further: client_address() derives the
+address that policy is checked against from the ClientTrafficPolicy on the
+listener, following Envoy Gateway v1.9.2's translation, so a forged header is
+judged against the rendered policies rather than against a description of them.
+
     python3 -m pytest scripts/tests/test_edge_web_fence.py -q
 
 Needs `helm` on PATH.
 """
 
+import ipaddress
 import json
 import subprocess
 from pathlib import Path
@@ -34,12 +41,21 @@ GATEWAY = chart_dir("envoy-gateway-config")
 VALUES = REPO_ROOT / "argocd" / "values"
 
 ALLOWED = ["203.0.113.7/32", "198.51.100.0/24"]
-TRUSTED = "10.90.128.0/20"
+# A CDN's edge ranges, one per family.
+CDN = ["192.0.2.0/25", "2001:db8:cd::/48"]
+# Untrusted hops beside the load balancer: a host in its subnet, such as the
+# tunnel forwarder, and any other caller off the list.
+FORWARDER = "192.0.2.200"
+STRANGER = "192.0.2.150"
 
 
 # --set splits on commas, so a comma-separated scalar goes through --set-json.
 def allow(value: str) -> tuple[str, ...]:
-    return ("--set-json", f"ui.allowed_cidrs={json.dumps(value)}", "--set", f"ui.trusted_proxy_cidrs={TRUSTED}")
+    return ("--set-json", f"ui.allowed_cidrs={json.dumps(value)}")
+
+
+def trust(value: list[str]) -> tuple[str, ...]:
+    return ("--set-json", f"ui.trusted_proxy_cidrs={json.dumps(','.join(value))}")
 
 
 FENCE = allow(",".join(ALLOWED))
@@ -52,6 +68,7 @@ EVERYTHING = (*PUBLIC, *OIDC, *OTEL_ON, "--set", "exposure.infraUisExternal=true
               "--set", "deployRepo.bundled=true", "--set", "ui.public.kafbat=true")
 
 INGEST = {"otel", "receiver"}
+RECEIVER_ON = ("--set", "routes.receiver.enabled=true")
 # The :80 listener's redirect answers with a 301 and serves nothing.
 REDIRECT = "dfe-gateway-http-redirect"
 
@@ -223,7 +240,7 @@ def test_an_allow_all_list_renders_and_is_named(value: str) -> None:
 
 # --- ingest is not a web surface --------------------------------------------------
 def test_ingest_routes_answer_to_their_own_auth_not_the_fence() -> None:
-    docs = render("aws", *OTEL_ON, "--set", "routes.receiver.enabled=true")
+    docs = render("aws", *OTEL_ON, *RECEIVER_ON, "--set", "routes.receiver.authMode=bearer")
     for name in INGEST:
         (route,) = [r for r in of_kind(docs, "HTTPRoute") if r["metadata"]["name"] == name]
         (policy,) = route_policies(docs, route)
@@ -328,3 +345,168 @@ def test_hyperdx_renders_wherever_the_console_does(flavour: str) -> None:
     names = {r["metadata"]["name"] for r in of_kind(render(flavour), "HTTPRoute")}
     assert {"dfe-ui", "hyperdx"} <= names, sorted(names)
     assert not {"argocd", "kafbat", "links"} & names, sorted(names)
+
+
+# --- the client address the fence judges ------------------------------------------
+GATEWAY_NAME = "dfe-gateway"
+
+
+def listener_policy(docs: list[dict], section: str) -> dict:
+    """The ClientTrafficPolicy on one listener: the one naming its sectionName, else the Gateway's."""
+    named, whole = [], []
+    for policy in of_kind(docs, "ClientTrafficPolicy"):
+        for ref in policy["spec"]["targetRefs"]:
+            if ref.get("kind") != "Gateway" or ref.get("name") != GATEWAY_NAME:
+                continue
+            if "sectionName" not in ref:
+                whole.append(policy)
+            elif ref["sectionName"] == section:
+                named.append(policy)
+    assert len(named) <= 1, (section, named)
+    assert len(whole) == 1, whole
+    return (named or whole)[0]
+
+
+def client_address(policy: dict, peer: str, forwarded: list[str]) -> str:
+    """The address Envoy checks clientCIDRs against on a listener carrying this policy.
+
+    Envoy Gateway v1.9.2 (internal/xds/translator/listener.go): with no
+    clientIPDetection the connection manager sets use_remote_address and no
+    trusted hops, so the TCP peer is the client whatever X-Forwarded-For says.
+    xForwardedFor.trustedCIDRs installs Envoy's xff extension instead: the header
+    is read only when the peer is inside the list, right to left, and the first
+    entry outside it is the client, or the leftmost when every entry is inside.
+    """
+    detection = policy["spec"].get("clientIPDetection")
+    if detection is None:
+        return peer
+    assert detection.keys() == {"xForwardedFor"}, detection
+    assert detection["xForwardedFor"].keys() == {"trustedCIDRs"}, detection
+    trusted = [ipaddress.ip_network(cidr) for cidr in detection["xForwardedFor"]["trustedCIDRs"]]
+
+    def inside(address: str) -> bool:
+        return any(ipaddress.ip_address(address) in net for net in trusted)
+
+    if not inside(peer) or not forwarded:
+        return peer
+    for entry in reversed(forwarded):
+        if not inside(entry):
+            return entry
+    return forwarded[0]
+
+
+def admits(policy: dict, address: str) -> bool:
+    """Whether an address-only SecurityPolicy lets a request from this address through."""
+    auth = policy["spec"]["authorization"]
+    ip = ipaddress.ip_address(address)
+    for rule in auth.get("rules") or []:
+        principal = rule.get("principal") or {}
+        assert principal.keys() == {"clientCIDRs"}, (policy["metadata"]["name"], rule)
+        if any(ip in ipaddress.ip_network(cidr) for cidr in principal["clientCIDRs"]):
+            return rule["action"] == "Allow"
+    return auth["defaultAction"] == "Allow"
+
+
+def passes(docs: list[dict], route_name: str, peer: str, forwarded: tuple[str, ...] = ()) -> bool:
+    """One request to a route: its listener names the client, its policy judges it."""
+    (route,) = [r for r in of_kind(docs, "HTTPRoute") if r["metadata"]["name"] == route_name]
+    (parent,) = route["spec"]["parentRefs"]
+    address = client_address(listener_policy(docs, parent["sectionName"]), peer, list(forwarded))
+    return admits(effective(docs, route), address)
+
+
+@pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
+def test_an_allow_list_renders_with_no_trusted_proxy_range(flavour: str) -> None:
+    """The public listeners judge the TCP peer, so a list needs no proxy range beside it."""
+    docs = render(flavour, *PUBLIC, *allow(",".join(ALLOWED)))
+    assert "clientIPDetection" not in listener_policy(docs, "https-public-dfe-ui")["spec"]
+
+
+@pytest.mark.parametrize(("peer", "forwarded"), [
+    (FORWARDER, ("203.0.113.7",)),
+    (STRANGER, ("203.0.113.7",)),
+    (STRANGER, ("198.51.100.20", "203.0.113.7")),
+    ("2001:db8:ff::9", ("203.0.113.7",)),
+], ids=["forwarder", "stranger", "stranger-two-entries", "stranger-v6"])
+def test_a_forged_forwarded_for_from_an_untrusted_hop_does_not_pass_a_public_listener(
+    peer: str, forwarded: tuple[str, ...]
+) -> None:
+    docs = render("aws", *PUBLIC, *allow(",".join(ALLOWED)))
+    for route in ("dfe-ui-public", "dfe-engine-public"):
+        assert not passes(docs, route, peer, forwarded), (route, peer, forwarded)
+        assert passes(docs, route, "203.0.113.7", forwarded), route
+
+
+@pytest.mark.parametrize(("peer", "forwarded", "admitted"), [
+    ("192.0.2.10", ("203.0.113.7",), True),
+    ("2001:db8:cd::1", ("198.51.100.20",), True),
+    ("192.0.2.10", (STRANGER,), False),
+    ("192.0.2.10", ("203.0.113.7", STRANGER), False),
+    ("192.0.2.10", ("203.0.113.7", "192.0.2.11"), True),
+    (FORWARDER, ("203.0.113.7",), False),
+], ids=["cdn-v4", "cdn-v6", "cdn-unlisted-client", "cdn-forged-leftmost", "cdn-chain", "forwarder"])
+def test_a_trusted_cdn_hop_passes_its_client_through_and_nothing_else(
+    peer: str, forwarded: tuple[str, ...], admitted: bool
+) -> None:
+    """The CDN appends the client it saw, so an entry written before it is never the one read."""
+    docs = render("aws", *PUBLIC, *allow(",".join(ALLOWED)), *trust(CDN))
+    detection = listener_policy(docs, "https-public-dfe-ui")["spec"]["clientIPDetection"]
+    assert detection == {"xForwardedFor": {"trustedCIDRs": CDN}}
+    assert passes(docs, "dfe-ui-public", peer, forwarded) is admitted
+
+
+@pytest.mark.parametrize("cdn", [[], CDN], ids=["no cdn", "cdn"])
+def test_internal_listeners_never_read_the_forwarded_header(cdn: list[str]) -> None:
+    docs = render("aws", *PUBLIC, *allow(",".join(ALLOWED)), *(trust(cdn) if cdn else ()))
+    assert "clientIPDetection" not in listener_policy(docs, "https")["spec"]
+    (public,) = [p for p in of_kind(docs, "ClientTrafficPolicy") if p["metadata"]["name"] == "dfe-public-edge"]
+    assert [ref.get("sectionName") for ref in public["spec"]["targetRefs"]] == ["https-public-dfe-ui"]
+    assert not passes(docs, "dfe-ui", "192.0.2.10", ("203.0.113.7",))
+    assert not passes(docs, "dfe-ui", FORWARDER, ("203.0.113.7",))
+    assert passes(docs, "dfe-ui", "203.0.113.7")
+
+
+def identity(doc: dict) -> tuple[str, str, str]:
+    return doc["kind"], doc["metadata"]["name"], doc["metadata"].get("namespace", "")
+
+
+def test_naming_a_cdn_changes_nothing_but_the_public_listener_policy() -> None:
+    base = render("aws", *PUBLIC, *allow(",".join(ALLOWED)))
+    with_cdn = render("aws", *PUBLIC, *allow(",".join(ALLOWED)), *trust(CDN))
+    changed = sorted(identity(d) for d in with_cdn if d not in base)
+    assert changed == [("ClientTrafficPolicy", "dfe-public-edge", "envoy-gateway-system")], changed
+    assert len(with_cdn) == len(base)
+
+
+def test_the_notes_name_the_cdn_opt_in() -> None:
+    plain = " ".join(notes("aws", *PUBLIC, *allow(",".join(ALLOWED))).split())
+    assert "ignore X-Forwarded-For" in plain, plain
+    assert "goes in ui.trusted_proxy_cidrs" in plain, plain
+    named = " ".join(notes("aws", *PUBLIC, *allow(",".join(ALLOWED)), *trust(CDN)).split())
+    assert f"ui.trusted_proxy_cidrs ({','.join(CDN)})" in named, named
+
+
+# --- the receiver route on an internet-facing Service ------------------------------
+@pytest.mark.parametrize("mode", [None, "none", "mtls", "both"])
+def test_the_receiver_route_is_refused_on_an_internet_facing_service_without_caller_auth(mode: str | None) -> None:
+    out = helm("aws", *RECEIVER_ON, *(("--set", f"routes.receiver.authMode={mode}") if mode else ()))
+    assert out.returncode != 0, f"authMode {mode} rendered"
+    assert "routes.receiver.enabled is true on an internet-facing Service" in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
+@pytest.mark.parametrize("mode", ["header", "bearer", "Bearer"])
+def test_the_receiver_route_renders_once_its_caller_auth_is_declared(flavour: str, mode: str) -> None:
+    docs = render(flavour, *RECEIVER_ON, "--set", f"routes.receiver.authMode={mode}")
+    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+
+
+def test_the_receiver_route_off_the_internet_is_unchanged() -> None:
+    docs = render("onprem", *RECEIVER_ON)
+    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+
+
+def test_an_unknown_receiver_auth_mode_is_refused_by_name() -> None:
+    out = helm("onprem", "--set", "routes.receiver.authMode=token")
+    assert out.returncode != 0, "an unknown mode rendered"
+    assert 'routes.receiver.authMode is "token"' in out.stderr, out.stderr

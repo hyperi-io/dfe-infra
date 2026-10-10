@@ -36,9 +36,11 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 
 ## The gateway's trusted proxy ranges
 
-On AWS the public listeners (`https-public-*`) believe `X-Forwarded-For` from the public subnets' ranges (`terraform/modules/edge/aws/outputs.tf`, `gateway_trusted_proxy_cidrs`). The tunnel forwarder sits in a public subnet (`variables.tf`, `network`), so a compromised forwarder, or any host there, can claim a listed address and pass the CIDR filter on those listeners. The internal listener sets no client-IP detection and reads the TCP peer, so it is not affected.
+No gateway listener believes `X-Forwarded-For` by default. The CIDR filter judges the TCP peer, which every flavour's load balancer delivers unchanged ([EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)), so a forged header from a client, the tunnel forwarder in an AWS public subnet, or any other host beside the load balancer passes nothing.
 
-Recommendation: trust no forwarded header unless a CDN the deployer names is in front. Envoy Gateway v1.9.2 reads the TCP peer on a listener with no client-IP detection, and the NLB's IP targets with `preserve_client_ip` already deliver the real client as that peer. That means dropping the public subnets from the trusted ranges, and dropping the chart's refusal of an allow-list without them, as one change.
+`ui.trusted_proxy_cidrs` is the one way to change that: the public listeners (`https-public-*`) then read the header when the TCP peer is inside the list. Every host in a listed range can claim any client address, so it names a CDN's ranges and nothing shared. Treat a deployment that lists anything else as fenced to that whole range.
+
+The receiver route through the gateway is refused on an internet-facing Service unless `routes.receiver.authMode` says the receiver checks callers (`header` or `bearer`). The gateway cannot read the receiver's own values, so that key is only what the operator declared. Grade a deployment whose two values disagree by the receiver's.
 
 ## The edge tunnel
 

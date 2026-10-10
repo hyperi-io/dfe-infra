@@ -54,7 +54,8 @@ own compute, the pricing model named, never a rate.
 | SCIM, `/api/v1/scim/v2` | b | 2 | off | `edge.engine_api.scim_public` | no spend |
 | TLS floor and HSTS | a b | 1 | on | `edge.product.tls` | none |
 | Rate limit, per proxy replica | a b | 1 | on | `edge.product.rate_limit` | none |
-| CIDR filter, at Envoy (web) and the load balancer (everything) | a b c d | 1 | empty, so every web route answers 403 | `edge.product.allowed_cidrs`, with `edge.product.trusted_proxy_cidrs` | none |
+| CIDR filter, at Envoy (web) and the load balancer (everything) | a b c d | 1 | empty, so every web route answers 403 | `edge.product.allowed_cidrs` | none |
+| A CDN's `X-Forwarded-For` believed on the public listeners | a b | 2 | none believed | `edge.product.trusted_proxy_cidrs` | no spend |
 | Edge OIDC on the admin routes | c | 1 | on | `edge.admin_uis.oidc` | none |
 | Admin UI routes, one at a time | c | 1 | off | `edge.admin_uis.public.*` | none |
 | Class-wide admin kill switch | c | 1 | off | `edge.admin_uis.external` | none |
@@ -68,7 +69,7 @@ own compute, the pricing model named, never a rate.
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
 
-Public web access is default-deny on every cloud flavour ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so an allow-list narrow enough to lock an admin UI down blocks agent ingest too, until the sender's range goes in `envoyGateway.service.loadBalancerSourceRanges`. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and trusts the public subnets' ranges, where the load balancer sits, plus `edge.product.trusted_proxy_cidrs` (a CDN in front) for the client address. Never the whole VPC, so a pod cannot reach Envoy directly with a forged `X-Forwarded-For` and pass the filter. A guarded test run replaces the list with its runner's /32.
+Public web access is default-deny on every cloud flavour ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so an allow-list narrow enough to lock an admin UI down blocks agent ingest too, until the sender's range goes in `envoyGateway.service.loadBalancerSourceRanges`. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
 
 ### What the engine API's split gets wrong
 

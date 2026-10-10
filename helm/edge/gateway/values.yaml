@@ -351,10 +351,14 @@ ui:
   # web routes to this list.
   allowed_cidrs: ""
 
-  # The proxy ranges Envoy may believe about the client address, comma-separated
-  # -- the load balancer's own subnets, plus any CDN in front. Required whenever
-  # allowed_cidrs is set: without it Envoy trusts the leftmost X-Forwarded-For
-  # entry, which the caller writes.
+  # THE CDN OPT-IN for the public listeners, comma-separated. Empty (the
+  # default) believes no X-Forwarded-For from anyone: the client allowed_cidrs
+  # judges is the TCP peer, which the AWS NLB (IP targets, preserve_client_ip),
+  # GKE, AKS and MetalLB load balancers (externalTrafficPolicy Local) all hand
+  # Envoy unchanged. Name only an L7 proxy that writes X-Forwarded-For, such as a
+  # CDN in front of the public hostnames -- never an L4 load balancer or a subnet
+  # other hosts share, because any host in a listed range can claim any address.
+  # Internal listeners never read the header.
   trusted_proxy_cidrs: ""
 
   # Rate limiting sized for a handful of humans, so a credential-stuffing run
@@ -426,6 +430,8 @@ ui:
 #   hiddenPaths  -- PathPrefix values the gateway answers 404 for on this route
 #                   and its public face, so the backend never serves them to
 #                   anyone outside the cluster.
+#   authMode     -- receiver only: the caller auth the receiver enforces itself,
+#                   restated (see routes.receiver).
 routes:
   dfeUi:
     class: product
@@ -652,6 +658,12 @@ routes:
     backendService: dfe-receiver
     backendNamespace: ""
     backendPort: 8080
+    # The receiver's own config.server.auth.mode, restated, because this chart
+    # cannot read another chart's values: none | header | bearer | mtls | both.
+    # On an internet-facing Service the route refuses to render unless it is
+    # header or bearer -- Envoy terminates TLS, so mtls never sees a client
+    # certificate. Restate it whenever the receiver's own value changes.
+    authMode: none
 
   # Platform OTLP/HTTP ingest: the one DNS door for telemetry from outside the
   # cluster (edge agents, other estates). Renders only with otel.ingress.enabled,

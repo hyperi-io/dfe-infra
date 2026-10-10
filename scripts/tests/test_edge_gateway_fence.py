@@ -1,7 +1,7 @@
 #  Project:      dfe-infra
 #  File:         scripts/tests/test_edge_gateway_fence.py
-#  Purpose:      Prove the public gateway's allow-list travels from bootstrap's
-#                environment to the gateway chart -- both halves or neither -- and
+#  Purpose:      Prove the public gateway's allow-list, and any CDN ranges beside
+#                it, travel from bootstrap's environment to the gateway chart, and
 #                that a deployment naming no fence renders exactly what it did.
 #  Language:     Python
 #
@@ -35,13 +35,14 @@ CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tp
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 VALUES = REPO_ROOT / "argocd" / "values"
 
-ALLOWED = "20.1.2.3/32,203.0.113.7/32"
-TRUSTED = "10.90.128.0/20,10.90.144.0/20,10.90.160.0/20"
+ALLOWED = "198.51.100.3/32,203.0.113.7/32"
+# A CDN's edge ranges: the only hops whose X-Forwarded-For the gateway believes.
+TRUSTED = "192.0.2.0/25,2001:db8:cd::/48"
 ALLOWED_KEY = "dfe.hyperi.io/edge_allowed_cidrs"
 TRUSTED_KEY = "dfe.hyperi.io/edge_trusted_proxy_cidrs"
 
 
-# --- bootstrap.sh: both annotations or neither ------------------------------------
+# --- bootstrap.sh: the list alone or with CDN ranges, never the ranges alone ------
 
 
 def _bootstrap_block() -> str:
@@ -76,15 +77,18 @@ def test_no_fence_writes_neither() -> None:
     assert done.stdout.splitlines() == ["", ""]
 
 
-@pytest.mark.parametrize("half", [
-    {"DFE_EDGE_ALLOWED_CIDRS": ALLOWED},
-    {"DFE_EDGE_TRUSTED_PROXY_CIDRS": TRUSTED},
-])
-def test_expected_fail_half_a_fence_is_refused_by_name(half: dict[str, str]) -> None:
-    """The chart refuses the pair split, and a sync failure surfaces long after bootstrap."""
-    done = _run_block(**half)
+def test_a_list_with_no_cdn_writes_the_list_alone() -> None:
+    """The gateway judges the TCP peer, so a list needs no trusted range beside it."""
+    done = _run_block(DFE_EDGE_ALLOWED_CIDRS=ALLOWED)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [f'{ALLOWED_KEY}: "{ALLOWED}"', ""]
+
+
+def test_expected_fail_cdn_ranges_with_no_list_are_refused_by_name() -> None:
+    """The appset carries them only beside a list, so alone they would vanish without a word."""
+    done = _run_block(DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)
     assert done.returncode == 1
-    assert "DFE_EDGE_ALLOWED_CIDRS and DFE_EDGE_TRUSTED_PROXY_CIDRS" in done.stderr
+    assert "DFE_EDGE_TRUSTED_PROXY_CIDRS is set and DFE_EDGE_ALLOWED_CIDRS is empty" in done.stderr
 
 
 def _fence_notice(**env: str) -> subprocess.CompletedProcess:
@@ -177,6 +181,12 @@ def test_the_appset_hands_the_gateway_both_halves_of_a_fence(tmp_path: Path) -> 
     assert values["ui"] == {"allowed_cidrs": ALLOWED, "trusted_proxy_cidrs": TRUSTED}
 
 
+def test_a_list_with_no_cdn_clears_any_trusted_range_an_overlay_carries(tmp_path: Path) -> None:
+    """An empty string beats the deploy-repo overlay, so a range the dial dropped is not still believed."""
+    values = _render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED})
+    assert values["ui"] == {"allowed_cidrs": ALLOWED, "trusted_proxy_cidrs": ""}
+
+
 def test_a_cluster_with_no_fence_gets_no_ui_key_at_all(tmp_path: Path) -> None:
     """An empty ui.allowed_cidrs would override a deployer's own overlay with nothing."""
     assert "ui" not in _render_values_block(tmp_path, {})
@@ -206,9 +216,10 @@ def _source_ranges(docs: list[dict]) -> list[str]:
     return proxy["spec"]["provider"]["kubernetes"]["envoyService"].get("loadBalancerSourceRanges", [])
 
 
-def test_the_fence_closes_the_aws_load_balancer_to_everyone_else(tmp_path: Path) -> None:
+@pytest.mark.parametrize("cdn", [{TRUSTED_KEY: TRUSTED}, {}], ids=["cdn", "no cdn"])
+def test_the_fence_closes_the_aws_load_balancer_to_everyone_else(tmp_path: Path, cdn: dict[str, str]) -> None:
     fence = tmp_path / "fence.yaml"
-    fence.write_text(yaml.safe_dump(_render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED, TRUSTED_KEY: TRUSTED})),
+    fence.write_text(yaml.safe_dump(_render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED, **cdn})),
                      encoding="utf-8")
     assert _source_ranges(_gateway("-f", str(fence))) == ALLOWED.split(",")
 

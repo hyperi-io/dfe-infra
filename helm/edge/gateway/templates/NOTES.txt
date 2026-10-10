@@ -3,7 +3,7 @@
 PUBLIC WEB CLOSED. envoyGateway.service.internetFacing is true and ui.allowed_cidrs
 is empty, so dfe-ui, HyperDX, the engine API and every admin UI on this gateway
 answer 403 to every address. Ingest routes are not affected. Set ui.allowed_cidrs
-(with ui.trusted_proxy_cidrs) to the ranges that may reach them.
+to the ranges that may reach them.
 {{- else if eq $fence "allow-all" }}
 WARNING: ui.allowed_cidrs admits every address ({{ .Values.ui.allowed_cidrs }}).
 {{- if .Values.envoyGateway.service.internetFacing }}
@@ -17,4 +17,16 @@ Name the ranges that need them instead.
 {{- else if and (eq $fence "listed") .Values.envoyGateway.service.internetFacing }}
 Web routes on this gateway admit {{ .Values.ui.allowed_cidrs }} and refuse every
 other address.
+{{- end }}
+{{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.trusted_proxy_cidrs) | fromJsonArray }}
+{{- if include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
+{{- if $trusted }}
+Public listeners take the client address from X-Forwarded-For when the connection
+comes from ui.trusted_proxy_cidrs ({{ join "," $trusted }}), and from the
+connection itself otherwise. List only a CDN or other L7 proxy there.
+{{- else }}
+Public listeners judge the client by its own connection and ignore
+X-Forwarded-For. A CDN or other L7 proxy in front of them goes in
+ui.trusted_proxy_cidrs.
+{{- end }}
 {{- end }}

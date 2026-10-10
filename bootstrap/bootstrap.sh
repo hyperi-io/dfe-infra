@@ -490,14 +490,13 @@ export DFE_TUNNEL_ZONE_ANNOTATION="${DFE_TUNNEL_ZONE:+dfe.hyperi.io/tunnel_zone:
 # the instance is rebuilt and its address moves.
 export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"
 export DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION="${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr: \"${DFE_TOOLBOX_ADMIN_CIDR}\"}"
-# The public gateway's allow-list and its trusted proxy ranges, comma-separated
-# and empty unless a fence was asked for. The chart refuses one without the
-# other, so a half pair stops here rather than as a failed Argo sync.
+# The gateway's allow-list and the CDN ranges in front of it, comma-separated.
+# layer2-edge.yaml carries the CDN ranges only beside a list, so ranges with no
+# list stop here rather than vanish.
 export DFE_EDGE_ALLOWED_CIDRS="${DFE_EDGE_ALLOWED_CIDRS:-}"
 export DFE_EDGE_TRUSTED_PROXY_CIDRS="${DFE_EDGE_TRUSTED_PROXY_CIDRS:-}"
-if [[ -n "${DFE_EDGE_ALLOWED_CIDRS}" && -z "${DFE_EDGE_TRUSTED_PROXY_CIDRS}" ]] \
-  || [[ -z "${DFE_EDGE_ALLOWED_CIDRS}" && -n "${DFE_EDGE_TRUSTED_PROXY_CIDRS}" ]]; then
-  echo "ERROR: DFE_EDGE_ALLOWED_CIDRS and DFE_EDGE_TRUSTED_PROXY_CIDRS are set together or not at all -- the gateway refuses an allow-list it cannot read the client address for" >&2
+if [[ -z "${DFE_EDGE_ALLOWED_CIDRS}" && -n "${DFE_EDGE_TRUSTED_PROXY_CIDRS}" ]]; then
+  echo "ERROR: DFE_EDGE_TRUSTED_PROXY_CIDRS is set and DFE_EDGE_ALLOWED_CIDRS is empty -- the trusted ranges only say which address the allow-list judges, so with no list they do nothing. Set the list, or clear DFE_EDGE_TRUSTED_PROXY_CIDRS" >&2
   exit 1
 fi
 export DFE_EDGE_ALLOWED_CIDRS_ANNOTATION="${DFE_EDGE_ALLOWED_CIDRS:+dfe.hyperi.io/edge_allowed_cidrs: \"${DFE_EDGE_ALLOWED_CIDRS}\"}"

@@ -143,8 +143,8 @@ decides what switch can turn it off.
 
 | Class | Routes | What can disable it |
 |---|---|---|
-| `product` | dfe-ui, dfe-engine | its own `enabled` -- nothing else |
-| `infra` | Argo CD, HyperDX, Forgejo, Kafbat, links, Cruise Control | `exposure.infraUisExternal: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
+| `product` | dfe-ui, dfe-engine, HyperDX | its own `enabled` -- nothing else |
+| `infra` | Argo CD, Forgejo, Kafbat, links, Cruise Control | `exposure.infraUisExternal: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
 | `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
 
 Every web UI with a login renders by default, through a five-step cascade, first match wins:
@@ -161,7 +161,7 @@ A public flag on a route with no login of its own (`ui.public.links: true`) and 
 off the edge**, and it is ABSOLUTE for the class: a route's own
 `enabled: true` does not beat it, so a lock-down cannot be picked apart one
 route at a time, withdrawing their edge policies too. It never touches
-dfe-ui or the engine API.
+dfe-ui, the engine API or HyperDX.
 
 On a cloud deploy with an internet-facing Gateway Service, this defaults
 off instead -- see [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
@@ -181,9 +181,9 @@ reading the keys it owns.
 | Cruise Control UI | `cruise-control.{domain}` | infra | only behind edge OIDC, Kafka cluster tier | edge OIDC + group check; no auth of its own |
 | Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |
 | Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
-| HyperDX | `hyperdx.{domain}` | infra | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
+| HyperDX | `hyperdx.{domain}` | product | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
 | otel OTLP ingest | `otel.{domain}` | ingest | no (`otel.ingress.enabled`) | bearer token, checked by the collector |
-| dfe-receiver ingest | `receiver.{domain}` | ingest | no | the receiver's own `server.auth` |
+| dfe-receiver ingest | `receiver.{domain}` | ingest | no | the receiver's own `server.auth`, restated as `routes.receiver.authMode` (`header` or `bearer` when internet-facing) |
 
 The gate on an infra route is a deny-by-default Envoy `SecurityPolicy`
 carrying three blocks that only work together: `oidc` logs the user in and
@@ -197,8 +197,9 @@ session minted on one infra host being replayed on another.
 
 Kafbat and HyperDX are exempt from the EDGE gate and check groups app-side
 instead -- Kafbat runs its own OIDC against the same provider, and HyperDX
-cannot complete an interactive redirect inside the dfe-ui iframe. Both stay
-class `infra`, so the kill switch still covers them.
+cannot complete an interactive redirect inside the dfe-ui iframe. Kafbat stays
+class `infra`, under the kill switch. HyperDX is class `product`, beside the
+console that frames it.
 
 Gating Forgejo also closes git-over-HTTP from OUTSIDE the cluster. Nothing
 in the product needs that: Argo CD and dfe-engine reach the deploy repo on

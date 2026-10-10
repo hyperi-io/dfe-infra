@@ -82,11 +82,10 @@ variables {
   cluster_name = "dfe-edge-contract"
 
   network = {
-    vpc_id              = "vpc-00000000000000000"
-    cidr                = "10.90.0.0/16"
-    azs                 = ["mock-1a", "mock-1b", "mock-1c"]
-    public_subnet_ids   = ["subnet-0000000000000pub1", "subnet-0000000000000pub2", "subnet-0000000000000pub3"]
-    public_subnet_cidrs = ["10.90.128.0/20", "10.90.144.0/20", "10.90.160.0/20"]
+    vpc_id            = "vpc-00000000000000000"
+    cidr              = "10.90.0.0/16"
+    azs               = ["mock-1a", "mock-1b", "mock-1c"]
+    public_subnet_ids = ["subnet-0000000000000pub1", "subnet-0000000000000pub2", "subnet-0000000000000pub3"]
   }
 
   node_security_group_id = "sg-000000000000nodes0"
@@ -832,7 +831,7 @@ run "every_role_carries_the_permissions_boundary" {
   }
 }
 
-// --- the gateway's fence: nothing unless asked for, and then both halves
+// --- the gateway's fence: nothing unless asked for, and no forwarded header trusted unless a CDN is named
 
 run "no_allow_list_fences_nothing" {
   command = plan
@@ -847,7 +846,7 @@ run "no_allow_list_fences_nothing" {
   }
 }
 
-run "an_allow_list_admits_the_clusters_own_egress_and_trusts_the_load_balancer_subnets" {
+run "an_allow_list_admits_the_clusters_own_egress_and_trusts_no_forwarded_header" {
   command = plan
 
   variables {
@@ -860,15 +859,10 @@ run "an_allow_list_admits_the_clusters_own_egress_and_trusts_the_load_balancer_s
     error_message = "the fence must carry the named ranges and every NAT address as a /32, comma-separated as the chart reads it"
   }
 
+  // Any host in a trusted range can claim any client address, and the tunnel forwarder sits in a public subnet.
   assert {
-    condition     = output.gateway_trusted_proxy_cidrs == "10.90.128.0/20,10.90.144.0/20,10.90.160.0/20"
-    error_message = "the trusted proxies must be the public subnets' ranges whenever the fence is set -- the chart refuses one without the other"
-  }
-
-  // A pod reaching Envoy directly comes from inside the VPC; trusting that range would let its own X-Forwarded-For pass the fence.
-  assert {
-    condition     = !contains(split(",", output.gateway_trusted_proxy_cidrs), var.network.cidr)
-    error_message = "the trusted proxies must never be the whole VPC"
+    condition     = output.gateway_trusted_proxy_cidrs == ""
+    error_message = "an allow-list with no CDN named must trust no proxy -- the NLB writes no X-Forwarded-For, so Envoy's TCP peer is already the client"
   }
 }
 
@@ -887,18 +881,18 @@ run "an_egress_address_already_named_is_not_listed_twice" {
 }
 
 // A CDN in front of the load balancer forwards the client in X-Forwarded-For,
-// so its range is trusted beside the load balancer's subnets.
-run "a_named_proxy_range_is_trusted_beside_the_load_balancer_subnets" {
+// so its ranges, and only its ranges, are trusted.
+run "a_named_proxy_range_is_the_whole_trusted_list" {
   command = plan
 
   variables {
     gateway_allowed_cidrs       = ["198.51.100.10/32"]
-    gateway_trusted_proxy_cidrs = ["192.0.2.0/24", "10.90.144.0/20"]
+    gateway_trusted_proxy_cidrs = ["192.0.2.0/24", "2001:db8::/48", "192.0.2.0/24"]
   }
 
   assert {
-    condition     = output.gateway_trusted_proxy_cidrs == "10.90.128.0/20,10.90.144.0/20,10.90.160.0/20,192.0.2.0/24"
-    error_message = "the trusted proxies must be the public subnets' ranges and every named range, each once"
+    condition     = output.gateway_trusted_proxy_cidrs == "192.0.2.0/24,2001:db8::/48"
+    error_message = "the trusted proxies must be every named range, each once, and nothing the module adds"
   }
 }
 
@@ -911,7 +905,7 @@ run "a_proxy_range_with_no_allow_list_trusts_nothing" {
 
   assert {
     condition     = output.gateway_trusted_proxy_cidrs == ""
-    error_message = "trusted proxies without a fence would be a half pair, which bootstrap refuses"
+    error_message = "trusted proxies without a fence decide nothing, and bootstrap refuses them"
   }
 }
 
