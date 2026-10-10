@@ -2476,7 +2476,8 @@ def _argo_comparing_after_the_push(monkeypatch: pytest.MonkeyPatch, *, stale_rea
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
         if cmd[:1] == ["git"] and cmd[-1] == "push":
             seen["pushes"] += 1
-        if cmd[:1] == ["kubectl"] and "applications.argoproj.io" in cmd:
+        listed = cmd[cmd.index("get") + 1 :][:1] if "get" in cmd else []
+        if cmd[:1] == ["kubectl"] and listed == ["applications.argoproj.io"]:
             seen["reads"] += 1
             seen["reads_after_push"] += 1 if seen["pushes"] else 0
             compared = stale_reads is not None and seen["reads_after_push"] > stale_reads
