@@ -39,6 +39,9 @@ replaces the derived set outright.
         --domain dfe.example.com
     python3 scripts/dfe-ops idp teardown --kubeconfig .tmp/dfe.kubeconfig
 
+`idp wire-engine --teardown` takes back what `wire-engine` handed the engine, including
+the copies its config volume already holds, which a Dex teardown alone leaves live.
+
 Passwords and the client secret are GENERATED per deploy and written to
 --secrets-out with mode 0600. They are never printed, never passed on argv, and
 never committed -- the tool prints the issuer, the client id and the file path,
@@ -121,6 +124,28 @@ SEARCH_GROUP = "svcaccts"
 
 # The ConfigMap name the engine chart's authConfig.groupsConfigMap is pointed at.
 DEFAULT_GROUPS_CONFIGMAP = "dfe-auth-groups"
+DEFAULT_ENGINE = "dfe-engine"
+# The engine chart's config.mountPath, and where its seed step copies the ConfigMap keys.
+ENGINE_CONFIG_DIR = "/config"
+PROVIDERS_SUBDIR = "auth/oidc-providers"
+GROUPS_SUBDIR = "auth/groups"
+# Runs inside the engine container, as the engine's own user, so the files land with
+# the ownership the engine writes beside them. Reads a JSON plan on stdin.
+CONTAINER_EDIT = """
+import json, pathlib, sys
+plan = json.load(sys.stdin)
+root = pathlib.Path(plan["root"])
+for rel, text in plan["write"].items():
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\\n")
+    print("wrote", path)
+for rel in plan["remove"]:
+    path = root / rel
+    if path.is_file():
+        path.unlink()
+        print("removed", path)
+"""
 # The engine stores a group as <name>.yaml, so its name must be a safe file stem.
 _ENGINE_GROUP_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}\Z")
 _ORG_SCOPE_PREFIX = "org:"
@@ -618,6 +643,61 @@ def _apply(args: argparse.Namespace, objects: list[dict]) -> None:
     _run([*_kube(args), "apply", "-f", "-"], stdin=doc)
 
 
+def get_json(args: argparse.Namespace, kind: str, name: str) -> dict | None:
+    """The object, or None when it does not exist. Any other failure exits."""
+    cmd = [*_kube(args), "-n", args.namespace, "get", kind, name, "-o", "json"]
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+    )
+    if proc.returncode == 0:
+        return json.loads(proc.stdout)
+    if "NotFound" in proc.stderr:
+        return None
+    raise SystemExit(f"kubectl get {kind} {name} failed: {proc.stderr.strip()}")
+
+
+def merge_patch(args: argparse.Namespace, kind: str, name: str, patch: dict) -> None:
+    """Merge-patch the object; a key set to None is removed."""
+    _run(
+        [
+            *_kube(args),
+            "-n",
+            args.namespace,
+            "patch",
+            kind,
+            name,
+            "--type",
+            "merge",
+            "-p",
+            json.dumps(patch),
+        ]
+    )
+
+
+def remove_seeded_copies(args: argparse.Namespace, config_dir: str, paths: list[str]) -> int:
+    """Delete `paths` under `config_dir` in the engine pod; the exit code of the exec.
+
+    The chart's seed step copies ConfigMap keys into the engine's config volume
+    and never deletes, so a persistent volume keeps a removed provider live until
+    its copies go too.
+    """
+    deployment = f"deploy/{args.engine_deployment}"
+    exec_cmd = [*_kube(args), "-n", args.namespace, "exec", "-i", deployment]
+    if args.engine_container:
+        exec_cmd += ["-c", args.engine_container]
+    plan = {"root": config_dir, "write": {}, "remove": paths}
+    rc = _run(
+        [*exec_cmd, "--", "python3", "-c", CONTAINER_EDIT], check=False, stdin=json.dumps(plan)
+    )
+    if rc != 0:
+        print(
+            f"WARNING: could not remove the seeded copies from deploy/{args.engine_deployment}; "
+            f"remove {', '.join(paths)} under {config_dir} by hand",
+            file=sys.stderr,
+        )
+    return rc
+
+
 # --- deploy ------------------------------------------------------------------
 def cmd_idp_deploy(args: argparse.Namespace) -> int:
     hostname = resolve_hostname(args)
@@ -834,6 +914,67 @@ def render_provider_yaml(
     )
 
 
+def _fixture_group_files(args: argparse.Namespace) -> dict[str, str] | None:
+    """The group files the fixture map renders for --provider, or None after saying why not."""
+    groups_file = Path(args.groups_file)
+    if not groups_file.is_file():
+        print(f"ERROR: --groups-file {groups_file} not found", file=sys.stderr)
+        return None
+    try:
+        return render_engine_groups(
+            groups_file.read_text(encoding="utf-8", errors="replace"), args.provider
+        )
+    except (ValueError, tomllib.TOMLDecodeError) as exc:
+        print(f"ERROR: {groups_file} is not a usable group map: {exc}", file=sys.stderr)
+        return None
+
+
+def seeded_paths(provider_key: str, group_keys: list[str]) -> list[str]:
+    """The provider file and the named group files, relative to the engine's config dir."""
+    return [
+        f"{PROVIDERS_SUBDIR}/{provider_key}",
+        *(f"{GROUPS_SUBDIR}/{key}" for key in group_keys),
+    ]
+
+
+def unwire_engine(args: argparse.Namespace) -> int:
+    """Remove what wire-engine added: its ConfigMap keys, its Secret and the engine's copies.
+
+    The seed step copies the ConfigMap keys again on every pod start, so the keys
+    and the copies both have to go. The ConfigMaps themselves stay, because the
+    chart's values still name them.
+    """
+    group_files = _fixture_group_files(args)
+    if group_files is None:
+        return 2
+    provider_key = f"{args.provider}.yaml"
+    group_keys = sorted(group_files)
+    paths = seeded_paths(provider_key, group_keys)
+    if args.dry_run:
+        plan = {
+            "namespace": args.namespace,
+            "configmap keys": {
+                args.providers_configmap: [provider_key],
+                args.groups_configmap: group_keys,
+            },
+            "secret": args.secret_name,
+            "seeded copies": paths,
+        }
+        print(json.dumps(plan, indent=2))
+        return 0
+    for name, keys in (
+        (args.providers_configmap, [provider_key]),
+        (args.groups_configmap, group_keys),
+    ):
+        if get_json(args, "configmap", name) is not None:
+            merge_patch(args, "configmap", name, {"data": dict.fromkeys(keys)})
+    delete = [*_kube(args), "-n", args.namespace, "delete", "secret", args.secret_name]
+    _run([*delete, "--ignore-not-found"])
+    rc = remove_seeded_copies(args, args.config_dir, paths)
+    print(f"=== {args.provider} unwired from namespace {args.namespace} ===", file=sys.stderr)
+    return 0 if rc == 0 else 1
+
+
 def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     """Hand the IdP's credentials, trust material and group map to a consumer namespace.
 
@@ -848,20 +989,14 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     The chart-values half (auth/oidc/authConfig) stays with the deployment, so
     this command creates only the objects those values name.
     """
+    if args.teardown:
+        return unwire_engine(args)
     env_file = Path(args.secrets_file)
     if not env_file.is_file():
         print(f"ERROR: --secrets-file {env_file} not found (run `idp deploy` first)", file=sys.stderr)
         return 2
-    groups_file = Path(args.groups_file)
-    if not groups_file.is_file():
-        print(f"ERROR: --groups-file {groups_file} not found", file=sys.stderr)
-        return 2
-    try:
-        group_files = render_engine_groups(
-            groups_file.read_text(encoding="utf-8", errors="replace"), args.provider
-        )
-    except (ValueError, tomllib.TOMLDecodeError) as exc:
-        print(f"ERROR: {groups_file} is not a usable group map: {exc}", file=sys.stderr)
+    group_files = _fixture_group_files(args)
+    if group_files is None:
         return 2
     env = {}
     for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -1110,7 +1245,17 @@ def add_idp_subparser(sub) -> None:
                     help="env var the consumer reads the client id from")
     we.add_argument("--client-secret-env", default="DFE_OIDC_DEX_CLIENT_SECRET",
                     help="env var the consumer reads the client secret from")
-    we.add_argument("--dry-run", action="store_true", help="print the objects and apply nothing")
+    we.add_argument("--teardown", action="store_true",
+                    help="remove what an earlier wire-engine added: its ConfigMap keys, the Secret "
+                         "and the copies the engine's config volume already holds")
+    we.add_argument("--engine-deployment", default=DEFAULT_ENGINE,
+                    help="--teardown: engine Deployment whose config volume is cleaned")
+    we.add_argument("--engine-container", default=None,
+                    help="--teardown: container in that Deployment (default: the default one)")
+    we.add_argument("--config-dir", default=ENGINE_CONFIG_DIR,
+                    help="--teardown: engine config directory inside its container")
+    we.add_argument("--dry-run", action="store_true",
+                    help="print the objects, or with --teardown what it removes, and apply nothing")
     we.set_defaults(func=cmd_idp_wire_engine)
 
     # Imported here, not at the top, because external_idp imports this module.

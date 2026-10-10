@@ -58,7 +58,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,11 +73,11 @@ DISPLAY_NAMES = {"okta": "Okta", "entra_id": "Microsoft Entra ID", "google": "Go
 
 DEFAULT_PROVIDERS_CONFIGMAP = "dfe-oidc-providers"
 DEFAULT_GROUPS_CONFIGMAP = tester_idp.DEFAULT_GROUPS_CONFIGMAP
-DEFAULT_ENGINE = "dfe-engine"
-# The engine chart's config.mountPath and dfe-docker's DFE_ENGINE_CONFIG_DIR default.
-CONFIG_DIRS = {"k8s": "/config", "docker": "/app/config"}
-PROVIDERS_SUBDIR = "auth/oidc-providers"
-GROUPS_SUBDIR = "auth/groups"
+DEFAULT_ENGINE = tester_idp.DEFAULT_ENGINE
+# The chart's config.mountPath, and dfe-docker's DFE_ENGINE_CONFIG_DIR default.
+CONFIG_DIRS = {"k8s": tester_idp.ENGINE_CONFIG_DIR, "docker": "/app/config"}
+PROVIDERS_SUBDIR = tester_idp.PROVIDERS_SUBDIR
+GROUPS_SUBDIR = tester_idp.GROUPS_SUBDIR
 
 PART_OF = "dfe-external-idp"
 CREATED_BY_LABEL = "dfe.hyperi.io/created-by"
@@ -93,24 +92,6 @@ GROUP_FIELDS = frozenset(
 _PROVIDER_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,47}[a-z0-9])?\Z")
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 _GUID = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
-
-# Runs inside the engine container, as the engine's own user, so the files land with
-# the ownership the engine writes beside them. Reads a JSON plan on stdin.
-CONTAINER_EDIT = """
-import json, pathlib, sys
-plan = json.load(sys.stdin)
-root = pathlib.Path(plan["root"])
-for rel, text in plan["write"].items():
-    path = root / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="\\n")
-    print("wrote", path)
-for rel in plan["remove"]:
-    path = root / rel
-    if path.is_file():
-        path.unlink()
-        print("removed", path)
-"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,10 +128,7 @@ class Wiring:
 
     def paths(self, group_keys: list[str]) -> list[str]:
         """The provider file and the named group files, relative to the config dir."""
-        return [
-            f"{PROVIDERS_SUBDIR}/{self.provider_key}",
-            *(f"{GROUPS_SUBDIR}/{key}" for key in group_keys),
-        ]
+        return tester_idp.seeded_paths(self.provider_key, group_keys)
 
 
 # --- group files -------------------------------------------------------------
@@ -441,36 +419,6 @@ def _holder_object(wiring: Wiring, namespace: str) -> dict:
     return holder
 
 
-def _get_json(args: argparse.Namespace, kind: str, name: str) -> dict | None:
-    """The object, or None when it does not exist. Any other failure exits."""
-    cmd = [*tester_idp._kube(args), "-n", args.namespace, "get", kind, name, "-o", "json"]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-    )
-    if proc.returncode == 0:
-        return json.loads(proc.stdout)
-    if "NotFound" in proc.stderr:
-        return None
-    raise SystemExit(f"kubectl get {kind} {name} failed: {proc.stderr.strip()}")
-
-
-def _merge_patch(args: argparse.Namespace, kind: str, name: str, patch: dict) -> None:
-    tester_idp._run(
-        [
-            *tester_idp._kube(args),
-            "-n",
-            args.namespace,
-            "patch",
-            kind,
-            name,
-            "--type",
-            "merge",
-            "-p",
-            json.dumps(patch),
-        ]
-    )
-
-
 def _ledger(configmap: dict | None, key: str) -> dict:
     """The ledger a previous run left on the providers ConfigMap, or an empty one."""
     if configmap is None:
@@ -512,13 +460,13 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     previous run of this provider added and this one does not are removed.
     """
     kube = tester_idp._kube(args)
-    providers_cm = _get_json(args, "configmap", args.providers_configmap)
+    providers_cm = tester_idp.get_json(args, "configmap", args.providers_configmap)
     if providers_cm is None:
         tester_idp._run(
             [*kube, "create", "-f", "-"],
             stdin=json.dumps(_configmap(args.providers_configmap, args.namespace)),
         )
-    if _get_json(args, "configmap", args.groups_configmap) is None:
+    if tester_idp.get_json(args, "configmap", args.groups_configmap) is None:
         tester_idp._run(
             [*kube, "create", "-f", "-"],
             stdin=json.dumps(_configmap(args.groups_configmap, args.namespace)),
@@ -526,7 +474,7 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     stale = set(_ledger(providers_cm, wiring.ledger_key).get("groups", [])) - set(
         wiring.group_files
     )
-    _merge_patch(
+    tester_idp.merge_patch(
         args,
         "configmap",
         args.providers_configmap,
@@ -537,7 +485,7 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     )
     group_data: dict[str, str | None] = dict(wiring.group_files)
     group_data.update(dict.fromkeys(sorted(stale)))
-    _merge_patch(args, "configmap", args.groups_configmap, {"data": group_data})
+    tester_idp.merge_patch(args, "configmap", args.groups_configmap, {"data": group_data})
     tester_idp._apply(args, [_holder_object(wiring, args.namespace)])
 
     print(f"\n=== wired {wiring.provider} into namespace {args.namespace} ===", file=sys.stderr)
@@ -566,7 +514,7 @@ def k8s_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
     the copies go too. A ConfigMap this tool created is deleted once empty.
     """
     kube = tester_idp._kube(args)
-    providers_cm = _get_json(args, "configmap", args.providers_configmap)
+    providers_cm = tester_idp.get_json(args, "configmap", args.providers_configmap)
     ledger = _ledger(providers_cm, wiring.ledger_key)
     if not ledger:
         print(
@@ -576,7 +524,7 @@ def k8s_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
         )
         return 0
     group_keys = [key for key in ledger.get("groups", []) if isinstance(key, str)]
-    _merge_patch(
+    tester_idp.merge_patch(
         args,
         "configmap",
         args.providers_configmap,
@@ -585,27 +533,17 @@ def k8s_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
             "data": {wiring.provider_key: None},
         },
     )
-    if group_keys and _get_json(args, "configmap", args.groups_configmap) is not None:
-        _merge_patch(args, "configmap", args.groups_configmap, {"data": dict.fromkeys(group_keys)})
+    if group_keys and tester_idp.get_json(args, "configmap", args.groups_configmap) is not None:
+        tester_idp.merge_patch(
+            args, "configmap", args.groups_configmap, {"data": dict.fromkeys(group_keys)}
+        )
     holder = str(ledger.get("holder", wiring.holder_name))
     tester_idp._run([*kube, "-n", args.namespace, "delete", "secret", holder, "--ignore-not-found"])
 
-    exec_cmd = [*kube, "-n", args.namespace, "exec", "-i", f"deploy/{args.engine_deployment}"]
-    if args.engine_container:
-        exec_cmd += ["-c", args.engine_container]
-    plan = {"root": wiring.config_dir, "write": {}, "remove": wiring.paths(group_keys)}
-    rc = tester_idp._run(
-        [*exec_cmd, "--", "python3", "-c", CONTAINER_EDIT], check=False, stdin=json.dumps(plan)
-    )
-    if rc != 0:
-        print(
-            f"WARNING: could not remove the seeded copies from deploy/{args.engine_deployment}; "
-            f"remove {', '.join(plan['remove'])} under {wiring.config_dir} by hand",
-            file=sys.stderr,
-        )
+    rc = tester_idp.remove_seeded_copies(args, wiring.config_dir, wiring.paths(group_keys))
 
     for name in (args.providers_configmap, args.groups_configmap):
-        configmap = _get_json(args, "configmap", name)
+        configmap = tester_idp.get_json(args, "configmap", name)
         if configmap is None or configmap.get("data"):
             continue
         if configmap.get("metadata", {}).get("labels", {}).get(CREATED_BY_LABEL) == CREATED_BY:
@@ -683,7 +621,7 @@ def _recreate(args: argparse.Namespace) -> None:
 
 def _container_edit(args: argparse.Namespace, plan: dict) -> None:
     tester_idp._run(
-        ["docker", "exec", "-i", args.container, "python3", "-c", CONTAINER_EDIT],
+        ["docker", "exec", "-i", args.container, "python3", "-c", tester_idp.CONTAINER_EDIT],
         stdin=json.dumps(plan),
     )
 

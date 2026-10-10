@@ -788,6 +788,11 @@ def test_the_cli_still_parses() -> None:
         all(f in wire.stdout for f in ("--groups-file", "--groups-configmap")),
         wire.stdout,
     )
+    expect(
+        "and the teardown flags",
+        all(f in wire.stdout for f in ("--teardown", "--engine-deployment", "--config-dir")),
+        wire.stdout,
+    )
 
 
 def main() -> int:

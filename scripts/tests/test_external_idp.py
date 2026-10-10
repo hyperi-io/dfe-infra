@@ -4,7 +4,8 @@
 #  Purpose:      Prove `dfe-ops idp wire-external` renders provider and group files
 #                the engine accepts, keeps the client secret off every argv and
 #                out of every printout, and that --teardown removes exactly what
-#                the wire added.
+#                the wire added. `wire-engine --teardown` shares the volume cleanup,
+#                so its cases sit here beside the same fake tools.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -186,9 +187,11 @@ def _ops():
     return _ops_module
 
 
-def run(tools: FakeTools, argv: list[str], *, secret: str | None = SECRET) -> tuple[int, str]:
+def run(
+    tools: FakeTools, argv: list[str], *, secret: str | None = SECRET, action: str = "wire-external"
+) -> tuple[int, str]:
     """Parse with dfe-ops' own parser and run it. Returns (rc, everything printed)."""
-    args = _ops().build_parser().parse_args(["idp", "wire-external", *argv])
+    args = _ops().build_parser().parse_args(["idp", action, *argv])
     saved_env = dict(os.environ)
     out = io.StringIO()
     os.environ.update(tools.env)
@@ -632,6 +635,140 @@ def test_k8s_teardown_reports_a_failed_volume_cleanup() -> None:
         rc, out = run(tools, ["--type", "okta", "--teardown", *k8s()], secret=None)
     expect("a failed cleanup exits non-zero", rc == 1, str(rc))
     expect("it names the files left behind", "auth/oidc-providers/okta.yaml" in out, out)
+
+
+# --- wire-engine teardown, through the same volume cleanup ---------------------
+GROUP_MAP = '[[groups]]\n  name = "dfe-admins"\n\n[[groups]]\n  name = "dfe-viewers"\n'
+
+
+def engine_teardown_args(tmp: Path, *extra: str) -> list[str]:
+    """wire-engine's flags for a two-group fixture map written under `tmp`."""
+    groups = tmp / "groups.toml"
+    groups.write_text(GROUP_MAP, encoding="utf-8")
+    return ["--namespace", "dfe-test", "--groups-file", str(groups), *extra]
+
+
+def engine_objects() -> dict:
+    """What a wire-engine run leaves, plus a neighbour of each kind it must not touch."""
+    return {
+        "configmap/dfe-oidc-providers": {
+            "kind": "ConfigMap",
+            "metadata": {"name": "dfe-oidc-providers"},
+            "data": {"dex.yaml": "{}", "okta.yaml": "{}"},
+        },
+        "configmap/dfe-auth-groups": {
+            "kind": "ConfigMap",
+            "metadata": {"name": "dfe-auth-groups"},
+            "data": {"dfe-admins.yaml": "{}", "dfe-viewers.yaml": "{}", "okta-ops.yaml": "{}"},
+        },
+        "secret/dfe-oidc-dex": {"kind": "Secret", "metadata": {"name": "dfe-oidc-dex"}},
+        "secret/dfe-oidc-okta": {"kind": "Secret", "metadata": {"name": "dfe-oidc-okta"}},
+    }
+
+
+def test_wire_engine_teardown_removes_exactly_the_files_it_seeded() -> None:
+    with tempfile.TemporaryDirectory() as tmp, FakeTools() as tools:
+        tools.seed(engine_objects())
+        rc, out = run(
+            tools,
+            ["--teardown", *engine_teardown_args(Path(tmp))],
+            secret=None,
+            action="wire-engine",
+        )
+        objects = tools.objects()
+        execs = [c for c in tools.called() if "exec" in c["args"]]
+    plan = json.loads(execs[0]["stdin"]) if execs else {}
+    expect("teardown succeeds", rc == 0, out)
+    expect("the volume is cleaned once", len(execs) == 1, str(execs))
+    expect(
+        "each seeded file is removed and nothing else",
+        plan.get("remove")
+        == [
+            "auth/oidc-providers/dex.yaml",
+            "auth/groups/dfe-admins.yaml",
+            "auth/groups/dfe-viewers.yaml",
+        ],
+        str(plan),
+    )
+    expect(
+        "under the chart's config mount, writing nothing",
+        (plan.get("root"), plan.get("write")) == ("/config", {}),
+        str(plan),
+    )
+    expect(
+        "the engine pod is the one reached",
+        "deploy/dfe-engine" in (execs[0]["args"] if execs else []),
+        str(execs),
+    )
+    expect(
+        "the provider key is gone from the ConfigMap, a neighbour stays",
+        sorted(objects["configmap/dfe-oidc-providers"]["data"]) == ["okta.yaml"],
+        str(objects),
+    )
+    expect(
+        "the group keys are gone, a neighbour stays",
+        sorted(objects["configmap/dfe-auth-groups"]["data"]) == ["okta-ops.yaml"],
+        str(objects),
+    )
+    expect("the Secret it applied is gone", "secret/dfe-oidc-dex" not in objects, str(objects))
+    expect("another provider's Secret stays", "secret/dfe-oidc-okta" in objects, str(objects))
+
+
+def test_wire_engine_teardown_undoes_a_wire() -> None:
+    with tempfile.TemporaryDirectory() as tmp, FakeTools() as tools:
+        env = Path(tmp) / "idp.env"
+        env.write_text(
+            "TESTER_IDP_ISSUER=https://dex.example.com\nTESTER_IDP_CLIENT_ID=dfe-engine\n"
+            "TESTER_IDP_CLIENT_SECRET=" + SECRET + "\n",
+            encoding="utf-8",
+        )
+        common = engine_teardown_args(Path(tmp))
+        wired, _ = run(
+            tools, ["--secrets-file", str(env), *common], secret=None, action="wire-engine"
+        )
+        seeded = sorted(configmap(tools, "dfe-oidc-providers").get("data", {}))
+        rc, out = run(tools, ["--teardown", *common], secret=None, action="wire-engine")
+        objects = tools.objects()
+        execs = [c for c in tools.called() if "exec" in c["args"]]
+    expect("the wire succeeds", wired == 0, str(wired))
+    expect("it wrote the provider key", seeded == ["dex.yaml"], str(seeded))
+    expect("the teardown succeeds", rc == 0, out)
+    expect(
+        "no key, no Secret and no copy is left",
+        not objects["configmap/dfe-oidc-providers"].get("data")
+        and not objects["configmap/dfe-auth-groups"].get("data")
+        and "secret/dfe-oidc-dex" not in objects
+        and len(execs) == 1,
+        str(objects),
+    )
+
+
+def test_wire_engine_teardown_reports_a_failed_volume_cleanup() -> None:
+    with tempfile.TemporaryDirectory() as tmp, FakeTools() as tools:
+        tools.seed(engine_objects())
+        tools.env["FAKE_EXEC_RC"] = "1"
+        rc, out = run(
+            tools,
+            ["--teardown", *engine_teardown_args(Path(tmp))],
+            secret=None,
+            action="wire-engine",
+        )
+    expect("a failed cleanup exits non-zero", rc == 1, str(rc))
+    expect("it names the files left behind", "auth/oidc-providers/dex.yaml" in out, out)
+
+
+def test_wire_engine_teardown_dry_run_touches_nothing() -> None:
+    with tempfile.TemporaryDirectory() as tmp, FakeTools() as tools:
+        rc, out = run(
+            tools,
+            ["--teardown", "--dry-run", *engine_teardown_args(Path(tmp))],
+            secret=None,
+            action="wire-engine",
+        )
+        calls = tools.called()
+    expect("the dry run succeeds", rc == 0, out)
+    expect("it names the copies it would remove", "auth/groups/dfe-viewers.yaml" in out, out)
+    expect("and calls nothing", calls == [], str(calls))
 
 
 # --- docker wire and teardown -------------------------------------------------

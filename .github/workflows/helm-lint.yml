@@ -23,13 +23,24 @@ on:
       - '.python-version'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
-      - '.github/workflows/helm-lint.yml'
-      # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
-      - '.github/workflows/release.yml'
-      # scripts/tests/test_cloud_reaper.py asserts its gate, pins and environment.
-      - '.github/workflows/cloud-reaper.yml'
-      # scripts/tests/test_cloud_cycle_workflow.py asserts its gate, pins, identity and expiry.
-      - '.github/workflows/cloud-cycle.yml'
+      # test_workflow_log_masks.py walks every workflow and three more tests read named ones.
+      - '.github/workflows/**'
+      # test_no_cost_figures.py sweeps every doc and the README.
+      - 'docs/**'
+      - 'README.md'
+      # Several tests read the modules and roots, and the drift check sweeps the .tf files for pins.
+      - 'terraform/**'
+      # test_validate_sizing.py and test_no_cost_figures.py read the sizing tables and shapes.
+      - 'sizing/**'
+      - 'shapes/**'
+      # test_toolbox_inputs.py walks the base build context.
+      - 'docker/dfe-toolbox/**'
+      # test_dfe_stack.py ties the customManager regex to versions.yaml.
+      - 'renovate.json'
+      # test_check_versions_drift.py asserts the operator's dial is ignored from the root.
+      - '.gitignore'
+      # test_tester_idp.py holds the fixture to the spec's truth table.
+      - 'tests/e2e-ui/specs/engine/oidc-rba.spec.ts'
   pull_request:
     paths:
       - 'helm/**'
@@ -50,13 +61,24 @@ on:
       - '.python-version'
       - 'suite.yaml'
       - 'docs/suite-graph.md'
-      - '.github/workflows/helm-lint.yml'
-      # Its HELM_VERSION is held equal to this file's by check_versions_drift.py.
-      - '.github/workflows/release.yml'
-      # scripts/tests/test_cloud_reaper.py asserts its gate, pins and environment.
-      - '.github/workflows/cloud-reaper.yml'
-      # scripts/tests/test_cloud_cycle_workflow.py asserts its gate, pins, identity and expiry.
-      - '.github/workflows/cloud-cycle.yml'
+      # test_workflow_log_masks.py walks every workflow and three more tests read named ones.
+      - '.github/workflows/**'
+      # test_no_cost_figures.py sweeps every doc and the README.
+      - 'docs/**'
+      - 'README.md'
+      # Several tests read the modules and roots, and the drift check sweeps the .tf files for pins.
+      - 'terraform/**'
+      # test_validate_sizing.py and test_no_cost_figures.py read the sizing tables and shapes.
+      - 'sizing/**'
+      - 'shapes/**'
+      # test_toolbox_inputs.py walks the base build context.
+      - 'docker/dfe-toolbox/**'
+      # test_dfe_stack.py ties the customManager regex to versions.yaml.
+      - 'renovate.json'
+      # test_check_versions_drift.py asserts the operator's dial is ignored from the root.
+      - '.gitignore'
+      # test_tester_idp.py holds the fixture to the spec's truth table.
+      - 'tests/e2e-ui/specs/engine/oidc-rba.spec.ts'
   # A push made with GITHUB_TOKEN triggers no workflow, so the propagate job's
   # write-back leaves its own head commit unchecked. workflow_dispatch is the
   # documented exception to that rule and is how it asks for this run.
