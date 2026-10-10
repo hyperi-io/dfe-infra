@@ -2857,7 +2857,7 @@ stacks:
       dfe-schemas: "v0.2.9"              # 2026-10-06. The engine applies it at startup.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.7"               # The deploy-repo template, seeded from this tag.
-      # A commit, not a version: dfe-docker cuts no per-stack tag.
+      # A commit, not a version: dfe-docker cuts no per-stack tag. 03ee6b97 is #216, which runs the e2e suites under console TLS.
       dfe-docker: "03ee6b97eeb0f081a4c637a995cd6441216818bf"
       dfe-hyperdx: "v0.3.2"              # 2026-10-10, amd64 and arm64. The image thin chart 0.3.2 pins.
 
