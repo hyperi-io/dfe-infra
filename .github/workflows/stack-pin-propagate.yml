@@ -16,6 +16,11 @@ on:
       - 'versions.yaml'
       - 'scripts/propagate_stack_pin.py'
       - '.github/workflows/stack-pin-propagate.yml'
+  # A `current` move lands before its tag exists, so the push run skips; the tag
+  # comes from Stack Release, whose own token cannot trigger a tag-push workflow.
+  workflow_run:
+    workflows: ['Stack Release']
+    types: [completed]
   workflow_dispatch:
 
 # Nothing is written in THIS repo; the write is on the target, through a GitHub
@@ -30,6 +35,8 @@ concurrency:
 jobs:
   propagate:
     name: move the consumer's stack dial onto current
+    # A Stack Release that failed cut no tag, so there is nothing to move onto.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
     runs-on: ubuntu-24.04
     steps:
