@@ -28,6 +28,12 @@ published release and repins the matching digest.
 version's predecessor, so `cut` re-points it there and `check-upgrade` reports
 the consecutive path as verified without a hand edit.
 
+A content repo recorded by commit rather than tag (dfe-docker cuts no per-stack
+tag) is re-resolved at its `main` head, and the comment above the pin is
+rewritten to cite that commit's date and subject. Every other pin keeps the
+comment it was cloned with, so a moved app or tag needs its evidence rewritten
+by hand before `check_pin_evidence.py` passes.
+
 Third-party pins carry over untouched. Those are Renovate's to move, and several
 are deliberately held below a ceiling -- the ClickHouse LTS line, the Kafka
 version strimzi supports. A cut is about OUR components catching up, not about

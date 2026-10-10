@@ -995,16 +995,32 @@ stacks:
 """
 
 
-def _cut_into(tmp: Path, head: object) -> int:
+def _a_commit(org: str, repo: str, sha: str) -> tuple[str, str]:
+    """The default stand-in for the GitHub read of one commit's subject and date."""
+    return "fix: a change to the content repo (#7)", "2026-01-02"
+
+
+def _cut_into(
+    tmp: Path,
+    head: object,
+    summary: object = _a_commit,
+    fixture: str = _CUT_FIXTURE,
+) -> int:
     """Run a cut over the fixture with the registry and git reads stubbed out."""
     import argparse
 
-    (tmp / "versions.yaml").write_text(_CUT_FIXTURE, encoding="utf-8", newline="\n")
-    original = (stack.REPO_ROOT, stack._latest_published, stack.registry_pins.head_commit)
+    (tmp / "versions.yaml").write_text(fixture, encoding="utf-8", newline="\n")
+    original = (
+        stack.REPO_ROOT,
+        stack._latest_published,
+        stack.registry_pins.head_commit,
+        stack.registry_pins.commit_summary,
+    )
     stack.REPO_ROOT = tmp
     # Offline: no published release, so every app pin holds and no registry is hit.
     stack._latest_published = lambda org, app: None
     stack.registry_pins.head_commit = head
+    stack.registry_pins.commit_summary = summary
     try:
         return stack.cmd_cut(
             argparse.Namespace(
@@ -1013,7 +1029,12 @@ def _cut_into(tmp: Path, head: object) -> int:
             )
         )
     finally:
-        stack.REPO_ROOT, stack._latest_published, stack.registry_pins.head_commit = original
+        (
+            stack.REPO_ROOT,
+            stack._latest_published,
+            stack.registry_pins.head_commit,
+            stack.registry_pins.commit_summary,
+        ) = original
 
 
 def test_a_cut_stamps_the_git_ref_that_ran_it() -> None:
@@ -1063,6 +1084,192 @@ def test_the_key_names_the_repo_so_no_table_says_which() -> None:
         asked == [("test-org", "a-git-repo")],
         f"{asked}",
     )
+
+
+# The comment the source stack carries over its git-ref pin: wrapped prose naming
+# the commit it ran, a Renovate annotation, and a trailing note on the pin line.
+_OLD_PIN_LINES = (
+    "      # A commit, not a version: a-git-repo cuts no per-stack tag.\n"
+    "      # 11111111 is the commit the old stack ran.\n"
+    "      # renovate: datasource=git-refs depName=https://example.test/a-git-repo\n"
+    f'      a-git-repo: "{_OLD_SHA}"   # old trailing note\n'
+)
+_EVIDENCE_FIXTURE = _CUT_FIXTURE.replace(f'      a-git-repo: "{_OLD_SHA}"\n', _OLD_PIN_LINES)
+
+
+def _cut_block(text: str) -> str:
+    """The new stack's block, which a cut appends last."""
+    return text.split("  9.9.0-rc.3:\n", 1)[1]
+
+
+def test_a_cut_that_moves_the_ref_writes_evidence_the_checker_accepts() -> None:
+    """The cut clones the source block, so the comment above a moved git ref
+    still described the commit it replaced and check_pin_evidence.py failed
+    every cut until someone rewrote it by hand."""
+    import tempfile
+
+    import check_pin_evidence as evidence
+
+    asked: list[tuple[str, str, str]] = []
+
+    def _summary(org: str, repo: str, sha: str) -> tuple[str, str]:
+        asked.append((org, repo, sha))
+        return "fix: run the e2e suites under console TLS (#216)", "2026-10-10"
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc = _cut_into(
+            tmp, lambda org, repo, ref="main": _NEW_SHA, _summary, _EVIDENCE_FIXTURE
+        )
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+    expect("the cut writes the file", rc == 0, f"exit {rc}")
+    stacks = evidence.read_pins(text)
+    moved = stacks["9.9.0-rc.3"]["content.a-git-repo"]
+    expect("the ref moved", moved.value == _NEW_SHA, f"{moved.value!r}")
+    expect(
+        "check_pin_evidence.py accepts the cut",
+        not evidence.detached(stacks["9.9.0-rc.2"], stacks["9.9.0-rc.3"]),
+        f"evidence still reads {moved.evidence!r}",
+    )
+    expect(
+        "the evidence cites the commit it moved to: sha, date and subject",
+        "22222222" in moved.evidence
+        and "2026-10-10" in moved.evidence
+        and "fix: run the e2e suites under console TLS (#216)" in moved.evidence,
+        f"{moved.evidence!r}",
+    )
+    expect(
+        "and nothing of the commit it replaced",
+        "11111111" not in moved.evidence and "old trailing note" not in moved.evidence,
+        f"{moved.evidence!r}",
+    )
+    expect(
+        "the commit is read at the sha the ref moved to, in the repo the key names",
+        asked == [("test-org", "a-git-repo", _NEW_SHA)],
+        f"{asked}",
+    )
+    expect(
+        "a Renovate annotation above the pin is not evidence and survives",
+        "      # renovate: datasource=git-refs depName=https://example.test/a-git-repo\n"
+        in _cut_block(text),
+        _cut_block(text),
+    )
+    expect(
+        "the source stack keeps the comment that justified ITS ref",
+        "11111111 is the commit the old stack ran"
+        in stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence
+        and "old trailing note" in stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        f"{stacks['9.9.0-rc.2']['content.a-git-repo'].evidence!r}",
+    )
+
+
+def test_a_cut_that_leaves_the_ref_alone_keeps_its_evidence() -> None:
+    """A ref already at main did not move, so its comment is still true."""
+    import tempfile
+
+    import check_pin_evidence as evidence
+
+    def _unread(org: str, repo: str, sha: str) -> tuple[str, str]:
+        raise AssertionError("an unmoved ref must not be looked up")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc = _cut_into(
+            tmp, lambda org, repo, ref="main": _OLD_SHA, _unread, _EVIDENCE_FIXTURE
+        )
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+    expect("the cut writes the file", rc == 0, f"exit {rc}")
+    expect(
+        "the comment and pin line carry over byte for byte",
+        _OLD_PIN_LINES in _cut_block(text),
+        _cut_block(text),
+    )
+    stacks = evidence.read_pins(text)
+    expect(
+        "the evidence reads the same as the stack it was cut from",
+        stacks["9.9.0-rc.3"]["content.a-git-repo"].evidence
+        == stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        f"{stacks['9.9.0-rc.3']['content.a-git-repo'].evidence!r}",
+    )
+
+
+def test_a_cut_refuses_when_it_cannot_read_the_commit_it_cites() -> None:
+    """No evidence is better than invented evidence: the cut stops and writes nothing."""
+    import tempfile
+
+    def _unreadable(org: str, repo: str, sha: str) -> tuple[str, str]:
+        raise stack.registry_pins.RegistryError("HTTP 502")
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        try:
+            _cut_into(
+                tmp, lambda org, repo, ref="main": _NEW_SHA, _unreadable, _EVIDENCE_FIXTURE
+            )
+        except SystemExit as exc:
+            expect(
+                "it refuses, naming the repo, the commit and the cause",
+                "a-git-repo@22222222" in str(exc) and "HTTP 502" in str(exc),
+                f"message={str(exc)!r}",
+            )
+        else:
+            expect("it refuses rather than citing nothing", False, "cut returned")
+        expect(
+            "and leaves versions.yaml as it found it",
+            (tmp / "versions.yaml").read_text(encoding="utf-8") == _EVIDENCE_FIXTURE,
+            "the file changed",
+        )
+
+
+def _gh_answers(stdout: str, returncode: int = 0, stderr: str = "") -> object:
+    """A stand-in for subprocess, so commit_summary reads canned `gh api` output."""
+    import subprocess
+    import types
+
+    def _run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    return types.SimpleNamespace(run=_run)
+
+
+def test_commit_summary_returns_the_subject_line_and_the_date() -> None:
+    import json
+
+    original = stack.registry_pins.subprocess
+    message = "fix: first line (#9)\r\n\r\nBody that is not the subject.\r\n"
+    reply = json.dumps({"message": message, "date": "2026-10-10T06:50:15Z"})
+    stack.registry_pins.subprocess = _gh_answers(reply)
+    try:
+        got = stack.registry_pins.commit_summary("o", "r", "a" * 40)
+    finally:
+        stack.registry_pins.subprocess = original
+    expect(
+        "the subject is the first line only and the date is a day",
+        got == ("fix: first line (#9)", "2026-10-10"),
+        f"{got}",
+    )
+
+
+def test_commit_summary_will_not_return_an_empty_subject() -> None:
+    import json
+
+    original = stack.registry_pins.subprocess
+    try:
+        for name, run in (
+            ("a failed gh call", _gh_answers("", 1, "HTTP 404")),
+            ("an empty message", _gh_answers(json.dumps({"message": "", "date": "2026-10-10T00:00:00Z"}))),
+        ):
+            stack.registry_pins.subprocess = run
+            try:
+                stack.registry_pins.commit_summary("o", "r", "a" * 40)
+            except stack.registry_pins.RegistryError:
+                expect(f"{name} raises RegistryError", True)
+            else:
+                expect(f"{name} raises RegistryError", False, "returned")
+    finally:
+        stack.registry_pins.subprocess = original
 
 
 def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:

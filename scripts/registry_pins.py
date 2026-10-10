@@ -32,6 +32,7 @@ Everything here is decoupled from any pin FILE. The public surface is:
   resolve_digest(org, app, tag)-> just the digest string, or None
   version_key(tag)             -> numeric sort key for vX.Y.Z tags
   head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
+  commit_summary(org, repo, sha) -> (subject line, commit date) of that commit
 
 Two ways to reach a registry, because they need different credentials.
 `docker buildx imagetools` authenticates from the docker credential store and
@@ -367,3 +368,31 @@ def head_commit(org: str, repo: str, ref: str = "main") -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise RegistryError(f"{org}/{repo}@{ref} did not resolve to a commit sha: {sha!r}")
     return sha
+
+
+def commit_summary(org: str, repo: str, sha: str) -> tuple[str, str]:
+    """The subject line and committer date (YYYY-MM-DD) of one commit.
+
+    What a pin recorded by commit cites as its evidence. Raises RegistryError
+    when the commit cannot be read or has no subject, so a pin is never
+    justified by an empty string.
+    """
+    proc = subprocess.run(
+        [
+            "gh", "api", f"/repos/{org}/{repo}/commits/{sha}",
+            "--jq", "{message: .commit.message, date: .commit.committer.date}",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RegistryError(proc.stderr.strip() or f"gh api could not read {org}/{repo}@{sha}")
+    record = json.loads(proc.stdout)
+    lines = (record.get("message") or "").strip().splitlines()
+    date = (record.get("date") or "")[:10]
+    if not lines or not date:
+        raise RegistryError(f"{org}/{repo}@{sha} returned no subject or date: {record!r}")
+    return lines[0].strip(), date
