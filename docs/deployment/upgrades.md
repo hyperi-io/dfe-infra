@@ -76,6 +76,10 @@ One pin, `base.dfe-infra`, selects the whole certified stack, and `apply` sets i
 
 The work around the pin still runs in stage order: confirms, `before` checks, `finalise` notes and waits. The Kafka version hold is the one place a component waits for its own stage. `--stop-before` skips a stage's hooks and waits, not its component versions. Staging the pin itself is open in https://github.com/hyperi-io/dfe-infra/issues/508.
 
+### Onto the thin charts
+
+A move to a stack carrying `chart-digests:`, from one that does not, puts the apps on thin charts, and `apply` adds a stage either side of the first one that moves an Argo-managed component. `overlay-vocabulary`, before it, copies each set value in `values/*-values.yaml` to the key `scripts/weave/value-map.yaml` names and keeps the 2.2.0 key, so the 2.2.0 charts render as before. `podSecurityContext.seccompProfileType` alone moves out, because the thin chart would copy it into the pod spec. The stage never overwrites a key already set, prints what it cannot carry for a hand edit, as `plan` does, and commits nothing on a second run. `--stop-before` that first stage leaves the rewrite committed and nothing else moved. `enrichment-tables`, after it, names each table file in its app's config under the mount `apps.yaml` declares.
+
 ## Re-size
 
 Re-run the sizing resolver with a new estimate, focus or ratio and diff the

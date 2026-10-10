@@ -13,10 +13,25 @@
 #                                          now; the same path where it is kept
 #         dropped: <reason>                nothing reads it after the switch
 #         note: <text>                     what a deployer has to know
+#         migrate: <how>                   what the migration writes to `to` in place
+#                                          of a copy: fullname (<project>-<component>),
+#                                          list (a list of the one value), tls (true
+#                                          for a protocol carrying SSL), public
+#                                          (whether the mode is public), oidc (an
+#                                          extraEnv entry per envMappings row), move
+#                                          (a copy, and the old key taken out, where
+#                                          the thin chart would render it verbatim
+#                                          into a Kubernetes object), or by-hand
+#                                          (nothing, and the plan prints the note)
+#         when-off: {<path>: <value>}      what the migration writes where the key
+#                                          is set empty, null or false, which 2.2.0
+#                                          read as off, or by-hand to print the note
+#         default: <value>                 for move, what 2.2.0 renders without the
+#                                          key, so the plan prints any other value
 #
 # An entry covers the keys beneath it. The 2.2.0 charts read every moved key
 # through `default`, so an empty or null value there meant "derive it": the
-# migration moves a set value only.
+# migration moves a set value only, and keeps the key where it was.
 
 apps:
   dfe-ui:
@@ -31,6 +46,7 @@ apps:
           deployment that renamed the engine sets extraEnv.INTERNAL_API_URL.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. The default renders dfe-ui,
           the chart's name, so only a renamed instance sets it.
@@ -68,6 +84,7 @@ apps:
         to: extraEnv.NODE_OPTIONS
       config.nextauthSecretName:
         to: config.nextauthSecretName
+        when-off: by-hand
         note: >-
           dfe-extras names the NextAuth ExternalSecret from it, and
           secrets.nextauth.existingSecret takes it through tpl. Empty no longer
@@ -144,6 +161,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: Merged over the contract's security block, under the same field names.
@@ -186,6 +205,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. The default renders
           dfe-hyperdx, the chart's name, so only a renamed instance sets it.
@@ -233,6 +253,7 @@ apps:
           (packages/api/src/config.ts reads CLICKHOUSE_HOST, _USER and _PASSWORD).
       clickhouse.passwordSecretName:
         to: clickhouse.passwordSecretName
+        when-off: by-hand
         note: >-
           secrets.clickhouse.existingSecret takes it through tpl. The reference
           is optional now, so empty leaves CLICKHOUSE_PASSWORD unresolved where
@@ -258,9 +279,10 @@ apps:
         to: mongodb.uri
       mongodb.passwordSecretName:
         to: mongodb.passwordSecretName
+        when-off: {extraEnv.MONGO_PASSWORD: ""}
         note: >-
           Empty no longer drops MONGO_PASSWORD: an external endpoint with inline
-          credentials sets extraEnv.MONGO_PASSWORD to null as well.
+          credentials sets extraEnv.MONGO_PASSWORD to an empty string as well.
       mongodb.passwordSecretKey:
         to: mongodb.passwordSecretKey
       sessionSecret.name:
@@ -285,6 +307,7 @@ apps:
           (src/dfe_engine/api/v1/hyperdx.py).
       dashboards.enabled:
         to: dashboards.enabled
+        when-off: {initContainers: []}
         note: >-
           false drops the provisioner env. The init container and its volume sit
           in apps/hyperdx/values.yaml, so an overlay sets initContainers to [] as well.
@@ -304,6 +327,7 @@ apps:
         to: dashboards.image.pullPolicy
       dashboards.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/hyperdx/values.yaml; an overlay restates the list.
       otlp:
         dropped: OTLP ports 4317 and 4318 are dropped. The fork image runs no OTLP receiver.
@@ -358,6 +382,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -374,6 +400,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. The default renders
           dfe-archiver, the chart's name, so only a renamed instance sets it.
@@ -409,6 +436,7 @@ apps:
           the variable empty, which the app reads as unset, where 2.2.0 left it out.
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false instead.
@@ -426,6 +454,7 @@ apps:
         note: S3_BUCKET, through tpl. Empty renders it empty, which the app reads as unset.
       s3.secretName:
         to: s3.secretName
+        when-off: {secrets.s3.enabled: false}
         note: >-
           secrets.s3.existingSecret takes it through tpl. The references stay
           optional. Empty no longer drops them: set secrets.s3.enabled to false.
@@ -448,6 +477,7 @@ apps:
           port and ARCHIVER_GRPC_LISTEN, both 6000, so moving it is a contract change.
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: The wait-for-engine block in apps/dfe-archiver/values.yaml. Off is an initContainers list without it.
       waitForEngine.service:
         to: waitForEngine.service
@@ -461,6 +491,7 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-archiver/values.yaml, so an overlay restates the list.
       otel.endpoint:
         to: otel.endpoint
@@ -529,6 +560,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -570,6 +603,7 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
         note: >-
           The pressure trigger block in apps/dfe-archiver/profile-*.yaml, on every
           profile but slim. Off is an extraTriggers list without it.
@@ -599,6 +633,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>, which dfe-engine makes unique
           per instance. It also names the default consumer group and telemetry.
@@ -628,11 +663,13 @@ apps:
         note: DFE_TRANSFORM_SOURCE_BROKERS and _SINK_BROKERS on the bus profiles, through tpl.
       kafka.securityProtocol:
         to: [configOverrides.source.tls.enabled, configOverrides.sink.tls.enabled]
+        migrate: tls
         note: >-
           2.2.0 turned source.tls and sink.tls on for a protocol carrying SSL. The
           config file takes no template, so a TLS listener sets both to true.
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false instead.
@@ -647,9 +684,11 @@ apps:
         note: DFE_TRANSFORM_SOURCE_GROUP_ID on the bus profiles. Empty is the instance's fullname.
       kafka.autoOffsetReset:
         to: config.source.auto_offset_reset
+        migrate: by-hand
         note: The bus profiles default it to earliest, and an overlay value wins as before.
       loaderPort:
         to: config.sink.endpoint
+        migrate: by-hand
         note: >-
           The direct profiles' default endpoint names port 6000, so a loader on
           another port is a config.sink.endpoint.
@@ -676,6 +715,7 @@ apps:
         note: Empty is the fullname, as 2.2.0's dfe-<component>.
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: The wait-for-engine block in apps/dfe-transform-vrl/values.yaml. Off is an initContainers list without it.
       waitForEngine.service:
         to: waitForEngine.service
@@ -689,6 +729,7 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-transform-vrl/values.yaml, so an overlay restates the list.
       otel.endpoint:
         to: otel.endpoint
@@ -757,6 +798,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -798,6 +841,7 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
         note: >-
           The pressure trigger block in apps/dfe-transform-vrl/profile-*.yaml, on
           every profile but slim. Off is an extraTriggers list without it.
@@ -830,6 +874,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>, which dfe-engine makes unique
           per instance. It also names the default consumer group and telemetry.
@@ -860,11 +905,13 @@ apps:
         note: DFE_TRANSFORM_SOURCE_BROKERS and _SINK_BROKERS on the bus profiles, through tpl.
       kafka.securityProtocol:
         to: [configOverrides.source.tls.enabled, configOverrides.sink.tls.enabled]
+        migrate: tls
         note: >-
           2.2.0 turned source.tls and sink.tls on for a protocol carrying SSL. The
           config file takes no template, so a TLS listener sets both to true.
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false instead.
@@ -879,9 +926,11 @@ apps:
         note: DFE_TRANSFORM_SOURCE_GROUP_ID on the bus profiles. Empty is the instance's fullname.
       kafka.autoOffsetReset:
         to: config.source.auto_offset_reset
+        migrate: by-hand
         note: The bus profiles default it to smallest, Vector's spelling, and an overlay value wins as before.
       loaderPort:
         to: config.sink.endpoint
+        migrate: by-hand
         note: >-
           The direct profiles' default endpoint names port 6000, so a loader on
           another port is a config.sink.endpoint.
@@ -907,6 +956,7 @@ apps:
         note: Empty is the fullname, as 2.2.0's dfe-<component>.
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: The wait-for-engine block in apps/dfe-transform-vector/values.yaml. Off is an initContainers list without it.
       waitForEngine.service:
         to: waitForEngine.service
@@ -920,6 +970,7 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-transform-vector/values.yaml, so an overlay restates the list.
       otel.endpoint:
         to: otel.endpoint
@@ -989,6 +1040,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -1030,6 +1083,7 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
         note: >-
           Off in 2.2.0: this app sets no scaling_pressure gauge. Turning it on is
           a keda.extraTriggers list holding argocd/values/apps/_fragments/pressure-trigger.yaml.
@@ -1061,6 +1115,7 @@ apps:
           bus-only app. The thin chart's own name is fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>, which dfe-engine makes unique
           per instance. It also names the instance's telemetry.
@@ -1091,6 +1146,7 @@ apps:
           file, and beats an overlay's source.brokers.
       kafka.securityProtocol:
         to: kafka.securityProtocol
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           KAFKA_SECURITY_PROTOCOL on the bus profiles, through tpl, beside the SASL
           references. Empty renders it empty where 2.2.0 dropped all four: set
@@ -1100,6 +1156,7 @@ apps:
         note: KAFKA_SASL_MECHANISM on the bus profiles, through tpl.
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false instead.
@@ -1181,6 +1238,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -1222,6 +1281,7 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
         note: >-
           The pressure trigger block in apps/dfe-transform-elastic/profile-*.yaml,
           on every profile but slim. Off is an extraTriggers list without it.
@@ -1245,6 +1305,7 @@ apps:
         note: dfe-extras names the ingest NetworkPolicy and the mesh listener from it.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. The default renders
           dfe-receiver, the chart's name, so only a renamed instance sets it.
@@ -1267,6 +1328,7 @@ apps:
           envFrom; 2.2.0's derived env beat the overlay's.
       listeners:
         to: [listeners, config]
+        migrate: by-hand
         note: >-
           dfe-extras opens the ingest NetworkPolicy on the exposed entries and
           refuses an exposed non-http entry in internal mode. The contract owns
@@ -1280,6 +1342,7 @@ apps:
           the contract's http port.
       receiver.loaderPort:
         to: config.loader.grpc_endpoint
+        migrate: by-hand
         note: The loader's port is part of the endpoint URL apps/dfe-receiver/profile-*.yaml sets.
       receiver.buffer.memoryLimit:
         to: configOverrides.buffer.memory_limit
@@ -1295,6 +1358,7 @@ apps:
         to: writablePaths.spool.sizeLimit
       exposure.mode:
         to: [exposure.mode, publicService.enabled]
+        migrate: public
         note: >-
           dfe-extras reads the mode for the ingest NetworkPolicy; the thin chart's
           load balancer is publicService.enabled, which dfe-extras refuses to see
@@ -1328,6 +1392,7 @@ apps:
         to: kafka.securityProtocol
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL env: set secrets.kafka.enabled false instead.
@@ -1413,6 +1478,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -1457,6 +1524,8 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
+        when-off: {keda.extraTriggers: []}
         note: >-
           The ScalingPressure trigger is keda.extraTriggers in
           apps/dfe-receiver/values.yaml; false no longer drops it, an overlay sets
@@ -1479,11 +1548,13 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: >-
           The init container sits whole in apps/dfe-receiver/values.yaml; false no
           longer drops it, an overlay restates initContainers without it.
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-receiver/values.yaml; an overlay restates the list.
 
   dfe-loader:
@@ -1494,6 +1565,7 @@ apps:
         note: dfe-extras names the mesh listener and dfe-loader-env from it.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. The default renders
           dfe-loader, the chart's name, so only a renamed instance sets it.
@@ -1527,6 +1599,7 @@ apps:
         to: kafka.securityProtocol
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL env: set secrets.kafka.enabled false instead.
@@ -1542,6 +1615,7 @@ apps:
         to: clickhouse.mode
       clickhouse.passwordSecretName:
         to: clickhouse.passwordSecretName
+        when-off: {secrets.clickhouse.enabled: false}
         note: >-
           secrets.clickhouse.existingSecret takes it through tpl. Empty no longer
           drops DFE_LOADER__CLICKHOUSE__PASSWORD: set secrets.clickhouse.enabled
@@ -1568,6 +1642,7 @@ apps:
         to: clickhouse.tls.ca.dataKey
       clickhouse.tls.bundleResources:
         to: initContainers
+        migrate: by-hand
         note: The clickhouse-ca-bundle init container sits whole in apps/dfe-loader/values.yaml; an overlay restates the list.
       dlq.topic:
         to: dlq.topic
@@ -1654,6 +1729,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
@@ -1698,6 +1775,8 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
+        when-off: {keda.extraTriggers: []}
         note: >-
           The ScalingPressure trigger is keda.extraTriggers in
           apps/dfe-loader/values.yaml; false no longer drops it, an overlay sets
@@ -1720,11 +1799,13 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: >-
           The init container sits whole in apps/dfe-loader/values.yaml; false no
           longer drops it, an overlay restates initContainers without it.
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-loader/values.yaml; an overlay restates the list.
 
   # Most keys stay where they were: dfe-extras renders the hunt runner, the keda
@@ -1739,6 +1820,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>, and dfe-extras derives the
           component from it. The default renders dfe-engine, the chart's name.
@@ -1786,6 +1868,7 @@ apps:
         to: kafka.messageMaxBytes
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false as well.
@@ -1803,6 +1886,7 @@ apps:
         to: clickhouse.mode
       clickhouse.passwordSecretName:
         to: clickhouse.passwordSecretName
+        when-off: {secrets.clickhouse.enabled: false}
         note: >-
           secrets.clickhouse.existingSecret takes it through tpl, and the keda shim
           reads it. Empty no longer drops DFE_CLICKHOUSE_PASSWORD: set
@@ -1870,6 +1954,7 @@ apps:
           ConfigMap, where 2.2.0 projected ca-bundle.pem alone.
       gitops.enabled:
         to: gitops.enabled
+        when-off: {secrets.gitops.enabled: false}
         note: >-
           dfe-extras drops DFE_GITOPS_* and the hunt runner's git-sync on false.
           Set secrets.gitops.enabled to false as well; the deploy-repo emptyDir
@@ -1898,6 +1983,7 @@ apps:
         to: auth.jwtSecret
       auth.adminSecretName:
         to: auth.adminSecretName
+        when-off: {secrets.admin.enabled: false}
         note: >-
           dfe-extras mints it and names it in DFE_AUTH_LOCAL_ADMIN_SECRET_NAME, and
           secrets.admin.existingSecret takes it through tpl. Empty no longer drops
@@ -1913,6 +1999,7 @@ apps:
         to: auth.adminSecretPath
       auth.breakglassSecretName:
         to: auth.breakglassSecretName
+        when-off: {secrets.breakglass.enabled: false}
         note: >-
           dfe-extras mints it, and secrets.breakglass.existingSecret takes it
           through tpl. Empty no longer drops DFE_AUTH_BREAKGLASS_PASSWORD: set
@@ -1944,14 +2031,17 @@ apps:
         to: seedAuth.adminPassword
       oidc.enabled:
         to: extraEnv
+        migrate: oidc
         note: >-
           Where true, one extraEnv entry per providers[].envMappings row: the
           variable, as a secretKeyRef on that provider's secretName and key.
       oidc.providers:
         to: extraEnv
+        migrate: oidc
         note: The same rows as oidc.enabled; the thin chart reads no oidc block.
       huntRunner.enabled:
         to: huntRunner.enabled
+        when-off: {secrets.hunt-runner.enabled: false}
         note: >-
           dfe-extras renders the hunt runner and its Secret from it. false also
           needs secrets.hunt-runner.enabled false, or the engine pod waits on a
@@ -2083,6 +2173,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
         note: >-
           The engine pod only. The hunt runner and keda shim keep RuntimeDefault:
           scalo-service merges the whole block into the engine pod, so the 2.2.0
@@ -2102,6 +2194,7 @@ apps:
           fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>: dfe-fetcher-<instance> for a
           per-config instance, which also names the cursor claim
@@ -2140,6 +2233,7 @@ apps:
           the overlay's config names its own kafka.brokers.
       kafka.saslSecretName:
         to: kafka.saslSecretName
+        when-off: {secrets.kafka.enabled: false}
         note: >-
           secrets.kafka.existingSecret takes it through tpl. Empty no longer drops
           the SASL references: set secrets.kafka.enabled to false instead.
@@ -2150,6 +2244,7 @@ apps:
           listener, through tpl. Empty otherwise, which the app reads as unset.
       credentials.secretName:
         to: credentials.secretName
+        when-off: by-hand
         note: >-
           The optional envFrom Secret in apps/dfe-fetcher/values.yaml, through tpl.
           Empty no longer drops it: an overlay restates extraEnvFrom without it.
@@ -2172,6 +2267,7 @@ apps:
         note: DFE_FETCHER_DLQ_MODE, as dlq.topic.
       waitForEngine.enabled:
         to: initContainers
+        migrate: by-hand
         note: The wait-for-engine block in apps/dfe-fetcher/values.yaml. Off is an initContainers list without it.
       waitForEngine.service:
         to: waitForEngine.service
@@ -2185,6 +2281,7 @@ apps:
         to: waitForEngine.intervalSeconds
       waitForEngine.resources:
         to: initContainers
+        migrate: by-hand
         note: The init container sits whole in apps/dfe-fetcher/values.yaml, so an overlay restates the list.
       otel.endpoint:
         to: otel.endpoint
@@ -2257,6 +2354,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: The app container only. The wait-for-engine init container's sits in its block.
@@ -2302,6 +2401,7 @@ apps:
         to: keda.triggerAuthentication.secretTargetRef
       keda.pressure.enabled:
         to: keda.extraTriggers
+        migrate: by-hand
         note: >-
           No layer turned the fetcher's pressure trigger on in 2.2.0, and
           apps/dfe-fetcher carries none. An overlay that wants it adds the
@@ -2323,6 +2423,7 @@ apps:
           thin chart's own name is fullnameOverride, see component.
       component:
         to: fullnameOverride
+        migrate: fullname
         note: >-
           fullnameOverride is <project>-<component>. apps/culvert/values.yaml sets
           dfe-culvert, so only a renamed instance sets it.
@@ -2473,12 +2574,15 @@ apps:
         to: writablePaths.pki.persistence.storageClass
       persistence.accessMode:
         to: writablePaths.pki.persistence.accessModes
+        migrate: list
         note: A list now, of the one access mode.
       ipForward.enabled:
         to: initContainers
+        migrate: by-hand
         note: The enable-ip-forward block in apps/culvert/values.yaml. Off is an initContainers list without it.
       tunDevice.enabled:
         to: extraVolumes
+        migrate: by-hand
         note: >-
           The tun volume and its mount in apps/culvert/values.yaml. Off is
           extraVolumes and extraVolumeMounts restated without them.
@@ -2532,6 +2636,8 @@ apps:
         to: podSecurityContext.fsGroup
       podSecurityContext.seccompProfileType:
         to: podSecurityContext.seccompProfile.type
+        migrate: move
+        default: RuntimeDefault
       containerSecurityContext:
         to: containerSecurityContext
         note: >-
