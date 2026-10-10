@@ -2948,6 +2948,28 @@ def _cloud_programs_loadbalancers(cloud: str) -> bool:
     return bool(found) and cloud in found.group(1).split()
 
 
+def _storage_class_verdict(
+    storage_class: str, cloud: str, sc_names: list[str], default_scs: list[str]
+) -> tuple[str, str]:
+    """Preflight's storage verdict, as ("ok" | "warn" | "fail", message).
+
+    Mirrors bootstrap.sh step [1b/7]: a missing local-path class is installed,
+    and on AWS a missing named class is created (gp3, ebs.csi.aws.com) because
+    EKS 1.30+ ships only gp2 -- so neither is a reason to refuse a fresh cluster.
+    """
+    if storage_class:
+        if storage_class in sc_names:
+            return "ok", f"named StorageClass {storage_class!r} exists"
+        if storage_class == "local-path" and not sc_names:
+            return "ok", f"StorageClass {storage_class!r} absent -- bootstrap detect-or-installs local-path-provisioner"
+        if cloud == "aws":
+            return "ok", f"StorageClass {storage_class!r} absent -- bootstrap creates it (gp3, ebs.csi.aws.com)"
+        return "fail", f"StorageClass {storage_class!r} not found (have: {', '.join(sc_names) or 'none'})"
+    if default_scs:
+        return "ok", f"default StorageClass: {default_scs[0]}"
+    return "warn", "no default StorageClass -- bootstrap will install local-path-provisioner (fine on-prem; on a cloud target set DFE_STORAGE_CLASS)"
+
+
 def _strimzi_stored_versions(crds: list[dict], base: list[str]) -> tuple[bool, str]:
     """Whether the Strimzi CRDs already on the cluster let the 1.x operator chart install.
 
@@ -3194,17 +3216,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for s in scs
         if s.get("metadata", {}).get("annotations", {}).get("storageclass.kubernetes.io/is-default-class") == "true"
     ]
-    if storage_class:
-        if storage_class in sc_names:
-            ok(f"named StorageClass {storage_class!r} exists")
-        elif storage_class == "local-path" and not sc_names:
-            ok(f"StorageClass {storage_class!r} absent -- bootstrap detect-or-installs local-path-provisioner")
-        else:
-            fail(f"StorageClass {storage_class!r} not found (have: {', '.join(sc_names) or 'none'})")
-    elif default_scs:
-        ok(f"default StorageClass: {default_scs[0]}")
-    else:
-        warn("no default StorageClass -- bootstrap will install local-path-provisioner (fine on-prem; on a cloud target set DFE_STORAGE_CLASS)")
+    level, msg = _storage_class_verdict(storage_class, file_env.get("DFE_CLOUD") or "", sc_names, default_scs)
+    {"ok": ok, "warn": warn, "fail": fail}[level](msg)
 
     # 4 + 5. One deploy sweep serves the LB heuristic and adopt-or-install.
     rc, deploys_json, _ = _kubectl_json(base, "get", "deployments", "-A")
