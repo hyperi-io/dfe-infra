@@ -751,6 +751,17 @@ def test_check_clickhouse_merges_names_an_unreadable_secret(monkeypatch: pytest.
     )
 
 
+def test_check_clickhouse_merges_names_a_secret_with_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing `password` key reads back empty with exit 0, so it is said, not passed over."""
+    _mock_run(monkeypatch, _ch_pods("ch-0"), _proc(0, stdout=""), _proc(1))
+    ok, detail = u.check_clickhouse_merges("kc")
+    assert ok is False
+    assert detail == (
+        "no ClickHouse credential answers on ch-0: secret/clickhouse-admin-password holds no password, "
+        "tried default with no password"
+    )
+
+
 def test_check_clickhouse_merges_no_pod(monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
