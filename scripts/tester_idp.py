@@ -957,7 +957,7 @@ def unwire_engine(args: argparse.Namespace) -> int:
                 args.providers_configmap: [provider_key],
                 args.groups_configmap: group_keys,
             },
-            "holder": args.secret_name,
+            "holder": args.holder_name,
             "seeded copies": paths,
         }
         print(json.dumps(plan, indent=2))
@@ -968,7 +968,7 @@ def unwire_engine(args: argparse.Namespace) -> int:
     ):
         if get_json(args, "configmap", name) is not None:
             merge_patch(args, "configmap", name, {"data": dict.fromkeys(keys)})
-    delete = [*_kube(args), "-n", args.namespace, "delete", "secret", args.secret_name]
+    delete = [*_kube(args), "-n", args.namespace, "delete", "secret", args.holder_name]
     _run([*delete, "--ignore-not-found"])
     rc = remove_seeded_copies(args, args.config_dir, paths)
     print(f"=== {args.provider} unwired from namespace {args.namespace} ===", file=sys.stderr)
@@ -1025,7 +1025,7 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
 
     objects = [
         render_secret(
-            args.secret_name,
+            args.holder_name,
             args.namespace,
             {
                 "client-id": env["TESTER_IDP_CLIENT_ID"],
@@ -1075,7 +1075,7 @@ def cmd_idp_wire_engine(args: argparse.Namespace) -> int:
     print(f"\n=== wired {env['TESTER_IDP_ISSUER']} into namespace {args.namespace} ===", file=sys.stderr)
     print("  Set these on the consumer's chart values to pick them up:", file=sys.stderr)
     print("    oidc.enabled: true", file=sys.stderr)
-    print(f"    oidc.providers[0].secretName: {args.secret_name}", file=sys.stderr)
+    print(f"    oidc.providers[0].secretName: {args.holder_name}", file=sys.stderr)
     print(
         f"    oidc.providers[0].envMappings: "
         f"{{{args.client_id_env}: client-id, {args.client_secret_env}: client-secret}}",
@@ -1230,7 +1230,8 @@ def add_idp_subparser(sub) -> None:
                     help="the 0600 file `idp deploy` wrote")
     we.add_argument("--provider", default=DEFAULT_PROVIDER, help="provider name the engine registers it under")
     we.add_argument("--display-name", default="Dex (tester IdP)", help="label shown on the login page")
-    we.add_argument("--secret-name", default="dfe-oidc-dex", help="Secret to create the credentials in")
+    we.add_argument("--secret-name", dest="holder_name", default="dfe-oidc-dex",
+                    help="Secret to create the credentials in")
     we.add_argument("--providers-configmap", default="dfe-oidc-providers",
                     help="ConfigMap to write the provider definition to")
     we.add_argument("--groups-file", default=str(DEFAULT_GROUPS_FILE),
