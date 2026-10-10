@@ -65,8 +65,12 @@ does, so a component whose tag stays put while its digest moves still moves.
                push only with --push; wait for Argo to report every
                Application Synced and Healthy and then for every Deployment
                and StatefulSet in the DFE namespace to finish rolling out,
-               both bounded by --timeout, and after a stage that bumps the
-               Strimzi operator wait again on every Kafka CR's
+               both bounded by --timeout. After a push that carried a commit,
+               and after the retarget below, each Application must also show
+               a `status.reconciledAt` from after that change, since until
+               Argo compares it again its Synced and Healthy are the state
+               from before. After a stage that bumps the
+               Strimzi operator, wait again on every Kafka CR's
                `status.operatorLastSuccessfulVersion` reaching the new
                operator version, under the same bound. A rollout has finished
                when its controller has observed the current generation, every
@@ -314,6 +318,17 @@ def _absent(err: str) -> bool:
 
 def _git(deploy: Path, *args: str) -> subprocess.CompletedProcess:
     return _run(["git", "-C", str(deploy), *args])
+
+
+def _unpushed(deploy: Path) -> bool:
+    """Whether the deploy repo holds a commit its upstream lacks; True when git cannot say."""
+    result = _git(deploy, "rev-list", "--count", "@{upstream}..HEAD")
+    return result.returncode != 0 or result.stdout.strip() != "0"
+
+
+def _push_moment(deploy: Path) -> datetime | None:
+    """change_moment() when a push has a commit to carry; None when Argo has nothing new to read."""
+    return change_moment() if _unpushed(deploy) else None
 
 
 # The deploy paths an upgrade commit carries. `git add` with one missing
@@ -666,12 +681,32 @@ def _source_revisions(app: dict) -> list[str]:
     return [str(src.get("targetRevision") or "") for src in sources if isinstance(src, dict)]
 
 
+def _argo_time(value: object) -> datetime | None:
+    """An Argo status timestamp (RFC 3339 in UTC, whole seconds), or None when absent or unreadable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+def change_moment() -> datetime:
+    """The instant, to the whole second Argo stamps, taken before a push or retarget lands.
+
+    Taken before, so a reconcile the change itself triggers is never mistaken for an older one.
+    """
+    return datetime.now(UTC).replace(microsecond=0)
+
+
 def check_argo_apps(
     kubeconfig: str | None,
     namespace: str = DEFAULT_ARGOCD_NAMESPACE,
     *,
     stale_revision: str = "",
     require_healthy: bool = True,
+    reconciled_after: datetime | None = None,
 ) -> tuple[bool, str]:
     """Every Argo Application in `namespace` is Synced and Healthy.
 
@@ -681,7 +716,10 @@ def check_argo_apps(
     fails: right after a retarget every Application is still Synced to the old
     one until the ApplicationSet controller regenerates it. With
     `require_healthy` False an Application counts once it is Synced, whatever
-    its health, for a wait whose health a later stage settles.
+    its health, for a wait whose health a later stage settles. With
+    `reconciled_after`, an Application whose `status.reconciledAt` is earlier,
+    or absent, also fails: until Argo compares an Application against the
+    change again, its Synced and Healthy are the state from before it.
     """
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "applications.argoproj.io")
     if rc != 0:
@@ -695,15 +733,20 @@ def check_argo_apps(
         status = app.get("status") or {}
         sync = (status.get("sync") or {}).get("status") or "Unknown"
         health = (status.get("health") or {}).get("status") or "Unknown"
+        reconciled = _argo_time(status.get("reconciledAt"))
         if stale_revision and stale_revision in _source_revisions(app):
             bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
+        elif reconciled_after and (reconciled is None or reconciled < reconciled_after):
+            seen = status.get("reconciledAt") or "never"
+            bad.append(f"{name} (last reconciled {seen}, before this change)")
         elif sync != "Synced" or (require_healthy and health != "Healthy"):
             bad.append(f"{name} (sync {sync}, health {health})")
     wanted = "Synced and Healthy" if require_healthy else "Synced"
     if bad:
         extra = f", +{len(bad) - 6} more" if len(bad) > 6 else ""
         return False, f"{len(bad)} app(s) not {wanted.replace(' and ', '/')}: {', '.join(bad[:6])}{extra}"
-    return True, f"{len(items)} Application(s) {wanted}"
+    since = ", each reconciled since this change" if reconciled_after else ""
+    return True, f"{len(items)} Application(s) {wanted}{since}"
 
 
 def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
@@ -1731,21 +1774,24 @@ def wait_for_argo(
     stale_revision: str = "",
     require_healthy: bool = True,
     rollout_namespace: str = "",
+    reconciled_after: datetime | None = None,
     sleep=time.sleep,
     now=time.monotonic,
 ) -> tuple[bool, str]:
     """Block until check_argo_apps reports every Application Synced and
-    Healthy (Synced alone without `require_healthy`, and none on
-    `stale_revision`), or `timeout` seconds pass.
+    Healthy (Synced alone without `require_healthy`, none on
+    `stale_revision`, and each reconciled at or after `reconciled_after`),
+    or `timeout` seconds pass.
 
     With `rollout_namespace` and `require_healthy`, every rollout there must
     also have finished, inside the same `timeout`; the timeout detail names
-    each one that had not.
+    each Application not yet reconciled and each rollout that had not finished.
     """
 
     def settled() -> tuple[bool, str]:
         ok, detail = check_argo_apps(
-            kubeconfig, argocd_namespace, stale_revision=stale_revision, require_healthy=require_healthy
+            kubeconfig, argocd_namespace, stale_revision=stale_revision, require_healthy=require_healthy,
+            reconciled_after=reconciled_after,
         )
         if not ok or not rollout_namespace or not require_healthy:
             return ok, detail
@@ -2906,9 +2952,14 @@ def _rollout_scope(args: argparse.Namespace) -> str:
     return args.namespace or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
 
 
-def _wait_line(args: argparse.Namespace, *, leaving: str = "") -> str:
-    """What a healthy wait waits on, as a --dry-run prints it; `leaving` names the ref a retarget leaves."""
+def _wait_line(args: argparse.Namespace, *, leaving: str = "", reconciled: str = "") -> str:
+    """What a healthy wait waits on, as a --dry-run prints it; `leaving` names the ref a retarget leaves.
+
+    `reconciled` names the change each Application must have been reconciled after.
+    """
     argo = f"Argo Applications to leave {leaving}" if leaving else f"Argo Applications in {args.argocd_namespace}"
+    if reconciled:
+        argo += f", each reconciled after {reconciled}"
     return (
         f"wait for {argo}, then every Deployment and StatefulSet in {_rollout_scope(args)} to finish rolling out "
         f"(timeout {args.timeout}s)"
@@ -2944,16 +2995,19 @@ def _commit_overlays(
                 failure = _last_line(commit.stderr) or _last_line(commit.stdout)
                 return _stage_failed(stage_index, f"git commit failed: {failure}", [])
 
+    pushed_at: datetime | None = None
     if args.push:
         emit(f"git -C {deploy} push")
-        if not args.dry_run and _git(deploy, "push").returncode != 0:
-            return _stage_failed(stage_index, "git push failed", [])
+        if not args.dry_run:
+            pushed_at = _push_moment(deploy)
+            if _git(deploy, "push").returncode != 0:
+                return _stage_failed(stage_index, "git push failed", [])
 
-    emit(_wait_line(args))
+    emit(_wait_line(args, reconciled="any change it pushes" if args.push else ""))
     if not args.dry_run:
         ok, detail = wait_for_argo(
             args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-            rollout_namespace=rollout_namespace,
+            rollout_namespace=rollout_namespace, reconciled_after=pushed_at,
         )
         print(f"  argo: {detail}", file=sys.stderr)
         if not ok:
@@ -3208,18 +3262,20 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     failure = _last_line(commit.stderr) or _last_line(commit.stdout)
                     return _stage_failed(stage_index, f"git commit failed: {failure}", stage_moves)
 
+        pushed_at: datetime | None = None
         if args.push:
             emit(f"git -C {deploy} push")
             if not args.dry_run:
+                pushed_at = _push_moment(deploy)
                 push = _git(deploy, "push")
                 if push.returncode != 0:
                     return _stage_failed(stage_index, "git push failed", stage_moves)
 
-        emit(_wait_line(args))
+        emit(_wait_line(args, reconciled="any change it pushes" if args.push else ""))
         if not args.dry_run:
             ok, detail = wait_for_argo(
                 args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-                rollout_namespace=rollout_namespace,
+                rollout_namespace=rollout_namespace, reconciled_after=pushed_at,
             )
             print(f"  argo: {detail}", file=sys.stderr)
             if not ok:
@@ -3235,11 +3291,15 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             # A thin-chart transform reading tables cannot start until the next stage names them.
             tables_follow = TABLES_STAGE in reached
             if tables_follow:
-                emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
+                emit(
+                    f"wait for Argo Applications to leave {from_name}, each reconciled after the retarget "
+                    f"(timeout {args.timeout}s)"
+                )
                 emit(f"health is checked after stage {TABLES_STAGE}, which names the tables the thin charts read")
             else:
-                emit(_wait_line(args, leaving=from_name))
+                emit(_wait_line(args, leaving=from_name, reconciled="the retarget"))
             if not args.dry_run and retarget:
+                retargeted_at = change_moment()
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
                 print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
                 if not ok:
@@ -3247,7 +3307,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 ok, detail = wait_for_argo(
                     args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
                     stale_revision=current_ref, require_healthy=not tables_follow,
-                    rollout_namespace=rollout_namespace,
+                    rollout_namespace=rollout_namespace, reconciled_after=retargeted_at,
                 )
                 print(f"  argo: {detail}", file=sys.stderr)
                 if not ok:
