@@ -33,13 +33,12 @@ envoyGateway:
     loadBalancerSourceRanges: []
     externalIPs: []
     # Is this Service actually reachable from the internet? Not derived from
-    # `type` or the annotations, because the scheme annotation that makes it so
-    # is cloud-specific (AWS: aws-load-balancer-scheme: internet-facing; GCP and
-    # Azure carry no equivalent here yet) and a chart-side render guard needs
-    # ONE stable field to check regardless of cloud. False on every local/
-    # on-prem overlay; a cloud overlay that requests a public LB sets it true
-    # alongside the annotation that does so (argocd/values/aws.yaml). Read by
-    # envoy-gateway-config.validateUi below.
+    # `type` or the annotations, because what makes it so is cloud-specific (AWS:
+    # the aws-load-balancer-scheme annotation; GKE and AKS: a LoadBalancer is
+    # public unless annotated internal) and the chart needs ONE stable field to
+    # check regardless of cloud. False on every on-prem overlay; true in
+    # edge-aws.yaml, edge-gcp.yaml and edge-azure.yaml. True turns on the web
+    # fence (templates/security-policy-fence.yaml) and validateUi's guard.
     internetFacing: false
   # The data-plane image both EnvoyProxy resources run, set here so it is the
   # services.envoy-gateway-proxy pin rather than the controller's compiled
@@ -280,7 +279,7 @@ exposure:
   # THE INFRA KILL SWITCH. false takes EVERY infra-class route off the edge in
   # one flip and BEATS that route's own `enabled: true` -- it is absolute for
   # the class, so a lock-down cannot be undone one route at a time.
-  # Product-class routes (dfe-ui, the engine API) are never touched by it:
+  # Product-class routes (dfe-ui, the engine API, HyperDX) are never touched by it:
   # turning the product off is always its own explicit act. Ingest-class routes
   # are data plane and unaffected.
   infraUisExternal: true
@@ -338,11 +337,18 @@ ui:
     # needs it; an in-cluster IdP reaches the engine on its Service and does not.
     scim_public: false
 
-  # Who may reach a public UI, comma-separated; empty = any address. Enforced
-  # twice -- at Envoy (SecurityPolicy authorization) and at the cloud load
-  # balancer (loadBalancerSourceRanges) -- so a gateway misconfiguration is not
-  # the only wall. NOTE the load-balancer half fences the WHOLE front door,
-  # ingest routes included, because one Service carries every listener.
+  # Who may reach the web routes, comma-separated. On an internet-facing Service
+  # (envoyGateway.service.internetFacing) EVERY web route -- dfe-ui, HyperDX, the
+  # engine API, each admin UI, internal and public names alike -- is refused at
+  # Envoy unless the client is on this list, and EMPTY REFUSES EVERY ADDRESS.
+  # Elsewhere it fences the public routes alone, and empty admits any address.
+  # A /0 admits the whole internet and the chart's NOTES say so. Enforced twice
+  # -- at Envoy (SecurityPolicy authorization) and at the cloud load balancer
+  # (loadBalancerSourceRanges). The load-balancer half fences the WHOLE front
+  # door, ingest routes included, because one Service carries every listener;
+  # a sender ingest needs beyond this list goes in
+  # envoyGateway.service.loadBalancerSourceRanges, and Envoy still holds the
+  # web routes to this list.
   allowed_cidrs: ""
 
   # The proxy ranges Envoy may believe about the client address, comma-separated
@@ -382,7 +388,8 @@ ui:
 #
 # Every route carries its CLASSIFICATION as data, and the class decides which
 # switches reach it:
-#   product -- dfe-ui + the engine API it consumes. Only `enabled` disables it.
+#   product -- dfe-ui, the engine API it consumes and the HyperDX it frames.
+#              Only `enabled` disables it.
 #   infra   -- the ops surfaces. exposure.infraUisExternal gates the whole class
 #              first, then `enabled`. Edge RBAC applies (see edgePolicy).
 #   ingest  -- data plane (otel, receiver). No UI switch reaches it.
@@ -534,16 +541,15 @@ routes:
       name: Argo CD
       purpose: GitOps sync state of every application this deployment runs
 
-  # HyperDX. Class infra, so the kill switch covers it, but NO edge policy: it
-  # is served inside a dfe-ui iframe and an interactive OIDC redirect cannot
-  # complete in a frame the IdP refuses to be framed in. The fork is its own PEP
-  # -- it authenticates from the dfe_token cookie dfe-ui shares across the
-  # domain -- so the group check happens app-side, not at the edge.
+  # HyperDX. Class product: dfe-ui's Observe page frames it, so it renders
+  # wherever the console does and the infra kill switch never takes it away. No
+  # edge OIDC policy either: an interactive redirect cannot complete in a frame
+  # the IdP refuses to be framed in. The fork is its own PEP -- it authenticates
+  # from the dfe_token cookie dfe-ui shares across the domain. adminLink keeps it
+  # on the engine's admin list.
   hyperdx:
-    class: infra
+    class: product
     enabled: true
-    edgePolicy: false
-    ownLogin: true
     routeName: hyperdx
     hostnameKey: hyperdx
     hostname: ""

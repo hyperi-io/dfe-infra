@@ -18,9 +18,11 @@
 envoyGateway:
   service:
     type: LoadBalancer
-    # The chart's own cloud-agnostic exposure signal (values.yaml), read by
-    # envoy-gateway-config.validateUi's render guard -- set alongside the
-    # internet-facing scheme annotation below, not derived from it.
+    # The chart's own cloud-agnostic exposure signal (values.yaml), set
+    # alongside the internet-facing scheme annotation below, not derived from
+    # it. It fences every web route to ui.allowed_cidrs -- refused to every
+    # address until a deployment names who may reach it -- and arms
+    # validateUi's guard.
     internetFacing: true
     annotations:
       # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
@@ -53,10 +55,10 @@ envoyGateway:
 # exposure.mode stays in aws.yaml.
 exposure:
   # TIER 1 -- the infra-class kill switch, off here because the gateway Service
-  # above is internet-facing. Argo CD, Kafbat, HyperDX, Forgejo, links and
-  # Cruise Control all stay off the public load balancer until an operator's own
-  # overlay opts one back on. dfe-ui is unaffected -- it is class product, and
-  # the kill switch never reaches it. Turning a route back on also needs
+  # above is internet-facing. Argo CD, Kafbat, Forgejo, links and Cruise Control
+  # all stay off the public load balancer until an operator's own overlay opts
+  # one back on. dfe-ui, the engine API and HyperDX are unaffected -- they are
+  # class product, and the kill switch never reaches them. Turning a route back on also needs
   # oidc.enabled (aws.yaml) with an oidc.providers entry, or ui.allowed_cidrs,
   # which the chart's render guard requires whenever the Service is
   # internet-facing and this switch is on.

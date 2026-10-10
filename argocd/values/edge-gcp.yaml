@@ -15,10 +15,20 @@
 # THERE IS NO GCP TOFU ROOT (terraform/environments holds aws, aws-state and
 # local), so this flavour is values-only until one exists.
 
-# TIER 1 -- the HTTP plane's front door.
+# TIER 1 -- the HTTP plane's front door. GKE makes a LoadBalancer Service an
+# external load balancer unless it is annotated internal, so it is internet-facing
+# and every web route is fenced to ui.allowed_cidrs -- refused to every address
+# until a deployment names who may reach it. Envoy Gateway's default
+# externalTrafficPolicy Local keeps the client address the fence reads.
 envoyGateway:
   service:
     type: LoadBalancer
+    internetFacing: true
+
+# TIER 1 -- the infra-class kill switch, off for the reason edge-aws.yaml gives:
+# the Service above is internet-facing.
+exposure:
+  infraUisExternal: false
 
 pki:
   # TIER 1 -- external PKI is the rebuildable shape on a cloud flavour, because

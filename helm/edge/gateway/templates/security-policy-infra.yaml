@@ -57,13 +57,22 @@ spec:
           cookies:
             - dfe-{{ $r.routeName }}-access-token
       {{- end }}
+  {{- /* Replaces dfe-edge-fence on an internet-facing gateway, so the address
+         check is ANDed into every rule, and an empty list keeps no rule at all. */}}
+  {{- $facing := $.Values.envoyGateway.service.internetFacing }}
+  {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" $.Values.ui.allowed_cidrs) | fromJsonArray }}
   authorization:
     defaultAction: Deny
+    {{- if or (not $facing) $allowed }}
     rules:
       {{- range $provider := $.Values.oidc.providers }}
       - name: allow-admin-groups-{{ $provider.name }}
         action: Allow
         principal:
+          {{- if $facing }}
+          clientCIDRs:
+            {{- toYaml $allowed | nindent 12 }}
+          {{- end }}
           jwt:
             provider: {{ $provider.name }}
             claims:
@@ -72,6 +81,7 @@ spec:
                 values:
                   {{- toYaml $.Values.adminGroups | nindent 18 }}
       {{- end }}
+    {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

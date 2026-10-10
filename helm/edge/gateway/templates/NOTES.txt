@@ -1,0 +1,20 @@
+{{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
+{{- if eq $fence "deny" }}
+PUBLIC WEB CLOSED. envoyGateway.service.internetFacing is true and ui.allowed_cidrs
+is empty, so dfe-ui, HyperDX, the engine API and every admin UI on this gateway
+answer 403 to every address. Ingest routes are not affected. Set ui.allowed_cidrs
+(with ui.trusted_proxy_cidrs) to the ranges that may reach them.
+{{- else if eq $fence "allow-all" }}
+WARNING: ui.allowed_cidrs admits every address ({{ .Values.ui.allowed_cidrs }}).
+{{- if .Values.envoyGateway.service.internetFacing }}
+dfe-ui, HyperDX, the engine API and every admin UI on this gateway are open to the
+whole internet, behind their own logins only.
+{{- else }}
+Every public route on this gateway is open to any address that can reach the
+load balancer, behind its own login only.
+{{- end }}
+Name the ranges that need them instead.
+{{- else if and (eq $fence "listed") .Values.envoyGateway.service.internetFacing }}
+Web routes on this gateway admit {{ .Values.ui.allowed_cidrs }} and refuse every
+other address.
+{{- end }}

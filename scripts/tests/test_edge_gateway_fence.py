@@ -87,6 +87,49 @@ def test_expected_fail_half_a_fence_is_refused_by_name(half: dict[str, str]) -> 
     assert "DFE_EDGE_ALLOWED_CIDRS and DFE_EDGE_TRUSTED_PROXY_CIDRS" in done.stderr
 
 
+def _fence_notice(**env: str) -> subprocess.CompletedProcess:
+    """bootstrap.sh's fence notice and the cloud test it calls, run on their own."""
+    lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
+    providers = next(line for line in lines if line.startswith("DFE_CLOUD_LB_PROVIDERS="))
+    helper = lines.index("dfe_cloud_programs_loadbalancers() {")
+    start = lines.index("dfe_edge_fence_notice() {")
+    call = lines.index("dfe_edge_fence_notice", start)
+    script = "\n".join([providers, *lines[helper : helper + 3], *lines[start : call + 1]])
+    return subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={"PATH": "/usr/bin:/bin", "DFE_EDGE_ENABLED": "true", "DFE_EDGE_ALLOWED_CIDRS": "",
+             "DFE_CLOUD": "aws", **env},
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+
+
+@pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
+def test_no_fence_on_a_cloud_says_the_public_web_is_closed(cloud: str) -> None:
+    done = _fence_notice(DFE_CLOUD=cloud)
+    assert done.returncode == 0, done.stderr
+    assert "Public web: CLOSED" in done.stdout
+    assert done.stderr == ""
+
+
+@pytest.mark.parametrize(("cloud", "edge"), [("local", "true"), ("aws", "false")])
+def test_no_notice_where_nothing_is_internet_facing(cloud: str, edge: str) -> None:
+    done = _fence_notice(DFE_CLOUD=cloud, DFE_EDGE_ENABLED=edge)
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize("fence", ["0.0.0.0/0", "203.0.113.7/32, ::/0", "10.0.0.0/0"])
+def test_an_allow_all_fence_is_a_warning(fence: str) -> None:
+    done = _fence_notice(DFE_EDGE_ALLOWED_CIDRS=fence)
+    assert done.returncode == 0, done.stderr
+    assert "WARNING: DFE_EDGE_ALLOWED_CIDRS carries" in done.stderr
+    assert "admits every address" in done.stderr
+    assert done.stdout == ""
+
+
+def test_a_listed_fence_says_nothing() -> None:
+    assert _fence_notice(DFE_EDGE_ALLOWED_CIDRS=ALLOWED).stderr == ""
+
+
 def test_the_cluster_secret_carries_both_annotations() -> None:
     rendered = subprocess.run(
         ["envsubst"],

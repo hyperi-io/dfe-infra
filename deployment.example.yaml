@@ -173,11 +173,14 @@ edge:
       requests: "300"
       unit: Minute           # Second | Minute | Hour | Day | Month | Year
       scope: local           # local only
-    ## Who may reach a public surface; empty = any address. Enforced at Envoy
-    ## AND at the cloud load balancer, so one misconfiguration is not the whole
-    ## wall. The load-balancer half fences the entire front door, ingest
-    ## included. Tier 1 once set. A cloud root applies it, adding its NAT
-    ## gateways' addresses so the cluster's own callers still get in.
+    ## Who may reach dfe-ui, HyperDX, the engine API and the admin UIs. On a
+    ## cloud flavour EMPTY REFUSES EVERY ADDRESS, so the console is unreachable
+    ## from outside until this names who may use it; on-prem empty fences
+    ## nothing. A /0 admits the whole internet and every renderer warns.
+    ## Enforced at Envoy AND at the cloud load balancer, so one
+    ## misconfiguration is not the whole wall. The load-balancer half fences the
+    ## entire front door, ingest included. A cloud root applies it, adding its
+    ## NAT gateways' addresses so the cluster's own callers still get in.
     allowed_cidrs: ""
     ## The proxy ranges Envoy may believe about the client address, such as a
     ## CDN in front. A cloud root adds its public subnets' ranges itself; anywhere else,

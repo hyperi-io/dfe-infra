@@ -1,8 +1,9 @@
 {{- /* The engine's DFE_ADMIN_LINKS: every infra route that routeEnabled renders,
-       placed in the engine's namespace because a configMapKeyRef reads no other. */}}
+       and any other that carries an adminLink, placed in the engine's namespace
+       because a configMapKeyRef reads no other. */}}
 {{- $links := list }}
 {{- range $key, $r := .Values.routes }}
-{{- if and (eq ($r.class | default "infra") "infra") (include "envoy-gateway-config.routeEnabled" (dict "ctx" $ "key" $key)) }}
+{{- if and (or (eq ($r.class | default "infra") "infra") $r.adminLink) (include "envoy-gateway-config.routeEnabled" (dict "ctx" $ "key" $key)) }}
 {{- $label := $r.adminLink | default dict }}
 {{- if not (and $label.name $label.purpose) }}
 {{- fail (printf "routes.%s renders and carries no adminLink.name and adminLink.purpose -- the engine lists every infra route this chart serves under both, so set them on the route" $key) }}

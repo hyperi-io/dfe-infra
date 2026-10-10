@@ -683,6 +683,41 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
     return ranges
 
 
+# The flavours whose gateway Service argocd/values/edge-<flavour>.yaml marks
+# internet-facing, which is what fences every web route to the allow-list.
+INTERNET_FACING_FLAVOURS = ("aws", "gcp", "azure")
+
+
+def web_fence(cidrs: list[str], flavour: str) -> tuple[str, list[str]]:
+    """What edge.product.allowed_cidrs admits, and the warnings it earns.
+
+    The gateway chart's webFence, read from the dial: on an internet-facing
+    flavour an empty list refuses every web route, and a /0 of either family
+    admits every address whatever the address part says.
+
+    Args:
+        cidrs: The parsed allow-list.
+        flavour: The edge flavour the dial selects.
+
+    Returns:
+        (the summary line's value, warning lines -- empty unless a /0 is listed).
+    """
+    everything = [cidr for cidr in cidrs if cidr.endswith("/0")]
+    if everything:
+        return f"{', '.join(cidrs)} -- every address", [
+            f"edge.product.allowed_cidrs carries {', '.join(everything)}, which admits every "
+            "address: dfe-ui, HyperDX, the engine API and every admin UI on the gateway are "
+            "open to the whole internet behind their own logins. Name the ranges that need "
+            "them instead"
+        ]
+    if cidrs:
+        return ", ".join(cidrs), []
+    if flavour in INTERNET_FACING_FLAVOURS:
+        return ("empty -- the gateway is internet-facing, so every web route answers 403 to "
+                "every address until this names who may reach it"), []
+    return "empty -- this flavour's gateway is not internet-facing, so nothing is fenced", []
+
+
 def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
     """Refuse the two admin-peer fields that reach nothing yet.
 
@@ -1265,6 +1300,8 @@ def _render_tofu(dial: dict[str, object], out: Path | None) -> int:
     with destination.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(variables, indent=2) + "\n")
     print(f"render_dial: wrote {destination}", file=sys.stderr)
+    for line in web_fence(variables["edge_allowed_cidrs"], cloud)[1]:
+        print(f"render_dial: WARNING -- {line}", file=sys.stderr)
 
     root = TOFU_ROOTS / cloud
     rel = root.relative_to(REPO_ROOT) if root.is_relative_to(REPO_ROOT) else root
@@ -1327,6 +1364,9 @@ def main() -> int:
         edge_flags = _edge_flags(dial)
         edge_enums = _edge_enums(dial)
         _edge_refusals(dial, edge_flags)
+        fence, fence_warnings = web_fence(
+            _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")), edge_enums["edge.flavour"]
+        )
         controller_pool = _controller_pool(dial)
     except DialError as error:
         print(f"render_dial: {error}", file=sys.stderr)
@@ -1385,6 +1425,9 @@ def main() -> int:
         + ("on" if edge_flags["edge.admin_uis.external"] else "off, every infra route is withdrawn"),
         file=sys.stderr,
     )
+    print(f"  web allow-list (edge.product.allowed_cidrs): {fence}", file=sys.stderr)
+    for line in fence_warnings:
+        print(f"render_dial: WARNING -- {line}", file=sys.stderr)
     print(
         f"  receiver ingest door (edge.ingest.receiver.mode): {ingest_mode}"
         f" -- {_INGEST_MODE_NOTE[ingest_mode]}",

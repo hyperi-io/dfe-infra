@@ -61,8 +61,8 @@ PROVIDER = [{"name": "acme", "issuerUrl": "https://id.example.com", "clientId": 
 OIDC = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDER)}")
 
 LOGIN_LESS = {"links", "cruise-control"}
-OWN_LOGIN = {"argocd", "hyperdx", "kafbat"}
-INFRA = {"argocd", "hyperdx", "kafbat", "forgejo", "links", "cruise-control"}
+OWN_LOGIN = {"argocd", "kafbat"}
+INFRA = {"argocd", "kafbat", "forgejo", "links", "cruise-control"}
 BUNDLED_LABEL = "dfe.hyperi.io/bundled-deploy-repo"
 
 
@@ -169,7 +169,6 @@ def test_every_infra_route_declares_own_login() -> None:
     }
     assert declared == {
         "argocd": True,
-        "hyperdx": True,
         "forgejo": True,
         "kafbat": True,
         "cruiseControl": False,
@@ -199,9 +198,10 @@ def test_the_aws_defaults_are_the_switch_without_a_provider() -> None:
 
 
 def test_the_aws_defaults_render_with_no_infra_route() -> None:
+    """HyperDX is class product, so the console's Observe frame keeps its route."""
     served = routes(cascade=AWS)
     assert not INFRA & served, sorted(served)
-    assert {"dfe-ui", "dfe-engine"} <= served, sorted(served)
+    assert {"dfe-ui", "dfe-engine", "hyperdx"} <= served, sorted(served)
 
 
 def test_oidc_switched_on_with_no_provider_does_not_satisfy_the_guard() -> None:
