@@ -21,13 +21,18 @@ test_dfe_ops_bastion.py mocks for tofu/render_dial.py. No real cluster,
 repo or resolver is touched.
 """
 
+import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from test_clickhouse_replica_spread import keeper_pod_labels as ch_keeper_labels
+from test_clickhouse_replica_spread import render as ch_render
+from test_clickhouse_replica_spread import server_pod_labels as ch_server_labels
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
@@ -223,6 +228,62 @@ def test_read_deploy_pin_no_pins_file(tmp_path: Path) -> None:
         u.read_deploy_pin(tmp_path)
 
 
+STACK_VERSION_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/stack_version}"
+
+
+def test_read_stack_version_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"))
+    assert u.read_stack_version("kc", "argocd") == "2.2.0"
+    assert calls[0][-2:] == ["-o", STACK_VERSION_JSONPATH]
+    assert ["secret", "dfe-cluster"] == calls[0][calls[0].index("get") + 1 : calls[0].index("get") + 3]
+    assert calls[0][calls[0].index("-n") + 1] == "argocd"
+
+
+def test_from_stack_without_pins_yaml_is_the_cluster_secrets_stack(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"))
+    stack, note = u.read_from_stack(tmp_path, None, kubeconfig="kc", argocd_namespace="argocd")
+    assert stack == "2.2.0"
+    # The value came out of a Secret, so the note never repeats it. resolve_stack's key is what prints.
+    assert note == (
+        "FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version: the deploy repo carries "
+        "no pins.yaml, so apply writes one at its first stage"
+    )
+
+
+def test_from_stack_reads_no_cluster_when_pins_yaml_or_from_names_it(deploy: Path, tmp_path: Path) -> None:
+    # The autouse guard fails any kubectl call, so reaching the cluster here fails the test.
+    assert u.read_from_stack(deploy, None, kubeconfig="kc", argocd_namespace="argocd") == ("1.0.0", "")
+    assert u.read_from_stack(deploy, "0.9.0", kubeconfig="kc", argocd_namespace="argocd") == ("0.9.0", "")
+    assert u.read_from_stack(tmp_path, "0.9.0", kubeconfig="kc", argocd_namespace="argocd") == ("0.9.0", "")
+
+
+def test_from_stack_still_refuses_a_pins_yaml_apply_cannot_bump(tmp_path: Path) -> None:
+    (tmp_path / "pins.yaml").write_text('channel: "release"\n', encoding="utf-8")
+    with pytest.raises(u.UpgradeError, match=r"no base\.dfe-infra pin"):
+        u.read_from_stack(tmp_path, "1.0.0", kubeconfig="kc", argocd_namespace="argocd")
+
+
+def test_from_stack_refuses_with_neither_pins_yaml_nor_a_stack_annotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _mock_run(monkeypatch, _proc(0, stdout=""))
+    with pytest.raises(u.UpgradeError) as caught:
+        u.read_from_stack(tmp_path, None, kubeconfig="kc", argocd_namespace="argocd")
+    assert str(caught.value) == (
+        f"no pins.yaml in {tmp_path}, and secret/dfe-cluster carries no dfe.hyperi.io/stack_version -- "
+        "commit a pins.yaml whose base.dfe-infra names the stack this deployment runs"
+    )
+
+
+def test_from_stack_names_a_cluster_secret_it_could_not_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): secrets "dfe-cluster" not found'))
+    unreadable = re.escape("cannot read dfe.hyperi.io/stack_version on secret/dfe-cluster in argocd: Error from server")
+    with pytest.raises(u.UpgradeError, match=unreadable):
+        u.read_from_stack(tmp_path, None, kubeconfig="kc", argocd_namespace="argocd")
+
+
 # ---------------------------------------------------------------------------
 # plan_moves / render_plan -- the two-key move with a before hook
 # ---------------------------------------------------------------------------
@@ -292,6 +353,25 @@ def test_bump_pin_file_writes_and_reports_change(deploy: Path) -> None:
     assert u.read_deploy_pin(deploy) == "2.0.0"
     changed_again = u.bump_pin_file(deploy, "2.0.0")
     assert changed_again is False
+
+
+def test_bump_pin_file_writes_dfe_deploys_shape_where_there_is_none(tmp_path: Path) -> None:
+    assert u.bump_pin_file(tmp_path, "2.2.1", channel="release") is True
+    written = (tmp_path / "pins.yaml").read_text(encoding="utf-8")
+    assert u.read_deploy_pin(tmp_path) == "2.2.1"
+    tree = u.yaml_subset.parse(written, source="pins.yaml")
+    assert tree == {"base": {"dfe-infra": "2.2.1"}, "channel": "release"}
+    assert "# overrides:\n#   apps:\n" in written
+    assert written.isascii()
+    # The next upgrade edits the written file in place, like any other pins.yaml.
+    assert u.bump_pin_file(tmp_path, "2.2.2", channel="release") is True
+    assert (tmp_path / "pins.yaml").read_text(encoding="utf-8") == written.replace('"2.2.1"', '"2.2.2"')
+
+
+def test_bump_pin_file_names_no_channel_for_a_stack_with_no_maturity(tmp_path: Path) -> None:
+    u.bump_pin_file(tmp_path, "2.2.1")
+    tree = u.yaml_subset.parse((tmp_path / "pins.yaml").read_text(encoding="utf-8"), source="pins.yaml")
+    assert tree == {"base": {"dfe-infra": "2.2.1"}}
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +673,65 @@ def test_check_clickhouse_merges_no_pod(monkeypatch: pytest.MonkeyPatch) -> None
     assert "no pod matching" in detail
 
 
+PROFILES = sorted(
+    path.stem.removeprefix("profile-") for path in (REPO_ROOT / "argocd" / "values").glob("profile-*.yaml")
+)
+
+
+def _selects(selector: str, labels: dict[str, str]) -> bool:
+    """Whether a kubectl label selector matches `labels`, every requirement ANDed."""
+    for requirement in re.split(r",(?![^(]*\))", selector):
+        if found := re.fullmatch(r"\s*([\w./-]+)\s+(in|notin)\s+\(([^)]*)\)\s*", requirement):
+            key, op, values = found.groups()
+            member = labels.get(key) in {v.strip() for v in values.split(",")}
+            if member != (op == "in"):
+                return False
+        elif found := re.fullmatch(r"\s*([\w./-]+)\s*(==|=|!=)\s*([\w./-]*)\s*", requirement):
+            key, op, value = found.groups()
+            if (labels.get(key) == value) != (op != "!="):
+                return False
+        else:
+            raise AssertionError(f"selector requirement this test does not model: {requirement!r}")
+    return True
+
+
+def _clickhouse_pods(profile: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """(server pod labels, every other pod's labels) for the ClickHouse a profile deploys,
+    as the chart writes them in single mode and the operator writes them in cluster mode."""
+    servers: list[dict[str, str]] = []
+    others: list[dict[str, str]] = []
+    for doc in ch_render(profile):
+        kind, spec = doc.get("kind"), doc.get("spec") or {}
+        name = (doc.get("metadata") or {}).get("name", "")
+        if kind == "ClickHouseCluster":
+            servers.append({**(spec.get("labels") or {}), **ch_server_labels(name, 0, 0)})
+        elif kind == "KeeperCluster":
+            others.append({**(spec.get("labels") or {}), **ch_keeper_labels(name, 0)})
+        elif kind == "StatefulSet":
+            servers.append(spec["template"]["metadata"]["labels"])
+        elif kind in ("Deployment", "DaemonSet", "Job"):
+            others.append(spec["template"]["metadata"]["labels"])
+    return servers, others
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_default_clickhouse_selector_finds_the_server_on_every_profile(profile: str) -> None:
+    servers, others = _clickhouse_pods(profile)
+    assert servers, f"profile-{profile} renders no ClickHouse server"
+    for labels in servers:
+        assert _selects(u.DEFAULT_CLICKHOUSE_SELECTOR, labels), (profile, labels)
+    for labels in others:
+        assert not _selects(u.DEFAULT_CLICKHOUSE_SELECTOR, labels), (profile, labels)
+
+
+def test_the_selector_model_reads_both_requirement_forms() -> None:
+    assert _selects("app in (a,b)", {"app": "b"})
+    assert not _selects("app in (a,b)", {"app": "c"})
+    assert _selects("app notin (a,b), tier=db", {"app": "c", "tier": "db"})
+    assert not _selects("app=a", {"app": "b"})
+    assert _selects("app!=a", {"app": "b"})
+
+
 def test_check_strimzi_conversion_no_crds_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(monkeypatch, *[_proc(1, stderr="NotFound") for _ in u.STRIMZI_CRDS])
     ok, detail = u.check_strimzi_conversion("kc")
@@ -683,6 +822,13 @@ class _Args:
         self.__dict__.update(kwargs)
 
 
+def _plan_args(**overrides: object) -> _Args:
+    """The plan _Args shape every test shares, with per-test overrides."""
+    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
+    base.update(overrides)
+    return _Args(**base)
+
+
 def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
     monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -690,7 +836,7 @@ def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     _mock_run(monkeypatch, _proc(0, stdout="ok     rule-a: x = y\n\ncompat-check 1.1.0: 1 rule(s) checked"))
 
-    args = _Args(deploy=str(deploy), to="1.1.0", dial=None, fixtures=None, live=False)
+    args = _plan_args(deploy=str(deploy), to="1.1.0")
     rc = u.cmd_upgrade_plan(args)
 
     assert rc == u.EXIT_OK
@@ -711,7 +857,7 @@ def test_cmd_upgrade_plan_blocked_by_compat_check(
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     _mock_run(monkeypatch, _proc(1, stdout="FAIL   rule-a: x violates >=2\n"))
 
-    args = _Args(deploy=str(deploy), to="1.1.0", dial=None, fixtures=None, live=False)
+    args = _plan_args(deploy=str(deploy), to="1.1.0")
     rc = u.cmd_upgrade_plan(args)
     assert rc == u.EXIT_BLOCKED
 
@@ -721,9 +867,71 @@ def test_cmd_upgrade_plan_bad_stack_is_preflight_failure(
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    args = _Args(deploy=str(deploy), to="9.9.9", dial=None, fixtures=None, live=False)
+    args = _plan_args(deploy=str(deploy), to="9.9.9")
     rc = u.cmd_upgrade_plan(args)
     assert rc == u.EXIT_PREFLIGHT_FAILED
+
+
+def test_cmd_upgrade_plan_without_pins_yaml_plans_from_the_cluster_secrets_stack(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+    calls = _mock_run(monkeypatch, _proc(0, stdout="1.0.0"), _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(bundled), to="1.1.0", kubeconfig="kc", argocd_namespace="cd"))
+
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK, out
+    assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
+    assert calls[0][calls[0].index("-n") + 1] == "cd"
+    assert calls[0][-1] == STACK_VERSION_JSONPATH
+    assert out.startswith(
+        "# Upgrade plan: 1.0.0 -> 1.1.0\n\nFROM is secret/dfe-cluster's dfe.hyperi.io/stack_version"
+    )
+    written = (bundled / "upgrades" / "1.0.0-to-1.1.0.md").read_text(encoding="utf-8")
+    assert "the deploy repo carries no pins.yaml, so apply writes one at its first stage" in written
+    assert "1. bootstrap.cert-manager: v1.0.0 -> v1.1.0" in written
+    assert not (bundled / "pins.yaml").exists()
+
+
+def test_cmd_upgrade_plan_without_pins_yaml_or_a_stack_annotation_is_preflight_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout=""))
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(tmp_path), to="1.1.0"))
+    assert rc == u.EXIT_PREFLIGHT_FAILED
+    assert "carries no dfe.hyperi.io/stack_version" in capsys.readouterr().err
+    assert len(calls) == 1
+    assert not (tmp_path / "upgrades").exists()
+
+
+def test_the_plan_verb_takes_the_cluster_secret_flags() -> None:
+    parser = argparse.ArgumentParser()
+    u.add_upgrade_subparser(parser.add_subparsers())
+    args = parser.parse_args(["upgrade", "plan", "--deploy", "d", "--kubeconfig", "kc", "--argocd-namespace", "cd"])
+    assert (args.kubeconfig, args.argocd_namespace) == ("kc", "cd")
+    assert parser.parse_args(["upgrade", "plan", "--deploy", "d"]).argocd_namespace == "argocd"
+
+
+def test_cmd_upgrade_preflight_without_pins_yaml_says_where_from_came_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "read_stack_version", lambda *_a, **_k: "1.0.0")
+    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [("cluster reachable", True, "ok")])
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(tmp_path), to="1.1.0"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK
+    assert out.startswith("FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version")
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +951,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
     args = _Args(
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -777,7 +985,7 @@ def test_cmd_upgrade_apply_nothing_to_apply(
     args = _Args(
         deploy=str(deploy), to="1.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -796,7 +1004,7 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
     args = _Args(
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -811,13 +1019,51 @@ def _apply_args(**overrides: object) -> _Args:
     base = dict(
         dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
     )
     base.update(overrides)
     return _Args(**base)
+
+
+def test_cmd_upgrade_apply_dry_run_without_pins_yaml_writes_it_at_the_first_stage_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="1.0.0"), _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+    bundled = tmp_path / "bundled"
+    bundled.mkdir()
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(bundled), to="1.1.0"))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert err.startswith("FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version")
+    assert err.index('[dry-run] write pins.yaml with base.dfe-infra = "1.1.0"') < err.index("stage 2/2: 20-operators")
+    assert err.count("[dry-run] write pins.yaml") == 1
+    assert '[dry-run] set pins.yaml base.dfe-infra = "1.1.0"' in err[err.index("stage 2/2: 20-operators") :]
+    assert calls[0][-1] == STACK_VERSION_JSONPATH
+    assert len(calls) == 2
+    assert list(bundled.iterdir()) == []
+
+
+def test_cmd_upgrade_apply_from_without_pins_yaml_reads_no_cluster(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(tmp_path), to="1.1.0", from_stack="1.0.0"))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "FROM is" not in err
+    assert '[dry-run] write pins.yaml with base.dfe-infra = "1.1.0"' in err
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1862,6 +2108,27 @@ def test_check_argo_apps_fails_an_app_still_on_the_old_ref(monkeypatch: pytest.M
     assert "1.0.0" not in detail  # the stale ref came out of the cluster Secret
 
 
+def test_check_argo_apps_without_health_counts_a_synced_app_but_not_a_stale_or_unsynced_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def app(name: str, revision: str, sync: str, health: str) -> dict:
+        return {"metadata": {"name": name}, "spec": {"source": {"targetRevision": revision}},
+                "status": {"sync": {"status": sync}, "health": {"status": health}}}
+
+    degraded = {"items": [app("vrl", "2.0.0", "Synced", "Degraded"), app("ui", "2.0.0", "Synced", "Healthy")]}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(degraded)), _proc(0, stdout=json.dumps(degraded)))
+    assert u.check_argo_apps("kc", stale_revision="1.0.0", require_healthy=False) == (True, "2 Application(s) Synced")
+    ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
+    assert ok is False
+    assert "1 app(s) not Synced/Healthy: vrl (sync Synced, health Degraded)" in detail
+
+    behind = {"items": [app("vrl", "2.0.0", "OutOfSync", "Healthy"), app("ui", "1.0.0", "Synced", "Healthy")]}
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(behind)))
+    ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0", require_healthy=False)
+    assert ok is False
+    assert detail.startswith("2 app(s) not Synced: vrl (sync OutOfSync, health Healthy), ui (still renders")
+
+
 # ---------------------------------------------------------------------------
 # The in-place Strimzi 0.51 -> 1.2.0 path end to end, against a real deploy
 # repo pushed to a real (local) remote: holds, retarget order, version roll,
@@ -2062,3 +2329,37 @@ def test_apply_dry_run_names_the_holds_and_the_retarget_in_order(
     positions = [err.index(line) for line in order]
     assert positions == sorted(positions)
     assert len(calls) == 1
+
+
+def test_apply_on_a_deploy_repo_without_pins_yaml_commits_one_at_the_first_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, remote = pushed_deploy
+    # The bundled repo's own shape: seeded values files and the marker, no pins.yaml.
+    (deploy / "values").mkdir()
+    (deploy / "values" / "dfe-engine-default-values.yaml").write_text("deploy:\n  service: dfe-engine\n", "utf-8")
+    (deploy / ".seeded-apps").write_text("dfe-engine\n", encoding="utf-8")
+    for args in (["rm", "-q", "pins.yaml"], ["add", "values", ".seeded-apps"], ["commit", "-q", "-m", "seed"],
+                 ["push", "-q"]):
+        assert u._git(deploy, *args).returncode == 0, args
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    live = {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"}
+    events = _ga_cluster(monkeypatch, live)
+    monkeypatch.setattr(u, "read_stack_version", lambda *_a, **_k: "1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version" in err
+    stage1 = _commit_with(remote, "stage 1 -- bootstrap.cert-manager")
+    pinned = u.yaml_subset.parse(_remote_file(remote, stage1, "pins.yaml"), source="pins.yaml")
+    assert pinned == {"base": {"dfe-infra": "2.0.0"}}
+    assert ("retarget", "2.0.0") in events
+    assert u.read_deploy_pin(deploy) == "2.0.0"
+    assert u._git(deploy, "status", "--porcelain").stdout == ""

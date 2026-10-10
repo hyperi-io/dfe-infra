@@ -57,6 +57,10 @@ stack upgrade from a deployment repo's own `pins.yaml`, walking
 `current` pointer; the FROM stack is read from the deploy's `pins.yaml`
 (`base.dfe-infra`).
 
+The bundled in-cluster deploy repo is seeded without a `pins.yaml`. Against a deploy repo with none, `plan`, `preflight` and `apply` take FROM from the cluster secret's `dfe.hyperi.io/stack_version`, which bootstrap writes and every retarget moves, and say so. `plan` takes `--kubeconfig` for that read. `apply` writes a `pins.yaml` in the dfe-deploy template's shape at its first stage, and from that commit on `pins.yaml` is what FROM is read from. A deploy repo with neither refuses, naming both.
+
+`preflight` and `apply` find ClickHouse by `--clickhouse-selector`, which defaults to `app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)`: the single-mode StatefulSet's pods and the ClickHouse operator's server pods, never its Keeper pods.
+
 - `plan` diffs FROM -> TO, grouped by stage, each step carrying its
   `before`/`finalise`/`pair`/`rollback` note. Runs `dfe-stack compat-check
   --strict` for TO and writes the numbered plan to
@@ -78,7 +82,7 @@ The work around the pin still runs in stage order: confirms, `before` checks, `f
 
 ### Onto the thin charts
 
-A move to a stack carrying `chart-digests:`, from one that does not, puts the apps on thin charts, and `apply` adds a stage either side of the first one that moves an Argo-managed component. `overlay-vocabulary`, before it, copies each set value in `values/*-values.yaml` to the key `scripts/weave/value-map.yaml` names and keeps the 2.2.0 key, so the 2.2.0 charts render as before. `podSecurityContext.seccompProfileType` alone moves out, because the thin chart would copy it into the pod spec. The stage never overwrites a key already set, prints what it cannot carry for a hand edit, as `plan` does, and commits nothing on a second run. `--stop-before` that first stage leaves the rewrite committed and nothing else moved. `enrichment-tables`, after it, names each table file in its app's config under the mount `apps.yaml` declares.
+A move to a stack carrying `chart-digests:`, from one that does not, puts the apps on thin charts, and `apply` adds a stage either side of the first one that moves an Argo-managed component. `overlay-vocabulary`, before it, copies each set value in `values/*-values.yaml` to the key `scripts/weave/value-map.yaml` names and keeps the 2.2.0 key, so the 2.2.0 charts render as before. `podSecurityContext.seccompProfileType` alone moves out, because the thin chart would copy it into the pod spec. The stage never overwrites a key already set, prints what it cannot carry for a hand edit, as `plan` does, and commits nothing on a second run. `--stop-before` that first stage leaves the rewrite committed and nothing else moved. `enrichment-tables`, after it, names each table file in its app's config under the mount `apps.yaml` declares. A transform that reads a table fails to compile on the thin chart until that entry exists, so the wait after the retarget asks only that every Application has synced the new ref, and the `enrichment-tables` wait asks for health.
 
 ## Re-size
 

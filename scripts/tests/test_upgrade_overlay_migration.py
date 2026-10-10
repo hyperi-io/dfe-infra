@@ -772,7 +772,7 @@ def _apply_args(deploy: Path, **overrides: object) -> _Args:
     base = dict(
         deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
         kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector="app.kubernetes.io/name=clickhouse", clickhouse_merge_threshold=300.0,
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=True, push=False, timeout=900, dry_run=False, finalise=False, stop_before=None,
         from_stack=None, target_revision=None,
@@ -806,6 +806,50 @@ def test_stop_before_the_switch_stage_leaves_the_migration_committed_and_nothing
     assert vrl["fileSets"]["enrichment"]["files"] == [{"name": "geo.csv", "content": "a,b"}]
     assert [e["name"] for e in vrl["config"]["enrichment_tables"]] == ["zones"]
     assert u._git(stack, "status", "--porcelain").stdout == ""
+
+
+def _retarget_waits(
+    stack: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **overrides: object
+) -> tuple[int, list[tuple[str, bool]]]:
+    """Apply across a retarget from the 1.0.0 tag, recording each Argo wait's stale ref and health ask."""
+    remote = tmp_path / "remote.git"
+    assert u._run(["git", "init", "-q", "--bare", str(remote)]).returncode == 0
+    for args in (["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "HEAD"]):
+        assert u._git(stack, *args).returncode == 0, args
+    waits: list[tuple[str, bool]] = []
+
+    def argo(*_a: object, stale_revision: str = "", require_healthy: bool = True, **_k: object) -> tuple[bool, str]:
+        waits.append((stale_revision, require_healthy))
+        return True, "converged"
+
+    monkeypatch.setattr(u, "wait_for_argo", argo)
+    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "1.0.0")
+    monkeypatch.setattr(u, "write_target_revision", lambda *_a, **_k: (True, "moved"))
+    rc = u.cmd_upgrade_apply(_apply_args(stack, push=True, **overrides))
+    return rc, waits
+
+
+def test_the_retarget_wait_leaves_health_to_the_tables_stage(
+    stack: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    rc, waits = _retarget_waits(stack, tmp_path, monkeypatch)
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert ("1.0.0", False) in waits
+    # Every other wait, the tables stage's last of all, still asks for health.
+    assert [healthy for stale, healthy in waits if not stale] == [True, True, True, True]
+    assert waits[-1] == ("", True)
+    assert _log(stack)[0] == "chore(upgrade): 2.0.0 stage 4 -- enrichment tables"
+
+
+def test_the_retarget_wait_asks_for_health_when_the_tables_stage_does_not_run(
+    stack: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    rc, waits = _retarget_waits(stack, tmp_path, monkeypatch, stop_before=u.TABLES_STAGE)
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert ("1.0.0", True) in waits
+    assert "stopping before stage 4/4 (enrichment-tables)" in err
 
 
 def test_a_second_apply_commits_nothing(stack: Path, capsys: pytest.CaptureFixture) -> None:
@@ -878,7 +922,7 @@ def test_a_failed_migration_stops_apply_with_nothing_of_it_committed(
 
 
 def test_plan_lists_the_stage_where_apply_runs_it(stack: Path, capsys: pytest.CaptureFixture) -> None:
-    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False)
+    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
     assert u.cmd_upgrade_plan(args) == u.EXIT_OK
     written = (stack / "upgrades" / "1.0.0-to-2.0.0.md").read_text(encoding="utf-8")
     assert "## overlay vocabulary (stage overlay-vocabulary, before 40-apps)" in written
@@ -890,7 +934,7 @@ def test_plan_lists_the_stage_where_apply_runs_it(stack: Path, capsys: pytest.Ca
 
 
 def test_plan_has_no_overlay_section_without_the_switch(stack: Path, capsys: pytest.CaptureFixture) -> None:
-    args = _Args(deploy=str(stack), to="1.1.0", dial=None, fixtures=None, live=False)
+    args = _Args(deploy=str(stack), to="1.1.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
     assert u.cmd_upgrade_plan(args) == u.EXIT_OK
     assert "overlay vocabulary" not in capsys.readouterr().out
 
@@ -899,7 +943,7 @@ def test_plan_is_blocked_by_an_overlay_the_migration_cannot_read(
     stack: Path, capsys: pytest.CaptureFixture
 ) -> None:
     (stack / "values" / "dfe-fetcher-bad-values.yaml").write_text("x: [\n", encoding="utf-8")
-    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False)
+    args = _Args(deploy=str(stack), to="2.0.0", dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
     assert u.cmd_upgrade_plan(args) == u.EXIT_BLOCKED
     assert "BLOCKED: values/dfe-fetcher-bad-values.yaml is not YAML" in capsys.readouterr().out
 

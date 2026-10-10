@@ -22,7 +22,10 @@
 
 Every verb takes `--deploy`, a dfe-deploy checkout (its `pins.yaml` names the
 FROM stack in `base.dfe-infra`), and `--to`, a versions.yaml stack version
-(default: the `current` pointer). The move is computed by diffing the FROM and
+(default: the `current` pointer). A deploy repo with no `pins.yaml`, such as the
+bundled one, takes FROM from the cluster secret's `dfe.hyperi.io/stack_version`,
+says so, and gets a `pins.yaml` in dfe-deploy's shape at apply's first stage.
+The move is computed by diffing the FROM and
 TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
 `docs/deployment/upgrades.md` says is applied by hand today.
 
@@ -82,6 +85,9 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                commits nothing. An `enrichment-tables` stage runs just after that
                first stage, once the thin charts render, and writes the config
                entry for each table file an apps.yaml set names table by table.
+               A transform reading those tables cannot start without them, so
+               the wait after the retarget asks only that every Application has
+               synced, and the tables stage's own wait asks for health.
 
                When the plan moves services.kafka-version on a Strimzi
                cluster, that same stage first writes two holds into the
@@ -176,7 +182,8 @@ EXIT_PREFLIGHT_FAILED = 2
 
 DEFAULT_ARGOCD_NAMESPACE = "argocd"
 DEFAULT_CLICKHOUSE_NAMESPACE = "clickhouse"
-DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name=clickhouse"
+# The server pod in either layout: the chart's single-mode StatefulSet, then the operator's cluster pods.
+DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)"
 DEFAULT_CLICKHOUSE_MERGE_THRESHOLD = 300.0  # seconds
 DEFAULT_TIER = "scale"
 DEFAULT_BACKUP_MARKER = "upgrades/.backup-ok"
@@ -387,13 +394,17 @@ def _norm_stack(name: str) -> str:
 
 def resolve_stack(root: dict, name: str) -> tuple[str, dict]:
     """(canonical name, pin set) for a stack version, tolerant of a v-prefix
-    mismatch -- the same rule dfe-stack's own stack_pins() applies."""
+    mismatch -- the same rule dfe-stack's own stack_pins() applies.
+
+    The name returned is versions.yaml's own key, never `name`, so a stack read
+    off the cluster secret goes on as a label this repo certifies.
+    """
     stacks = root.get("stacks")
     if not isinstance(stacks, dict):
         raise UpgradeError("versions.yaml carries no stacks: map")
-    if name in stacks:
-        return name, stacks[name]
-    match = next((n for n in stacks if _norm_stack(n) == _norm_stack(name)), None)
+    match = next((n for n in stacks if n == name), None)
+    if match is None:
+        match = next((n for n in stacks if _norm_stack(n) == _norm_stack(name)), None)
     if match is None:
         have = ", ".join(sorted(stacks)) or "none"
         raise UpgradeError(f"stack {name!r} not in versions.yaml stacks: (have: {have})")
@@ -457,9 +468,12 @@ def plan_moves(steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, 
     return moves
 
 
-def render_plan(moves: list[Move], *, from_stack: str, to_stack: str) -> str:
-    """The numbered plan, grouped by stage, each move carrying its notes."""
+def render_plan(moves: list[Move], *, from_stack: str, to_stack: str, note: str = "") -> str:
+    """The numbered plan, grouped by stage, each move carrying its notes, with `note`
+    under the heading."""
     lines = [f"# Upgrade plan: {from_stack} -> {to_stack}", ""]
+    if note:
+        lines += [note, ""]
     if not moves:
         lines.append("No pinned key moves between these two stacks.")
         return "\n".join(lines) + "\n"
@@ -594,7 +608,11 @@ def _source_revisions(app: dict) -> list[str]:
 
 
 def check_argo_apps(
-    kubeconfig: str | None, namespace: str = DEFAULT_ARGOCD_NAMESPACE, *, stale_revision: str = ""
+    kubeconfig: str | None,
+    namespace: str = DEFAULT_ARGOCD_NAMESPACE,
+    *,
+    stale_revision: str = "",
+    require_healthy: bool = True,
 ) -> tuple[bool, str]:
     """Every Argo Application in `namespace` is Synced and Healthy.
 
@@ -602,7 +620,9 @@ def check_argo_apps(
     dfe-ops refresh/cycle already use -- no second CLI (argocd) dependency.
     With `stale_revision`, an Application still rendering from that ref also
     fails: right after a retarget every Application is still Synced to the old
-    one until the ApplicationSet controller regenerates it.
+    one until the ApplicationSet controller regenerates it. With
+    `require_healthy` False an Application counts once it is Synced, whatever
+    its health, for a wait whose health a later stage settles.
     """
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "applications.argoproj.io")
     if rc != 0:
@@ -618,12 +638,13 @@ def check_argo_apps(
         health = (status.get("health") or {}).get("status") or "Unknown"
         if stale_revision and stale_revision in _source_revisions(app):
             bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
-        elif sync != "Synced" or health != "Healthy":
+        elif sync != "Synced" or (require_healthy and health != "Healthy"):
             bad.append(f"{name} (sync {sync}, health {health})")
+    wanted = "Synced and Healthy" if require_healthy else "Synced"
     if bad:
         extra = f", +{len(bad) - 6} more" if len(bad) > 6 else ""
-        return False, f"{len(bad)} app(s) not Synced/Healthy: {', '.join(bad[:6])}{extra}"
-    return True, f"{len(items)} Application(s) Synced and Healthy"
+        return False, f"{len(bad)} app(s) not {wanted.replace(' and ', '/')}: {', '.join(bad[:6])}{extra}"
+    return True, f"{len(items)} Application(s) {wanted}"
 
 
 def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
@@ -1006,10 +1027,43 @@ def set_pin_stack(text: str, stack: str) -> str:
     return rendered + "\n" if text.endswith("\n") else rendered
 
 
-def bump_pin_file(deploy: Path, stack: str) -> bool:
+# The dfe-deploy template's pins.yaml, less its prose, for a deploy repo seeded without one.
+_NEW_PIN_FILE = """\
+# pins.yaml -- the certified DFE stack this deployment runs, written by
+# `dfe-ops upgrade apply` into a deploy repo that carried none.
+#
+# ONE pin selects the WHOLE stack: dfe-infra's versions.yaml at this version
+# names every dfe-* app image, operator and data service. `dfe-ops upgrade
+# apply` moves it, and leaves your values/ and config/ untouched.
+
+base:
+  dfe-infra: "{stack}"
+{channel}
+# Per-component overrides -- move ONE component off the certified set, at your
+# own documented risk. Use tag@sha256 digests, never floating tags.
+# overrides:
+#   apps:
+#     dfe-receiver: "v1.16.0@sha256:..."
+"""
+
+_NEW_PIN_CHANNEL = """
+# Release channel this environment tracks: alpha | beta | rc | release.
+channel: "{channel}"
+"""
+
+
+def bump_pin_file(deploy: Path, stack: str, *, channel: str = "") -> bool:
     """Set the deploy's pins.yaml to `stack`, idempotently. Returns whether it
-    changed anything (False when it already named this stack)."""
+    changed anything (False when it already named this stack).
+
+    A deploy repo with no pins.yaml gets dfe-deploy's shape, naming `channel`
+    when one is given.
+    """
     pins_path = deploy / "pins.yaml"
+    if not pins_path.is_file():
+        named = _NEW_PIN_CHANNEL.format(channel=channel) if channel else ""
+        pins_path.write_text(_NEW_PIN_FILE.format(stack=stack, channel=named), encoding="utf-8")
+        return True
     text = pins_path.read_text(encoding="utf-8")
     updated = set_pin_stack(text, stack)
     if updated == text:
@@ -1190,19 +1244,30 @@ def _norm_ref(ref: str) -> str:
     return _norm_stack(ref) if ref else ""
 
 
-def read_target_revision(kubeconfig: str | None, namespace: str) -> str:
-    """The cluster secret's target_revision. Raises UpgradeError when unreadable."""
-    jsonpath = "jsonpath={.metadata.annotations." + TARGET_REVISION_ANNOTATION.replace(".", "\\.") + "}"
+def _cluster_secret_annotation(kubeconfig: str | None, namespace: str, annotation: str) -> str:
+    """One annotation on the cluster secret, empty when unset. Raises UpgradeError when unreadable."""
+    jsonpath = "jsonpath={.metadata.annotations." + annotation.replace(".", "\\.") + "}"
     result = _kubectl(
         kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
         "get", "secret", ARGO_CLUSTER, "-o", jsonpath,
     )
     if result.returncode != 0:
         raise UpgradeError(
-            f"cannot read {TARGET_REVISION_ANNOTATION} on secret/{ARGO_CLUSTER} in {namespace}: "
+            f"cannot read {annotation} on secret/{ARGO_CLUSTER} in {namespace}: "
             f"{_last_line(result.stderr) or 'kubectl failed'}"
         )
     return (result.stdout or "").strip()
+
+
+def read_target_revision(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's target_revision. Raises UpgradeError when unreadable."""
+    return _cluster_secret_annotation(kubeconfig, namespace, TARGET_REVISION_ANNOTATION)
+
+
+def read_stack_version(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's stack_version: the stack bootstrap deployed, moved by every
+    retarget since. Raises UpgradeError when unreadable."""
+    return _cluster_secret_annotation(kubeconfig, namespace, STACK_VERSION_ANNOTATION)
 
 
 def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | None) -> tuple[str | None, str]:
@@ -1323,13 +1388,17 @@ def wait_for_argo(
     argocd_namespace: str,
     timeout: float,
     stale_revision: str = "",
+    require_healthy: bool = True,
     sleep=time.sleep,
     now=time.monotonic,
 ) -> tuple[bool, str]:
     """Block until check_argo_apps reports every Application Synced and
-    Healthy (and none on `stale_revision`), or `timeout` seconds pass."""
+    Healthy (Synced alone without `require_healthy`, and none on
+    `stale_revision`), or `timeout` seconds pass."""
     return _wait_until(
-        lambda: check_argo_apps(kubeconfig, argocd_namespace, stale_revision=stale_revision),
+        lambda: check_argo_apps(
+            kubeconfig, argocd_namespace, stale_revision=stale_revision, require_healthy=require_healthy
+        ),
         timeout=timeout, stuck="still not converged", sleep=sleep, now=now,
     )
 
@@ -2195,25 +2264,62 @@ def unname_tables(deploy: Path, *, write: bool, manifest: Path | None = None) ->
 # --- plan ----------------------------------------------------------------------
 
 
-def _load_from_to(
-    deploy: Path, to_arg: str | None, from_arg: str | None = None
-) -> tuple[dict, str, dict, str, dict]:
-    """(root, from_name, from_pins, to_name, to_pins) -- raises UpgradeError.
+def read_from_stack(
+    deploy: Path, from_arg: str | None, *, kubeconfig: str | None, argocd_namespace: str
+) -> tuple[str, str]:
+    """(the FROM stack, a note saying so when it came from the cluster) -- raises UpgradeError.
 
-    FROM is pins.yaml's pin unless `from_arg` names it, which is how an apply
-    whose first stage already moved the pin is resumed or finalised.
+    pins.yaml's pin, unless `from_arg` names it. A pins.yaml present is read
+    either way, so one apply could not bump refuses before anything moves. A
+    deploy repo with no pins.yaml (the bundled one is seeded without it) falls
+    back to the cluster secret's stack_version, and apply writes the file at its
+    first stage.
+    """
+    if (deploy / "pins.yaml").is_file():
+        pinned = read_deploy_pin(deploy)
+        return from_arg or pinned, ""
+    if from_arg:
+        return from_arg, ""
+    stack = read_stack_version(kubeconfig, argocd_namespace)
+    if not stack:
+        raise UpgradeError(
+            f"no pins.yaml in {deploy}, and secret/{ARGO_CLUSTER} carries no {STACK_VERSION_ANNOTATION} -- "
+            "commit a pins.yaml whose base.dfe-infra names the stack this deployment runs"
+        )
+    return stack, (
+        f"FROM is secret/{ARGO_CLUSTER}'s {STACK_VERSION_ANNOTATION}: the deploy repo carries "
+        "no pins.yaml, so apply writes one at its first stage"
+    )
+
+
+def _load_from_to(
+    deploy: Path,
+    to_arg: str | None,
+    from_arg: str | None = None,
+    *,
+    kubeconfig: str | None,
+    argocd_namespace: str,
+) -> tuple[dict, str, dict, str, dict, str]:
+    """(root, from_name, from_pins, to_name, to_pins, from_note) -- raises UpgradeError.
+
+    FROM is read_from_stack's; `from_arg` is how an apply whose first stage
+    already moved the pin is resumed or finalised.
     """
     root = load_versions_root()
     to_name, to_pins = resolve_stack(root, to_arg or current_stack(root))
-    pinned = read_deploy_pin(deploy)
-    from_name, from_pins = resolve_stack(root, from_arg or pinned)
-    return root, from_name, from_pins, to_name, to_pins
+    from_stack, from_note = read_from_stack(
+        deploy, from_arg, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
+    )
+    from_name, from_pins = resolve_stack(root, from_stack)
+    return root, from_name, from_pins, to_name, to_pins, from_note
 
 
 def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
-        _root, from_name, from_pins, to_name, to_pins = _load_from_to(deploy, args.to)
+        _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
+            deploy, args.to, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+        )
     except UpgradeError as err:
         print(f"dfe-ops upgrade plan: {err}", file=sys.stderr)
         return EXIT_PREFLIGHT_FAILED
@@ -2222,7 +2328,7 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
     blocked = False
 
-    sections = [render_plan(moves, from_stack=from_name, to_stack=to_name)]
+    sections = [render_plan(moves, from_stack=from_name, to_stack=to_name, note=from_note)]
 
     if needs_overlay_migration(from_pins, to_pins):
         chart_stage = _chart_stage(moves_by_stage(moves))
@@ -2266,10 +2372,14 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
 def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
-        _root, _from_name, from_pins, _to_name, to_pins = _load_from_to(deploy, args.to)
+        _root, _from_name, from_pins, _to_name, to_pins, from_note = _load_from_to(
+            deploy, args.to, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+        )
     except UpgradeError as err:
         print(f"dfe-ops upgrade preflight: {err}", file=sys.stderr)
         return EXIT_PREFLIGHT_FAILED
+    if from_note:
+        print(from_note)
 
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
@@ -2484,10 +2594,14 @@ def _commit_overlays(
 def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
-        _root, from_name, from_pins, to_name, to_pins = _load_from_to(deploy, args.to, args.from_stack)
+        _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
+            deploy, args.to, args.from_stack, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+        )
     except UpgradeError as err:
         print(f"dfe-ops upgrade apply: {err}", file=sys.stderr)
         return EXIT_PREFLIGHT_FAILED
+    if from_note:
+        print(from_note, file=sys.stderr)
 
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
@@ -2538,6 +2652,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             print(f"[dry-run] {cmd}", file=sys.stderr)
 
     reached = stage_names[: stage_names.index(args.stop_before)] if args.stop_before else stage_names
+    pins_present = (deploy / "pins.yaml").is_file()
     kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
     kafka_stage = kafka_move.step.stage if kafka_move else None
 
@@ -2620,9 +2735,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     _print_rollback(stage_moves)
                     return EXIT_BLOCKED
 
-        emit(f'set pins.yaml base.dfe-infra = "{to_name}"')
+        verb = "set pins.yaml" if pins_present else "write pins.yaml with"
+        emit(f'{verb} base.dfe-infra = "{to_name}"')
+        pins_present = True
         if not args.dry_run:
-            bump_pin_file(deploy, to_name)
+            bump_pin_file(deploy, to_name, channel=str(to_pins.get("maturity") or ""))
 
         if args.dial:
             previous = deploy / "sizing" / "resolved.yaml"
@@ -2721,6 +2838,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             ref = args.target_revision or to_name
             emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
             emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
+            # A thin-chart transform reading tables cannot start until the next stage names them.
+            tables_follow = TABLES_STAGE in reached
+            if tables_follow:
+                emit(f"health is checked after stage {TABLES_STAGE}, which names the tables the thin charts read")
             if not args.dry_run and retarget:
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
                 print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
@@ -2728,7 +2849,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     return _stage_failed(stage_index, "the cluster secret did not take the new target_revision", stage_moves)
                 ok, detail = wait_for_argo(
                     args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-                    stale_revision=current_ref,
+                    stale_revision=current_ref, require_healthy=not tables_follow,
                 )
                 print(f"  argo: {detail}", file=sys.stderr)
                 if not ok:
@@ -2978,6 +3099,11 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     )
     _add_deploy_target_args(plan)
     _add_sizing_args(plan)
+    plan.add_argument(
+        "--kubeconfig", default=None,
+        help="kubeconfig for the target cluster, read only when the deploy repo carries no pins.yaml",
+    )
+    plan.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
     plan.set_defaults(func=cmd_upgrade_plan)
 
     preflight = verbs.add_parser(
