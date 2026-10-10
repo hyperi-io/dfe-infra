@@ -16,7 +16,7 @@ ARG AWS_CLI_VERSION="2.37.9"
 # and the RUN step below asserts the download still reports it. A mismatch
 # means AWS moved `latest` again and this pin (plus the drift check that
 # reads it) needs bumping to match.
-ARG AWS_SSM_PLUGIN_VERSION="1.2.835.0"
+ARG AWS_SSM_PLUGIN_VERSION="1.2.889.0"
 
 USER 0
 
