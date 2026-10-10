@@ -412,6 +412,41 @@ def test_an_unready_workload_in_an_owned_namespace_fails() -> None:
     )
 
 
+def test_a_workload_scaled_to_zero_is_at_desired() -> None:
+    """kubectl prints <none> for readyReplicas when spec.replicas is 0."""
+    out = run_gate(
+        {
+            "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
+            "deployments": ["dfe-local dfe-engine 1 1", "dfe-local dfe-fetcher-s3pypi 0 <none>"],
+            "statefulsets": ["dfe-local dfe-paused 0 <none>"],
+            "ns_workloads": ["dfe-engine 1/1 1 1 6d", "dfe-fetcher-s3pypi 0/0 0 0 6d"],
+        },
+        DFE_NS="dfe-local",
+        DFE_ENV="local",
+    )
+    expect(
+        "a deployment and a statefulset scaled to zero pass",
+        out.returncode == 0 and "<none>" not in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
+def test_a_workload_with_no_ready_replica_still_fails() -> None:
+    out = run_gate(
+        {
+            "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
+            "deployments": ["dfe-local dfe-ui 2 <none>"],
+            "ns_workloads": ["dfe-ui 0/2 2 0 5d"],
+        },
+        DFE_NS="dfe-local",
+    )
+    expect(
+        "a deployment wanting 2 with none ready fails, counted as 0",
+        out.returncode != 0 and "deployment dfe-local/dfe-ui 0/2 ready" in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
+
+
 # A converged single-pod deploy: every other check passes, so the credential
 # verdict is the only thing left to decide the exit code.
 HEALTHY = {

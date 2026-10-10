@@ -235,6 +235,8 @@ run_check() {
       [ -z "$ns" ] && continue
       watched_ns "$ns" || continue
       [ "$want" = "<none>" ] && want=0
+      # kubectl prints <none> for readyReplicas on a workload scaled to zero, which is at desired.
+      [ "$have" = "<none>" ] && have=0
       [ "${have:-0}" != "${want:-0}" ] && echo "$kind $ns/$name ${have:-0}/${want:-0} ready" >> "$ISSUES_FILE"
     done < <(kubectl get "$kind" -A --no-headers -o custom-columns=NS:.metadata.namespace,N:.metadata.name,W:.spec.replicas,H:.status.readyReplicas 2>/dev/null)
   done
