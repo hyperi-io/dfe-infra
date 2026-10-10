@@ -106,14 +106,9 @@ from dfe_suite.proc import (
     warn,
 )
 from dfe_suite.rebuild import (
-    _DRIFT_TEST_NAMES,
     _assert_locked,
     _bump_py_constraint,
-    _chart_drift_tests,
-    _chart_root,
-    _emit_chart,
     _emit_dockerfile,
-    _hand_fix_markers,
     _skip_optimize,
     rebuild_python,
     rebuild_rust,
@@ -150,7 +145,6 @@ __all__ = [
     "SHIP_PY",
     "SHIP_RS",
     "USER_AGENT",
-    "_DRIFT_TEST_NAMES",
     "_RED_CONCLUSIONS",
     "_TAG",
     "Artefact",
@@ -160,11 +154,7 @@ __all__ = [
     "_assert_locked",
     "_bump_py_constraint",
     "_candidate_roots",
-    "_chart_drift_tests",
-    "_chart_root",
-    "_emit_chart",
     "_emit_dockerfile",
-    "_hand_fix_markers",
     "_http_json",
     "_pr_number_from_url",
     "_red_checks",
@@ -233,7 +223,6 @@ def cmd_rebuild_rs(args: argparse.Namespace) -> int:
         args.version,
         subject=args.subject,
         run_tests=not args.no_tests,
-        emit_chart=not args.no_chart,
         watch=not args.no_watch,
         dry_run=args.dry_run,
         org=args.org,
@@ -345,14 +334,6 @@ def build_parser() -> argparse.ArgumentParser:
                 "--no-tests",
                 action="store_true",
                 help="skip the local nextest gate (dfe-loader: its suite is Docker-bound)",
-            )
-            rebuild.add_argument(
-                "--no-chart",
-                action="store_true",
-                help=(
-                    "skip chart/ regeneration (for an app with neither an "
-                    "emit-chart subcommand nor a chart drift test)"
-                ),
             )
             rebuild.add_argument(
                 "--release-unoptimized",

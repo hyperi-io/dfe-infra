@@ -886,10 +886,10 @@ class CliTests(unittest.TestCase):
         args = ds.build_parser().parse_args(["signals", "dfe-loader"])
         assert args.member == "dfe-loader"
 
-    def test_the_skip_flags_take_a_consumer_list_or_stand_bare(self) -> None:
+    def test_the_skip_flag_takes_a_consumer_list_or_stands_bare(self) -> None:
         parse = ds.build_parser().parse_args
-        bare = parse(["walk", "scalo-rs", "2.11.0", "--no-tests", "--no-chart"])
-        assert (bare.no_tests, bare.no_chart) == ("", "")
+        bare = parse(["walk", "scalo-rs", "2.11.0", "--no-tests"])
+        assert bare.no_tests == ""
         assert ds._flag_applies(bare.no_tests, "dfe-loader")
         listed = parse(
             ["walk", "scalo-rs", "2.11.0", "--no-tests", "dfe-loader,dfe-receiver"]
@@ -897,8 +897,8 @@ class CliTests(unittest.TestCase):
         assert ds._flag_applies(listed.no_tests, "dfe-loader")
         assert not ds._flag_applies(listed.no_tests, "dfe-fetcher")
         absent = parse(["walk", "scalo-rs", "2.11.0"])
-        assert absent.no_chart is None
-        assert not ds._flag_applies(absent.no_chart, "dfe-loader")
+        assert absent.no_tests is None
+        assert not ds._flag_applies(absent.no_tests, "dfe-loader")
 
     def test_include_repeats_and_comma_separates(self) -> None:
         args = ds.build_parser().parse_args(

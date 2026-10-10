@@ -31,9 +31,8 @@ The layers, bottom up:
 
 WHAT IS AND IS NOT TESTED HERE. The pure halves are covered directly: the
 matchers and every edge check in :mod:`~hyperi_ai.suite.kinds`, the repo lookup
-and slug read in :mod:`~hyperi_ai.suite.repos`, the chart-contract detection in
-:mod:`~hyperi_ai.suite.rebuild`. The rest of ``rebuild``, ``ship``, ``landing``
-and ``artefacts`` is toolchain-bound -- it drives cargo, uv, gh and the two
+and slug read in :mod:`~hyperi_ai.suite.repos`. The rest of ``rebuild``,
+``ship``, ``landing`` and ``artefacts`` is toolchain-bound -- it drives cargo, uv, gh and the two
 registries -- so it is exercised by its dry-run path and by real releases, not
 by a test that would have to stand in for the toolchain to say anything.
 """
