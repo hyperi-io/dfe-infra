@@ -432,9 +432,11 @@ def _configmap(name: str, namespace: str) -> dict:
     }
 
 
-def _holder_object(wiring: Wiring, namespace: str, value: str) -> dict:
-    """The k8s Secret holding the client secret; a dry run passes a placeholder value."""
-    holder = tester_idp.render_secret(wiring.holder_name, namespace, {"client-secret": value})
+def _holder_object(wiring: Wiring, namespace: str) -> dict:
+    """The k8s Secret holding the client secret, fed to kubectl on stdin only."""
+    holder = tester_idp.render_secret(
+        wiring.holder_name, namespace, {"client-secret": wiring.secret_value}
+    )
     holder["metadata"]["labels"] = {"app.kubernetes.io/part-of": PART_OF}
     return holder
 
@@ -498,7 +500,7 @@ def k8s_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
             },
             args.groups_configmap: {"data": wiring.group_files},
         },
-        "holder": _holder_object(wiring, args.namespace, "<redacted>"),
+        "holder": {"kind": "Secret", "name": wiring.holder_name, "keys": ["client-secret"]},
     }
 
 
@@ -536,7 +538,7 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     group_data: dict[str, str | None] = dict(wiring.group_files)
     group_data.update(dict.fromkeys(sorted(stale)))
     _merge_patch(args, "configmap", args.groups_configmap, {"data": group_data})
-    tester_idp._apply(args, [_holder_object(wiring, args.namespace, wiring.secret_value)])
+    tester_idp._apply(args, [_holder_object(wiring, args.namespace)])
 
     print(f"\n=== wired {wiring.provider} into namespace {args.namespace} ===", file=sys.stderr)
     print(
