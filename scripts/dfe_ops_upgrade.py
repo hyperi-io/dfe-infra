@@ -16,7 +16,7 @@
     dfe-ops upgrade preflight --deploy <dir> [--to <stack>]
     dfe-ops upgrade apply --deploy <dir> [--to <stack>] [--from <stack>] [--yes] [--push]
                            [--dry-run] [--finalise] [--stop-before <stage-key>]
-                           [--target-revision <ref>]
+                           [--target-revision <ref>] [--namespace <ns>]
     dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run] [--push]
                            [--skip-cluster-check] [--target-revision <ref>]
 
@@ -27,7 +27,9 @@ bundled one, takes FROM from the cluster secret's `dfe.hyperi.io/stack_version`,
 says so, and gets a `pins.yaml` in dfe-deploy's shape at apply's first stage.
 The move is computed by diffing the FROM and
 TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
-`docs/deployment/upgrades.md` says is applied by hand today.
+`docs/deployment/upgrades.md` says is applied by hand today. A step moves when
+its `key` moves, or the image or thin-chart digest its `image`/`chart` names
+does, so a component whose tag stays put while its digest moves still moves.
 
     plan       Diff FROM -> TO, ordered by stage, with each step's `before`/
                `finalise`/`pair`/`rollback` note attached. Runs
@@ -61,10 +63,18 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                moves the same way a re-size would; commit the stage
                in the deploy repo (`chore(upgrade): <stack> stage <n> -- <keys>`);
                push only with --push; wait for Argo to report every
-               Application Synced and Healthy, bounded by --timeout, and after
-               a stage that bumps the Strimzi operator wait again on every
-               Kafka CR's `status.operatorLastSuccessfulVersion` reaching the
-               new operator version, under the same bound.
+               Application Synced and Healthy and then for every Deployment
+               and StatefulSet in the DFE namespace to finish rolling out,
+               both bounded by --timeout, and after a stage that bumps the
+               Strimzi operator wait again on every Kafka CR's
+               `status.operatorLastSuccessfulVersion` reaching the new
+               operator version, under the same bound. A rollout has finished
+               when its controller has observed the current generation, every
+               replica runs the new template, no old replica is left, and
+               every replica is available -- what `kubectl rollout status`
+               waits on. The DFE namespace is --namespace, else the cluster
+               secret's `dfe.hyperi.io/dfe_namespace`, read before anything
+               moves; a cluster secret naming none refuses the run.
 
                The first stage that moves an Argo-managed component also moves
                the cluster secret's `dfe.hyperi.io/target_revision` from the
@@ -96,7 +106,9 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                pin changes nothing on the cluster. After such a stage apply
                reads the chart version each release runs, prints [DONE] where
                it matches the pin, and otherwise [PENDING] with the helm upgrade
-               that moves it. It never runs that upgrade. After the walk it
+               that moves it: --reset-values and every value bootstrap.sh's
+               install sets, from the bootstrap/helm_releases.py table
+               bootstrap.sh reads. It never runs that upgrade. After the walk it
                reads every other bootstrap pin of the target stack the same
                way, so one an earlier upgrade left uninstalled still keeps the
                run from reporting OK. An Argo CD that
@@ -182,6 +194,7 @@ REPO_ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import argocd_release  # noqa: E402
+import helm_releases  # noqa: E402
 import yaml_subset  # noqa: E402
 
 UPGRADE_ORDER = REPO_ROOT / "upgrade-order.yaml"
@@ -189,13 +202,10 @@ VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 DFE_STACK = SCRIPTS / "dfe-stack"
 RESOLVE_SIZING = SCRIPTS / "resolve_sizing.py"
 CHECK_NODE_CAPACITY = SCRIPTS / "check_node_capacity.py"
+ARGOCD_LOGIN = REPO_ROOT / "bootstrap" / "argocd_login.py"
 
-# The versions.yaml sections upgrade-order.yaml's `key:` fields point into --
-# the deploy-relevant pin set. digests/services-digests/content/providers/stack
-# are versions.yaml sections too, but no upgrade-order.yaml step names one, so
-# a move there is invisible to this diff by design (dfe-stack refresh-digests
-# owns that half).
-UPGRADE_SECTIONS = ("bootstrap", "operators", "services", "apps")
+# Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; a pin no step names moves unreported.
+UPGRADE_SECTIONS = ("bootstrap", "operators", "services", "apps", "content", "digests", "chart-digests")
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -241,6 +251,8 @@ KAFKA_VERSION_KEY = "services.kafka-version"
 ARGO_CLUSTER = "dfe-cluster"
 TARGET_REVISION_ANNOTATION = "dfe.hyperi.io/target_revision"
 STACK_VERSION_ANNOTATION = "dfe.hyperi.io/stack_version"
+DFE_NAMESPACE_ANNOTATION = "dfe.hyperi.io/dfe_namespace"
+DOMAIN_ANNOTATION = "dfe.hyperi.io/domain"
 
 # The deploy repo's kafka chart overlay, layered last by appsets/layer2-data.yaml.
 KAFKA_OVERLAY = Path("infra") / "kafka.yaml"
@@ -348,7 +360,11 @@ def _unquote(text: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Step:
-    """One upgrade-order.yaml step -- a versions.yaml key and its notes."""
+    """One upgrade-order.yaml step -- a versions.yaml key and its notes.
+
+    `image` and `chart` name the versions.yaml keys of the component's image
+    digest and thin-chart digest, which move with `key` as one component.
+    """
 
     stage: str
     order: str
@@ -358,6 +374,8 @@ class Step:
     pair: str = ""
     rollback: str = ""
     scope: str = ""
+    image: str = ""
+    chart: str = ""
 
     @property
     def one_way(self) -> bool:
@@ -399,6 +417,8 @@ def load_steps(path: Path | None = None) -> list[Step]:
                     pair=str(entry.get("pair", "")),
                     rollback=str(entry.get("rollback", "")),
                     scope=str(entry.get("scope", "")),
+                    image=str(entry.get("image", "")),
+                    chart=str(entry.get("chart", "")),
                 )
             )
     return steps
@@ -447,7 +467,7 @@ def current_stack(root: dict) -> str:
 
 def flatten_stack(stack: dict) -> dict[str, str]:
     """A stack's pins as dotted keys (bootstrap.X, operators.X, ...), limited
-    to the sections upgrade-order.yaml's `key:` fields can name."""
+    to the sections an upgrade-order.yaml step can name."""
     flat: dict[str, str] = {}
     for section in UPGRADE_SECTIONS:
         body = stack.get(section)
@@ -475,23 +495,33 @@ def read_deploy_pin(deploy: Path) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """One upgrade-order.yaml step whose pin differs between FROM and TO."""
+    """One upgrade-order.yaml step whose pins differ between FROM and TO.
+
+    `old`/`new` are the step key's values, and `pins` each digest the step's
+    `image`/`chart` names that moved, as (label, key, old, new).
+    """
 
     step: Step
     old: str
     new: str
+    pins: tuple[tuple[str, str, str, str], ...] = ()
 
 
 def plan_moves(steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, str]) -> list[Move]:
-    """Every step whose key's value differs between the two flattened pin sets,
-    in upgrade-order.yaml order."""
+    """Every step whose key, image digest or chart digest differs between the two
+    flattened pin sets, in upgrade-order.yaml order."""
     moves: list[Move] = []
     for step in steps:
         old = from_pins.get(step.key)
         new = to_pins.get(step.key)
-        if old == new:
+        pins = tuple(
+            (label, key, from_pins.get(key) or "(absent)", to_pins.get(key) or "(absent)")
+            for label, key in (("image", step.image), ("chart", step.chart))
+            if key and from_pins.get(key) != to_pins.get(key)
+        )
+        if old == new and not pins:
             continue
-        moves.append(Move(step=step, old=old or "(absent)", new=new or "(absent)"))
+        moves.append(Move(step=step, old=old or "(absent)", new=new or "(absent)", pins=pins))
     return moves
 
 
@@ -514,6 +544,8 @@ def render_plan(moves: list[Move], *, from_stack: str, to_stack: str, note: str 
         n += 1
         scoped_key = f"{move.step.key} ({move.step.scope})" if move.step.scope else move.step.key
         lines.append(f"{n}. {scoped_key}: {move.old} -> {move.new}")
+        for label, key, old, new in move.pins:
+            lines.append(f"   {label + ':':<9} {key}: {old} -> {new}")
         if move.step.before:
             lines.append(f"   before:   {move.step.before}")
         if move.step.finalise:
@@ -1353,6 +1385,12 @@ def read_stack_version(kubeconfig: str | None, namespace: str) -> str:
     return _cluster_secret_annotation(kubeconfig, namespace, STACK_VERSION_ANNOTATION)
 
 
+def read_dfe_namespace(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's dfe_namespace, the namespace bootstrap deployed the apps into.
+    It came out of a Secret, so nothing prints it. Raises UpgradeError when unreadable."""
+    return _cluster_secret_annotation(kubeconfig, namespace, DFE_NAMESPACE_ANNOTATION)
+
+
 def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | None) -> tuple[str | None, str]:
     """(the ref to write, why) -- None leaves the secret as it is.
 
@@ -1409,43 +1447,22 @@ BOOTSTRAP_PREFIX = "bootstrap."
 ARGOCD_KEY = "bootstrap.argocd"
 # check_bootstrap_move's verdicts; only PENDING keeps an apply from reporting OK.
 BOOTSTRAP_DONE, BOOTSTRAP_PENDING, BOOTSTRAP_ADOPTED = "DONE", "PENDING", "ADOPTED"
+# The shell variable a printed upgrade reads the domain into, the name bootstrap.sh gives it.
+DOMAIN_VAR = "DFE_DOMAIN"
+# Marks where the domain goes while the command is quoted; no value it stands for contains it.
+_DOMAIN_MARK = "DFE-DOMAIN-FROM-THE-CLUSTER-SECRET"
 
-
-@dataclass(frozen=True, slots=True)
-class BootstrapRelease:
-    """The helm release bootstrap.sh installs for one bootstrap-section pin.
-
-    Attributes:
-        release: The helm release name bootstrap.sh installs.
-        namespace: The namespace the release lives in.
-        chart: The chart name, also the prefix of its `helm.sh/chart` label.
-        repo: The chart repository URL bootstrap.sh adds.
-        deployment: A Deployment whose `helm.sh/chart` label names the running chart.
-        timeout: The --timeout bootstrap.sh gives the install.
-    """
-
-    release: str
-    namespace: str
-    chart: str
-    repo: str
-    deployment: str
-    timeout: str
-
-
-# The same release, chart, repository and timeout bootstrap.sh's steps [2/7], [3/7] and [6/7] use.
-BOOTSTRAP_RELEASES: dict[str, BootstrapRelease] = {
-    "bootstrap.external-secrets": BootstrapRelease(
-        "external-secrets", "external-secrets", "external-secrets", "https://charts.external-secrets.io",
-        "external-secrets", "5m",
-    ),
-    "bootstrap.cert-manager": BootstrapRelease(
-        "cert-manager", "cert-manager", "cert-manager", "https://charts.jetstack.io", "cert-manager", "5m",
-    ),
-    ARGOCD_KEY: BootstrapRelease(
-        argocd_release.RELEASE, argocd_release.NAMESPACE, argocd_release.CHART,
-        "https://argoproj.github.io/argo-helm", "argocd-server", "10m",
-    ),
+# The releases bootstrap.sh's steps [2/7], [3/7] and [6/7] install, from the table they read.
+BOOTSTRAP_RELEASES: dict[str, helm_releases.HelmRelease] = {
+    "bootstrap.external-secrets": helm_releases.EXTERNAL_SECRETS,
+    "bootstrap.cert-manager": helm_releases.CERT_MANAGER,
+    ARGOCD_KEY: helm_releases.ARGOCD,
 }
+
+
+def _cache_service() -> str:
+    """The Valkey Service bootstrap.sh wires Argo to, read from DFE_VALKEY_SERVICE as bootstrap.sh reads it."""
+    return os.environ.get("DFE_VALKEY_SERVICE") or argocd_release.DEFAULT_CACHE_SERVICE
 
 
 def _helm_json(kubeconfig: str | None, *argv: str) -> tuple[object, str]:
@@ -1476,7 +1493,7 @@ def argocd_installed_by_bootstrap(kubeconfig: str | None) -> tuple[bool | None, 
     if error:
         return None, f"cannot list helm releases in {argocd_release.NAMESPACE}: {error}"
     listed = [r for r in releases if isinstance(r, dict)] if isinstance(releases, list) else []
-    cache = os.environ.get("DFE_VALKEY_SERVICE") or argocd_release.DEFAULT_CACHE_SERVICE
+    cache = _cache_service()
     if not any(r.get("name") == argocd_release.RELEASE for r in listed):
         return argocd_release.verdict([], None, cache)
     values, error = _helm_json(kubeconfig, "get", "values", argocd_release.RELEASE, *scope)
@@ -1485,7 +1502,7 @@ def argocd_installed_by_bootstrap(kubeconfig: str | None) -> tuple[bool | None, 
     return argocd_release.verdict(listed, values if isinstance(values, dict) else None, cache)
 
 
-def read_bootstrap_chart(kubeconfig: str | None, release: BootstrapRelease) -> tuple[str, str]:
+def read_bootstrap_chart(kubeconfig: str | None, release: helm_releases.HelmRelease) -> tuple[str, str]:
     """(the chart version the cluster runs, why it could not be read).
 
     Read off the Deployment's `helm.sh/chart` label, which the chart stamps with
@@ -1505,28 +1522,49 @@ def read_bootstrap_chart(kubeconfig: str | None, release: BootstrapRelease) -> t
     return label[len(prefix):], ""
 
 
-def bootstrap_upgrade_command(release: BootstrapRelease, version: str, kubeconfig: str | None) -> str:
+def bootstrap_upgrade_command(
+    release: helm_releases.HelmRelease,
+    version: str,
+    kubeconfig: str | None,
+    argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
+) -> str:
     """The helm upgrade an operator runs to move a bootstrap release to `version`.
 
-    --reset-then-reuse-values starts from the new chart's defaults and applies the
-    values bootstrap.sh set on the release over them. `upgrade` without --install
+    --reset-values starts from the new chart's defaults, and every value after it
+    is one bootstrap.sh's install sets, read from the same helm_releases.py table,
+    so the release ends up as a fresh bootstrap would install it. Argo's login
+    values are piped in from argocd_login.py, as bootstrap.sh feeds them on stdin.
+    A command that needs the domain reads it off the cluster secret in
+    `argocd_namespace` as it runs, and stops when the secret names none, so a
+    value read from a Secret is never printed. `upgrade` without --install
     refuses where no such release exists.
     """
-    cmd = ["helm"]
-    if kubeconfig:
-        cmd += ["--kubeconfig", kubeconfig]
-    cmd += [
-        "-n", release.namespace, "upgrade", release.release, release.chart, "--repo", release.repo,
-        "--version", version, "--reset-then-reuse-values", "--wait", "--timeout", release.timeout,
-    ]
-    return shlex.join(cmd)
+    kube = ["--kubeconfig", kubeconfig] if kubeconfig else []
+    values = helm_releases.install_args(release, domain=_DOMAIN_MARK, cache_service=_cache_service())
+    command = shlex.join([
+        "helm", *kube, "-n", release.namespace, "upgrade", release.release, release.chart,
+        "--repo", release.repo, "--version", version, "--reset-values", *values,
+        "--wait", "--timeout", release.timeout,
+    ])
+    if release.login_values:
+        login = shlex.join(["python3", str(ARGOCD_LOGIN), *kube, "values", "--domain", _DOMAIN_MARK])
+        command = f"{login} | {command}"
+    if _DOMAIN_MARK not in command:
+        return command
+    jsonpath = "jsonpath={.metadata.annotations." + DOMAIN_ANNOTATION.replace(".", "\\.") + "}"
+    lookup = shlex.join(["kubectl", *kube, "-n", argocd_namespace, "get", "secret", ARGO_CLUSTER, "-o", jsonpath])
+    domain = f'"${DOMAIN_VAR}"'
+    return f'{DOMAIN_VAR}="$({lookup})" && test -n {domain} && {command.replace(_DOMAIN_MARK, domain)}'
 
 
-def check_bootstrap_move(kubeconfig: str | None, move: Move) -> tuple[str, str]:
+def check_bootstrap_move(
+    kubeconfig: str | None, move: Move, argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE
+) -> tuple[str, str]:
     """(BOOTSTRAP_DONE, _PENDING or _ADOPTED, the line saying why).
 
     A PENDING line ends with the command that moves the release. Argo's owner is
-    decided first, so a host's Argo reads ADOPTED rather than PENDING.
+    decided first, so a host's Argo reads ADOPTED rather than PENDING. An Argo
+    command reads its domain off the cluster secret in `argocd_namespace`.
     """
     moved = (
         f"{move.step.key} {move.old} -> {move.new}" if move.old != move.new
@@ -1550,7 +1588,7 @@ def check_bootstrap_move(kubeconfig: str | None, move: Move) -> tuple[str, str]:
     seen = f"the cluster runs {running}" if running else why
     return BOOTSTRAP_PENDING, (
         f"{moved}: bootstrap.sh installs it, not Argo, and {seen}. "
-        f"Run{where}: {bootstrap_upgrade_command(release, move.new, kubeconfig)}"
+        f"Run{where}: {bootstrap_upgrade_command(release, move.new, kubeconfig, argocd_namespace)}"
     )
 
 
@@ -1615,7 +1653,74 @@ def write_finalise_marker(
     return path
 
 
-# --- Argo sync wait (apply) ----------------------------------------------------
+# --- Argo sync and rollout wait (apply) ----------------------------------------
+# Argo can report every Application Synced and Healthy while a Deployment it
+# synced is still rolling, so a healthy wait also reads each rollout itself.
+
+
+def rollout_pending(item: dict) -> str:
+    """Why one Deployment or StatefulSet has not finished rolling out; empty once it has.
+
+    The conditions `kubectl rollout status` waits on: the controller has observed
+    the current generation, every replica runs the new template (up to a
+    StatefulSet's partition), no old replica is left, and the replicas are
+    available. A StatefulSet on the OnDelete strategy has no rollout to finish.
+    """
+    spec = item.get("spec") or {}
+    status = item.get("status") or {}
+    generation = int((item.get("metadata") or {}).get("generation") or 0)
+    observed = int(status.get("observedGeneration") or 0)
+    if observed < generation:
+        return f"generation {generation} not yet observed, at {observed}"
+    replicas = int(spec.get("replicas", 1))
+    updated = int(status.get("updatedReplicas") or 0)
+    available = int(status.get("availableReplicas") or 0)
+    if item.get("kind") == "StatefulSet":
+        strategy = spec.get("updateStrategy") or {}
+        if strategy.get("type", "RollingUpdate") != "RollingUpdate":
+            return ""
+        want = replicas - int((strategy.get("rollingUpdate") or {}).get("partition") or 0)
+        if updated < want:
+            return f"{updated} of {want} replicas updated"
+        if available < replicas:
+            return f"{available} of {replicas} replicas available"
+        return ""
+    conditions = status.get("conditions") or []
+    if any(c.get("type") == "Progressing" and c.get("reason") == "ProgressDeadlineExceeded" for c in conditions):
+        return "past its progress deadline"
+    if updated < replicas:
+        return f"{updated} of {replicas} replicas updated"
+    total = int(status.get("replicas") or 0)
+    if total > updated:
+        return f"{total - updated} old replica(s) still running"
+    if available < updated:
+        return f"{available} of {updated} updated replicas available"
+    return ""
+
+
+def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
+    """Every Deployment and StatefulSet in `namespace` has finished rolling out.
+
+    A namespace holding neither fails: it is the wrong namespace or an empty
+    stack, and neither is a settled one. The detail never names `namespace`,
+    which apply can have read off the cluster secret.
+    """
+    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "deployments.apps,statefulsets.apps")
+    if rc != 0:
+        return False, f"cannot list Deployments and StatefulSets in the DFE namespace: {err}"
+    items = doc.get("items") or []
+    if not items:
+        return False, "no Deployment or StatefulSet in the DFE namespace"
+    pending = []
+    for item in items:
+        why = rollout_pending(item)
+        if why:
+            name = (item.get("metadata") or {}).get("name", "<unnamed>")
+            pending.append(f"{str(item.get('kind') or 'workload').lower()}/{name} ({why})")
+    if pending:
+        extra = f", +{len(pending) - 6} more" if len(pending) > 6 else ""
+        return False, f"{len(pending)} of {len(items)} rollout(s) not finished: {', '.join(pending[:6])}{extra}"
+    return True, f"{len(items)} rollout(s) finished"
 
 
 def wait_for_argo(
@@ -1625,18 +1730,29 @@ def wait_for_argo(
     timeout: float,
     stale_revision: str = "",
     require_healthy: bool = True,
+    rollout_namespace: str = "",
     sleep=time.sleep,
     now=time.monotonic,
 ) -> tuple[bool, str]:
     """Block until check_argo_apps reports every Application Synced and
     Healthy (Synced alone without `require_healthy`, and none on
-    `stale_revision`), or `timeout` seconds pass."""
-    return _wait_until(
-        lambda: check_argo_apps(
+    `stale_revision`), or `timeout` seconds pass.
+
+    With `rollout_namespace` and `require_healthy`, every rollout there must
+    also have finished, inside the same `timeout`; the timeout detail names
+    each one that had not.
+    """
+
+    def settled() -> tuple[bool, str]:
+        ok, detail = check_argo_apps(
             kubeconfig, argocd_namespace, stale_revision=stale_revision, require_healthy=require_healthy
-        ),
-        timeout=timeout, stuck="still not converged", sleep=sleep, now=now,
-    )
+        )
+        if not ok or not rollout_namespace or not require_healthy:
+            return ok, detail
+        rolled, rollouts = check_rollouts(kubeconfig, rollout_namespace)
+        return rolled, f"{detail}; {rollouts}"
+
+    return _wait_until(settled, timeout=timeout, stuck="still not converged", sleep=sleep, now=now)
 
 
 def wait_for_kafka_operator_version(
@@ -2728,6 +2844,7 @@ def _apply_overlay_migration(
     stage_index: int,
     to_name: str,
     emit: Callable[[str], None],
+    rollout_namespace: str,
 ) -> int | None:
     """The overlay-vocabulary stage: rewrite, commit, push and wait as any stage does.
 
@@ -2748,7 +2865,7 @@ def _apply_overlay_migration(
     emit(f"write the thin-chart keys into {len(result.changed)} overlay(s), keeping the 2.2.0 ones")
     return _commit_overlays(
         args, deploy, stage_index, MIGRATION_STAGE, to_name, result.changed, emit,
-        unchanged="every overlay already carries its thin-chart keys",
+        unchanged="every overlay already carries its thin-chart keys", rollout_namespace=rollout_namespace,
     )
 
 
@@ -2758,6 +2875,7 @@ def _apply_table_naming(
     stage_index: int,
     to_name: str,
     emit: Callable[[str], None],
+    rollout_namespace: str,
 ) -> int | None:
     """The enrichment-tables stage, once the thin charts render: name each table file in
     its app's config, then commit, push and wait as any stage does.
@@ -2779,7 +2897,21 @@ def _apply_table_naming(
     emit(f"name the table files of {len(result.changed)} overlay(s) in their config")
     return _commit_overlays(
         args, deploy, stage_index, TABLES_STAGE, to_name, result.changed, emit,
-        unchanged="every table file is already named",
+        unchanged="every table file is already named", rollout_namespace=rollout_namespace,
+    )
+
+
+def _rollout_scope(args: argparse.Namespace) -> str:
+    """The namespace the rollout waits read, named by where it comes from rather than by a value read off a Secret."""
+    return args.namespace or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
+
+
+def _wait_line(args: argparse.Namespace, *, leaving: str = "") -> str:
+    """What a healthy wait waits on, as a --dry-run prints it; `leaving` names the ref a retarget leaves."""
+    argo = f"Argo Applications to leave {leaving}" if leaving else f"Argo Applications in {args.argocd_namespace}"
+    return (
+        f"wait for {argo}, then every Deployment and StatefulSet in {_rollout_scope(args)} to finish rolling out "
+        f"(timeout {args.timeout}s)"
     )
 
 
@@ -2793,8 +2925,9 @@ def _commit_overlays(
     emit: Callable[[str], None],
     *,
     unchanged: str,
+    rollout_namespace: str,
 ) -> int | None:
-    """Commit the overlays a stage rewrote, push with --push, and wait for Argo."""
+    """Commit the overlays a stage rewrote, push with --push, and wait for Argo and the rollouts."""
     message = f"chore(upgrade): {to_name} stage {stage_index} -- {stage.replace('-', ' ')}"
     emit(f"git -C {deploy} add {' '.join(changed) or '(nothing changed)'}")
     emit(f"git -C {deploy} commit -m {message!r}")
@@ -2816,14 +2949,15 @@ def _commit_overlays(
         if not args.dry_run and _git(deploy, "push").returncode != 0:
             return _stage_failed(stage_index, "git push failed", [])
 
-    emit(f"wait for Argo Applications in {args.argocd_namespace} (timeout {args.timeout}s)")
+    emit(_wait_line(args))
     if not args.dry_run:
         ok, detail = wait_for_argo(
-            args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout
+            args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
+            rollout_namespace=rollout_namespace,
         )
         print(f"  argo: {detail}", file=sys.stderr)
         if not ok:
-            return _stage_failed(stage_index, "Argo did not converge", [])
+            return _stage_failed(stage_index, "Argo and the rollouts did not settle", [])
     return None
 
 
@@ -2895,6 +3029,22 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
 
     # Read before any stage moves, so a cluster in a state apply cannot move
     # refuses with nothing half done.
+    rollout_namespace = args.namespace or ""
+    if not args.dry_run and not rollout_namespace:
+        try:
+            rollout_namespace = read_dfe_namespace(args.kubeconfig, args.argocd_namespace)
+        except UpgradeError as err:
+            print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
+            return EXIT_BLOCKED
+        if not rollout_namespace:
+            print(
+                f"dfe-ops upgrade apply: REFUSED -- secret/{ARGO_CLUSTER} carries no {DFE_NAMESPACE_ANNOTATION}, "
+                "so no rollout can be waited on -- pass --namespace",
+                file=sys.stderr,
+            )
+            return EXIT_BLOCKED
+    if not args.dry_run:
+        print(f"  rollouts: every Deployment and StatefulSet in {_rollout_scope(args)}", file=sys.stderr)
     current_ref = ""
     retarget: str | None = None
     hold: KafkaHold | None = None
@@ -2929,12 +3079,14 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         print(f"\n=== stage {stage_index}/{len(walk)}: {stage} ===", file=sys.stderr)
         if stage in (MIGRATION_STAGE, TABLES_STAGE):
             step = _apply_overlay_migration if stage == MIGRATION_STAGE else _apply_table_naming
-            failed = step(args, deploy, stage_index, to_name, emit)
+            failed = step(args, deploy, stage_index, to_name, emit, rollout_namespace)
             if failed is not None:
                 return failed
             continue
         for move in stage_moves:
             print(f"  {move.step.key}: {move.old} -> {move.new}", file=sys.stderr)
+            for label, key, old, new in move.pins:
+                print(f"    {label} {key}: {old} -> {new}", file=sys.stderr)
 
         if not args.dry_run and not _confirm(f"apply stage {stage_index} ({stage})?", assume_yes=args.yes):
             print("dfe-ops upgrade apply: aborted by operator", file=sys.stderr)
@@ -3063,14 +3215,15 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 if push.returncode != 0:
                     return _stage_failed(stage_index, "git push failed", stage_moves)
 
-        emit(f"wait for Argo Applications in {args.argocd_namespace} (timeout {args.timeout}s)")
+        emit(_wait_line(args))
         if not args.dry_run:
             ok, detail = wait_for_argo(
-                args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout
+                args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
+                rollout_namespace=rollout_namespace,
             )
             print(f"  argo: {detail}", file=sys.stderr)
             if not ok:
-                return _stage_failed(stage_index, "Argo did not converge", stage_moves)
+                return _stage_failed(stage_index, "Argo and the rollouts did not settle", stage_moves)
 
         for move in stage_moves:
             if move.step.key.startswith(BOOTSTRAP_PREFIX) and _bootstrap_pending(args, move, emit):
@@ -3079,11 +3232,13 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         if stage == chart_stage:
             ref = args.target_revision or to_name
             emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
-            emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
             # A thin-chart transform reading tables cannot start until the next stage names them.
             tables_follow = TABLES_STAGE in reached
             if tables_follow:
+                emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
                 emit(f"health is checked after stage {TABLES_STAGE}, which names the tables the thin charts read")
+            else:
+                emit(_wait_line(args, leaving=from_name))
             if not args.dry_run and retarget:
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
                 print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
@@ -3092,10 +3247,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 ok, detail = wait_for_argo(
                     args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
                     stale_revision=current_ref, require_healthy=not tables_follow,
+                    rollout_namespace=rollout_namespace,
                 )
                 print(f"  argo: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, f"Argo did not converge on {retarget}", stage_moves)
+                    return _stage_failed(stage_index, f"Argo and the rollouts did not settle on {retarget}", stage_moves)
 
         # Argo calls the operator Application Healthy as soon as its Deployment
         # is up, which is well before the new operator has reconciled anything.
@@ -3163,12 +3319,12 @@ def _bootstrap_pending(args: argparse.Namespace, move: Move, emit: Callable[[str
     if args.dry_run:
         release = BOOTSTRAP_RELEASES.get(move.step.key)
         command = (
-            bootstrap_upgrade_command(release, move.new, args.kubeconfig)
+            bootstrap_upgrade_command(release, move.new, args.kubeconfig, args.argocd_namespace)
             if release else "re-run bootstrap/bootstrap.sh"
         )
         emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
         return False
-    state, detail = check_bootstrap_move(args.kubeconfig, move)
+    state, detail = check_bootstrap_move(args.kubeconfig, move, args.argocd_namespace)
     print(f"  [{state}] {detail}", file=sys.stderr)
     return state == BOOTSTRAP_PENDING
 
@@ -3420,7 +3576,15 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     _add_preflight_args(apply_)
     apply_.add_argument("--yes", action="store_true", help="do not ask for confirmation between stages")
     apply_.add_argument("--push", action="store_true", help="git push after each stage's commit")
-    apply_.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="bounded wait (seconds) for Argo to converge, per stage")
+    apply_.add_argument(
+        "--timeout", type=float, default=DEFAULT_TIMEOUT,
+        help="bounded wait (seconds) for Argo to converge and the rollouts to finish, per stage",
+    )
+    apply_.add_argument(
+        "--namespace", default=None, metavar="<ns>",
+        help=f"the DFE namespace whose Deployments and StatefulSets every wait waits on to finish rolling "
+        f"out (default: the cluster secret's {DFE_NAMESPACE_ANNOTATION})",
+    )
     apply_.add_argument("--dry-run", action="store_true", help="print every command without running it")
     apply_.add_argument(
         "--finalise",

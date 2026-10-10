@@ -23,10 +23,14 @@ repo or resolver is touched.
 
 import argparse
 import base64
+import itertools
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -37,9 +41,16 @@ from test_clickhouse_replica_spread import server_pod_labels as ch_server_labels
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
+BOOTSTRAP_DIR = REPO_ROOT / "bootstrap"
+BOOTSTRAP_SH = BOOTSTRAP_DIR / "bootstrap.sh"
 
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(1, str(BOOTSTRAP_DIR))
+import argocd_login  # noqa: E402
 import dfe_ops_upgrade as u  # noqa: E402
+
+# The real wait, for the tests that drive apply through it rather than past it.
+REAL_WAIT_FOR_ARGO = u.wait_for_argo
 
 # ---------------------------------------------------------------------------
 # Fixture data -- small, self-contained versions.yaml / upgrade-order.yaml /
@@ -332,6 +343,120 @@ def test_render_plan_shows_scope_for_disambiguation() -> None:
     move = u.Move(step=step, old="a", new="b")
     rendered = u.render_plan([move], from_stack="x", to_stack="y")
     assert "services.clickhouse-version (keeper): a -> b" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Every pinned DFE component moves with a step, its image and chart digests
+# included; one no step names rolls on the retarget with no stage in the plan.
+# ---------------------------------------------------------------------------
+
+# Two stacks that differ in dfe-hyperdx's tag, image digest and chart digest alone.
+HYPERDX_VERSIONS_YAML = """
+current: "2.0.0"
+stacks:
+  1.0.0:
+    apps:
+      dfe-engine: "v1.0.0"
+    content:
+      dfe-hyperdx: "v0.3.2"
+    digests:
+      dfe-engine: "sha256:e1"
+      dfe-hyperdx: "sha256:h1"
+    chart-digests:
+      dfe-engine: "sha256:ce1"
+      hyperdx: "sha256:ch1"
+  2.0.0:
+    apps:
+      dfe-engine: "v1.0.0"
+    content:
+      dfe-hyperdx: "v0.3.3"
+    digests:
+      dfe-engine: "sha256:e1"
+      dfe-hyperdx: "sha256:h2"
+    chart-digests:
+      dfe-engine: "sha256:ce1"
+      hyperdx: "sha256:ch2"
+"""
+
+# An operator shell image tagged by toolbox.dfe-toolbox, which no stage deploys.
+UNDEPLOYED_DIGESTS = {"dfe-toolbox-base"}
+
+
+def _hyperdx_stacks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str = HYPERDX_VERSIONS_YAML) -> None:
+    """The fixture stacks against the repo's own upgrade-order.yaml."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+
+
+def test_a_stack_moving_only_dfe_hyperdx_yields_a_plan_stage(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _hyperdx_stacks(monkeypatch, tmp_path)
+
+    assert u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "## stage 40-apps" in out
+    assert "1. content.dfe-hyperdx: v0.3.2 -> v0.3.3" in out
+    assert "   image:    digests.dfe-hyperdx: sha256:h1 -> sha256:h2" in out
+    assert "   chart:    chart-digests.hyperdx: sha256:ch1 -> sha256:ch2" in out
+    assert "2. " not in out
+    assert "No pinned key moves" not in out
+
+
+def test_apply_walks_a_dfe_hyperdx_move_as_a_stage(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _hyperdx_stacks(monkeypatch, tmp_path)
+
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
+
+    err = capsys.readouterr().err
+    assert "=== stage 1/1: 40-apps ===" in err
+    assert "  content.dfe-hyperdx: v0.3.2 -> v0.3.3" in err
+    assert "    chart chart-digests.hyperdx: sha256:ch1 -> sha256:ch2" in err
+    assert "chore(upgrade): 2.0.0 stage 1 -- content.dfe-hyperdx" in err
+
+
+def test_a_digest_moving_under_an_unchanged_tag_still_moves_its_step(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    republished = HYPERDX_VERSIONS_YAML.replace('dfe-hyperdx: "v0.3.3"', 'dfe-hyperdx: "v0.3.2"')
+    republished = republished.replace('dfe-hyperdx: "sha256:h2"', 'dfe-hyperdx: "sha256:h1"')
+    _hyperdx_stacks(monkeypatch, tmp_path, republished)
+    root = u.load_versions_root()
+    _, old = u.resolve_stack(root, "1.0.0")
+    _, new = u.resolve_stack(root, "2.0.0")
+
+    (move,) = u.plan_moves(u.load_steps(), u.flatten_stack(old), u.flatten_stack(new))
+
+    assert (move.step.key, move.old, move.new) == ("content.dfe-hyperdx", "v0.3.2", "v0.3.2")
+    assert move.pins == (("chart", "chart-digests.hyperdx", "sha256:ch1", "sha256:ch2"),)
+
+
+def test_every_dfe_component_the_current_stack_pins_moves_with_a_step() -> None:
+    """A component pinned with no step moves on the retarget with no stage, which dfe-hyperdx did."""
+    root = u.load_versions_root()
+    _, stack = u.resolve_stack(root, u.current_stack(root))
+    steps = u.load_steps()
+    keys = {step.key for step in steps}
+    images = {step.image for step in steps if step.image}
+    charts = {step.chart for step in steps if step.chart}
+
+    assert sorted(f"apps.{name}" for name in stack["apps"] if f"apps.{name}" not in keys) == []
+    deployed = set(stack["digests"]) - UNDEPLOYED_DIGESTS
+    assert sorted(f"digests.{name}" for name in deployed if f"digests.{name}" not in images) == []
+    assert sorted(f"chart-digests.{name}" for name in stack["chart-digests"] if f"chart-digests.{name}" not in charts) == []
+    # A digest a step names must be a pin the stack carries, or the step watches nothing.
+    flat = u.flatten_stack(stack)
+    assert sorted(pin for pin in images | charts if pin not in flat) == []
+    # The step key carries the component's own tag: digests.X goes with apps.X or content.X.
+    assert [s.key for s in steps if s.image and s.key.split(".", 1)[1] != s.image.split(".", 1)[1]] == []
+
+
+def test_dfe_hyperdx_moves_after_the_engine_whose_jwks_it_verifies_against() -> None:
+    order = [step.key for step in u.load_steps() if step.stage == "40-apps"]
+    assert order.index("content.dfe-hyperdx") == order.index("apps.dfe-engine") + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1096,7 +1221,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None,
+        from_stack=None, target_revision=None, namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -1114,7 +1239,7 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
     assert (
         "[dry-run] # bootstrap.cert-manager is installed by bootstrap.sh, not Argo; unless it runs v1.1.0: "
         "helm -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io --version v1.1.0 "
-        "--reset-then-reuse-values --wait --timeout 5m"
+        "--reset-values --set crds.enabled=true --set config.enableGatewayAPI=true --wait --timeout 5m"
     ) in err
     assert "3 command(s) would run" in err or "command(s) would run" in err
 
@@ -1136,7 +1261,7 @@ def test_cmd_upgrade_apply_nothing_to_apply(
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None,
+        from_stack=None, target_revision=None, namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -1156,7 +1281,7 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None,
+        from_stack=None, target_revision=None, namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_BLOCKED
@@ -1172,7 +1297,7 @@ def _apply_args(**overrides: object) -> _Args:
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None,
+        from_stack=None, target_revision=None, namespace=None,
     )
     base.update(overrides)
     return _Args(**base)
@@ -1318,6 +1443,7 @@ def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
     args = _apply_args(
         deploy=str(deploy), to="1.1.0", dial=str(tmp_path / "deployment.yaml"),
         fixtures=str(tmp_path / "fixtures"), yes=True, dry_run=False, stop_before="20-operators",
+        namespace="dfe",
     )
     rc = u.cmd_upgrade_apply(args)
 
@@ -1683,6 +1809,207 @@ def test_wait_for_argo_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Rollouts: Argo can read every Application Synced and Healthy while a
+# Deployment it synced is still rolling, so a healthy wait reads each rollout.
+# ---------------------------------------------------------------------------
+
+
+def _deployment(
+    name: str = "dfe-engine",
+    *,
+    replicas: int = 1,
+    updated: int = 1,
+    available: int = 1,
+    total: int | None = None,
+    generation: int = 2,
+    observed: int = 2,
+    conditions: list[dict] | None = None,
+) -> dict:
+    """One Deployment as `kubectl get -o json` lists it; finished unless told otherwise."""
+    status: dict[str, object] = {
+        "observedGeneration": observed,
+        "replicas": updated if total is None else total,
+        "updatedReplicas": updated,
+        "availableReplicas": available,
+    }
+    if conditions is not None:
+        status["conditions"] = conditions
+    return {
+        "kind": "Deployment",
+        "metadata": {"name": name, "generation": generation},
+        "spec": {"replicas": replicas},
+        "status": status,
+    }
+
+
+def _statefulset(
+    name: str = "dfe-fetcher",
+    *,
+    replicas: int = 1,
+    updated: int = 1,
+    available: int = 1,
+    observed: int = 2,
+    strategy: dict | None = None,
+) -> dict:
+    """One StatefulSet as `kubectl get -o json` lists it, with the API server's default strategy."""
+    return {
+        "kind": "StatefulSet",
+        "metadata": {"name": name, "generation": 2},
+        "spec": {
+            "replicas": replicas,
+            "updateStrategy": strategy or {"type": "RollingUpdate", "rollingUpdate": {"partition": 0}},
+        },
+        "status": {"observedGeneration": observed, "updatedReplicas": updated, "availableReplicas": available},
+    }
+
+
+@pytest.mark.parametrize(
+    ("item", "why"),
+    [
+        (_deployment(), ""),
+        (_deployment(replicas=0, updated=0, available=0), ""),
+        (_deployment(observed=1), "generation 2 not yet observed, at 1"),
+        (_deployment(updated=0, total=1), "0 of 1 replicas updated"),
+        (_deployment(total=2), "1 old replica(s) still running"),
+        (_deployment(available=0), "0 of 1 updated replicas available"),
+        (
+            _deployment(available=0, conditions=[{"type": "Progressing", "reason": "ProgressDeadlineExceeded"}]),
+            "past its progress deadline",
+        ),
+        (_statefulset(), ""),
+        (_statefulset(observed=1), "generation 2 not yet observed, at 1"),
+        (_statefulset(replicas=3, updated=2, available=3), "2 of 3 replicas updated"),
+        (_statefulset(replicas=3, updated=3, available=2), "2 of 3 replicas available"),
+        (
+            _statefulset(
+                replicas=3, updated=1, available=3,
+                strategy={"type": "RollingUpdate", "rollingUpdate": {"partition": 2}},
+            ),
+            "",
+        ),
+        (_statefulset(replicas=3, updated=0, available=3, strategy={"type": "OnDelete"}), ""),
+    ],
+    ids=[
+        "deployment-finished", "deployment-scaled-to-zero", "deployment-generation-unobserved",
+        "deployment-not-updated", "deployment-old-replica-left", "deployment-new-pod-unavailable",
+        "deployment-past-deadline", "statefulset-finished", "statefulset-generation-unobserved",
+        "statefulset-not-updated", "statefulset-unavailable", "statefulset-partition-reached",
+        "statefulset-on-delete",
+    ],
+)
+def test_rollout_pending_reads_what_kubectl_rollout_status_waits_on(item: dict, why: str) -> None:
+    assert u.rollout_pending(item) == why
+
+
+def test_check_rollouts_names_each_rollout_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The shape apply reported as settled: a surge pod Pending beside the old one, and a new pod not yet up.
+    items = [_deployment(total=2), _deployment("dfe-hyperdx", available=0), _deployment("dfe-ui"), _statefulset()]
+    calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": items})))
+
+    ok, detail = u.check_rollouts("kc", "dfe-from-the-secret")
+
+    assert ok is False
+    assert detail == (
+        "2 of 4 rollout(s) not finished: deployment/dfe-engine (1 old replica(s) still running), "
+        "deployment/dfe-hyperdx (0 of 1 updated replicas available)"
+    )
+    assert calls[0][:7] == [
+        "kubectl", "--kubeconfig", "kc", "-n", "dfe-from-the-secret", "get", "deployments.apps,statefulsets.apps",
+    ]
+
+
+def test_check_rollouts_passes_once_every_rollout_has_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_deployment(), _statefulset()]})))
+    assert u.check_rollouts(None, "dfe-from-the-secret") == (True, "2 rollout(s) finished")
+
+
+@pytest.mark.parametrize(
+    ("response", "detail"),
+    [
+        (_proc(0, stdout=json.dumps({"items": []})), "no Deployment or StatefulSet in the DFE namespace"),
+        (
+            _proc(1, stderr="Unable to connect to the server"),
+            "cannot list Deployments and StatefulSets in the DFE namespace: Unable",
+        ),
+    ],
+    ids=["empty-namespace", "unreadable"],
+)
+def test_check_rollouts_fails_what_it_cannot_show_settled(
+    monkeypatch: pytest.MonkeyPatch, response: subprocess.CompletedProcess, detail: str
+) -> None:
+    _mock_run(monkeypatch, response)
+    ok, why = u.check_rollouts(None, "dfe-from-the-secret")
+    assert ok is False
+    assert why.startswith(detail)
+    # apply can have read the namespace off the cluster secret, so no detail repeats it.
+    assert "dfe-from-the-secret" not in why
+
+
+ONE_HEALTHY_APP = _proc(0, stdout=json.dumps({"items": [
+    {"metadata": {"name": "a"}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}
+]}))
+
+
+def _clock() -> tuple[dict, list[float], Callable[[float], None]]:
+    clock = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
+    return clock, sleeps, fake_sleep
+
+
+def test_wait_for_argo_waits_on_the_rollouts_after_argo_reads_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    rolling = _proc(0, stdout=json.dumps({"items": [_deployment(available=0)]}))
+    rolled = _proc(0, stdout=json.dumps({"items": [_deployment()]}))
+    _mock_run(monkeypatch, ONE_HEALTHY_APP, rolling, ONE_HEALTHY_APP, rolled)
+    clock, sleeps, fake_sleep = _clock()
+
+    ok, detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=120, rollout_namespace="dfe", sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is True
+    assert detail == "1 Application(s) Synced and Healthy; 1 rollout(s) finished"
+    assert len(sleeps) == 1
+
+
+def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(monkeypatch: pytest.MonkeyPatch) -> None:
+    rolling = _proc(0, stdout=json.dumps({"items": [_deployment(available=0)]}))
+    _mock_run(monkeypatch, *[ONE_HEALTHY_APP, rolling] * 10)
+    clock, _sleeps, fake_sleep = _clock()
+
+    ok, detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=15, rollout_namespace="dfe", sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is False
+    assert detail == (
+        "still not converged after 15s -- 1 Application(s) Synced and Healthy; 1 of 1 rollout(s) not "
+        "finished: deployment/dfe-engine (0 of 1 updated replicas available)"
+    )
+
+
+def test_a_wait_that_asks_only_for_synced_reads_no_rollout(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, ONE_HEALTHY_APP)
+    ok, _ = u.wait_for_argo("kc", argocd_namespace="argocd", timeout=15, rollout_namespace="dfe", require_healthy=False)
+    assert ok is True
+    assert len(calls) == 1
+
+
+DFE_NAMESPACE_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/dfe_namespace}"
+
+
+def test_read_dfe_namespace_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0, stdout="dfe-apps\n"))
+    assert u.read_dfe_namespace("kc", "cd") == "dfe-apps"
+    assert calls[0][-2:] == ["-o", DFE_NAMESPACE_JSONPATH]
+    assert calls[0][calls[0].index("-n") + 1] == "cd"
+
+
+# ---------------------------------------------------------------------------
 # The Strimzi operator upgrade's two traps: a Kafka CR whose Ready condition is
 # stale across the lift, and a conversion tool fetched at the wrong version.
 # ---------------------------------------------------------------------------
@@ -1908,7 +2235,7 @@ def _bootstrap_runs(monkeypatch: pytest.MonkeyPatch, version: str) -> list[str]:
     """Every bootstrap release reads as running chart `version`; returns the releases asked about."""
     asked: list[str] = []
 
-    def read(_kubeconfig: object, release: u.BootstrapRelease) -> tuple[str, str]:
+    def read(_kubeconfig: object, release: u.helm_releases.HelmRelease) -> tuple[str, str]:
         asked.append(release.release)
         return version, ""
 
@@ -1922,6 +2249,7 @@ def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
     # A branch-tracking secret: nothing to retarget, so no --push is needed.
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
+    monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
     # cert-manager already upgraded by hand to the 2.0.0 pin.
     _bootstrap_runs(monkeypatch, "v1.1.0")
 
@@ -1954,6 +2282,170 @@ def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
     assert (real_git_deploy / "pins.yaml").read_text(encoding="utf-8") == PINS_YAML.replace("1.0.0", "2.0.0")
 
 
+# The engine as it sat while Argo read every Application Healthy: its new pod Pending beside the old one.
+ENGINE_ROLLING = json.dumps({"items": [_deployment(total=2), _deployment("dfe-ui")]})
+ENGINE_ROLLED = json.dumps({"items": [_deployment(), _deployment("dfe-ui")]})
+
+
+def _argo_healthy_while(
+    monkeypatch: pytest.MonkeyPatch, listings: list[str], *, after: str | None = None
+) -> list[str]:
+    """Argo reads every Application Healthy throughout, and each read of the rollouts in
+    namespace dfe answers the next of `listings` (then `after`, or the last, for ever).
+    git runs for real; any other kubectl or helm call fails the test. Returns the
+    namespaces each rollout read named."""
+    monkeypatch.setattr(u, "wait_for_argo", REAL_WAIT_FOR_ARGO)
+    monkeypatch.setattr(u, "check_argo_apps", lambda *_a, **_k: (True, "28 Application(s) Synced and Healthy"))
+    monkeypatch.setattr(u, "_SYNC_POLL_INTERVAL", 0.0)
+    queue = list(listings)
+    read: list[str] = []
+    real_run = u._run
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if cmd[:1] == ["kubectl"] and "deployments.apps,statefulsets.apps" in cmd:
+            read.append(cmd[cmd.index("-n") + 1])
+            listing = queue.pop(0) if queue else (after or listings[-1])
+            return _proc(0, stdout=listing)
+        if cmd[:1] in (["kubectl"], ["helm"]):
+            raise AssertionError(f"test reached a real cluster: {cmd}")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(u, "_run", fake_run)
+    return read
+
+
+def test_apply_reports_ok_only_once_every_rollout_has_finished(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """apply printed OK over a Deployment Argo called Healthy and kubectl still showed rolling."""
+    _two_stage(monkeypatch, real_git_deploy)
+    read = _argo_healthy_while(monkeypatch, [ENGINE_ROLLING, ENGINE_ROLLING, ENGINE_ROLLED])
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    # Stage 1 read the rollouts three times before it settled, stage 2 once.
+    assert read == ["dfe"] * 4
+    assert "argo: 28 Application(s) Synced and Healthy; 2 rollout(s) finished" in err
+    assert err.index("2 rollout(s) finished") < err.index("dfe-ops upgrade apply OK")
+
+
+def test_apply_fails_naming_a_rollout_that_does_not_finish_within_the_timeout(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    _argo_healthy_while(monkeypatch, [ENGINE_ROLLING])
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, timeout=0.05,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert (
+        "28 Application(s) Synced and Healthy; 1 of 2 rollout(s) not finished: "
+        "deployment/dfe-engine (1 old replica(s) still running)"
+    ) in err
+    assert "FAILED at stage 1: Argo and the rollouts did not settle" in err
+    assert "apply OK" not in err
+
+
+def test_apply_waits_on_the_namespace_the_cluster_secret_names(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    asked: list[tuple[object, str]] = []
+
+    def read_namespace(kubeconfig: object, namespace: str) -> str:
+        asked.append((kubeconfig, namespace))
+        return "dfe-apps"
+
+    monkeypatch.setattr(u, "read_dfe_namespace", read_namespace)
+    waits: list[str] = []
+
+    def wait(*_a: object, rollout_namespace: str = "", **_k: object) -> tuple[bool, str]:
+        waits.append(rollout_namespace)
+        return True, "ok"
+
+    monkeypatch.setattr(u, "wait_for_argo", wait)
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc", argocd_namespace="cd",
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert asked == [("kc", "cd")]
+    assert waits == ["dfe-apps", "dfe-apps"]
+    # It came out of a Secret, so it is named by where it came from and never printed.
+    assert (
+        "rollouts: every Deployment and StatefulSet in the namespace secret/dfe-cluster's "
+        "dfe.hyperi.io/dfe_namespace names"
+    ) in err
+    assert "dfe-apps" not in err
+
+
+def test_namespace_names_the_rollouts_without_reading_the_cluster_secret(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+
+    def unread(*_a: object) -> str:
+        raise AssertionError("--namespace names the namespace; the cluster secret is not read for it")
+
+    monkeypatch.setattr(u, "read_dfe_namespace", unread)
+    read = _argo_healthy_while(monkeypatch, [ENGINE_ROLLED])
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, namespace="dfe-named",
+    ))
+
+    assert rc == u.EXIT_OK, capsys.readouterr().err
+    assert read == ["dfe-named", "dfe-named"]
+
+
+def test_apply_refuses_before_anything_moves_when_no_namespace_is_known(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a: "")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert (
+        "REFUSED -- secret/dfe-cluster carries no dfe.hyperi.io/dfe_namespace, so no rollout can be waited on "
+        "-- pass --namespace"
+    ) in err
+    assert u.read_deploy_pin(real_git_deploy) == "1.0.0"
+    assert u._git(real_git_deploy, "rev-list", "--count", "HEAD").stdout.strip() == "1"
+
+
+def test_a_dry_run_names_the_rollouts_each_wait_waits_on(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
+    unnamed = capsys.readouterr().err
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", namespace="dfe-named")) == u.EXIT_OK
+    named = capsys.readouterr().err
+
+    # One wait per stage, all three before the cluster secret has been read.
+    assert unnamed.count(
+        "wait for Argo Applications in argocd, then every Deployment and StatefulSet in the namespace "
+        "secret/dfe-cluster's dfe.hyperi.io/dfe_namespace names to finish rolling out (timeout 900s)"
+    ) == 3
+    assert (
+        "wait for Argo Applications to leave 1.0.0, then every Deployment and StatefulSet in dfe-named "
+        "to finish rolling out (timeout 900s)"
+    ) in named
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap-section pins: bootstrap.sh installs them and Argo never does, so a
 # stage that moves only the pin is not done until the cluster runs it.
@@ -1961,11 +2453,26 @@ def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
 
 CERT_MANAGER_UPGRADE = (
     "helm --kubeconfig kc -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io "
-    "--version v1.1.0 --reset-then-reuse-values --wait --timeout 5m"
+    "--version v1.1.0 --reset-values --set crds.enabled=true --set config.enableGatewayAPI=true "
+    "--wait --timeout 5m"
 )
+DOMAIN = "single.dfe.test"
+# Every value bootstrap.sh's [6/7] install sets, its login values piped in on stdin, and the
+# domain read off the cluster secret as the command runs.
 ARGOCD_UPGRADE = (
-    "helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm "
-    "--version 10.10.0 --reset-then-reuse-values --wait --timeout 10m"
+    "DFE_DOMAIN=\"$(kubectl -n argocd get secret dfe-cluster -o "
+    "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
+    f"python3 {shlex.quote(str(BOOTSTRAP_DIR / 'argocd_login.py'))} values --domain \"$DFE_DOMAIN\" | "
+    "helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.0 "
+    "--reset-values --set redis.enabled=false --set externalRedis.host=valkey.argocd.svc.cluster.local "
+    "--set externalRedis.port=6379 --set-string global.domain=argocd.\"$DFE_DOMAIN\" "
+    "--set-string 'configs.params.server\\.insecure=true' "
+    "--set-string 'configs.params.reposerver\\.disable\\.git\\.modules=true' "
+    "--set-string 'configs.cm.timeout\\.reconciliation=300s' "
+    "--set-string 'configs.params.controller\\.self\\.heal\\.timeout\\.seconds=30' "
+    "--set-string 'configs.params.controller\\.repo\\.server\\.timeout\\.seconds=60' "
+    "--set-string 'configs.params.controller\\.diff\\.server\\.side=true' "
+    "--values - --wait --timeout 10m"
 )
 ARGO_STEP = u.Step(stage="10-bootstrap", order="30", key="bootstrap.argocd")
 # The user-supplied values bootstrap.sh's step [6/7] installs Argo with.
@@ -2154,6 +2661,7 @@ def test_a_deployment_without_this_charts_label_reads_as_adopted(
 
 
 def test_an_unreadable_deployment_is_pending_with_the_reason_and_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
     _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): deployments.apps "argocd-server" not found'))
     state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
@@ -2193,6 +2701,7 @@ def test_a_stock_argo_install_reads_adopted_and_gets_no_command(monkeypatch: pyt
 
 
 def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
 
     def no_helm(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
@@ -2231,6 +2740,223 @@ def test_every_bootstrap_release_matches_the_install_bootstrap_sh_runs() -> None
         # The deployment bootstrap.sh's own detect-or-install gate reads.
         gate = rf"dfe_should_install \S+ \S+ {re.escape(release.namespace)} {re.escape(release.deployment)}\b"
         assert re.search(gate, script), key
+
+
+# ---------------------------------------------------------------------------
+# A printed bootstrap upgrade is --reset-values plus exactly the values
+# bootstrap.sh's install sets, both read from bootstrap/helm_releases.py.
+# ---------------------------------------------------------------------------
+
+SPLICE = '${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"}'
+
+
+def _function(lines: list[str], name: str) -> list[str]:
+    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"{name}() {{"))
+    end = next(i for i in range(start, len(lines)) if lines[i] == "}")
+    return lines[start:end + 1]
+
+
+def _install(release: u.helm_releases.HelmRelease) -> tuple[str, str]:
+    """(the dfe_release_values call bootstrap.sh makes for `release`, the helm install it feeds)."""
+    script = BOOTSTRAP_SH.read_text(encoding="utf-8")
+    start = re.search(rf"helm upgrade --install {re.escape(release.release)} ", script).start()
+    install = script[start:script.index("--timeout", start)]
+    calls = list(re.finditer(r"(?m)^\s*(dfe_release_values .+)$", script[:start]))
+    assert calls, f"bootstrap.sh calls dfe_release_values before no install of {release.release}"
+    return calls[-1].group(1).strip(), install
+
+
+def _bootstrap_values(release: u.helm_releases.HelmRelease) -> list[str]:
+    """The values bootstrap.sh's own install of `release` passes helm: its helper, run on its call line."""
+    lines = BOOTSTRAP_SH.read_text(encoding="utf-8").splitlines()
+    call, _install_text = _install(release)
+    script = "\n".join([
+        "set -euo pipefail", *_function(lines, "dfe_release_values"), call, f'printf "%s\\n" {SPLICE}',
+    ])
+    env = {**os.environ, "SCRIPT_DIR": str(BOOTSTRAP_DIR), "DFE_DOMAIN": DOMAIN, "VALKEY_SVC": "valkey"}
+    out = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    return [line for line in out.stdout.splitlines() if line]
+
+
+def _printed_helm(printed: str) -> list[str]:
+    """The helm call of a printed upgrade, with DOMAIN where it reads the domain at run time."""
+    return shlex.split(printed.split(" | ")[-1].replace('"$DFE_DOMAIN"', DOMAIN))
+
+
+def _printed_values(printed: str) -> list[str]:
+    """The value arguments a printed upgrade passes helm, between --reset-values and --wait."""
+    helm = _printed_helm(printed)
+    return helm[helm.index("--reset-values") + 1 : helm.index("--wait")]
+
+
+@pytest.mark.parametrize("key", sorted(u.BOOTSTRAP_RELEASES))
+def test_the_printed_upgrade_sets_exactly_what_bootstrap_sh_installs_with(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    release = u.BOOTSTRAP_RELEASES[key]
+    call, install = _install(release)
+
+    # The splice is the install's only source of values, so nothing hand-written can differ.
+    assert re.findall(r"--set\S*|--values|\s-f\s", install) == [], install
+    assert SPLICE in install
+    assert call.split()[1] == release.release
+
+    printed = u.bootstrap_upgrade_command(release, "9.9.9", "kc")
+    assert _printed_values(printed) == _bootstrap_values(release)
+    assert "--reset-then-reuse-values" not in printed
+    assert "--reuse-values" not in printed
+
+
+def test_the_cert_manager_upgrade_is_the_one_the_stack_note_and_bootstrap_sh_agree_on() -> None:
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.21.2", None)
+    assert printed == (
+        "helm -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io --version v1.21.2 "
+        "--reset-values --set crds.enabled=true --set config.enableGatewayAPI=true --wait --timeout 5m"
+    )
+
+
+def test_the_argo_upgrade_pipes_in_the_login_bootstrap_sh_feeds_its_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    assert printed == ARGOCD_UPGRADE
+    script = BOOTSTRAP_SH.read_text(encoding="utf-8")
+    assert 'python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"' in script
+    assert re.search(r'--wait --timeout 10m <<<"\$\{ARGOCD_LOGIN_VALUES\}"', script)
+
+
+def test_the_argo_upgrade_follows_a_renamed_cache_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DFE_VALKEY_SERVICE", "cache")
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    assert "externalRedis.host=cache.argocd.svc.cluster.local" in _printed_helm(printed)
+
+
+def test_the_argo_upgrade_reads_the_domain_off_the_cluster_secret_it_was_told(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A value read from a Secret is never printed, so the command reads the domain itself."""
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", "kc", "cd")
+    assert printed.startswith(
+        "DFE_DOMAIN=\"$(kubectl --kubeconfig kc -n cd get secret dfe-cluster -o "
+        "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
+    )
+
+
+def test_an_upgrade_no_value_of_which_names_the_domain_reads_none() -> None:
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.1.0", "kc")
+    assert printed == CERT_MANAGER_UPGRADE
+
+
+FAKE_KUBECTL = """#!/usr/bin/env python3
+import os, sys
+if "secret" in sys.argv and "dfe-cluster" in sys.argv:
+    print(os.environ["FAKE_DOMAIN"], end="")
+"""
+
+FAKE_HELM = """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["FAKE_LOG"], "w", encoding="utf-8") as log:
+    json.dump({"argv": sys.argv[1:], "stdin": sys.stdin.read()}, log)
+"""
+
+
+def _run_printed(tmp_path: Path, printed: str, domain: str) -> tuple[subprocess.CompletedProcess, dict | None]:
+    """The printed command, run under bash with a kubectl naming `domain` and a helm that records its call."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (("kubectl", FAKE_KUBECTL), ("helm", FAKE_HELM)):
+        (bindir / name).write_text(body, encoding="utf-8", newline="\n")
+        (bindir / name).chmod(0o755)
+    log = tmp_path / "helm.json"
+    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "FAKE_DOMAIN": domain,
+           "FAKE_LOG": str(log)}
+    out = subprocess.run(
+        ["bash", "-c", printed], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+    return out, json.loads(log.read_text(encoding="utf-8")) if log.is_file() else None
+
+
+def test_the_printed_argo_upgrade_runs_and_hands_helm_what_bootstrap_sh_installs_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    release = u.BOOTSTRAP_RELEASES["bootstrap.argocd"]
+    out, helm = _run_printed(tmp_path, u.bootstrap_upgrade_command(release, "10.10.0", None), DOMAIN)
+
+    assert out.returncode == 0, out.stderr
+    argv = helm["argv"]
+    assert argv[argv.index("--reset-values") + 1 : argv.index("--wait")] == _bootstrap_values(release)
+    assert json.loads(helm["stdin"]) == argocd_login.helm_values(None)
+
+
+def test_the_printed_argo_upgrade_stops_before_helm_when_the_secret_names_no_domain(tmp_path: Path) -> None:
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    out, helm = _run_printed(tmp_path, printed, "")
+    assert out.returncode != 0
+    assert helm is None
+
+
+def _set_values(helm: list[str]) -> dict:
+    """The values helm's --set and --set-string arguments in `helm` build, typed as helm types them."""
+    values: dict = {}
+    for flag, pair in itertools.pairwise(helm):
+        if flag not in ("--set", "--set-string"):
+            continue
+        path, raw = pair.split("=", 1)
+        value: object = raw
+        if flag == "--set":
+            value = {"true": True, "false": False}.get(raw, int(raw) if raw.isdigit() else raw)
+        *parents, leaf = [part.replace("\\.", ".") for part in re.split(r"(?<!\\)\.", path)]
+        node = values
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = value
+    return values
+
+
+def _merged(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for key, value in over.items():
+        out[key] = _merged(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
+# What `helm get values argocd` holds for a release bootstrap.sh installed while no OIDC provider fronted Argo.
+BOOTSTRAP_ARGO_RELEASE_VALUES = {
+    "configs": {
+        "cm": {"timeout.reconciliation": "300s"},
+        "params": {
+            "controller.diff.server.side": "true",
+            "controller.repo.server.timeout.seconds": "60",
+            "controller.self.heal.timeout.seconds": "30",
+            "reposerver.disable.git.modules": "true",
+            "server.insecure": "true",
+        },
+        "rbac": {"policy.csv": argocd_login.policy_csv()},
+    },
+    "externalRedis": {"host": "valkey.argocd.svc.cluster.local", "port": 6379},
+    "global": {"domain": f"argocd.{DOMAIN}"},
+    "redis": {"enabled": False},
+}
+
+
+def test_the_argo_upgrade_carries_every_value_a_bootstrap_install_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--reset-values drops whatever the command does not set again, so it must set all of it."""
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    sets = _set_values(_printed_helm(printed))
+    assert _merged(sets, argocd_login.helm_values(None)) == BOOTSTRAP_ARGO_RELEASE_VALUES
+
+
+def test_a_pending_argo_names_the_cluster_secret_in_the_argo_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
+    monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
+    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"), "cd")
+    assert state == u.BOOTSTRAP_PENDING
+    assert "Run: DFE_DOMAIN=\"$(kubectl -n cd get secret dfe-cluster -o " in detail
 
 
 # ---------------------------------------------------------------------------
@@ -2614,6 +3340,7 @@ def _ga_cluster(monkeypatch: pytest.MonkeyPatch, live: dict[str, str]) -> list[t
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [("strimzi stored-version conversion", True, "ok")])
     monkeypatch.setattr(u, "check_strimzi_conversion", lambda *_a, **_k: (True, "10 Strimzi CRD(s) store v1 only"))
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: live["target_revision"])
+    monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
     monkeypatch.setattr(
         u, "read_kafka_state", lambda *_a, **_k: u.KafkaState(crs=1, version=live["kafka"], metadata=live["metadata"])
     )
