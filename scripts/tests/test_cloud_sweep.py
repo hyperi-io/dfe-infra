@@ -534,6 +534,14 @@ ENI_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:network-interface/eni-1"
 ENI_NOT_FOUND = (
     "An error occurred (InvalidNetworkInterfaceID.NotFound) when calling the DescribeNetworkInterfaces operation"
 )
+VOLUME_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:volume/vol-1"
+VOLUME_NOT_FOUND = "An error occurred (InvalidVolume.NotFound) when calling the DescribeVolumes operation"
+KMS_ARN = f"arn:aws:kms:{REGION}:{ACCOUNT_ID}:key/7a67c3b8-0000-4000-8000-000000000001"
+KMS_NOT_FOUND = "An error occurred (NotFoundException) when calling the DescribeKey operation"
+
+
+def _kms(state: str) -> subprocess.CompletedProcess:
+    return _ok({"KeyMetadata": {"KeyState": state}})
 
 
 def _tagging_hit(arn: str, kind: str = "tagged:ec2") -> cloud_sweep.Resource:
@@ -576,6 +584,11 @@ def _instance(state: str) -> subprocess.CompletedProcess:
             ENI_ARN, _ok({"NetworkInterfaces": [{"Status": "available"}]}), False, id="network-interface-available"
         ),
         pytest.param(ENI_ARN, _ok({"NetworkInterfaces": [{"Status": "in-use"}]}), False, id="network-interface-in-use"),
+        pytest.param(VOLUME_ARN, _fail(VOLUME_NOT_FOUND), True, id="volume-not-found"),
+        pytest.param(VOLUME_ARN, _ok({"Volumes": [{"State": "deleted"}]}), True, id="volume-deleted"),
+        pytest.param(VOLUME_ARN, _ok({"Volumes": [{"State": "deleting"}]}), False, id="volume-deleting"),
+        pytest.param(VOLUME_ARN, _ok({"Volumes": [{"State": "available"}]}), False, id="volume-available"),
+        pytest.param(VOLUME_ARN, _ok({"Volumes": [{"State": "in-use"}]}), False, id="volume-in-use"),
     ],
 )
 def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
@@ -594,7 +607,33 @@ def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
     assert arn not in call, "the ARN is not an id the describe calls accept"
 
 
-@pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN, ENI_ARN])
+@pytest.mark.parametrize(
+    ("answer", "gone"),
+    [
+        pytest.param(_kms("PendingDeletion"), True, id="kms-pending-deletion"),
+        pytest.param(_kms("PendingReplicaDeletion"), True, id="kms-pending-replica-deletion"),
+        pytest.param(_fail(KMS_NOT_FOUND), True, id="kms-not-found"),
+        pytest.param(_kms("Enabled"), False, id="kms-enabled"),
+        pytest.param(_kms("Disabled"), False, id="kms-disabled"),
+    ],
+)
+def test_a_kms_key_scheduled_for_deletion_is_gone(
+    monkeypatch: pytest.MonkeyPatch, answer: subprocess.CompletedProcess, gone: bool
+) -> None:
+    """A destroy can only schedule a key's deletion, so that is what finished looks like."""
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return answer
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(KMS_ARN, "tagged:kms"), REGION) is gone
+    (call,) = calls
+    assert call[call.index("--key-id") + 1] == KMS_ARN.rsplit("/", 1)[-1]
+
+
+@pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN, ENI_ARN, VOLUME_ARN])
 def test_a_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
     monkeypatch: pytest.MonkeyPatch, arn: str
 ) -> None:
@@ -607,7 +646,7 @@ def test_a_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_
     "hit",
     [
         pytest.param(_tagging_hit(f"arn:aws:rds:{REGION}:{ACCOUNT_ID}:db:run-db", "tagged:rds"), id="another-service"),
-        pytest.param(_tagging_hit(f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:volume/vol-1"), id="another-ec2-class"),
+        pytest.param(_tagging_hit(f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:snapshot/snap-1"), id="another-ec2-class"),
         pytest.param(_tagging_hit("natgateway/nat-1"), id="not-an-arn"),
         pytest.param(_tagging_hit(NAT_ARN, "nat-gateway"), id="a-lister-resource"),
     ],

@@ -826,6 +826,28 @@ def _network_interface_gone(eni_id: str, region: str) -> bool:
     return not interfaces
 
 
+def _ebs_volume_gone(volume_id: str, region: str) -> bool:
+    """True once the volume is deleted, or AWS no longer lists it."""
+    try:
+        volumes = run_aws(["ec2", "describe-volumes", "--volume-ids", volume_id], region).get("Volumes", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    return all(v.get("State") == "deleted" for v in volumes)
+
+
+def _kms_key_gone(key_id: str, region: str) -> bool:
+    """True once the key is scheduled for deletion, which is all a destroy can do to it."""
+    try:
+        state = run_aws(["kms", "describe-key", "--key-id", key_id], region).get("KeyMetadata", {}).get("KeyState")
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    return state in ("PendingDeletion", "PendingReplicaDeletion")
+
+
 def _delete_load_balancer(r: Resource, region: str) -> None:
     run_aws(["elbv2", "delete-load-balancer", "--load-balancer-arn", r.id], region)
 
@@ -903,18 +925,23 @@ def _delete_vpc_endpoint(r: Resource, region: str) -> None:
 
 
 def tagging_hit_gone(resource: Resource, region: str) -> bool:
-    """True when a tagging-API hit names a NAT gateway, VPC endpoint, instance or network interface EC2 reports gone.
+    """True when a tagging-API hit names an EC2 object or KMS key AWS reports gone.
 
-    The tagging API keeps listing all four after they go. One still deleting or shutting down is
-    not gone, and any other hit is not judged and reads as present.
+    The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
+    volumes and KMS keys after they go. One still deleting or shutting down is not gone, a KMS key
+    scheduled for deletion is, and any other hit is not judged and reads as present.
 
     Raises:
         CloudSweepError: The describe call failed for any reason but NotFound.
     """
     parts = resource.id.split(":", 5)
-    if resource.kind != "tagged:ec2" or len(parts) < 6:
+    if resource.kind not in ("tagged:ec2", "tagged:kms") or len(parts) < 6:
         return False
     resource_type, _, bare_id = parts[5].partition("/")
+    if resource.kind == "tagged:kms":
+        return resource_type == "key" and _kms_key_gone(bare_id, region)
+    if resource_type == "volume":
+        return _ebs_volume_gone(bare_id, region)
     if resource_type == "natgateway":
         return _nat_gateway_state(bare_id, region) == "deleted"
     if resource_type == "vpc-endpoint":
