@@ -1298,21 +1298,28 @@ def _latest_published(org: str, app: str) -> tuple[str, str] | None:
     return best, tags[best]
 
 
-def _rewrite_scalar(block: list[str], section: str, key: str, value: str) -> bool:
-    """Set `key: "value"` inside `section:` of a block. True when it matched."""
+def _scalar_line(block: list[str], section: str, key: str) -> int | None:
+    """Index of the `key: "value"` line inside `section:` of a block, or None."""
     in_section = False
     for i, ln in enumerate(block):
         if re.match(rf"^    {re.escape(section)}:\s*$", ln):
             in_section = True
             continue
         if in_section and re.match(r"^    \S", ln):
-            break
-        if in_section:
-            m = re.match(rf'^(\s+{re.escape(key)}:\s*)"[^"]*"(.*)$', ln)
-            if m:
-                block[i] = f'{m.group(1)}"{value}"{m.group(2)}\n'
-                return True
-    return False
+            return None
+        if in_section and re.match(rf'^\s+{re.escape(key)}:\s*"[^"]*"', ln):
+            return i
+    return None
+
+
+def _rewrite_scalar(block: list[str], section: str, key: str, value: str) -> bool:
+    """Set `key: "value"` inside `section:` of a block. True when it matched."""
+    i = _scalar_line(block, section, key)
+    if i is None:
+        return False
+    m = re.match(rf'^(\s+{re.escape(key)}:\s*)"[^"]*"(.*)$', block[i])
+    block[i] = f'{m.group(1)}"{value}"{m.group(2)}\n'
+    return True
 
 
 def _carry_constraints(root: dict, from_name: str, new: str) -> str | None:
@@ -1363,6 +1370,10 @@ def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[s
     Without this, an old stack names no dfe-docker ref at all and the only
     pairing that reproduces its docker path is "whatever main looked like that
     week" (dfe-infra#171).
+
+    A ref that moves also gets fresh evidence, written from the commit it moved
+    to: the cloned comment still describes the commit it replaced, and
+    check_pin_evidence.py fails a pin that moved under the same prose.
     """
     moved: list[str] = []
     for name, current in sorted(from_pins.get("content", {}).items()):
@@ -1374,8 +1385,37 @@ def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[s
             continue
         if not _rewrite_scalar(block, "content", name, sha):
             raise SystemExit(f"error: no content.{name} pin to rewrite")
+        try:
+            subject, date = registry_pins.commit_summary(org, name, sha)
+        except registry_pins.RegistryError as exc:
+            raise SystemExit(
+                f"error: cannot read {org}/{name}@{sha[:12]} to write its evidence: {exc}"
+            ) from exc
+        _restate_ref_evidence(block, name, sha, subject, date)
         moved.append(f"{name} {current[:12]} -> {sha[:12]} (git ref)")
     return moved
+
+
+def _restate_ref_evidence(block: list[str], key: str, sha: str, subject: str, date: str) -> None:
+    """Replace the comment on a moved `content.<key>` ref with evidence for `sha`.
+
+    The comment is the run of comment lines directly above the pin plus any
+    trailing note on it, which is what check_pin_evidence.py compares. A
+    `# renovate:` annotation in that run is Renovate's, not evidence, so it stays.
+    """
+    i = _scalar_line(block, "content", key)
+    if i is None:
+        raise SystemExit(f"error: no content.{key} pin to restate the evidence of")
+    first = i
+    while first > 0 and block[first - 1].lstrip().startswith("#"):
+        first -= 1
+    annotations = [ln for ln in block[first:i] if "# renovate:" in ln]
+    pin = re.match(r'^(\s+)(\S+\s*"[^"]*")', block[i])
+    evidence = (
+        f"{pin.group(1)}# A commit, not a version: {key} cuts no per-stack tag. "
+        f'{sha[:8]} ({date}) is "{subject}".\n'
+    )
+    block[first : i + 1] = [evidence, *annotations, f"{pin.group(1)}{pin.group(2)}\n"]
 
 
 def cmd_cut(args: argparse.Namespace) -> int:
@@ -1388,7 +1428,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     ClickHouse LTS line, the Kafka version strimzi supports).
 
     A content entry recorded as a git commit rather than a tag is re-resolved
-    here too, so the new stack names the exact ref that ran it.
+    here too, so the new stack names the exact ref that ran it, and its
+    evidence comment is rewritten to cite the commit it moved to.
 
     `stack.previous` is DERIVED, not cloned: the source block is by definition
     the new version's predecessor, so cut re-points it at `--from`.
