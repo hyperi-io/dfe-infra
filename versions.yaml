@@ -2668,7 +2668,7 @@ stacks:
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.37.9"                  # 2026-10-02.
-      aws-session-manager-plugin: "1.2.835.0"  # AWS only publishes a floating latest, so the aws Dockerfile fails the build when latest stops matching this. No feed for Renovate.
+      aws-session-manager-plugin: "1.2.889.0"  # Observed 2026-10-10 as what latest serves on amd64 and arm64. AWS only publishes a floating latest, so the aws Dockerfile fails the build when latest stops matching this. No feed for Renovate.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
