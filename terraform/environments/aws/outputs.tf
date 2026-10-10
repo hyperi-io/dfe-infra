@@ -125,6 +125,16 @@ output "DFE_TOOLBOX_ADMIN_CIDR" {
   value       = var.edge.enabled && var.edge.tunnel.admin_peer.enabled ? module.toolbox.admin_cidr : ""
 }
 
+output "DFE_EDGE_ALLOWED_CIDRS" {
+  description = "Who may reach the public gateway, comma-separated: edge_allowed_cidrs plus the NAT gateways' addresses, because a pod calling the gateway's public hostname leaves by NAT. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/edge_allowed_cidrs annotation, which layer2-edge.yaml turns into the gateway chart's ui.allowed_cidrs. Empty when edge_allowed_cidrs is, or the edge module is off: no annotation, no fence."
+  value       = join("", module.edge[*].gateway_allowed_cidrs)
+}
+
+output "DFE_EDGE_TRUSTED_PROXY_CIDRS" {
+  description = "The hops in front of Envoy that may vouch for a client address, comma-separated: the public subnets' ranges, where the load balancer sits, plus edge_trusted_proxy_cidrs. Travels with DFE_EDGE_ALLOWED_CIDRS into the gateway chart's ui.trusted_proxy_cidrs, and is empty exactly when that is, because the chart refuses either one without the other."
+  value       = join("", module.edge[*].gateway_trusted_proxy_cidrs)
+}
+
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   description = "Empty on this cloud. EKS Pod Identity binds a role to a service account from OUTSIDE the cluster, so no service account carries an annotation -- unlike IRSA, Workload Identity Federation and Entra Workload ID, which all need one."
   value       = "{}"

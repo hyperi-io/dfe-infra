@@ -27,7 +27,7 @@ only explicitly after an extended stable-release period.
 
 Each stage self-executes as its own `dfe-ops` subcommand, so the cycle and the
 hand-run commands cannot drift, and the cycle exports `--kubeconfig` as
-`KUBECONFIG` to every stage so all four aim at the SAME cluster (by hand they
+`KUBECONFIG` to every stage so they all aim at the SAME cluster (by hand they
 use your current context; check it first). A failed deploy still destroys -- a
 broken cycle must not strand a half-stack. `--keep` skips the destroy, on a dev
 cluster only.
@@ -44,9 +44,11 @@ the last proof lands.
 
 ## Unattended cloud runs
 
-An unattended cloud cycle runs through `dfe-ops cloud-cycle --tf-dir <root> --run-length 3h -- <cycle args>`. The cycle's mode is the dial's profile: the guard adds `--mode <profile>`, and before anything is created it refuses a `--mode` that names another and any argument `dfe-ops cycle`'s own parser rejects. It creates nothing unless `dfe-ops cloud-preflight` passes: the account's guardrails are readable, the credential outlives the run plus its teardown, and no expired run resources remain. The run gets its own state key and `dfe-e2e`/`expires-at` tags (`scripts/cloud_run.py`), and every exit short of SIGKILL tears it down. `.github/workflows/cloud-reaper.yml` removes what an expired run left, every 15 minutes, and does nothing while `vars.DFE_REAPER_AWS_ROLE` is unset. Flags, variables and refusals: `scripts/dfe_ops_cloud_guard.py` and `scripts/cloud_reaper.py`.
+An unattended cloud cycle runs through `dfe-ops cloud-cycle --tf-dir <root> --run-length 3h -- <cycle args>`. The cycle's mode is the dial's profile: the guard adds `--mode <profile>`, and before anything is created it refuses a `--mode` that names another and any argument `dfe-ops cycle`'s own parser rejects. It creates nothing unless `dfe-ops cloud-preflight` passes: the account's guardrails are readable, the credential outlives the run plus its teardown, and no earlier run is left: no run record, and no run-tagged resource, expired or live. The run gets its own state key and `dfe-e2e`/`expires-at` tags (`scripts/cloud_run.py`), and every exit short of SIGKILL tears it down. `.github/workflows/cloud-reaper.yml` removes what an expired run left, every 15 minutes, and does nothing while `vars.DFE_REAPER_AWS_ROLE` is unset. Flags, variables and refusals: `scripts/dfe_ops_cloud_guard.py` and `scripts/cloud_reaper.py`.
 
-Preflight also refuses a session credential (`AWS_SESSION_TOKEN`) whose expiry it cannot read, and every child of a run gets the dial's region as `AWS_REGION`, so a call that names no region never lands outside the run's. `.github/workflows/cloud-cycle.yml` dispatches one run from the `e2e-runner` environment: the runner role by OIDC for 4h, with the dial and bootstrap env file taken from that environment's variables and secrets, and it refuses at its first step when any is missing. A hosted runner sits outside the VPC, so the run opens the Kubernetes API's public endpoint to the runner's own address alone (`DFE_RUN_ENDPOINT_CIDR`, one /32 that two address services must agree on), in place of the dial's endpoint. The private endpoint stays on, and the allowance goes with the cluster at teardown.
+Preflight also refuses a session credential (`AWS_SESSION_TOKEN`) whose expiry it cannot read, and every child of a run gets the dial's region as `AWS_REGION`, so a call that names no region never lands outside the run's. `.github/workflows/cloud-cycle.yml` dispatches from the `e2e-runner` environment: the runner role by OIDC for 4h, with the dial and bootstrap env file taken from that environment's variables and secrets, and it refuses at its first step when any is missing. A hosted runner sits outside the VPC, so the run opens the Kubernetes API's public endpoint to the runner's own address alone (`DFE_RUN_ENDPOINT_CIDR`, one /32 that two address services must agree on), in place of the dial's endpoint, and fences the public gateway to that address plus the cluster's NAT addresses. The private endpoint stays on, and the allowance goes with the cluster at teardown.
+
+`dfe-ops cycle --acceptance-suite <suite>` runs `acceptance` as a stage after smoke and before ui, from the deploy's terraform outputs and as its minted admin; a failed stage skips the rest and destroy still runs. The workflow passes `source` unless its `acceptance_suite` input says otherwise (`none` skips it), clones dfe-engine and dfe-transform-vrl at the tags the current stack pins, and keeps screenshots and the step table only from a failed leg. `repeat` (1-3) runs that many legs, one after another, each with its own credential.
 
 ## Upgrading a persistent deploy instead of cycling it
 
@@ -180,11 +182,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 Not part of the stock POST: the default E2E tests prove the deploy moved data,
 these prove an operator can add a source and watch it work. Run on demand after
 a deploy, here and on docker through dfe-docker's `make test-source`, which
-calls the same runner. Three cases, chosen with `--source-case`: `filebeat` (the
-default) pushes a real corpus at the receiver through the bundled VRL, `elastic`
-pushes the corpus's cisco_ios lines at a transform compiled into
-dfe-transform-elastic, and `cloudwatch` (run as `--aws-service cloudtrail`) lets
-a fetcher pull an AWS upstream.
+calls the same runner. Three cases, chosen with `--source-case`: `filebeat` (the default) pushes the corpus's cisco_ios lines at the receiver in the Elastic Agent envelope, routed on `data_stream.dataset`, through the bundled VRL, `elastic` pushes the same lines at a transform compiled into dfe-transform-elastic, and `cloudwatch` (run as `--aws-service cloudtrail`) lets a fetcher pull an AWS upstream.
 
 The CloudWatch case needs a SIXTH env file naming the upstream
 (`.tmp/aws-test.env`: `DFE_AWS_REGION`, `DFE_AWS_LOG_GROUP`), and

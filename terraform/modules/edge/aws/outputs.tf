@@ -33,6 +33,16 @@ output "tunnel_zone" {
   value       = local.forwarder_enabled ? local.forwarder_zone : ""
 }
 
+output "gateway_allowed_cidrs" {
+  description = "The gateway chart's ui.allowed_cidrs, comma-separated as that chart takes it: gateway_allowed_cidrs plus each egress address as a /32. Empty when gateway_allowed_cidrs is, so a deployment that names no fence gets none."
+  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(concat(var.gateway_allowed_cidrs, [for ip in var.egress_addresses : "${ip}/32"])))
+}
+
+output "gateway_trusted_proxy_cidrs" {
+  description = "The gateway chart's ui.trusted_proxy_cidrs, comma-separated: the public subnets' ranges, where the load balancer sits, plus gateway_trusted_proxy_cidrs, once each. Not the whole VPC, so a pod cannot reach Envoy directly with a forged X-Forwarded-For and pass the fence. Set exactly when gateway_allowed_cidrs is, because the chart refuses either one without the other."
+  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(concat(var.network.public_subnet_cidrs, var.gateway_trusted_proxy_cidrs)))
+}
+
 output "load_balancer_controller_role_arn" {
   description = "The role the AWS Load Balancer Controller assumes. Already associated with its service account; named here so a caller can prove which identity reconciles the deployment's load balancers."
   value       = aws_iam_role.lbc.arn

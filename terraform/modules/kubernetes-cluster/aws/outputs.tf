@@ -35,14 +35,20 @@ output "cluster_security_group_id" {
 }
 
 output "network" {
-  description = "What a sibling module attaches to -- managed Kafka on private connectivity needs the same subnets and the same CIDR."
+  description = "What a sibling module attaches to -- managed Kafka on private connectivity needs the same subnets and the same CIDR. public_subnet_cidrs are where an internet-facing load balancer sits, so they are the only hops the gateway trusts to name a client address."
   value = {
-    vpc_id             = aws_vpc.this.id
-    cidr               = aws_vpc.this.cidr_block
-    azs                = local.azs
-    private_subnet_ids = [for az in local.azs : aws_subnet.private[az].id]
-    public_subnet_ids  = [for az in local.azs : aws_subnet.public[az].id]
+    vpc_id              = aws_vpc.this.id
+    cidr                = aws_vpc.this.cidr_block
+    azs                 = local.azs
+    private_subnet_ids  = [for az in local.azs : aws_subnet.private[az].id]
+    public_subnet_ids   = [for az in local.azs : aws_subnet.public[az].id]
+    public_subnet_cidrs = [for az in local.azs : aws_subnet.public[az].cidr_block]
   }
+}
+
+output "nat_public_ips" {
+  description = "Every NAT gateway's Elastic IP, one per gateway. A pod reaching a public address leaves the VPC from one of these, so a fence on a public load balancer the cluster's own callers also use has to admit them."
+  value       = [for az in local.nat_azs : aws_eip.nat[az].public_ip]
 }
 
 output "private_zone_id" {

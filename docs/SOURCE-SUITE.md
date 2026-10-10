@@ -22,20 +22,17 @@ product was driven.
 
 ## `filebeat` (the default case)
 
-The console creates the source -- Configuration tab (name, display name,
-description, Archive on, match `_source equals <name>`), Meta Schema tab (the
+The console creates the source -- Configuration tab (name, display name, description, Archive on, match `data_stream.dataset equals cisco_ios.log`, Elastic's own identifier for the source), Meta Schema tab (the
 shipped `common-header/timeseries` 1.0.1 and `meta/beats/filebeat` 1.0.0), then
 the Transform tab that then becomes available (Define Transform -> `dfe-transform-vrl`). After
 the deploy the source's Processing tab puts the bundled
 `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the
 dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.
-The filebeat corpus is then posted at the receiver wrapped as
-`{message, tags, _source}`.
+The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream` (the dataset read off the archive path, `cisco_ios/log` -> `cisco_ios.log`), `input`, the vendor line as `message`, and `tags` carrying the run marker.
 
-Proof: the transform instance reports, the receiver routes, new rows in
-`<name>` carry `log_file_path` (only the program sets it), a zstd file appears
-under `<name>_land` in the archiver, and the engine lists a HyperDX source for
-it.
+One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella lines are not fed and this suite does not cover them.
+
+Proof: the transform instance reports, the receiver routes, every row in `<name>` carries `data_stream.dataset` `cisco_ios.log` in its `_raw` (`dataset`), new rows carry `source_ip` (the program reads it out of the syslog body), a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
 
 `reporting` is not taken at face value. The engine answers it off the otel
 tables, and on Compose one container serves the app and every instance of it, so
@@ -70,18 +67,11 @@ the instance starts on no transform at all.
 And there is no `upload-program`: the app declares no file sets, so the step
 records `skipped` and the run writes nothing to the instance.
 
-The corpus is narrowed to its `cisco_ios` module, which is the entry the variant
-names. cisco_umbrella is delivered out of an S3 bucket and takes no receiver
-intake; cisco_meraki's pipeline reads a body rather than a syslog line.
-
-Proof: new rows in `<name>` carry `source_ip`. `meta/beats/filebeat` declares
-it, the cisco_ios transform reads it out of the syslog body, and the posted
-`{message, tags, _source}` record carries nothing of the sort.
+The cisco_ios lines the filebeat case posts are also the entry the variant names, and the proof is the same `source_ip` column, which the posted envelope carries nothing of.
 
 ## Pushing through a real filebeat and logstash (`--via logstash`)
 
-The wrapper's `{message, tags, _source}` proves the transform and is not how a
-deployment is fed. The common path is a Beats agent shipping lumberjack to
+The posted envelope is reconstructed. The common path is a Beats agent shipping lumberjack to
 Logstash and Logstash's http output posting its whole event at the receiver, and
 the Elastic ingest pipelines dfe-transform-elastic compiles in were written
 against that envelope. `--via logstash` is that variation of the two pushed
@@ -91,9 +81,7 @@ same proof all still apply.
 It stands a filebeat and a logstash container beside a compose deployment --
 `--beats-network` names the docker network the stack runs on and
 `--beats-receiver-url` the ingest URL as seen from inside it -- writes this run's
-corpus slice to a file the agent tails, and lets the pair carry it. A logstash
-filter adds the `_source` field the source is matched on; everything else in the
-event is the envelope filebeat and logstash built. The run still waits for
+corpus slice to a file the agent tails, and lets the pair carry it. Filebeat stamps the `data_stream` the source is matched on, as an integration policy does, and an `e2e_run` tag; Logstash adds nothing. The run still waits for
 routing over HTTP first, so the receiver has rolled onto the new rule before the
 agent ships, and its teardown removes both containers.
 
@@ -101,8 +89,8 @@ Three rows of its own: `logstash` and `filebeat` say the pair came up, `feed`
 carries filebeat's own acked count (its count, not the receiver's, so an agent
 that shipped nothing is a different finding from a stack that took nothing), and
 `envelope` names the fields the record that landed arrived with, plus its
-`log.file.path` -- the field only a Beats agent sets and the one the wrapper
-cannot produce.
+`log.file.path` -- the field only a Beats agent sets and the one the posted
+envelope does not carry.
 
 Compose only. The Kubernetes tier wants a Job instead, which is not built.
 

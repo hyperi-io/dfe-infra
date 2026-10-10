@@ -357,6 +357,20 @@ run "aws_network_object" {
     error_message = "network.public_subnet_ids must carry one subnet per zone"
   }
 
+  // The edge gateway trusts exactly these as load balancer hops.
+  assert {
+    condition = (
+      length(distinct(output.network.public_subnet_cidrs)) == 3
+      && alltrue([for c in output.network.public_subnet_cidrs : cidrcontains(output.network.cidr, c) && c != output.network.cidr])
+    )
+    error_message = "network.public_subnet_cidrs must carry one distinct range per zone, each inside the VPC and narrower than it"
+  }
+
+  assert {
+    condition     = output.network.public_subnet_cidrs == [for az in output.network.azs : aws_subnet.public[az].cidr_block]
+    error_message = "network.public_subnet_cidrs must be the public subnets' own ranges, in the order of azs"
+  }
+
   assert {
     condition     = can(tostring(output.network.vpc_id))
     error_message = "network.vpc_id must be a string"
@@ -546,6 +560,11 @@ run "aws_nat_per_az" {
     condition     = length(aws_route_table.private) == 3
     error_message = "there must be one private route table per zone either way"
   }
+
+  assert {
+    condition     = length(output.nat_public_ips) == 3
+    error_message = "nat_public_ips must carry one address per NAT gateway, or a fence built from it refuses the zones it leaves out"
+  }
 }
 
 run "aws_nat_single" {
@@ -563,6 +582,33 @@ run "aws_nat_single" {
   assert {
     condition     = length(aws_route_table.private) == 3
     error_message = "there must be one private route table per zone either way"
+  }
+
+  assert {
+    condition     = length(output.nat_public_ips) == 1
+    error_message = "nat_public_ips must carry one address per NAT gateway"
+  }
+}
+
+// The addresses are the gateways' own Elastic IPs, not anything the module
+// derives, so an override stands in for the address AWS allocates.
+run "aws_nat_public_ips_are_the_gateways_own_addresses" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  override_resource {
+    target = aws_eip.nat
+    values = {
+      public_ip = "203.0.113.7"
+    }
+  }
+
+  assert {
+    condition     = output.nat_public_ips == ["203.0.113.7"]
+    error_message = "nat_public_ips must be the NAT gateways' Elastic IPs"
   }
 }
 

@@ -32,7 +32,11 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
       session credential (AWS_SESSION_TOKEN) whose expiry cannot be read;
   (c) run-tagged resources whose expiry has already passed exist in the region
       -- a previous run left them, and it prints the cloud_sweep command that
-      removes them.
+      removes them;
+  (d) a run is unfinished: a run record exists under the state prefix, or a
+      run-tagged resource in the region has not yet expired. A run's names come
+      from its dial, so applying the dial again stops on AlreadyExists after
+      paying for part of a deployment.
 
 It also refuses a dial whose tags.lifecycle is not ephemeral, because a
 persistent deployment's deletion protection would stop the teardown short.
@@ -45,7 +49,9 @@ everything it creates, the guardrail inputs (boundary, IAM path, bucket
 prefix) and CloudTrail off. Given an endpoint CIDR, it also opens the
 Kubernetes API's public endpoint to that one address, in place of whatever the
 dial sets, so a runner outside the VPC can reach the cluster it created. The
-private endpoint stays on either way. A run record goes beside the state BEFORE the
+private endpoint stays on either way. The same address replaces the dial's
+edge_allowed_cidrs, fencing the public gateway to the runner and the cluster's
+own NAT addresses for the run. A run record goes beside the state BEFORE the
 apply, so the scheduled reaper can destroy the run if this process dies.
 From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
 SIGHUP -- tears the run down: the in-flight child is stopped, the cluster's
@@ -364,11 +370,23 @@ class AwsGuard:
         except ValueError as exc:
             raise GuardError(f"the credential's Expiration is not an ISO-8601 instant: {exc}") from exc
 
-    def expired_resources(self, keys: cloud_run.RunTagKeys, now: float, exclude_bucket: str) -> list:
-        provider = cloud_sweep.AwsProvider(self.region)
-        found = provider.collect({}, exclude_bucket, run_key=keys.run)
-        expiry = cloud_sweep.ExpirySelection(keys=keys, now=now, grace=0)
-        return cloud_sweep.filter_expired(found, expiry=expiry, exclude_bucket=exclude_bucket)
+    def run_resources(self, keys: cloud_run.RunTagKeys, exclude_bucket: str) -> list:
+        """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside."""
+        found = cloud_sweep.AwsProvider(self.region).collect({}, exclude_bucket, run_key=keys.run)
+        return [
+            r for r in found
+            if r.tags.get(keys.run) and not (r.kind == "s3-bucket" and r.id == exclude_bucket)
+        ]
+
+    def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
+        """Every run record under the prefix; a record goes only when its run's destroy succeeds."""
+        # The CLI follows every page itself unless --max-items is given.
+        body = self._read(["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", f"{prefix}/"], region)
+        return [
+            str(item["Key"])
+            for item in body.get("Contents", [])
+            if str(item.get("Key", "")).endswith(f"/{cloud_run.RECORD_OBJECT}")
+        ]
 
     def put_record(self, bucket: str, region: str, key: str, body: str) -> None:
         with tempfile.TemporaryDirectory(prefix="dfe-run-record-") as scratch:
@@ -504,22 +522,62 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
     except GuardError as exc:
         report.add("(b) credential", False, str(exc))
 
-    # (c) nothing a previous run left behind is still there past its expiry.
+    # (c) and (d) read the region's run-tagged resources once and split them by expiry.
     try:
-        leftovers = guard.expired_resources(config.keys, now, config.state_bucket)
-        if leftovers:
-            names = ", ".join(f"{r.kind} {r.name}" for r in leftovers[:10])
-            more = f" and {len(leftovers) - 10} more" if len(leftovers) > 10 else ""
-            command = (
-                f"python3 scripts/cloud_sweep.py --provider {config.provider} --region {config.region} "
-                f"--expired --grace 0 --delete --account {config.account} --exclude-bucket {config.state_bucket}"
-            )
-            report.add("(c) expired run resources", False, f"{names}{more}; remove them with: {command}")
-        else:
-            report.add("(c) expired run resources", True, "none in this region")
+        found = guard.run_resources(config.keys, config.state_bucket)
     except cloud_sweep.CloudSweepError as exc:
         report.add("(c) expired run resources", False, f"could not list: {exc}")
+        report.add("(d) unfinished runs", False, f"could not list the region's run resources: {exc}")
+        return report
+    expiry = cloud_sweep.ExpirySelection(keys=config.keys, now=now, grace=0)
+    classified = [(r, expiry.state(r)) for r in found]
+
+    # (c) nothing a previous run left behind is still there past its expiry.
+    expired = [r for r, state in classified if state is cloud_run.ExpiryState.EXPIRED]
+    if expired:
+        command = (
+            f"python3 scripts/cloud_sweep.py --provider {config.provider} --region {config.region} "
+            f"--expired --grace 0 --delete --account {config.account} --exclude-bucket {config.state_bucket}"
+        )
+        detail = f"{_resource_names(expired)}; remove them with: {command}"
+        report.add("(c) expired run resources", False, detail)
+    else:
+        report.add("(c) expired run resources", True, "none in this region")
+
+    # (d) no other run is still up, since an apply sharing its names would stop on AlreadyExists after
+    # paying for part of a deployment. A run tag with no readable expiry is never swept, so it counts here.
+    live = [
+        (r, f"until {r.tags.get(config.keys.expiry)}" if state is cloud_run.ExpiryState.LIVE else str(state))
+        for r, state in classified
+        if state not in (cloud_run.ExpiryState.EXPIRED, cloud_run.ExpiryState.UNTAGGED)
+    ]
+    try:
+        records = guard.run_records(config.state_bucket, config.state_region, config.state_prefix)
+    except cloud_sweep.CloudSweepError as exc:
+        report.add("(d) unfinished runs", False, f"could not list the run records: {exc}")
+        return report
+    held = [f"run record {key}" for key in records]
+    if live:
+        held.append(_resource_names([r for r, _ in live], [note for _, note in live]))
+    if held:
+        report.add(
+            "(d) unfinished runs",
+            False,
+            f"{'; '.join(held)}. A run whose destroy has not succeeded still holds them: wait for it, run "
+            "`tofu destroy` against its state, or let the reaper remove it once it expires",
+        )
+    else:
+        clear = f"no run record under {config.state_prefix}/, no live run resources"
+        report.add("(d) unfinished runs", True, clear)
     return report
+
+
+def _resource_names(resources: list[cloud_sweep.Resource], notes: list[str] | None = None) -> str:
+    """The first ten resources by kind and name, each with its note when given, and how many more."""
+    shown = [
+        f"{r.kind} {r.name}" + (f" ({notes[i]})" if notes else "") for i, r in enumerate(resources[:10])
+    ]
+    return ", ".join(shown) + (f" and {len(resources) - 10} more" if len(resources) > 10 else "")
 
 
 # --- the run ---------------------------------------------------------------------
@@ -528,7 +586,8 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
 def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str, object]:
     """The run's tfvars overlay: its own state key, its tags, the guardrail inputs, CloudTrail off.
 
-    Given an endpoint CIDR it also replaces the dial's endpoint, for this run alone.
+    Given an endpoint CIDR it also replaces the dial's endpoint and the public
+    gateway's allow-list, for this run alone.
     """
     overlay: dict[str, object] = {
         "run": cloud_run.run_tfvar(run_id, expires_at, config.keys),
@@ -549,6 +608,7 @@ def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str
         overlay["inspector_ec2_exclusion"] = True
     if config.endpoint_cidr:
         overlay["endpoint"] = {"public": True, "allowed_cidrs": [config.endpoint_cidr]}
+        overlay["edge_allowed_cidrs"] = [config.endpoint_cidr]
     return overlay
 
 

@@ -93,7 +93,9 @@ def _run_script(script: str, env: dict[str, str], tmp_path: Path) -> tuple[subpr
 def test_the_cycle_only_ever_runs_on_dispatch() -> None:
     triggers = _triggers()
     assert set(triggers) == {"workflow_dispatch"}
-    assert set(triggers["workflow_dispatch"]["inputs"]) == {"run_length", "cycle_args", "preflight_only"}
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {
+        "run_length", "cycle_args", "preflight_only", "acceptance_suite", "repeat",
+    }
 
 
 def test_every_action_is_pinned_by_full_commit_sha_with_its_version() -> None:
@@ -183,11 +185,14 @@ def test_the_mode_is_the_dials_so_the_cycle_arguments_carry_no_default(tmp_path:
     fake.chmod(0o755)
     calls = tmp_path / "calls"
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls), "RUNNER_TEMP": str(tmp_path),
-           "RUN_LENGTH": "150m", "CYCLE_ARGS": ""}
+           "RUN_LENGTH": "150m", "CYCLE_ARGS": "", "ACCEPTANCE_SUITE": "none"}
     done, _output = _run_script(_named("Run one guarded cycle")["run"], env, tmp_path)
     assert done.returncode == 0, done.stdout + done.stderr
     argv = calls.read_text(encoding="utf-8").splitlines()
-    assert argv[argv.index("--"):] == ["--", "--env-file", f"{tmp_path}/dfe-cycle.env"]
+    assert argv[argv.index("--"):] == [
+        "--", "--acceptance-shots-dir", f"{tmp_path}/acceptance", "--env-file", f"{tmp_path}/dfe-cycle.env",
+    ]
+    assert "--mode" not in argv
 
 
 # --- the runner's own address, the one the cluster API opens to -------------------------------------
@@ -275,7 +280,7 @@ def test_preflight_only_runs_the_read_only_preflight_as_the_runner_and_never_the
 def test_preflight_only_hands_the_guard_everything_the_cycles_own_preflight_reads() -> None:
     """Only the cycle arguments and the redpanda credential, which preflight never reads, are left out."""
     preflight, cycle = _named("Run the preflight only"), _named("Run one guarded cycle")
-    not_read = ("CYCLE_ARGS", "REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET")
+    not_read = ("CYCLE_ARGS", "ACCEPTANCE_SUITE", "REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET")
     assert preflight["env"] == {k: v for k, v in cycle["env"].items() if k not in not_read}
 
 
@@ -397,3 +402,207 @@ def test_expected_fail_a_role_that_is_not_a_role_arn_refuses_without_echoing_it(
     assert "not an IAM role ARN" in done.stdout
     assert role not in done.stdout
     assert output == ""
+
+
+# --- repeat: several cycles, one after another ---------------------------------------------------
+
+
+def test_repeat_is_one_to_three_and_defaults_to_one() -> None:
+    repeat = _triggers()["workflow_dispatch"]["inputs"]["repeat"]
+    assert repeat["type"] == "choice"
+    assert repeat["options"] == ["1", "2", "3"]
+    assert repeat["default"] == "1"
+
+
+def test_each_leg_runs_alone_and_a_failed_leg_does_not_cancel_the_rest() -> None:
+    strategy = _job()["strategy"]
+    assert strategy["max-parallel"] == 1
+    assert strategy["fail-fast"] is False
+    leg = strategy["matrix"]["leg"]
+    for count, legs in (("3", "[1, 2, 3]"), ("2", "[1, 2]")):
+        assert f"inputs.repeat == '{count}' && '{legs}'" in leg
+    assert leg.rstrip(" }").endswith("|| '[1]')")
+
+
+def test_no_job_level_group_can_cancel_a_waiting_leg() -> None:
+    """A concurrency group holds one pending job, so leg 3 joining a job-level group
+    cancels leg 2 while it waits. The run-level group never sees the legs."""
+    assert "concurrency" not in _job()
+
+
+def test_each_leg_assumes_the_role_under_its_own_session_name() -> None:
+    assert _step("creds")["with"]["role-session-name"].endswith("-${{ matrix.leg }}")
+
+
+# --- the acceptance stage -----------------------------------------------------------------------
+
+
+def test_the_acceptance_suite_defaults_to_source_and_none_turns_it_off() -> None:
+    suite = _triggers()["workflow_dispatch"]["inputs"]["acceptance_suite"]
+    assert suite["type"] == "choice"
+    assert suite["default"] == "source"
+    assert "none" in suite["options"]
+    # Every other option is a suite dfe-ops cycle's own parser accepts.
+    for option in (o for o in suite["options"] if o != "none"):
+        assert guard_mod._parse_cycle(["--acceptance-suite", option]).acceptance_suite == option
+
+
+def _cycle_argv(tmp_path: Path, cycle_args: str, suite: str) -> list[str]:
+    """The arguments the cycle step hands dfe-ops cloud-cycle after its `--`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "python3"
+    fake.write_text('#!/bin/bash\nprintf \'%s\\n\' "$@" > "${CALLS}"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls), "RUNNER_TEMP": str(tmp_path),
+           "RUN_LENGTH": "150m", "CYCLE_ARGS": cycle_args, "ACCEPTANCE_SUITE": suite}
+    done, _output = _run_script(_named("Run one guarded cycle")["run"], env, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    argv = calls.read_text(encoding="utf-8").splitlines()
+    return argv[argv.index("--") + 1:]
+
+
+def test_the_cycle_runs_the_source_suite_when_nothing_else_is_named(tmp_path: Path) -> None:
+    argv = _cycle_argv(tmp_path, "", "source")
+    parsed = guard_mod._parse_cycle(argv)
+    assert parsed.acceptance_suite == "source"
+    assert parsed.acceptance_shots_dir == f"{tmp_path}/acceptance"
+
+
+def test_none_runs_no_acceptance_stage(tmp_path: Path) -> None:
+    assert guard_mod._parse_cycle(_cycle_argv(tmp_path, "", "none")).acceptance_suite is None
+
+
+def test_the_jobs_shots_dir_and_env_file_win_over_the_cycle_arguments(tmp_path: Path) -> None:
+    """The input's description says so; the upload step reads only the job's directory."""
+    argv = _cycle_argv(tmp_path, "--acceptance-shots-dir /elsewhere --env-file other.env", "source")
+    parsed = guard_mod._parse_cycle(argv)
+    assert parsed.acceptance_shots_dir == f"{tmp_path}/acceptance"
+    assert parsed.env_file[-1] == f"{tmp_path}/dfe-cycle.env"
+    description = _triggers()["workflow_dispatch"]["inputs"]["cycle_args"]["description"]
+    assert "then --acceptance-shots-dir and --env-file after these, so the job's own" in description
+
+
+@pytest.mark.parametrize("named", ["--acceptance-suite flows", "--acceptance-suite=flows", "--acceptance-su flows"])
+def test_a_suite_the_cycle_arguments_name_wins_over_the_input(tmp_path: Path, named: str) -> None:
+    argv = _cycle_argv(tmp_path, f"--e2e {named}", "source")
+    assert guard_mod._parse_cycle(argv).acceptance_suite == "flows"
+    assert "source" not in argv
+
+
+INSTALL_STEP = "Install the acceptance suite's Python dependencies, hashes required"
+
+
+def test_the_suite_is_set_up_before_the_credential_clock_starts() -> None:
+    """The checkouts and the browser install take minutes the run's credential does not have to cover."""
+    names = [s.get("name") for s in _job()["steps"]]
+    session = names.index(_step("session")["name"])
+    for name in ("Check out the engine and the transform the stack pins", INSTALL_STEP):
+        assert names.index(name) < session, name
+        assert _named(name)["if"] == "${{ !inputs.preflight_only }}"
+
+
+def test_no_step_installs_a_browser() -> None:
+    """Under CI=true `playwright install chrome` runs as root, removes the image's Chrome and
+    installs a .deb it downloads with no signature or hash check."""
+    assert "playwright install" not in WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_the_suites_drive_the_runner_images_chrome_and_refuse_without_it() -> None:
+    """Playwright's chrome channel launches /opt/google/chrome/chrome on Linux, where the image installs it."""
+    script = _named(INSTALL_STEP)["run"]
+    assert "if ! /opt/google/chrome/chrome --version; then" in script
+    assert "Nothing was created." in script
+    from acceptance.onboarding import run as onboarding_run
+    from acceptance.source import run as source_run
+
+    urls = ["--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example"]
+    assert source_run.build_parser().parse_args([*urls, "--engine-repo", "/x"]).channel == "chrome"
+    assert onboarding_run.build_parser().parse_args(urls).channel == "chrome"
+    # dfe-ops hands neither runner a channel of its own.
+    assert "--channel" not in (REPO_ROOT / "scripts" / "dfe-ops").read_text(encoding="utf-8")
+
+
+def test_the_python_dependencies_install_with_hashes() -> None:
+    script = _named(INSTALL_STEP)["run"]
+    assert "uv pip install --require-hashes -r scripts/acceptance/requirements.txt" in script
+    requirements = (REPO_ROOT / "scripts" / "acceptance" / "requirements.txt").read_text(encoding="utf-8")
+    pins = [line for line in requirements.splitlines() if line and not line.startswith(("#", " "))]
+    assert pins
+    for pin in pins:
+        assert re.match(r"^[A-Za-z0-9._-]+==[^ ]+ \\$", pin), pin
+    for wanted in ("playwright==", "httpx=="):
+        assert any(pin.startswith(wanted) for pin in pins), wanted
+
+
+def _versions_pin(name: str) -> str:
+    """The current stack's tag for one app, read straight off versions.yaml."""
+    root = yaml.safe_load((REPO_ROOT / "versions.yaml").read_text(encoding="utf-8"))
+    return root["stacks"][root["current"]]["apps"][name]
+
+
+def _run_checkout(tmp_path: Path, python3: str = "") -> tuple[subprocess.CompletedProcess, Path, Path]:
+    """The checkout step against this repo's real dfe-stack, with git recording and doing nothing."""
+    workspace = tmp_path / "work" / "dfe-infra"
+    workspace.mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git = bin_dir / "git"
+    git.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >> "${CALLS}"\n', encoding="utf-8")
+    git.chmod(0o755)
+    if python3:
+        fake = bin_dir / "python3"
+        fake.write_text(python3, encoding="utf-8")
+        fake.chmod(0o755)
+    github_env = tmp_path / "github_env"
+    github_env.touch()
+    calls = tmp_path / "calls"
+    done = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _named("Check out the engine and the transform the stack pins")["run"]],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "CALLS": str(calls), "RUNNER_TEMP": str(tmp_path),
+             "GITHUB_WORKSPACE": str(workspace), "GITHUB_ENV": str(github_env)},
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    return done, calls, github_env
+
+
+def test_the_engine_and_the_transform_are_cloned_at_the_current_stacks_tags(tmp_path: Path) -> None:
+    done, calls, github_env = _run_checkout(tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    clones = calls.read_text(encoding="utf-8").splitlines()
+    parent = tmp_path / "work"
+    for repo, line in zip(("dfe-engine", "dfe-transform-vrl"), clones, strict=True):
+        words = line.split()
+        assert words[words.index("--branch") + 1] == _versions_pin(repo), line
+        assert f"https://github.com/hyperi-io/{repo}.git" in words
+        assert words[-1] == f"{parent}/{repo}"
+    assert github_env.read_text(encoding="utf-8").splitlines() == [
+        f"DFE_ENGINE_REPO={parent}/dfe-engine",
+        f"DFE_TRANSFORM_VRL_REPO={parent}/dfe-transform-vrl",
+    ]
+
+
+def test_expected_fail_a_pin_that_is_not_a_release_tag_clones_nothing(tmp_path: Path) -> None:
+    passthrough = '#!/bin/bash\nif [[ "$1" == "-c" ]]; then echo latest; exit 0; fi\nexec /usr/bin/python3 "$@"\n'
+    done, calls, github_env = _run_checkout(tmp_path, python3=passthrough)
+    assert done.returncode == 1
+    assert "not a release tag" in done.stdout
+    assert not calls.exists()
+    assert github_env.read_text(encoding="utf-8") == ""
+
+
+def test_the_screenshots_are_kept_only_from_a_failed_leg() -> None:
+    """The repository is public, so a green run's screenshots would be published for nothing."""
+    upload = _named("Keep the acceptance screenshots and step table")
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert "failure()" in upload["if"]
+    assert "always()" not in upload["if"]
+    assert upload["with"]["retention-days"] == 7
+    assert upload["with"]["path"] == "${{ runner.temp }}/acceptance"
+    # One artifact name per leg: a second upload under the same name fails the leg.
+    assert "${{ matrix.leg }}" in upload["with"]["name"]
+    # The cycle step writes where this uploads from.
+    assert '--acceptance-shots-dir "${RUNNER_TEMP}/acceptance"' in _named("Run one guarded cycle")["run"]
+    names = [s.get("name") for s in _job()["steps"]]
+    assert names.index("Run one guarded cycle") < names.index(upload["name"])

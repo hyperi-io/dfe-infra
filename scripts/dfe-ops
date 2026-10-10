@@ -657,6 +657,26 @@ def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = Tr
     return env
 
 
+def terraform_settings(tf_dir: str) -> dict[str, str]:
+    """The DFE_* outputs of a terraform env dir, as strings a child's environment takes.
+
+    bridge.get_tf_outputs answers name -> (value, sensitive), and a pair left in
+    an env dict makes subprocess refuse the whole call with a TypeError.
+
+    Args:
+        tf_dir: The terraform env dir to read the outputs of.
+
+    Returns:
+        Each DFE_* output's value, keyed by its name.
+    """
+    sys.path.insert(0, str(BOOTSTRAP))
+    from bridge import get_tf_outputs
+
+    return {
+        k: value for k, (value, _sensitive) in get_tf_outputs(tf_dir).items() if k.startswith("DFE_")
+    }
+
+
 def _suite_env(args: argparse.Namespace) -> dict[str, str]:
     """The deploy's own env for a bootstrap test script: terraform, then env files.
 
@@ -666,11 +686,7 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
     """
     env = dict(os.environ)
     if args.from_terraform:
-        sys.path.insert(0, str(BOOTSTRAP))
-        from bridge import get_tf_outputs
-
-        tf = {k: v for k, v in get_tf_outputs(args.from_terraform).items()
-              if k.startswith("DFE_")}
+        tf = terraform_settings(args.from_terraform)
         env.update(tf)
         print(f"  loaded {len(tf)} DFE_* var(s) from terraform {args.from_terraform}",
               file=sys.stderr)
@@ -1338,6 +1354,9 @@ BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE)
 # shape and removes it again, so it proves a fresh deploy. A suite that reads a
 # source the deployment must already carry is run through the pytest passthrough.
 SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, "all")
+# Where the cycle's acceptance stage writes, anchored to this repo's gitignored
+# .tmp rather than the caller's cwd.
+ACCEPTANCE_SHOTS = REPO_ROOT / ".tmp" / "acceptance"
 
 
 def suite_steps(suite: str) -> tuple[str, ...]:
@@ -1363,6 +1382,14 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     API -- and hands it credentials read from the cluster's own secrets.
     """
     settings = dict(os.environ)
+    terraform_fence = ""
+    # Terraform first and env files over it, the precedence stack-deploy applies.
+    if args.from_terraform:
+        loaded = terraform_settings(args.from_terraform)
+        settings.update(loaded)
+        terraform_fence = loaded.get(EDGE_FENCE_VAR, "")
+        print(f"  loaded {len(loaded)} DFE_* var(s) from terraform {args.from_terraform}",
+              file=sys.stderr)
     for env_file in args.env_file:
         loaded = envfile.parse_env_file(Path(env_file))
         settings.update(loaded)
@@ -1399,6 +1426,11 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     # routing /api to the engine is the gateway's job.
     ui_url, resolve = "", list(args.resolve)
     if any(step in BROWSER_SUITES for step in steps):
+        fence_problem = _edge_fence_problem(kube, settings.get(EDGE_FENCE_VAR, ""), terraform_fence)
+        if fence_problem:
+            print(f"acceptance: EDGE FENCE NOT DEPLOYED, so the gateway is open wider than this run names: "
+                  f"{fence_problem}", file=sys.stderr)
+            return 1
         ui_url = args.ui_url or _console_urls(kube, namespace)[0]
         if "localhost" in ui_url:
             print(
@@ -1482,8 +1514,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         env["DFE_E2E_ADMIN_PASSWORD"] = password
         # The engine forces the admin off that issued password at first login;
         # every suite changes it to this one, and signs in with it from then on.
-        if settings.get(NEW_ADMIN_PASSWORD_VAR):
-            env[NEW_ADMIN_PASSWORD_VAR] = settings[NEW_ADMIN_PASSWORD_VAR]
+        env[NEW_ADMIN_PASSWORD_VAR] = ui_admin_password(settings, password)
     else:
         env.pop("DFE_E2E_ENGINE_URL", None)
         stop.set()
@@ -2018,6 +2049,49 @@ def _gateway_address(kube: list[str]) -> str:
             if address.get("value"):
                 return str(address["value"])
     return ""
+
+
+EDGE_FENCE_VAR = "DFE_EDGE_ALLOWED_CIDRS"
+# Envoy Gateway's own label on every proxy Service it creates, whatever the Gateway is named.
+ENVOY_OWNER_LABEL = "gateway.envoyproxy.io/owning-gateway-name"
+
+
+def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> str:
+    """Why the gateway's load balancer does not carry the edge fence, or empty when it does.
+
+    An env file's `DFE_EDGE_ALLOWED_CIDRS=` line beats the terraform output, and
+    bootstrap then writes no fence at all, so the terraform value is the one
+    held to when the merged value is empty.
+
+    Args:
+        kube: kubectl argv prefix.
+        fence: DFE_EDGE_ALLOWED_CIDRS as this run resolved it, env files over terraform.
+        terraform_fence: The same output as terraform alone gave it.
+
+    Returns:
+        Empty when no fence is named, or every Envoy LoadBalancer Service carries
+        each fenced range in loadBalancerSourceRanges; otherwise what is missing.
+    """
+    want = {cidr.strip() for cidr in (fence or terraform_fence).split(",") if cidr.strip()}
+    if not want:
+        return ""
+    rc, doc, err = _kubectl_json([*kube, "get", "service", "-A", "-l", ENVOY_OWNER_LABEL])
+    if rc != 0:
+        return f"could not list the gateway's Services: {err}"
+    services = [s for s in doc.get("items") or [] if (s.get("spec") or {}).get("type") == "LoadBalancer"]
+    if not services:
+        return "no Envoy Gateway LoadBalancer Service exists to carry it"
+    problems = []
+    for svc in services:
+        missing = sorted(want - set((svc.get("spec") or {}).get("loadBalancerSourceRanges") or []))
+        if missing:
+            meta = svc.get("metadata") or {}
+            problems.append(f"{meta.get('namespace')}/{meta.get('name')} lacks {', '.join(missing)}")
+    if problems and terraform_fence and not fence:
+        problems.append(
+            f"an env file sets {EDGE_FENCE_VAR} empty over the terraform output, so no fence was deployed"
+        )
+    return "; ".join(problems)
 
 
 def _route_hosts(kube: list[str], console: str) -> list[str]:
@@ -2980,15 +3054,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     # (same precedence as stack-deploy's _assemble_env: terraform < env-file).
     file_env: dict[str, str] = {}
     if args.from_terraform:
-        sys.path.insert(0, str(BOOTSTRAP))
-        from bridge import get_tf_outputs
-
-        # name -> (value, sensitive), the same unwrap _assemble_env does.
-        file_env.update({
-            k: value
-            for k, (value, _sensitive) in get_tf_outputs(args.from_terraform).items()
-            if k.startswith("DFE_")
-        })
+        file_env.update(terraform_settings(args.from_terraform))
     envfile.load_env_files(args.env_file, file_env)
     namespace = args.namespace or file_env.get("DFE_NAMESPACE") or "dfe-local"
     storage_class = args.storage_class or file_env.get("DFE_STORAGE_CLASS") or ""
@@ -3383,16 +3449,7 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     env = dict(os.environ)
 
     if args.from_terraform:
-        # Reuse bridge.py's tested terraform-output reader (handles sensitive
-        # outputs) rather than re-implementing it.
-        sys.path.insert(0, str(BOOTSTRAP))
-        from bridge import get_tf_outputs
-
-        tf = get_tf_outputs(args.from_terraform)
-        # get_tf_outputs answers name -> (value, sensitive) by design, so the
-        # value has to be unwrapped -- a raw tuple in the env dict makes
-        # subprocess.run refuse the whole call with a TypeError.
-        dfe = {k: value for k, (value, _sensitive) in tf.items() if k.startswith("DFE_")}
+        dfe = terraform_settings(args.from_terraform)
         env.update(dfe)
         print(f"  loaded {len(dfe)} DFE_* var(s) from terraform {args.from_terraform}", file=sys.stderr)
 
@@ -3591,6 +3648,8 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
 def cmd_cycle(args: argparse.Namespace) -> int:
     """THE validation cycle this repo owns: preflight -> deploy+E2E -> smoke -> destroy.
 
+    --acceptance-suite adds an `acceptance` stage after smoke, and --ui-repo a
+    `ui` stage after that; a failed stage skips every later one but destroy.
     Each stage self-executes as its own dfe-ops subcommand, so a stage run by
     the cycle is EXACTLY the stage a human runs by hand -- no drift between
     "the cycle" and "the commands". The one thing the cycle adds on top is
@@ -3608,6 +3667,14 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         print(
             "ERROR: the ui stage runs the dfe-ui suite, which seeds through the engine's "
             "e2e routes: add --e2e so the deploy mounts them",
+            file=sys.stderr,
+        )
+        return 2
+    # Refused before anything deploys, since `acceptance` refuses without one at the end.
+    if args.acceptance_suite and _sibling_repo("dfe-engine", "DFE_ENGINE_REPO") is None:
+        print(
+            "ERROR: the acceptance stage runs from a dfe-engine checkout: set DFE_ENGINE_REPO, "
+            "or check one out beside this repo",
             file=sys.stderr,
         )
         return 2
@@ -3671,6 +3738,17 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     if args.from_terraform:
         smoke_cmd += ["--from-terraform", args.from_terraform]
     stages.append(("smoke", smoke_cmd))
+    # Before the ui stage, whose seed routes reset every account this one signs in as.
+    # --insecure: a fresh deployment's gateway certificate is not one the runner trusts.
+    if args.acceptance_suite:
+        acceptance_cmd = [
+            *self_cmd, "acceptance", "--suite", args.acceptance_suite, "--mode", args.mode,
+            *passthrough_kube, *passthrough_env,
+            "--insecure", "--shots-dir", args.acceptance_shots_dir,
+        ]
+        if args.from_terraform:
+            acceptance_cmd += ["--from-terraform", args.from_terraform]
+        stages.append(("acceptance", acceptance_cmd))
     # The UI stage is opt-in: it needs a dfe-ui checkout and node, which not
     # every cycle runner has, and a cycle that starts failing for want of a
     # browser would be worse than one that says the stage did not run.
@@ -3903,6 +3981,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="dfe-ui checkout; given, the ui stage runs after smoke (needs --e2e, node and a browser)")
     cy.add_argument("--ui-url", default=None,
                     help="the gateway URL the console is served on (default: the cluster's domain annotation)")
+    cy.add_argument("--acceptance-suite", default=None, choices=SUITES,
+                    help="run `acceptance --suite <name>` as a stage after smoke (needs the engine "
+                         "checkout acceptance --repo finds, and a browser for onboarding and source)")
+    cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
+                    help="where the acceptance stage writes its screenshots and step table")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -4024,6 +4107,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ac.add_argument("--env-file", action="append", default=[], metavar="PATH",
                     help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
+    ac.add_argument("--from-terraform", default=None, metavar="DIR",
+                    help="read DFE_* outputs from a terraform env dir, as the deploy did (env files win over it)")
     ac.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
     ac.add_argument("--context", default=None, help="kubeconfig context (default: DFE_KUBE_CONTEXT from --env-file)")
     ac.add_argument("--namespace", default=None, help="namespace the apps run in (default: DFE_NAMESPACE, else dfe-local)")

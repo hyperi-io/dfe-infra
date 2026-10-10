@@ -52,7 +52,7 @@ own compute, the pricing model named, never a rate.
 | SCIM, `/api/v1/scim/v2` | b | 2 | off | `edge.engine_api.scim_public` | no spend |
 | TLS floor and HSTS | a b | 1 | on | `edge.product.tls` | none |
 | Rate limit, per proxy replica | a b | 1 | on | `edge.product.rate_limit` | none |
-| CIDR filter, at Envoy and the load balancer | a b c d | 1 | unset | `edge.product.allowed_cidrs` | none |
+| CIDR filter, at Envoy and the load balancer | a b c d | 1 | unset | `edge.product.allowed_cidrs`, with `edge.product.trusted_proxy_cidrs` | none |
 | Edge OIDC on the admin routes | c | 1 | on | `edge.admin_uis.oidc` | none |
 | Admin UI routes, one at a time | c | 1 | off | `edge.admin_uis.public.*` | none |
 | Class-wide admin kill switch | c | 1 | off | `edge.admin_uis.external` | none |
@@ -66,10 +66,7 @@ own compute, the pricing model named, never a rate.
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
 
-The CIDR filter fences the WHOLE front door: one gateway Service carries every
-listener, so an allow-list narrow enough to lock an admin UI down blocks agent
-ingest too. Set `edge.product.trusted_proxy_cidrs` with it, or the client address
-comes from a header the caller writes.
+The CIDR filter fences the WHOLE front door: one gateway Service carries every listener, so an allow-list narrow enough to lock an admin UI down blocks agent ingest too. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and trusts the public subnets' ranges, where the load balancer sits, plus `edge.product.trusted_proxy_cidrs` (a CDN in front) for the client address. Never the whole VPC, so a pod cannot reach Envoy directly with a forged `X-Forwarded-For` and pass the filter. A guarded test run replaces the list with its runner's /32.
 
 ### What the engine API's split gets wrong
 

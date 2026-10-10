@@ -129,8 +129,10 @@ dns:
 ## quoted "false" is a non-empty string that is always truthy, and the chart
 ## refuses a quoted one at render rather than guessing what you meant.
 ##
-## NOTHING HERE IS APPLIED FOR YOU except `enabled`. render_dial.py validates
-## the block, reports it, and carries `enabled` to DFE_EDGE_ENABLED.
+## NOTHING HERE IS APPLIED FOR YOU except `enabled`, which render_dial.py
+## carries to DFE_EDGE_ENABLED, and `product.allowed_cidrs` and
+## `product.trusted_proxy_cidrs`, which its --tofu render hands a cloud root. It
+## validates and reports the rest.
 edge:
   ## `false` leaves argocd/appsets/layer2-edge.yaml generating nothing, so the
   ## deployment gets no public gateway and no tunnel and every app stays on a
@@ -174,12 +176,13 @@ edge:
     ## Who may reach a public surface; empty = any address. Enforced at Envoy
     ## AND at the cloud load balancer, so one misconfiguration is not the whole
     ## wall. The load-balancer half fences the entire front door, ingest
-    ## included. Tier 1 once set.
+    ## included. Tier 1 once set. A cloud root applies it, adding its NAT
+    ## gateways' addresses so the cluster's own callers still get in.
     allowed_cidrs: ""
-    ## The proxy ranges Envoy may believe about the client address -- the load
-    ## balancer's subnets, plus any CDN in front. Required whenever
-    ## allowed_cidrs is set: without it the address comes from a header the
-    ## caller writes.
+    ## The proxy ranges Envoy may believe about the client address, such as a
+    ## CDN in front. A cloud root adds its public subnets' ranges itself; anywhere else,
+    ## name the load balancer's subnets here whenever allowed_cidrs is set, or
+    ## the address comes from a header the caller writes.
     trusted_proxy_cidrs: ""
     ## Every public route already sits behind a login with deny-by-default
     ## authorisation, so managed rules would guard code no unauthenticated

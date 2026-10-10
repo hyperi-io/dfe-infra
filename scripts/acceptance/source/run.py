@@ -46,6 +46,9 @@ from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
 from acceptance.source import cases, fetcher, steps
 
+# The report's file name in the screenshot directory.
+STEP_TABLE = "steps.txt"
+
 
 def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restart_exec: list[str]) -> None:
     """Every source's journey, in one order, with the case filling in its own halves."""
@@ -75,10 +78,11 @@ def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
     driver = run.driver
     try:
         created = run.engine.call("GET", f"/sources/{case.name}").status == 200
-    except OSError as exc:
-        # The step table is what this run produces; an engine that has gone away
-        # is a finding to print, not a traceback that loses every row above it.
-        driver.results.append(wizard.StepResult("teardown", "failed", f"the engine did not answer: {exc}"))
+    except (OSError, RuntimeError) as exc:
+        # The step table is what this run produces; an engine that has gone away or
+        # refused the login is a finding to print, not a traceback that loses every row above it.
+        refused = f"the engine did not serve the run: {exc}"
+        driver.results.append(wizard.StepResult("teardown", "failed", refused))
         return
     if created and not run.args.keep:
         detail = remove_source(
@@ -180,15 +184,46 @@ def run(args: argparse.Namespace) -> int:
 
     teardown(current, case, api_url)
 
+    held = (password, new_password, store.password, engine.password, engine.token)
     print()
-    print(wizard.report_table(driver.results))
-    unproven = [row.slug for row in driver.results if row.status == "unproven"]
+    print(report(driver.results, shots, secrets=held))
+    print(f"\nscreenshots: {shots}")
+    return wizard.exit_code(driver.results)
+
+
+def report(results: list[wizard.StepResult], shots: Path, secrets: tuple[str, ...] = ()) -> str:
+    """The step table plus a line naming each failed and each unproven row.
+
+    Also written to STEP_TABLE beside the screenshots, so the two travel together
+    as one record of the run. A detail is free text, an exception's first line
+    among them, and the table is printed to a job log that can be public, so
+    every secret the run holds is replaced before either copy is made.
+
+    Args:
+        results: The run's step rows, in the order they happened.
+        shots: The screenshot directory.
+        secrets: The run's passwords and token; an empty one is skipped.
+
+    Returns:
+        The report text.
+    """
+    lines = [wizard.report_table(results)]
+    failed = [row.slug for row in results if row.status == "failed"]
+    if failed:
+        # By name, so a stage summary that says only "failed" points at the step that did.
+        lines.append(f"\nFAILED: {', '.join(failed)}")
+    unproven = [row.slug for row in results if row.status == "unproven"]
     if unproven:
         # A row that ran and could not decide is neither a pass nor a failure,
         # and is said again here so a long table cannot be read as green.
-        print(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
-    print(f"\nscreenshots: {shots}")
-    return wizard.exit_code(driver.results)
+        lines.append(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
+    text = "\n".join(lines)
+    # Longest first, so a secret that contains another is never left half shown.
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+    shots.mkdir(parents=True, exist_ok=True)
+    (shots / STEP_TABLE).write_text(text + "\n", encoding="utf-8")
+    return text
 
 
 def build_parser() -> argparse.ArgumentParser:

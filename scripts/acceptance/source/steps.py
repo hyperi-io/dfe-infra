@@ -22,6 +22,7 @@ import json
 import re
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -31,6 +32,7 @@ from pathlib import Path
 from acceptance.clients import Datastore, Engine, remove_source, setup_status, tls_context
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
+from acceptance.source import beats
 
 STEP_TIMEOUT_MS = onboarding.STEP_TIMEOUT_MS
 # The receiver rolls onto a new rule and a per-source instance is spawned by
@@ -51,6 +53,11 @@ RUN_PREFIXES = ("fb", "cw", "el", "vc", "onboard")
 # The whole minted shape rather than the prefix alone, because a sweep removes
 # sources and a deployment may own one called `elastic` or `fbprod`.
 RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
+# The wrapper an Elastic Agent puts round each vendor line, in the shape of
+# dfe-transform-elastic's tests/envelopes/beats/agent_cisco_ios.json.
+AGENT_NAME = "dfe-acceptance"
+AGENT_INPUT = "tcp"
+DATA_STREAM_NAMESPACE = "default"
 
 
 # --- console helpers ---------------------------------------------------------
@@ -350,18 +357,83 @@ def corpus_lines(engine_repo: Path, corpus_file: Path, per_module: int,
     return [item.line for item in items]
 
 
-def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                name: str, run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
-    """POST the wrapped corpus, one request per record.
+def corpus_datasets(corpus_file: Path) -> dict[str, str]:
+    """Each corpus module's Elastic data stream, read off the archive's own paths.
 
-    ``modules`` narrows the archive to the corpus modules a case's transform
-    handles; empty is every module the wrapper names.
+    The corpus is elastic/integrations test data laid out ``<package>/<stream>/``,
+    so ``cisco_ios/log/`` holds the ``cisco_ios.log`` dataset.
+
+    Args:
+        corpus_file: The corpus archive.
+
+    Returns:
+        Dataset by module.
+
+    Raises:
+        ValueError: A module ships lines under more than one data stream, so a
+            line's module alone cannot name its dataset.
+    """
+    found: dict[str, set[str]] = {}
+    with tarfile.open(corpus_file, "r:gz") as tar:
+        for member in tar.getnames():
+            parts = member.split("/")
+            if len(parts) >= 3 and member.endswith(".log"):
+                found.setdefault(parts[0], set()).add(f"{parts[0]}.{parts[1]}")
+    split = sorted(module for module, streams in found.items() if len(streams) > 1)
+    if split:
+        raise ValueError(f"corpus modules under more than one data stream: {', '.join(split)}")
+    return {module: streams.pop() for module, streams in found.items()}
+
+
+def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
+    """One vendor line as an Elastic Agent ships it, routed on ``data_stream.dataset``.
+
+    Args:
+        line: The vendor's own log line.
+        tags: The record's tags, which carry this run's marker.
+        dataset: The data stream the line belongs to.
+
+    Returns:
+        The body the receiver is posted.
+    """
+    return {
+        "agent": {"type": "filebeat", "name": AGENT_NAME, "version": beats.ELASTIC_VERSION},
+        "data_stream": {"dataset": dataset, "namespace": DATA_STREAM_NAMESPACE, "type": "logs"},
+        "input": {"type": AGENT_INPUT},
+        "message": line,
+        "tags": tags,
+    }
+
+
+def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: int,
+                  modules: tuple[str, ...] = ()) -> list[dict]:
+    """The corpus lines a case feeds, each in the envelope an Elastic Agent sends.
+
+    dfe-engine's wrapper still reads the archive and mints each record's tags,
+    so the run marker the stray search looks for is the engine's own.
     """
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
     items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
-    bodies = corpus.wrap_all(items, source=name, run=run)
+    if not items:
+        return []
+    datasets = corpus_datasets(corpus_file)
+    wrapped = corpus.wrap_all(items, run=run)
+    return [
+        agent_envelope(item.line, record["tags"], datasets[item.module])
+        for item, record in zip(items, wrapped, strict=True)
+    ]
+
+
+def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
+                run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
+    """POST the corpus in the Elastic Agent envelope, one request per record.
+
+    ``modules`` narrows the archive to the corpus modules a case's transform
+    handles; empty is every module the wrapper names.
+    """
+    bodies = corpus_bodies(engine_repo, corpus_file, run, per_module, modules)
 
     for body in bodies:
         request = urllib.request.Request(
@@ -406,13 +478,36 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
     before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, name, probe, 1, modules)
+        post_corpus(receiver_url, verify, engine_repo, corpus_file, probe, 1, modules)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name}") > before:
             return f"routed into dfe.{name} after {passes} probe pass(es)"
         if time.monotonic() >= until:
             return f"NOT routed into dfe.{name} within {deadline:.0f}s ({passes} probe passes)"
         time.sleep(20)
+
+
+def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, str]:
+    """The step result for every row in *table* carrying the dataset it is matched on.
+
+    ``_raw`` is the record as the loader took it, so a row without the field
+    either reached the table some other way or lost it in the transform.
+
+    Args:
+        store: The datastore.
+        table: The source's own table, which holds this run's rows alone.
+        dataset: The ``data_stream.dataset`` value the source matches.
+
+    Returns:
+        The status and detail for ``Driver.record``.
+    """
+    total = store.scalar(f"SELECT count() FROM {table}")
+    carrying = store.scalar(
+        f"SELECT count() FROM {table} "
+        f"WHERE JSONExtractString(_raw, 'data_stream', 'dataset') = '{dataset}'"
+    )
+    detail = f"{carrying} of {total} rows in dfe.{table} carry data_stream.dataset {dataset}"
+    return ("done" if total and carrying == total else "failed"), detail
 
 
 def wait_gain(store: Datastore, table: str, baseline: int, wanted: int, deadline: float,
