@@ -36,12 +36,13 @@ jobs:
     outputs:
       enabled: ${{ steps.gate.outputs.enabled }}
     steps:
+      # A boolean, so the role ARN never reaches this step's env dump.
       - name: Read the reaper's role variable
         id: gate
         env:
-          DFE_REAPER_AWS_ROLE: ${{ vars.DFE_REAPER_AWS_ROLE }}
+          HAS_ROLE: ${{ vars.DFE_REAPER_AWS_ROLE != '' }}
         run: |
-          if [[ -z "${DFE_REAPER_AWS_ROLE:-}" ]]; then
+          if [[ "${HAS_ROLE:-false}" != "true" ]]; then
             echo "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
@@ -70,6 +71,20 @@ jobs:
       DFE_RUN_TAG_KEY: ${{ vars.DFE_RUN_TAG_KEY }}
       DFE_RUN_EXPIRY_KEY: ${{ vars.DFE_RUN_EXPIRY_KEY }}
     steps:
+      # First, because a mask covers only the output written after the step that registers it. The runner
+      # prints a step's env before the step runs, so this step's own header is the one place the role and account still show.
+      - name: Mask the AWS account and the role
+        run: |
+          for value in "${DFE_REAPER_AWS_ROLE:-}" "${DFE_REAPER_AWS_ACCOUNT:-}"; do
+            if [[ -n "${value}" ]]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+          # The account defaults to the role ARN's own.
+          if [[ "${DFE_REAPER_AWS_ROLE:-}" =~ ^arn:aws[a-z-]*:iam::([0-9]{12}):role/.+$ ]]; then
+            echo "::add-mask::${BASH_REMATCH[1]}"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
