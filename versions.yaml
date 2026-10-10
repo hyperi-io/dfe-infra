@@ -50,7 +50,7 @@
 # ---------------------------------------------------------------------------
 
 schema: 2
-current: "2.2.1-rc.3"
+current: "2.2.1-rc.4"
 latest: "2.2.0"
 lts:
   # <stack version>: "<LTS expiry, ISO 8601>". Empty until the first LTS is
@@ -3102,6 +3102,219 @@ stacks:
     stack:
       # The release an environment upgrades to this one from.
       previous: "2.2.1-rc.2"
+      # Rollout order between component groups on an upgrade.
+      upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
+
+    # OpenTofu provider constraints. They mirror required_providers under terraform/, which is what runs.
+    providers:
+      hashicorp-null: "~> 3.0"       # terraform/modules/tf-naming
+      hashicorp-vault: "~> 5.0"      # terraform/modules/tf-iam, tf-secrets, environments/local
+      hashicorp-random: "~> 3.6"     # terraform/modules/tf-secrets, secrets/aws-sm, environments/aws
+      hashicorp-aws: "~> 6.64"       # terraform/modules/{kubernetes-cluster/aws,managed-kafka/{msk,confluent-cloud,redpanda-cloud},secrets/aws-sm}, terraform/environments/{aws,aws-state}
+      confluentinc-confluent: "~> 2.86"  # terraform/modules/managed-kafka/confluent-cloud
+      redpanda-data-redpanda: "~> 2.3"   # terraform/modules/managed-kafka/redpanda-cloud
+      hashicorp-archive: "~> 2.8"    # terraform/modules/managed-kafka/msk, for the broker autoscaler's Lambda
+      # The OIDC modules ship no lock file, so these are a customer's only ceiling.
+      okta-okta: "~> 7.0"            # terraform/modules/tf-oidc-okta. 7.0.0, 2026-08-24.
+      hashicorp-google: "~> 8.5"     # terraform/modules/tf-oidc-google. 8.5.0, 2026-09-29.
+      hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
+  2.2.1-rc.4:
+    maturity: rc
+    support: standard
+    constraints: "constraints/2.2.1-rc.4.yaml"   # interdependency locks, checked by dfe-stack compat-check
+
+    # What the cluster must already be. Floors, because the operator owns the cluster and upgrades it.
+    # Keep every leaf a string: check_versions_drift.py skips a nested map without saying so.
+    platform:
+      # bootstrap/check_platform.py refuses below 1.34 and warns above 1.36, the newest minor tested.
+      kubernetes: "1.34-1.36"
+      # Checked when the server version carries +rke2. 1.37 waits on Rancher 2.16.
+      rke2: ">=v1.34"
+      # Declared, not checked -- nothing in a cluster reports the Rancher managing it.
+      rancher: ">=2.15"
+      eks: ">=1.34"
+
+    # Installed by bootstrap.sh, which reads these through read_versions.py.
+    bootstrap:
+      cert-manager: "v1.21.2"        # 2026-09-11, K8s 1.33-1.36. Minors cannot be skipped. Upgrade with --reset-values and the values in bootstrap/helm_releases.py; --reuse-values fails on this hop.
+      external-secrets: "2.11.0"     # 2026-09-18, tested on K8s 1.36. Never downgrade to 0.x: it strands the generator CRDs.
+      argocd: "10.10.0"              # chart 2026-10-07, Argo CD v3.5.4 (2026-10-06), K8s 1.33-1.36. The highest chart on v3.5.4: 10.9.7 carries the same app, and 10.10.0 adds only server.enabled (default true) and a redis-ha exporter bump. Upgrade with --reset-values and the values in bootstrap/helm_releases.py; --reuse-values fails across a chart hop.
+      # image: valkey/valkey
+      valkey: "8.1.10-alpine"        # 2026-08-31, fixes GHSA-jcj7-v34w-v9vv. Held on the 8.1 line.
+      # image: docker.io/rancher/local-path-provisioner
+      local-path-provisioner: "v0.0.37"  # 2026-08-05. Only installed when the cluster has no default StorageClass; bootstrap/local_path_image.py pins the manifest's image by digest.
+      metallb: "0.16.1"              # 2026-05-27. On-prem LoadBalancer when nothing else provides one (DFE_CLOUD=local). No LTS line.
+
+    # Cluster addons and the data operators: Argo waves 2-3 (appsets/layer1-addons.yaml, layer-scale.yaml).
+    operators:
+      envoy-gateway: "v1.9.2"        # 2026-09-28, fixes GHSA-gmx8-fhfh-mgjx. Runs on chart defaults, so upgrade with --reset-values.
+      external-dns: "1.23.0"         # chart 2026-09-30, app v0.23.0. layer1-addons.yaml holds annotationPrefix at external-dns.alpha.kubernetes.io/ so existing records survive.
+      keda: "2.21.0"                 # 2026-09-23, fixes GHSA-637c-6jxx-4rwm. K8s 1.34-1.36.
+      metrics-server: "3.14.0"       # 2026-08-19, app v0.9.0.
+      reloader: "2.2.18"             # 2026-09-30, app v1.4.22.
+      strimzi-kafka-operator: "1.2.0"  # 2026-08-20. Needed for Kafka 4.3.1. A 0.51 cluster must convert its v1beta2 resources (v1-api-conversion.sh convert-resource, then crd-upgrade) before upgrading; dfe-ops refuses to deploy over a CRD still stored at v1beta2.
+      clickhouse-operator: "0.0.8"   # 2026-09-25, ghcr.io/clickhouse/clickhouse-operator-helm@sha256:61d97bb43a16859f485af1099251fc591b527a4c01013e6de355be11a80fbc9c. ClickHouse Inc's own operator, scale profile only; Altinity's is untested with DFE. See docs/deployment/clickhouse.md.
+      redpanda-operator: "26.2.4"    # 2026-09-24. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
+      # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
+      aws-load-balancer-controller: "3.6.0"  # 2026-10-05. AWS only. Its CRDs ship in the chart.
+      # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
+      karpenter: "1.14.1"            # 2026-08-21, LTS. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/karpenter-pools is checked against this release's CRDs, so they move together.
+      # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
+      karpenter-al2023-ami: "v20260930"  # 2026-10-01. helm/charts/karpenter-pools uses it as the EC2NodeClass alias al2023@v20260930.
+
+    # Datastores, brokers and telemetry: Argo waves 4-5 (appsets/layer2-data.yaml).
+    services:
+      postgresql: "17"               # The major of FerretDB's DocumentDB backend; moves with documentdb-pg. Only read to install a matching psql in the AWS toolbox.
+      # image: apache/kafka rejects=apache/kafka-native
+      # The version moves by hand with Strimzi; refresh-digests moves the digest.
+      kafka-version: "4.3.1"         # 2026-06-23. The newest Kafka Strimzi 1.2.0 runs, and its default. Docker and k8s run the same version.
+      kafka-replicas: "3"            # cluster mode default
+      # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda
+      # The version moves by hand with the operator; refresh-digests moves the digest.
+      redpanda-version: "v26.2.3"    # 2026-09-17, the broker operator chart 26.2.4 ships with. dfe-loader's dev compose and PGO script use the same tag. The cluster-mode CR takes a bare tag, no digest.
+      # image: clickhouse/clickhouse-server
+      # The version moves by hand with the operator; refresh-digests moves the digest.
+      clickhouse-version: "26.3.42.3"  # v26.3.42.3-lts, 2026-10-05. The 26.3 LTS line is supported to about 2027-03. Docker tags drop the -lts suffix.
+      # image: docker.io/clickhouse/clickhouse-keeper
+      # Moves with clickhouse-version (constraints rule clickhouse-keeper-server-pairing).
+      clickhouse-keeper: "26.3.42.3"  # Same release as the server.
+      clickhouse-replicas: "1"       # default; the scale profile sets 3
+      # renovate: datasource=docker depName=ghcr.io/ferretdb/ferretdb
+      ferretdb: "2.7.0"              # 2025-11-10. Needs the DocumentDB backend; 1.x to 2.x is a dump and restore.
+      # renovate: datasource=docker depName=ghcr.io/ferretdb/postgres-documentdb
+      documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # The newest PostgreSQL 17 build for FerretDB 2.7.0. FerretDB ships no 18 build yet.
+      # image: code.forgejo.org/forgejo/forgejo
+      forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
+      # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
+      otel-collector: "0.162.0"      # 2026-09-29. Both rendered collector configs pass otelcol validate on it.
+      hyperdx: "2.40.0"              # The upstream HyperDX release dfe-hyperdx v0.3.3 merges, its packages/app version. The image is content.dfe-hyperdx.
+      # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
+      kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
+      # renovate: datasource=docker depName=envoyproxy/envoy
+      envoy-proxy: "v1.39.2"         # 2026-10-01, fixes CVE-2026-35189. The docker stack's front proxy. Ubuntu build, not distroless: the compose healthcheck needs bash.
+      # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
+      nginx-unprivileged: "1.31.6-alpine"  # 2026-09-15. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
+      # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
+      git-sync: "v4.7.1"             # 2026-07-16. Pulls the deploy repo's hunts and rules into the hunt runner pod.
+      # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
+      aws-msk-iam-auth: "2.3.9"      # 2026-09-24. A jar, not an image: the MSK bootstrap Job downloads it and checks its sha256.
+      # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
+      cruise-control-ui: "0.4.0"     # 2022-05-27, unmaintained (last commit 2024-08). A tarball, not an image: the chart serves it from nginx-unprivileged and checks its sha256.
+      # renovate: datasource=docker depName=docker.io/library/busybox
+      busybox: "1.38.0"              # 2026-05-13. The local-path-provisioner helper pod, which upstream leaves untagged. Re-diff bootstrap/templates/local-path-helper-pod.yaml against upstream when local-path-provisioner moves.
+      # image: docker.io/envoyproxy/envoy
+      # Moves with operators.envoy-gateway (constraints rule envoy-gateway-proxy-pairing).
+      envoy-gateway-proxy: "distroless-v1.39.2"  # 2026-10-01, fixes CVE-2026-35189. Replaces the distroless-v1.39.1 that Envoy Gateway v1.9.2 defaults to.
+
+    # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
+    # check_versions_drift.py holds each chart's appVersion to its pin.
+    apps:
+      dfe-engine: "v1.22.19"        # 2026-10-10, amd64 and arm64. The image thin chart 1.22.19 pins. Keeps user identifiers out of IdP error logs and answers, fails a group sync on a bad listing, closes name-validation holes (dfe-engine#798 #799 #800).
+      dfe-ui: "v1.7.9"              # 2026-10-10, amd64 and arm64. The image thin chart 1.7.9 pins. OIDC provider forms match the engine, name fields match the engine rules (dfe-ui#512 #513 #515).
+      dfe-receiver: "v1.15.43"      # 2026-10-09, amd64 and arm64. The image thin chart 1.15.43 pins.
+      dfe-loader: "v1.18.47"        # 2026-10-09, amd64 and arm64. The image thin chart 1.18.47 pins. reqwest stays on 0.12 (dfe-loader#240).
+      dfe-archiver: "v1.7.29"       # 2026-10-09, amd64 and arm64. The image thin chart 1.7.29 pins.
+      dfe-fetcher: "v1.4.33"        # 2026-10-09, amd64 and arm64. The image thin chart 1.4.33 pins.
+      dfe-transform-vrl: "v1.1.31"   # 2026-10-09, amd64 and arm64. The image thin chart 1.1.31 pins.
+      dfe-transform-vector: "v1.0.46"  # 2026-10-09, amd64 and arm64. The image thin chart 1.0.46 pins.
+      dfe-transform-elastic: "v1.1.10" # 2026-10-09, amd64 and arm64. The image thin chart 1.1.10 pins. Idle until a source names it.
+      # Alpha and unpublished. A commented pin is read by nothing.
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
+      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
+
+    # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
+    # An app with no digest here is unpublished and left out of rendered manifests.
+    digests:
+      dfe-engine: "sha256:f2a77524eca93cb3eb299e7e2fea5386883be8aaf190fd0b612d942ded6996d4"
+      dfe-ui: "sha256:aca5f6561fb02b37470e3a4d43e1a50672e5ffed8ffc25b4d0e33dfb9ac686a8"
+      dfe-receiver: "sha256:2729443b687bdce058fbfd77fad9eb07573267f260215ea44f807115347b729b"
+      dfe-loader: "sha256:f764250959c84ac5744744f5c8a973c2ed6bee7049762632a0150fd6cf5b9ea7"
+      dfe-archiver: "sha256:01c44c367cac8a1b24b6ca4b58c2dba46ab6c947e4d5123298ef0bb3f35ec9eb"
+      dfe-fetcher: "sha256:cdd45e404e75b5a42faca89fc9b30424894904535376909a8e1f2ffaf4dcb856"
+      dfe-transform-vrl: "sha256:41b035383ed29f9fadc46f638b94d6c2eda1a29f03d85ce3d91acf26f149e5ae"
+      dfe-transform-vector: "sha256:b79bebc159c1de416fb579d02949c0145139dac26c16b362b71bbfe8076ddee6"
+      dfe-transform-elastic: "sha256:0776f6546d4cf49b9270c5c86b04ab53b38e1a9380075c0629adbde171dc831c"
+      dfe-hyperdx: "sha256:3e594123968b7775540c4e8ace4ca96585badc892d2e769764160f7bde63c6c5"
+      culvert: "sha256:27666a427c2cf66d8a327874782bb47b108afebbb8c699f76155557bf4598a6e"
+      # Tagged by toolbox.dfe-toolbox.
+      dfe-toolbox-base: "sha256:056ab60643f2a0814f3e4baacca2534ac852367e15ba22665caa869c043dcc4b"
+
+    # Each component's thin chart, assembled from its deployment contract, by manifest digest and
+    # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
+    # and refuse to render a service whose entry is not a sha256 digest: "unpublished" marks a chart
+    # not published yet. The chart version is the app tag without its v, so it has no key here.
+    chart-digests:
+      culvert: "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"                # 2.1.18
+      dfe-archiver: "sha256:90f7d9ec8cddb4d18c41caca5e38ab21a96be7159ddceb1fa2899bb726da5aae"           # 1.7.29
+      dfe-engine: "sha256:83c219ab2685db3275882eb8e4bb30f451c7f7253dcfc1c911f801bbfd2a58fe"             # 1.22.19
+      dfe-fetcher: "sha256:17b44639cd741115bd8f287b3b959ac86133b7f8fc14e8e1ee389a4856b1235f"            # 1.4.33
+      dfe-loader: "sha256:d08d0416925e7322b4580d54f5226cce340a77c150e39845efe3e2ac910875b3"             # 1.18.47
+      dfe-receiver: "sha256:11a8972d1681aa46a07c1e516c7733a6f1d3688462da33f3c36866ba2ffc46d9"           # 1.15.43
+      dfe-transform-elastic: "sha256:85af7d98187c9fc8a82adb05fbc827316f59e1a795e9b649e44f5aa41036a752"  # 1.1.10
+      dfe-transform-vector: "sha256:124db1bada639381231806a882b525388ec61837c02c85dfb8329b60b3856104"   # 1.0.46
+      dfe-transform-vrl: "sha256:f04ff3cee742d4c3c0f3a33127bc2addd309b89ca87ab151ff0fa517c2849881"      # 1.1.31
+      dfe-ui: "sha256:6a09e4c70be92c5696b33936372fc40056f382bda522cadfb74edf45ccec9102"                 # 1.7.9
+      hyperdx: "sha256:95a0ab3a12b56360d43cd22099d0ad7f19ec7a6065408459ce6f6a12a2f4cc00"                # 0.3.3
+
+    # Digests for the third-party images, keyed like their version under services: or bootstrap:.
+    # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
+    services-digests:
+      clickhouse-version: "sha256:21d572843e59539c7d100286b6f5a6053c341fe4b33c2d7b74b1ff7cb24c5399"  # clickhouse/clickhouse-server:26.3.42.3
+      clickhouse-keeper: "sha256:8361ed78996d087f3e85622566f15517c502e169a63e70b44dafe6ddca6dd3f5"   # docker.io/clickhouse/clickhouse-keeper:26.3.42.3
+      kafka-version: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"       # apache/kafka:4.3.1
+      redpanda-version: "sha256:9e83cfa99278f30d0133271c26bf670cd69c94ffa6ba0b42830dd0c3bd9dcfd9"    # docker.redpanda.com/redpandadata/redpanda:v26.2.3
+      kafbat: "sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"              # ghcr.io/kafbat/kafka-ui:v1.5.0
+      ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0
+      documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0
+      envoy-proxy: "sha256:460f8c329f24b2e1c7c5af64cb314a6f351ad1c262ba77b135ac46b35ebd5f85"         # envoyproxy/envoy:v1.39.2
+      nginx-unprivileged: "sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083"   # nginxinc/nginx-unprivileged:1.31.6-alpine
+      otel-collector: "sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6"       # otel/opentelemetry-collector-contrib:0.162.0
+      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1
+      busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
+      forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
+      valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
+      local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"  # docker.io/rancher/local-path-provisioner:v0.0.37
+      envoy-gateway-proxy: "sha256:dced08cf7c472e1a1d067f906878266078eeeb63c110b4961882c039a622853a" # docker.io/envoyproxy/envoy:distroless-v1.39.2
+
+    # Content repos, tagged with this stack.
+    content:
+      dfe-schemas: "v0.2.9"              # 2026-10-06. The engine applies it at startup.
+      # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
+      dfe-deploy: "v1.0.7"               # The deploy-repo template, seeded from this tag.
+      # A commit, not a version: dfe-docker cuts no per-stack tag. a202782b (2026-10-10) is "docs: Google groups come from the user's own token, not a service account (#219)".
+      dfe-docker: "a202782b0102fc511a27422b86ab1d5ec124ce88"
+      dfe-hyperdx: "v0.3.3"              # 2026-10-10, amd64 and arm64. The image thin chart 0.3.3 pins. Reads the caller's own team and carries two ReDoS patches (dfe-hyperdx#136 #137).
+
+    # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
+    # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
+    toolbox:
+      # renovate: datasource=docker depName=ghcr.io/hyperi-io/dfe-toolbox-base
+      dfe-toolbox: "v1.0.3"              # The family tag for all four images. A published tag never moves, so any input change ships under a new one. v1.0.3 carries argocd-cli v3.5.4; v1.0.2 stays published as it was.
+      # renovate: datasource=docker depName=debian
+      debian: "trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a"  # Debian 13.7, pushed 2026-09-19.
+      # renovate: datasource=github-releases depName=kubernetes/kubernetes
+      kubectl: "v1.35.9"                 # 2026-09-23. The middle of the platform window, so within kubectl's one-minor skew of both 1.34 and 1.36. renovate.json holds it to 1.35.x.
+      # renovate: datasource=github-releases depName=helm/helm
+      helm: "v4.3.0"                     # 2026-09-09.
+      # renovate: datasource=github-releases depName=argoproj/argo-cd
+      argocd-cli: "v3.5.4"               # 2026-10-06. Matches the Argo CD that bootstrap.argocd installs.
+      # renovate: datasource=github-releases depName=opentofu/opentofu
+      tofu: "1.12.7"                     # 2026-10-01, fixes CVE-2026-78662 and CVE-2026-56855.
+      # renovate: datasource=github-releases depName=mikefarah/yq
+      yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
+      # renovate: datasource=github-tags depName=aws/aws-cli
+      aws-cli: "2.37.9"                  # 2026-10-02.
+      # renovate: datasource=github-releases depName=aws/session-manager-plugin
+      aws-session-manager-plugin: "1.2.889.0"  # Observed 2026-10-10 as what latest serves on amd64 and arm64. The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. Renovate watches the GitHub releases, which can land minutes before latest moves.
+      gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
+      # renovate: datasource=pypi depName=azure-cli
+      az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
+
+    stack:
+      # The release an environment upgrades to this one from.
+      previous: "2.2.1-rc.3"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
