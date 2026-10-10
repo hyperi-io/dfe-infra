@@ -1,0 +1,8 @@
+{
+  "provider": "dex",
+  "emits_transitive": false,
+  "users": {
+    "dfe-admin": { "login": "mock-dex-admin", "roles": ["admin"] },
+    "dfe-nobody": { "login": "mock-dex-nobody", "roles": [] }
+  }
+}

@@ -248,28 +248,57 @@ def render_engine_groups(groups_toml: str, provider: str = DEFAULT_PROVIDER) -> 
     files: dict[str, str] = {}
     for entry in entries:
         name = entry.get("name", "")
-        if not isinstance(name, str) or not _ENGINE_GROUP_NAME.match(name):
-            raise ValueError(f"{name!r} is not a valid engine group name")
         key = f"{name}.yaml"
         if key in files:
             raise ValueError(f"group {name!r} is declared twice")
-        scope = entry.get("scope", "system")
-        org_scoped = isinstance(scope, str) and scope.startswith(_ORG_SCOPE_PREFIX)
-        if scope != "system" and not (org_scoped and scope[len(_ORG_SCOPE_PREFIX):].strip()):
-            raise ValueError(f"group {name!r}: scope must be 'system' or 'org:<id>', got {scope!r}")
-        source_id = entry.get("source_id", name)
-        if not isinstance(source_id, str) or not source_id.strip():
-            raise ValueError(f"group {name!r}: source_id must be a non-empty string")
-        body = {"description": entry.get("description", ""), "scope": scope}
-        for field in ("roles", "org_ids"):
-            values = entry.get(field, [])
-            if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
-                raise ValueError(f"group {name!r}: {field} must be a list of names")
-            body[field] = values
-        body["source_provider"] = provider
-        body["source_id"] = source_id
+        body = engine_group_body(name, entry, provider, default_source_id=name)
         files[key] = json.dumps(body, indent=2) + "\n"
     return files
+
+
+def engine_group_body(
+    name: object, entry: dict, provider: str, *, default_source_id: str
+) -> dict:
+    """Validate one group entry and return the body of its engine group file.
+
+    The checks are the engine group model's own -- a safe file stem, a
+    `system` or `org:<id>` scope, lists of names -- so a bad entry is refused
+    here rather than skipped by the engine with a log line nobody reads.
+
+    Args:
+        name: The engine group name, which is also the file stem.
+        entry: The group's fields: description, scope, roles, org_ids, source_id.
+        provider: The provider name the group links to (`source_provider`).
+        default_source_id: The claim value to link when the entry names none.
+
+    Returns:
+        The group file body, with `source_provider` and `source_id` set.
+
+    Raises:
+        ValueError: The name, description, scope, roles, org_ids or source_id is
+            unusable.
+    """
+    if not isinstance(name, str) or not _ENGINE_GROUP_NAME.match(name):
+        raise ValueError(f"{name!r} is not a valid engine group name")
+    scope = entry.get("scope", "system")
+    org_scoped = isinstance(scope, str) and scope.startswith(_ORG_SCOPE_PREFIX)
+    if scope != "system" and not (org_scoped and scope[len(_ORG_SCOPE_PREFIX):].strip()):
+        raise ValueError(f"group {name!r}: scope must be 'system' or 'org:<id>', got {scope!r}")
+    source_id = entry.get("source_id", default_source_id)
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError(f"group {name!r}: source_id must be a non-empty string")
+    description = entry.get("description", "")
+    if not isinstance(description, str):
+        raise ValueError(f"group {name!r}: description must be a string")
+    body = {"description": description, "scope": scope}
+    for field in ("roles", "org_ids"):
+        values = entry.get(field, [])
+        if not isinstance(values, list) or not all(isinstance(v, str) and v for v in values):
+            raise ValueError(f"group {name!r}: {field} must be a list of names")
+        body[field] = values
+    body["source_provider"] = provider
+    body["source_id"] = source_id
+    return body
 
 
 def render_glauth_manifests(namespace: str, *, image: str = GLAUTH_IMAGE) -> list[dict]:
@@ -564,9 +593,13 @@ def _helm(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
-def _run(cmd: list[str], *, check: bool = True, stdin: str | None = None) -> int:
+def _run(
+    cmd: list[str], *, check: bool = True, stdin: str | None = None, cwd: Path | None = None
+) -> int:
     print(f"==> {' '.join(cmd)}", file=sys.stderr)
-    proc = subprocess.run(cmd, input=stdin, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.run(
+        cmd, input=stdin, text=True, encoding="utf-8", errors="replace", cwd=cwd, check=False
+    )
     if check and proc.returncode != 0:
         raise SystemExit(f"command failed (rc={proc.returncode}): {' '.join(cmd)}")
     return proc.returncode
@@ -1004,7 +1037,8 @@ def add_idp_subparser(sub) -> None:
     """Register `dfe-ops idp` and its actions."""
     idp = sub.add_parser(
         "idp",
-        help="stand up / tear down a throwaway Dex+glauth tester IdP behind the gateway",
+        help="stand up / tear down a throwaway Dex+glauth tester IdP behind the gateway, "
+             "or wire a hosted IdP into a deployment",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     actions = idp.add_subparsers(dest="idp_action", required=True, metavar="<action>")
@@ -1078,6 +1112,11 @@ def add_idp_subparser(sub) -> None:
                     help="env var the consumer reads the client secret from")
     we.add_argument("--dry-run", action="store_true", help="print the objects and apply nothing")
     we.set_defaults(func=cmd_idp_wire_engine)
+
+    # Imported here, not at the top, because external_idp imports this module.
+    from external_idp import add_wire_external_parser
+
+    add_wire_external_parser(actions)
 
     st = actions.add_parser(
         "status",

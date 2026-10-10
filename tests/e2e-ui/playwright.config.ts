@@ -16,6 +16,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 import { DFE_UI_URL, ENGINE_URL, HYPERDX_URL } from './harness/env';
 
+// A trace records typed passwords and bearer tokens (microsoft/playwright#19992),
+// so a project that signs in to a real IdP keeps no trace, screenshot or video.
+const NO_ARTIFACTS = { trace: 'off', screenshot: 'off', video: 'off' } as const;
+
 export default defineConfig({
   testDir: './specs',
   fullyParallel: false, // one deployment under test; specs share server state
@@ -24,7 +28,8 @@ export default defineConfig({
   timeout: 60_000,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    trace: 'retain-on-failure',
+    // A CI artifact may be published, so traces stay local.
+    trace: process.env.CI ? 'off' : 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [
@@ -41,7 +46,18 @@ export default defineConfig({
     {
       name: 'engine',
       testMatch: 'engine/**/*.spec.ts',
+      testIgnore: 'engine/oidc-live.spec.ts',
       use: { ...devices['Desktop Chrome'], baseURL: ENGINE_URL },
+    },
+    {
+      name: 'oidc-live',
+      testMatch: 'engine/oidc-live.spec.ts',
+      use: { ...devices['Desktop Chrome'], baseURL: ENGINE_URL, ...NO_ARTIFACTS },
+    },
+    {
+      name: 'oidc-live-selftest',
+      testMatch: 'selftest/**/*.spec.ts',
+      use: { ...devices['Desktop Chrome'], ...NO_ARTIFACTS },
     },
     {
       name: 'tenancy',

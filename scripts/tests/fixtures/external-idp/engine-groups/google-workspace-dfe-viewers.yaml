@@ -1,0 +1,6 @@
+description: Synthetic fixture group, linked by a recorded group id
+roles:
+- data_viewer
+scope: system
+source_id: 0synthetic0groupkey
+source_provider: google-workspace

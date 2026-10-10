@@ -11,4 +11,6 @@
 
 export const HYPERDX_URL = process.env.HYPERDX_URL ?? 'http://localhost:18080';
 export const DFE_UI_URL = process.env.DFE_UI_URL ?? 'http://localhost:13001';
-export const ENGINE_URL = process.env.ENGINE_URL ?? 'http://localhost:18000';
+// 8000 because the engine builds its OIDC redirect URI from this origin, and an
+// IdP accepts only registered ones.
+export const ENGINE_URL = process.env.ENGINE_URL ?? 'http://localhost:8000';
