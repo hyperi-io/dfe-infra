@@ -16,7 +16,7 @@ image:
   tag: ""  # defaults to Chart.appVersion (fork CODE_VERSION)
   # The immutable half of the pin; GHCR tags are mutable. == versions.yaml
   # digests.dfe-hyperdx (drift-checked). The tag and this must move together.
-  digest: "sha256:1317906009657449448c4397dbd974ee14ea6cf6e481cbb6a43d58f4877d7f17"
+  digest: "sha256:cf098734100e04c13965039da460dc8ac88a53be3bdc5ff7ab9defbf3dc25e0c"
   pullPolicy: IfNotPresent
 
 # The image runs as USER node, which its node:alpine base creates as uid 1000, so
@@ -166,10 +166,10 @@ dashboards:
   requireRefs: true
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.22.16"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.22.17"     # == versions.yaml apps.dfe-engine (drift-checked)
     # The immutable half of the pin; GHCR tags are mutable. This init container
     # runs the ENGINE image, so it is versions.yaml digests.dfe-engine (drift-checked).
-    digest: "sha256:7ab69a428c7c0d8b9ad647891dbba27067c5b63853a2ece97f02a976a68c2b58"
+    digest: "sha256:f5487f843c3048001757b00b6cc4276977ca2c3a787fdb57768ef3b498081095"
     pullPolicy: IfNotPresent
   resources:
     requests:
