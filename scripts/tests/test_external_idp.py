@@ -521,7 +521,7 @@ def test_k8s_wire_records_a_ledger_before_teardown_reads_it() -> None:
         run(tools, [*wire_args("okta"), *k8s()])
         annotations = configmap(tools, "dfe-oidc-providers")["metadata"]["annotations"]
     ledger = json.loads(annotations["dfe.hyperi.io/wire-external-okta"])
-    expect("the ledger names the Secret", ledger["secret"] == "dfe-oidc-okta", str(ledger))
+    expect("the ledger names the Secret", ledger["holder"] == "dfe-oidc-okta", str(ledger))
     expect(
         "the ledger names every group key",
         ledger["groups"]

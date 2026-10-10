@@ -119,8 +119,8 @@ class Wiring:
 
     Attributes:
         provider: The engine provider name, a path segment of the callback URI.
-        engine_secret_env: The env var the engine reads the client secret from.
-        secret_name: The k8s Secret holding the client secret.
+        engine_env_var: The env var the engine reads the client secret from.
+        holder_name: The k8s Secret holding the client secret.
         config_dir: The engine's config directory inside its container.
         provider_file: The provider file body; empty on a teardown.
         group_files: Group file name -> body; empty on a teardown.
@@ -128,8 +128,8 @@ class Wiring:
     """
 
     provider: str
-    engine_secret_env: str
-    secret_name: str
+    engine_env_var: str
+    holder_name: str
     config_dir: str
     provider_file: str = ""
     group_files: dict[str, str] = field(default_factory=dict)
@@ -286,7 +286,7 @@ def render_provider(
     idp_type: str,
     issuer: str,
     client_id: str,
-    client_secret_env: str,
+    engine_env_var: str,
     display_name: str,
     scopes: str = "",
     tenant_id: str = "",
@@ -297,7 +297,7 @@ def render_provider(
         idp_type: okta, entra_id or google.
         issuer: The IdP's OIDC issuer URL.
         client_id: The OIDC client id, held in the clear as the engine allows.
-        client_secret_env: The env var the engine reads the client secret from.
+        engine_env_var: The env var the engine reads the client secret from.
         display_name: The label on the login page.
         scopes: Space-separated scopes; empty takes the engine's per-type default.
         tenant_id: Entra ID only: the tenant the >200-group overage lookup asks.
@@ -316,7 +316,7 @@ def render_provider(
         "display_name": display_name,
         "issuer": issuer,
         "client_id": client_id,
-        "client_secret_env": client_secret_env,
+        "client_secret_env": engine_env_var,
         "groups": groups,
     }
     if scopes:
@@ -332,7 +332,7 @@ def entra_tenant(issuer: str, explicit: str | None) -> str:
     return first if _GUID.match(first) else ""
 
 
-def default_engine_secret_env(provider: str) -> str:
+def default_engine_env_var(provider: str) -> str:
     """DFE_OIDC_<PROVIDER>_CLIENT_SECRET, the env var naming dfe-docker's examples use."""
     return f"DFE_OIDC_{re.sub(r'[^A-Z0-9]', '_', provider.upper())}_CLIENT_SECRET"
 
@@ -356,8 +356,8 @@ def resolve_wiring(args: argparse.Namespace, environ: dict[str, str]) -> Wiring:
         raise ValueError(
             f"--provider {provider!r} must be lowercase letters, digits and '-', at most 49"
         )
-    engine_secret_env = args.engine_secret_env or default_engine_secret_env(provider)
-    if not _ENV_NAME.match(engine_secret_env):
+    engine_env_var = args.engine_env_var or default_engine_env_var(provider)
+    if not _ENV_NAME.match(engine_env_var):
         raise ValueError("--engine-secret-env must be an environment variable name")
     if args.target == "k8s" and not args.namespace:
         raise ValueError("--target k8s needs --namespace, the engine's namespace")
@@ -365,8 +365,8 @@ def resolve_wiring(args: argparse.Namespace, environ: dict[str, str]) -> Wiring:
         raise ValueError("--target docker needs --compose-dir, where the engine is recreated")
     names = {
         "provider": provider,
-        "engine_secret_env": engine_secret_env,
-        "secret_name": args.secret_name or f"dfe-oidc-{provider}",
+        "engine_env_var": engine_env_var,
+        "holder_name": args.holder_name or f"dfe-oidc-{provider}",
         "config_dir": args.config_dir or CONFIG_DIRS[args.target],
     }
     if args.teardown:
@@ -405,7 +405,7 @@ def resolve_wiring(args: argparse.Namespace, environ: dict[str, str]) -> Wiring:
         idp_type=args.idp_type,
         issuer=issuer,
         client_id=args.client_id,
-        client_secret_env=engine_secret_env,
+        engine_env_var=engine_env_var,
         display_name=args.display_name or DISPLAY_NAMES[args.idp_type],
         scopes=args.scopes or "",
         tenant_id=entra_tenant(issuer, args.tenant_id) if args.idp_type == "entra_id" else "",
@@ -432,12 +432,11 @@ def _configmap(name: str, namespace: str) -> dict:
     }
 
 
-def _secret(wiring: Wiring, namespace: str) -> dict:
-    secret = tester_idp.render_secret(
-        wiring.secret_name, namespace, {"client-secret": wiring.secret_value}
-    )
-    secret["metadata"]["labels"] = {"app.kubernetes.io/part-of": PART_OF}
-    return secret
+def _holder_object(wiring: Wiring, namespace: str, value: str) -> dict:
+    """The k8s Secret holding the client secret; a dry run passes a placeholder value."""
+    holder = tester_idp.render_secret(wiring.holder_name, namespace, {"client-secret": value})
+    holder["metadata"]["labels"] = {"app.kubernetes.io/part-of": PART_OF}
+    return holder
 
 
 def _get_json(args: argparse.Namespace, kind: str, name: str) -> dict | None:
@@ -484,11 +483,11 @@ def _ledger(configmap: dict | None, key: str) -> dict:
 
 def _ledger_value(wiring: Wiring) -> str:
     """The ledger annotation's value: the Secret and the group keys this run adds."""
-    return json.dumps({"secret": wiring.secret_name, "groups": sorted(wiring.group_files)})
+    return json.dumps({"holder": wiring.holder_name, "groups": sorted(wiring.group_files)})
 
 
 def k8s_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
-    """What a k8s wire applies, with the secret redacted, for --dry-run."""
+    """What a k8s wire applies, the client secret never read into it, for --dry-run."""
     return {
         "target": "k8s",
         "namespace": args.namespace,
@@ -499,7 +498,7 @@ def k8s_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
             },
             args.groups_configmap: {"data": wiring.group_files},
         },
-        "secret": tester_idp._redacted([_secret(wiring, args.namespace)])[0],
+        "holder": _holder_object(wiring, args.namespace, "<redacted>"),
     }
 
 
@@ -537,7 +536,7 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     group_data: dict[str, str | None] = dict(wiring.group_files)
     group_data.update(dict.fromkeys(sorted(stale)))
     _merge_patch(args, "configmap", args.groups_configmap, {"data": group_data})
-    tester_idp._apply(args, [_secret(wiring, args.namespace)])
+    tester_idp._apply(args, [_holder_object(wiring, args.namespace, wiring.secret_value)])
 
     print(f"\n=== wired {wiring.provider} into namespace {args.namespace} ===", file=sys.stderr)
     print(
@@ -547,8 +546,8 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     print("  Set these on the engine's chart values to pick them up:", file=sys.stderr)
     print("    oidc.enabled: true", file=sys.stderr)
     print(
-        f"    oidc.providers[]: {{name: {wiring.provider}, secretName: {wiring.secret_name}, "
-        f"envMappings: {{{wiring.engine_secret_env}: client-secret}}}}",
+        f"    oidc.providers[]: {{name: {wiring.provider}, secretName: {wiring.holder_name}, "
+        f"envMappings: {{{wiring.engine_env_var}: client-secret}}}}",
         file=sys.stderr,
     )
     print(f"    authConfig.providersConfigMap: {args.providers_configmap}", file=sys.stderr)
@@ -586,10 +585,8 @@ def k8s_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
     )
     if group_keys and _get_json(args, "configmap", args.groups_configmap) is not None:
         _merge_patch(args, "configmap", args.groups_configmap, {"data": dict.fromkeys(group_keys)})
-    secret = ledger.get("secret", wiring.secret_name)
-    tester_idp._run(
-        [*kube, "-n", args.namespace, "delete", "secret", str(secret), "--ignore-not-found"]
-    )
+    holder = str(ledger.get("holder", wiring.holder_name))
+    tester_idp._run([*kube, "-n", args.namespace, "delete", "secret", holder, "--ignore-not-found"])
 
     exec_cmd = [*kube, "-n", args.namespace, "exec", "-i", f"deploy/{args.engine_deployment}"]
     if args.engine_container:
@@ -664,7 +661,7 @@ def docker_env_text(outside: list[str], wiring: Wiring) -> str:
     block = [
         begin,
         f"# files: {' '.join(wiring.paths(sorted(wiring.group_files)))}",
-        f"{wiring.engine_secret_env}={wiring.secret_value}",
+        f"{wiring.engine_env_var}={wiring.secret_value}",
         end,
     ]
     return "\n".join([*outside, *block]) + "\n"
@@ -699,7 +696,7 @@ def docker_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
         "config_dir": wiring.config_dir,
         "files": files,
         "env_file": str(_env_file(args)),
-        "env": {wiring.engine_secret_env: "<redacted>"},
+        "env": {wiring.engine_env_var: "<redacted>"},
         "recreate": f"docker compose up -d --no-deps --force-recreate {args.service}",
     }
 
@@ -709,9 +706,9 @@ def docker_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     env_file = _env_file(args)
     text = env_file.read_text(encoding="utf-8", errors="replace") if env_file.is_file() else ""
     outside, block = split_env_block(text, wiring.provider)
-    if any(_assigns(line, wiring.engine_secret_env) for line in outside):
+    if any(_assigns(line, wiring.engine_env_var) for line in outside):
         print(
-            f"ERROR: {env_file} already sets {wiring.engine_secret_env} outside this tool's "
+            f"ERROR: {env_file} already sets {wiring.engine_env_var} outside this tool's "
             "block; remove it or pass another --engine-secret-env",
             file=sys.stderr,
         )
@@ -726,7 +723,7 @@ def docker_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     print(f"\n=== wired {wiring.provider} into container {args.container} ===", file=sys.stderr)
     print(
         f"  {len(write)} file(s) under {wiring.config_dir}; "
-        f"{wiring.engine_secret_env} in {env_file} (mode 0600)",
+        f"{wiring.engine_env_var} in {env_file} (mode 0600)",
         file=sys.stderr,
     )
     _print_callback(wiring)
@@ -860,6 +857,7 @@ def add_wire_external_parser(actions) -> None:
     )
     we.add_argument(
         "--engine-secret-env",
+        dest="engine_env_var",
         default=None,
         metavar="NAME",
         help="env var the engine reads the client secret from "
@@ -883,6 +881,7 @@ def add_wire_external_parser(actions) -> None:
     we.add_argument("--namespace", default=None, help="k8s: the engine's namespace")
     we.add_argument(
         "--secret-name",
+        dest="holder_name",
         default=None,
         help="k8s: Secret for the client secret (default dfe-oidc-<provider>)",
     )

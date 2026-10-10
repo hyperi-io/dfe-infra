@@ -304,9 +304,9 @@ export async function startMockOidc(config: MockConfig): Promise<MockOidc> {
         }
       }
       send(res, 404, page('not found'));
-    })().catch((error: unknown) => {
-      res.writeHead(500);
-      res.end(String(error));
+    })().catch(() => {
+      res.writeHead(500, { 'content-type': 'text/plain' });
+      res.end('mock server error');
     });
   });
 
