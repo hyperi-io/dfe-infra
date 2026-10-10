@@ -245,8 +245,9 @@ echo "=== CORE 0: schema control (dfe-engine reports its bootstrap converged) ==
 # script does not hold, so the failure message points there instead.
 ENGINE_WAIT="${DFE_ENGINE_WAIT:-300}"
 ENGINE_WAIT_INTERVAL="${DFE_ENGINE_WAIT_INTERVAL:-5}"
+# The thin chart names the container after the chart, not the 2.2.0 chart's `engine`.
 engine_readyz() {
-  kubectl -n "$NS_APP" exec deploy/dfe-engine -c engine -- \
+  kubectl -n "$NS_APP" exec deploy/dfe-engine -c dfe-engine -- \
     curl -fsS --max-time 5 http://localhost:8000/readyz 2>/dev/null
 }
 engine_schema_converged() {
@@ -482,7 +483,7 @@ check "ClickHouse answers a query (dfe DB present)" \
 # need very different actions, and slim deliberately omits it while telemetry.mode
 # still names it the default OTLP destination.
 hyperdx_readyz() {
-  kubectl -n "$NS_HYPERDX" exec deploy/dfe-hyperdx -c hyperdx -- node -e \
+  kubectl -n "$NS_HYPERDX" exec deploy/dfe-hyperdx -c dfe-hyperdx -- node -e \
     "fetch('http://localhost:8000/readyz',{signal:AbortSignal.timeout(10000)}).then(async r=>{const b=await r.json();process.exit(r.status===200&&b.status==='ready'?0:1)}).catch(()=>process.exit(1))"
 }
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then

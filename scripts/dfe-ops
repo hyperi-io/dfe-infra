@@ -682,7 +682,8 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
 
     Every check in those scripts is namespace-scoped, so without these vars they
     read the compiled-in default namespace -- `dfe` rather than the deployed
-    `dfe-local` -- and report a healthy stack as broken.
+    `dfe-local` -- and report a healthy stack as broken. The resolved app
+    namespace also goes out as DFE_NS, the one name the readiness gate reads.
     """
     env = dict(os.environ)
     if args.from_terraform:
@@ -698,6 +699,11 @@ def _suite_env(args: argparse.Namespace) -> dict[str, str]:
         env["KUBECONFIG"] = args.kubeconfig
     if args.mode:
         env["DFE_PROFILE"] = args.mode
+    namespace = getattr(args, "namespace", None) or env.get("DFE_NAMESPACE", "")
+    if namespace:
+        env["DFE_NS"] = namespace
+    print(f"  app namespace: {env.get('DFE_NS') or '(none -- DFE_NS-scoped checks narrow)'}",
+          file=sys.stderr)
     return _apply_domain(env, args.mode, deploying=False)
 
 
@@ -876,10 +882,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     gate_env = dict(env)
     gate_env["READINESS_TIMEOUT"] = str(args.readiness_timeout)
     # The gate's presence check -- did the deploy produce any workload at all --
-    # is the one check it skips when DFE_NS is empty.
-    if namespace:
-        gate_env["DFE_NS"] = namespace
-    else:
+    # is the one check it skips when DFE_NS is empty; _suite_env set it from namespace.
+    if not namespace:
         print("    [warn] no namespace (DFE_NAMESPACE or --namespace) -- the gate "
               "cannot tell an empty deploy from a healthy one", file=sys.stderr)
     rc = _run_streaming(["bash", str(script)], env=gate_env)

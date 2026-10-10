@@ -125,14 +125,22 @@ def deploy(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def plan_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Where `plan` writes by default, kept out of this checkout's own .tmp/."""
+    path = tmp_path / "plans"
+    monkeypatch.setattr(u, "DEFAULT_PLAN_DIR", path)
+    return path
+
+
+@pytest.fixture(autouse=True)
 def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail any test whose kubectl call reaches the real subprocess boundary,
-    which would read whatever cluster this host's kubeconfig names. git still
-    runs for real, for the tests built on a real deploy repo."""
+    """Fail any test whose kubectl or helm call reaches the real subprocess
+    boundary, which would read whatever cluster this host's kubeconfig names.
+    git still runs for real, for the tests built on a real deploy repo."""
     real_run = u._run
 
     def guarded(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if cmd[:1] == ["kubectl"]:
+        if cmd[:1] in (["kubectl"], ["helm"]):
             raise AssertionError(f"test reached a real cluster: {cmd}")
         return real_run(cmd, **kwargs)
 
@@ -922,13 +930,14 @@ class _Args:
 
 def _plan_args(**overrides: object) -> _Args:
     """The plan _Args shape every test shares, with per-test overrides."""
-    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd")
+    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd", out=None)
     base.update(overrides)
     return _Args(**base)
 
 
 def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path,
+    capsys: pytest.CaptureFixture, plan_dir: Path,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -943,9 +952,43 @@ def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
     assert "compat-check (1.1.0, --strict)" in out
     assert "sizing locked-change check" in out
     assert "skipped: no --dial given" in out
-    written = deploy / "upgrades" / "1.0.0-to-1.1.0.md"
+    written = plan_dir / "1.0.0-to-1.1.0.md"
     assert written.is_file()
     assert "before:   kafka.strimzi.io stored-version conversion" in written.read_text(encoding="utf-8")
+    assert not (deploy / "upgrades").exists()
+
+
+def test_a_plan_leaves_the_deploy_repo_clean_for_preflight(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, order_path: Path, versions_path: Path, plan_dir: Path,
+) -> None:
+    """plan wrote into <deploy>/upgrades/, and preflight then refused the untracked file it left."""
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    assert u.check_deploy_clean(real_git_deploy) == (True, "working tree clean")
+
+    assert u.cmd_upgrade_plan(_plan_args(deploy=str(real_git_deploy), to="1.1.0")) == u.EXIT_OK
+
+    assert (plan_dir / "1.0.0-to-1.1.0.md").is_file()
+    assert u.check_deploy_clean(real_git_deploy) == (True, "working tree clean")
+
+
+def test_plan_out_names_the_file(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, tmp_path: Path,
+    plan_dir: Path,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    out = tmp_path / "elsewhere" / "plan.md"
+    assert u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="1.1.0", out=str(out))) == u.EXIT_OK
+    assert out.read_text(encoding="utf-8").startswith("# Upgrade plan: 1.0.0 -> 1.1.0")
+    assert not plan_dir.exists()
+
+    parser = argparse.ArgumentParser()
+    u.add_upgrade_subparser(parser.add_subparsers())
+    assert parser.parse_args(["upgrade", "plan", "--deploy", "d", "--out", "p.md"]).out == "p.md"
+    assert parser.parse_args(["upgrade", "plan", "--deploy", "d"]).out is None
 
 
 def test_cmd_upgrade_plan_blocked_by_compat_check(
@@ -972,7 +1015,7 @@ def test_cmd_upgrade_plan_bad_stack_is_preflight_failure(
 
 def test_cmd_upgrade_plan_without_pins_yaml_plans_from_the_cluster_secrets_stack(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
-    capsys: pytest.CaptureFixture,
+    capsys: pytest.CaptureFixture, plan_dir: Path,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -990,10 +1033,10 @@ def test_cmd_upgrade_plan_without_pins_yaml_plans_from_the_cluster_secrets_stack
     assert out.startswith(
         "# Upgrade plan: 1.0.0 -> 1.1.0\n\nFROM is secret/dfe-cluster's dfe.hyperi.io/stack_version"
     )
-    written = (bundled / "upgrades" / "1.0.0-to-1.1.0.md").read_text(encoding="utf-8")
+    written = (plan_dir / "1.0.0-to-1.1.0.md").read_text(encoding="utf-8")
     assert "the deploy repo carries no pins.yaml, so apply writes one at its first stage" in written
     assert "1. bootstrap.cert-manager: v1.0.0 -> v1.1.0" in written
-    assert not (bundled / "pins.yaml").exists()
+    assert list(bundled.iterdir()) == []
 
 
 def test_cmd_upgrade_plan_without_pins_yaml_or_a_stack_annotation_is_preflight_failure(
@@ -1068,6 +1111,11 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
     assert "# verify before-hook: kafka.strimzi.io stored-version conversion" in err
     assert "chore(upgrade): 2.0.0 stage 1 -- bootstrap.cert-manager" in err
     assert "wait for Argo Applications in argocd" in err
+    assert (
+        "[dry-run] # bootstrap.cert-manager is installed by bootstrap.sh, not Argo; unless it runs v1.1.0: "
+        "helm -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io --version v1.1.0 "
+        "--reset-then-reuse-values --wait --timeout 5m"
+    ) in err
     assert "3 command(s) would run" in err or "command(s) would run" in err
 
     # Nothing was actually executed beyond the one compat-check call: no git,
@@ -1252,6 +1300,7 @@ def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     monkeypatch.setattr(u, "run_preflight", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_args, **_kwargs: (True, "converged"))
+    _bootstrap_runs(monkeypatch, "v1.1.0")
     calls: list[list[str]] = []
     staged: dict[str, str] = {}
 
@@ -1855,12 +1904,26 @@ def real_git_deploy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return d
 
 
+def _bootstrap_runs(monkeypatch: pytest.MonkeyPatch, version: str) -> list[str]:
+    """Every bootstrap release reads as running chart `version`; returns the releases asked about."""
+    asked: list[str] = []
+
+    def read(_kubeconfig: object, release: u.BootstrapRelease) -> tuple[str, str]:
+        asked.append(release.release)
+        return version, ""
+
+    monkeypatch.setattr(u, "read_bootstrap_chart", read)
+    return asked
+
+
 def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
     # A branch-tracking secret: nothing to retarget, so no --push is needed.
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
+    # cert-manager already upgraded by hand to the 2.0.0 pin.
+    _bootstrap_runs(monkeypatch, "v1.1.0")
 
 
 def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
@@ -1883,11 +1946,207 @@ def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0 (2 stage(s))" in err
+    assert "[DONE] bootstrap.cert-manager runs v1.1.0 (deployment/cert-manager helm.sh/chart)" in err
     assert "stage 2 (20-second) changed nothing" in err
     log = u._git(real_git_deploy, "log", "--oneline").stdout
     assert "stage 1 -- bootstrap.cert-manager" in log
     assert "stage 2 -- services.clickhouse-version" not in log
     assert (real_git_deploy / "pins.yaml").read_text(encoding="utf-8") == PINS_YAML.replace("1.0.0", "2.0.0")
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap-section pins: bootstrap.sh installs them and Argo never does, so a
+# stage that moves only the pin is not done until the cluster runs it.
+# ---------------------------------------------------------------------------
+
+CERT_MANAGER_UPGRADE = (
+    "helm --kubeconfig kc -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io "
+    "--version v1.1.0 --reset-then-reuse-values --wait --timeout 5m"
+)
+ARGOCD_UPGRADE = (
+    "helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm "
+    "--version 10.10.0 --reset-then-reuse-values --wait --timeout 10m"
+)
+ARGO_STEP = u.Step(stage="10-bootstrap", order="30", key="bootstrap.argocd")
+# The user-supplied values bootstrap.sh's step [6/7] installs Argo with.
+BOOTSTRAP_ARGO_VALUES = {"redis": {"enabled": False}, "externalRedis": {"host": "valkey.argocd.svc.cluster.local"}}
+ARGO_RELEASES = [{"name": "argocd", "namespace": "argocd", "chart": "argo-cd-10.9.6"}]
+
+
+def _two_stage(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    order_path = deploy.parent / "upgrade-order.yaml"
+    order_path.write_text(TWO_STAGE_ORDER_YAML, encoding="utf-8")
+    versions_path = deploy.parent / "versions.yaml"
+    versions_path.write_text(TWO_STAGE_VERSIONS_YAML, encoding="utf-8")
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    _stub_cluster_facing_calls(monkeypatch)
+
+
+def test_a_bootstrap_pin_the_cluster_does_not_run_ends_not_complete_with_the_command(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Argo CD stayed on its old chart while apply reported the bootstrap stage done and the run OK."""
+    _two_stage(monkeypatch, real_git_deploy)
+    asked = _bootstrap_runs(monkeypatch, "v1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc",
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert asked == ["cert-manager"]
+    assert (
+        "[PENDING] bootstrap.cert-manager v1.0.0 -> v1.1.0: bootstrap.sh installs it, not Argo, and the "
+        f"cluster runs v1.0.0. Run, where this deploy installed it: {CERT_MANAGER_UPGRADE}"
+    ) in err
+    # The walk carries on past it: the later stage still runs.
+    assert "stage 2/2: 20-second" in err
+    assert "NOT complete -- bootstrap.cert-manager not shown running the pinned chart" in err
+    assert "re-run this apply with --from 1.0.0" in err
+    assert "apply OK" not in err
+    assert u.read_deploy_pin(real_git_deploy) == "2.0.0"
+
+
+def test_a_stop_before_after_a_pending_bootstrap_pin_is_not_ok_either(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    _bootstrap_runs(monkeypatch, "v1.0.0")
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, stop_before="20-second",
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert "stopping before stage 2/2 (20-second)" in err
+    assert "NOT complete -- bootstrap.cert-manager" in err
+
+
+def test_the_resumed_apply_confirms_a_bootstrap_pin_once_it_runs(
+    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _two_stage(monkeypatch, real_git_deploy)
+    _bootstrap_runs(monkeypatch, "v1.0.0")
+    assert u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False,
+    )) == u.EXIT_BLOCKED
+    capsys.readouterr()
+
+    _bootstrap_runs(monkeypatch, "v1.1.0")
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False,
+    ))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "[DONE] bootstrap.cert-manager runs v1.1.0" in err
+    assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0" in err
+
+
+def test_read_bootstrap_chart_reads_the_chart_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"metadata": {"labels": {"helm.sh/chart": "argo-cd-10.9.6", "app.kubernetes.io/version": "v3.5.3"}}}
+    calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
+
+    assert u.read_bootstrap_chart("kc", u.BOOTSTRAP_RELEASES["bootstrap.argocd"]) == ("10.9.6", "")
+    assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
+    assert calls[0][3:8] == ["-n", "argocd", "get", "deployment", "argocd-server"]
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [{}, {"app.kubernetes.io/managed-by": "Helm"}, {"helm.sh/chart": "cert-manager-v1.21.2"}],
+)
+def test_a_deployment_without_this_charts_label_reads_as_adopted(
+    monkeypatch: pytest.MonkeyPatch, labels: dict[str, str]
+) -> None:
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"metadata": {"labels": labels}})))
+    running, why = u.read_bootstrap_chart(None, u.BOOTSTRAP_RELEASES["bootstrap.argocd"])
+    assert running == ""
+    assert "carries no helm.sh/chart label for argo-cd" in why
+    assert "adopted" in why
+
+
+def test_an_unreadable_deployment_is_pending_with_the_reason_and_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
+    _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): deployments.apps "argocd-server" not found'))
+    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    assert state == u.BOOTSTRAP_PENDING
+    assert "cannot read deployment/argocd-server in argocd: Error from server (NotFound)" in detail
+    assert detail.endswith(f"Run: {ARGOCD_UPGRADE}")
+
+
+def test_a_bootstrap_pin_with_no_known_release_points_at_bootstrap_sh() -> None:
+    step = u.Step(stage="10-bootstrap", order="40", key="bootstrap.metallb")
+    state, detail = u.check_bootstrap_move(None, u.Move(step=step, old="0.15.0", new="0.16.1"))
+    assert state == u.BOOTSTRAP_PENDING
+    assert "re-run bootstrap/bootstrap.sh with DFE_STACK_VERSION" in detail
+
+
+def test_bootstraps_own_argo_is_recognised_the_way_bootstrap_sh_recognises_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout=json.dumps(ARGO_RELEASES)), _proc(0, stdout=json.dumps(BOOTSTRAP_ARGO_VALUES))
+    )
+    ours, why = u.argocd_installed_by_bootstrap("kc")
+    assert ours is True, why
+    assert calls[0] == [
+        "helm", "list", "--namespace", "argocd", "--filter", "^argocd$", "-o", "json", "--kubeconfig", "kc",
+    ]
+    assert calls[1][:4] == ["helm", "get", "values", "argocd"]
+
+
+def test_a_stock_argo_install_reads_adopted_and_gets_no_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host's `helm install argocd argo/argo-cd` carries the same release, chart and label."""
+    calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps(ARGO_RELEASES)), _proc(0, stdout="null"))
+    state, detail = u.check_bootstrap_move("kc", u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    assert state == u.BOOTSTRAP_ADOPTED
+    assert detail.endswith("so this bootstrap did not install it, so its owner upgrades it")
+    assert "helm --kubeconfig" not in detail
+    assert [c[0] for c in calls] == ["helm", "helm"]  # no kubectl read of the version
+
+
+def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
+
+    def no_helm(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        raise FileNotFoundError("helm")
+
+    monkeypatch.setattr(u, "_run", no_helm)
+    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    assert state == u.BOOTSTRAP_PENDING
+    assert (
+        "the cluster runs 10.9.6. Run (cannot list helm releases in argocd: helm is not on PATH), "
+        f"where this deploy installed it: {ARGOCD_UPGRADE}"
+    ) in detail
+
+
+def test_an_argo_on_the_pin_is_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
+    monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.10.0", ""))
+    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    assert (state, detail) == (u.BOOTSTRAP_DONE, "bootstrap.argocd runs 10.10.0 (deployment/argocd-server helm.sh/chart)")
+
+
+def test_every_bootstrap_release_matches_the_install_bootstrap_sh_runs() -> None:
+    """The printed upgrade must name the release, chart, repository and namespace bootstrap.sh installed."""
+    script = (REPO_ROOT / "bootstrap" / "bootstrap.sh").read_text(encoding="utf-8")
+    steps = {step.key for step in u.load_steps() if step.key.startswith(u.BOOTSTRAP_PREFIX)}
+    assert steps == set(u.BOOTSTRAP_RELEASES)
+    for key, release in u.BOOTSTRAP_RELEASES.items():
+        install = re.search(
+            rf"helm upgrade --install {re.escape(release.release)} (\S+)/{re.escape(release.chart)} \\\n"
+            rf"\s+--namespace {re.escape(release.namespace)} ",
+            script,
+        )
+        assert install, key
+        assert re.search(rf"helm repo add {re.escape(install.group(1))} {re.escape(release.repo)} ", script), key
+        assert re.search(r"--timeout (\S+)", script[install.end():]).group(1) == release.timeout, key
+        # The deployment bootstrap.sh's own detect-or-install gate reads.
+        gate = rf"dfe_should_install \S+ \S+ {re.escape(release.namespace)} {re.escape(release.deployment)}\b"
+        assert re.search(gate, script), key
 
 
 # ---------------------------------------------------------------------------
@@ -2302,6 +2561,7 @@ def _ga_cluster(monkeypatch: pytest.MonkeyPatch, live: dict[str, str]) -> list[t
     monkeypatch.setattr(u, "wait_for_kafka_operator_version", operator)
     monkeypatch.setattr(u, "check_kafka_version", kafka_version)
     monkeypatch.setattr(u, "check_kafka_metadata_moved", metadata)
+    _bootstrap_runs(monkeypatch, "v1.1.0")
     return events
 
 

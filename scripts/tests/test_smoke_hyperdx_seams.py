@@ -11,7 +11,10 @@
 
 The image ships node and neither curl nor wget. A fake `kubectl` first on PATH
 runs `kubectl exec` commands locally with a PATH holding only `env`, `sh` and
-(optionally) `node`, and answers the deploy reads from a fixture. The JWKS,
+(optionally) `node`, and answers the deploy reads from a fixture. The settings sit
+in an envFrom ConfigMap, as the thin chart puts them, so only a read of the running
+container's environment finds them, and an exec naming any container but
+`dfe-hyperdx` is refused. The JWKS,
 ClickHouse and frontend are one local HTTP server, so the probes' JavaScript really
 runs under node and the assertions are on what the server received.
 
@@ -52,6 +55,7 @@ CSP = "CSP frame-ancestors present"
 XFO = "X-Frame-Options NOT set"
 BEARER = "HyperDX accepts an engine-issued token"
 EMBED_SKIPPED = "embed headers -- could not read response headers"
+ENV_UNREAD = "read HyperDX's runtime env"
 
 # `kubectl exec` runs the command with PATH set to the pod's bin dir, so a tool the
 # image lacks fails exactly as it does in the pod.
@@ -76,7 +80,11 @@ if "exec" in args:
     if target == "deploy/dfe-engine":
         print(json.dumps({"access_token": pod["engine_token"]}))
         sys.exit(0)
-    child_env = {"PATH": os.environ["FAKE_POD_BIN"], **pod["pod_env"]}
+    if "-c" in args and args[args.index("-c") + 1] != "dfe-hyperdx":
+        sys.stderr.write("error: container is not valid for pod\\n")
+        sys.exit(1)
+    # The Deployment's env and an envFrom ConfigMap both land in the container's environment.
+    child_env = {"PATH": os.environ["FAKE_POD_BIN"], **pod["env"], **pod["configmap_env"], **pod["pod_env"]}
     try:
         sys.exit(subprocess.run(args[args.index("--") + 1:], env=child_env, check=False).returncode)
     except FileNotFoundError:
@@ -144,8 +152,13 @@ def run_smoke(
     pod_env: dict | None = None,
     node: bool = True,
     engine_token: str | None = None,
+    in_deployment_env: bool = False,
 ) -> tuple[subprocess.CompletedProcess, dict]:
-    """The smoke script against the local server, and what the server saw."""
+    """The smoke script against the local server, and what the server saw.
+
+    The settings live in an envFrom ConfigMap, the thin chart's shape, unless
+    `in_deployment_env` puts them in the Deployment's own env, the 2.2.0 chart's.
+    """
     server = ThreadingHTTPServer(("127.0.0.1", 0), Frontend)
     server.cfg = {
         "jwks_alg": "ES384",
@@ -169,13 +182,15 @@ def run_smoke(
             for tool in ("env", "sh", *(["node"] if node else [])):
                 (podbin / tool).symlink_to(shutil.which(tool))
 
+            settings = {
+                "DFE_AUTH_MODE": "oidc-proxy",
+                "DFE_ENGINE_JWKS_URL": f"{base}/.well-known/jwks.json",
+                # The chart's form: the ClickHouse HTTP URL, which the script dials as is.
+                "CLICKHOUSE_HOST": base,
+            }
             pod = {
-                "env": {
-                    "DFE_AUTH_MODE": "oidc-proxy",
-                    "DFE_ENGINE_JWKS_URL": f"{base}/.well-known/jwks.json",
-                    # The chart's form: the ClickHouse HTTP URL, which the script dials as is.
-                    "CLICKHOUSE_HOST": base,
-                },
+                "env": settings if in_deployment_env else {},
+                "configmap_env": {} if in_deployment_env else settings,
                 "pod_env": {
                     "CLICKHOUSE_USER": CH_USER,
                     "CLICKHOUSE_PASSWORD": CH_FIXTURE_VALUE,
@@ -244,8 +259,20 @@ def test_a_pod_that_answers_nothing_passes_no_embed_check() -> None:
 
     expect("the embed checks are skipped", verdict(out, "SKIP", EMBED_SKIPPED), out.stdout)
     expect("X-Frame-Options does not pass", not verdict(out, "PASS", XFO), out.stdout)
-    for name in (JWKS, ES384, PING, TABLE):
+    # An unreadable env must not read as the DFE middleware being off.
+    expect("the env read fails", verdict(out, "FAIL", ENV_UNREAD), out.stdout)
+    expect("auth is not skipped as unset", not verdict(out, "SKIP", "DFE_AUTH_MODE unset"), out.stdout)
+    for name in (PING, TABLE):
         expect(f"{name} fails", verdict(out, "FAIL", name), out.stdout)
+
+
+def test_settings_in_the_deployment_env_read_the_same() -> None:
+    # The 2.2.0 chart set them on the Deployment; the thin chart moved them to a ConfigMap.
+    out, _ = run_smoke(in_deployment_env=True)
+
+    for name in (JWKS, ES384, PING, TABLE, CSP, XFO):
+        expect(f"{name} passes", verdict(out, "PASS", name), out.stdout)
+    expect("no check failed", "0 failed" in out.stdout, out.stdout)
 
 
 def test_x_frame_options_on_the_response_fails_the_check() -> None:

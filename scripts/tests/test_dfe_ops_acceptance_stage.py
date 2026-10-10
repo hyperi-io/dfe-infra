@@ -379,6 +379,24 @@ def test_the_smoke_suite_gets_terraform_outputs_as_strings(monkeypatch: pytest.M
     assert "cluster_name" not in env
 
 
+def test_the_smoke_suite_gets_the_app_namespace_as_dfe_ns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The readiness gate reads DFE_NS alone, so verify ran it with the app namespace dropped."""
+    _fake_bridge(monkeypatch)
+    monkeypatch.setenv("DFE_NS", "a-stale-namespace")
+    args = argparse.Namespace(from_terraform="tf", env_file=[], kubeconfig="", mode="single")
+    assert dfeops._suite_env(args)["DFE_NS"] == "dfe-aws-test"
+
+    args.namespace = "dfe-named"
+    assert dfeops._suite_env(args)["DFE_NS"] == "dfe-named"
+
+
+def test_an_operators_dfe_ns_stands_when_nothing_names_the_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DFE_NS", "dfe-local")
+    monkeypatch.delenv("DFE_NAMESPACE", raising=False)
+    args = argparse.Namespace(from_terraform=None, env_file=[], kubeconfig="", mode=None)
+    assert dfeops._suite_env(args)["DFE_NS"] == "dfe-local"
+
+
 # --- the source runner's report ----------------------------------------------------
 
 

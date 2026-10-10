@@ -13,8 +13,10 @@ dfe-loader stores a JSON payload once, in `_json`, and leaves `_raw` NULL unless
 the payload carries a `_raw` field of its own, which it keeps. The check used to
 demand a populated `_raw` on a plain POST, so a loader doing the right thing
 failed it. The HyperDX image ships node and neither wget nor curl, so the
-readiness check asks /readyz through node. A fake `kubectl` first on PATH answers
-from the POSTs it receives and from a `hyperdx_ready` verdict.
+readiness check asks /readyz through node. Both it and the engine schema check
+exec into the container the thin chart names after itself. A fake `kubectl` first
+on PATH answers from the POSTs it receives and from the `hyperdx_ready` and
+`engine_schema` verdicts.
 
     python3 scripts/tests/test_smoke_raw_and_hyperdx_checks.py
 
@@ -31,6 +33,7 @@ from _smoke import run_smoke
 KEPT = "[PASS] a payload's own _raw is kept as sent (1 of 3 fixture lines carry one)"
 NULLED = "[PASS] payloads without a _raw field land with _raw NULL (stored once, in _json)"
 HYPERDX = "hyperdx API reaches its ferretdb backend"
+ENGINE_SCHEMA = "dfe-engine reports schema converged"
 
 
 def smoke(fixture: dict, **env: str) -> str:
@@ -73,6 +76,20 @@ def test_hyperdx_that_does_not_answer_ready_fails() -> None:
     stdout = smoke({"hyperdx_ready": False})
 
     expect("a not-ready API fails", f"[FAIL] {HYPERDX}" in stdout, stdout)
+
+
+def test_the_engine_schema_check_asks_the_thin_chart_container() -> None:
+    # The 2.2.0 chart's `engine` container does not exist under the thin chart, so
+    # `-c engine` failed a converged engine.
+    stdout = smoke({"engine_schema": True}, DFE_ENGINE_WAIT="0")
+
+    expect("a converged engine passes", f"[PASS] {ENGINE_SCHEMA}" in stdout, stdout)
+
+
+def test_an_engine_whose_schema_has_not_converged_fails() -> None:
+    stdout = smoke({"engine_schema": False}, DFE_ENGINE_WAIT="0")
+
+    expect("an unconverged engine fails", f"[FAIL] {ENGINE_SCHEMA}" in stdout, stdout)
 
 
 def main() -> int:
