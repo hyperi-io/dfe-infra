@@ -42,7 +42,8 @@ Subcommands:
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR image and thin-chart digests and compare them to
-                 versions.yaml.
+                 versions.yaml; check the unpinned toolbox family images exist at
+                 the family tag for linux/amd64 and linux/arm64.
   release-gate   Fail a release-maturity stack with an unpublished app, or with
                  a DFE image whose index lacks linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
@@ -230,6 +231,15 @@ def versions_at(tag: str | None = None, stack: str | None = None) -> dict:
 # `digests:` keys whose tag is a family pin under another name: digests key ->
 # (section, key). The toolbox base image ships under the toolbox family's tag.
 _FAMILY_TAGS = {"dfe-toolbox-base": ("toolbox", "dfe-toolbox")}
+
+# Family images with no digest pin, published under the same family tag: image ->
+# (section, key). Nothing pulls them by digest, so verify checks each is published
+# at that tag for both REQUIRED_PLATFORMS.
+_FAMILY_UNPINNED = {
+    "dfe-toolbox-aws": ("toolbox", "dfe-toolbox"),
+    "dfe-toolbox-gcp": ("toolbox", "dfe-toolbox"),
+    "dfe-toolbox-azure": ("toolbox", "dfe-toolbox"),
+}
 
 
 def image_tag(v: dict, name: str) -> str:
@@ -797,8 +807,39 @@ def _pin_matches(label: str, org: str, package: str, tag: str, digest: str, host
     return True
 
 
+def _family_image_published(name: str, org: str, tag: str, host: str) -> bool:
+    """Resolve an unpinned family image at its tag and print ok, DRIFT or ERROR.
+
+    The tag must exist and its index must carry every REQUIRED_PLATFORMS entry;
+    the platforms are read at the digest the tag resolved to, so both halves
+    describe one index.
+    """
+    try:
+        digest = registry_pins.tag_digest(org, name, tag, registry=host)
+    except registry_pins.RegistryError as exc:
+        print(f"ERROR {name}: {exc}")
+        return False
+    if not digest:
+        print(f"DRIFT {name}: {tag} (tag not found)")
+        return False
+    found, err = registry_pins.ref_platforms(f"{host}/{org}/{name}:{tag}@{digest}")
+    if found is None:
+        print(f"ERROR {name}: {err}")
+        return False
+    missing = [p for p in REQUIRED_PLATFORMS if p not in found]
+    if missing:
+        print(f"DRIFT {name}: {tag}@{digest[:19]}... missing {', '.join(missing)}")
+        return False
+    print(f"ok    {name}: {tag}@{digest[:19]}... {', '.join(REQUIRED_PLATFORMS)}")
+    return True
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
-    """Compare every image and thin-chart digest a stack pins with what its tag resolves to now."""
+    """Compare every image and thin-chart digest a stack pins with what its tag resolves to now.
+
+    The unpinned toolbox family images have no digest to compare, so each must be
+    published at the family tag for both REQUIRED_PLATFORMS instead.
+    """
     _, v = stack_pins(load_root(), args.stack)
     host, _, org = args.registry.partition("/")
     if not org:
@@ -811,6 +852,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
             bad += 1
             continue
         if not _pin_matches(name, org, name, tag, digest, host):
+            bad += 1
+    for name, (section, key) in sorted(_FAMILY_UNPINNED.items()):
+        tag = v.get(section, {}).get(key, "")
+        if not tag:
+            print(f"skip  {name}: this stack pins no {section}.{key}, so it ships no {name}")
+            continue
+        if not _family_image_published(name, org, tag, host):
             bad += 1
     # Each thin chart sits beside its images, at <registry>/charts/<chart>:<chart version>.
     for service, chart, version, digest in chart_pins(v):
@@ -825,7 +873,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         if not _pin_matches(label, org, f"charts/{chart}", version, digest, host):
             bad += 1
     if bad:
-        print(f"\n{bad} digest(s) drifted from the registry")
+        print(f"\n{bad} registry check(s) failed")
         return 1
     print("\nall image and chart digests match the registry")
     return 0
@@ -1514,7 +1562,10 @@ def main() -> int:
     )
     p.set_defaults(func=cmd_resolve)
 
-    p = sub.add_parser("verify", help="compare versions.yaml image and chart digests to GHCR")
+    p = sub.add_parser(
+        "verify",
+        help="compare image and chart digests to GHCR; check the toolbox family is published",
+    )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_verify)
 
