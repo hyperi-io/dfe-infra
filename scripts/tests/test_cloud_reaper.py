@@ -288,14 +288,18 @@ def _gate_script() -> tuple[str, dict]:
     return step["run"], step["env"]
 
 
-@pytest.mark.parametrize("role", ["", None])
-def test_the_gate_with_no_role_is_a_notice_and_a_green_run(tmp_path: Path, role: str | None) -> None:
-    script, step_env = _gate_script()
-    assert step_env == {"DFE_REAPER_AWS_ROLE": "${{ vars.DFE_REAPER_AWS_ROLE }}"}
+def test_the_gate_is_handed_a_boolean_so_the_role_never_reaches_its_env_dump() -> None:
+    _script, step_env = _gate_script()
+    assert step_env == {"HAS_ROLE": "${{ vars.DFE_REAPER_AWS_ROLE != '' }}"}
+
+
+@pytest.mark.parametrize("has_role", ["false", "", None])
+def test_the_gate_with_no_role_is_a_notice_and_a_green_run(tmp_path: Path, has_role: str | None) -> None:
+    script, _env = _gate_script()
     output = tmp_path / "github_output"
     env = {"PATH": "/usr/bin:/bin", "GITHUB_OUTPUT": str(output)}
-    if role is not None:
-        env["DFE_REAPER_AWS_ROLE"] = role
+    if has_role is not None:
+        env["HAS_ROLE"] = has_role
     done = subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", check=False)
     assert done.returncode == 0, done.stderr
@@ -306,11 +310,48 @@ def test_the_gate_with_no_role_is_a_notice_and_a_green_run(tmp_path: Path, role:
 def test_the_gate_with_a_role_enables_the_reaping_job(tmp_path: Path) -> None:
     script, _env = _gate_script()
     output = tmp_path / "github_output"
-    env = {"PATH": "/usr/bin:/bin", "GITHUB_OUTPUT": str(output), "DFE_REAPER_AWS_ROLE": ROLE}
+    env = {"PATH": "/usr/bin:/bin", "GITHUB_OUTPUT": str(output), "HAS_ROLE": "true"}
     done = subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", check=False)
     assert done.returncode == 0, done.stderr
     assert output.read_text(encoding="utf-8") == "enabled=true\n"
+
+
+# --- the mask: first, so no later step prints the account or the role ----------------------------
+
+
+def _mask_run(env: dict[str, str]) -> subprocess.CompletedProcess:
+    script = _workflow()["jobs"]["reap"]["steps"][0]["run"]
+    return subprocess.run(["bash", "-euo", "pipefail", "-c", script], env={"PATH": "/usr/bin:/bin", **env},
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+
+
+def test_the_reaping_jobs_first_step_masks_and_nothing_runs_before_it() -> None:
+    """A mask covers only output written after the step that registers it."""
+    steps = _workflow()["jobs"]["reap"]["steps"]
+    assert steps[0]["name"] == "Mask the AWS account and the role"
+    assert "::add-mask::" in steps[0]["run"]
+    assert "uses" not in steps[0]
+    for step in steps[1:]:
+        assert "::add-mask::" not in step.get("run", ""), step.get("name")
+
+
+def test_the_mask_registers_the_role_and_the_account_it_names() -> None:
+    done = _mask_run({"DFE_REAPER_AWS_ROLE": ROLE})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.splitlines() == [f"::add-mask::{ROLE}", "::add-mask::000000000000"]
+
+
+def test_the_mask_registers_an_account_variable_that_differs_from_the_roles() -> None:
+    done = _mask_run({"DFE_REAPER_AWS_ROLE": ROLE, "DFE_REAPER_AWS_ACCOUNT": "111111111111"})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.splitlines() == [f"::add-mask::{ROLE}", "::add-mask::111111111111", "::add-mask::000000000000"]
+
+
+def test_the_mask_with_nothing_set_registers_nothing() -> None:
+    done = _mask_run({})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout == ""
 
 
 def test_the_reaper_and_ci_validate_on_the_same_opentofu() -> None:

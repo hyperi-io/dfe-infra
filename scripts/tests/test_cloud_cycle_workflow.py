@@ -5,7 +5,8 @@
 #                anything when its environment is unconfigured, assumes the
 #                runner by OIDC for four hours, hands the guard an expiry that
 #                can only under-read the credential's, never publishes the
-#                credential, pins every action and carries no deployment value.
+#                credential, masks the account and role before any later step
+#                prints them, pins every action and carries no deployment value.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -146,7 +147,7 @@ def test_the_runner_is_assumed_by_oidc_for_four_hours_from_variables() -> None:
     assert inputs["aws-region"] == "${{ vars.DFE_CYCLE_AWS_REGION }}"
     assert inputs["role-duration-seconds"] == "${{ env.RUNNER_SESSION_SECONDS }}"
     assert _session_seconds() == 14400
-    assert inputs["allowed-account-ids"] == "${{ steps.gate.outputs.account }}"
+    assert inputs["allowed-account-ids"] == "${{ steps.mask.outputs.account }}"
     assert inputs["mask-aws-account-id"] is True
     assert "aws-access-key-id" not in inputs
 
@@ -366,11 +367,10 @@ def test_expected_fail_a_session_length_that_is_not_whole_seconds_hands_on_nothi
 # --- the gate: refuse before anything is created ---------------------------------------------
 
 
-def test_a_configured_environment_passes_the_gate_and_masks_the_account(tmp_path: Path) -> None:
+def test_a_configured_environment_passes_the_gate(tmp_path: Path) -> None:
     done, output = _run_script(_step("gate")["run"], CONFIGURED, tmp_path)
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "::add-mask::000000000000" in done.stdout
-    assert output == "account=000000000000\n"
+    assert output == ""
 
 
 def test_expected_fail_an_unconfigured_environment_refuses_and_names_every_gap(tmp_path: Path) -> None:
@@ -395,12 +395,51 @@ def test_expected_fail_a_missing_env_file_secret_refuses(tmp_path: Path) -> None
     assert "DFE_CYCLE_ENV_FILE" in done.stdout
 
 
+# --- the mask: first, so no later step prints the account or the role ----------------------------
+
+
+def test_the_mask_is_the_jobs_first_step_and_nothing_before_it_names_the_role() -> None:
+    """A mask covers only output written after the step that registers it."""
+    steps = _job()["steps"]
+    assert steps[0]["id"] == "mask"
+    assert "::add-mask::" in steps[0]["run"]
+    assert set(steps[0]["env"]) == {"DFE_CYCLE_AWS_ROLE"}
+    for step in steps[1:]:
+        assert "::add-mask::" not in step.get("run", ""), step.get("name")
+
+
+def test_the_role_reaches_the_gate_and_the_credentials_only_after_the_mask() -> None:
+    names = [s.get("name") for s in _job()["steps"]]
+    mask = names.index(_step("mask")["name"])
+    for step_id in ("gate", "creds"):
+        assert names.index(_step(step_id)["name"]) > mask
+
+
+def test_the_mask_registers_the_role_and_its_account_and_hands_the_account_on(tmp_path: Path) -> None:
+    done, output = _run_script(_step("mask")["run"], {"DFE_CYCLE_AWS_ROLE": ROLE}, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.splitlines() == [f"::add-mask::{ROLE}", "::add-mask::000000000000"]
+    assert output == "account=000000000000\n"
+
+
+@pytest.mark.parametrize("role", ["", None])
+def test_an_unset_role_masks_nothing_and_leaves_the_refusal_to_the_gate(tmp_path: Path, role: str | None) -> None:
+    env = {} if role is None else {"DFE_CYCLE_AWS_ROLE": role}
+    done, output = _run_script(_step("mask")["run"], env, tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout == ""
+    assert output == ""
+
+
 @pytest.mark.parametrize("role", ["role-dfe-e2e-runner", "arn:aws:iam::12345:role/x", "arn:aws:iam::000000000000:user/x"])
 def test_expected_fail_a_role_that_is_not_a_role_arn_refuses_without_echoing_it(tmp_path: Path, role: str) -> None:
-    done, output = _run_script(_step("gate")["run"], {**CONFIGURED, "DFE_CYCLE_AWS_ROLE": role}, tmp_path)
+    done, output = _run_script(_step("mask")["run"], {"DFE_CYCLE_AWS_ROLE": role}, tmp_path)
     assert done.returncode == 1
-    assert "not an IAM role ARN" in done.stdout
-    assert role not in done.stdout
+    # The raw value is registered first, so the refusal cannot be the line that prints it.
+    assert done.stdout.splitlines()[0] == f"::add-mask::{role}"
+    printed = [line for line in done.stdout.splitlines() if not line.startswith("::add-mask::")]
+    assert any("not an IAM role ARN" in line for line in printed)
+    assert all(role not in line for line in printed)
     assert output == ""
 
 
