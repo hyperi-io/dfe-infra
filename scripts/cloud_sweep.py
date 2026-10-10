@@ -791,6 +791,19 @@ def _ec2_instance_gone(instance_id: str, region: str) -> bool:
     return True
 
 
+def _network_interface_gone(eni_id: str, region: str) -> bool:
+    """True once AWS no longer lists the interface; an available one still exists and is not gone."""
+    try:
+        interfaces = run_aws(
+            ["ec2", "describe-network-interfaces", "--network-interface-ids", eni_id], region
+        ).get("NetworkInterfaces", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    return not interfaces
+
+
 def _delete_load_balancer(r: Resource, region: str) -> None:
     run_aws(["elbv2", "delete-load-balancer", "--load-balancer-arn", r.id], region)
 
@@ -868,9 +881,9 @@ def _delete_vpc_endpoint(r: Resource, region: str) -> None:
 
 
 def tagging_hit_gone(resource: Resource, region: str) -> bool:
-    """True when a tagging-API hit names a NAT gateway, VPC endpoint or instance EC2 reports gone.
+    """True when a tagging-API hit names a NAT gateway, VPC endpoint, instance or network interface EC2 reports gone.
 
-    The tagging API keeps listing all three after they go. One still deleting or shutting down is
+    The tagging API keeps listing all four after they go. One still deleting or shutting down is
     not gone, and any other hit is not judged and reads as present.
 
     Raises:
@@ -886,6 +899,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
         return _vpc_endpoint_gone(bare_id, region)
     if resource_type == "instance":
         return _ec2_instance_gone(bare_id, region)
+    if resource_type == "network-interface":
+        return _network_interface_gone(bare_id, region)
     return False
 
 
