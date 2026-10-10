@@ -2240,7 +2240,7 @@ stacks:
       yq: "v4.54.1"                      # mikefarah/yq, the Go binary -- NOT Debian's python3-yq apt package. 2026-09-29, verified via `gh api repos/mikefarah/yq/releases`.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.37.9"                  # 2026-10-02. aws-cli publishes no GitHub Releases (tags only, so the annotation above reads tags); dated via the tag's own commit (`gh api repos/aws/aws-cli/commits/<sha>`). No LTS line.
-      aws-session-manager-plugin: "1.2.835.0"  # AWS publishes only a floating "latest" URL per OS/arch -- no versioned download exists. This records the version `latest` resolved to when last verified (observed 2026-09-13; the artifact itself is dated 2026-06-17); docker/dfe-toolbox/aws/Dockerfile asserts the installed version still matches this pin and fails the build if AWS has moved `latest` again, which is what makes this pin worth having despite the URL floating under it. UNWATCHED by Renovate on purpose: there is no version feed to watch, so the Dockerfile assertion is the only signal that AWS moved it.
+      aws-session-manager-plugin: "1.2.835.0"  # AWS publishes only a floating "latest" URL per OS/arch -- no versioned download exists. This records the version `latest` resolved to when last verified (observed 2026-09-13; the artifact itself is dated 2026-06-17); docker/dfe-toolbox/aws/Dockerfile asserts the installed version still matches this pin and fails the build if AWS has moved `latest` again, which is what makes this pin worth having despite the URL floating under it. aws/session-manager-plugin GitHub releases are the version feed; the current stack's pin is the one Renovate watches.
       gcloud: "587.0.0"                  # google-cloud-cli. 2026-09-29 (Last-Modified on https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-587.0.0-linux-x86_64.tar.gz); 588.0.0 is not published. No LTS line; the SDK ships weekly. UNWATCHED by Renovate: the SDK ships off dl.google.com with no GitHub repo and no datasource Renovate carries, so this one moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # azure-cli. 2026-10-05, verified via `gh api repos/Azure/azure-cli/releases`; its bookworm .deb is on packages.microsoft.com for amd64 and arm64. Watched through PyPI rather than the GitHub tag, which is spelled `azure-cli-2.91.0` and does not compare against this value. Installed from Microsoft's apt repo pinned to the `bookworm` codename: packages.microsoft.com/repos/azure-cli has no `trixie` suite yet, and the bookworm build (a self-contained venv under /opt/az) installs and runs cleanly on trixie regardless.
@@ -2454,7 +2454,7 @@ stacks:
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.37.9"                  # 2026-10-02.
-      aws-session-manager-plugin: "1.2.835.0"  # AWS only publishes a floating latest, so the aws Dockerfile fails the build when latest stops matching this. No feed for Renovate.
+      aws-session-manager-plugin: "1.2.835.0"  # The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. aws/session-manager-plugin GitHub releases are the version feed.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
@@ -2667,7 +2667,8 @@ stacks:
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.37.9"                  # 2026-10-02.
-      aws-session-manager-plugin: "1.2.889.0"  # Observed 2026-10-10 as what latest serves on amd64 and arm64. AWS only publishes a floating latest, so the aws Dockerfile fails the build when latest stops matching this. No feed for Renovate.
+      # renovate: datasource=github-releases depName=aws/session-manager-plugin
+      aws-session-manager-plugin: "1.2.889.0"  # Observed 2026-10-10 as what latest serves on amd64 and arm64. The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. Renovate watches the GitHub releases, which can land minutes before latest moves.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
