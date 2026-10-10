@@ -24,7 +24,7 @@ concurrency:
 
 # Held equal to tf-validate.yml's, so the reaper destroys with the OpenTofu CI validates on.
 env:
-  TOFU_VERSION: "1.12.6"
+  TOFU_VERSION: "1.12.7"
 
 jobs:
   gate:

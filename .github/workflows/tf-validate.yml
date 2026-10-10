@@ -23,7 +23,7 @@ permissions:
 # modules declare required_version >= 1.10, and edge/aws, toolbox/aws and
 # managed-kafka/redpanda-cloud declare >= 1.11.
 env:
-  TOFU_VERSION: "1.12.6"
+  TOFU_VERSION: "1.12.7"
 
 jobs:
   validate:
