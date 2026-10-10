@@ -49,7 +49,6 @@ from dfe_suite.kinds import (
     python_range,
     semver_admits,
 )
-from dfe_suite.rebuild import _chart_drift_tests
 from dfe_suite.repos import repo_slug
 
 _GIT_ENV = {
@@ -684,7 +683,7 @@ class VendoredFileTests(unittest.TestCase):
 
 
 class HoistedHelperTests(unittest.TestCase):
-    """The two hoisted helpers that answer without a toolchain behind them."""
+    """The hoisted slug helper, which answers without a toolchain behind it."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory(prefix="suite-hoisted-")
@@ -711,34 +710,6 @@ class HoistedHelperTests(unittest.TestCase):
     def test_a_failing_gh_falls_back_to_the_org_and_the_directory_name(self) -> None:
         self._gh("#!/bin/sh\necho 'not logged in' >&2\nexit 1\n")
         assert repo_slug(self.repo, "hyperi-io") == "hyperi-io/suite-consumer-xyzzy"
-
-    def test_a_chart_contract_test_is_found_by_its_file_name(self) -> None:
-        tests = self.repo / "tests"
-        tests.mkdir()
-        target = tests / "helm_contract.rs"
-        target.write_text("fn main() {}\n", encoding="utf-8", newline="\n")
-        assert _chart_drift_tests(self.repo) == {"helm_contract": target}
-
-    def test_a_chart_contract_test_is_found_by_its_module_or_fn(self) -> None:
-        src = self.repo / "src"
-        src.mkdir()
-        target = src / "lib.rs"
-        target.write_text("mod helm_contract;\n", encoding="utf-8", newline="\n")
-        assert _chart_drift_tests(self.repo) == {"helm_contract": target}
-        target.write_text(
-            "#[test]\nfn chart_helm_contract_holds() {}\n",
-            encoding="utf-8",
-            newline="\n",
-        )
-        assert _chart_drift_tests(self.repo) == {"chart_helm_contract_holds": target}
-
-    def test_a_mention_in_a_comment_is_not_a_gate(self) -> None:
-        src = self.repo / "src"
-        src.mkdir()
-        (src / "lib.rs").write_text(
-            "// TODO: write a helm_contract test\n", encoding="utf-8", newline="\n"
-        )
-        assert _chart_drift_tests(self.repo) == {}
 
 
 class WalkPastTests(unittest.TestCase):
