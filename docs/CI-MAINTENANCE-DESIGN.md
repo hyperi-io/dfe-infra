@@ -53,6 +53,7 @@ by name, exit non-zero.
 | `check_namespace_drift.py` | the operator-namespace SSoT matches where the appsets install |
 | `check_submodule_drift.py` | every consumer of a shared submodule pins the same commit |
 | `check_governance_drift.py` | governance actions resolve to real chart values |
+| `test_governance_actions.py` | the thin path rendered with each governance action leaves no pod reading a Secret nothing mints |
 | `check_image_pins.py` | image references carry a digest |
 
 They run in `helm-lint.yml` on every PR, and the deploy-affecting ones run again
