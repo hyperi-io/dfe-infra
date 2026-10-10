@@ -445,7 +445,7 @@ def list_vpc_endpoints(region: str, tag_filter: dict[str, str]) -> list[Resource
         region,
         tag_filter,
         kind="vpc-endpoint",
-        skip=lambda i: i.get("VpcId") in default_vpcs,
+        skip=lambda i: i.get("VpcId") in default_vpcs or i.get("State", "").lower() == "deleted",
     )
 
 
@@ -774,6 +774,23 @@ def _delete_ec2_instance(r: Resource, region: str) -> None:
     run_aws(["ec2", "terminate-instances", "--instance-ids", r.id], region)
 
 
+def _ec2_instance_gone(instance_id: str, region: str) -> bool:
+    """True once the instance is terminated, or AWS no longer lists it."""
+    try:
+        reservations = run_aws(
+            ["ec2", "describe-instances", "--instance-ids", instance_id], region
+        ).get("Reservations", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    for reservation in reservations:
+        for instance in reservation.get("Instances", []):
+            if instance.get("State", {}).get("Name") != "terminated":
+                return False
+    return True
+
+
 def _delete_load_balancer(r: Resource, region: str) -> None:
     run_aws(["elbv2", "delete-load-balancer", "--load-balancer-arn", r.id], region)
 
@@ -798,14 +815,25 @@ def _delete_msk_cluster(r: Resource, region: str) -> None:
     run_aws(["kafka", "delete-cluster", "--cluster-arn", r.id], region)
 
 
+def _nat_gateway_state(nat_id: str, region: str) -> str:
+    """The gateway's State.
+
+    AWS lists a deleted gateway for about an hour and then answers NotFound, which reads as "deleted".
+    """
+    try:
+        gateways = run_aws(
+            ["ec2", "describe-nat-gateways", "--nat-gateway-ids", nat_id], region
+        ).get("NatGateways", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return "deleted"
+        raise
+    return gateways[0].get("State", "") if gateways else "deleted"
+
+
 def _delete_nat_gateway(r: Resource, region: str) -> None:
     run_aws(["ec2", "delete-nat-gateway", "--nat-gateway-id", r.id], region)
-    _wait_until(
-        lambda: run_aws(["ec2", "describe-nat-gateways", "--nat-gateway-ids", r.id], region)["NatGateways"][0][
-            "State"
-        ]
-        in ("deleted", "deleting")
-    )
+    _wait_until(lambda: _nat_gateway_state(r.id, region) in ("deleted", "deleting"))
 
 
 def _delete_eip(r: Resource, region: str) -> None:
@@ -820,12 +848,12 @@ def _delete_security_group(r: Resource, region: str) -> None:
     run_aws(["ec2", "delete-security-group", "--group-id", r.id], region)
 
 
-def _vpc_endpoint_gone(r: Resource, region: str) -> bool:
+def _vpc_endpoint_gone(endpoint_id: str, region: str) -> bool:
     """True once an interface endpoint has released the network interfaces it holds."""
     try:
-        endpoints = run_aws(["ec2", "describe-vpc-endpoints", "--vpc-endpoint-ids", r.id], region).get(
-            "VpcEndpoints", []
-        )
+        endpoints = run_aws(
+            ["ec2", "describe-vpc-endpoints", "--vpc-endpoint-ids", endpoint_id], region
+        ).get("VpcEndpoints", [])
     except CloudSweepError as exc:
         if "NotFound" in str(exc):
             return True
@@ -836,7 +864,29 @@ def _vpc_endpoint_gone(r: Resource, region: str) -> bool:
 def _delete_vpc_endpoint(r: Resource, region: str) -> None:
     """An interface endpoint's ENIs hold its security groups, so the security group tier waits on this."""
     run_aws(["ec2", "delete-vpc-endpoints", "--vpc-endpoint-ids", r.id], region)
-    _wait_until(lambda: _vpc_endpoint_gone(r, region))
+    _wait_until(lambda: _vpc_endpoint_gone(r.id, region))
+
+
+def tagging_hit_gone(resource: Resource, region: str) -> bool:
+    """True when a tagging-API hit names a NAT gateway, VPC endpoint or instance EC2 reports gone.
+
+    The tagging API keeps listing all three after they go. One still deleting or shutting down is
+    not gone, and any other hit is not judged and reads as present.
+
+    Raises:
+        CloudSweepError: The describe call failed for any reason but NotFound.
+    """
+    parts = resource.id.split(":", 5)
+    if resource.kind != "tagged:ec2" or len(parts) < 6:
+        return False
+    resource_type, _, bare_id = parts[5].partition("/")
+    if resource_type == "natgateway":
+        return _nat_gateway_state(bare_id, region) == "deleted"
+    if resource_type == "vpc-endpoint":
+        return _vpc_endpoint_gone(bare_id, region)
+    if resource_type == "instance":
+        return _ec2_instance_gone(bare_id, region)
+    return False
 
 
 def _delete_route_table(r: Resource, region: str) -> None:

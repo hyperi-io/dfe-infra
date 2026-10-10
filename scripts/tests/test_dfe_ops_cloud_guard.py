@@ -479,6 +479,180 @@ def test_refusal_d_resources_that_cannot_be_listed_fail_both_checks(root: Path) 
     assert _failed(_preflight(root, guard)) == ["(c) expired run resources", "(d) unfinished runs"]
 
 
+# --- (c) and (d) when the tagging API lists what EC2 has already deleted ------------------------
+
+NAT_ID = "nat-0123456789abcdef0"
+ENDPOINT_ID = "vpce-0123456789abcdef0"
+INSTANCE_ID = "i-0123456789abcdef0"
+NAT_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:natgateway/{NAT_ID}"
+ENDPOINT_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:vpc-endpoint/{ENDPOINT_ID}"
+INSTANCE_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{INSTANCE_ID}"
+ID_FLAGS = ("--nat-gateway-ids", "--vpc-endpoint-ids", "--instance-ids")
+
+
+def _aws_ok(body: object) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(["aws"], 0, stdout=json.dumps(body), stderr="")
+
+
+def _aws_fail(stderr: str) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(["aws"], 254, stdout="", stderr=stderr)
+
+
+def _nat(state: str) -> subprocess.CompletedProcess:
+    return _aws_ok({"NatGateways": [{"NatGatewayId": NAT_ID, "State": state}]})
+
+
+def _endpoint(state: str) -> subprocess.CompletedProcess:
+    return _aws_ok({"VpcEndpoints": [{"VpcEndpointId": ENDPOINT_ID, "State": state}]})
+
+
+def _instance(state: str) -> subprocess.CompletedProcess:
+    return _aws_ok(_instances(state))
+
+
+def _instances(state: str) -> dict:
+    return {"Reservations": [{"Instances": [{"InstanceId": INSTANCE_ID, "State": {"Name": state}}]}]}
+
+
+INSTANCE_NOT_FOUND = _aws_fail(
+    "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances "
+    f"operation: The instance ID '{INSTANCE_ID}' does not exist"
+)
+NAT_NOT_FOUND = _aws_fail(
+    f"An error occurred (NatGatewayNotFound) when calling the DescribeNatGateways operation: {NAT_ID}"
+)
+ENDPOINT_NOT_FOUND = _aws_fail(
+    "An error occurred (InvalidVpcEndpointId.NotFound) when calling the DescribeVpcEndpoints "
+    f"operation: The VpcEndpoint Id '{ENDPOINT_ID}' does not exist"
+)
+
+
+class AwsRegionGuard(FakeGuard):
+    """FakeGuard's account reads, with the region's run resources read through the real AwsGuard."""
+
+    def run_resources(self, keys: object, exclude_bucket: str) -> list:
+        return guard_mod.AwsGuard("us-west-2").run_resources(keys, exclude_bucket)
+
+
+def _stale_region(
+    monkeypatch: pytest.MonkeyPatch,
+    arns: list[str],
+    described: dict[str, subprocess.CompletedProcess],
+    *,
+    expires_at: int,
+    listed: dict[str, object] | None = None,
+) -> list[list[str]]:
+    """Stand in for the aws CLI in a region whose tagging API lists `arns` as run-tagged.
+
+    `described` answers a describe call by the resource id it names. `listed` answers an
+    unfiltered ec2 describe call, keyed by its subcommand, and every other call answers an
+    empty region. Returns the calls made.
+    """
+    calls: list[list[str]] = []
+    tags = [{"Key": k, "Value": v} for k, v in cloud_run.run_tags("r-prev", expires_at).items()]
+    mappings = [{"ResourceARN": arn, "Tags": tags} for arn in arns]
+    unfiltered = listed or {}
+
+    def answer(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        if args[:2] == ["resourcegroupstaggingapi", "get-resources"]:
+            return _aws_ok({"ResourceTagMappingList": mappings})
+        for flag in ID_FLAGS:
+            if flag in args:
+                return described[args[args.index(flag) + 1]]
+        if args[0] == "ec2" and args[1] in unfiltered:
+            return _aws_ok(unfiltered[args[1]])
+        return _aws_ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", answer)
+    return calls
+
+
+# A deleted NAT gateway and a terminated instance stay in the unfiltered listing a while, which the
+# listers skip, so only the tagging API's hit reaches the guard.
+LISTED_DELETED_NAT = {
+    "describe-nat-gateways": {"NatGateways": [{"NatGatewayId": NAT_ID, "State": "deleted"}]}
+}
+LISTED_TERMINATED_INSTANCE = {"describe-instances": _instances("terminated")}
+GONE_FROM_EC2 = [
+    pytest.param(NAT_ARN, _nat("deleted"), LISTED_DELETED_NAT, id="nat-gateway-deleted"),
+    pytest.param(NAT_ARN, NAT_NOT_FOUND, None, id="nat-gateway-no-longer-listed"),
+    pytest.param(ENDPOINT_ARN, _endpoint("Deleted"), None, id="vpc-endpoint-deleted"),
+    pytest.param(ENDPOINT_ARN, ENDPOINT_NOT_FOUND, None, id="vpc-endpoint-not-found"),
+    pytest.param(INSTANCE_ARN, _instance("terminated"), LISTED_TERMINATED_INSTANCE, id="instance-terminated"),
+    pytest.param(INSTANCE_ARN, INSTANCE_NOT_FOUND, None, id="instance-not-found"),
+]
+
+
+@pytest.mark.parametrize(("arn", "answer", "listed"), GONE_FROM_EC2)
+def test_refusal_d_ignores_what_the_tagging_api_lists_after_ec2_deleted_it(
+    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess,
+    listed: dict[str, object] | None,
+) -> None:
+    """The tagging API lags a delete, and the run's expiry is still ahead, so (d) would call it unfinished."""
+    _stale_region(
+        monkeypatch, [arn], {arn.rsplit("/", 1)[-1]: answer}, expires_at=int(NOW) + 3600, listed=listed
+    )
+    report = _preflight(root, AwsRegionGuard())
+    assert report.ok, [c.detail for c in report.checks if not c.ok]
+
+
+@pytest.mark.parametrize(("arn", "answer", "listed"), GONE_FROM_EC2)
+def test_refusal_c_ignores_an_expired_resource_the_tagging_api_lists_after_ec2_deleted_it(
+    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess,
+    listed: dict[str, object] | None,
+) -> None:
+    """(c) sends the operator to a sweep that has no delete for a tagging-API hit, so it must not name one."""
+    _stale_region(
+        monkeypatch, [arn], {arn.rsplit("/", 1)[-1]: answer}, expires_at=int(NOW) - 60, listed=listed
+    )
+    report = _preflight(root, AwsRegionGuard())
+    assert report.ok, [c.detail for c in report.checks if not c.ok]
+
+
+@pytest.mark.parametrize(
+    ("arn", "answer", "name"),
+    [
+        pytest.param(NAT_ARN, _nat("available"), NAT_ID, id="nat-gateway-available"),
+        pytest.param(NAT_ARN, _nat("deleting"), NAT_ID, id="nat-gateway-still-deleting"),
+        pytest.param(ENDPOINT_ARN, _endpoint("Available"), ENDPOINT_ID, id="vpc-endpoint-available"),
+        pytest.param(ENDPOINT_ARN, _endpoint("Deleting"), ENDPOINT_ID, id="vpc-endpoint-still-deleting"),
+        pytest.param(INSTANCE_ARN, _instance("running"), INSTANCE_ID, id="instance-running"),
+        pytest.param(INSTANCE_ARN, _instance("shutting-down"), INSTANCE_ID, id="instance-shutting-down"),
+    ],
+)
+def test_refusal_d_still_refuses_a_tagged_resource_ec2_still_holds(
+    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess, name: str
+) -> None:
+    _stale_region(monkeypatch, [arn], {name: answer}, expires_at=int(NOW) + 3600)
+    report = _preflight(root, AwsRegionGuard())
+    assert _failed(report) == ["(d) unfinished runs"]
+    assert f"tagged:ec2 {name} (until 2026-10-08T13:00:00Z)" in _check(report, "(d) unfinished runs").detail
+
+
+@pytest.mark.parametrize("reason", ["UnauthorizedOperation", "RequestLimitExceeded"])
+def test_refusal_d_counts_a_resource_live_when_its_deletion_cannot_be_read(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, reason: str
+) -> None:
+    denied = _aws_fail(f"An error occurred ({reason}) when calling the DescribeNatGateways operation")
+    _stale_region(monkeypatch, [NAT_ARN], {NAT_ID: denied}, expires_at=int(NOW) + 3600)
+    report = _preflight(root, AwsRegionGuard())
+    assert _failed(report) == ["(d) unfinished runs"]
+    assert f"tagged:ec2 {NAT_ID}" in _check(report, "(d) unfinished runs").detail
+    assert reason in capsys.readouterr().err
+
+
+def test_a_run_tagged_resource_of_another_class_is_never_judged_gone(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _stale_region(
+        monkeypatch, [f"arn:aws:rds:us-west-2:{ACCOUNT}:db:run-db"], {}, expires_at=int(NOW) + 3600
+    )
+    assert _failed(_preflight(root, AwsRegionGuard())) == ["(d) unfinished runs"]
+    described_by_id = [call for call in calls if any(flag in call for flag in ID_FLAGS)]
+    assert described_by_id == []
+
+
 def test_a_second_leg_after_a_failed_destroy_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Leg 1's teardown failed, so its record and unexpired resources stay; leg 2 stops at preflight."""
     guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1})

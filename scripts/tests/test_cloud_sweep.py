@@ -166,6 +166,27 @@ def test_subnets_skip_default_vpc_subnets(monkeypatch: pytest.MonkeyPatch) -> No
     assert [r.id for r in found] == ["subnet-dfe"]
 
 
+def test_vpc_endpoints_skip_the_deleted_and_the_default_vpcs_in_either_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deleted endpoint is not a leftover, and the CLI spells its State capitalised."""
+    _mock_run(
+        monkeypatch,
+        _ok({"Vpcs": [{"VpcId": "vpc-default", "IsDefault": True}]}),  # _default_vpc_ids lookup
+        _ok(
+            {
+                "VpcEndpoints": [
+                    {"VpcEndpointId": "vpce-deleted", "VpcId": "vpc-dfe", "State": "Deleted", "Tags": DFE_TAGS},
+                    {"VpcEndpointId": "vpce-lower", "VpcId": "vpc-dfe", "State": "deleted", "Tags": DFE_TAGS},
+                    {"VpcEndpointId": "vpce-deleting", "VpcId": "vpc-dfe", "State": "Deleting", "Tags": DFE_TAGS},
+                    {"VpcEndpointId": "vpce-live", "VpcId": "vpc-dfe", "State": "Available", "Tags": DFE_TAGS},
+                    {"VpcEndpointId": "vpce-default", "VpcId": "vpc-default", "State": "Available", "Tags": []},
+                ]
+            }
+        ),
+    )
+    found = cloud_sweep.list_vpc_endpoints(REGION, TAG_FILTER)
+    assert [r.id for r in found] == ["vpce-deleting", "vpce-live"]
+
+
 def test_route_tables_skip_the_main_table(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(
         monkeypatch,
@@ -470,6 +491,125 @@ def test_a_vpc_endpoint_delete_waits_until_the_endpoint_is_gone(monkeypatch: pyt
     monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
     cloud_sweep._delete_vpc_endpoint(_resource("vpc-endpoint", "vpce-1", tagged=True), REGION)
     assert [c[1] for c in calls] == ["delete-vpc-endpoints", "describe-vpc-endpoints", "describe-vpc-endpoints"]
+
+
+def test_a_nat_gateway_delete_waits_until_the_gateway_is_deleting_or_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    responses = [
+        _ok({}),  # delete-nat-gateway
+        _ok({"NatGateways": [{"NatGatewayId": "nat-1", "State": "available"}]}),
+        _ok({"NatGateways": [{"NatGatewayId": "nat-1", "State": "deleting"}]}),
+    ]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    cloud_sweep._delete_nat_gateway(_resource("nat-gateway", "nat-1", tagged=True), REGION)
+    assert [c[1] for c in calls] == ["delete-nat-gateway", "describe-nat-gateways", "describe-nat-gateways"]
+
+
+def test_a_nat_gateway_delete_is_done_once_aws_no_longer_lists_the_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [_ok({}), _fail("An error occurred (NatGatewayNotFound) when calling the DescribeNatGateways operation")]
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda *_a, **_k: responses.pop(0))
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    cloud_sweep._delete_nat_gateway(_resource("nat-gateway", "nat-1", tagged=True), REGION)
+    assert responses == []
+
+
+# ---------------------------------------------------------------------------
+# A tagging-API hit the cloud has already deleted
+# ---------------------------------------------------------------------------
+
+ACCOUNT_ID = "000000000000"
+NAT_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:natgateway/nat-1"
+ENDPOINT_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:vpc-endpoint/vpce-1"
+INSTANCE_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:instance/i-1"
+NAT_NOT_FOUND = "An error occurred (NatGatewayNotFound) when calling the DescribeNatGateways operation: nat-1"
+ENDPOINT_NOT_FOUND = "An error occurred (InvalidVpcEndpointId.NotFound) when calling the DescribeVpcEndpoints operation"
+INSTANCE_NOT_FOUND = "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances operation"
+
+
+def _tagging_hit(arn: str, kind: str = "tagged:ec2") -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(kind=kind, id=arn, name=arn.rsplit("/", 1)[-1], created=None, tagged=True)
+
+
+def _nat(state: str) -> subprocess.CompletedProcess:
+    return _ok({"NatGateways": [{"NatGatewayId": "nat-1", "State": state}]})
+
+
+def _endpoint(state: str) -> subprocess.CompletedProcess:
+    return _ok({"VpcEndpoints": [{"VpcEndpointId": "vpce-1", "State": state}]})
+
+
+def _instance(state: str) -> subprocess.CompletedProcess:
+    return _ok({"Reservations": [{"Instances": [{"InstanceId": "i-1", "State": {"Name": state}}]}]})
+
+
+@pytest.mark.parametrize(
+    ("arn", "answer", "gone"),
+    [
+        pytest.param(NAT_ARN, _nat("deleted"), True, id="nat-gateway-deleted"),
+        pytest.param(NAT_ARN, _fail(NAT_NOT_FOUND), True, id="nat-gateway-not-found"),
+        pytest.param(NAT_ARN, _nat("deleting"), False, id="nat-gateway-deleting"),
+        pytest.param(NAT_ARN, _nat("available"), False, id="nat-gateway-available"),
+        pytest.param(NAT_ARN, _nat("pending"), False, id="nat-gateway-pending"),
+        pytest.param(ENDPOINT_ARN, _endpoint("Deleted"), True, id="vpc-endpoint-deleted"),
+        pytest.param(ENDPOINT_ARN, _fail(ENDPOINT_NOT_FOUND), True, id="vpc-endpoint-not-found"),
+        pytest.param(ENDPOINT_ARN, _endpoint("Deleting"), False, id="vpc-endpoint-deleting"),
+        pytest.param(ENDPOINT_ARN, _endpoint("Available"), False, id="vpc-endpoint-available"),
+        pytest.param(INSTANCE_ARN, _instance("terminated"), True, id="instance-terminated"),
+        pytest.param(INSTANCE_ARN, _fail(INSTANCE_NOT_FOUND), True, id="instance-not-found"),
+        pytest.param(INSTANCE_ARN, _instance("shutting-down"), False, id="instance-shutting-down"),
+        pytest.param(INSTANCE_ARN, _instance("stopped"), False, id="instance-stopped"),
+        pytest.param(INSTANCE_ARN, _instance("running"), False, id="instance-running"),
+        pytest.param(INSTANCE_ARN, _ok({"Reservations": []}), True, id="instance-no-longer-returned"),
+    ],
+)
+def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
+    monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess, gone: bool
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return answer
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(arn), REGION) is gone
+    (call,) = calls
+    assert arn.rsplit("/", 1)[-1] in call, "the describe call names the bare id"
+    assert arn not in call, "the ARN is not an id the describe calls accept"
+
+
+@pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN])
+def test_a_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
+    monkeypatch: pytest.MonkeyPatch, arn: str
+) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (UnauthorizedOperation) when calling the Describe operation"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="UnauthorizedOperation"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(arn), REGION)
+
+
+@pytest.mark.parametrize(
+    "hit",
+    [
+        pytest.param(_tagging_hit(f"arn:aws:rds:{REGION}:{ACCOUNT_ID}:db:run-db", "tagged:rds"), id="another-service"),
+        pytest.param(_tagging_hit(f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:volume/vol-1"), id="another-ec2-class"),
+        pytest.param(_tagging_hit("natgateway/nat-1"), id="not-an-arn"),
+        pytest.param(_tagging_hit(NAT_ARN, "nat-gateway"), id="a-lister-resource"),
+    ],
+)
+def test_a_hit_with_no_gone_check_is_never_judged_gone(
+    monkeypatch: pytest.MonkeyPatch, hit: cloud_sweep.Resource
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("nothing is described for a class with no gone-check")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    assert cloud_sweep.tagging_hit_gone(hit, REGION) is False
 
 
 def test_a_route53_zone_loses_every_record_but_its_apex_soa_and_ns_before_the_zone(

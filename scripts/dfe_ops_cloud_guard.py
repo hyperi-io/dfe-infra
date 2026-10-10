@@ -38,6 +38,10 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
       from its dial, so applying the dial again stops on AlreadyExists after
       paying for part of a deployment.
 
+(c) and (d) leave out a NAT gateway, VPC endpoint or instance that EC2 reports
+deleted, terminated or not found, which the tagging API goes on listing for a
+while. One whose state cannot be read counts as present.
+
 It also refuses a dial whose tags.lifecycle is not ephemeral, because a
 persistent deployment's deletion protection would stop the teardown short.
 
@@ -371,12 +375,29 @@ class AwsGuard:
             raise GuardError(f"the credential's Expiration is not an ISO-8601 instant: {exc}") from exc
 
     def run_resources(self, keys: cloud_run.RunTagKeys, exclude_bucket: str) -> list:
-        """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside."""
+        """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside.
+
+        A NAT gateway, VPC endpoint or instance the tagging API still lists after EC2 deleted it is
+        not one.
+        """
         found = cloud_sweep.AwsProvider(self.region).collect({}, exclude_bucket, run_key=keys.run)
         return [
             r for r in found
-            if r.tags.get(keys.run) and not (r.kind == "s3-bucket" and r.id == exclude_bucket)
+            if r.tags.get(keys.run)
+            and not (r.kind == "s3-bucket" and r.id == exclude_bucket)
+            and not self._deleted(r)
         ]
+
+    def _deleted(self, resource: cloud_sweep.Resource) -> bool:
+        """Whether EC2 reports a tagging-API hit deleted; a reading that fails counts it present."""
+        try:
+            return cloud_sweep.tagging_hit_gone(resource, self.region)
+        except cloud_sweep.CloudSweepError as exc:
+            print(
+                f"could not confirm {resource.kind} {resource.name} is deleted, counting it live: {exc}",
+                file=sys.stderr,
+            )
+            return False
 
     def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
         """Every run record under the prefix; a record goes only when its run's destroy succeeds."""
