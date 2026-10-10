@@ -703,6 +703,8 @@ def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: s
                 login = ["--user", user, "--password", pw]
                 if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", login).returncode == 0:
                     return login
+        else:
+            unread = f"secret/{store} holds no password, "
     else:
         unread = f"secret/{store} unreadable ({_last_line(read.stderr) or 'kubectl failed'}), "
     if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", []).returncode == 0:
