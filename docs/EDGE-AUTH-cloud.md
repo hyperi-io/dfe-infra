@@ -27,7 +27,8 @@ One Gateway-wide SecurityPolicy, `dfe-edge-fence`, carries the rule. Envoy Gatew
 applies only the most specific SecurityPolicy to a route, so every route-level
 policy the chart renders restates it. The OIDC ones AND it with their group
 check. Ingest routes (`otel`, `receiver`) carry an explicit allow, since they are
-not web surfaces. A route another namespace attaches inherits the deny.
+not web surfaces, and so does the `:80` redirect, which serves nothing but a 301
+to the fenced https side. A route another namespace attaches inherits the deny.
 
 The load balancer's half fences ingest too. A sender outside the web list goes in
 `envoyGateway.service.loadBalancerSourceRanges`, and Envoy still holds the web
@@ -78,7 +79,7 @@ cert-manager's Pod Identity role (`tls.public`).
 
 ## What fails the render
 
-Five things fail the render rather than shipping a weaker edge:
+Six things fail the render rather than shipping a weaker edge:
 
 - **A public UI with no authentication.** Edge OIDC (`edgePolicy`, or
   `oidc.targetRoutes` naming the route, with a provider configured) counts,
@@ -87,6 +88,9 @@ Five things fail the render rather than shipping a weaker edge:
 - **`allowed_cidrs` with no `trusted_proxy_cidrs`.** Envoy would take the
   client address from the leftmost `X-Forwarded-For` entry, which the caller
   writes.
+- **An entry in either list that is not a CIDR range**, such as a bare address.
+  Envoy Gateway and the load balancer would refuse it at admission, failing the
+  whole gateway sync.
 - **`rate_limit.scope: global`**, which needs a Redis backend named in the
   EnvoyGateway install config.
 - **`waf.mode` other than `none`.** A WAF terminates TLS above Envoy, which

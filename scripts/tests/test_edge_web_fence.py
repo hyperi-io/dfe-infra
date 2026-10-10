@@ -246,6 +246,81 @@ def test_a_quoted_internet_facing_switch_is_refused_by_name() -> None:
     assert "envoyGateway.service.internetFacing is false (a string)" in out.stderr, out.stderr
 
 
+# --- two OIDC providers: one policy per public route -----------------------------
+PROVIDERS_TWO = [*PROVIDERS, {"name": "globex", "issuerUrl": "https://sso.example.org", "clientId": "dfe-globex"}]
+OIDC_TWO = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDERS_TWO)}")
+EVERYTHING_TWO = (*PUBLIC, *OIDC_TWO, *OTEL_ON, "--set", "exposure.infraUisExternal=true",
+                  "--set", "deployRepo.bundled=true", "--set", "ui.public.argocd=true")
+
+
+def public_policy(docs: list[dict], route: str) -> dict:
+    (found,) = [r for r in of_kind(docs, "HTTPRoute") if r["metadata"]["name"] == route]
+    (policy,) = route_policies(docs, found)
+    return policy
+
+
+@pytest.mark.parametrize("fence", [(), FENCE], ids=["no list", "list"])
+def test_two_providers_leave_every_web_route_one_policy_and_fenced(fence: tuple[str, ...]) -> None:
+    """effective() refuses a route carrying two policies, which is what one per provider was."""
+    docs = render("aws", *EVERYTHING_TWO, *fence)
+    want = [ALLOWED] if fence else []
+    for route in web_routes(docs):
+        rules = admitted(effective(docs, route))
+        assert all(cidrs == ALLOWED for cidrs in rules) if fence else rules == [], route["metadata"]["name"]
+        assert bool(rules) == bool(want), route["metadata"]["name"]
+
+
+def test_every_provider_stays_an_issuer_and_the_login_provider_owns_the_redirect() -> None:
+    docs = render("aws", *EVERYTHING_TWO, *FENCE, "--set", "oidc.loginProvider=globex")
+    for route in ("dfe-engine-public", "argocd-public"):
+        policy = public_policy(docs, route)
+        assert policy["metadata"]["name"] == f"dfe-public-oidc-globex-{route.removesuffix('-public')}"
+        assert policy["spec"]["oidc"]["clientID"] == "dfe-globex"
+        issuers = sorted(p["name"] for p in policy["spec"]["jwt"]["providers"])
+        assert issuers == ["acme", "globex"], (route, issuers)
+    rules = public_policy(docs, "argocd-public")["spec"]["authorization"]["rules"]
+    assert sorted(rule["principal"]["jwt"]["provider"] for rule in rules) == ["acme", "globex"]
+    for rule in rules:
+        assert rule["principal"]["clientCIDRs"] == ALLOWED
+        assert rule["principal"]["jwt"]["claims"][0]["name"] == "groups"
+
+
+# --- the :80 redirect is not fenced -----------------------------------------------
+@pytest.mark.parametrize("fence", [(), FENCE], ids=["no list", "list"])
+def test_the_http_redirect_answers_everyone_with_its_301(fence: tuple[str, ...]) -> None:
+    """It serves nothing but the move to https, where the fence holds."""
+    docs = render("aws", *fence)
+    (redirect,) = [r for r in of_kind(docs, "HTTPRoute") if r["metadata"]["name"] == REDIRECT]
+    (policy,) = route_policies(docs, redirect)
+    assert policy["spec"]["authorization"] == {"defaultAction": "Allow"}, policy
+    assert redirect["spec"]["rules"][0]["filters"][0]["type"] == "RequestRedirect"
+    assert "backendRefs" not in redirect["spec"]["rules"][0]
+
+
+# --- a malformed entry fails the render, not the sync ------------------------------
+@pytest.mark.parametrize("entry", [
+    "203.0.113.7", "203.0.113.7/33", "300.1.1.1/32", "203.0.113.0/24junk",
+    "2001:db8::/129", "2001:db8::", "fe80::1%eth0/64", "not-a-cidr",
+])
+def test_a_malformed_allow_list_entry_is_refused_by_name(entry: str) -> None:
+    out = helm("aws", *allow(f"198.51.100.0/24,{entry}"))
+    assert out.returncode != 0, f"{entry} rendered"
+    assert f'ui.allowed_cidrs carries "{entry}", which is not a CIDR range' in out.stderr, out.stderr
+
+
+def test_a_malformed_trusted_proxy_entry_is_refused_by_name() -> None:
+    out = helm("onprem", "--set", "ui.allowed_cidrs=198.51.100.0/24", "--set", "ui.trusted_proxy_cidrs=10.0.0.1")
+    assert out.returncode != 0, "a bare trusted proxy address rendered"
+    assert 'ui.trusted_proxy_cidrs carries "10.0.0.1"' in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize("entry", [
+    "203.0.113.7/32", "10.0.0.0/8", "0.0.0.0/0", "2001:db8::/64", "::/0", "::ffff:203.0.113.7/128",
+])
+def test_every_cidr_shape_envoy_gateway_accepts_renders(entry: str) -> None:
+    assert helm("aws", *allow(entry)).returncode == 0, entry
+
+
 # --- HyperDX beside the console ---------------------------------------------------
 @pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
 def test_hyperdx_renders_wherever_the_console_does(flavour: str) -> None:

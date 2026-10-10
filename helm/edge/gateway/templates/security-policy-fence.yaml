@@ -21,6 +21,24 @@ spec:
       kind: Gateway
       name: {{ .Values.gateway.name }}
   {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+---
+# The :80 redirect sends every caller to https and serves nothing itself, so a
+# 403 here would hide the move to TLS and protect nothing: the fence above holds
+# the https side.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ .Values.gateway.name }}-http-redirect-open
+  namespace: {{ .Values.gateway.namespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ .Values.gateway.name }}-http-redirect
+  authorization:
+    defaultAction: Allow
 {{- range $key := include "envoy-gateway-config.ingestRoutes" (dict "ctx" $) | fromJsonArray }}
 {{- $r := index $.Values.routes $key }}
 ---

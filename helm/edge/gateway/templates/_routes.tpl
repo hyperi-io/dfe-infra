@@ -305,6 +305,17 @@ deny
 {{- end -}}
 {{- end -}}
 
+{{- /* Envoy Gateway's own CIDR alternatives (shared_types.go at v1.9.2),
+       anchored, with the prefix length bounded by the family. Its zone-indexed
+       fe80 form is left out: the Service API refuses a zone in a source range. */ -}}
+{{- define "envoy-gateway-config.cidrValid" -}}
+{{- $v4 := `^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/([0-9]|[12][0-9]|3[0-2])$` -}}
+{{- $v6 := `^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$` -}}
+{{- if or (regexMatch $v4 .) (regexMatch $v6 .) -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- /* No rules with an empty list, so the policy refuses every request. */ -}}
 {{- define "envoy-gateway-config.fenceAuthorization" -}}
 {{- $block := dict "defaultAction" "Deny" -}}
@@ -512,6 +523,17 @@ deny
        CIDR filter admits anyone who sends the right header. */ -}}
 {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" $ui.allowed_cidrs) | fromJsonArray -}}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" $ui.trusted_proxy_cidrs) | fromJsonArray -}}
+{{- /* Envoy Gateway's CIDR type (api/v1alpha1/shared_types.go at v1.9.2) and
+       the Service's loadBalancerSourceRanges both refuse an entry with no
+       prefix length, but only at admission, where it surfaces as an Argo
+       SyncFailed on the whole edge. Same shape, anchored, checked here. */ -}}
+{{- range $field, $list := dict "ui.allowed_cidrs" $allowed "ui.trusted_proxy_cidrs" $trusted -}}
+{{- range $entry := $list -}}
+{{- if not (include "envoy-gateway-config.cidrValid" $entry) -}}
+{{- fail (printf "%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $field $entry) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if and $allowed (not $trusted) -}}
 {{- fail "ui.allowed_cidrs is set and ui.trusted_proxy_cidrs is empty -- Envoy would take the client address from the leftmost X-Forwarded-For entry, which the caller writes, so the filter would admit anyone who sends the right header. Name the load balancer's subnet CIDRs (and any CDN in front of it)" -}}
 {{- end -}}

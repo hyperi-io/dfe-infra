@@ -34,6 +34,12 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 | ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. On Kubernetes the apps reach ClickHouse over verified TLS (below). dfe-docker's `docs/operating.md` covers the Compose bindings. |
 | The collector's OTLP ingress | **Off by default. When a deployment sets `otel.ingress.enabled`: reachable from outside the cluster, authenticated** | `otel.<domain>` on the gateway reaches a second OTLP/HTTP receiver that refuses any request without the bearer token from the deployment's secret store. The check is the collector's own (`bearertokenauth`), so it holds however that port is reached. Before the token is checked, the collector's HTTP server and the extension parse an outsider's request: on such a deployment, grade an advisory in either as reachable. The in-cluster receiver on 4317/4318 stays unauthenticated and no route publishes it. |
 
+## The gateway's trusted proxy ranges
+
+On AWS the public listeners (`https-public-*`) believe `X-Forwarded-For` from the public subnets' ranges (`terraform/modules/edge/aws/outputs.tf`, `gateway_trusted_proxy_cidrs`). The tunnel forwarder sits in a public subnet (`variables.tf`, `network`), so a compromised forwarder, or any host there, can claim a listed address and pass the CIDR filter on those listeners. The internal listener sets no client-IP detection and reads the TCP peer, so it is not affected.
+
+Recommendation: trust no forwarded header unless a CDN the deployer names is in front. Envoy Gateway v1.9.2 reads the TCP peer on a listener with no client-IP detection, and the NLB's IP targets with `preserve_client_ip` already deliver the real client as that peer. That means dropping the public subnets from the trusted ranges, and dropping the chart's refusal of an allow-list without them, as one change.
+
 ## The edge tunnel
 
 culvert is off unless a deployment asks for it. On-prem it is a public LoadBalancer on UDP 51820 (WireGuard) and 1194 (OpenVPN). On AWS it is a NodePort (31820, 31194) behind the tunnel forwarder's address or one the deployer brings. Empty source ranges mean every address. `openvpn-tcp` and `oauth2-udp` exist only where `listeners` adds them.
