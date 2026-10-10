@@ -90,6 +90,8 @@ helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-hel
 
 `--reset-then-reuse-values` starts from the new chart's defaults and applies the values `bootstrap.sh` set on the release over them. `apply` never runs it. The walk carries on, and a run with anything still pending ends `NOT complete` with exit 1. Run the printed commands, then re-run `apply` with `--from <stack>` to confirm.
 
+After the walk `apply` reads every other bootstrap pin of the target stack the same way, marked `(unchanged by this upgrade)`. A release an earlier upgrade left on its old chart therefore keeps a later upgrade from reporting OK, even when that later plan moves no bootstrap pin.
+
 An Argo CD that `bootstrap/argocd_release.py` does not recognise as `bootstrap.sh`'s own reads `[ADOPTED]` and is left to its owner, the same call `bootstrap.sh` makes before it upgrades Argo. Nothing tells a cert-manager or external-secrets `bootstrap.sh` installed from one it adopted, so their command says to run it only where this deploy installed them. A `bootstrap.sh` re-run skips a running install of either unless `DFE_FORCE_INSTALL=true`.
 
 ### Onto the thin charts

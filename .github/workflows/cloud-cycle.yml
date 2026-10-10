@@ -11,8 +11,8 @@
 #
 # Everything deployment-specific comes from the e2e-runner environment, never
 # from this file: the runner role, the region, the dial and the bootstrap env
-# file. A copy of this repository without that environment refuses at the first
-# step and creates nothing.
+# file. A copy of this repository without that environment refuses before it
+# creates anything.
 name: Cloud cycle
 
 on:
@@ -83,6 +83,27 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # First, because a mask covers only the output written after the step that registers it. The runner
+      # prints a step's env before the step runs, so this step's own header is the one line that still shows the role.
+      - name: Mask the AWS account and the role
+        id: mask
+        env:
+          DFE_CYCLE_AWS_ROLE: ${{ vars.DFE_CYCLE_AWS_ROLE }}
+        run: |
+          # An unset role is named by the next step, beside every other gap.
+          if [[ -z "${DFE_CYCLE_AWS_ROLE:-}" ]]; then
+            exit 0
+          fi
+          echo "::add-mask::${DFE_CYCLE_AWS_ROLE}"
+          # The account is the role ARN's own, so allowed-account-ids needs no variable of its own.
+          if [[ ! "${DFE_CYCLE_AWS_ROLE}" =~ ^arn:aws[a-z-]*:iam::([0-9]{12}):role/.+$ ]]; then
+            echo "::error::DFE_CYCLE_AWS_ROLE is not an IAM role ARN. Nothing was created."
+            exit 1
+          fi
+          account="${BASH_REMATCH[1]}"
+          echo "::add-mask::${account}"
+          echo "account=${account}" >> "$GITHUB_OUTPUT"
+
       - name: Refuse unless the e2e-runner environment is configured
         id: gate
         env:
@@ -107,14 +128,6 @@ jobs:
             echo "::error::cloud cycle not configured: the e2e-runner environment does not set ${missing[*]}. Nothing was created."
             exit 1
           fi
-          # The account is the role ARN's own, so allowed-account-ids needs no variable of its own.
-          if [[ ! "${DFE_CYCLE_AWS_ROLE}" =~ ^arn:aws[a-z-]*:iam::([0-9]{12}):role/.+$ ]]; then
-            echo "::error::DFE_CYCLE_AWS_ROLE is not an IAM role ARN. Nothing was created."
-            exit 1
-          fi
-          account="${BASH_REMATCH[1]}"
-          echo "::add-mask::${account}"
-          echo "account=${account}" >> "$GITHUB_OUTPUT"
 
       # Two services run by different operators must agree, so neither one alone
       # decides who may reach the cluster's API.
@@ -248,7 +261,7 @@ jobs:
           # A first-hop web identity session may last the role's full maximum, where a chained one is held to 1h.
           role-duration-seconds: ${{ env.RUNNER_SESSION_SECONDS }}
           aws-region: ${{ vars.DFE_CYCLE_AWS_REGION }}
-          allowed-account-ids: ${{ steps.gate.outputs.account }}
+          allowed-account-ids: ${{ steps.mask.outputs.account }}
           mask-aws-account-id: true
 
       - name: Run the preflight only

@@ -10,6 +10,10 @@
 #                      Application stays until the patch lands
 #   argocd-held        the argocd namespace outlives its delete timeout, and
 #                      this file is the condition message it carries
+#   call-seconds       how long every kubectl call takes, in seconds of the clock
+# The clock is a file: `date +%s` reads it, sleep and each kubectl call advance
+# it, and trace.log stamps every kubectl call with it, so a test sees how long
+# a wait ran without waiting.
 # No cluster is involved.
 
 setup() {
@@ -18,9 +22,16 @@ setup() {
     STUB_DIR="${BATS_TEST_TMPDIR}/stub"
     mkdir -p "${STUB_DIR}/bin"
     : > "${STUB_DIR}/kubectl.log"
+    : > "${STUB_DIR}/trace.log"
+    echo 1000000 > "${STUB_DIR}/clock"
     cat > "${STUB_DIR}/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_DIR}/kubectl.log"
+now="$(cat "${STUB_DIR}/clock")"
+printf '%s %s\n' "${now}" "$*" >> "${STUB_DIR}/trace.log"
+if [[ -f "${STUB_DIR}/call-seconds" ]]; then
+    echo $((now + $(cat "${STUB_DIR}/call-seconds"))) > "${STUB_DIR}/clock"
+fi
 case "$*" in
     "-n keda get pods "*)
         if [[ -f "${STUB_DIR}/pods-unreadable" ]]; then
@@ -53,10 +64,21 @@ case "$*" in
 esac
 exit 0
 STUB
-    # The settle pauses and the Helm uninstalls are not under test.
-    for name in sleep helm; do
-        printf '#!/bin/sh\nexit 0\n' > "${STUB_DIR}/bin/${name}"
-    done
+    # The Helm uninstalls are not under test.
+    printf '#!/bin/sh\nexit 0\n' > "${STUB_DIR}/bin/helm"
+    # A pause costs the clock what it asks for and no real time.
+    cat > "${STUB_DIR}/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+echo $(($(cat "${STUB_DIR}/clock") + ${1%%.*})) > "${STUB_DIR}/clock"
+STUB
+    cat > "${STUB_DIR}/bin/date" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "+%s" ]]; then
+    cat "${STUB_DIR}/clock"
+else
+    exec /bin/date "$@"
+fi
+STUB
     chmod +x "${STUB_DIR}/bin/"*
     export STUB_DIR
     export PATH="${STUB_DIR}/bin:${PATH}"
@@ -192,4 +214,48 @@ log() {
     [ "${scaledobject}" -lt "${applications}" ]
     [ "${applications}" -lt "${backstop}" ]
     [ ! -s "${STUB_DIR}/kubectl.log" ]
+}
+
+# Seconds of the clock the Application wait ran: from its first kubectl call to
+# the last settle pause before step 3, which is the 10 the script sleeps between.
+applications_wait_seconds() {
+    local first_poll step3
+    first_poll="$(awk '$3 == "keda" { print $1; exit }' "${STUB_DIR}/trace.log")"
+    step3="$(awk '$3 == "strimzi" && $4 == "delete" { print $1; exit }' "${STUB_DIR}/trace.log")"
+    [ -n "${first_poll}" ]
+    [ -n "${step3}" ]
+    echo $((step3 - 10 - first_poll))
+}
+
+@test "the Application wait ends at its 300s budget when every kubectl call takes time" {
+    echo 2 > "${STUB_DIR}/call-seconds"
+    stick '["example.com/other"]'
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local waited
+    waited="$(applications_wait_seconds)"
+    # A poll is five calls of 2s, and the one under way at the deadline finishes.
+    [ "${waited}" -ge 300 ]
+    [ "${waited}" -le 310 ]
+    [[ "${output}" =~ WARN:\ ArgoCD\ Applications\ still\ present\ after\ ([0-9]+)s ]]
+    [ "${BASH_REMATCH[1]}" -eq "${waited}" ]
+}
+
+@test "quick polls still get the whole 300s budget" {
+    stick '["example.com/other"]'
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local waited
+    waited="$(applications_wait_seconds)"
+    [ "${waited}" -ge 300 ]
+    [ "${waited}" -le 305 ]
+}
+
+@test "Applications that are gone end the wait at the first poll, however slow the calls" {
+    echo 40 > "${STUB_DIR}/call-seconds"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    # One operator check per poll.
+    [ "$(grep -c -- '^-n keda get pods' "${STUB_DIR}/kubectl.log")" -eq 1 ]
+    [[ "${output}" != *"WARN"* ]]
 }

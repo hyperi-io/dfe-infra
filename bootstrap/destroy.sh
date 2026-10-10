@@ -11,6 +11,8 @@ set -euo pipefail
 DRY_RUN="${DFE_DRY_RUN:-false}"
 # The most any one delete below waits; kubectl's own default is to wait forever.
 DELETE_TIMEOUT="120s"
+# Seconds step 1 waits for the Argo CD Applications to go.
+APPLICATIONS_WAIT=300
 run() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "[DRY-RUN] $*"
@@ -46,18 +48,25 @@ clear_stranded_keda_finalizers() {
     done
 }
 
-# Bounded, so an Application held up by anything else cannot stall the teardown.
+# Bounded by the clock, kubectl calls included, so an Application held up by
+# anything else cannot stall the teardown. The poll under way at the deadline
+# finishes, so the wait ends within one poll of APPLICATIONS_WAIT.
 await_applications_gone() {
-    local waited=0
-    while (( waited < 300 )); do
+    local started now deadline nap
+    started="$(date +%s)"
+    deadline=$((started + APPLICATIONS_WAIT))
+    while :; do
         clear_stranded_keda_finalizers
         if [[ -z "$(kubectl -n argocd get applications.argoproj.io -o name 2>/dev/null)" ]]; then
             return 0
         fi
-        sleep 5
-        waited=$((waited + 5))
+        now="$(date +%s)"
+        (( now < deadline )) || break
+        nap=$((deadline - now))
+        (( nap <= 5 )) || nap=5
+        sleep "${nap}"
     done
-    echo "  WARN: ArgoCD Applications still present after ${waited}s, continuing"
+    echo "  WARN: ArgoCD Applications still present after $((now - started))s, continuing"
 }
 
 # Nothing clears resources-finalizer.argocd.argoproj.io once Argo is gone, and an

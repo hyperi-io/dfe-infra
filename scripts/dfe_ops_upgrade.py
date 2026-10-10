@@ -96,7 +96,10 @@ TO stacks' pins, keyed by upgrade-order.yaml's declared order -- the same file
                pin changes nothing on the cluster. After such a stage apply
                reads the chart version each release runs, prints [DONE] where
                it matches the pin, and otherwise [PENDING] with the helm upgrade
-               that moves it. It never runs that upgrade. An Argo CD that
+               that moves it. It never runs that upgrade. After the walk it
+               reads every other bootstrap pin of the target stack the same
+               way, so one an earlier upgrade left uninstalled still keeps the
+               run from reporting OK. An Argo CD that
                bootstrap/argocd_release.py does not recognise as bootstrap.sh's
                own reads [ADOPTED] and is left to its owner. A run with anything
                still pending ends NOT complete with exit 1, and a re-run with
@@ -1525,7 +1528,10 @@ def check_bootstrap_move(kubeconfig: str | None, move: Move) -> tuple[str, str]:
     A PENDING line ends with the command that moves the release. Argo's owner is
     decided first, so a host's Argo reads ADOPTED rather than PENDING.
     """
-    moved = f"{move.step.key} {move.old} -> {move.new}"
+    moved = (
+        f"{move.step.key} {move.old} -> {move.new}" if move.old != move.new
+        else f"{move.step.key} {move.new} (unchanged by this upgrade)"
+    )
     release = BOOTSTRAP_RELEASES.get(move.step.key)
     if release is None:
         return BOOTSTRAP_PENDING, (
@@ -3067,19 +3073,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 return _stage_failed(stage_index, "Argo did not converge", stage_moves)
 
         for move in stage_moves:
-            if not move.step.key.startswith(BOOTSTRAP_PREFIX):
-                continue
-            release = BOOTSTRAP_RELEASES.get(move.step.key)
-            if args.dry_run:
-                command = (
-                    bootstrap_upgrade_command(release, move.new, args.kubeconfig)
-                    if release else "re-run bootstrap/bootstrap.sh"
-                )
-                emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
-                continue
-            state, detail = check_bootstrap_move(args.kubeconfig, move)
-            print(f"  [{state}] {detail}", file=sys.stderr)
-            if state == BOOTSTRAP_PENDING:
+            if move.step.key.startswith(BOOTSTRAP_PREFIX) and _bootstrap_pending(args, move, emit):
                 bootstrap_pending.append(move.step.key)
 
         if stage == chart_stage:
@@ -3141,6 +3135,20 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 if not ok:
                     return _stage_failed(stage_index, "the metadata version did not move", stage_moves)
 
+    # A pin this plan does not move can still be one an earlier upgrade left uninstalled.
+    walked = {move.step.key for _stage, stage_moves in walk for move in stage_moves}
+    from_flat, to_flat = flatten_stack(from_pins), flatten_stack(to_pins)
+    held = [
+        Move(step=step, old=from_flat.get(step.key) or "(absent)", new=to_flat[step.key])
+        for step in steps
+        if step.key.startswith(BOOTSTRAP_PREFIX) and step.key not in walked and to_flat.get(step.key)
+    ]
+    if held:
+        print("\n=== bootstrap releases this plan does not move ===", file=sys.stderr)
+    for move in held:
+        if _bootstrap_pending(args, move, emit):
+            bootstrap_pending.append(move.step.key)
+
     if args.dry_run:
         print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)
         return EXIT_OK
@@ -3148,6 +3156,21 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         return _report_bootstrap_pending(bootstrap_pending, from_name, to_name)
     print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))", file=sys.stderr)
     return EXIT_OK
+
+
+def _bootstrap_pending(args: argparse.Namespace, move: Move, emit: Callable[[str], None]) -> bool:
+    """Whether the cluster is not shown running a bootstrap pin; a dry run only names the read and the command."""
+    if args.dry_run:
+        release = BOOTSTRAP_RELEASES.get(move.step.key)
+        command = (
+            bootstrap_upgrade_command(release, move.new, args.kubeconfig)
+            if release else "re-run bootstrap/bootstrap.sh"
+        )
+        emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
+        return False
+    state, detail = check_bootstrap_move(args.kubeconfig, move)
+    print(f"  [{state}] {detail}", file=sys.stderr)
+    return state == BOOTSTRAP_PENDING
 
 
 def _report_bootstrap_pending(pending: list[str], from_name: str, to_name: str) -> int:
