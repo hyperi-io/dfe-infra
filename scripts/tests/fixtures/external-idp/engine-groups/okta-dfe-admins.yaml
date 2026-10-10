@@ -1,0 +1,6 @@
+description: Synthetic fixture group, admin role
+roles:
+- admin
+scope: system
+source_id: dfe-admins
+source_provider: okta

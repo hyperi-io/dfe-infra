@@ -1,0 +1,9 @@
+# Synthetic fixture group: org-scoped, block list indented under its key.
+description: 'Synthetic fixture group, org viewer'
+roles:
+  - org_viewer
+org_ids:
+  - test_org
+scope: "org:test_org"
+source_id: dfe-test-org-viewers
+source_provider: okta

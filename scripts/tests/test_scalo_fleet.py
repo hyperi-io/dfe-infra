@@ -41,7 +41,6 @@ _SPEC.loader.exec_module(sf)
 from dfe_suite.landing import dispatch_release
 from dfe_suite.rebuild import (
     _check_unoptimized_caller,
-    _drift_filter,
     _gate_exclusions,
     _gate_features,
 )
@@ -122,43 +121,6 @@ def _fake_bin(
     script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     script.chmod(0o755)
     return script
-
-
-def _emitting_cargo(
-    directory: Path,
-    chart: dict[str, str],
-    *,
-    nextest_status: int = 0,
-    spelling: str = "emit-chart",
-) -> None:
-    """A cargo stand-in whose ``<spelling> DIR`` writes ``chart`` into DIR.
-
-    The same argv log as ``_fake_bin``. ``emit-dockerfile`` prints a Dockerfile,
-    ``nextest run`` exits ``nextest_status``, and every other call succeeds
-    without writing a chart, so the other chart spellings produce nothing.
-
-    Args:
-        directory: Scratch directory that is on the front of PATH.
-        chart: Relative path -> content of every file the generator writes.
-        nextest_status: The exit code of a ``cargo nextest run``.
-        spelling: The one chart-emit form the app answers, e.g. ``--emit-helm``.
-    """
-    lines = [
-        "#!/bin/sh",
-        f'printf "%s\\n" "$@" >> "{directory / "cargo.argv"}"',
-        'for last in "$@"; do :; done',
-        'case " $* " in',
-        f'  *" nextest run "*) exit {nextest_status} ;;',
-        "  *\" emit-dockerfile \"*) echo 'FROM scratch'; exit 0 ;;",
-        f'  *" {spelling} "*)',
-        '    mkdir -p "$last/templates"',
-    ]
-    for rel, body in chart.items():
-        lines.extend([f'    cat > "$last/{rel}" <<\'FAKE_EOF\'', body, "FAKE_EOF"])
-    lines.extend(["    exit 0 ;;", "esac", "exit 0"])
-    script = directory / "cargo"
-    script.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-    script.chmod(0o755)
 
 
 def _fake_argv(directory: Path, name: str) -> list[str]:
@@ -536,388 +498,8 @@ class FollowReleaseTests(OnPathTestCase):
         assert "SHIPPED: scalo 2.29.17 -> 2.29.18" in buffer.getvalue()
 
 
-class EmitChartTests(OnPathTestCase):
-    """A chart the app's own gate tests is maintained, not stale (#84)."""
-
-    def setUp(self) -> None:
-        # PATH and the failing `cargo` stand-in (no app answers emit-chart)
-        # come from the base class, which registers its cleanup before it
-        # touches the environment.
-        super().setUp()
-        repo_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-chart-")
-        self.addCleanup(repo_tmp.cleanup)
-        self.repo = Path(repo_tmp.name)
-
-    def _chart(self) -> None:
-        chart = self.repo / "chart"
-        chart.mkdir()
-        (chart / "Chart.yaml").write_text("name: app\n", encoding="utf-8")
-
-    def _test_file(self, relative: str, body: str) -> None:
-        path = self.repo / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
-
-    def test_no_chart_directory_is_simply_skipped(self) -> None:
-        sf._emit_chart(self.repo, "dfe-archiver")
-
-    def test_a_contract_test_file_covers_the_chart(self) -> None:
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        sf._emit_chart(self.repo, "dfe-loader")
-
-    def test_a_contract_test_function_covers_the_chart(self) -> None:
-        self._chart()
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn helm_contract_values_match_defaults() {}\n",
-        )
-        sf._emit_chart(self.repo, "dfe-fetcher")
-
-    def test_a_chart_with_neither_an_emitter_nor_a_gate_still_fails(self) -> None:
-        self._chart()
-        self._test_file("tests/integration/deployment.rs", "#[test]\nfn other() {}\n")
-        with pytest.raises(sf.FleetError) as caught:
-            sf._emit_chart(self.repo, "dfe-receiver")
-        message = str(caught.value)
-        assert "helm_contract" in message
-        assert "--no-chart" in message
-
-    def test_the_committed_chart_is_left_untouched_by_the_gate_path(self) -> None:
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        sf._emit_chart(self.repo, "dfe-loader")
-        assert (self.repo / "chart" / "Chart.yaml").read_text(encoding="utf-8") == "name: app\n"
-
-    def test_a_module_declaration_in_src_is_a_gate(self) -> None:
-        # dfe-loader's shape: the suite declares the module rather than naming
-        # the file after it.
-        self._chart()
-        self._test_file("src/lib.rs", "#[cfg(test)]\nmod helm_contract;\n")
-        sf._emit_chart(self.repo, "dfe-loader")
-
-    def test_a_comment_mentioning_the_contract_is_not_a_gate(self) -> None:
-        # "TODO: add a helm_contract test" is the ABSENCE of the gate.
-        self._chart()
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn other() {}\n// TODO: add a helm_contract test\n",
-        )
-        with pytest.raises(sf.FleetError) as caught:
-            sf._emit_chart(self.repo, "dfe-receiver")
-        assert "helm_contract" in str(caught.value)
-
-    def test_a_gated_chart_never_runs_the_in_place_emit(self) -> None:
-        # The in-place form overwrites the committed chart as it runs, so a
-        # chart its drift tests already check only ever sees the scratch forms.
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        sf._emit_chart(self.repo, "dfe-loader")
-        argv = _fake_argv(self.bindir, "cargo")
-        emits = [i for i, arg in enumerate(argv) if arg in ("emit-chart", "--emit-chart")]
-        assert emits
-        for i in emits:
-            assert i + 1 < len(argv)
-            assert argv[i + 1].startswith("/")
-
-    def test_no_tests_runs_the_very_gate_the_chart_was_deferred_to(self) -> None:
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        _fake_bin(self.bindir, "cargo", status=0)
-        _fake_bin(self.bindir, "cargo-nextest", status=0)
-        sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
-        argv = _fake_argv(self.bindir, "cargo")
-        assert "nextest" in argv
-        assert argv[argv.index("-E") + 1] == "test(/helm_contract/)"
-
-    def test_a_failing_contract_test_stops_the_rebuild(self) -> None:
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo itself fails
-        with pytest.raises(sf.FleetError):
-            sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
-
-    def test_a_failing_drift_test_names_the_exact_command_it_ran(self) -> None:
-        # The gate's feature flags are the operator's rerun, so the message
-        # carries the argv as run rather than a --all-features that was not.
-        self._chart()
-        self._test_file("tests/integration/helm_contract.rs", "// values sync\n")
-        _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo itself fails
-        features = ["--no-default-features", "--features", "app/db,app/default"]
-        with pytest.raises(sf.FleetError) as caught:
-            sf._emit_chart(self.repo, "dfe-app", run_drift_tests=True, features=features)
-        assert (
-            "Rerun them: cargo nextest run --workspace --no-default-features "
-            "--features app/db,app/default -E 'test(/helm_contract/)'"
-        ) in str(caught.value)
-        argv = _fake_argv(self.bindir, "cargo")
-        assert _contains(argv, ["nextest", "run", "--workspace", *features, "-E"]) != -1
-        assert "--all-features" not in argv
-
-    def test_no_tests_runs_a_committed_chart_matches_the_generator_test(self) -> None:
-        # dfe-loader's shape: the full-chart drift test sits OUTSIDE
-        # `mod helm_contract`, so a helm_contract-only gate passed a stale chart.
-        self._chart()
-        self._test_file("tests/integration/mod.rs", "mod deployment;\nmod helm_contract;\n")
-        self._test_file("tests/integration/helm_contract.rs", "#[test]\nfn values() {}\n")
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
-        )
-        _fake_bin(self.bindir, "cargo", status=0)
-        _fake_bin(self.bindir, "cargo-nextest", status=0)
-        sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
-        argv = _fake_argv(self.bindir, "cargo")
-        expression = argv[argv.index("-E") + 1]
-        assert expression == "test(/committed_chart_matches_the_generator|helm_contract/)"
-
-    def test_a_stale_chart_fails_the_no_tests_gate_and_names_the_test(self) -> None:
-        self._chart()
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
-        )
-        _fake_bin(self.bindir, "cargo-nextest", status=0)  # cargo, and so nextest, fails
-        with pytest.raises(sf.FleetError) as caught:
-            sf._emit_chart(self.repo, "dfe-loader", run_drift_tests=True)
-        assert "committed_chart_matches_the_generator" in str(caught.value)
-
-    def test_every_fleet_drift_test_name_is_selected(self) -> None:
-        # One per shape the fleet uses, including scalo's own drift assertion
-        # under a name that matches none of the others.
-        self._chart()
-        self._test_file(
-            "crates/fetcher/src/deployment.rs",
-            "    #[test]\n    fn checked_in_chart_matches_generated() {}\n",
-        )
-        self._test_file(
-            "src/deployment.rs",
-            "#[test]\nfn checked_in_chart_matches_generate_chart() {}\n"
-            "#[test]\nfn the_chart_config_block_matches_the_contract() {}\n"
-            "#[test]\nfn chart_is_current() {\n"
-            "    scalo::deployment::assert_no_chart_drift(&contract(), &chart, &[]);\n}\n",
-        )
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "#[tokio::test]\nasync fn checked_in_keda_scaledobject_survives_emit_chart() {}\n",
-        )
-        found = sf._chart_drift_tests(self.repo)
-        assert set(found) == {
-            "checked_in_chart_matches_generated",
-            "checked_in_chart_matches_generate_chart",
-            "the_chart_config_block_matches_the_contract",
-            "chart_is_current",
-            "checked_in_keda_scaledobject_survives_emit_chart",
-        }
-
-    def test_an_integration_test_file_is_selected_as_a_whole_binary(self) -> None:
-        # Its own test names need not carry the file's, and nextest refuses a
-        # binary() that names no binary, so only a real tests/<name>.rs gets one.
-        self._chart()
-        self._test_file("tests/helm_contract.rs", "#[test]\nfn values_sync() {}\n")
-        self._test_file("tests/integration/committed_chart_matches_the_generator.rs", "\n")
-        found = sf._chart_drift_tests(self.repo)
-        expression = _drift_filter(found)
-        assert expression == (
-            "test(/committed_chart_matches_the_generator|helm_contract/)"
-            " | binary(=helm_contract)"
-        )
-
-    def test_a_chart_patch_named_in_a_comment_is_not_a_hand_fix(self) -> None:
-        # dfe-transform-vrl's shape: the doc comment names ChartPatch, the call
-        # passes none.
-        self._test_file(
-            "src/deployment.rs",
-            "    /// A hand fix goes in as a pinned `ChartPatch`, never an exempt file.\n"
-            "    // HAND_FIXED would be the wrong shape here.\n"
-            "    fn test_committed_chart_matches_the_generator() {\n"
-            "        scalo::deployment::assert_no_chart_drift(&contract(), &chart, &[]);\n"
-            "    }\n",
-        )
-        assert sf._hand_fix_markers(self.repo) == []
-
-    def test_a_hand_fixed_list_and_a_chart_patch_are_hand_fixes(self) -> None:
-        self._test_file(
-            "tests/integration/deployment.rs",
-            "// the exemptions\n    const HAND_FIXED: &[&str] = &[\"values.yaml\"];\n",
-        )
-        self._test_file(
-            "src/deployment.rs",
-            "let patches = [ChartPatch::new(\"templates/x.yaml\", \"a\", \"b\")];\n",
-        )
-        assert sorted(sf._hand_fix_markers(self.repo)) == [
-            "src/deployment.rs:1",
-            "tests/integration/deployment.rs:2",
-        ]
-
-
-class ChartRegenerationTests(OnPathTestCase):
-    """A fresh emit lands in scratch, and replaces only a chart that pins no hand fix."""
-
-    FRESH: ClassVar[dict[str, str]] = {
-        "Chart.yaml": "name: app\nversion: 2.0.0",
-        "values.yaml": "replicas: 1",
-        "templates/deployment.yaml": "kind: Deployment  # generated",
-    }
-
-    def setUp(self) -> None:
-        super().setUp()
-        repo_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-regen-")
-        self.addCleanup(repo_tmp.cleanup)
-        self.repo = Path(repo_tmp.name)
-        # Only answers require_tools: the cargo stand-in decides what nextest returns.
-        _fake_bin(self.bindir, "cargo-nextest", status=0)
-
-    def _write(self, relative: str, body: str) -> Path:
-        path = self.repo / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
-        return path
-
-    def _committed(self, root: str, files: dict[str, str]) -> None:
-        for rel, body in files.items():
-            self._write(f"{root}/{rel}", body + "\n")
-
-    def _read(self, relative: str) -> str:
-        return (self.repo / relative).read_text(encoding="utf-8")
-
-    def _emit(self, **kwargs: object) -> tuple[object, str, str]:
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            result = sf._emit_chart(self.repo, "dfe-app", **kwargs)
-        return result, out.getvalue(), err.getvalue()
-
-    def _hand_fixed(self) -> None:
-        """dfe-transform-vector's shape: a HAND_FIXED list beside its drift test."""
-        self._committed(
-            "chart",
-            {
-                "Chart.yaml": "name: app\nversion: 2.0.0",
-                "values.yaml": "replicas: 1",
-                "templates/deployment.yaml": "kind: Deployment  # hand-fixed port",
-            },
-        )
-        self._write(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn committed_chart_matches_the_generator() {\n"
-            '    const HAND_FIXED: &[&str] = &["templates/deployment.yaml"];\n}\n',
-        )
-
-    def test_a_hand_fixed_chart_is_kept_and_its_drift_tests_decide(self) -> None:
-        self._hand_fixed()
-        _emitting_cargo(self.bindir, self.FRESH, nextest_status=0)
-        result, out, _err = self._emit()
-        assert result is None
-        assert self._read("chart/templates/deployment.yaml") == (
-            "kind: Deployment  # hand-fixed port\n"
-        )
-        argv = _fake_argv(self.bindir, "cargo")
-        assert argv[argv.index("-E") + 1] == "test(/committed_chart_matches_the_generator/)"
-        assert "tests/integration/deployment.rs:3" in out
-        assert "stays as committed" in out
-
-    def test_a_hand_fixed_chart_that_drifted_stops_and_names_tests_and_files(self) -> None:
-        self._hand_fixed()
-        _emitting_cargo(self.bindir, self.FRESH, nextest_status=1)
-        with pytest.raises(sf.FleetError) as caught:
-            self._emit()
-        message = str(caught.value)
-        assert "committed_chart_matches_the_generator" in message
-        assert "templates/deployment.yaml" in message
-        assert "chart is left as committed" in message
-        assert self._read("chart/templates/deployment.yaml") == (
-            "kind: Deployment  # hand-fixed port\n"
-        )
-
-    def test_a_hand_fixed_chart_without_a_drift_test_is_left_alone_with_a_warning(
-        self,
-    ) -> None:
-        self._committed("chart", {"Chart.yaml": "name: app\nversion: 1.0.0"})
-        self._write("src/deployment.rs", 'let p = ChartPatch::new("a", "b", "c");\n')
-        _emitting_cargo(self.bindir, self.FRESH)
-        result, _out, err = self._emit()
-        assert result is None
-        assert self._read("chart/Chart.yaml") == "name: app\nversion: 1.0.0\n"
-        assert "WARNING" in err
-        assert "no chart drift test" in err
-        assert not (self.repo / "chart" / "values.yaml").exists()
-
-    def test_a_nested_chart_is_regenerated_where_it_sits_and_not_flattened(self) -> None:
-        # dfe-transform-elastic's shape: the chart lives one level down, and
-        # emit-chart DIR writes the chart's files flat into DIR.
-        self._committed(
-            "chart/dfe-app", {"Chart.yaml": "name: app\nversion: 1.0.0", "values.yaml": "old"}
-        )
-        self._write("chart/README.md", "notes beside the chart\n")
-        self._write("src/deployment.rs", "#[test]\nfn the_chart_config_block_matches_the_contract() {}\n")
-        _emitting_cargo(self.bindir, self.FRESH)
-        result, out, err = self._emit()
-        assert result == self.repo / "chart" / "dfe-app"
-        assert self._read("chart/dfe-app/Chart.yaml") == "name: app\nversion: 2.0.0\n"
-        assert self._read("chart/dfe-app/templates/deployment.yaml") == (
-            "kind: Deployment  # generated\n"
-        )
-        assert not (self.repo / "chart" / "Chart.yaml").exists()
-        assert not (self.repo / "chart" / "templates").exists()
-        assert self._read("chart/README.md") == "notes beside the chart\n"
-        assert "regenerated chart/dfe-app" in out
-        assert "WARNING" not in err
-
-    def test_a_plain_chart_with_no_drift_test_regenerates_with_a_warning(self) -> None:
-        self._committed("chart", {"Chart.yaml": "name: app\nversion: 1.0.0"})
-        _emitting_cargo(self.bindir, self.FRESH)
-        result, _out, err = self._emit(run_drift_tests=True)
-        assert result == self.repo / "chart"
-        assert self._read("chart/values.yaml") == "replicas: 1\n"
-        assert "WARNING" in err
-        assert "no chart drift test" in err
-        # Nothing to gate on, so no nextest run was invented.
-        assert "nextest" not in _fake_argv(self.bindir, "cargo")
-
-    def test_an_app_that_only_answers_emit_helm_is_regenerated_from_scratch(self) -> None:
-        # dfe-loader's and dfe-receiver's shape: `--emit-helm DIR` is their only
-        # chart emitter, so without it a changed contract leaves the chart stale
-        # and the drift test fails the rebuild.
-        self._committed(
-            "chart", {"Chart.yaml": "name: app\nversion: 1.0.0", "values.yaml": "port: 50051"}
-        )
-        self._write(
-            "tests/integration/deployment.rs",
-            "#[test]\nfn committed_chart_matches_the_generator() {}\n",
-        )
-        _emitting_cargo(self.bindir, self.FRESH, spelling="--emit-helm")
-        result, out, _err = self._emit(run_drift_tests=True)
-        assert result == self.repo / "chart"
-        assert self._read("chart/values.yaml") == "replicas: 1\n"
-        assert self._read("chart/templates/deployment.yaml") == "kind: Deployment  # generated\n"
-        assert "regenerated chart from a fresh emit" in out
-        # The emit went to scratch, never into the committed chart.
-        argv = _fake_argv(self.bindir, "cargo")
-        target = Path(argv[argv.index("--emit-helm") + 1])
-        assert target.is_absolute()
-        assert not target.is_relative_to(self.repo)
-
-    def test_a_chart_equal_to_a_fresh_emit_is_not_rewritten(self) -> None:
-        self._committed("chart", self.FRESH)
-        self._write("src/deployment.rs", "#[test]\nfn committed_chart_matches_the_generator() {}\n")
-        before = (self.repo / "chart" / "Chart.yaml").stat().st_mtime_ns
-        _emitting_cargo(self.bindir, self.FRESH)
-        result, out, _err = self._emit()
-        assert result is None
-        assert "already matches a fresh emit" in out
-        assert (self.repo / "chart" / "Chart.yaml").stat().st_mtime_ns == before
-
-    def test_two_nested_charts_are_refused_rather_than_guessed(self) -> None:
-        self._committed("chart/one", {"Chart.yaml": "name: one"})
-        self._committed("chart/two", {"Chart.yaml": "name: two"})
-        with pytest.raises(sf.FleetError) as caught:
-            self._emit()
-        assert "2 charts" in str(caught.value)
-        assert _fake_argv(self.bindir, "cargo") == []
-
-
-class RebuildRsChartTests(OnPathTestCase):
-    """--no-chart really skips the chart step, and the dry run says which."""
+class RebuildRsTests(OnPathTestCase):
+    """A Rust rebuild regenerates the Dockerfile and docs/ artefacts, and no chart."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -934,17 +516,12 @@ class RebuildRsChartTests(OnPathTestCase):
         _git(seed, "commit", "-m", "chore: seed")
         _git(seed, "push", "origin", "main")
 
-        # A committed chart, no emit-chart subcommand and no chart drift test,
-        # so the chart step fails unless it is skipped.
         self.repo = root / "dfe-receiver"
         _git(root, "clone", str(origin), str(self.repo))
         _identify(self.repo)
-        chart = self.repo / "chart"
-        chart.mkdir()
-        (chart / "Chart.yaml").write_text("name: dfe-receiver\n", encoding="utf-8")
 
-        # A cargo that answers everything, so the run reaches the chart step
-        # and stops there for chart reasons rather than toolchain ones.
+        # A cargo that answers everything, so the run reaches the end of the
+        # regeneration steps rather than stopping on the toolchain.
         _fake_bin(self.bindir, "cargo", stdout="FROM scratch")
         os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
 
@@ -953,92 +530,20 @@ class RebuildRsChartTests(OnPathTestCase):
             ["rebuild-rs", str(self.repo), "2.11.0", *extra]
         )
 
-    def test_no_chart_skips_the_chart_step_entirely(self) -> None:
-        code = sf.cmd_rebuild_rs(self._args("--no-chart", "--no-tests"))
+    def test_a_rebuild_regenerates_the_dockerfile_and_config_artefacts(self) -> None:
+        code = sf.cmd_rebuild_rs(self._args("--no-tests"))
         argv = _fake_argv(self.bindir, "cargo")
         assert code == 0
         assert "emit-dockerfile" in argv
-        assert "emit-chart" not in argv
-
-    def test_without_no_chart_the_same_app_is_refused(self) -> None:
-        with pytest.raises(sf.FleetError):
-            sf.cmd_rebuild_rs(self._args("--no-tests"))
-        assert "emit-chart" in _fake_argv(self.bindir, "cargo")
-
-    def test_a_chart_step_that_stops_the_rebuild_leaves_docs_regenerated(self) -> None:
-        # The chart is the step that stops a rebuild; docs/ went stale behind it.
-        with pytest.raises(sf.FleetError):
-            sf.cmd_rebuild_rs(self._args("--no-tests"))
-        argv = _fake_argv(self.bindir, "cargo")
         assert "config-schema" in argv
-        assert argv.index("config-schema") < argv.index("emit-chart")
 
-    def test_the_dry_run_names_the_chart_when_it_will_regenerate_one(self) -> None:
+    def test_the_dry_run_names_the_dockerfile_and_docs_artefacts_only(self) -> None:
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             sf.cmd_rebuild_rs(self._args("-n"))
-        assert "the Dockerfile, chart/ and docs/ artefacts" in buffer.getvalue()
-
-    def test_the_dry_run_drops_the_chart_from_the_artefact_list(self) -> None:
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            sf.cmd_rebuild_rs(self._args("-n", "--no-chart"))
         output = buffer.getvalue()
         assert "the Dockerfile and docs/ artefacts" in output
         assert "chart/" not in output
-
-
-class RebuildRsChartLandingTests(OnPathTestCase):
-    """A regenerated chart reaches the release commit whole, new templates included."""
-
-    BRANCH = "scalo/rebuild-2-11-0"
-
-    def setUp(self) -> None:
-        super().setUp()
-        root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-chart-land-")
-        self.addCleanup(root_tmp.cleanup)
-        root = Path(root_tmp.name)
-        self.origin = root / "origin.git"
-        _git(root, "init", "--bare", "-b", "main", str(self.origin))
-        seed = root / "seed"
-        _git(root, "clone", str(self.origin), str(seed))
-        _identify(seed)
-        (seed / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
-        (seed / "Dockerfile").write_text("FROM old\n", encoding="utf-8")
-        (seed / "chart" / "templates").mkdir(parents=True)
-        (seed / "chart" / "Chart.yaml").write_text("name: app\n", encoding="utf-8")
-        (seed / "chart" / "templates" / "deployment.yaml").write_text("old\n", encoding="utf-8")
-        _git(seed, "add", "Cargo.toml", "Dockerfile", "chart")
-        _git(seed, "commit", "-m", "chore: seed")
-        _git(seed, "push", "origin", "main")
-        main_sha = _git(self.origin, "rev-parse", "main")
-
-        self.repo = root / "dfe-app"
-        _git(root, "clone", str(self.origin), str(self.repo))
-        _identify(self.repo)
-        # The generator now writes a template the committed chart never had.
-        _emitting_cargo(
-            self.bindir,
-            {
-                "Chart.yaml": "name: app",
-                "templates/deployment.yaml": "new",
-                "templates/keda-triggerauth.yaml": "kind: TriggerAuthentication",
-            },
-        )
-        _dispatching_gh(self.bindir, sha=main_sha, push_run=1, dispatch_run=2)
-        os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
-
-    def test_a_template_the_generator_adds_is_committed(self) -> None:
-        args = sf.build_parser().parse_args(
-            ["--org", "example-org", "rebuild-rs", str(self.repo), "2.11.0", "--no-tests", "--no-watch"]
-        )
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(io.StringIO()):
-            code = sf.cmd_rebuild_rs(args)
-        assert code == 0, buffer.getvalue()
-        touched = _git(self.origin, "show", "--name-only", "--format=", self.BRANCH).split()
-        assert "chart/templates/keda-triggerauth.yaml" in touched
-        assert "chart/templates/deployment.yaml" in touched
 
 
 # dfe-fetcher's workspace as `cargo metadata --no-deps` reports it, cut to the
@@ -1151,7 +656,7 @@ class GateFeaturesTests(OnPathTestCase):
 
 
 class RebuildRsGateFeaturesTests(OnPathTestCase):
-    """A suite node's exclusion reaches clippy, nextest and the drift gate alike."""
+    """A suite node's exclusion reaches clippy and nextest alike."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1189,26 +694,13 @@ class RebuildRsGateFeaturesTests(OnPathTestCase):
         return buffer.getvalue()
 
     def test_clippy_and_the_test_suite_build_without_the_excluded_feature(self) -> None:
-        output = self._rebuild("--no-chart")
+        output = self._rebuild()
         argv = _fake_argv(self.bindir, "cargo")
         clippy = ["clippy", "--workspace", "--all-targets", *_FETCHER_GATE, "--", "-D", "warnings"]
         assert _contains(argv, clippy) != -1
         assert _contains(argv, ["nextest", "run", "--workspace", *_FETCHER_GATE]) != -1
         assert "--all-features" not in argv
         assert "(suite.yaml keeps dfe-fetcher-db/odbc out)" in output
-
-    def test_the_drift_gate_builds_without_the_excluded_feature(self) -> None:
-        chart = self.repo / "chart"
-        chart.mkdir()
-        (chart / "Chart.yaml").write_text("name: dfe-fetcher\n", encoding="utf-8")
-        drift = self.repo / "tests" / "integration" / "helm_contract.rs"
-        drift.parent.mkdir(parents=True)
-        drift.write_text("// values sync\n", encoding="utf-8")
-        self._rebuild("--no-tests")
-        argv = _fake_argv(self.bindir, "cargo")
-        drift_run = ["nextest", "run", "--workspace", *_FETCHER_GATE, "-E", "test(/helm_contract/)"]
-        assert _contains(argv, drift_run) != -1
-        assert "--all-features" not in argv
 
 
 class FindRepoTests(unittest.TestCase):
@@ -1540,12 +1032,6 @@ class CliTests(unittest.TestCase):
         assert rs.no_tests
         with pytest.raises(SystemExit):
             sf.build_parser().parse_args(["rebuild-py", "/x", "1.0.0", "--no-tests"])
-
-    def test_rebuild_rs_takes_no_chart_and_rebuild_py_does_not(self) -> None:
-        rs = sf.build_parser().parse_args(["rebuild-rs", "/x", "1.0.0", "--no-chart"])
-        assert rs.no_chart
-        with pytest.raises(SystemExit):
-            sf.build_parser().parse_args(["rebuild-py", "/x", "1.0.0", "--no-chart"])
 
     def test_rebuild_rs_takes_release_unoptimized_and_rebuild_py_does_not(self) -> None:
         # dfe-engine is Python and has no optimisation stage to consent to skipping.

@@ -2,9 +2,9 @@
 #  Project:      dfe-infra
 #  File:         scripts/check_governance_drift.py
 #  Purpose:      Drift guard: resolve the dfe-deploy template's governance
-#                actions (cls: helmvars changes) against the charts' values,
-#                so a chart renaming a dial var cannot orphan an action
-#                silently.
+#                actions (cls: helmvars changes) against the values the
+#                deployed charts read, so a rename of a dial var cannot
+#                orphan an action silently.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -17,7 +17,18 @@ own CI validates their STRUCTURE (tools/validate_governance.py there) and
 explicitly leaves chart-path drift to this repo -- the charts these paths dial
 into live here, and the dial rule (docs/architecture.md) says every dial must
 be a chart value. This check closes the loop: every `cls: helmvars` change
-must resolve to an existing key in the referenced chart's values.yaml.
+must resolve to a key the deployed chart reads.
+
+An app is deployed from its thin chart (layer2-apps.yaml), so a path resolves
+when it is set in a values layer under argocd/values, in dfe-extras' defaults
+for the chart, or is one of the scalo-service library's per-group keys
+(secrets.<group>.enabled and the like) for a group the app's contract declares.
+A path only the 2.2.0 hand-written chart under helm/charts holds is a warning:
+nothing deploys that chart, so the thin chart may ignore the key.
+
+This is key presence. Whether the keys of one action agree with each other (a
+Secret group left on beside the component that mints it) is
+scripts/tests/test_governance_actions.py's, which renders them.
 
 A checkout of the deploy template may legitimately be absent (an operator run
 with no clone beside this repo). Absence is a LOUD skip, never a silent pass --
@@ -31,10 +42,10 @@ Usage:
 Needs PyYAML (same dependency as the sibling validators).
 """
 
-from __future__ import annotations
-
 import argparse
+import json
 import sys
+from collections.abc import Collection
 from pathlib import Path
 
 try:
@@ -44,6 +55,15 @@ except ImportError:  # pragma: no cover
     sys.exit(2)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# What the layer 2 appset layers for an app, and where dfe-extras keeps its defaults.
+THIN_VALUES = REPO_ROOT / "argocd" / "values"
+EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
+CONTRACTS = REPO_ROOT / "scripts" / "tests" / "fixtures" / "contracts"
+
+# The keys scalo-service reads under secrets.<group> for each group a contract declares
+# (values.schema.json, secrets.additionalProperties.properties).
+LIBRARY_SECRET_KEYS = {"enabled", "existingSecret", "keys", "optional"}
 
 # changes[] classes owned by the engine's governance registry -- not chart
 # dials, so not this check's business (dfe-deploy's structural validator and
@@ -88,7 +108,53 @@ def _chart_values(*roots: Path) -> dict[str, dict]:
     return out
 
 
-def _resolve_chart(name: str, charts: dict[str, dict]) -> tuple[str, str] | None:
+def _thin_services() -> set[str]:
+    """The services layer2-apps deploys from a thin chart: a directory under argocd/values/apps."""
+    apps = THIN_VALUES / "apps"
+    if not apps.is_dir():
+        return set()
+    return {p.name for p in apps.iterdir() if p.is_dir() and not p.name.startswith("_")}
+
+
+def _thin_layers(service: str) -> list[dict]:
+    """The values layers the appset reads for a service, then dfe-extras' defaults for its chart."""
+    apps = THIN_VALUES / "apps"
+    files = [
+        *sorted(THIN_VALUES.glob("*.yaml")),
+        apps / "_common.yaml",
+        *sorted((apps / service).glob("*.yaml")),
+    ]
+    layers = [doc for f in files if f.is_file() and isinstance(doc := _load_yaml(f), dict)]
+    extras = _load_yaml(EXTRAS_VALUES) if EXTRAS_VALUES.is_file() else None
+    defaults = ((extras or {}).get("extras") or {}).get("defaults") or {}
+    chart = "dfe-hyperdx" if service == "hyperdx" else service
+    return [*layers, defaults.get(chart) or {}]
+
+
+def _contract_groups(service: str) -> set[str]:
+    """The secret groups the service's deployment contract declares."""
+    contract = CONTRACTS / f"{service}.json"
+    if not contract.is_file():
+        return set()
+    declared = json.loads(contract.read_text(encoding="utf-8"))
+    return {group["group_name"] for group in declared.get("secrets") or []}
+
+
+def _thin_source(service: str, path: str) -> str | None:
+    """What declares ``path`` for a service on the thin path, or None where nothing does."""
+    if any(_path_exists(layer, path) for layer in _thin_layers(service)):
+        return "the layer 2 values or dfe-extras defaults"
+    parts = path.split(".")
+    is_group_key = (
+        len(parts) >= 3
+        and parts[0] == "secrets"
+        and parts[1] in _contract_groups(service)
+        and parts[2] in LIBRARY_SECRET_KEYS
+    )
+    return "the contract's secret group" if is_group_key else None
+
+
+def _resolve_chart(name: str, charts: Collection[str]) -> tuple[str, str] | None:
     """Resolve a helmvars target name to (chart, instance).
 
     The layer2-apps appset fans out values/<service>-<instance>-values.yaml,
@@ -161,7 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: no charts found under {' '.join(args.charts_dir)}", file=sys.stderr)
         return 1
 
+    thin_services = _thin_services()
+    known = {*charts, *thin_services}
     failures = 0
+    warnings = 0
     checked = 0
     skipped_classes = 0
     for action_file in sorted(actions_dir.glob("*.yaml")):
@@ -194,23 +263,36 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             name, path = change.get("name", ""), change.get("path", "")
             where = f"{action_file.name} changes[{i}]"
-            resolved = _resolve_chart(name, charts)
+            resolved = _resolve_chart(name, known)
             if resolved is None:
                 print(
                     f"  [FAIL] {where}: name {name!r} does not resolve to any chart in "
-                    f"{sorted(charts)} (expected <service>-<instance>-values)",
+                    f"{sorted(known)} (expected <service>-<instance>-values)",
                     file=sys.stderr,
                 )
                 failures += 1
                 continue
             chart, _instance = resolved
             checked += 1
-            if _path_exists(charts[chart], str(path)):
+            on_thin_path = chart in thin_services
+            declared_by = _thin_source(chart, str(path)) if on_thin_path else None
+            in_chart = _path_exists(charts.get(chart, {}), str(path))
+            if declared_by:
+                print(f"  [ok]   {where}: {path} is declared by {declared_by}", file=sys.stderr)
+            elif in_chart and on_thin_path:
+                print(
+                    f"  [warn] {where}: only the 2.2.0 {chart} chart holds {path!r}, and "
+                    "nothing deploys that chart -- the thin chart may ignore the key",
+                    file=sys.stderr,
+                )
+                warnings += 1
+            elif in_chart:
                 print(f"  [ok]   {where}: {chart} values has {path}", file=sys.stderr)
             else:
                 print(
-                    f"  [FAIL] {where}: chart {chart!r} has NO values key {path!r} -- "
-                    "the action would write a dial the chart no longer reads (orphaned action)",
+                    f"  [FAIL] {where}: no values layer, dfe-extras default or chart for "
+                    f"{chart!r} holds {path!r} -- the action would write a dial nothing "
+                    "reads (orphaned action)",
                     file=sys.stderr,
                 )
                 failures += 1
@@ -218,7 +300,8 @@ def main(argv: list[str] | None = None) -> int:
     verdict = "FAILED" if failures else "PASSED"
     print(
         f"=== governance drift check {verdict}: {checked} helmvars path(s) checked, "
-        f"{failures} failure(s), {skipped_classes} engine-class change(s) skipped ===",
+        f"{failures} failure(s), {warnings} warning(s), {skipped_classes} engine-class "
+        "change(s) skipped ===",
         file=sys.stderr,
     )
     return 1 if failures else 0

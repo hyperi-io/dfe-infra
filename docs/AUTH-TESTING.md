@@ -8,7 +8,8 @@ Proving auth end to end needs real identities in a real identity provider. `dfe-
 
 - `deploy` generates the client secret and one shared user password and writes both to a mode-0600 file (`--secrets-out`, default `.tmp/tester-idp.env`). Neither is printed or committed. The e2e specs read that password as `E2E_FIXTURE_PASSWORD`, from the file's `TESTER_IDP_USER_PASSWORD` line.
 - `wire-engine` hands the client credentials, the provider definition, the group map and the CA bundle to the engine's namespace, then prints the chart values that pick them up.
-- `status` reports whether it is serving, and `teardown` removes it.
+- `status` reports whether it is serving, and `teardown` removes Dex and glauth.
+- `wire-engine --teardown` takes back what `wire-engine` handed over: the provider and group keys in the ConfigMaps, the client Secret, and the copies already seeded onto the engine's config volume. The engine's seed step never deletes, so without it the provider stays live on a persistent volume after `teardown`.
 
 Every environment value is a flag: `python3 scripts/dfe-ops idp deploy --help` lists them.
 
@@ -40,3 +41,12 @@ The set is wider than a happy-path login on purpose:
 ## Real providers
 
 The tester IdP proves the engine's login, claim and role mapping. Proving a real provider such as Entra ID, Okta or Google Workspace behaves needs identities in your own tenant of it.
+
+`dfe-ops idp wire-external` registers one on a deployment: `--type okta|entra_id|google`, the issuer, the client id, the client secret by the NAME of an environment variable (`--client-secret-env`, never the value), and `--groups-dir`, a flat directory of engine group files.
+
+- Group files are named `<provider>-<group>.yaml`, the stem being the engine group name. Each carries `source_provider` and `source_id`, the claim value or directory id that links to it; `source_id` defaults to the stem after the prefix. Only this provider's prefix is taken, so one directory serves every provider.
+- Okta and Entra ID read the groups claim. Entra ID also records its tenant (`--tenant-id`, else the GUID in the issuer path), which the engine's lookup for a user in over 200 groups needs. Google puts no groups in its tokens, so it registers in `api` mode with `enrich_on_login`, and its scopes are always the engine's default.
+- `--target k8s` merges the files into the ConfigMaps the engine chart seeds from and applies the client-secret Secret, then prints the chart values that pick them up. `--target docker` writes them into the engine container's config directory and the compose env file, and recreates the engine.
+- `--teardown` removes exactly what the wire recorded, including the copies already seeded into the engine's config volume. `--dry-run` prints the plan with the secret redacted.
+
+The `oidc-live` Playwright project then signs in through that provider's own login page and checks each user's roles against an expectations table ([`tests/e2e-ui/README.md`](../tests/e2e-ui/README.md)).

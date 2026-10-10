@@ -361,7 +361,7 @@ def _between(lines: list[str], start: str, end: str) -> list[str]:
     return lines[first:last]
 
 
-HELPERS = ("run", "dfe_have_crd", "dfe_should_install")
+HELPERS = ("run", "dfe_release_values", "dfe_have_crd", "dfe_should_install")
 STEP = ('echo "==> [6/7] ArgoCD', "# argocd-secret exists only once Argo")
 REREAD = ("# The gateway's policy on the argocd route exists", 'if [ "${POST_INTEGRATION}"')
 

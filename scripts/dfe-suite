@@ -410,7 +410,6 @@ def _walk_consumer(
     }
     if rebuild is rebuild_rust:
         kwargs["run_tests"] = not _flag_applies(args.no_tests, consumer)
-        kwargs["emit_chart"] = not _flag_applies(args.no_chart, consumer)
     try:
         rc = rebuild(repo, args.version, **kwargs)
     except FleetError as exc:
@@ -811,17 +810,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "skip the local test gate on Rust rebuilds: bare for every "
             "consumer, or a comma-separated list of the ones to skip it on"
-        ),
-    )
-    walk.add_argument(
-        "--no-chart",
-        nargs="?",
-        const="",
-        default=None,
-        metavar="CONSUMERS",
-        help=(
-            "skip chart/ regeneration on Rust rebuilds: bare for every "
-            "consumer, or a comma-separated list"
         ),
     )
     walk.add_argument(

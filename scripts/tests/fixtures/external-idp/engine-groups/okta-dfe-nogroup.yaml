@@ -1,0 +1,4 @@
+description: Synthetic fixture group that maps to no role
+roles: []
+scope: system
+source_provider: okta

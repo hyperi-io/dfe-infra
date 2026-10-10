@@ -1,0 +1,8 @@
+{
+  "provider": "entra",
+  "emits_transitive": true,
+  "users": {
+    "dfe-nested-member": { "login": "mock-entra-nested", "roles": ["data_analyst"] },
+    "dfe-nobody": { "login": "mock-entra-nobody", "roles": [] }
+  }
+}

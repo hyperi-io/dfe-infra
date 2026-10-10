@@ -750,9 +750,10 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
     monkeypatch.setattr(u, "wait_for_argo", lambda *_a, **_k: (True, "converged"))
     monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: "main")
+    monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
     # Every bootstrap release already runs its new pin; test_dfe_ops_upgrade.py covers the check itself.
     monkeypatch.setattr(
-        u, "check_bootstrap_move", lambda _kc, move: (u.BOOTSTRAP_DONE, f"{move.step.key} runs {move.new}")
+        u, "check_bootstrap_move", lambda _kc, move, *_a: (u.BOOTSTRAP_DONE, f"{move.step.key} runs {move.new}")
     )
     monkeypatch.setattr(u, "DEFAULT_PLAN_DIR", tmp_path / "plans")
     manifest = tmp_path / "apps.yaml"
@@ -781,7 +782,7 @@ def _apply_args(deploy: Path, **overrides: object) -> _Args:
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=True, push=False, timeout=900, dry_run=False, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None,
+        from_stack=None, target_revision=None, namespace=None,
     )
     base.update(overrides)
     return _Args(**base)

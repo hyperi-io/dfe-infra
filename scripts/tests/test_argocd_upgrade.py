@@ -25,7 +25,6 @@ fixture, so what is under test is the script as it ships.
 import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,8 +39,7 @@ COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 
 STEP_START = 'echo "==> [6/7] ArgoCD'
 STEP_END = "# argocd-secret exists only once Argo"
-ARGO_INSTALL = "helm upgrade --install argocd argo/argo-cd"
-HELPERS = ("run", "dfe_have_crd", "dfe_should_install")
+HELPERS = ("run", "dfe_release_values", "dfe_have_crd", "dfe_should_install")
 
 DOMAIN = "single.dfe.test"
 CACHE_HOST = "valkey.argocd.svc.cluster.local"
@@ -125,18 +123,12 @@ def test_the_chart_name_is_read_off_helm_lists_name_dash_version(chart: str, nam
 
 
 # --- the install command and the verdict cannot drift apart ------------------
-def install_command() -> str:
-    body = BOOTSTRAP.read_text(encoding="utf-8")
-    start = body.find(ARGO_INSTALL)
-    assert start >= 0, f"bootstrap.sh no longer carries {ARGO_INSTALL!r}"
-    return body[start:body.find("--wait", start)]
-
-
-def install_values(valkey: str) -> dict:
-    """The --set values the install passes, typed the way helm types them."""
+def install_values(argv: list[str]) -> dict:
+    """The --set values one logged helm call passes, typed the way helm types them."""
     values: dict = {}
-    for key, raw in re.findall(r'--set "?([A-Za-z.]+)=([^"\s\\]+)"?', install_command()):
-        value = {"true": True, "false": False}.get(raw, raw.replace("${VALKEY_SVC}", valkey))
+    pairs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--set"]
+    for key, raw in (pair.split("=", 1) for pair in pairs):
+        value = {"true": True, "false": False}.get(raw, raw)
         node = values
         *parents, leaf = key.split(".")
         for part in parents:
@@ -145,17 +137,21 @@ def install_values(valkey: str) -> dict:
     return values
 
 
-def test_the_install_bootstrap_runs_is_one_it_then_recognises() -> None:
+def test_the_install_bootstrap_runs_is_one_it_then_recognises(tmp_path: Path) -> None:
     """A change to the cache wiring in the install must move the verdict with it."""
-    values = install_values("valkey")
+    _, calls = run_step(tmp_path, {"crd": False, "server": False})
+    (install,) = helm_upgrades(calls)
+    values = install_values(install.split())
     assert values["externalRedis"]["host"] == CACHE_HOST
     ours, why = argocd_release.verdict(release(), values, "valkey")
     assert ours, why
 
 
-def test_argo_is_told_the_name_the_gateway_publishes_it_under() -> None:
+def test_argo_is_told_the_name_the_gateway_publishes_it_under(tmp_path: Path) -> None:
     label = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["hostnames"]["argocd"]
-    assert f'--set-string "global.domain={label}.${{DFE_DOMAIN}}"' in install_command()
+    _, calls = run_step(tmp_path, {"crd": False, "server": False})
+    (install,) = helm_upgrades(calls)
+    assert f"global.domain={label}.{DOMAIN}" in install.split()
 
 
 # --- the step, run under bash against a fake cluster --------------------------

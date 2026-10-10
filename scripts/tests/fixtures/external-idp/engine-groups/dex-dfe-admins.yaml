@@ -1,0 +1,7 @@
+{
+  "description": "Synthetic fixture group, written as JSON",
+  "roles": ["admin"],
+  "scope": "system",
+  "source_id": "dfe-admins",
+  "source_provider": "dex"
+}

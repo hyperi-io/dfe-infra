@@ -14,7 +14,10 @@
 ## version starts; data services next, coordinators before the stores that
 ## depend on them; apps last.
 ##
-## `key` is the versions.yaml path inside the current stack block. Maps keyed
+## `key` is the versions.yaml path inside the current stack block. `image` and
+## `chart` name the component's image digest and thin-chart digest, which move
+## with `key` as one component, so a digest that moves under an unchanged tag
+## still moves the step. Maps keyed
 ## by a two-digit order, never lists: the repo's stdlib YAML reader handles
 ## nested maps and scalars only. `before` names a step that must complete on
 ## the RUNNING cluster before the version moves; `finalise` names the one-way
@@ -69,17 +72,46 @@ stages:
   "40-apps":
     "10-dfe-engine":
       key: apps.dfe-engine
+      image: digests.dfe-engine
+      chart: chart-digests.dfe-engine
+    ## After dfe-engine: HyperDX verifies the engine's JWT against the engine's JWKS.
+    "15-dfe-hyperdx":
+      key: content.dfe-hyperdx
+      image: digests.dfe-hyperdx
+      chart: chart-digests.hyperdx
     "20-dfe-receiver":
       key: apps.dfe-receiver
+      image: digests.dfe-receiver
+      chart: chart-digests.dfe-receiver
     "30-dfe-transform-vrl":
       key: apps.dfe-transform-vrl
+      image: digests.dfe-transform-vrl
+      chart: chart-digests.dfe-transform-vrl
     "40-dfe-transform-vector":
       key: apps.dfe-transform-vector
+      image: digests.dfe-transform-vector
+      chart: chart-digests.dfe-transform-vector
+    "45-dfe-transform-elastic":
+      key: apps.dfe-transform-elastic
+      image: digests.dfe-transform-elastic
+      chart: chart-digests.dfe-transform-elastic
     "50-dfe-loader":
       key: apps.dfe-loader
+      image: digests.dfe-loader
+      chart: chart-digests.dfe-loader
     "60-dfe-archiver":
       key: apps.dfe-archiver
+      image: digests.dfe-archiver
+      chart: chart-digests.dfe-archiver
     "70-dfe-fetcher":
       key: apps.dfe-fetcher
+      image: digests.dfe-fetcher
+      chart: chart-digests.dfe-fetcher
     "80-dfe-ui":
       key: apps.dfe-ui
+      image: digests.dfe-ui
+      chart: chart-digests.dfe-ui
+    "90-culvert":
+      key: apps.culvert
+      image: digests.culvert
+      chart: chart-digests.culvert

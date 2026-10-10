@@ -1,0 +1,7 @@
+{
+  "provider": "google-workspace",
+  "emits_transitive": false,
+  "users": {
+    "dfe-viewer": { "login": "mock-google-viewer", "roles": ["data_viewer"] }
+  }
+}

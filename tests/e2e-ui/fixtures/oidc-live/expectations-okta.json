@@ -1,0 +1,9 @@
+{
+  "provider": "okta",
+  "emits_transitive": false,
+  "users": {
+    "dfe-admin": { "login": "mock-okta-admin", "roles": ["admin"] },
+    "dfe-nobody": { "login": "mock-okta-nobody", "roles": [] },
+    "dfe-legacy-shape": ["data_viewer"]
+  }
+}
