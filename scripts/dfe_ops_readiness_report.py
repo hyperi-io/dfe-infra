@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 import capacity
 from kubectl_cli import run_kubectl
 
-# Karpenter, the load balancer controller and CoreDNS run here, outside any namespace the deploy owns.
+# Karpenter, the load balancer controller and CoreDNS run here, outside the deploy's namespaces.
 ALWAYS_READ = ("kube-system",)
 # Cluster-scoped kinds whose events land in whatever namespace the API server picks.
 CLUSTER_EVENT_KINDS = frozenset({"Node", "NodeClaim", "NodePool", "EC2NodeClass"})
@@ -95,7 +95,7 @@ def judged(namespace: str, globs: Iterable[str]) -> bool:
 
 
 def _failing_conditions(item: dict, wanted: Iterable[str] | None = None) -> list[str]:
-    """Each condition not True, as `Type=Status reason: message`, in the order the object lists them."""
+    """Each condition not True, as `Type=Status reason: message`, in the object's own order."""
     lines = []
     for cond in _status(item).get("conditions") or []:
         if not isinstance(cond, dict) or cond.get("status") == "True":
@@ -110,8 +110,10 @@ def _failing_conditions(item: dict, wanted: Iterable[str] | None = None) -> list
 def _pod_ready(pod: dict) -> bool:
     status = _status(pod)
     containers = status.get("containerStatuses") or []
-    return status.get("phase") == "Running" and bool(containers) and all(
-        c.get("ready") for c in containers
+    return (
+        status.get("phase") == "Running"
+        and bool(containers)
+        and all(c.get("ready") for c in containers)
     )
 
 
@@ -124,18 +126,26 @@ def _container_lines(status: dict, kind: str) -> list[str]:
         state = container.get("state") or {}
         if "waiting" in state:
             waiting = state["waiting"] or {}
-            lines.append(_clip(f"{label} {name} waiting {_why(waiting.get('reason'), waiting.get('message'))}"))
+            lines.append(
+                _clip(
+                    f"{label} {name} waiting {_why(waiting.get('reason'), waiting.get('message'))}"
+                )
+            )
         elif "terminated" in state and (state["terminated"] or {}).get("exitCode") not in (0, None):
             code, reason = state["terminated"].get("exitCode"), state["terminated"].get("reason")
             lines.append(_clip(f"{label} {name} exited {code} ({reason})"))
         elif "running" in state and not container.get("ready"):
-            lines.append(f"{label} {name} running, not {'ready' if label == 'container' else 'finished'}")
+            lines.append(
+                f"{label} {name} running, not {'ready' if label == 'container' else 'finished'}"
+            )
         last = (container.get("lastState") or {}).get("terminated")
         if last and container.get("restartCount"):
             exited = f"last exit {last.get('exitCode')} ({last.get('reason')})"
             lines.append(
-                _clip(f"{label} {name} restarted {container.get('restartCount')}x, "
-                      f"{_why(exited, last.get('message'))}")
+                _clip(
+                    f"{label} {name} restarted {container.get('restartCount')}x, "
+                    f"{_why(exited, last.get('message'))}"
+                )
             )
     return lines
 
@@ -200,7 +210,10 @@ def event_lines(events: list[dict], globs: Iterable[str]) -> list[str]:
         if not (judged(namespace, globs) or involved.get("kind") in CLUSTER_EVENT_KINDS):
             continue
         key = (
-            namespace, str(involved.get("kind")), str(involved.get("name")), str(event.get("reason"))
+            namespace,
+            str(involved.get("kind")),
+            str(involved.get("name")),
+            str(event.get("reason")),
         )
         if key not in newest or _event_time(event) >= _event_time(newest[key]):
             newest[key] = event
@@ -209,14 +222,13 @@ def event_lines(events: list[dict], globs: Iterable[str]) -> list[str]:
     for (namespace, kind, name, reason), event in ordered:
         count = (event.get("series") or {}).get("count") or event.get("count") or 1
         message = event.get("message") or event.get("note") or ""
-        lines.append(
-            _clip(f"{_event_time(event)} {namespace or '-'} {kind}/{name} {reason} x{count}: {message}")
-        )
+        where = f"{namespace or '-'} {kind}/{name}"
+        lines.append(_clip(f"{_event_time(event)} {where} {reason} x{count}: {message}"))
     return lines
 
 
 def _requests(pod: dict) -> tuple[float, int]:
-    """CPU cores and memory bytes the scheduler counts for a pod: its containers, or its largest init."""
+    """The CPU cores and memory bytes the scheduler counts: the containers, or the largest init."""
     spec = pod.get("spec") or {}
 
     def summed(containers: list[dict]) -> tuple[float, int]:
@@ -279,14 +291,19 @@ def node_lines(nodes: list[dict], pods: list[dict]) -> list[str]:
             f"{t.get('key')}={t.get('value', '')}:{t.get('effect')}"
             for t in (node.get("spec") or {}).get("taints") or []
         )
-        pool = labels.get("karpenter.sh/nodepool") or labels.get("eks.amazonaws.com/nodegroup") or "-"
-        capacity_type = (
-            labels.get("karpenter.sh/capacity-type") or labels.get("eks.amazonaws.com/capacityType") or "-"
+        pool = (
+            labels.get("karpenter.sh/nodepool") or labels.get("eks.amazonaws.com/nodegroup") or "-"
         )
+        capacity_type = (
+            labels.get("karpenter.sh/capacity-type")
+            or labels.get("eks.amazonaws.com/capacityType")
+            or "-"
+        )
+        instance_type = labels.get("node.kubernetes.io/instance-type", "-")
         lines.append(
             _clip(
                 f"node {name} ready={ready} arch={labels.get('kubernetes.io/arch', '-')} "
-                f"type={labels.get('node.kubernetes.io/instance-type', '-')} capacity={capacity_type} "
+                f"type={instance_type} capacity={capacity_type} "
                 f"pool={pool} workload={labels.get('dfe.hyperi.io/workload', '-')} {room} "
                 f"taints={taints or '-'}"
             )
@@ -333,7 +350,9 @@ def nodeclass_lines(classes: list[dict]) -> list[str]:
     lines = []
     for node_class in classes:
         failing = _failing_conditions(node_class)
-        lines.append(f"ec2nodeclass {_meta(node_class).get('name')} {'not ready' if failing else 'ready'}")
+        lines.append(
+            f"ec2nodeclass {_meta(node_class).get('name')} {'not ready' if failing else 'ready'}"
+        )
         lines += [f"  {line}" for line in failing]
     return lines
 
@@ -390,7 +409,10 @@ def application_lines(apps: list[dict]) -> list[str]:
             lines.append("  " + _clip(_why(cond.get("type"), cond.get("message"))))
         operation = status.get("operationState") or {}
         if operation.get("phase") not in (None, "Succeeded"):
-            lines.append("  " + _clip(_why(f"last operation {operation.get('phase')}", operation.get("message"))))
+            lines.append(
+                "  "
+                + _clip(_why(f"last operation {operation.get('phase')}", operation.get("message")))
+            )
     return lines
 
 
@@ -432,8 +454,16 @@ def read(prefix: list[str], what: list[str]) -> Reading:
 def _controller_errors(prefix: list[str]) -> list[str]:
     try:
         done = run_kubectl(
-            [*prefix, "-n", "kube-system", "logs", "-l", "app.kubernetes.io/name=karpenter",
-             f"--tail={LOG_TAIL}", "--all-containers"],
+            [
+                *prefix,
+                "-n",
+                "kube-system",
+                "logs",
+                "-l",
+                "app.kubernetes.io/name=karpenter",
+                f"--tail={LOG_TAIL}",
+                "--all-containers",
+            ],
             timeout=KUBECTL_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -457,10 +487,18 @@ def _karpenter(prefix: list[str]) -> list[str]:
     classes = read(prefix, ["ec2nodeclasses.karpenter.k8s.aws"])
     return [
         *_section("karpenter nodepools", pools, nodepool_lines(pools.items), "no NodePool exists"),
-        *_section("karpenter nodeclaims", claims, nodeclaim_lines(claims.items),
-                  "no NodeClaim exists: nothing has been launched"),
-        *_section("karpenter ec2nodeclasses", classes, nodeclass_lines(classes.items),
-                  "no EC2NodeClass exists"),
+        *_section(
+            "karpenter nodeclaims",
+            claims,
+            nodeclaim_lines(claims.items),
+            "no NodeClaim exists: nothing has been launched",
+        ),
+        *_section(
+            "karpenter ec2nodeclasses",
+            classes,
+            nodeclass_lines(classes.items),
+            "no EC2NodeClass exists",
+        ),
         "--- karpenter controller errors ---",
         *(f"  {line}" for line in _controller_errors(prefix)),
     ]
@@ -477,13 +515,26 @@ def report(args: argparse.Namespace) -> list[str]:
     apps = read(prefix, ["applications.argoproj.io", "-A"])
     return [
         "=== readiness report: why the workloads above are not ready ===",
-        *_section("pods not Ready", pods, pod_lines(pods.items, globs), "every judged pod is Ready"),
-        *_section("newest warning events", events, event_lines(events.items, globs), "no Warning event"),
+        *_section(
+            "pods not Ready", pods, pod_lines(pods.items, globs), "every judged pod is Ready"
+        ),
+        *_section(
+            "newest warning events", events, event_lines(events.items, globs), "no Warning event"
+        ),
         *_section("nodes", nodes, node_lines(nodes.items, pods.items), "no node"),
         *_karpenter(prefix),
-        *_section("volume claims not Bound", claims, pvc_lines(claims.items, globs), "every claim is Bound"),
-        *_section("argo applications not Synced and Healthy", apps, application_lines(apps.items),
-                  "every Application is Synced and Healthy"),
+        *_section(
+            "volume claims not Bound",
+            claims,
+            pvc_lines(claims.items, globs),
+            "every claim is Bound",
+        ),
+        *_section(
+            "argo applications not Synced and Healthy",
+            apps,
+            application_lines(apps.items),
+            "every Application is Synced and Healthy",
+        ),
     ]
 
 
@@ -503,16 +554,21 @@ def add_readiness_report_subparser(sub: argparse._SubParsersAction) -> None:
     rep = sub.add_parser(
         "readiness-report",
         help="READ-ONLY: why each workload is not ready -- scheduling, image pulls, events, nodes, "
-             "Karpenter, volumes and Argo -- for after the readiness gate fails",
+        "Karpenter, volumes and Argo -- for after the readiness gate fails",
         description="Reads the cluster once and prints, for every pod not Ready in the judged "
-                    "namespaces and kube-system, why: its scheduling verdict and each container's "
-                    "wait, then the newest Warning events, every node, Karpenter's NodePools, "
-                    "NodeClaims, EC2NodeClasses and controller errors, unbound volume claims, "
-                    "and Argo Applications not Synced and Healthy. Writes nothing; exits 0.",
+        "namespaces and kube-system, why: its scheduling verdict and each container's "
+        "wait, then the newest Warning events, every node, Karpenter's NodePools, "
+        "NodeClaims, EC2NodeClasses and controller errors, unbound volume claims, "
+        "and Argo Applications not Synced and Healthy. Writes nothing; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    rep.add_argument("--namespaces", default="*",
-                     help="space-separated namespace globs to judge; kube-system is always read")
+    rep.add_argument(
+        "--namespaces",
+        default="*",
+        help="space-separated namespace globs to judge; kube-system is always read",
+    )
     rep.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
-    rep.add_argument("--context", default="", help="kubeconfig context to read; empty is its current one")
+    rep.add_argument(
+        "--context", default="", help="kubeconfig context to read; empty is its current one"
+    )
     rep.set_defaults(func=cmd_readiness_report)
