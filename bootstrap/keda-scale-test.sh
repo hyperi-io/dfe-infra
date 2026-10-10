@@ -26,7 +26,7 @@
 # replicas alone, which is dfe-infra #134 and is neither a working seam nor a broken one.
 #
 # Usage:  bootstrap/keda-scale-test.sh [--namespace dfe] [--ch-namespace clickhouse]
-#                                      [--ch-selector app.kubernetes.io/name=clickhouse]
+#                                      [--ch-selector 'app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)']
 #                                      [--shim dfe-keda-shim.dfe.svc.cluster.local:8080]
 #                                      [--real-deployment dfe-receiver]
 set -euo pipefail
