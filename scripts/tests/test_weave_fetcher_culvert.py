@@ -40,7 +40,7 @@ import pytest
 import yaml
 
 from _gate import APPSETS, INSTANCE, PROFILES, cell
-from _weave import CONTRACTS, REPO_ROOT, helm, library, render_app, weave
+from _weave import CONTRACTS, REPO_ROOT, appset, helm, library, old_appset, render_app, weave
 
 APPS = REPO_ROOT / "argocd" / "values" / "apps"
 EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
@@ -55,8 +55,12 @@ def _render(
     which: str,
     overlay: dict,
     instance: str = "default",
+    **facts: str,
 ) -> list[dict]:
-    """One render with ``overlay`` as the instance file, over the gate's own instance values."""
+    """One render with ``overlay`` as the instance file, over the gate's own instance values.
+
+    ``facts`` are cluster-secret facts, such as ``registry``.
+    """
     with tempfile.TemporaryDirectory(prefix="dfe-weave-fetcher-culvert-") as tmp:
         body = {
             "deploy": {"service": service, "instance": instance},
@@ -66,7 +70,7 @@ def _render(
         path = Path(tmp) / "values" / f"{service}-{instance}-values.yaml"
         path.parent.mkdir()
         path.write_text(yaml.safe_dump(body), encoding="utf-8", newline="\n")
-        options: dict = {"deploy_repo": Path(tmp), "instance": instance}
+        options: dict = {"deploy_repo": Path(tmp), "instance": instance, **facts}
         if service in APPSETS:
             options["appset"] = APPSETS[service]
         return render_app(service, profile, cloud, which, **options)
@@ -259,27 +263,50 @@ def test_culvert_renders_from_the_edge_appset_with_its_flavour_file() -> None:
     """layer2-edge.yaml holds two ApplicationSets, and the tunnel's is the one read."""
     w = weave()
     target = w.Target("culvert", "single", "aws")
-    app = w.application(REPO_ROOT, APPSETS["culvert"], target, None, helm())
+    app = w.application(REPO_ROOT, appset(APPSETS["culvert"]), target, None, helm())
     source = app["spec"]["sources"][0]
     assert app["metadata"]["name"] == "culvert-default-in-cluster"
-    assert source["path"] == "helm/edge/culvert"
-    assert "../../../argocd/values/edge-aws.yaml" in source["helm"]["valueFiles"]
+    assert (source["repoURL"].rsplit("/", 1)[-1], source["path"]) == ("culvert", ".")
+    assert "$infra/argocd/values/edge-aws.yaml" in source["helm"]["valueFiles"]
 
 
 @pytest.mark.parametrize(
-    ("registry", "repository"),
-    [
-        ({}, "ghcr.io/hyperi-io/culvert"),
-        ({"registry": "mirror.example.net/dfe"}, "mirror.example.net/dfe/culvert"),
-    ],
-    ids=["contract-registry", "global-registry"],
+    "overlay",
+    [{}, {"global": {"registry": "other.example.org/dfe"}}],
+    ids=["cluster-registry", "over-an-instance-registry"],
 )
-def test_culverts_image_follows_global_registry(registry: dict, repository: str) -> None:
-    """The tunnel and its sysctl init container pull <registry>/culvert, so a mirror moves them too."""
-    pod = _pod(_render("culvert", "slim", "local", "new", {"global": registry}))
+def test_culverts_image_follows_global_registry(overlay: dict) -> None:
+    """The tunnel and its sysctl init container pull <registry>/culvert, so a mirror moves them too.
+
+    The edge appset hands global.registry from the cluster secret, the registry the
+    chart itself comes from, and a parameter beats the instance file.
+    """
+    registry = "mirror.example.net/dfe"
+    pod = _pod(_render("culvert", "slim", "local", "new", overlay, registry=registry))
     images = [c["image"] for c in [*pod["initContainers"], *pod["containers"]]]
     assert len(images) == 2
-    assert all(image.startswith(f"{repository}:") for image in images), images
+    assert all(image.startswith(f"{registry}/culvert:") for image in images), images
+
+
+def test_culvert_falls_back_to_its_contract_registry_with_none_set() -> None:
+    """A render with no global.registry at all, as the 2.2.0 edge appset handed none."""
+    w = weave()
+    body = {"deploy": {"service": "culvert", "instance": "default"}, **INSTANCE["culvert"]["local"]}
+    with tempfile.TemporaryDirectory(prefix="dfe-weave-culvert-registry-") as tmp:
+        path = Path(tmp) / "values" / "culvert-default-values.yaml"
+        path.parent.mkdir()
+        path.write_text(yaml.safe_dump(body), encoding="utf-8", newline="\n")
+        inputs = w.Inputs(
+            appset=old_appset(APPSETS["culvert"]),
+            deploy_repo=Path(tmp),
+            contract=CONTRACTS / "culvert.json",
+            library=library(),
+            helm=helm(),
+        )
+        pod = _pod(w.render_app(w.Target("culvert", "slim", "local"), "new", inputs).docs)
+    images = [c["image"] for c in [*pod["initContainers"], *pod["containers"]]]
+    assert len(images) == 2
+    assert all(image.startswith("ghcr.io/hyperi-io/culvert:") for image in images), images
 
 
 def test_an_image_repository_still_replaces_culverts_whole_image() -> None:

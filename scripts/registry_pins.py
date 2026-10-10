@@ -143,8 +143,12 @@ def package_versions(org: str, app: str) -> tuple[dict, ...]:
     Cached because a run resolves many apps but often re-reads the same one
     across the check and the write path -- one API sweep per package, not per
     lookup. Returns a tuple so the lru_cache value stays immutable.
+
+    A nested package such as charts/dfe-engine is one path segment to the API,
+    so its slash is sent as %2F.
     """
-    return tuple(_gh_api(f"/orgs/{org}/packages/container/{app}/versions?per_page=100"))
+    package = app.replace("/", "%2F")
+    return tuple(_gh_api(f"/orgs/{org}/packages/container/{package}/versions?per_page=100"))
 
 
 def _parse_ts(value: str) -> datetime.datetime | None:

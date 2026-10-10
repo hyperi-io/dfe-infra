@@ -3,7 +3,7 @@ name: dfe-engine
 description: DFE control plane — Python 3.12 FastAPI, YAML SSoT, HelmValuesCompiler
 type: application
 version: 0.3.0
-appVersion: "v1.22.14"   # == versions.yaml apps.dfe-engine (drift-checked)
+appVersion: "v1.22.16"   # == versions.yaml apps.dfe-engine (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.15.0"

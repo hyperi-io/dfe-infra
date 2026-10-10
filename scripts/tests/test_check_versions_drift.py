@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -756,6 +757,64 @@ def test_the_toolbox_helm_is_not_tied_to_the_workflows() -> None:
            drift.helm_version_problems(texts) == [])
     expect("and no check holds HELM_VERSION to it",
            not any(c.file in (_HELM_LINT, _RELEASE) for c in drift.CHECKS))
+
+
+_APPS_APPSET = Path("argocd/appsets/layer2-apps.yaml")
+_EDGE_APPSET = Path("argocd/appsets/layer2-edge.yaml")
+
+
+def _chart_pin_texts() -> dict[Path, str]:
+    return {path: drift.read_source(path) for path in drift.CHART_PIN_APPSETS}
+
+
+def test_the_committed_chart_pin_maps_match_chart_digests() -> None:
+    versions = drift.load_versions()
+    problems = drift.chart_pin_problems(versions, _chart_pin_texts())
+    expect("both appsets' maps hold exactly what they deploy", problems == [], f"got {problems}")
+    keys = drift.chart_digest_keys(versions)
+    expect("chart-digests pins eleven components", len(keys) == 11, f"{sorted(keys)}")
+    checked = {c.key for c in drift.CHECKS if c.key.startswith("chart-digests.")}
+    expect("and every one of them is read by a check",
+           checked == {f"chart-digests.{k}" for k in keys}, f"{sorted(checked)}")
+
+
+def test_a_chart_pin_map_missing_a_service_is_drift() -> None:
+    """The appset fails that service's render, so its Application never moves."""
+    texts = _chart_pin_texts()
+    texts[_APPS_APPSET] = re.sub(r'\n\s*"dfe-ui" "[^"]*"', "", texts[_APPS_APPSET], count=1)
+    problems = drift.chart_pin_problems(drift.load_versions(), texts)
+    expect("one problem, naming the service the map lacks",
+           len(problems) == 1 and "lacks ['dfe-ui']" in problems[0], f"got {problems}")
+
+
+def test_a_chart_pin_map_carrying_a_service_it_does_not_deploy_is_drift() -> None:
+    texts = _chart_pin_texts()
+    texts[_EDGE_APPSET] = texts[_EDGE_APPSET].replace(
+        '"culvert" "', '"dfe-ui" "unpublished"\n                "culvert" "', 1
+    )
+    problems = drift.chart_pin_problems(drift.load_versions(), texts)
+    expect("one problem, naming the extra service",
+           len(problems) == 1 and "carries ['dfe-ui']" in problems[0], f"got {problems}")
+
+
+def test_fix_writes_a_chart_digest_into_every_appset_that_pins_it() -> None:
+    """culvert's digest sits in both maps: layer2-edge and the bridge in layer2-apps."""
+    digest = "sha256:" + "7" * 64
+    versions = dict(drift.load_versions())
+    versions["chart-digests.culvert"] = digest
+    writes, fixed, refused = drift.plan_fix(versions)
+    expect("propagation refuses nothing", refused == [], f"{refused}")
+    expect("both culvert pins are rewritten",
+           len([f for f in fixed if "culvert chart digest" in f]) == 2, f"{fixed}")
+    for path in (_APPS_APPSET, _EDGE_APPSET):
+        written = drift.chart_pin_map(writes.get(path, ""))
+        expect(f"{path} carries the new digest", written.get("culvert") == digest, f"{written}")
+    apps = drift.chart_pin_map(writes.get(_APPS_APPSET, ""))
+    expect("and no other service's pin moves",
+           {k: v for k, v in apps.items() if k != "culvert"}
+           == {k: v for k, v in drift.chart_pin_map(drift.read_source(_APPS_APPSET)).items()
+               if k != "culvert"},
+           f"{apps}")
 
 
 def test_main_ignores_the_ambient_argv() -> None:

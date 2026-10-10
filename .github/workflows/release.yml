@@ -70,9 +70,9 @@ jobs:
       - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
         run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
 
-      # Every DFE image is public, so verify reads each tag's digest anonymously
-      # through docker buildx imagetools; an image an outsider cannot pull fails here.
-      - name: Gate -- every pinned DFE digest matches the registry
+      # Every DFE image and thin chart is public, so verify reads each tag's digest
+      # anonymously through docker buildx imagetools; one an outsider cannot pull fails here.
+      - name: Gate -- every pinned DFE image and chart digest matches the registry
         run: python3 scripts/dfe-stack verify
 
       - name: Resolve `current` + decide whether to cut

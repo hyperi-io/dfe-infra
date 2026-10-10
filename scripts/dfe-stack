@@ -41,7 +41,8 @@ Subcommands:
                  stack.previous, else sequential minors + free z-hops.
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
-  verify         Re-fetch GHCR digests and compare them to versions.yaml.
+  verify         Re-fetch GHCR image and thin-chart digests and compare them to
+                 versions.yaml.
   release-gate   Fail a release-maturity stack with an unpublished app, or with
                  a DFE image whose index lacks linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
@@ -761,7 +762,43 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+# The thin chart each chart-digests key names, as argocd/appsets/layer2-apps.yaml maps it.
+_CHART_NAMES = {"hyperdx": "dfe-hyperdx"}
+
+# The chart-digests value of a chart not published yet, which the appsets refuse to render.
+UNPUBLISHED_CHART = "unpublished"
+
+
+def chart_pins(v: dict) -> list[tuple[str, str, str, str]]:
+    """(service, chart, chart version, pinned digest) for each chart-digests entry.
+
+    A thin chart's version is the tag of the image it is named for, without its v,
+    so the version is empty when no apps:, content: or family pin tags that image.
+    """
+    rows: list[tuple[str, str, str, str]] = []
+    for service, digest in sorted(v.get("chart-digests", {}).items()):
+        chart = _CHART_NAMES.get(service, service)
+        tag = image_tag(v, chart)
+        rows.append((service, chart, _norm_version(tag) if tag else "", digest))
+    return rows
+
+
+def _pin_matches(label: str, org: str, package: str, tag: str, digest: str, host: str) -> bool:
+    """Read one tag's digest from the registry and print ok, DRIFT or ERROR against the pin."""
+    try:
+        actual = registry_pins.tag_digest(org, package, tag, registry=host)
+    except registry_pins.RegistryError as exc:
+        print(f"ERROR {label}: {exc}")
+        return False
+    if actual != digest:
+        print(f"DRIFT {label}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
+        return False
+    print(f"ok    {label}: {tag}@{digest[:19]}...")
+    return True
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
+    """Compare every image and thin-chart digest a stack pins with what its tag resolves to now."""
     _, v = stack_pins(load_root(), args.stack)
     host, _, org = args.registry.partition("/")
     if not org:
@@ -773,21 +810,24 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin")
             bad += 1
             continue
-        try:
-            actual = registry_pins.tag_digest(org, name, tag, registry=host)
-        except registry_pins.RegistryError as exc:
-            print(f"ERROR {name}: {exc}")
+        if not _pin_matches(name, org, name, tag, digest, host):
+            bad += 1
+    # Each thin chart sits beside its images, at <registry>/charts/<chart>:<chart version>.
+    for service, chart, version, digest in chart_pins(v):
+        label = f"chart {chart}"
+        if digest == UNPUBLISHED_CHART:
+            print(f"skip  {label}: chart-digests.{service} is {digest!r}, so nothing is published")
+            continue
+        if not version:
+            print(f"ERROR {label}: chart-digests.{service} is pinned, but nothing tags {chart}")
             bad += 1
             continue
-        if actual != digest:
-            print(f"DRIFT {name}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
+        if not _pin_matches(label, org, f"charts/{chart}", version, digest, host):
             bad += 1
-        else:
-            print(f"ok    {name}: {tag}@{digest[:19]}...")
     if bad:
         print(f"\n{bad} digest(s) drifted from the registry")
         return 1
-    print("\nall digests match the registry")
+    print("\nall image and chart digests match the registry")
     return 0
 
 
@@ -1063,7 +1103,7 @@ def cmd_set_latest(args: argparse.Namespace) -> int:
 def cmd_bump_app(args: argparse.Namespace) -> int:
     """Pin an app to a new image version, in BOTH places that must agree.
 
-    versions.yaml `apps.<name>` and helm/charts/<name>/Chart.yaml `appVersion` are
+    versions.yaml `apps.<name>` and the app chart's Chart.yaml `appVersion` are
     drift-checked against each other (check_versions_drift.py), so bumping one by
     hand and forgetting the other turns the drift check red. This does both, or
     neither: each rewrite asserts it matched EXACTLY once, so a renamed key or a
@@ -1103,7 +1143,11 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     )
     vnew = "".join(lines)
 
-    cpath = REPO_ROOT / "helm" / "charts" / name / "Chart.yaml"
+    # The drift check owns where each chart lives; culvert's is under helm/edge.
+    from check_versions_drift import chart_dir
+
+    crel = f"{chart_dir(name)}/Chart.yaml"
+    cpath = REPO_ROOT / crel
     if not cpath.exists():
         raise SystemExit(f"error: {cpath} not found -- no chart to keep in step with versions.yaml")
     ctext = cpath.read_text()
@@ -1120,7 +1164,7 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     cpath.write_text(cnew)
     print(f"{name} -> {version} (stack {stack})")
     print(f"  versions.yaml apps.{name}")
-    print(f"  helm/charts/{name}/Chart.yaml appVersion")
+    print(f"  {crel} appVersion")
     # An app can be mirrored beyond its own chart -- the engine pin also drives
     # the hyperdx dashboards tag.
     print("  next: check_versions_drift.py --fix, for any other mirror of this pin")
@@ -1470,7 +1514,7 @@ def main() -> int:
     )
     p.set_defaults(func=cmd_resolve)
 
-    p = sub.add_parser("verify", help="compare versions.yaml digests to GHCR")
+    p = sub.add_parser("verify", help="compare versions.yaml image and chart digests to GHCR")
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_verify)
 

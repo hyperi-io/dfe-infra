@@ -883,6 +883,80 @@ CHECKS += [
     ),
 ]
 
+# Each DFE component's thin chart, by digest. An appset cannot read versions.yaml,
+# so each layer 2 appset carries a literal map in its chart source's targetRevision:
+# layer2-apps generates every component, culvert too on a cluster the edge module
+# does not reach, and layer2-edge generates culvert alone (None = every key).
+CHART_PIN_MAP = re.compile(r"\$pins := dict(?P<body>[^}]*)")
+CHART_PIN_ENTRY = re.compile(r'"(?P<service>[^"\s]+)"\s+"(?P<pin>[^"]*)"')
+CHART_PIN_APPSETS: dict[Path, tuple[str, ...] | None] = {
+    Path("argocd/appsets/layer2-apps.yaml"): None,
+    Path("argocd/appsets/layer2-edge.yaml"): ("culvert",),
+}
+
+
+def chart_pin_map(text: str) -> dict[str, str]:
+    """Service -> pin in an appset's chart pin map; empty when the text carries none."""
+    found = CHART_PIN_MAP.search(text)
+    if found is None:
+        return {}
+    return {m["service"]: m["pin"] for m in CHART_PIN_ENTRY.finditer(found["body"])}
+
+
+def chart_pin_pattern(service: str) -> str:
+    """One service's entry in an appset's chart pin map -- capture group 1 is the pin."""
+    return r'\$pins := dict[^}]*?"' + re.escape(service) + r'"\s+"([^"]*)"'
+
+
+def chart_digest_keys(versions: dict[str, str]) -> set[str]:
+    """The services the selected stack pins a chart digest for."""
+    return {key.split(".", 1)[1] for key in versions if key.startswith("chart-digests.")}
+
+
+CHECKS += [
+    Check(
+        f"{service} chart digest ({path.name})",
+        f"chart-digests.{service}",
+        path,
+        chart_pin_pattern(service),
+    )
+    for path, services in CHART_PIN_APPSETS.items()
+    for service in (services or sorted(chart_digest_keys(load_versions())))
+]
+
+
+def chart_pin_problems(versions: dict[str, str], texts: dict[Path, str]) -> list[str]:
+    """Each appset whose chart pin map names other services than it should.
+
+    A CHECKS entry reads one service's pin, so a map that drops a service, or
+    carries one versions.yaml does not pin, is invisible to them. The appset
+    fails that service's render either way, which is the outage this catches.
+
+    Args:
+        versions: The selected stack, flattened.
+        texts: Each CHART_PIN_APPSETS file's text, keyed by its repo-relative path.
+
+    Returns:
+        One line per appset that lacks a service or carries an extra one.
+    """
+    pinned = chart_digest_keys(versions)
+    problems: list[str] = []
+    for path, services in CHART_PIN_APPSETS.items():
+        wanted = set(services) if services is not None else pinned
+        found = set(chart_pin_map(texts[path]))
+        if wanted - found:
+            problems.append(
+                f"  [DRIFT]  {path} chart pin map lacks {sorted(wanted - found)}, "
+                f"which versions.yaml chart-digests pins"
+            )
+        if found - wanted:
+            problems.append(
+                f"  [DRIFT]  {path} chart pin map carries {sorted(found - wanted)}, "
+                f"which it does not deploy or chart-digests does not pin"
+            )
+    return problems
+
+
 # dfe-toolbox image family (docker/dfe-toolbox/): a standalone ops shell, not
 # a deployed stack component, but every ARG default in its Dockerfiles must
 # still equal the versions.yaml pin it starts from -- the workflow overrides
@@ -1527,6 +1601,9 @@ def main(argv: list[str] | None = None) -> int:
 
     failures.extend(dead_guards(versions, stack))
     failures.extend(helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS}))
+    failures.extend(
+        chart_pin_problems(versions, {path: read_source(path) for path in CHART_PIN_APPSETS})
+    )
 
     # The other direction: a literal in a file no check points at.
     failures.extend(reverse_sweep())

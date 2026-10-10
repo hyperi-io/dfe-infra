@@ -106,9 +106,10 @@ def test_the_appset_turns_the_zone_into_culverts_own_node_selector() -> None:
     assert '$tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone"' in text
     assert "{{- if $tunnelZone }}" in text
     assert "topology.kubernetes.io/zone: {{ $tunnelZone | quote }}" in text
-    # nodeScheduling.nodeSelector is the shared library's own key
-    # (helm/library/dfe-common/templates/_scheduling.tpl), not one invented here.
-    assert "nodeScheduling:" in text
+    # The thin chart's own top-level nodeSelector, which the cloud files set
+    # too; 2.2.0's nodeScheduling is a key it never reads.
+    assert "\n              nodeSelector:\n                topology.kubernetes.io/zone:" in text
+    assert "nodeScheduling:" not in text
 
 
 def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class() -> None:

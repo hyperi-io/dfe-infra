@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _weave import CONTRACTS, REPO_ROOT, diff_app, helm, library, weave
+from _weave import CONTRACTS, REPO_ROOT, appset, diff_app, helm, library, old_appset, weave
 
 w = weave()
 DIGEST = "sha256:" + "ab" * 32
@@ -288,8 +288,8 @@ def _write(path: Path, data: dict) -> None:
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
-def test_old_render_reads_its_layers_from_layer2_apps() -> None:
-    rendered = w.render_app(_target(), "old", _inputs())
+def test_old_render_reads_its_layers_from_the_2_2_0_layer2_apps() -> None:
+    rendered = w.render_app(_target(), "old", _inputs(appset=old_appset()))
     assert [(c["file"], c["present"]) for c in rendered.chain[0]] == [
         ("argocd/values/common.yaml", True),
         ("argocd/values/aws.yaml", True),
@@ -297,8 +297,8 @@ def test_old_render_reads_its_layers_from_layer2_apps() -> None:
         ("$values/infra/common.yaml", False),
         ("$values/values/dfe-ui-default-values.yaml", False),
     ]
-    appset = yaml.safe_load((REPO_ROOT / w.APPSET).read_text(encoding="utf-8"))
-    written = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
+    written_appset = yaml.safe_load(old_appset().read_text(encoding="utf-8"))
+    written = written_appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
     assert len(rendered.chain[0]) == len(written)
     assert (rendered.release, rendered.namespace) == ("dfe-ui-default-in-cluster", "dfe")
     assert {(d["kind"], d["metadata"]["name"]) for d in rendered.docs} >= {
@@ -327,7 +327,12 @@ def test_new_render_puts_the_app_layers_after_the_profile_and_before_the_deploy_
     rendered = w.render_app(
         _target(),
         "new",
-        _inputs(chart=_values_chart(tmp_path, "dfe-ui"), apps_dir=apps, deploy_repo=deploy),
+        _inputs(
+            appset=appset(),
+            chart=_values_chart(tmp_path, "dfe-ui"),
+            apps_dir=apps,
+            deploy_repo=deploy,
+        ),
     )
     assert [c["file"] for c in rendered.chain[0]] == [
         "argocd/values/common.yaml",
@@ -356,7 +361,9 @@ def test_a_missing_app_layer_is_skipped_as_the_appset_skips_it(tmp_path: Path) -
     rendered = w.render_app(
         _target(profile="slim", cloud="local"),
         "new",
-        _inputs(chart=_values_chart(tmp_path, "dfe-ui"), apps_dir=tmp_path / "empty"),
+        _inputs(
+            appset=appset(), chart=_values_chart(tmp_path, "dfe-ui"), apps_dir=tmp_path / "empty"
+        ),
     )
     present = [c["file"] for c in rendered.chain[0] if c["present"]]
     assert present == [
@@ -368,12 +375,12 @@ def test_a_missing_app_layer_is_skipped_as_the_appset_skips_it(tmp_path: Path) -
 
 def test_the_new_render_carries_dfe_extras_as_its_second_source(tmp_path: Path) -> None:
     chart = _values_chart(tmp_path, "dfe-ui")
-    rendered = w.render_app(_target(), "new", _inputs(chart=chart))
+    rendered = w.render_app(_target(), "new", _inputs(appset=appset(), chart=chart))
     assert len(rendered.chain) == 2
     assert [c["file"] for c in rendered.chain[1]] == [c["file"] for c in rendered.chain[0]]
     ids = {(d["kind"], d["metadata"]["name"]) for d in rendered.docs}
     assert {("ExternalSecret", "dfe-ui-nextauth"), ("Password", "dfe-ui-nextauth-gen")} <= ids
-    alone = w.render_app(_target(), "new", _inputs(chart=chart, extras=False))
+    alone = w.render_app(_target(), "new", _inputs(appset=appset(), chart=chart, extras=False))
     assert len(alone.chain) == 1
     assert ("ExternalSecret", "dfe-ui-nextauth") not in {
         (d["kind"], d["metadata"]["name"]) for d in alone.docs
@@ -381,7 +388,8 @@ def test_the_new_render_carries_dfe_extras_as_its_second_source(tmp_path: Path) 
 
 
 def test_the_dfe_extras_source_is_the_chart_source_with_chart_name_and_profile() -> None:
-    app = w.application(REPO_ROOT, w.APPSET, _target(service="hyperdx"), None, helm())
+    """Built from an appset that carries none, as the 2.2.0 one does not."""
+    app = w.application(REPO_ROOT, old_appset(), _target(service="hyperdx"), None, helm())
     sources = app["spec"]["sources"]
     built = w.extras_source(sources, "dfe-hyperdx", "scale", w.INFRA_REPO_URL)
     params = {p["name"]: p["value"] for p in built["helm"]["parameters"]}
@@ -524,24 +532,25 @@ def test_a_value_file_outside_its_repo_is_refused(tmp_path: Path, escape: str) -
 
 def test_the_application_takes_name_namespace_and_parameters_from_the_appset() -> None:
     target = _target(namespace="dfe-x", registry="mirror.example.com/dfe")
-    app = w.application(REPO_ROOT, w.APPSET, target, None, helm())
+    app = w.application(REPO_ROOT, appset(), target, None, helm())
     spec = app["spec"]
     params = {p["name"]: p["value"] for p in spec["sources"][0]["helm"]["parameters"]}
     assert app["metadata"]["name"] == "dfe-ui-default-in-cluster"
     assert app["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "7"
     assert spec["destination"]["namespace"] == "dfe-x"
+    assert spec["sources"][0]["repoURL"] == "oci://mirror.example.com/dfe/charts/dfe-ui"
     assert params["global.registry"] == "mirror.example.com/dfe"
     assert params["profile"] == "scale"
     # The receiver address annotation is unset here, and reads empty as Argo's string map gives it.
     assert "<no value>" not in json.dumps(app)
-    engine = w.application(REPO_ROOT, w.APPSET, _target(service="dfe-engine"), None, helm())
+    engine = w.application(REPO_ROOT, appset(), _target(service="dfe-engine"), None, helm())
     assert engine["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "5"
 
 
 def test_the_appset_refuses_a_cluster_with_no_registry() -> None:
     target = _target(annotations=(("dfe.hyperi.io/registry", ""),))
     with pytest.raises(w.WeaveError, match=re.escape("carries no dfe.hyperi.io/registry")):
-        w.application(REPO_ROOT, w.APPSET, target, None, helm())
+        w.application(REPO_ROOT, appset(), target, None, helm())
 
 
 def test_an_instance_file_for_another_service_is_refused(tmp_path: Path) -> None:
@@ -563,8 +572,9 @@ def test_old_ref_reads_the_render_from_git() -> None:
     )
     if head.returncode != 0:
         pytest.skip("not a git checkout")
-    from_git = w.render_app(_target(), "old", _inputs(old_ref="HEAD"))
-    from_tree = w.render_app(_target(), "old", _inputs())
+    # The 2.2.0 appset by absolute path, so the ref supplies only the charts and values.
+    from_git = w.render_app(_target(), "old", _inputs(old_ref="HEAD", appset=old_appset()))
+    from_tree = w.render_app(_target(), "old", _inputs(appset=old_appset()))
     assert from_git.docs == from_tree.docs
 
 
@@ -578,6 +588,8 @@ def test_application_runs_from_the_command_line(capsys: pytest.CaptureFixture[st
             "slim",
             "--cloud",
             "local",
+            "--appset",
+            str(appset()),
             "--helm",
             helm(),
         ]
@@ -585,7 +597,8 @@ def test_application_runs_from_the_command_line(capsys: pytest.CaptureFixture[st
     app = yaml.safe_load(capsys.readouterr().out)
     assert code == 0
     assert app["metadata"]["name"] == "hyperdx-default-in-cluster"
-    assert app["spec"]["sources"][0]["path"] == "helm/charts/hyperdx"
+    chart = app["spec"]["sources"][0]
+    assert (chart["repoURL"].rsplit("/", 1)[-1], chart["path"]) == ("dfe-hyperdx", ".")
 
 
 # ------------------------------------------------------------------------- facets
@@ -795,6 +808,8 @@ def test_a_thin_chart_renamed_by_its_overlay_fails_the_gate(tmp_path: Path) -> N
 def test_diff_exits_one_on_a_failed_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # One --appset serves both renders here, and only the 2.2.0 one names a chart
+    # render (a) can read without --old-ref; render (b) then builds its dfe-extras.
     base = [
         "diff",
         "--service",
@@ -803,6 +818,8 @@ def test_diff_exits_one_on_a_failed_gate(
         "slim",
         "--cloud",
         "local",
+        "--appset",
+        str(old_appset()),
         "--helm",
         helm(),
         "--contract",

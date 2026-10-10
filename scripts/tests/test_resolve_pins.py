@@ -253,6 +253,26 @@ def test_tag_digest_falls_back_to_the_api_without_docker(monkeypatch):
     assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
 
 
+def test_the_api_reads_a_nested_package_as_one_path_segment(monkeypatch):
+    """A thin chart is the package charts/<chart>, and the API answers 404 to a raw slash."""
+    registry_pins.package_versions.cache_clear()
+    chart_digest = "sha256:" + "e" * 64
+    asked: list[list[str]] = []
+
+    def run(cmd, *a, **k):
+        asked.append(cmd)
+        if cmd[0] == "docker":
+            raise FileNotFoundError("docker")
+        return _FakeProc(stdout=json.dumps([_record(chart_digest, ["1.22.16"], 1.0)]))
+
+    monkeypatch.setattr(registry_pins.subprocess, "run", run)
+    assert registry_pins.tag_digest("hyperi-io", "charts/dfe-engine", "1.22.16") == chart_digest
+    gh_paths = [cmd[-1] for cmd in asked if cmd[0] == "gh"]
+    want = "/orgs/hyperi-io/packages/container/charts%2Fdfe-engine/versions?per_page=100"
+    assert gh_paths == [want]
+    registry_pins.package_versions.cache_clear()
+
+
 def test_tag_digest_is_none_only_when_the_registry_says_not_found(monkeypatch):
     registry_pins.package_versions.cache_clear()
     monkeypatch.setattr(

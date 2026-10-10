@@ -1190,6 +1190,28 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   fi
 fi
 
+# Argo CD's read credential for each thin chart the layer 2 appsets pull from
+# oci://${DFE_REGISTRY}/charts/<chart>, from the token the image pull secret uses.
+# One repository per chart, because Argo matches a credential on the whole URL;
+# scripts/tests/test_appset_oci_sources.py holds the list to the appsets' charts.
+DFE_THIN_CHARTS="culvert dfe-archiver dfe-engine dfe-fetcher dfe-hyperdx dfe-loader dfe-receiver dfe-transform-elastic dfe-transform-vector dfe-transform-vrl dfe-ui"
+if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
+  if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
+    for chart in ${DFE_THIN_CHARTS}; do
+      kubectl -n argocd create secret generic "repo-chart-${chart}" \
+        --from-literal=type=oci \
+        --from-literal=name="${chart}" \
+        --from-literal=url="oci://${DFE_REGISTRY}/charts/${chart}" \
+        --from-literal=username="${DFE_PULL_SECRET_USER:-token}" \
+        --from-literal=password="${DFE_PULL_SECRET_TOKEN}" \
+        --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    done
+    echo "  [thin charts] Argo OCI credential registered for each chart under oci://${DFE_REGISTRY}/charts"
+  else
+    echo "  [thin charts] no DFE_PULL_SECRET_TOKEN -- assuming oci://${DFE_REGISTRY}/charts is PUBLIC"
+  fi
+fi
+
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
 # Envoy Gateway operator: anonymous OCI Helm repo cred, then the operator app.

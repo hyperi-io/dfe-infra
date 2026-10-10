@@ -9,11 +9,12 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """The chart-switch gate, shared by test_weave_identity.py, test_weave_runtime.py,
-test_weave_exposure.py and test_weave_value_map.py.
+test_weave_exposure.py, test_weave_value_map.py and test_weave_published.py.
 
 Each cell of the matrix is one component on one profile and cloud, rendered twice
 through scripts/dfe-weave: its 2.2.0 chart, and its thin chart beside dfe-extras
-with the integration values under argocd/values/apps. A component joins the gate
+with the integration values under argocd/values/apps. published_render() renders
+the cell's thin chart as the registry serves it instead of as assembled here. A component joins the gate
 as a row of COMPONENTS, an entry in fixtures/weave-accepted-diffs.yaml and an
 entry in scripts/weave/value-map.yaml; every test parametrises over COMPONENTS.
 A component another appset deploys names it in APPSETS, and instance values its
@@ -23,17 +24,19 @@ Renders are cached for the run, so the four files share them. A test that
 changes one works on a copy.
 """
 
+import contextlib
 import copy
 import functools
 import json
 import re
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from _weave import TESTS, render_app, weave
+from _weave import TESTS, published_chart, render_app, weave
 
 # The deploy.service of each component the gate covers, in the order they switch.
 COMPONENTS = (
@@ -134,9 +137,9 @@ class Cell:
         )
 
 
-@functools.cache
-def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Cell:
-    """Both renders of one component, cached for the run."""
+@contextlib.contextmanager
+def _cell_options(service: str, cloud: str, scenario: str) -> Iterator[dict]:
+    """The dfe-weave options a cell renders with: its facts, appset and deploy repo."""
     shape = SCENARIOS.get(scenario, {"facts": {}, "infra": None})
     instance = INSTANCE.get(service, {}).get(cloud)
     with tempfile.TemporaryDirectory(prefix="dfe-gate-deploy-") as tmp:
@@ -158,9 +161,29 @@ def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Cel
                 yaml.safe_dump(body), encoding="utf-8", newline="\n"
             )
             options["deploy_repo"] = Path(tmp)
+        yield options
+
+
+@functools.cache
+def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Cell:
+    """Both renders of one component, cached for the run."""
+    with _cell_options(service, cloud, scenario) as options:
         old = render_app(service, profile, cloud, "old", **options)
         new = render_app(service, profile, cloud, "new", **options)
     return Cell(service, profile, cloud, scenario, old, new)
+
+
+@functools.cache
+def published_render(
+    service: str, profile: str, cloud: str, scenario: str = DEFAULT
+) -> list[dict]:
+    """The new render of a cell from the thin chart the registry serves, cached for the run.
+
+    Read as cell() reads its assembled chart, so the two compare leaf for leaf.
+    """
+    chart = published_chart(service)
+    with _cell_options(service, cloud, scenario) as options:
+        return render_app(service, profile, cloud, "new", chart=chart, **options)
 
 
 def cells(service: str) -> list[Cell]:
@@ -525,6 +548,15 @@ def runtime_diffs(old: list[dict], new: list[dict]) -> list[Diff]:
 def unaccepted(diffs: list[Diff], entries: tuple[Accepted, ...], scenario: str) -> list[str]:
     """The diffs no entry accepts."""
     return [str(d) for d in diffs if not any(e.matches(d, scenario) for e in entries)]
+
+
+def render_differences(left: list[dict], right: list[dict]) -> list[str]:
+    """Every way two renders of one cell differ: an object only one holds, then each leaf."""
+    ids_left = {object_id(d) for d in left}
+    ids_right = {object_id(d) for d in right}
+    found = [f"only left: {o}" for o in sorted(ids_left - ids_right)]
+    found += [f"only right: {o}" for o in sorted(ids_right - ids_left)]
+    return found + [str(d) for d in runtime_diffs(left, right)]
 
 
 def _images(docs: list[dict]) -> dict[str, str]:

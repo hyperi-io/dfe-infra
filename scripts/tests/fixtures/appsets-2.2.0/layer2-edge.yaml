@@ -3,11 +3,11 @@
 # fleet tunnel (helm/edge/culvert) are one module because they are the same job
 # -- a door -- and they are turned off together.
 #
-# THIS FILE SERVES NEW CLUSTERS ONLY. A cluster secret written before the edge
-# module carries no dfe.hyperi.io/edge key, so the gate below never matches it;
-# layer2-platform.yaml and layer2-apps.yaml keep generating the same two
-# Applications for exactly those clusters, under the same names, until
-# dfe-infra#342 retires that bridge.
+# THIS FILE SERVES NEW CLUSTERS ONLY UNTIL rc.15. A cluster secret written before
+# the edge module carries no dfe.hyperi.io/edge key, so the gate below never
+# matches it; layer2-platform.yaml and layer2-apps.yaml keep generating the same
+# two Applications for exactly those clusters, under the same names, and both
+# hand over here at rc.15 (dfe-infra#342).
 #
 # THE OFF SWITCH is the cluster secret's own dfe.hyperi.io/edge, and it gates
 # both ApplicationSets below. A cluster secret written before this module
@@ -217,50 +217,26 @@ spec:
         argocd.argoproj.io/sync-wave: "7"
     spec:
       project: dfe-apps
-      # The four sources layer2-apps.yaml gives every component, in the same
-      # order: the thin chart over OCI, dfe-extras, this repo as ref `infra`
-      # and the deploy repo as ref `values`.
       sources:
-        - repoURL: 'oci://{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}/charts/{{ .deploy.service }}'
-          path: "."
-          # The literal map layer2-apps.yaml carries, held to the same
-          # versions.yaml chart-digests entry by scripts/check_versions_drift.py.
-          targetRevision: |-
-            {{- $pins := dict
-                "culvert" "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"
-            -}}
-            {{- $pin := index $pins .deploy.service | default "" -}}
-            {{- if not $pin -}}
-            {{- fail (printf "no chart digest is pinned for %s -- add chart-digests.%s to versions.yaml and run scripts/check_versions_drift.py --fix" .deploy.service .deploy.service) -}}
-            {{- end -}}
-            {{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $pin) -}}
-            {{- fail (printf "the chart digest pinned for %s is %q, not a published sha256 digest" .deploy.service $pin) -}}
-            {{- end -}}
-            {{- $pin -}}
+        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
+          path: helm/edge/culvert
           helm:
             ignoreMissingValueFiles: true
             valueFiles:
-              - "$infra/argocd/values/common.yaml"
-              - '$infra/argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+              - "../../../argocd/values/common.yaml"
+              - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               # The same flavour file the gateway above reads, layered in the
               # same place: one tier table serves both doors, and the tunnel's
               # own keys (exposure.serviceType, externalTrafficPolicy, pki.mode)
               # are in it.
-              - '$infra/argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "local-dfe") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
-              - '$infra/argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-              - "$infra/argocd/values/apps/_common.yaml"
-              - "$infra/argocd/values/apps/{{ .deploy.service }}/values.yaml"
-              - '$infra/argocd/values/apps/{{ .deploy.service }}/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '$infra/argocd/values/apps/{{ .deploy.service }}/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              - '../../../argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "local-dfe") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
+              - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
               # The deployer's own common.yaml, below the instance file, which
               # stays the last word.
               - '$values/infra/common.yaml'
               - '$values/{{ .path.path }}/{{ .path.filename }}'
             parameters:
-              # The registry culvert's image is pulled from, the one its chart
-              # came from, refused when absent for the reason layer2-apps gives.
-              - name: global.registry
-                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               # The deployment's own domain: vpn.serverCN derives
               # {hostnames.vpn}.{domain} from it when the instance file names
               # no server CN of its own.
@@ -273,8 +249,8 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
-              # The stack this revision certifies, carried for the same reason
-              # layer2-apps carries it.
+              # The stack the base chart is pinned at, carried for the same
+              # reason layer2-apps carries it.
               - name: stackVersion
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
               - name: profile
@@ -289,21 +265,20 @@ spec:
               # (terraform/modules/edge/aws), and a hop from it to a node in
               # another zone crosses a boundary billed per GB. Absent on every
               # flavour that brings its own address, where nothing pins a zone.
-              # A map, so it merges with the cloud file's own nodeSelector.
-              nodeSelector:
-                topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
+              nodeScheduling:
+                nodeSelector:
+                  topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
               {{- end }}
               {{- $cloud := index .metadata.annotations "dfe.hyperi.io/cloud" }}
               {{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}
               # culvert writes its revocations and its WireGuard peer
               # allocations into the pod's PKI directory, so a restart without a
               # volume re-issues a revoked peer's address and forgets which
-              # appliance is which. On-prem is left alone because not every
-              # cluster has a StorageClass (apps/culvert/local.yaml, rancher.yaml).
-              writablePaths:
-                pki:
-                  persistence:
-                    enabled: true
+              # appliance is which. Set here rather than in the flavour overlay
+              # because persistence.enabled is a key other charts read, and on-
+              # prem is left alone because not every cluster has a StorageClass.
+              persistence:
+                enabled: true
               {{- end }}
               {{- $adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr" }}
               {{- if $adminCIDR }}
@@ -319,68 +294,8 @@ spec:
                     adminCIDRs:
                       - {{ $adminCIDR | quote }}
               {{- end }}
-        # The DFE-only objects beside the thin chart: the chart source's value
-        # files, parameters and inline values, plus chartName.
-        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          path: helm/charts/dfe-extras
-          helm:
-            ignoreMissingValueFiles: true
-            valueFiles:
-              - "$infra/argocd/values/common.yaml"
-              - '$infra/argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '$infra/argocd/values/edge-{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}{{ if or (eq $c "local") (eq $c "local-dfe") (eq $c "rancher") }}onprem{{ else }}{{ $c }}{{ end }}.yaml'
-              - '$infra/argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-              - "$infra/argocd/values/apps/_common.yaml"
-              - "$infra/argocd/values/apps/{{ .deploy.service }}/values.yaml"
-              - '$infra/argocd/values/apps/{{ .deploy.service }}/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-              - '$infra/argocd/values/apps/{{ .deploy.service }}/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-              - '$values/infra/common.yaml'
-              - '$values/{{ .path.path }}/{{ .path.filename }}'
-            parameters:
-              - name: chartName
-                value: "{{ .deploy.service }}"
-              - name: global.registry
-                value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
-              - name: domain
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
-              - name: env
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
-              - name: cloud
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
-              - name: stackVersion
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
-              - name: profile
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
-            values: |
-              {{- $tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone" }}
-              {{- if $tunnelZone }}
-              nodeSelector:
-                topology.kubernetes.io/zone: {{ $tunnelZone | quote }}
-              {{- end }}
-              {{- $cloud := index .metadata.annotations "dfe.hyperi.io/cloud" }}
-              {{- if not (or (eq $cloud "local") (eq $cloud "rancher")) }}
-              writablePaths:
-                pki:
-                  persistence:
-                    enabled: true
-              {{- end }}
-              {{- $adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr" }}
-              {{- if $adminCIDR }}
-              peers:
-                classes:
-                  admin:
-                    adminCIDRs:
-                      - {{ $adminCIDR | quote }}
-              {{- end }}
-        # This repo again, at the revision dfe-extras is read at: Argo reads one
-        # revision per repo URL.
-        - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-          ref: infra
-        # The deploy repo, refused at another revision of this repo for the same reason.
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
-          targetRevision: '{{ $infra := index .metadata.annotations "dfe.hyperi.io/repo_url" | default "" | lower | trimSuffix "/" | trimSuffix ".git" }}{{ $deploy := index .metadata.annotations "dfe.hyperi.io/config_repo_url" | default "" | lower | trimSuffix "/" | trimSuffix ".git" }}{{ $revision := index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}{{ if and (eq $infra $deploy) (ne $revision (index .metadata.annotations "dfe.hyperi.io/target_revision")) }}{{ fail "dfe.hyperi.io/config_repo_url names the chart repo at a revision other than dfe.hyperi.io/target_revision -- Argo CD reads one revision per repo, so give the deploy repo its own repo or the same revision" }}{{ end }}{{ $revision }}'
+          targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
       destination:
         server: '{{ .server }}'

@@ -753,8 +753,8 @@ edges:
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:2628"
-    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:2626."
+    evidence: "dfe-infra/versions.yaml:2645"
+    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:2643."
 
   # --- logreducer ----------------------------------------------------------
 
@@ -864,13 +864,13 @@ edges:
     kind: image-pin
     type: lockstep
     evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:16"
-    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:2633."
+    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:2650."
   - from: dfe-deploy
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:2630"
-    note: "Lockstep by the same content-block policy at versions.yaml:2626."
+    evidence: "dfe-infra/versions.yaml:2647"
+    note: "Lockstep by the same content-block policy at versions.yaml:2643."
 
   # --- the components into dfe-engine --------------------------------------
   # dfe-engine authors these apps' configs, so it carries a hand-written copy

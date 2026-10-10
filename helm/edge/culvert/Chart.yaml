@@ -3,7 +3,7 @@ name: culvert
 description: Edge-fleet VPN -- OpenVPN + WireGuard tunnels that reach the receivers only
 type: application
 version: 0.1.0
-appVersion: "v2.1.17"   # == versions.yaml apps.culvert (drift-checked)
+appVersion: "v2.1.18"   # == versions.yaml apps.culvert (drift-checked)
 dependencies:
   - name: dfe-common
     version: "0.15.0"

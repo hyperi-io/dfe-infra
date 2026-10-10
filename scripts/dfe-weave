@@ -59,7 +59,8 @@ new appset has landed), so the old appset, values and chart are read together.
 ``--apps-dir`` replaces ``argocd/values/apps`` with another directory of the
 same layout. Where the appset carries no dfe-extras source, render (b) builds one
 from the chart source: its value files, inline values and parameters, plus
-``chartName`` and ``profile``; ``--no-extras`` leaves it out. Needs python3,
+``chartName`` and ``profile``. ``--no-extras`` renders the thin chart alone,
+without the appset's dfe-extras source or a built one. Needs python3,
 PyYAML, git and helm (``--helm`` or ``DFE_WEAVE_HELM``); jsonschema, when
 installed, validates the contract.
 """
@@ -459,6 +460,12 @@ def build_dependency(helm: str, chart: Path) -> None:
     run([find_helm(helm), "dependency", "build", str(chart)], f"helm dependency build {chart.name}")
 
 
+def has_library(chart: Path) -> bool:
+    """Whether ``chart/charts`` holds the library, packed or unpacked as a published chart has it."""
+    vendored = chart / "charts"
+    return any(vendored.glob(f"{LIBRARY}-*.tgz")) or (vendored / LIBRARY / "Chart.yaml").is_file()
+
+
 def pinned_image(tree: Path, app_name: str, stack: str | None = None) -> tuple[str, str]:
     """The app's image tag and digest in versions.yaml, for one stack (default ``current``).
 
@@ -729,8 +736,9 @@ class Inputs:
         stack: The versions.yaml stack whose pins the thin chart takes.
         image_tag: The thin chart's appVersion, in place of the stack's pin.
         digest: The thin chart's image digest, in place of the stack's pin.
-        extras: Render dfe-extras beside the thin chart where the appset carries
-            no dfe-extras source.
+        extras: Render dfe-extras beside the thin chart: the appset's dfe-extras
+            source, or one built where it carries none. False renders the thin
+            chart alone.
         helm: The helm executable.
     """
 
@@ -790,11 +798,13 @@ def thin_chart(inputs: Inputs) -> Iterator[Path]:
     """The thin chart render (b) uses.
 
     ``--chart`` as given, with the library fetched into it when absent, or one
-    assembled here from ``--contract`` and ``--library``.
+    assembled here from ``--contract`` and ``--library``. A chart pulled from a
+    registry carries its library unpacked, and fetching another beside it would
+    hand helm the library twice.
     """
     helm = inputs.helm
     if inputs.chart is not None:
-        if not any((inputs.chart / "charts").glob(f"{LIBRARY}-*.tgz")):
+        if not has_library(inputs.chart):
             build_dependency(helm, inputs.chart)
         yield inputs.chart
         return
@@ -1024,6 +1034,8 @@ def render_app(target: Target, which: str, inputs: Inputs) -> Rendered:
         if not helm_sources:
             raise WeaveError("the generated Application has no helm source")
         thin = scope.enter_context(thin_chart(inputs)) if which == "new" else None
+        if thin is not None and not inputs.extras:
+            helm_sources = [s for s in helm_sources if s.get("path") != EXTRAS_PATH]
         if thin is not None and inputs.extras:
             extras = extras_source(sources, thin.name, target.profile, infra_url)
             if extras not in helm_sources:
