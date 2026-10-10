@@ -9,6 +9,8 @@
 set -euo pipefail
 
 DRY_RUN="${DFE_DRY_RUN:-false}"
+# The most any one delete below waits; kubectl's own default is to wait forever.
+DELETE_TIMEOUT="120s"
 run() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "[DRY-RUN] $*"
@@ -58,6 +60,34 @@ await_applications_gone() {
     echo "  WARN: ArgoCD Applications still present after ${waited}s, continuing"
 }
 
+# Nothing clears resources-finalizer.argocd.argoproj.io once Argo is gone, and an
+# Application still carrying it holds the argocd namespace in Terminating for good.
+release_stranded_applications() {
+    local app
+    while read -r app; do
+        [[ -n "${app}" ]] || continue
+        if kubectl -n argocd patch "${app}" --type merge \
+            -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1; then
+            echo "  Argo is about to go: cleared the finalizers on ${app}, which never finished deleting its resources"
+        else
+            echo "  WARN: could not clear the finalizers on ${app}"
+        fi
+    done < <(kubectl -n argocd get applications.argoproj.io -o name 2>/dev/null || true)
+}
+
+# Bounded, so a namespace held by a finalizer whose controller is already gone
+# cannot stall the teardown; one still terminating says what holds it.
+delete_namespace() {
+    local ns="${1}" held
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        echo "[DRY-RUN] kubectl delete ns ${ns} --ignore-not-found --timeout=${DELETE_TIMEOUT}"
+        return 0
+    fi
+    kubectl delete ns "${ns}" --ignore-not-found --timeout="${DELETE_TIMEOUT}" 2>/dev/null && return 0
+    held="$(kubectl get ns "${ns}" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.message}{" "}{end}' 2>/dev/null || true)"
+    echo "  WARN: namespace ${ns} still terminating after ${DELETE_TIMEOUT}, continuing: ${held:-nothing on it says why}"
+}
+
 echo "=== DFE Teardown ==="
 echo "This will DELETE all DFE resources from the cluster."
 echo ""
@@ -92,15 +122,16 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 fi
 
 echo "==> [3/8] Deleting DFE data resources (CRDs)"
-run kubectl -n strimzi delete kafka --all 2>/dev/null || true
+# Bounded: step 1 may already have removed the operator that clears a CR's finalizer.
+run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
 # A CloudNativePG Cluster exists only on an install that predates its removal.
-run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all 2>/dev/null || true
+run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
 # ClickHouseCluster/KeeperCluster are the clickhouse.com operator's kinds and
 # clickhouseinstallation is Altinity's; a CR left behind keeps its finalizer and
 # wedges the namespace delete below.
-run kubectl -n clickhouse delete clickhousecluster --all 2>/dev/null || true
-run kubectl -n clickhouse delete keepercluster --all 2>/dev/null || true
-run kubectl -n clickhouse delete clickhouseinstallation --all 2>/dev/null || true
+run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
 fi
@@ -121,7 +152,7 @@ echo "==> [4/8] Deleting DFE namespaces"
 # for -- it empties the private zone itself, independent of whether
 # external-dns ever got the chance.
 for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
-    run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
+    delete_namespace "${ns}"
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its
 # namespace strands the registration, which wedges the metrics API and every
@@ -131,13 +162,13 @@ run kubectl delete apiservice v1beta1.external.metrics.k8s.io --ignore-not-found
 # would turn into an abort on an already-clean cluster.
 if [[ "${DRY_RUN}" != "true" ]]; then
     { kubectl get ns -o name 2>/dev/null | grep "namespace/dfe-" || true; } | while read -r ns; do
-        kubectl delete "${ns}" --ignore-not-found 2>/dev/null || true
+        delete_namespace "${ns#namespace/}"
     done
 else
     echo "[DRY-RUN] kubectl delete ns dfe-*"
 fi
 # Last, once no ScaledObject can still need its operator.
-run kubectl delete ns keda --ignore-not-found 2>/dev/null || true
+delete_namespace keda
 
 echo "==> [5/8] Deleting the Strimzi CRDs"
 # A leftover Strimzi CRD keeps every version it stored, and the next operator
@@ -168,6 +199,11 @@ else
 fi
 
 echo "==> [6/8] Uninstalling ArgoCD + Valkey"
+if [[ "${DRY_RUN}" != "true" ]]; then
+    release_stranded_applications
+else
+    echo "[DRY-RUN] clear the finalizers on any Application still present, which nothing clears once Argo is gone"
+fi
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
@@ -177,7 +213,7 @@ run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
 
 echo "==> [8/8] Cleaning up namespaces"
 for ns in argocd cert-manager external-secrets envoy-gateway-system; do
-    run kubectl delete ns "${ns}" --ignore-not-found 2>/dev/null || true
+    delete_namespace "${ns}"
 done
 # destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
 # already carried, and removing an adopted LoadBalancer provider would strand

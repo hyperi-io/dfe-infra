@@ -194,6 +194,16 @@ report_otel_ingress() {
   printf '%s\n' "$report" | sed 's/^/  [info] /'
 }
 
+# Why each failure above is not ready, read once: a ready count cannot tell a pod
+# with nowhere to schedule from one that cannot pull its image. `dfe-ops
+# readiness-report` owns the wording and never fails on its own account.
+report_not_ready() {
+  local repo_root
+  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+  python3 "${repo_root}/scripts/dfe-ops" readiness-report --namespaces "$WATCH_NS" 2>&1 \
+    || echo "  [warn] readiness report: dfe-ops readiness-report could not run"
+}
+
 ISSUES_FILE="$(mktemp)"
 trap 'rm -f "$ISSUES_FILE"' EXIT
 
@@ -283,6 +293,7 @@ while :; do
   if [ "$SECONDS" -ge "$TIMEOUT" ]; then
     echo "=== READINESS GATE FAILED after ${TIMEOUT}s -- ${n} issue(s): ==="
     sed 's/^/  [FAIL] /' "$ISSUES_FILE"
+    report_not_ready
     exit 1
   fi
   echo "  ...${n} not-ready, ${SECONDS}s elapsed; re-checking in ${INTERVAL}s"

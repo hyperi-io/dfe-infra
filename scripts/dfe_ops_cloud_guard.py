@@ -58,13 +58,22 @@ edge_allowed_cidrs, fencing the public gateway to the runner and the cluster's
 own NAT addresses for the run. A run record goes beside the state BEFORE the
 apply, so the scheduled reaper can destroy the run if this process dies.
 From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
-SIGHUP -- tears the run down: the in-flight child is stopped, the cluster's
-workloads go if the cycle did not reach its own destroy, then `tofu destroy`.
+SIGHUP, the run length running out -- tears the run down: the in-flight child
+is stopped, the cluster's workloads go if the cycle did not reach its own
+destroy, then `tofu destroy`.
 Only a destroy that succeeds removes the overlay and the run record; a failed
 one leaves both, and the run's tags, for the reaper. SIGKILL skips all of
 this, which is what the reaper is for. Every child runs with AWS_REGION and
 AWS_DEFAULT_REGION set to the dial's region, so a call that names no region
 lands in the run's region rather than the shell's.
+
+The run length is a deadline, not a hint. Apply and cycle share it, and a
+cycle still running when it passes is stopped, its whole process tree with
+it, so the teardown starts inside the credential with the margin still ahead
+of it. The workload teardown gets half the margin and is stopped there, so
+`tofu destroy` always runs. A tofu apply is never cut short, since a killed
+apply strands its state lock and resources its state never recorded: an
+apply that finishes past the run length skips the cycle instead.
 
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,
 DFE_GUARD_SWEEPER, DFE_GUARD_BUDGET_ACTION (`<budget-name>:<action-id>`),
@@ -108,6 +117,11 @@ RUNS_DIR = REPO_ROOT / ".tmp" / "cloud-runs"
 OVERLAY_NAME = "zz-dfe-run.auto.tfvars.json"
 DEFAULT_TEARDOWN_MARGIN = "45m"
 CHILD_STOP_TIMEOUT = 60  # seconds a stopped child gets to exit before it is killed
+# A tofu inside the stopped cycle finishes its in-flight calls and saves state on SIGTERM;
+# killed sooner, it leaves the state lock held and the guard's own destroy refused.
+DEADLINE_STOP_TIMEOUT = 300
+WORKLOAD_TEARDOWN_SHARE = 0.5  # of the margin; tofu destroy keeps the rest
+DEADLINE_EXIT = 124  # what a run stopped at its run length returns, as timeout(1) does
 TEARDOWN_SIGNALS = tuple(
     getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
 )
@@ -120,6 +134,10 @@ class GuardError(RuntimeError):
 
 class _Interrupted(BaseException):
     """A termination signal, raised where the main thread is so `finally` tears down."""
+
+
+class DeadlineError(RuntimeError):
+    """A child was still running at its deadline and has been stopped; the message names it."""
 
 
 # --- configuration -----------------------------------------------------------
@@ -647,31 +665,97 @@ def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
     return {**os.environ, "AWS_REGION": config.region, "AWS_DEFAULT_REGION": config.region, **extra}
 
 
+def _group_alive(pgid: int) -> bool:
+    """Whether any process is left in the group; one that cannot be signalled still counts."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class Runner:
     """Runs one child at a time with live output, and can stop the one in flight."""
 
     def __init__(self) -> None:
         self.current: subprocess.Popen | None = None
+        # The process group `current` leads, when it was started in a session of its own.
+        self.group: int | None = None
 
-    def run(self, cmd: list[str], *, env: Mapping[str, str] | None = None, new_session: bool = False) -> int:
+    def run(
+        self,
+        cmd: list[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        new_session: bool = False,
+        deadline: float | None = None,
+        stop_timeout: float = CHILD_STOP_TIMEOUT,
+    ) -> int:
+        """Run `cmd` to its end, or stop it at `deadline`, a `time.monotonic()` reading.
+
+        Args:
+            cmd: The child's argv.
+            env: Its environment, or None for this process's own.
+            new_session: Start it in a session of its own, so a terminal's Ctrl-C
+                never reaches it and a stop signals its whole tree.
+            deadline: When to stop it; None waits for as long as it runs.
+            stop_timeout: Seconds a child stopped at the deadline gets before it is killed.
+
+        Returns:
+            The child's exit code.
+
+        Raises:
+            DeadlineError: The child was still running at `deadline` and has been stopped.
+        """
         print(f"==> {' '.join(cmd)}", file=sys.stderr)
         proc = subprocess.Popen(cmd, env=None if env is None else dict(env), start_new_session=new_session)
         self.current = proc
-        returncode = proc.wait()
+        self.group = proc.pid if new_session and hasattr(os, "killpg") else None
+        wait_for = None if deadline is None else max(0.0, deadline - time.monotonic())
+        try:
+            returncode = proc.wait(timeout=wait_for)
+        except subprocess.TimeoutExpired:
+            print(f"==> deadline reached, stopping: {' '.join(cmd)}", file=sys.stderr)
+            self.stop_current(stop_timeout)
+            raise DeadlineError(f"{' '.join(cmd[:3])} ran past its deadline and was stopped") from None
         # Cleared only after a normal wait, so an interrupted wait leaves it for stop_current.
         self.current = None
+        self.group = None
         return returncode
 
     def stop_current(self, timeout: float = CHILD_STOP_TIMEOUT) -> None:
-        proc, self.current = self.current, None
-        if proc is None or proc.poll() is not None:
+        """Stop the child in flight, and every process in its group when it leads one.
+
+        A child in a session of its own is waited on until its whole group is
+        gone, so a grandchild still shutting down cannot outlive the stop and
+        race whatever runs next. The child stays `current` until then, so a stop
+        cut short by a signal is finished by the teardown's own stop.
+        """
+        proc, pgid = self.current, self.group
+        if proc is None:
             return
-        proc.terminate()
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        if pgid is None:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        elif proc.poll() is None or _group_alive(pgid):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGTERM)
+            give_up = time.monotonic() + timeout
+            while time.monotonic() < give_up and (proc.poll() is None or _group_alive(pgid)):
+                time.sleep(0.2)
+            if proc.poll() is None or _group_alive(pgid):
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(pgid, signal.SIGKILL)
             proc.wait()
+        self.current = None
+        self.group = None
 
 
 def _raise_interrupted(signum: int, _frame: object) -> NoReturn:
@@ -706,7 +790,20 @@ class Teardown:
         if not self.cycle_finished and self.kubeconfig.is_file():
             # Controllers own load balancers and volumes tofu cannot see, so the workloads go first.
             env = run_env(self.config, KUBECONFIG=str(self.kubeconfig))
-            self.runner.run([sys.executable, str(DFE_OPS), "teardown", "--force"], env=env, new_session=True)
+            budget = self.config.teardown_margin * WORKLOAD_TEARDOWN_SHARE
+            try:
+                self.runner.run(
+                    [sys.executable, str(DFE_OPS), "teardown", "--force"],
+                    env=env,
+                    new_session=True,
+                    deadline=time.monotonic() + budget,
+                )
+            except DeadlineError:
+                print(
+                    f"run {self.run_id}: the workload teardown passed its {int(budget)}s share of the "
+                    "teardown margin and was stopped, so tofu destroy runs now",
+                    file=sys.stderr,
+                )
         destroyed = self.runner.run(
             [tofu, f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve", "-input=false"],
             env=run_env(self.config),
@@ -869,6 +966,8 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         return 2
 
     expires_at = int(now) + config.window
+    # Monotonic, so a clock step cannot move it, and net of the preflight already spent.
+    deadline = time.monotonic() + config.run_length - (time.time() - now)
     overlay = build_overlay(config, run_id, expires_at)
     record = cloud_run.build_record(
         run_id=run_id,
@@ -882,7 +981,11 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     runner = Runner()
     teardown = Teardown(config, guard, runner, run_id, kubeconfig, record_key)
     tofu = shutil.which("tofu") or "tofu"
-    print(f"run {run_id}: expires at {cloud_run.format_expiry(expires_at)}", file=sys.stderr)
+    print(
+        f"run {run_id}: the cycle stops by {cloud_run.format_expiry(int(now) + config.run_length)}, "
+        f"and the run expires at {cloud_run.format_expiry(expires_at)}",
+        file=sys.stderr,
+    )
 
     child_env = run_env(config)
     returncode = 1
@@ -900,8 +1003,20 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
                 )
             if returncode == 0:
                 guard.write_kubeconfig(_tofu_output(config.tf_dir, "cluster_name"), kubeconfig)
-                returncode = runner.run([sys.executable, str(DFE_OPS), "cycle", *cycle_argv], env=child_env)
+                if time.monotonic() >= deadline:
+                    raise DeadlineError("tofu apply finished past it, so the cycle never started")
+                returncode = runner.run(
+                    [sys.executable, str(DFE_OPS), "cycle", *cycle_argv],
+                    env=child_env,
+                    new_session=True,
+                    deadline=deadline,
+                    stop_timeout=DEADLINE_STOP_TIMEOUT,
+                )
                 teardown.cycle_finished = True
+    except DeadlineError as exc:
+        print(f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
+              file=sys.stderr)
+        returncode = DEADLINE_EXIT
     except _Interrupted as exc:
         print(f"run {run_id} interrupted by {exc}; torn down above", file=sys.stderr)
         returncode = 143
@@ -923,7 +1038,9 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--tf-dir", required=True, help="the OpenTofu root the run applies, e.g. terraform/environments/aws")
     parser.add_argument("--provider", choices=sorted(GUARDS), default="aws",
                         help="cloud; gcp and azure have the interface and no checks yet, and refuse by name")
-    parser.add_argument("--run-length", required=True, help="how long the run may take: 90m, 3h")
+    parser.add_argument("--run-length", required=True,
+                        help="how long apply and the cycle may take before the cycle is stopped and "
+                             "the teardown starts: 90m, 3h")
     parser.add_argument("--teardown-margin", default=DEFAULT_TEARDOWN_MARGIN,
                         help=f"time allowed for the teardown after the run length (default {DEFAULT_TEARDOWN_MARGIN})")
     parser.add_argument("--account", default=None, help="account id the run must land in (default: provision.account)")

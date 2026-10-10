@@ -89,6 +89,11 @@ if "exec" in args:
         sys.exit(1)
     print(answer)
     sys.exit(0)
+if "get" in args and "-o" in args and args[args.index("-o") + 1] == "json":
+    fixture = json.load(open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8"))
+    resource = args[args.index("get") + 1]
+    print(json.dumps({"items": fixture.get("json", {}).get(resource, [])}))
+    sys.exit(0)
 if "applications.argoproj.io" in args:
     key = "applications"
 elif "pods" in args:
@@ -339,6 +344,45 @@ def test_an_empty_dfe_ns_says_what_the_gate_stopped_judging() -> None:
     )
     named = run_gate(HEALTHY, DFE_NS="dfe-local")
     expect("a named namespace prints no narrowing", "[narrow]" not in named.stdout, named.stdout)
+
+
+UNSCHEDULABLE_POD = {
+    "metadata": {"name": "dfe-receiver-6fb4bff97-2pcvr", "namespace": "dfe-local"},
+    "spec": {"containers": [{"name": "receiver"}]},
+    "status": {"phase": "Pending", "conditions": [{
+        "type": "PodScheduled", "status": "False", "reason": "Unschedulable",
+        "message": "0/11 nodes are available: 2 Insufficient cpu, 9 node(s) had untolerated taint",
+    }]},
+}
+
+
+def test_a_failed_gate_says_why_each_pod_is_not_ready() -> None:
+    """Run 38026303019 failed on 35 `Pending` lines and nothing that said why."""
+    out = run_gate(
+        {
+            "pods": ["dfe-local dfe-receiver-6fb4bff97-2pcvr 0/1 Pending 0 15m"],
+            "deployments": ["dfe-local dfe-receiver 2 <none>"],
+            "ns_workloads": ["dfe-receiver 0/2 2 0 15m"],
+            "json": {"pods": [UNSCHEDULABLE_POD]},
+        },
+        DFE_NS="dfe-local",
+    )
+    expect("the gate still fails", out.returncode != 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "the report follows the failures, with the scheduler's own verdict",
+        out.stdout.index("[FAIL] pod dfe-local/dfe-receiver") < out.stdout.index("=== readiness report")
+        and "PodScheduled=False Unschedulable: 0/11 nodes are available: 2 Insufficient cpu" in out.stdout,
+        out.stdout,
+    )
+
+
+def test_a_passing_gate_prints_no_report() -> None:
+    out = run_gate(HEALTHY, DFE_NS="dfe-local", DFE_ENV="local")
+    expect(
+        "no report on a pass",
+        out.returncode == 0 and "readiness report" not in out.stdout,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_the_presence_check_still_fires() -> None:
@@ -626,7 +670,9 @@ def destroyed_namespaces() -> set[str]:
         if listed:
             names.update(listed.group(1).split())
             continue
-        single = re.search(r"delete ns \"?([A-Za-z0-9-]+)\"?\s", line)
+        single = re.search(r"delete ns \"?([A-Za-z0-9-]+)\"?\s", line) or re.search(
+            r"^delete_namespace \"?([A-Za-z0-9-]+)\"?$", line.strip()
+        )
         if single:
             names.add(single.group(1))
     if 'grep "namespace/dfe-"' in text:

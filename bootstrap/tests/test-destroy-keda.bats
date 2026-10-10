@@ -1,11 +1,15 @@
 #!/usr/bin/env bats
 # A KEDA resource that is terminating once no KEDA operator is left to clear
 # finalizer.keda.sh holds its Argo Application, and so destroy.sh, forever.
+# The same goes for an Application once Argo itself is gone, and for any
+# namespace a finalizer holds, so every one of those waits is bounded.
 # kubectl is a stub that logs every call and answers from files in STUB_DIR:
 #   operator-running   a KEDA operator pod is Running
 #   pods-unreadable    listing the operator pod fails
 #   stuck              the line a terminating ScaledObject prints; the Argo
 #                      Application stays until the patch lands
+#   argocd-held        the argocd namespace outlives its delete timeout, and
+#                      this file is the condition message it carries
 # No cluster is involved.
 
 setup() {
@@ -39,6 +43,12 @@ case "$*" in
         if [[ -f "${STUB_DIR}/stuck" && ! -f "${STUB_DIR}/patched" ]]; then
             echo "application.argoproj.io/dfe-receiver"
         fi
+        ;;
+    "delete ns argocd "*)
+        [[ -f "${STUB_DIR}/argocd-held" ]] && exit 1
+        ;;
+    "get ns argocd "*)
+        [[ -f "${STUB_DIR}/argocd-held" ]] && cat "${STUB_DIR}/argocd-held"
         ;;
 esac
 exit 0
@@ -80,7 +90,7 @@ log() {
     stick '["finalizer.keda.sh"]'
     run bash "${DESTROY}" --force
     [ "$status" -eq 0 ]
-    [[ "$(log)" != *"patch "* ]]
+    [[ "$(log)" != *"patch ScaledObject.keda.sh"* ]]
     [[ "${output}" == *"WARN: ArgoCD Applications still present"* ]]
 }
 
@@ -89,7 +99,7 @@ log() {
     stick '["finalizer.keda.sh"]'
     run bash "${DESTROY}" --force
     [ "$status" -eq 0 ]
-    [[ "$(log)" != *"patch "* ]]
+    [[ "$(log)" != *"patch ScaledObject.keda.sh"* ]]
     [[ "${output}" == *"WARN: ArgoCD Applications still present"* ]]
 }
 
@@ -97,8 +107,43 @@ log() {
     stick '["example.com/other"]'
     run bash "${DESTROY}" --force
     [ "$status" -eq 0 ]
-    [[ "$(log)" != *"patch "* ]]
+    [[ "$(log)" != *"patch ScaledObject.keda.sh"* ]]
     [[ "${output}" == *"WARN: ArgoCD Applications still present"* ]]
+}
+
+@test "an Application left when Argo is uninstalled has its finalizers cleared first" {
+    touch "${STUB_DIR}/operator-running"
+    stick '["finalizer.keda.sh"]'
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text patched uninstalled
+    log_text="$(log)"
+    patched="$(line_of '-n argocd patch application.argoproj.io/dfe-receiver --type merge -p {"metadata":{"finalizers":null}}' "${log_text}")"
+    uninstalled="$(line_of 'helm uninstall argocd -n argocd' "${log_text}")"
+    [ -n "${patched}" ]
+    [ -n "${uninstalled}" ]
+    [ "${patched}" -lt "${uninstalled}" ]
+    [[ "${output}" == *"cleared the finalizers on application.argoproj.io/dfe-receiver"* ]]
+}
+
+@test "no namespace delete can wait forever" {
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local deletes
+    deletes="$(grep -E '^delete ns ' "${STUB_DIR}/kubectl.log")"
+    [ -n "${deletes}" ]
+    [[ "$(grep -cv -- '--timeout=120s' <<<"${deletes}")" -eq 0 ]]
+}
+
+@test "a namespace still terminating at its timeout is named and the teardown finishes" {
+    echo "Some content in the namespace has finalizers remaining: resources-finalizer.argocd.argoproj.io in 1 resource instances" \
+        > "${STUB_DIR}/argocd-held"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"WARN: namespace argocd still terminating after 120s, continuing: Some content in the namespace has finalizers remaining: resources-finalizer.argocd.argoproj.io"* ]]
+    [[ "$(log)" == *"delete ns cert-manager --ignore-not-found --timeout=120s"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
 }
 
 @test "a healthy teardown patches nothing and reports no warning" {

@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       run_length:
-        description: "How long the cycle may run before its 45m teardown margin: N, Ns, Nm, Nh or Nd, e.g. 150m. The credential lasts 4h, so run length plus margin must fit inside it."
+        description: "How long apply and the cycle may run before the guard stops the cycle and tears down inside the 45m margin that follows: N, Ns, Nm, Nh or Nd, e.g. 150m. The credential lasts 4h, so run length plus margin must fit inside it."
         required: true
         default: "150m"
       cycle_args:
@@ -76,6 +76,7 @@ jobs:
     # The runner role's OIDC trust names this environment, so no other job can assume it.
     environment: e2e-runner
     # Above the 4h credential, the longest window preflight admits, plus setup.
+    # The guard stops the cycle at the run length, so only a teardown that overruns its margin meets this.
     # A cancelled job gets seconds, not a teardown, so the reaper removes what it leaves.
     timeout-minutes: 260
     permissions:
