@@ -217,10 +217,7 @@ def report(results: list[wizard.StepResult], shots: Path, secrets: tuple[str, ..
         # A row that ran and could not decide is neither a pass nor a failure,
         # and is said again here so a long table cannot be read as green.
         lines.append(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
-    text = "\n".join(lines)
-    # Longest first, so a secret that contains another is never left half shown.
-    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
-        text = text.replace(secret, "[redacted]")
+    text = wizard.redact("\n".join(lines), secrets)
     shots.mkdir(parents=True, exist_ok=True)
     (shots / STEP_TABLE).write_text(text + "\n", encoding="utf-8")
     return text

@@ -180,6 +180,22 @@ def report_table(results: Sequence[StepResult]) -> str:
     return "\n".join(rows)
 
 
+def redact(text: str, secrets: Iterable[str]) -> str:
+    """*text* with every non-empty secret replaced, before it reaches a public job log.
+
+    Args:
+        text: The report, whose details are free text and can quote an exception.
+        secrets: The run's passwords and tokens.
+
+    Returns:
+        The redacted text.
+    """
+    # Longest first, so a secret that contains another is never left half shown.
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+    return text
+
+
 def exit_code(results: Sequence[StepResult]) -> int:
     """0 only when every screen finished. Any failure fails the deploy."""
     return 1 if any(r.status == "failed" for r in results) else 0

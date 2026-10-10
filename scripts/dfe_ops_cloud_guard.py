@@ -401,13 +401,7 @@ class AwsGuard:
 
     def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
         """Every run record under the prefix; a record goes only when its run's destroy succeeds."""
-        # The CLI follows every page itself unless --max-items is given.
-        body = self._read(["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", f"{prefix}/"], region)
-        return [
-            str(item["Key"])
-            for item in body.get("Contents", [])
-            if str(item.get("Key", "")).endswith(f"/{cloud_run.RECORD_OBJECT}")
-        ]
+        return cloud_sweep.list_run_record_keys(bucket, region, prefix)
 
     def put_record(self, bucket: str, region: str, key: str, body: str) -> None:
         with tempfile.TemporaryDirectory(prefix="dfe-run-record-") as scratch:

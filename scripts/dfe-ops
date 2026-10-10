@@ -2069,8 +2069,9 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
         terraform_fence: The same output as terraform alone gave it.
 
     Returns:
-        Empty when no fence is named, or every Envoy LoadBalancer Service carries
-        each fenced range in loadBalancerSourceRanges; otherwise what is missing.
+        Empty when no fence is named, every Envoy LoadBalancer Service carries
+        each fenced range in loadBalancerSourceRanges, or the gateway is on
+        NodePort with no load balancer; otherwise what is missing.
     """
     want = {cidr.strip() for cidr in (fence or terraform_fence).split(",") if cidr.strip()}
     if not want:
@@ -2078,8 +2079,16 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
     rc, doc, err = _kubectl_json([*kube, "get", "service", "-A", "-l", ENVOY_OWNER_LABEL])
     if rc != 0:
         return f"could not list the gateway's Services: {err}"
-    services = [s for s in doc.get("items") or [] if (s.get("spec") or {}).get("type") == "LoadBalancer"]
+    items = doc.get("items") or []
+    services = [s for s in items if (s.get("spec") or {}).get("type") == "LoadBalancer"]
     if not services:
+        if any((s.get("spec") or {}).get("type") == "NodePort" for s in items):
+            print(
+                "acceptance: the gateway is on NodePort, so no load balancer carries "
+                "loadBalancerSourceRanges; Envoy's client-CIDR filter is the fence there",
+                file=sys.stderr,
+            )
+            return ""
         return "no Envoy Gateway LoadBalancer Service exists to carry it"
     problems = []
     for svc in services:
