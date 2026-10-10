@@ -124,7 +124,11 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.ver.outputs.current }}"
-          gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes || true
+          # Only a release-maturity tag may become GitHub's "Latest"; an rc or beta publishes as a prerelease.
+          MATURITY=$(python3 scripts/dfe-stack maturity --stack "$TAG")
+          KIND=(--prerelease --latest=false)
+          if [ "$MATURITY" = "release" ]; then KIND=(--latest); fi
+          gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes "${KIND[@]}" || true
           gh release upload "$TAG" --clobber $FILES SHA256SUMS
 
       - uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
