@@ -245,6 +245,20 @@ run() {
   fi
 }
 
+# Fills DFE_RELEASE_VALUES with the values helm_releases.py holds for one install,
+# the same ones `dfe-ops upgrade` prints. Expanded as ${A[@]+"${A[@]}"} because
+# bash 3.2 reads an empty array as unbound under set -u.
+dfe_release_values() {
+  local listed value
+  listed="$(python3 "${SCRIPT_DIR}/helm_releases.py" args "$@")"
+  DFE_RELEASE_VALUES=()
+  while IFS= read -r value; do
+    if [[ -n "${value}" ]]; then
+      DFE_RELEASE_VALUES+=("${value}")
+    fi
+  done <<<"${listed}"
+}
+
 # Detect-or-install helpers. DFE assumes only a bare cluster and brings what it
 # needs -- but a destination may already run a cluster-singleton operator
 # (cert-manager, ESO, Argo) whose cluster-scoped CRDs cannot be owned twice. So
@@ -762,14 +776,11 @@ fi
 
 echo "==> [2/7] cert-manager (detect-or-install)"
 if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager; then
-  # enableGatewayAPI: the gateway-shim watches Gateway annotations and issues
-  # the dfe-wildcard-tls Secret the https listener references; without it the
-  # annotation is inert and the listener never programs.
+  dfe_release_values cert-manager
   run helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
     --version "${CERT_MANAGER_VERSION}" \
-    --set crds.enabled=true \
-    --set config.enableGatewayAPI=true \
+    ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
 fi
 # Private-CA issuance (the chart's tls.vault issuer mode): seed the AppRole
@@ -784,9 +795,11 @@ fi
 
 echo "==> [3/7] external-secrets (detect-or-install)"
 if dfe_should_install external-secrets clustersecretstores.external-secrets.io external-secrets external-secrets; then
+  dfe_release_values external-secrets
   run helm upgrade --install external-secrets external-secrets/external-secrets \
     --namespace external-secrets --create-namespace \
     --version "${EXTERNAL_SECRETS_VERSION}" \
+    ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
 fi
 
@@ -1119,33 +1132,18 @@ echo "==> [6/7] ArgoCD with Valkey cache (detect-or-install, upgrade our own)"
 # ApplicationSets below register into it. Otherwise install DFE-owned Argo. (Full
 # isolation -- a dedicated dfe-system Argo scoped to dfe-* namespaces so it never
 # couples to a host Argo -- is the Phase 0d adopt-path refinement.)
-# Argo HARDENING (dfe-infra#4): back off the controller timers so a degraded app
-# can never monopolise the control plane (self-heal 5s->30s, reconciliation
-# 180s->300s) and bound the repo-server timeout.
-# server.insecure: the gateway terminates TLS and forwards plain HTTP, which a
-# TLS-serving argocd-server answers with a redirect back to the same URL.
-# global.domain: argocd-cm's url, on the label the gateway publishes Argo under
-# (hostnames.argocd in argocd/values/common.yaml).
+# The values the install sets, and why each is set, are in bootstrap/helm_releases.py.
 # Argo's own login (--values - on stdin): the OIDC provider the gateway fronts Argo
 # with, Dex off, and DFE's groups mapped to Argo roles -- see bootstrap/argocd_login.py.
 dfe_argocd_login_values() {
   python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"
 }
 dfe_argocd_upgrade() {
+  dfe_release_values argocd --domain "${DFE_DOMAIN}" --cache-service "${VALKEY_SVC}"
   run helm upgrade --install argocd argo/argo-cd \
     --namespace argocd --create-namespace \
     --version "${ARGOCD_VERSION}" \
-    --set redis.enabled=false \
-    --set "externalRedis.host=${VALKEY_SVC}.argocd.svc.cluster.local" \
-    --set "externalRedis.port=6379" \
-    --set-string "global.domain=argocd.${DFE_DOMAIN}" \
-    --set-string 'configs.params.server\.insecure=true' \
-    --set-string 'configs.params.reposerver\.disable\.git\.modules=true' \
-    --set-string 'configs.cm.timeout\.reconciliation=300s' \
-    --set-string 'configs.params.controller\.self\.heal\.timeout\.seconds=30' \
-    --set-string 'configs.params.controller\.repo\.server\.timeout\.seconds=60' \
-    --set-string 'configs.params.controller\.diff\.server\.side=true' \
-    --values - \
+    ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 10m <<<"${ARGOCD_LOGIN_VALUES}"
 }
 if python3 "${SCRIPT_DIR}/argocd_release.py" --cache-service "${VALKEY_SVC}"; then

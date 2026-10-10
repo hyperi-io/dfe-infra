@@ -22,6 +22,7 @@ Needs `helm` on PATH.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,8 +35,14 @@ BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 VALUES = REPO_ROOT / "argocd" / "values"
 GATEWAY = chart_dir("envoy-gateway-config")
 
+sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
+import helm_releases  # noqa: E402
+
 ARGO_INSTALL = "helm upgrade --install argocd argo/argo-cd"
-INSECURE_FLAG = "--set-string 'configs.params.server\\.insecure=true'"
+INSECURE = ("--set-string", "configs.params.server\\.insecure=true")
+# The install takes its values from helm_releases.py through this call, and nowhere else.
+ARGO_VALUES_CALL = 'dfe_release_values argocd --domain "${DFE_DOMAIN}" --cache-service "${VALKEY_SVC}"'
+SPLICE = '${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"}'
 ADOPT_BRANCH = "Using existing ArgoCD"
 
 # The argo-cd chart's server.service.servicePortHttp: the Service port whose
@@ -74,14 +81,17 @@ def install_command() -> str:
 
 # --- bootstrap installs Argo CD insecure -------------------------------------
 def test_the_argo_install_runs_the_server_insecure() -> None:
-    assert INSECURE_FLAG in install_command()
+    args = helm_releases.install_args(helm_releases.ARGOCD, domain="dfe.example.com")
+    assert list(INSECURE) in [args[i : i + 2] for i in range(len(args) - 1)]
+    assert SPLICE in install_command()
 
 
 def test_an_adopted_argo_is_not_reconfigured() -> None:
-    """The flag lives on the install alone, never on the adopt branch."""
+    """The values reach helm through the install alone, never on the adopt branch."""
     body = BOOTSTRAP.read_text(encoding="utf-8")
-    assert body.count("server\\.insecure") == 1
-    assert body.find(INSECURE_FLAG) < body.find(ADOPT_BRANCH)
+    assert "server\\.insecure" not in body
+    assert body.count(ARGO_VALUES_CALL) == 1
+    assert body.find(ARGO_VALUES_CALL) < body.find(ARGO_INSTALL) < body.find(ADOPT_BRANCH)
 
 
 # --- the route and the probe reach the plain HTTP port -----------------------
