@@ -1906,26 +1906,31 @@ def test_check_rollouts_names_each_rollout_still_running(monkeypatch: pytest.Mon
     items = [_deployment(total=2), _deployment("dfe-hyperdx", available=0), _deployment("dfe-ui"), _statefulset()]
     calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": items})))
 
-    ok, detail = u.check_rollouts("kc", "dfe")
+    ok, detail = u.check_rollouts("kc", "dfe-from-the-secret")
 
     assert ok is False
     assert detail == (
-        "2 of 4 rollout(s) in dfe not finished: deployment/dfe-engine (1 old replica(s) still running), "
+        "2 of 4 rollout(s) not finished: deployment/dfe-engine (1 old replica(s) still running), "
         "deployment/dfe-hyperdx (0 of 1 updated replicas available)"
     )
-    assert calls[0][:7] == ["kubectl", "--kubeconfig", "kc", "-n", "dfe", "get", "deployments.apps,statefulsets.apps"]
+    assert calls[0][:7] == [
+        "kubectl", "--kubeconfig", "kc", "-n", "dfe-from-the-secret", "get", "deployments.apps,statefulsets.apps",
+    ]
 
 
 def test_check_rollouts_passes_once_every_rollout_has_finished(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_deployment(), _statefulset()]})))
-    assert u.check_rollouts(None, "dfe") == (True, "2 rollout(s) in dfe finished")
+    assert u.check_rollouts(None, "dfe-from-the-secret") == (True, "2 rollout(s) finished")
 
 
 @pytest.mark.parametrize(
     ("response", "detail"),
     [
-        (_proc(0, stdout=json.dumps({"items": []})), "no Deployment or StatefulSet in dfe"),
-        (_proc(1, stderr="Unable to connect to the server"), "cannot list Deployments and StatefulSets in dfe: Unable"),
+        (_proc(0, stdout=json.dumps({"items": []})), "no Deployment or StatefulSet in the DFE namespace"),
+        (
+            _proc(1, stderr="Unable to connect to the server"),
+            "cannot list Deployments and StatefulSets in the DFE namespace: Unable",
+        ),
     ],
     ids=["empty-namespace", "unreadable"],
 )
@@ -1933,9 +1938,11 @@ def test_check_rollouts_fails_what_it_cannot_show_settled(
     monkeypatch: pytest.MonkeyPatch, response: subprocess.CompletedProcess, detail: str
 ) -> None:
     _mock_run(monkeypatch, response)
-    ok, why = u.check_rollouts(None, "dfe")
+    ok, why = u.check_rollouts(None, "dfe-from-the-secret")
     assert ok is False
     assert why.startswith(detail)
+    # apply can have read the namespace off the cluster secret, so no detail repeats it.
+    assert "dfe-from-the-secret" not in why
 
 
 ONE_HEALTHY_APP = _proc(0, stdout=json.dumps({"items": [
@@ -1965,7 +1972,7 @@ def test_wait_for_argo_waits_on_the_rollouts_after_argo_reads_healthy(monkeypatc
     )
 
     assert ok is True
-    assert detail == "1 Application(s) Synced and Healthy; 1 rollout(s) in dfe finished"
+    assert detail == "1 Application(s) Synced and Healthy; 1 rollout(s) finished"
     assert len(sleeps) == 1
 
 
@@ -1980,7 +1987,7 @@ def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(monkeypa
 
     assert ok is False
     assert detail == (
-        "still not converged after 15s -- 1 Application(s) Synced and Healthy; 1 of 1 rollout(s) in dfe not "
+        "still not converged after 15s -- 1 Application(s) Synced and Healthy; 1 of 1 rollout(s) not "
         "finished: deployment/dfe-engine (0 of 1 updated replicas available)"
     )
 
@@ -1993,20 +2000,12 @@ def test_a_wait_that_asks_only_for_synced_reads_no_rollout(monkeypatch: pytest.M
 
 
 DFE_NAMESPACE_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/dfe_namespace}"
-DOMAIN_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}"
 
 
-@pytest.mark.parametrize(
-    ("reader", "jsonpath"),
-    [("read_dfe_namespace", DFE_NAMESPACE_JSONPATH), ("read_domain", DOMAIN_JSONPATH)],
-)
-def test_the_cluster_secret_readers_read_only_their_annotation(
-    monkeypatch: pytest.MonkeyPatch, reader: str, jsonpath: str
-) -> None:
-    read: Callable[[str | None, str], str] = getattr(u, reader)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="value\n"))
-    assert read("kc", "cd") == "value"
-    assert calls[0][-2:] == ["-o", jsonpath]
+def test_read_dfe_namespace_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0, stdout="dfe-apps\n"))
+    assert u.read_dfe_namespace("kc", "cd") == "dfe-apps"
+    assert calls[0][-2:] == ["-o", DFE_NAMESPACE_JSONPATH]
     assert calls[0][calls[0].index("-n") + 1] == "cd"
 
 
@@ -2328,8 +2327,8 @@ def test_apply_reports_ok_only_once_every_rollout_has_finished(
     assert rc == u.EXIT_OK, err
     # Stage 1 read the rollouts three times before it settled, stage 2 once.
     assert read == ["dfe"] * 4
-    assert "argo: 28 Application(s) Synced and Healthy; 2 rollout(s) in dfe finished" in err
-    assert err.index("2 rollout(s) in dfe finished") < err.index("dfe-ops upgrade apply OK")
+    assert "argo: 28 Application(s) Synced and Healthy; 2 rollout(s) finished" in err
+    assert err.index("2 rollout(s) finished") < err.index("dfe-ops upgrade apply OK")
 
 
 def test_apply_fails_naming_a_rollout_that_does_not_finish_within_the_timeout(
@@ -2345,7 +2344,7 @@ def test_apply_fails_naming_a_rollout_that_does_not_finish_within_the_timeout(
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
     assert (
-        "28 Application(s) Synced and Healthy; 1 of 2 rollout(s) in dfe not finished: "
+        "28 Application(s) Synced and Healthy; 1 of 2 rollout(s) not finished: "
         "deployment/dfe-engine (1 old replica(s) still running)"
     ) in err
     assert "FAILED at stage 1: Argo and the rollouts did not settle" in err
@@ -2379,7 +2378,12 @@ def test_apply_waits_on_the_namespace_the_cluster_secret_names(
     assert rc == u.EXIT_OK, err
     assert asked == [("kc", "cd")]
     assert waits == ["dfe-apps", "dfe-apps"]
-    assert "rollouts: every Deployment and StatefulSet in dfe-apps" in err
+    # It came out of a Secret, so it is named by where it came from and never printed.
+    assert (
+        "rollouts: every Deployment and StatefulSet in the namespace secret/dfe-cluster's "
+        "dfe.hyperi.io/dfe_namespace names"
+    ) in err
+    assert "dfe-apps" not in err
 
 
 def test_namespace_names_the_rollouts_without_reading_the_cluster_secret(
@@ -2453,12 +2457,15 @@ CERT_MANAGER_UPGRADE = (
     "--wait --timeout 5m"
 )
 DOMAIN = "single.dfe.test"
-# Every value bootstrap.sh's [6/7] install sets, with its login values piped in on stdin.
+# Every value bootstrap.sh's [6/7] install sets, its login values piped in on stdin, and the
+# domain read off the cluster secret as the command runs.
 ARGOCD_UPGRADE = (
-    f"python3 {shlex.quote(str(BOOTSTRAP_DIR / 'argocd_login.py'))} values --domain {DOMAIN} | "
+    "DFE_DOMAIN=\"$(kubectl -n argocd get secret dfe-cluster -o "
+    "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
+    f"python3 {shlex.quote(str(BOOTSTRAP_DIR / 'argocd_login.py'))} values --domain \"$DFE_DOMAIN\" | "
     "helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.0 "
     "--reset-values --set redis.enabled=false --set externalRedis.host=valkey.argocd.svc.cluster.local "
-    f"--set externalRedis.port=6379 --set-string global.domain=argocd.{DOMAIN} "
+    "--set externalRedis.port=6379 --set-string global.domain=argocd.\"$DFE_DOMAIN\" "
     "--set-string 'configs.params.server\\.insecure=true' "
     "--set-string 'configs.params.reposerver\\.disable\\.git\\.modules=true' "
     "--set-string 'configs.cm.timeout\\.reconciliation=300s' "
@@ -2656,7 +2663,6 @@ def test_a_deployment_without_this_charts_label_reads_as_adopted(
 def test_an_unreadable_deployment_is_pending_with_the_reason_and_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
-    monkeypatch.setattr(u, "read_domain", lambda *_a: DOMAIN)
     _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): deployments.apps "argocd-server" not found'))
     state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
     assert state == u.BOOTSTRAP_PENDING
@@ -2697,7 +2703,6 @@ def test_a_stock_argo_install_reads_adopted_and_gets_no_command(monkeypatch: pyt
 def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
-    monkeypatch.setattr(u, "read_domain", lambda *_a: DOMAIN)
 
     def no_helm(_cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
         raise FileNotFoundError("helm")
@@ -2777,9 +2782,14 @@ def _bootstrap_values(release: u.helm_releases.HelmRelease) -> list[str]:
     return [line for line in out.stdout.splitlines() if line]
 
 
+def _printed_helm(printed: str) -> list[str]:
+    """The helm call of a printed upgrade, with DOMAIN where it reads the domain at run time."""
+    return shlex.split(printed.split(" | ")[-1].replace('"$DFE_DOMAIN"', DOMAIN))
+
+
 def _printed_values(printed: str) -> list[str]:
     """The value arguments a printed upgrade passes helm, between --reset-values and --wait."""
-    helm = shlex.split(printed.split(" | ")[-1])
+    helm = _printed_helm(printed)
     return helm[helm.index("--reset-values") + 1 : helm.index("--wait")]
 
 
@@ -2796,7 +2806,7 @@ def test_the_printed_upgrade_sets_exactly_what_bootstrap_sh_installs_with(
     assert SPLICE in install
     assert call.split()[1] == release.release
 
-    printed = u.bootstrap_upgrade_command(release, "9.9.9", "kc", domain=DOMAIN)
+    printed = u.bootstrap_upgrade_command(release, "9.9.9", "kc")
     assert _printed_values(printed) == _bootstrap_values(release)
     assert "--reset-then-reuse-values" not in printed
     assert "--reuse-values" not in printed
@@ -2812,7 +2822,7 @@ def test_the_cert_manager_upgrade_is_the_one_the_stack_note_and_bootstrap_sh_agr
 
 def test_the_argo_upgrade_pipes_in_the_login_bootstrap_sh_feeds_its_install(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None, domain=DOMAIN)
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
     assert printed == ARGOCD_UPGRADE
     script = BOOTSTRAP_SH.read_text(encoding="utf-8")
     assert 'python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"' in script
@@ -2821,8 +2831,72 @@ def test_the_argo_upgrade_pipes_in_the_login_bootstrap_sh_feeds_its_install(monk
 
 def test_the_argo_upgrade_follows_a_renamed_cache_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DFE_VALKEY_SERVICE", "cache")
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None, domain=DOMAIN)
-    assert "externalRedis.host=cache.argocd.svc.cluster.local" in shlex.split(printed.split(" | ")[-1])
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    assert "externalRedis.host=cache.argocd.svc.cluster.local" in _printed_helm(printed)
+
+
+def test_the_argo_upgrade_reads_the_domain_off_the_cluster_secret_it_was_told(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A value read from a Secret is never printed, so the command reads the domain itself."""
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", "kc", "cd")
+    assert printed.startswith(
+        "DFE_DOMAIN=\"$(kubectl --kubeconfig kc -n cd get secret dfe-cluster -o "
+        "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
+    )
+
+
+def test_an_upgrade_no_value_of_which_names_the_domain_reads_none() -> None:
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.1.0", "kc")
+    assert printed == CERT_MANAGER_UPGRADE
+
+
+FAKE_KUBECTL = """#!/usr/bin/env python3
+import os, sys
+if "secret" in sys.argv and "dfe-cluster" in sys.argv:
+    print(os.environ["FAKE_DOMAIN"], end="")
+"""
+
+FAKE_HELM = """#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["FAKE_LOG"], "w", encoding="utf-8") as log:
+    json.dump({"argv": sys.argv[1:], "stdin": sys.stdin.read()}, log)
+"""
+
+
+def _run_printed(tmp_path: Path, printed: str, domain: str) -> tuple[subprocess.CompletedProcess, dict | None]:
+    """The printed command, run under bash with a kubectl naming `domain` and a helm that records its call."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (("kubectl", FAKE_KUBECTL), ("helm", FAKE_HELM)):
+        (bindir / name).write_text(body, encoding="utf-8", newline="\n")
+        (bindir / name).chmod(0o755)
+    log = tmp_path / "helm.json"
+    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "FAKE_DOMAIN": domain,
+           "FAKE_LOG": str(log)}
+    out = subprocess.run(
+        ["bash", "-c", printed], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False,
+    )
+    return out, json.loads(log.read_text(encoding="utf-8")) if log.is_file() else None
+
+
+def test_the_printed_argo_upgrade_runs_and_hands_helm_what_bootstrap_sh_installs_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
+    release = u.BOOTSTRAP_RELEASES["bootstrap.argocd"]
+    out, helm = _run_printed(tmp_path, u.bootstrap_upgrade_command(release, "10.10.0", None), DOMAIN)
+
+    assert out.returncode == 0, out.stderr
+    argv = helm["argv"]
+    assert argv[argv.index("--reset-values") + 1 : argv.index("--wait")] == _bootstrap_values(release)
+    assert json.loads(helm["stdin"]) == argocd_login.helm_values(None)
+
+
+def test_the_printed_argo_upgrade_stops_before_helm_when_the_secret_names_no_domain(tmp_path: Path) -> None:
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    out, helm = _run_printed(tmp_path, printed, "")
+    assert out.returncode != 0
+    assert helm is None
 
 
 def _set_values(helm: list[str]) -> dict:
@@ -2872,43 +2946,17 @@ BOOTSTRAP_ARGO_RELEASE_VALUES = {
 def test_the_argo_upgrade_carries_every_value_a_bootstrap_install_holds(monkeypatch: pytest.MonkeyPatch) -> None:
     """--reset-values drops whatever the command does not set again, so it must set all of it."""
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None, domain=DOMAIN)
-    sets = _set_values(shlex.split(printed.split(" | ")[-1]))
+    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    sets = _set_values(_printed_helm(printed))
     assert _merged(sets, argocd_login.helm_values(None)) == BOOTSTRAP_ARGO_RELEASE_VALUES
 
 
-def test_an_argo_upgrade_whose_domain_cannot_be_read_says_what_to_fill_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_pending_argo_names_the_cluster_secret_in_the_argo_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
-    asked: list[str] = []
-
-    def no_domain(_kubeconfig: object, namespace: str) -> str:
-        asked.append(namespace)
-        return ""
-
-    monkeypatch.setattr(u, "read_domain", no_domain)
     state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"), "cd")
-
     assert state == u.BOOTSTRAP_PENDING
-    assert asked == ["cd"]
-    assert "values --domain '<domain>' | helm" in detail
-    assert "'global.domain=argocd.<domain>'" in detail
-    assert detail.endswith(
-        "-- put the deployment's domain in for <domain>: secret/dfe-cluster carries no dfe.hyperi.io/domain"
-    )
-
-
-def test_a_cert_manager_upgrade_reads_no_domain(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("v1.0.0", ""))
-
-    def unread(*_a: object) -> str:
-        raise AssertionError("no cert-manager value names the domain")
-
-    monkeypatch.setattr(u, "read_domain", unread)
-    step = u.Step(stage="10-bootstrap", order="20", key="bootstrap.cert-manager")
-    state, detail = u.check_bootstrap_move("kc", u.Move(step=step, old="v1.0.0", new="v1.1.0"))
-    assert state == u.BOOTSTRAP_PENDING
-    assert detail.endswith(CERT_MANAGER_UPGRADE)
+    assert "Run: DFE_DOMAIN=\"$(kubectl -n cd get secret dfe-cluster -o " in detail
 
 
 # ---------------------------------------------------------------------------

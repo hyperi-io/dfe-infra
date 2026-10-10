@@ -1387,14 +1387,8 @@ def read_stack_version(kubeconfig: str | None, namespace: str) -> str:
 
 def read_dfe_namespace(kubeconfig: str | None, namespace: str) -> str:
     """The cluster secret's dfe_namespace, the namespace bootstrap deployed the apps into.
-    Raises UpgradeError when unreadable."""
+    It came out of a Secret, so nothing prints it. Raises UpgradeError when unreadable."""
     return _cluster_secret_annotation(kubeconfig, namespace, DFE_NAMESPACE_ANNOTATION)
-
-
-def read_domain(kubeconfig: str | None, namespace: str) -> str:
-    """The cluster secret's domain, the DFE_DOMAIN bootstrap installed with. Raises
-    UpgradeError when unreadable."""
-    return _cluster_secret_annotation(kubeconfig, namespace, DOMAIN_ANNOTATION)
 
 
 def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | None) -> tuple[str | None, str]:
@@ -1453,8 +1447,10 @@ BOOTSTRAP_PREFIX = "bootstrap."
 ARGOCD_KEY = "bootstrap.argocd"
 # check_bootstrap_move's verdicts; only PENDING keeps an apply from reporting OK.
 BOOTSTRAP_DONE, BOOTSTRAP_PENDING, BOOTSTRAP_ADOPTED = "DONE", "PENDING", "ADOPTED"
-# Stands in for the deployment's domain in a printed upgrade where it could not be read.
-DOMAIN_PLACEHOLDER = "<domain>"
+# The shell variable a printed upgrade reads the domain into, the name bootstrap.sh gives it.
+DOMAIN_VAR = "DFE_DOMAIN"
+# Marks where the domain goes while the command is quoted; no value it stands for contains it.
+_DOMAIN_MARK = "DFE-DOMAIN-FROM-THE-CLUSTER-SECRET"
 
 # The releases bootstrap.sh's steps [2/7], [3/7] and [6/7] install, from the table they read.
 BOOTSTRAP_RELEASES: dict[str, helm_releases.HelmRelease] = {
@@ -1527,7 +1523,10 @@ def read_bootstrap_chart(kubeconfig: str | None, release: helm_releases.HelmRele
 
 
 def bootstrap_upgrade_command(
-    release: helm_releases.HelmRelease, version: str, kubeconfig: str | None, *, domain: str = DOMAIN_PLACEHOLDER
+    release: helm_releases.HelmRelease,
+    version: str,
+    kubeconfig: str | None,
+    argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
 ) -> str:
     """The helm upgrade an operator runs to move a bootstrap release to `version`.
 
@@ -1535,37 +1534,27 @@ def bootstrap_upgrade_command(
     is one bootstrap.sh's install sets, read from the same helm_releases.py table,
     so the release ends up as a fresh bootstrap would install it. Argo's login
     values are piped in from argocd_login.py, as bootstrap.sh feeds them on stdin.
-    `upgrade` without --install refuses where no such release exists.
+    A command that needs the domain reads it off the cluster secret in
+    `argocd_namespace` as it runs, and stops when the secret names none, so a
+    value read from a Secret is never printed. `upgrade` without --install
+    refuses where no such release exists.
     """
     kube = ["--kubeconfig", kubeconfig] if kubeconfig else []
-    values = helm_releases.install_args(release, domain=domain, cache_service=_cache_service())
-    helm = shlex.join([
+    values = helm_releases.install_args(release, domain=_DOMAIN_MARK, cache_service=_cache_service())
+    command = shlex.join([
         "helm", *kube, "-n", release.namespace, "upgrade", release.release, release.chart,
         "--repo", release.repo, "--version", version, "--reset-values", *values,
         "--wait", "--timeout", release.timeout,
     ])
-    if not release.login_values:
-        return helm
-    login = shlex.join(["python3", str(ARGOCD_LOGIN), *kube, "values", "--domain", domain])
-    return f"{login} | {helm}"
-
-
-def _install_domain(
-    kubeconfig: str | None, namespace: str, release: helm_releases.HelmRelease
-) -> tuple[str, str]:
-    """(the domain a printed upgrade fills in, a note to append when it could not be read)."""
-    if not helm_releases.needs_domain(release):
-        return DOMAIN_PLACEHOLDER, ""
-    try:
-        domain = read_domain(kubeconfig, namespace)
-    except UpgradeError as err:
-        return DOMAIN_PLACEHOLDER, f" -- put the deployment's domain in for {DOMAIN_PLACEHOLDER}: {err}"
-    if not domain:
-        return DOMAIN_PLACEHOLDER, (
-            f" -- put the deployment's domain in for {DOMAIN_PLACEHOLDER}: secret/{ARGO_CLUSTER} "
-            f"carries no {DOMAIN_ANNOTATION}"
-        )
-    return domain, ""
+    if release.login_values:
+        login = shlex.join(["python3", str(ARGOCD_LOGIN), *kube, "values", "--domain", _DOMAIN_MARK])
+        command = f"{login} | {command}"
+    if _DOMAIN_MARK not in command:
+        return command
+    jsonpath = "jsonpath={.metadata.annotations." + DOMAIN_ANNOTATION.replace(".", "\\.") + "}"
+    lookup = shlex.join(["kubectl", *kube, "-n", argocd_namespace, "get", "secret", ARGO_CLUSTER, "-o", jsonpath])
+    domain = f'"${DOMAIN_VAR}"'
+    return f'{DOMAIN_VAR}="$({lookup})" && test -n {domain} && {command.replace(_DOMAIN_MARK, domain)}'
 
 
 def check_bootstrap_move(
@@ -1574,8 +1563,8 @@ def check_bootstrap_move(
     """(BOOTSTRAP_DONE, _PENDING or _ADOPTED, the line saying why).
 
     A PENDING line ends with the command that moves the release. Argo's owner is
-    decided first, so a host's Argo reads ADOPTED rather than PENDING. The domain
-    an Argo command needs is read off the cluster secret in `argocd_namespace`.
+    decided first, so a host's Argo reads ADOPTED rather than PENDING. An Argo
+    command reads its domain off the cluster secret in `argocd_namespace`.
     """
     moved = (
         f"{move.step.key} {move.old} -> {move.new}" if move.old != move.new
@@ -1597,10 +1586,9 @@ def check_bootstrap_move(
     if running == move.new:
         return BOOTSTRAP_DONE, f"{move.step.key} runs {running} (deployment/{release.deployment} helm.sh/chart)"
     seen = f"the cluster runs {running}" if running else why
-    domain, unread = _install_domain(kubeconfig, argocd_namespace, release)
     return BOOTSTRAP_PENDING, (
         f"{moved}: bootstrap.sh installs it, not Argo, and {seen}. "
-        f"Run{where}: {bootstrap_upgrade_command(release, move.new, kubeconfig, domain=domain)}{unread}"
+        f"Run{where}: {bootstrap_upgrade_command(release, move.new, kubeconfig, argocd_namespace)}"
     )
 
 
@@ -1714,14 +1702,15 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
     """Every Deployment and StatefulSet in `namespace` has finished rolling out.
 
     A namespace holding neither fails: it is the wrong namespace or an empty
-    stack, and neither is a settled one.
+    stack, and neither is a settled one. The detail never names `namespace`,
+    which apply can have read off the cluster secret.
     """
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "deployments.apps,statefulsets.apps")
     if rc != 0:
-        return False, f"cannot list Deployments and StatefulSets in {namespace}: {err}"
+        return False, f"cannot list Deployments and StatefulSets in the DFE namespace: {err}"
     items = doc.get("items") or []
     if not items:
-        return False, f"no Deployment or StatefulSet in {namespace}"
+        return False, "no Deployment or StatefulSet in the DFE namespace"
     pending = []
     for item in items:
         why = rollout_pending(item)
@@ -1730,11 +1719,8 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
             pending.append(f"{str(item.get('kind') or 'workload').lower()}/{name} ({why})")
     if pending:
         extra = f", +{len(pending) - 6} more" if len(pending) > 6 else ""
-        return False, (
-            f"{len(pending)} of {len(items)} rollout(s) in {namespace} not finished: "
-            f"{', '.join(pending[:6])}{extra}"
-        )
-    return True, f"{len(items)} rollout(s) in {namespace} finished"
+        return False, f"{len(pending)} of {len(items)} rollout(s) not finished: {', '.join(pending[:6])}{extra}"
+    return True, f"{len(items)} rollout(s) finished"
 
 
 def wait_for_argo(
@@ -2915,12 +2901,16 @@ def _apply_table_naming(
     )
 
 
-def _wait_line(args: argparse.Namespace, rollout_namespace: str, *, leaving: str = "") -> str:
+def _rollout_scope(args: argparse.Namespace) -> str:
+    """The namespace the rollout waits read, named by where it comes from rather than by a value read off a Secret."""
+    return args.namespace or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
+
+
+def _wait_line(args: argparse.Namespace, *, leaving: str = "") -> str:
     """What a healthy wait waits on, as a --dry-run prints it; `leaving` names the ref a retarget leaves."""
-    rollouts = rollout_namespace or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
     argo = f"Argo Applications to leave {leaving}" if leaving else f"Argo Applications in {args.argocd_namespace}"
     return (
-        f"wait for {argo}, then every Deployment and StatefulSet in {rollouts} to finish rolling out "
+        f"wait for {argo}, then every Deployment and StatefulSet in {_rollout_scope(args)} to finish rolling out "
         f"(timeout {args.timeout}s)"
     )
 
@@ -2959,7 +2949,7 @@ def _commit_overlays(
         if not args.dry_run and _git(deploy, "push").returncode != 0:
             return _stage_failed(stage_index, "git push failed", [])
 
-    emit(_wait_line(args, rollout_namespace))
+    emit(_wait_line(args))
     if not args.dry_run:
         ok, detail = wait_for_argo(
             args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
@@ -3054,7 +3044,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             return EXIT_BLOCKED
     if not args.dry_run:
-        print(f"  rollouts: every Deployment and StatefulSet in {rollout_namespace}", file=sys.stderr)
+        print(f"  rollouts: every Deployment and StatefulSet in {_rollout_scope(args)}", file=sys.stderr)
     current_ref = ""
     retarget: str | None = None
     hold: KafkaHold | None = None
@@ -3225,7 +3215,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 if push.returncode != 0:
                     return _stage_failed(stage_index, "git push failed", stage_moves)
 
-        emit(_wait_line(args, rollout_namespace))
+        emit(_wait_line(args))
         if not args.dry_run:
             ok, detail = wait_for_argo(
                 args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
@@ -3248,7 +3238,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 emit(f"wait for Argo Applications to leave {from_name} (timeout {args.timeout}s)")
                 emit(f"health is checked after stage {TABLES_STAGE}, which names the tables the thin charts read")
             else:
-                emit(_wait_line(args, rollout_namespace, leaving=from_name))
+                emit(_wait_line(args, leaving=from_name))
             if not args.dry_run and retarget:
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
                 print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
@@ -3329,7 +3319,7 @@ def _bootstrap_pending(args: argparse.Namespace, move: Move, emit: Callable[[str
     if args.dry_run:
         release = BOOTSTRAP_RELEASES.get(move.step.key)
         command = (
-            bootstrap_upgrade_command(release, move.new, args.kubeconfig)
+            bootstrap_upgrade_command(release, move.new, args.kubeconfig, args.argocd_namespace)
             if release else "re-run bootstrap/bootstrap.sh"
         )
         emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
