@@ -58,6 +58,10 @@ skip when the env is absent.
 Chromium runs with a fresh profile every time -- never point this at a
 personal browser profile.
 
+## Failure artefacts
+
+A failed test writes `error-context.md` whatever the trace, screenshot and video settings say, and its page snapshot shows a typed password in the clear, masked input or not. `playwright.config.ts` sets `PLAYWRIGHT_NO_COPY_PROMPT`, which drops the snapshot for every project. The error text and the source frame stay, so a spec must not put a password in either.
+
 ## Layout
 
 One harness, one Playwright project per deployed app, specs under

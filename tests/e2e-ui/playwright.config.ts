@@ -20,6 +20,11 @@ import { DFE_UI_URL, ENGINE_URL, HYPERDX_URL } from './harness/env';
 // so a project that signs in to a real IdP keeps no trace, screenshot or video.
 const NO_ARTIFACTS = { trace: 'off', screenshot: 'off', video: 'off' } as const;
 
+// A failed test writes the page's aria snapshot, typed password included, to
+// error-context.md whatever the artifact settings say. Playwright reads this
+// switch from the environment only, so it covers every project.
+process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
+
 export default defineConfig({
   testDir: './specs',
   fullyParallel: false, // one deployment under test; specs share server state

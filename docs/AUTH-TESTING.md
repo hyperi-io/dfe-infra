@@ -8,7 +8,8 @@ Proving auth end to end needs real identities in a real identity provider. `dfe-
 
 - `deploy` generates the client secret and one shared user password and writes both to a mode-0600 file (`--secrets-out`, default `.tmp/tester-idp.env`). Neither is printed or committed. The e2e specs read that password as `E2E_FIXTURE_PASSWORD`, from the file's `TESTER_IDP_USER_PASSWORD` line.
 - `wire-engine` hands the client credentials, the provider definition, the group map and the CA bundle to the engine's namespace, then prints the chart values that pick them up.
-- `status` reports whether it is serving, and `teardown` removes it.
+- `status` reports whether it is serving, and `teardown` removes Dex and glauth.
+- `wire-engine --teardown` takes back what `wire-engine` handed over: the provider and group keys in the ConfigMaps, the client Secret, and the copies already seeded onto the engine's config volume. The engine's seed step never deletes, so without it the provider stays live on a persistent volume after `teardown`.
 
 Every environment value is a flag: `python3 scripts/dfe-ops idp deploy --help` lists them.
 
