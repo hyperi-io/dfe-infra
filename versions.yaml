@@ -2600,8 +2600,7 @@ stacks:
       dfe-hyperdx: "sha256:1317906009657449448c4397dbd974ee14ea6cf6e481cbb6a43d58f4877d7f17"
       culvert: "sha256:27666a427c2cf66d8a327874782bb47b108afebbb8c699f76155557bf4598a6e"
       # Tagged by toolbox.dfe-toolbox.
-      # Still v1.0.2's index: Toolbox Build publishes v1.0.3 from main, then this and helm/charts/dfe-toolbox/values.yaml image.digest move to it.
-      dfe-toolbox-base: "sha256:250999940ec42da4bee512f1d122a613ad2962bf1a7ecdc5a21d5bb50716d0f2"
+      dfe-toolbox-base: "sha256:056ab60643f2a0814f3e4baacca2534ac852367e15ba22665caa869c043dcc4b"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),

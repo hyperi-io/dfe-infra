@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -364,8 +365,17 @@ _VERIFY_REGISTRY = {
 }
 
 
-def _verify_over(served: dict) -> tuple[int, str, list[tuple[str, str, str]]]:
-    """verify over _VERIFY_PINS with tag_digest answering from served: (exit, output, reads)."""
+def _both_platforms(ref: str) -> tuple[set[str], str]:
+    return {"linux/amd64", "linux/arm64"}, ""
+
+
+def _verify_over(
+    served: dict, pins: str = _VERIFY_PINS, platforms=_both_platforms
+) -> tuple[int, str, list[tuple[str, str, str]]]:
+    """verify over pins with tag_digest answering from served and ref_platforms from platforms.
+
+    Returns (exit, output, tag reads).
+    """
     import argparse
     import contextlib
     import io
@@ -381,14 +391,19 @@ def _verify_over(served: dict) -> tuple[int, str, list[tuple[str, str, str]]]:
         return found
 
     with tempfile.TemporaryDirectory() as td:
-        (Path(td) / "versions.yaml").write_text(_VERIFY_PINS, encoding="utf-8", newline="\n")
+        (Path(td) / "versions.yaml").write_text(pins, encoding="utf-8", newline="\n")
         original_root, original_read = stack.REPO_ROOT, stack.registry_pins.tag_digest
         out = io.StringIO()
         try:
             stack.REPO_ROOT = Path(td)
             stack.registry_pins.tag_digest = tag_digest
             with contextlib.redirect_stdout(out):
-                rc = stack.cmd_verify(argparse.Namespace(stack=None, registry="ghcr.io/hyperi-io"))
+                rc = _with_platforms(
+                    platforms,
+                    lambda: stack.cmd_verify(
+                        argparse.Namespace(stack=None, registry="ghcr.io/hyperi-io")
+                    ),
+                )
         finally:
             stack.REPO_ROOT, stack.registry_pins.tag_digest = original_root, original_read
     return rc, out.getvalue(), asked
@@ -444,6 +459,93 @@ def test_verify_fails_closed_when_a_chart_cannot_be_read() -> None:
     rc, out, _ = _verify_over(unreadable)
     expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
     expect("with the registry's own words", "ERROR chart dfe-engine: 403 Forbidden" in out, out)
+
+
+def test_verify_skips_the_toolbox_family_when_the_stack_pins_none() -> None:
+    rc, out, asked = _verify_over(_VERIFY_REGISTRY)
+    expect("a stack with no family tag still passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and says why each family image is skipped", out.count("skip  dfe-toolbox-") == 3, out)
+    expect(
+        "without reading any of them",
+        not any(p.startswith("dfe-toolbox-") for _, p, _ in asked),
+        f"{asked}",
+    )
+
+
+# The toolbox family: the base image pinned by digest, the three cloud images
+# unpinned under the same family tag.
+_FAMILY_PINS = (
+    'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n'
+    '    digests:\n      dfe-toolbox-base: "sha256:base-index"\n'
+    '    toolbox:\n      dfe-toolbox: "v1.0.3"\n'
+)
+
+_FAMILY_REGISTRY = {
+    ("dfe-toolbox-base", "v1.0.3"): "sha256:base-index",
+    ("dfe-toolbox-aws", "v1.0.3"): "sha256:aws-index",
+    ("dfe-toolbox-gcp", "v1.0.3"): "sha256:gcp-index",
+    ("dfe-toolbox-azure", "v1.0.3"): "sha256:azure-index",
+}
+
+
+def test_verify_reads_every_family_image_at_the_family_tag() -> None:
+    reads: list[str] = []
+
+    def platforms(ref: str) -> tuple[set[str], str]:
+        reads.append(ref)
+        return _both_platforms(ref)
+
+    rc, out, asked = _verify_over(_FAMILY_REGISTRY, _FAMILY_PINS, platforms)
+    expect("a published family passes", rc == 0, f"exit {rc}\n{out}")
+    for image in ("dfe-toolbox-aws", "dfe-toolbox-gcp", "dfe-toolbox-azure"):
+        read = ("hyperi-io", image, "v1.0.3") in asked
+        expect(f"{image} is read at the family tag", read, f"{asked}")
+        expect(f"{image} reports ok", f"ok    {image}: v1.0.3@" in out, out)
+    expect(
+        "the platforms are read at the digest the tag resolved to",
+        "ghcr.io/hyperi-io/dfe-toolbox-aws:v1.0.3@sha256:aws-index" in reads,
+        f"{reads}",
+    )
+
+
+def test_verify_fails_a_missing_aws_tag() -> None:
+    """The gap this check closes: the stack cut with dfe-toolbox-aws never published."""
+    missing = {k: v for k, v in _FAMILY_REGISTRY.items() if k[0] != "dfe-toolbox-aws"}
+    rc, out, _ = _verify_over(missing, _FAMILY_PINS)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    named = "DRIFT dfe-toolbox-aws: v1.0.3 (tag not found)" in out
+    expect("naming the image and the tag", named, out)
+    expect("and the published siblings still report ok", "ok    dfe-toolbox-gcp" in out, out)
+
+
+def test_verify_fails_a_family_image_missing_an_architecture() -> None:
+    single_arch_azure = _multi_arch_except("dfe-toolbox-azure")
+    rc, out, _ = _verify_over(_FAMILY_REGISTRY, _FAMILY_PINS, single_arch_azure)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    expect(
+        "naming the image and what it lacks",
+        "DRIFT dfe-toolbox-azure:" in out and "missing linux/arm64" in out,
+        out,
+    )
+
+
+def test_verify_fails_closed_when_a_family_image_cannot_be_read() -> None:
+    unreadable = dict(_FAMILY_REGISTRY)
+    unreadable[("dfe-toolbox-gcp", "v1.0.3")] = stack.registry_pins.RegistryError("403 Forbidden")
+    rc, out, _ = _verify_over(unreadable, _FAMILY_PINS)
+    expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
+    expect("with the registry's own words", "ERROR dfe-toolbox-gcp: 403 Forbidden" in out, out)
+
+
+def test_verify_covers_every_image_toolbox_build_publishes() -> None:
+    """An image the workflow pushes and verify never reads could ship unpublished."""
+    workflow = REPO_ROOT / ".github" / "workflows" / "toolbox-build.yml"
+    text = workflow.read_text(encoding="utf-8")
+    built = set(re.findall(r"^\s+IMAGE: (\S+)$", text, re.MULTILINE))
+    covered = set(stack._FAMILY_TAGS) | set(stack._FAMILY_UNPINNED)
+    expect("the workflow names its images", len(built) == 4, f"{sorted(built)}")
+    detail = f"built {sorted(built)}, covered {sorted(covered)}"
+    expect("verify reads every one of them", built == covered, detail)
 
 
 def test_the_chart_name_map_matches_the_appset() -> None:
