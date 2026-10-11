@@ -140,6 +140,19 @@ def test_pressure_can_still_be_turned_off() -> None:
     expect("keda.extraTriggers=[] leaves the cpu trigger alone", got == ["cpu"], f"got {got}")
 
 
+def test_no_values_file_sets_a_pressure_switch() -> None:
+    """The trigger is a keda.extraTriggers entry and nothing reads keda.pressure.enabled,
+    so a value there would read as turning pressure off and change nothing."""
+    for path in sorted(VALUES.rglob("*.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        keda = (doc.get("keda") or {}) if isinstance(doc, dict) else {}
+        expect(
+            f"{path.relative_to(REPO_ROOT)} sets no keda.pressure.enabled",
+            "enabled" not in (keda.get("pressure") or {}),
+            f"got {keda.get('pressure')!r}",
+        )
+
+
 def test_the_hunt_runner_shim_address_follows_the_namespace_too() -> None:
     scaled = {"huntRunner": {"autoscaling": {"enabled": True}}}
     docs = render_extras("dfe-engine", "slim", "local", namespace="dfe-local", overlay=scaled)
@@ -196,6 +209,7 @@ def main() -> int:
         test_the_shim_address_follows_the_release_namespace()
         test_an_explicit_shim_address_still_wins()
         test_pressure_can_still_be_turned_off()
+        test_no_values_file_sets_a_pressure_switch()
         test_the_hunt_runner_shim_address_follows_the_namespace_too()
         test_only_the_brokerless_minimum_tier_turns_pressure_off()
         test_the_scale_ceiling_divides_the_partition_count()

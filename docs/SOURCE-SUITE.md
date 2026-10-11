@@ -52,7 +52,7 @@ step with the console's own error line.
 ## `elastic`
 
 The same push and the same meta schema as `filebeat`, against
-dfe-transform-elastic instead. Two things differ.
+dfe-transform-elastic instead. Three things differ.
 
 The app carries one compiled-in transform per Elastic data stream and an
 instance runs one of them, so the source's `transform` block needs a `variant`
@@ -66,6 +66,8 @@ the instance starts on no transform at all.
 
 And there is no `upload-program`: the app declares no file sets, so the step
 records `skipped` and the run writes nothing to the instance.
+
+The source's brokers are the deployment's, not the source's. The bus profiles hand the app `kafka.bootstrapServers` as `DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS`, which it applies over its config file, and `apps.yaml` declares `config.source.brokers` deployment-owned, so the engine refuses a write to it and a `brokers` list in the instance overlay never reaches the consumer.
 
 The cisco_ios lines the filebeat case posts are also the entry the variant names, and the proof is the same `source_ip` column, which the posted envelope carries nothing of.
 

@@ -39,14 +39,14 @@ the scalo-service library (_weave.library).
 Needs `helm` on PATH.
 """
 
+import json
 from pathlib import Path
 
-import pytest
 import yaml
 
 from _expect import expect, standalone, summary
 from _gate import APPSETS, INSTANCE, WORKLOAD_KINDS, effective_env, goldens, references
-from _weave import render_app
+from _weave import contract, render_app, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST = REPO_ROOT / "apps.yaml"
@@ -191,13 +191,26 @@ def test_no_declared_app_renders_an_unnamed_secret_reference() -> None:
                    f"got {offenders}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="secrets.kafka.existingSecret tpl-renders an empty kafka.saslSecretName unnamed",
-)
+def reads_kafka_credential(app: str) -> bool:
+    """Whether the app's contract carries the kafka secret group."""
+    groups = json.loads(contract(app).read_text(encoding="utf-8")).get("secrets") or []
+    return any(group.get("group_name") == "kafka" for group in groups)
+
+
+def refusal(app: str, overlay: dict, options: dict) -> str:
+    """The message of a render expected to fail, or "" when it rendered."""
+    try:
+        render_app(app, "single", "local", overlay=overlay, **options)
+    except weave().WeaveError as refused:
+        return str(refused)
+    return ""
+
+
 def test_a_cleared_kafka_secret_name_renders_no_unnamed_reference() -> None:
     """The common overlay sets the protocol for every app, so a protocol with no
-    Secret name is the case that bites."""
+    Secret name is the case that bites. Where the pod reads the kafka credential the
+    render refuses the empty name and names the switch, and with the switch off
+    beside it renders clean."""
     clearings = (
         {"kafka": {"saslSecretName": ""}},
         {"kafka": {"saslSecretName": "", "securityProtocol": "SASL_PLAINTEXT"}},
@@ -206,6 +219,11 @@ def test_a_cleared_kafka_secret_name_renders_no_unnamed_reference() -> None:
         options = {"appset": APPSETS[app]} if app in APPSETS else {}
         for clearing in clearings:
             overlay = {**INSTANCE.get(app, {}).get("local", {}), **clearing}
+            if reads_kafka_credential(app):
+                refused = refusal(app, overlay, options)
+                expect(f"{app} refuses {clearing} and names the switch",
+                       "secrets.kafka.enabled: false" in refused, f"refusal={refused[-300:]!r}")
+                overlay = {**overlay, "secrets": {"kafka": {"enabled": False}}}
             docs = render_app(app, "single", "local", overlay=overlay, **options)
             offenders = unnamed_refs(docs)
             expect(f"{app} names every Secret it reads {clearing}", offenders == [],
@@ -266,6 +284,7 @@ def main() -> int:
         test_the_vector_chart_mounts_no_binary_cache()
         test_the_data_dir_survived_the_removal()
         test_no_declared_app_renders_an_unnamed_secret_reference()
+        test_a_cleared_kafka_secret_name_renders_no_unnamed_reference()
         test_the_common_overlay_carries_no_unread_sasl_block()
         test_the_archiver_cell_answers_for_the_writes_the_engine_makes()
         test_the_vrl_enrichment_cell_reports_the_roll_it_needs()

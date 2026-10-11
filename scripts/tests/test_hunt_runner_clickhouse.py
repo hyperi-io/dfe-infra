@@ -216,6 +216,24 @@ def test_no_runner_means_no_secret_and_no_reference() -> None:
     )
 
 
+def test_a_paused_runner_leaves_the_engines_password_minted() -> None:
+    """The runner off alone: the engine still reads the password through a required
+    reference, so the Secret behind it still renders."""
+    docs = render_app(ENGINE, "slim", "local", overlay={"huntRunner": {"enabled": False}})
+    expect(
+        "the runner is gone",
+        named(docs, "Deployment", "dfe-hunt-runner") == [],
+        "a dfe-hunt-runner Deployment rendered",
+    )
+    expect(
+        "the engine still reads the runner's password",
+        secret_ref(env(docs, ENGINE).get("DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD")) == (SECRET, KEY),
+        f"{env(docs, ENGINE).get('DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
+    )
+    for kind, name in MINTED[:2]:
+        expect(f"and the {kind} behind it renders", len(named(docs, kind, name)) == 1, "absent")
+
+
 def test_a_cleared_identity_fails_the_render() -> None:
     for field in ("user", "passwordSecretName"):
         overlay = {"huntRunner": {"clickhouse": {field: ""}}}

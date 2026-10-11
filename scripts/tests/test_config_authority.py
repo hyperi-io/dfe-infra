@@ -39,7 +39,6 @@ The live renders need `helm` on PATH and the scalo-service library (_weave.libra
 
 import sys
 
-import pytest
 import yaml
 
 from _expect import expect, standalone, summary
@@ -154,14 +153,17 @@ def test_the_s3_group_switched_off_renders_no_static_keys() -> None:
         expect(f"secrets.s3.enabled=false renders no {name}", name not in refs, "still rendered")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="secrets.s3.existingSecret tpl-renders an empty s3.secretName to an unnamed Secret",
-)
 def test_a_cleared_s3_secret_name_renders_no_unnamed_reference() -> None:
+    """An empty name falls back to the library's own, which the optional reference
+    reads only where that Secret exists, so the SDK's credential chain still runs."""
     refs = env_refs(render_app(ARCHIVER, *DIAL_CELL, overlay={"s3": {"secretName": ""}}))
     unnamed = sorted(name for name, ref in refs.items() if not ref.get("name"))
     expect("an empty s3.secretName names no empty Secret", not unnamed, f"got {unnamed}")
+    for name in sorted(ARCHIVER_S3_REFS):
+        ref = refs.get(name, {})
+        expect(f"{name} reads {ARCHIVER}-s3, optional",
+               ref.get("name") == f"{ARCHIVER}-s3" and ref.get("optional") is True,
+               "missing, pointed elsewhere, or not optional")
 
 
 def main() -> int:
@@ -172,6 +174,7 @@ def main() -> int:
         test_a_deployment_that_names_its_own_destination_still_wins()
         test_the_archiver_reads_static_keys_from_its_s3_secret()
         test_the_s3_group_switched_off_renders_no_static_keys()
+        test_a_cleared_s3_secret_name_renders_no_unnamed_reference()
         return summary()
 
 

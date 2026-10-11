@@ -14,10 +14,12 @@ extraEnv:
   # Heap cap at 70% of the pod memory limit, read from the cgroup by Node 24 and later.
   NODE_OPTIONS: "--max-old-space-size-percentage=70"
   NEXT_PUBLIC_API_URL: ""
-  # NextAuth's authorize call runs in the pod, against the engine in this namespace.
-  INTERNAL_API_URL: 'http://dfe-engine.{{ .Release.Namespace }}.svc.cluster.local:8000'
-  # No domain, no URL: the app falls back to its own default when this is empty.
-  HYPERDX_URL: '{{ with .Values.domain }}https://{{ dig "hyperdx" "hyperdx" ($.Values.hostnames | default dict) }}.{{ . }}{{ end }}'
+  # NextAuth's authorize call runs in the pod, against config.internalApiUrl or else
+  # the engine in this namespace.
+  INTERNAL_API_URL: '{{ .Values.config.internalApiUrl | default (printf "http://dfe-engine.%s.svc.cluster.local:8000" .Release.Namespace) }}'
+  # config.hyperdxUrl, else derived from the domain. No domain, no URL: the app
+  # falls back to its own default when this is empty.
+  HYPERDX_URL: '{{ if .Values.config.hyperdxUrl }}{{ .Values.config.hyperdxUrl }}{{ else if .Values.domain }}https://{{ .Values.config.hyperdxHostname | default (dig "hyperdx" "hyperdx" (.Values.hostnames | default dict)) }}.{{ .Values.domain }}{{ end }}'
   # Scopes the session cookie to the parent domain, so the HyperDX iframe receives it.
   DFE_COOKIE_DOMAIN: '{{ .Values.domain }}'
   NEXTAUTH_URL: '{{ with .Values.domain }}https://{{ dig "dfe" "dfe" ($.Values.hostnames | default dict) }}.{{ . }}{{ end }}'
@@ -27,6 +29,12 @@ extraEnv:
 config:
   nextauthSecretName: dfe-ui-nextauth
   secretStoreName: ""
+  # The engine URL the pod's server side calls. Empty is dfe-engine in this namespace.
+  internalApiUrl: ""
+  # The embedded HyperDX's base URL. Empty derives https://<hyperdxHostname>.<domain>,
+  # where an empty hyperdxHostname is hostnames.hyperdx.
+  hyperdxUrl: ""
+  hyperdxHostname: ""
 
 secrets:
   nextauth:

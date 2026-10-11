@@ -12,8 +12,12 @@ GENERATED IN-CLUSTER by ESO's Password generator with refreshPolicy CreatedOnce,
 for the reasons engine-jwt-secret.yaml gives: Argo renders with `helm template`, so a
 template-minted value would change on every sync, and Reloader would roll both
 pods onto a password the other had not been handed yet.
+
+Rendered while either pod reads it: the runner while huntRunner.enabled, the
+engine unless secrets.hunt-runner.enabled is false, since its reference is required.
 */ -}}
-{{- if .Values.huntRunner.enabled }}
+{{- $engineReads := ne (toString (dig "hunt-runner" "enabled" true (.Values.secrets | default dict))) "false" }}
+{{- if or .Values.huntRunner.enabled $engineReads }}
 {{- $hr := .Values.huntRunner.clickhouse -}}
 {{- if or (not $hr.user) (not $hr.passwordSecretName) }}
 {{- fail "huntRunner.clickhouse.user and huntRunner.clickhouse.passwordSecretName are required: the hunt runner connects to ClickHouse as its own user, never the admin account" }}

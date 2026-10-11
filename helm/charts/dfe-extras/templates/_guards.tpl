@@ -110,6 +110,49 @@ receiver's load balancer.
 {{- end -}}
 
 {{/*
+dfe-extras.kafkaSecretGuard -- the refusal of an empty kafka.saslSecretName while
+the pod still reads the contract's kafka credential.
+
+argocd/values/apps names the kafka group's Secret through a secrets.kafka.existingSecret
+that renders kafka.saslSecretName, so an empty name becomes a secretKeyRef with no
+name, which the API server rejects. scalo-service reads secrets.kafka.enabled as
+written, so a deployment without the credential sets it false beside the name.
+It reads the layered values alone, so it runs for every component, those with no
+defaults under extras.defaults included.
+*/}}
+{{- define "dfe-extras.kafkaSecretGuard" -}}
+{{- $group := dig "kafka" dict (.Values.secrets | default dict) -}}
+{{- $reads := and (ne (toString (dig "enabled" true $group)) "false") (contains "saslSecretName" (toString (dig "existingSecret" "" $group))) -}}
+{{- if and $reads (empty (dig "saslSecretName" "unset" (.Values.kafka | default dict))) -}}
+{{- fail (printf "%s: kafka.saslSecretName is empty, which names no Secret for the kafka credential the pod still reads -- set secrets.kafka.enabled: false beside it to run without one, or name the Secret" (toString .Values.chartName)) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-extras.engineContentGuard -- the refusal of a content entry no init container
+materialises.
+
+The engine's content init containers are a fixed list in
+argocd/values/apps/dfe-engine, one named content-<entry> per pin, because
+scalo-service renders initContainers from values and cannot range over
+content.entries. An entry without one leaves the engine reading a directory
+nothing fills. A container whose entry is dropped runs and materialises nothing.
+A render with no initContainers at all carries no engine values to hold the
+entries to, as when this chart renders on its own defaults.
+*/}}
+{{- define "dfe-extras.engineContentGuard" -}}
+{{- if .Values.initContainers -}}
+{{- $names := list -}}
+{{- range .Values.initContainers }}{{ $names = append $names (toString .name) }}{{ end -}}
+{{- range (.Values.content | default dict).entries | default list -}}
+{{- if not (has (printf "content-%s" .name) $names) -}}
+{{- fail (printf "dfe-engine: content.entries carries %q, and no init container named content-%s materialises it -- the content init containers are a fixed list in argocd/values/apps/dfe-engine/values.yaml, so restate initContainers with one for it beside the entry" .name .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.culvertListenerGuard -- culvert's refusal of a listener list with no
 tunnel in it. local.yaml sets the receiver's list on the same key, so a culvert
 that does not restate its own would otherwise open the receiver's ports.

@@ -17,7 +17,9 @@ it into etcd on every Argo sync.
 
 The entries and their init containers are argocd/values/apps/dfe-engine/values.yaml's,
 rendered by the engine's thin chart; dfe-extras reads the entries' roles for the
-env it hands the engine. Eight things are checked:
+env it hands the engine, and refuses an entry with no init container of its name.
+A container whose entry is dropped runs the engine image and materialises nothing.
+Eight things are checked, beside those two:
 
 1. Every entry renders ONE init container, named for its pin, running the pinned
    app image, and a moved pin moves its container.
@@ -25,7 +27,7 @@ env it hands the engine. Eight things are checked:
    and READ-ONLY by the engine.
 3. DFE_LIBRARY_SEED_DIR and DFE_APP_CONTRACT_DIR are set whether or not an entry
    exists, so adding one later needs no env change.
-4. No content init container runs without the entry that pins its image.
+4. Every content init container in a deployed render runs an image its entry pins.
 5. DFE_SOURCE_CATALOGUE_FILE is set ONLY where an entry materialises a
    catalogue: a path naming a file nothing wrote is refused by the engine.
 6. Content is not profile-dependent -- every tier renders the same init containers.
@@ -53,7 +55,7 @@ import yaml
 
 from _expect import expect, standalone, summary
 from _gate import CLOUDS, PROFILES, golden
-from _weave import REPO_ROOT, render_app, render_extras
+from _weave import REPO_ROOT, render_app, render_extras, weave
 
 ENGINE = "dfe-engine"
 ENGINE_VALUES = REPO_ROOT / "argocd" / "values" / "apps" / ENGINE / "values.yaml"
@@ -249,8 +251,8 @@ def test_the_seed_and_contract_dirs_are_set_with_or_without_an_entry() -> None:
 
 
 def test_every_content_init_container_has_its_entry() -> None:
-    """The vehicle is the entries' doing: an init container whose entry is gone
-    pulls an empty image, and the engine's pod never starts."""
+    """The vehicle is the entries' doing: every container the deployed entries keep
+    runs a non-empty image."""
     for profile in PROFILES:
         for cloud in CLOUDS:
             images = [c.get("image") for c in content_inits(deployed(profile, cloud))]
@@ -435,6 +437,61 @@ def test_an_emit_catalogue_entry_runs_the_pinned_image_and_never_wedges_the_pod(
         "and lands exactly what the app printed, under the catalogue filename",
         written == {"sources.yaml": "sources:\n  cisco_ios:\n    package: cisco_ios\n"},
         f"{written}",
+    )
+
+
+def test_a_dropped_entry_leaves_its_container_materialising_nothing() -> None:
+    """The container list is fixed, so a container whose entry is gone runs the
+    engine's own image and exits before it calls an app that image does not carry."""
+    dropped = [e for e in entries() if e["name"] != CATALOGUE_ENTRY]
+    doc = engine(render_app(ENGINE, "slim", "local", overlay={"content": {"entries": dropped}}))
+    init = container(doc, f"{CONTENT_PREFIX}{CATALOGUE_ENTRY}")
+    expect(
+        "the container runs the engine's own image",
+        bool(init) and init.get("image") == pod(doc)["containers"][0]["image"],
+        f"{init.get('image')}",
+    )
+    # An absolute shell, because the PATH below holds no app and no shell either.
+    busybox = shutil.which("busybox")
+    shell = [busybox, "sh"] if busybox else ["/bin/sh"]
+    done = subprocess.run(
+        [*shell, "-c", (init.get("command") or ["", "", "exit 1"])[2]],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={"PATH": "/nonexistent"},
+        check=False,
+        timeout=60,
+    )
+    expect(
+        "and exits 0 without calling the app",
+        done.returncode == 0 and "not in content.entries" in done.stdout,
+        f"rc={done.returncode} {done.stdout}{done.stderr}",
+    )
+
+
+def test_an_entry_with_no_container_is_refused() -> None:
+    """Nothing would fill its directory, so the render names the container it lacks."""
+    added = [
+        *entries(),
+        {
+            "name": "dfe-example-contract",
+            "kind": "emit",
+            "role": "contract",
+            "app": "dfe-example",
+            "ref": MOVED_REF,
+        },
+    ]
+    try:
+        render_extras(ENGINE, "slim", "local", overlay={"content": {"entries": added}})
+        refused = ""
+    except weave().WeaveError as exc:
+        refused = str(exc)
+    expect(
+        "an entry no init container materialises is refused by name",
+        "content-dfe-example-contract" in refused,
+        f"refusal={refused[-300:]!r}",
     )
 
 

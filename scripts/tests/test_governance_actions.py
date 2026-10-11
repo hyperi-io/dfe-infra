@@ -242,13 +242,10 @@ def test_hunts_resume_renders_what_hunts_pause_started_from(
 # ------------------------------------------------------------- written here, no checkout
 
 
-def test_a_pause_that_leaves_the_secret_group_on_is_caught() -> None:
-    """The shape hunts-pause shipped in: the runner off, the engine still reading its password."""
+def test_a_pause_that_leaves_the_secret_group_on_renders_clean() -> None:
+    """The runner off, the engine still reading its password: dfe-extras keeps minting it."""
     pause = action("hunts-pause", PAUSE_THE_RUNNER)
-    assert action_problems(pause, *SLIM) == [
-        "Deployment/dfe-engine dfe-engine env DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD "
-        "reads hunt-runner-clickhouse"
-    ]
+    assert action_problems(pause, *SLIM) == []
 
 
 def test_a_pause_that_turns_the_secret_group_off_too_renders_clean() -> None:
