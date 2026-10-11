@@ -13,6 +13,18 @@ DRY_RUN="${DFE_DRY_RUN:-false}"
 DELETE_TIMEOUT="120s"
 # Seconds step 1 waits for the Argo CD Applications to go.
 APPLICATIONS_WAIT=300
+# Seconds step 1 gives the load balancer controller to delete what it created.
+LOAD_BALANCERS_WAIT=300
+# The namespaces steps 4 and 8 delete. With dfe-* and keda they are every
+# namespace this teardown removes, and the only ones step 1 touches.
+DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
+PLATFORM_NAMESPACES=(argocd cert-manager external-secrets envoy-gateway-system)
+# Facts off the Argo CD cluster secret, which step 8 deletes; empty where it has none.
+CLUSTER_CLOUD=""
+CLUSTER_REGION=""
+CLUSTER_NAME=""
+CLUSTER_VPC=""
+CLUSTER_RUN_TAGS=""
 run() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "[DRY-RUN] $*"
@@ -97,6 +109,192 @@ delete_namespace() {
     echo "  WARN: namespace ${ns} still terminating after ${DELETE_TIMEOUT}, continuing: ${held:-nothing on it says why}"
 }
 
+# Success when this teardown deletes the namespace; anything elsewhere belongs to
+# another tenant on the cluster and is never touched.
+torn_down_namespace() {
+    local listed
+    [[ "${1}" == dfe-* || "${1}" == keda ]] && return 0
+    for listed in "${DATA_NAMESPACES[@]}" "${PLATFORM_NAMESPACES[@]}"; do
+        [[ "${1}" == "${listed}" ]] && return 0
+    done
+    return 1
+}
+
+# The cluster secret lives in the argocd namespace step 8 deletes, so it is read first.
+read_cluster_facts() {
+    local facts
+    facts="$(kubectl -n argocd get secret dfe-cluster -o jsonpath='{.metadata.annotations.dfe\.hyperi\.io/cloud}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/region}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/cluster_name}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/vpc_id}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/run_tags}{"\n"}' 2>/dev/null)" || return 0
+    { read -r CLUSTER_CLOUD; read -r CLUSTER_REGION; read -r CLUSTER_NAME; read -r CLUSTER_VPC; read -r CLUSTER_RUN_TAGS; } <<<"${facts}" || true
+}
+
+# Every Application but the AWS Load Balancer Controller's, one name a line, and
+# none at all when the Applications cannot be listed.
+applications_but_the_load_balancer_controller() {
+    local listing name charts
+    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.sources[*].chart}{"\n"}{end}' 2>/dev/null)" || return 0
+    while read -r name charts; do
+        if [[ -n "${name}" && " ${charts} " != *" aws-load-balancer-controller "* ]]; then
+            echo "${name}"
+        fi
+    done <<<"${listing}"
+}
+
+# Prints resource|namespace|name|deletionTimestamp|finalizers for each Gateway,
+# LoadBalancer Service, Ingress and TargetGroupBinding. Fails when the Services
+# or Ingresses cannot be listed; the other two kinds exist only where the edge
+# module or the load balancer controller installed their CRDs.
+load_balancer_objects() {
+    local fields='|{.metadata.namespace}|{.metadata.name}|{.metadata.deletionTimestamp}|{.metadata.finalizers}{"\n"}{end}'
+    local status=0
+    kubectl get gateways.gateway.networking.k8s.io -A -o jsonpath="{range .items[*]}gateways.gateway.networking.k8s.io${fields}" 2>/dev/null || true
+    kubectl get services -A -o jsonpath="{range .items[?(@.spec.type==\"LoadBalancer\")]}services${fields}" 2>/dev/null || status=1
+    kubectl get ingresses.networking.k8s.io -A -o jsonpath="{range .items[*]}ingresses.networking.k8s.io${fields}" 2>/dev/null || status=1
+    kubectl get targetgroupbindings.elbv2.k8s.aws -A -o jsonpath="{range .items[*]}targetgroupbindings.elbv2.k8s.aws${fields}" 2>/dev/null || true
+    return "${status}"
+}
+
+# The AWS Load Balancer Controller deletes a load balancer, its target groups and
+# its security groups only while it runs, and a security group it leaves behind
+# stops tofu destroy deleting the VPC. So everything it reconciles in the
+# namespaces this teardown removes is deleted, and it is kept until its *.k8s.aws/
+# finalizers clear. Bounded like the Application wait, and an unreadable answer
+# never reads as released.
+release_load_balancers() {
+    local started now deadline nap objects held resource ns name deleting finalizers
+    started="$(date +%s)"
+    deadline=$((started + LOAD_BALANCERS_WAIT))
+    while :; do
+        held=""
+        objects="$(load_balancer_objects)" || held=" (the cluster did not list every Service and Ingress)"
+        while IFS='|' read -r resource ns name deleting finalizers; do
+            if [[ -z "${name}" ]] || ! torn_down_namespace "${ns}"; then
+                continue
+            fi
+            if [[ -z "${deleting}" ]]; then
+                kubectl -n "${ns}" delete "${resource}" "${name}" --ignore-not-found --wait=false 2>/dev/null \
+                    || echo "  WARN: could not delete ${resource} ${ns}/${name}"
+            fi
+            if [[ "${finalizers}" == *k8s.aws/* ]]; then
+                held="${held} ${resource%%.*}/${ns}/${name}"
+            fi
+        done <<<"${objects}"
+        [[ -n "${held}" ]] || return 0
+        now="$(date +%s)"
+        (( now < deadline )) || break
+        nap=$((deadline - now))
+        (( nap <= 5 )) || nap=5
+        sleep "${nap}"
+    done
+    echo "  WARN: the load balancer controller still holds${held} after $((now - started))s, continuing"
+}
+
+# The aws CLI's error code alone: its full message can name the caller's account and role.
+aws_error_code() {
+    local pattern='\(([A-Za-z.]+)\)'
+    if [[ "${1}" =~ ${pattern} ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "an error with no code"
+    fi
+}
+
+# "delete <id>" or "keep <id> <why>" for each security group or network interface
+# in the aws JSON on stdin. Only one in the VPC named by ${2}, detached, and
+# carrying every run tag in the JSON object ${1} and every key=value after ${2}
+# is ever marked delete, so a filter the API did not apply widens nothing.
+select_run_owned() {
+    python3 -c '
+import json, sys
+try:
+    need = json.loads(sys.argv[1])
+    raw = sys.stdin.read()
+    data = json.loads(raw) if raw.strip() else {}
+except ValueError:
+    sys.exit(2)
+if not isinstance(need, dict) or not need or not all(isinstance(v, str) and v for v in need.values()):
+    sys.exit(2)
+need.update(arg.split("=", 1) for arg in sys.argv[3:])
+for item in data.get("SecurityGroups", []) + data.get("NetworkInterfaces", []):
+    ident = item.get("GroupId") or item.get("NetworkInterfaceId")
+    tags = {t.get("Key"): t.get("Value") for t in item.get("Tags") or item.get("TagSet") or []}
+    missing = sorted(k for k, v in need.items() if tags.get(k) != v)
+    if item.get("VpcId") != sys.argv[2]:
+        print("keep", ident, "it is outside the run VPC")
+    elif item.get("Status", "available") != "available":
+        print("keep", ident, "it is still attached")
+    elif missing:
+        print("keep", ident, "it does not carry", ",".join(missing))
+    else:
+        print("delete", ident)
+' "$@"
+}
+
+# A detached network interface still holding the group stops it being deleted.
+delete_detached_interfaces() {
+    local group="${1}" interfaces verdicts verdict id why error
+    if ! interfaces="$(aws ec2 describe-network-interfaces --region "${CLUSTER_REGION}" --output json \
+        --filters "Name=vpc-id,Values=${CLUSTER_VPC}" "Name=group-id,Values=${group}" 2>/dev/null)" \
+        || ! verdicts="$(select_run_owned "${CLUSTER_RUN_TAGS}" "${CLUSTER_VPC}" <<<"${interfaces}")"; then
+        echo "  WARN: could not list the network interfaces holding ${group}"
+        return 0
+    fi
+    while read -r verdict id why; do
+        if [[ -z "${id}" ]]; then
+            continue
+        elif [[ "${verdict}" != "delete" ]]; then
+            echo "  left network interface ${id} on ${group}: ${why}"
+        elif error="$(aws ec2 delete-network-interface --region "${CLUSTER_REGION}" --network-interface-id "${id}" 2>&1 >/dev/null)"; then
+            echo "  deleted network interface ${id}, which held ${group}"
+        else
+            echo "  WARN: could not delete network interface ${id}: $(aws_error_code "${error}")"
+        fi
+    done <<<"${verdicts}"
+}
+
+# A security group the load balancer controller did not get to delete stops tofu
+# destroy deleting the VPC. Only a test run's are swept: in its VPC, carrying the
+# controller's cluster tag and every run tag the controller was told to apply.
+sweep_load_balancer_security_groups() {
+    local groups verdicts verdict id why error swept=0
+    if [[ "${CLUSTER_CLOUD}" != "aws" ]]; then
+        echo "  not an AWS cluster, so there is nothing to sweep"
+        return 0
+    fi
+    if [[ -z "${CLUSTER_RUN_TAGS}" || -z "${CLUSTER_VPC}" || -z "${CLUSTER_NAME}" || -z "${CLUSTER_REGION}" ]]; then
+        echo "  the cluster secret names no run tags, VPC, cluster or region, so no security group is marked as a test run's"
+        return 0
+    fi
+    if ! command -v aws >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        echo "  WARN: no aws CLI or python3 on PATH, so no security group was swept"
+        return 0
+    fi
+    if ! groups="$(aws ec2 describe-security-groups --region "${CLUSTER_REGION}" --output json \
+        --filters "Name=vpc-id,Values=${CLUSTER_VPC}" "Name=tag:elbv2.k8s.aws/cluster,Values=${CLUSTER_NAME}" 2>/dev/null)"; then
+        echo "  WARN: could not list the security groups in ${CLUSTER_VPC}"
+        return 0
+    fi
+    if ! verdicts="$(select_run_owned "${CLUSTER_RUN_TAGS}" "${CLUSTER_VPC}" "elbv2.k8s.aws/cluster=${CLUSTER_NAME}" <<<"${groups}")"; then
+        echo "  WARN: the run tags on the cluster secret are not a JSON object of strings, so no security group was swept"
+        return 0
+    fi
+    while read -r verdict id why; do
+        if [[ -z "${id}" ]]; then
+            continue
+        elif [[ "${verdict}" != "delete" ]]; then
+            echo "  left security group ${id}: ${why}"
+            continue
+        fi
+        swept=$((swept + 1))
+        delete_detached_interfaces "${id}"
+        if error="$(aws ec2 delete-security-group --region "${CLUSTER_REGION}" --group-id "${id}" 2>&1 >/dev/null)"; then
+            echo "  deleted security group ${id}"
+        else
+            echo "  WARN: could not delete security group ${id}: $(aws_error_code "${error}")"
+        fi
+    done <<<"${verdicts}"
+    (( swept > 0 )) || echo "  no security group of this run's load balancers is left in ${CLUSTER_VPC}"
+}
+
 echo "=== DFE Teardown ==="
 echo "This will DELETE all DFE resources from the cluster."
 echo ""
@@ -109,13 +307,32 @@ if [[ "${DRY_RUN}" != "true" ]] && [[ "${1:-}" != "--force" ]]; then
     fi
 fi
 
-echo "==> [1/8] Deleting ArgoCD Applications + ApplicationSets"
-# ApplicationSets first, so Argo stops recreating what is deleted below.
-run kubectl -n argocd delete applicationset --all 2>/dev/null || true
+if [[ "${DRY_RUN}" != "true" ]]; then
+    read_cluster_facts
+fi
+
+echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets"
+# Orphaned, so Argo stops generating Applications while each one stays, still
+# carrying the finalizer that deletes what it deployed, until it is deleted below.
+run kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
 # KEDA clears its own finalizer.keda.sh, so its resources go while it still runs.
 run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete triggerauthentication --all -A --timeout=30s 2>/dev/null || true
+# The load balancer controller's own Application goes last, once it has released
+# every load balancer the others took with them.
+if [[ "${DRY_RUN}" != "true" ]]; then
+    other_applications=()
+    while read -r app; do
+        other_applications+=("${app}")
+    done < <(applications_but_the_load_balancer_controller)
+    if (( ${#other_applications[@]} > 0 )); then
+        kubectl -n argocd delete applications.argoproj.io "${other_applications[@]}" --wait=false 2>/dev/null || true
+    fi
+    release_load_balancers
+else
+    echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+fi
 # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
 # app.catalog.cattle.io and every Argo Application survives the teardown.
 run kubectl -n argocd delete applications.argoproj.io --all --wait=false 2>/dev/null || true
@@ -125,12 +342,12 @@ else
     echo "[DRY-RUN] wait for the Applications to go, clearing finalizer.keda.sh from any KEDA resource still terminating once no KEDA operator pod is running"
 fi
 
-echo "==> [2/8] Waiting for ArgoCD to clean up managed resources..."
+echo "==> [2/9] Waiting for ArgoCD to clean up managed resources..."
 if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 10
 fi
 
-echo "==> [3/8] Deleting DFE data resources (CRDs)"
+echo "==> [3/9] Deleting DFE data resources (CRDs)"
 # Bounded: step 1 may already have removed the operator that clears a CR's finalizer.
 run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
 # A CloudNativePG Cluster exists only on an install that predates its removal.
@@ -145,12 +362,12 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 5
 fi
 
-echo "==> [4/8] Deleting DFE namespaces"
-# Data-plane + operator + bundled deploy-repo (Forgejo) namespaces. The operator
-# namespaces (clickhouse-operator-system/redpanda-operator) and kafka exist only in
-# some profiles; --ignore-not-found makes listing them harmless when a profile did
-# not create them. Missing any here strands the namespace (+ its finalizers) after a
-# teardown, which then blocks a clean redeploy.
+echo "==> [4/9] Deleting DFE namespaces"
+# DATA_NAMESPACES: data-plane + operator + bundled deploy-repo (Forgejo) namespaces.
+# The operator namespaces (clickhouse-operator-system/redpanda-operator) and kafka
+# exist only in some profiles; --ignore-not-found makes listing them harmless when a
+# profile did not create them. Missing any there strands the namespace (+ its
+# finalizers) after a teardown, which then blocks a clean redeploy.
 # clickhouse-operator is the pre-rc.7 namespace, kept so a teardown of an older
 # deploy cannot leave a second operator reconciling the same CRs.
 # Deleting the external-dns namespace here does not itself clean up the DNS
@@ -160,7 +377,7 @@ echo "==> [4/8] Deleting DFE namespaces"
 # terraform/modules/kubernetes-cluster/aws/dns.tf's destroy-time cleanup is
 # for -- it empties the private zone itself, independent of whether
 # external-dns ever got the chance.
-for ns in strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links; do
+for ns in "${DATA_NAMESPACES[@]}"; do
     delete_namespace "${ns}"
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its
@@ -179,7 +396,7 @@ fi
 # Last, once no ScaledObject can still need its operator.
 delete_namespace keda
 
-echo "==> [5/8] Deleting the Strimzi CRDs"
+echo "==> [5/9] Deleting the Strimzi CRDs"
 # A leftover Strimzi CRD keeps every version it stored, and the next operator
 # release's chart refuses one it no longer serves.
 # Deleting a CRD deletes its resources cluster-wide, so all stay while any still
@@ -207,7 +424,7 @@ else
     echo "[DRY-RUN] kubectl delete crd <every *.strimzi.io CRD, once none holds a resource>"
 fi
 
-echo "==> [6/8] Uninstalling ArgoCD + Valkey"
+echo "==> [6/9] Uninstalling ArgoCD + Valkey"
 if [[ "${DRY_RUN}" != "true" ]]; then
     release_stranded_applications
 else
@@ -216,18 +433,25 @@ fi
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
-echo "==> [7/8] Uninstalling Layer 1 (ESO, cert-manager)"
+echo "==> [7/9] Uninstalling Layer 1 (ESO, cert-manager)"
 run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
 run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
 
-echo "==> [8/8] Cleaning up namespaces"
-for ns in argocd cert-manager external-secrets envoy-gateway-system; do
+echo "==> [8/9] Cleaning up namespaces"
+for ns in "${PLATFORM_NAMESPACES[@]}"; do
     delete_namespace "${ns}"
 done
 # destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
 # already carried, and removing an adopted LoadBalancer provider would strand
 # every other tenant's Service on the cluster.
 echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
+
+echo "==> [9/9] Deleting load balancer security groups left in a test run's VPC"
+if [[ "${DRY_RUN}" != "true" ]]; then
+    sweep_load_balancer_security_groups
+else
+    echo "[DRY-RUN] delete each security group in the run's VPC carrying the load balancer controller's cluster tag and every run tag, with its detached network interfaces"
+fi
 
 echo ""
 echo "=== Teardown complete ==="
