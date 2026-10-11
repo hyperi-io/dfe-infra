@@ -396,27 +396,15 @@ class AwsGuard:
     def run_resources(self, keys: cloud_run.RunTagKeys, exclude_bucket: str) -> list:
         """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside.
 
-        A hit the tagging API still lists after AWS deleted it is not one
-        (cloud_sweep.tagging_hit_gone names the classes it can judge).
+        A hit the tagging API still lists after AWS deleted it is not one: collect
+        drops it (cloud_sweep.tagging_hit_gone names the classes it can judge).
         """
         found = cloud_sweep.AwsProvider(self.region).collect({}, exclude_bucket, run_key=keys.run)
         return [
             r for r in found
             if r.tags.get(keys.run)
             and not (r.kind == "s3-bucket" and r.id == exclude_bucket)
-            and not self._deleted(r)
         ]
-
-    def _deleted(self, resource: cloud_sweep.Resource) -> bool:
-        """Whether EC2 reports a tagging-API hit deleted; a reading that fails counts it present."""
-        try:
-            return cloud_sweep.tagging_hit_gone(resource, self.region)
-        except cloud_sweep.CloudSweepError as exc:
-            print(
-                f"could not confirm {resource.kind} {resource.name} is deleted, counting it live: {exc}",
-                file=sys.stderr,
-            )
-            return False
 
     def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
         """Every run record under the prefix; a record goes only when its run's destroy succeeds."""
