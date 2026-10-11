@@ -686,6 +686,64 @@ def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
     assert arn not in call, "the ARN is not an id the describe calls accept"
 
 
+# Each network class: its tagging-API ARN, the id it carries, the describe call's list key and NotFound code.
+NETWORK_CLASSES = [
+    ("subnet", "subnet-1", "Subnets", "InvalidSubnetID.NotFound"),
+    ("security-group", "sg-1", "SecurityGroups", "InvalidGroup.NotFound"),
+    ("route-table", "rtb-1", "RouteTables", "InvalidRouteTableID.NotFound"),
+    ("internet-gateway", "igw-1", "InternetGateways", "InvalidInternetGatewayID.NotFound"),
+    ("vpc", "vpc-1", "Vpcs", "InvalidVpcID.NotFound"),
+    ("launch-template", "lt-1", "LaunchTemplates", "InvalidLaunchTemplateId.NotFound"),
+    ("elastic-ip", "eipalloc-1", "Addresses", "InvalidAllocationID.NotFound"),
+]
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "object_id", "key", "not_found", "answer", "gone"),
+    [
+        pytest.param(t, i, k, n, outcome, gone, id=f"{t}-{label}")
+        for t, i, k, n in NETWORK_CLASSES
+        for label, outcome, gone in (
+            ("not-found", "not-found", True),
+            ("no-longer-returned", "empty", True),
+            ("still-listed", "listed", False),
+        )
+    ],
+)
+def test_a_network_hit_is_gone_once_aws_no_longer_knows_it(
+    monkeypatch: pytest.MonkeyPatch, resource_type: str, object_id: str, key: str, not_found: str, answer: str,
+    gone: bool,
+) -> None:
+    """A teardown deletes the run's network, and the tagging API goes on listing each piece of it."""
+    replies = {
+        "not-found": _fail(f"An error occurred ({not_found}) when calling the Describe operation"),
+        "empty": _ok({key: []}),
+        "listed": _ok({key: [{"Id": object_id}]}),
+    }
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return replies[answer]
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    arn = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:{resource_type}/{object_id}"
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(arn), REGION) is gone
+    (call,) = calls
+    assert object_id in call, "the describe call names the bare id"
+    assert arn not in call, "the ARN is not an id the describe calls accept"
+
+
+@pytest.mark.parametrize(("resource_type", "object_id"), [(t, i) for t, i, _k, _n in NETWORK_CLASSES])
+def test_a_network_hit_whose_state_cannot_be_read_raises(
+    monkeypatch: pytest.MonkeyPatch, resource_type: str, object_id: str
+) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (UnauthorizedOperation) when calling the Describe operation"))
+    arn = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:{resource_type}/{object_id}"
+    with pytest.raises(cloud_sweep.CloudSweepError, match="UnauthorizedOperation"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(arn), REGION)
+
+
 @pytest.mark.parametrize(
     ("answer", "gone"),
     [

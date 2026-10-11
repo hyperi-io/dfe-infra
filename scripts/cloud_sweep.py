@@ -842,6 +842,30 @@ def _ebs_volume_gone(volume_id: str, region: str) -> bool:
     return all(v.get("State") == "deleted" for v in volumes)
 
 
+# Network classes a run creates, keyed by the tagging API's resource type: describe call, id flag, list key.
+_EC2_DESCRIBE_BY_TYPE = {
+    "subnet": ("describe-subnets", "--subnet-ids", "Subnets"),
+    "security-group": ("describe-security-groups", "--group-ids", "SecurityGroups"),
+    "route-table": ("describe-route-tables", "--route-table-ids", "RouteTables"),
+    "internet-gateway": ("describe-internet-gateways", "--internet-gateway-ids", "InternetGateways"),
+    "vpc": ("describe-vpcs", "--vpc-ids", "Vpcs"),
+    "launch-template": ("describe-launch-templates", "--launch-template-ids", "LaunchTemplates"),
+    "elastic-ip": ("describe-addresses", "--allocation-ids", "Addresses"),
+}
+
+
+def _ec2_object_gone(resource_type: str, object_id: str, region: str) -> bool:
+    """True once AWS answers NotFound for one of the classes above, or no longer lists it."""
+    subcommand, flag, key = _EC2_DESCRIBE_BY_TYPE[resource_type]
+    try:
+        found = run_aws(["ec2", subcommand, flag, object_id], region).get(key, [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    return not found
+
+
 def _kms_key_gone(key_id: str, region: str) -> bool:
     """True once the key is scheduled for deletion, which is all a destroy can do to it."""
     try:
@@ -954,9 +978,9 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
     """True when a tagging-API hit names an EC2 object, KMS key or EKS association AWS reports gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
-    volumes, KMS keys and EKS pod identity associations after they go. One still deleting or
-    shutting down is not gone, a KMS key scheduled for deletion is, and any other hit is not
-    judged and reads as present.
+    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, KMS keys and EKS pod identity
+    associations after they go. One still deleting or shutting down is not gone, a KMS key
+    scheduled for deletion is, and any other hit is not judged and reads as present.
 
     Raises:
         CloudSweepError: The describe call failed for any reason but NotFound.
@@ -969,6 +993,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
         return resource_type == "key" and _kms_key_gone(bare_id, region)
     if resource.kind == "tagged:eks":
         return resource_type == "podidentityassociation" and _pod_identity_association_gone(bare_id, region)
+    if resource_type in _EC2_DESCRIBE_BY_TYPE:
+        return _ec2_object_gone(resource_type, bare_id, region)
     if resource_type == "volume":
         return _ebs_volume_gone(bare_id, region)
     if resource_type == "natgateway":
