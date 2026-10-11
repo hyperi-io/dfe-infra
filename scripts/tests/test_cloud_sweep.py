@@ -426,6 +426,85 @@ def test_collect_asks_the_tagging_api_for_the_route1_filter_when_given(monkeypat
     assert seen == [TAG_FILTER, {"dfe-e2e": None}]
 
 
+def _tagging_only(
+    monkeypatch: pytest.MonkeyPatch,
+    hits: list[cloud_sweep.Resource],
+    described: dict[str, subprocess.CompletedProcess],
+) -> None:
+    """A region where only the tagging API finds anything; a describe call is answered by the id it names."""
+    monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
+    monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
+    monkeypatch.setattr(cloud_sweep, "list_tagged", lambda region, sf, tf: hits)
+
+    def answer(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        for rid, reply in described.items():
+            if rid in args:
+                return reply
+        raise AssertionError(f"unexpected aws call: {args}")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", answer)
+
+
+def test_collect_drops_a_tagging_api_hit_aws_reports_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tagging API lists a deleted endpoint for a while, and no scripted delete can remove it."""
+    _tagging_only(
+        monkeypatch,
+        [_tagging_hit(ENDPOINT_ARN), _tagging_hit(INSTANCE_ARN)],
+        {"vpce-1": _fail(ENDPOINT_NOT_FOUND), "i-1": _instance("running")},
+    )
+    found = cloud_sweep.collect(REGION, TAG_FILTER, None)
+    assert [r.id for r in found] == [INSTANCE_ARN]
+
+
+def test_collect_keeps_a_tagging_api_hit_whose_state_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A describe that fails for any reason but NotFound proves nothing, so the hit stays."""
+    _tagging_only(
+        monkeypatch,
+        [_tagging_hit(ENDPOINT_ARN)],
+        {"vpce-1": _fail("An error occurred (UnauthorizedOperation) when calling the DescribeVpcEndpoints operation")},
+    )
+    found = cloud_sweep.collect(REGION, TAG_FILTER, None)
+    assert [r.id for r in found] == [ENDPOINT_ARN]
+    assert "counting it live" in capsys.readouterr().err
+
+
+def test_an_expired_sweep_is_clean_when_every_expired_hit_is_already_deleted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The reaper's sweep: a deleted endpoint, a key scheduled for deletion and an association gone with its cluster."""
+    expired = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T11:00:00Z"}
+    hits = [
+        cloud_sweep.Resource(kind=kind, id=arn, name=arn.rsplit("/", 1)[-1], created=None, tagged=True, tags=expired)
+        for kind, arn in (
+            ("tagged:ec2", ENDPOINT_ARN),
+            ("tagged:kms", KMS_ARN),
+            ("tagged:eks", POD_IDENTITY_ARN),
+        )
+    ]
+    _tagging_only(
+        monkeypatch,
+        hits,
+        {
+            "vpce-1": _fail(ENDPOINT_NOT_FOUND),
+            KMS_ARN.rsplit("/", 1)[-1]: _kms("PendingDeletion"),
+            "a-0example": _fail(CLUSTER_NOT_FOUND),
+        },
+    )
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        cloud_sweep, "delete_resources", lambda resources, region: deleted.extend(r.id for r in resources) or []
+    )
+    code = cloud_sweep.main(
+        ["--region", REGION, "--expired", "--grace", "0", "--delete", "--account", ACCOUNT_ID, "--yes"]
+    )
+    assert code == 0
+    assert deleted == []
+    assert "sweep clean: no expired run resources left" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # Exclusions: the state bucket, and untagged resources without --include-untagged
 # ---------------------------------------------------------------------------

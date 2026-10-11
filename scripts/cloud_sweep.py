@@ -714,6 +714,9 @@ def collect(
     on id (rather than a full ARN<->kind mapping) is enough to avoid double-counting
     the common case without needing a parser for every AWS ARN shape.
 
+    A hit AWS reports deleted is skipped too: the tagging API goes on listing it
+    after the delete, and no scripted delete can ever remove it.
+
     `route1_filter` is what the tagging API is asked for; it defaults to
     `tag_filter`, and --expired passes the run key with any value.
     """
@@ -726,6 +729,8 @@ def collect(
     for tagged in list_tagged(region, server_filter, tag_filter):
         bare = tagged.id.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
         if tagged.id in known_ids or bare in known_ids:
+            continue
+        if _tagging_hit_deleted(tagged, region):
             continue
         resources.append(tagged)
         known_ids.add(tagged.id)
@@ -975,6 +980,18 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
     if resource_type == "network-interface":
         return _network_interface_gone(bare_id, region)
     return False
+
+
+def _tagging_hit_deleted(resource: Resource, region: str) -> bool:
+    """Whether AWS reports a tagging-API hit deleted; a reading that fails counts it present."""
+    try:
+        return tagging_hit_gone(resource, region)
+    except CloudSweepError as exc:
+        print(
+            f"could not confirm {resource.kind} {resource.name} is deleted, counting it live: {exc}",
+            file=sys.stderr,
+        )
+        return False
 
 
 def _delete_route_table(r: Resource, region: str) -> None:
