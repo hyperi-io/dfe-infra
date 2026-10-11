@@ -8,6 +8,7 @@
 # public endpoint to the runner's own address alone, and the teardown removes it with the cluster.
 # The same address, with the cluster's own NAT addresses, is the only one the public gateway admits.
 # repeat runs the whole cycle up to three times, one leg after another, each with its own credential.
+# backend applies a committed overlay over the dial (scripts/cycle_backend.py); any account value it names is an e2e-runner secret.
 #
 # Everything deployment-specific comes from the e2e-runner environment, never
 # from this file: the runner role, the region, the dial and the bootstrap env
@@ -43,6 +44,12 @@ on:
         required: false
         options: ["1", "2", "3"]
         default: "1"
+      backend:
+        description: "Which brokers and datastore the run deploys against. default runs the dial as the e2e-runner environment writes it; any other choice applies scripts/cycle-backends/<backend>.yaml over it at render time."
+        type: choice
+        required: false
+        options: ["default", "msk"]
+        default: "default"
 
 permissions:
   contents: read
@@ -182,16 +189,19 @@ jobs:
 
       # Neither file is committed: both name this deployment's account, state and secrets.
       # The captured catalogue stands in for --live, whose Pricing API is served from outside the run's region.
+      # The backend overlay lands first, so the tofu render and the sizing both read the dial it leaves.
       - name: Render the dial, its sizing and the bootstrap env file
         env:
           DFE_CYCLE_DIAL: ${{ vars.DFE_CYCLE_DIAL }}
           DFE_CYCLE_ENV_FILE: ${{ secrets.DFE_CYCLE_ENV_FILE }}
           DFE_CYCLE_AWS_REGION: ${{ vars.DFE_CYCLE_AWS_REGION }}
           PREFLIGHT_ONLY: ${{ inputs.preflight_only }}
+          BACKEND: ${{ inputs.backend }}
         run: |
           umask 077
           printf '%s\n' "${DFE_CYCLE_DIAL}" > "${RUNNER_TEMP}/deployment.yaml"
           printf '%s\n' "${DFE_CYCLE_ENV_FILE}" > "${RUNNER_TEMP}/dfe-cycle.env"
+          python3 scripts/cycle_backend.py --dial "${RUNNER_TEMP}/deployment.yaml" --backend "${BACKEND:-default}"
           python3 scripts/render_dial.py --dial "${RUNNER_TEMP}/deployment.yaml" --tofu
           # Preflight reads the dial's provision, state and tags only; sizing feeds the apply.
           if [[ "${PREFLIGHT_ONLY}" != "true" ]]; then

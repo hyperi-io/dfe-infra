@@ -4,6 +4,7 @@
 {{- $iam := $msk.bootstrap.iamAuth }}
 {{- $jarName := printf "aws-msk-iam-auth-%s-all.jar" $iam.version }}
 {{- $jarUrl := $iam.url | default (printf "https://github.com/aws/aws-msk-iam-auth/releases/download/v%s/%s" $iam.version $jarName) }}
+{{- $topicOps := list "Read" "Write" "Create" "Describe" "Alter" "Delete" "DescribeConfigs" "AlterConfigs" }}
 # The MSK bootstrap: the SCRAM principal's ACLs, and nothing else.
 #
 # ACLs live in the KAFKA data plane, so the AWS provider has no call that writes
@@ -22,20 +23,20 @@
 # makes a topic exist.
 #
 # The ACL set is kafka-user.yaml's, grant for grant: topic literal "*" with Read,
-# Write, Create, Describe, Alter and Delete, consumer groups by the "dfe-" prefix
-# with Read and Describe. Alter raises a topic's partition count when a source's
-# throughput changes; Delete is what DELETE /sources/{name} needs to take a
-# source's _land/_load pair with it. No cluster operation -- on-prem withholds
-# every one of those, and a compromised engine principal must not be able to
-# reconfigure or take over the bus.
+# Write, Create, Describe, Alter, Delete, DescribeConfigs and AlterConfigs,
+# consumer groups by the "dfe-" prefix with Read and Describe. kafka-user.yaml
+# names the engine call each operation serves. No cluster operation -- on-prem
+# withholds every one of those, and a compromised engine principal must not be
+# able to reconfigure or take over the bus.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # The inputs are hashed into the name so a changed principal or jar version is
-  # a NEW Job rather than an edit to an immutable one. Replace=true cannot do
-  # that job: the API server only defaults spec.selector on CREATE, so replacing
-  # a Job that declares none is rejected and the Application never syncs again.
-  name: {{ .Values.kafka.name }}-msk-bootstrap-{{ printf "%s|%s" $msk.scramUsername $iam.version | sha256sum | trunc 8 }}
+  # The inputs are hashed into the name so a changed principal, grant set or jar
+  # version is a NEW Job rather than an edit to an immutable one. Replace=true
+  # cannot do that job: the API server only defaults spec.selector on CREATE, so
+  # replacing a Job that declares none is rejected and the Application never
+  # syncs again.
+  name: {{ .Values.kafka.name }}-msk-bootstrap-{{ printf "%s|%s|%s" $msk.scramUsername (join "," $topicOps) $iam.version | sha256sum | trunc 8 }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
@@ -160,7 +161,7 @@ spec:
               done
               # The on-prem grants, verbatim (kafka-user.yaml). kafka-acls.sh --add
               # is idempotent, so a re-run re-asserts rather than duplicates.
-              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Write --operation Create --operation Describe --operation Alter --operation Delete --topic "*" --resource-pattern-type literal
+              /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" {{ range $topicOps }}--operation {{ . }} {{ end }}--topic "*" --resource-pattern-type literal
               # prefixed means the name IS the literal prefix -- never write a '*'
               # glob here, which would match groups starting "dfe-*", not "dfe-".
               /opt/kafka/bin/kafka-acls.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CFG" --add --allow-principal "User:{{ $msk.scramUsername }}" --operation Read --operation Describe --group "dfe-" --resource-pattern-type prefixed

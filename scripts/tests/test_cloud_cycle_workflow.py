@@ -95,7 +95,7 @@ def test_the_cycle_only_ever_runs_on_dispatch() -> None:
     triggers = _triggers()
     assert set(triggers) == {"workflow_dispatch"}
     assert set(triggers["workflow_dispatch"]["inputs"]) == {
-        "run_length", "cycle_args", "preflight_only", "acceptance_suite", "repeat",
+        "run_length", "cycle_args", "preflight_only", "acceptance_suite", "repeat", "backend",
     }
 
 

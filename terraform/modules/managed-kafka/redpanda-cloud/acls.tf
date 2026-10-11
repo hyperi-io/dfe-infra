@@ -1,10 +1,12 @@
 // The SCRAM principal, its grants and the landing topics.
 //
-// One principal for the whole DFE fleet, at the grant set kafka-user.yaml
-// already gives on-prem: topic * with Read, Write, Create and Describe, and
-// consumer groups fenced to the dfe- prefix with Read and Describe. No Delete,
-// no Alter, no cluster operations -- widening the grant here would make the
-// cloud path looser than the one we run ourselves.
+// One principal for the whole DFE fleet, at the grant set
+// helm/charts/kafka/templates/kafka-user.yaml gives on-prem: topic * with Read,
+// Write, Create, Describe, Delete, Alter, DescribeConfigs and AlterConfigs,
+// which is every topic call dfe-engine makes, and consumer groups fenced to the
+// dfe- prefix with Read and Describe. No cluster operations -- widening the
+// grant past on-prem would make the cloud path looser than the one we run
+// ourselves.
 //
 // These are data-plane resources, so on private connectivity they are written
 // over the endpoint and tofu has to be able to reach it.
@@ -14,7 +16,7 @@ locals {
   // provider's 256 default, matching the on-prem user.
   scram_mechanism = "scram-sha-512"
 
-  topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE"])
+  topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
 
   group_grants = toset(["READ", "DESCRIBE"])
 }

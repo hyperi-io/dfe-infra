@@ -13,7 +13,7 @@ Module and inputs (provisioning, Terraform, wiring): [aws-msk.md](aws-msk.md).
 
 # DFE on AWS MSK -- Operations
 
-## The bootstrap Job -- ACLs and landing topics
+## The bootstrap Job -- ACLs
 
 Kafka ACLs live in the **Kafka data plane**, not the AWS control plane, so no
 `tofu apply` can write one: the AWS provider has no such call, and the brokers sit
@@ -29,12 +29,14 @@ So the kafka chart runs an in-cluster Job, rendered only at
 **SASL/IAM on port 9098**, where the IAM policy is the authorisation and no Kafka
 ACL has to exist yet, then:
 
-1. creates every landing and DLQ topic the chart derives, `--if-not-exists`, with
-   the derived partition count, `max.message.bytes` and `retention.ms`;
-2. grants the SCRAM principal exactly what an on-prem deployment grants -- topic
-   literal `*` with Read, Write, Create and Describe, consumer groups by the
+1. grants the SCRAM principal exactly what an on-prem deployment grants -- topic
+   literal `*` with Read, Write, Create, Describe, Alter, Delete, DescribeConfigs
+   and AlterConfigs (every topic call dfe-engine makes), consumer groups by the
    `dfe-` prefix with Read and Describe;
-3. prints the resulting ACL and topic lists, and exits non-zero on any failure.
+2. prints the resulting ACL list, and exits non-zero on any failure.
+
+It creates no topic: dfe-engine creates the bootstrap topic set at its own
+startup, which is why the grant includes Create.
 
 **One principal, one ACL set, for the whole fleet.** This is deliberate
 on-prem parity, not a regression -- and a roadmap item toward per-app

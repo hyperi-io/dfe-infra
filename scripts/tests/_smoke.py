@@ -15,8 +15,10 @@ landing table, which answer from the POSTs the fake received. Each ask of the OT
 query is counted, so a test can tell polling from sampling.
 
 A `kafka` fixture adds a broker namespace: its `pods` (name, labels, phase and a
-role of broker, redpanda or other), the `topics` it holds and the `group_output`
-a broker prints for `kafka-consumer-groups.sh`. A pod with the role `other` ships
+role of broker, redpanda or other), the `topics` it holds, the `group_output`
+a broker prints for `kafka-consumer-groups.sh` and the `dlq_retention_ms` its
+topic describe shows (604800000 when absent, an authorisation error when None).
+A pod with the role `other` ships
 the Kafka tools and runs no broker, as Strimzi's cruise-control pod does. Every
 exec into one of its pods is counted as `kafka_exec:<pod>`.
 
@@ -109,6 +111,14 @@ def kafka_tool(pod, script):
                   "Failed to create new KafkaAdminClient")
     elif broker and "kafka-topics.sh" in script and "--list" in script:
         print("\\n".join(kafka["topics"]))
+    elif broker and "kafka-topics.sh" in script and "--describe" in script:
+        # A broker that withholds DescribeConfigs prints the error, not the configs.
+        retention = kafka.get("dlq_retention_ms", "604800000")
+        if retention is None:
+            print("Error while executing topic command : Topic authorization failed.")
+        else:
+            print(f"Topic: dfe_loader_dlq\\tPartitionCount: 3\\tReplicationFactor: 3\\t"
+                  f"Configs: min.insync.replicas=2,retention.ms={retention}")
     elif broker and "kafka-get-offsets.sh" in script:
         print("main_land:0:5")
     sys.exit(0)

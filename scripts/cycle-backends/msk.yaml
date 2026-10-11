@@ -1,0 +1,27 @@
+## Project:   dfe-infra
+## File:      scripts/cycle-backends/msk.yaml
+## Purpose:   The cloud-cycle overlay that runs the brokers on AWS MSK
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Applied over the e2e-runner dial by scripts/cycle_backend.py when a run names
+## backend msk. Every value is the shape deployment.example.yaml documents for
+## kafka.msk (test_cycle_backend.py holds the two equal), so nothing here names
+## an account: the aws root creates the cluster inside the run's own account.
+## broker_version must be ACTIVE in `aws kafka list-kafka-versions`; 4.2.x.kraft
+## is the newest there as of 2026-10.
+kafka:
+  provider: msk
+  msk:
+    shape_ref: msk-broker
+    broker_count: 3
+    broker_version: 4.2.x.kraft
+    num_partitions: 12
+    log_retention_ms: 259200000
+    message_max_bytes: 16777216
+    scram_username: dfe-kafka-user
+    bootstrap_job:
+      namespace: strimzi
+      service_account: dfe-kafka-bootstrap

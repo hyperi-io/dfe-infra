@@ -52,6 +52,10 @@ The run length is a deadline that apply and the cycle share: a cycle still runni
 
 `dfe-ops cycle --acceptance-suite <suite>` runs `acceptance` as a stage after smoke and before ui, from the deploy's terraform outputs and as its minted admin; a failed stage skips the rest and destroy still runs. The workflow passes `source` unless its `acceptance_suite` input says otherwise (`none` skips it), clones dfe-engine and dfe-transform-vrl at the tags the current stack pins, and keeps screenshots and the step table only from a failed leg. `repeat` (1-3) runs that many legs, one after another, each with its own credential.
 
+### Choosing the backend for one run
+
+The `backend` input picks what the run deploys against without editing the environment's one dial. `default` runs the dial as written. Any other choice applies `scripts/cycle-backends/<backend>.yaml` over it before the tofu render and the sizing read it (`scripts/cycle_backend.py`). An overlay commits only the shape -- `msk` sets `kafka.provider: msk` and the `kafka.msk` block -- and a value written `env:<NAME>` is read from an `e2e-runner` secret, so no host or cluster id reaches the repository or its logs.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

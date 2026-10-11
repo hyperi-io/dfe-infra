@@ -237,6 +237,30 @@ def test_an_rpk_group_list_with_only_its_header_is_not_a_group() -> None:
     )
 
 
+DLQ_RETENTION = "DLQ retention is longer than the data-topic default"
+
+
+def test_the_dlq_retention_is_asserted_on_a_strimzi_broker() -> None:
+    stdout, _ = smoke(SCALE_NAMESPACE)
+
+    expect("the seven-day DLQ retention passes", f"[PASS] {DLQ_RETENTION}" in stdout, stdout)
+    expect("it is never skipped", "[SKIP] DLQ retention" not in stdout, stdout)
+
+
+def test_a_wrong_dlq_retention_fails() -> None:
+    stdout, _ = smoke(SCALE_NAMESPACE, dlq_retention_ms="259200000")
+
+    expect("the data-topic default on a DLQ fails", f"[FAIL] {DLQ_RETENTION}" in stdout, stdout)
+
+
+def test_a_withheld_describeconfigs_fails_rather_than_skips() -> None:
+    # The DFE user holds DescribeConfigs on every broker, so a refusal is a broken grant.
+    stdout, _ = smoke(SCALE_NAMESPACE, dlq_retention_ms=None)
+
+    expect("a refused describe fails", f"[FAIL] {DLQ_RETENTION}" in stdout, stdout)
+    expect("it is not reported as a skip", "[SKIP] DLQ retention" not in stdout, stdout)
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

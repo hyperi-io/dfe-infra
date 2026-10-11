@@ -443,21 +443,10 @@ KSH
         "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${DLQ_TOPIC}'"
     done
     # Dead letters must outlive a weekend, against the 72h data-topic default.
-    #
-    # Reading a topic's config needs DescribeConfigs, which the DFE KafkaUser is
-    # not granted and must not be widened to hold for a test's sake -- under
-    # Strimzi's authorizer that call returns TopicAuthorizationException and the
-    # check reports a misconfigured DLQ against a correctly configured one. So it
-    # is asserted where the credential CAN read it (a single-tier broker with no
-    # authorizer, and redpanda, which runs this user as a superuser) and
-    # explicitly NOT asserted under Strimzi's authorizer.
-    # shellcheck disable=SC2016  # $P is expanded by the pod's shell, where kafka_cli defines it.
-    if printf '%s' "$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config $P --describe --topic dfe_loader_dlq')" | grep -q 'retention.ms='; then
-      check "DLQ retention is longer than the data-topic default" \
-        "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
-    else
-      skip "DLQ retention value -- this broker's authorizer withholds DescribeConfigs from the DFE user, by design. The topic's EXISTENCE is asserted above; its retention comes from the dfe-schemas topic set dfe-engine applied."
-    fi
+    # The DFE user holds DescribeConfigs on every broker (kafka-user.yaml), so a
+    # describe that shows no retention is a FAIL, never a skip.
+    check "DLQ retention is longer than the data-topic default (dfe_loader_dlq retention.ms=604800000)" \
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
   fi
 elif profile_has_kafka; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
