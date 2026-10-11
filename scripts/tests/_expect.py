@@ -42,6 +42,7 @@ def expect(name: str, condition: bool, detail: str = "") -> None:
     global _failures
     if condition:
         if _standalone:
+            # A name is test text (app names from SECRET_CONSUMERS), never a credential: alert 13.
             print(f"PASS  {name}")
         return
     _failures += 1
