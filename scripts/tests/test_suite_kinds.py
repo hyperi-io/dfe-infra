@@ -16,8 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from dfe_suite.kinds import (
     ACTION_BUMP_APP,
@@ -343,7 +342,7 @@ class CargoDepTests(unittest.TestCase):
         assert result.moved is None
         assert result.action == ACTION_HUMAN_READ
 
-    def test_a_line_declaring_a_NEIGHBOURING_crate_is_not_read_as_ours(self) -> None:
+    def test_a_line_declaring_a_neighbouring_crate_is_not_read_as_ours(self) -> None:
         # The line has a perfectly good range on it; it is just not scalo's.
         edge = self._manifest('tokio-util = { version = ">=0.7, <1" }')
         result = check_cargo_dep(
@@ -411,7 +410,7 @@ class PythonDepTests(unittest.TestCase):
         )
         assert result.action == ACTION_REBUILD_PYTHON
 
-    def test_a_line_declaring_a_NEIGHBOURING_distribution_is_not_ours(self) -> None:
+    def test_a_line_declaring_a_neighbouring_distribution_is_not_ours(self) -> None:
         edge = self._pyproject('"dfe-schemas>=0.2.0"')
         result = check_python_dep(
             edge, producer_version="2.29.20", consumer_repo=self.repo, package="scalo"

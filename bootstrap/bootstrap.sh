@@ -1284,9 +1284,9 @@ fi
 # secret. They were applied directly here too until the appset covered them; a
 # second copy baked the revision in at apply time, so a bootstrap from a feature
 # branch stranded them once that branch was deleted.
-# NOTE: keda-scalers chart retired -- KEDA is now folded into each app chart
-# (dfe-common.scaledobject helper), driven by the per-instance overlay.
-# cluster-addons ApplicationSet uses goTemplate — no envsubst needed
+# No KEDA scalers Application is applied here: each app's thin chart renders its
+# own ScaledObject from the app's keda values.
+# cluster-addons ApplicationSet uses goTemplate -- no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 
 # Prove Argo can actually READ the chart repo before declaring bootstrap done.

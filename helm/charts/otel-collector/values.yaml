@@ -175,8 +175,8 @@ clusterTelemetry:
     enabled: true
     port: 8888
 
-  # Scrape the DFE services' own /metrics. Every DFE chart already annotates its
-  # pods via dfe-common.prometheusAnnotations, so this is discovery by annotation
+  # Scrape the DFE services' own /metrics. Every DFE thin chart already annotates
+  # its pods with prometheus.io/scrape, port and path, so this is discovery by annotation
   # rather than a target list. Needed because the Rust services expose Prometheus
   # but do not push OTLP (scalo-rs#28), which leaves the pipeline dashboards blank.
   # Turn it OFF for any service that starts pushing: the scrape and the push use

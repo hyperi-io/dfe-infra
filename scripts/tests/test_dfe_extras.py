@@ -700,7 +700,7 @@ def _extras_otlp(docs: list[dict], workload: str) -> list[str]:
 def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
     workload: str, infra: dict, want: str | None
 ) -> None:
-    """apps/_common.yaml's template, which derives the receiver mode dfe-common leaves empty."""
+    """apps/_common.yaml's template, with the receiver endpoint it derives when none is named."""
     got = _extras_otlp(render("dfe-engine", "scale", "local", infra=infra), workload)
     if want is None:
         assert got == []

@@ -43,8 +43,8 @@ REGISTRY_TIMEOUT = 300
 # an hour on a release that published nothing.
 ARTEFACT_TIMEOUT = 900
 
-# A Rust publish that does PGO + BOLT on both targets legitimately takes 50-70
-# minutes; the early-fail is the real safety, the cap is just a backstop.
+# The default wait on a release run, which a consumer's suite.yaml
+# release_timeout_minutes replaces; the early-fail is the real safety, the cap a backstop.
 RUN_TIMEOUT_RUST = 7200
 RUN_TIMEOUT_PYTHON = 3600
 

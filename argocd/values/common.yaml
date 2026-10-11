@@ -85,9 +85,6 @@ telemetry:
   # set only to aim elsewhere.
   receiverEndpoint: ""
   externalEndpoint: ""
-  prometheus:
-    port: 9090
-    path: /metrics
 
 # Startup version check -- every DFE service boots with an opt-out release
 # check (one POST of {product, version, os, arch, install id} to the HyperI

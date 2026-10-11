@@ -97,6 +97,8 @@ tags:
 
   local_gate_exclude_features: "Cargo features, as package/feature, that the dfe-fleet local gate leaves out because building them links a system library the host may lack. Every feature that turns one on is left out with it. Name the feature that pulls the library in, not the app feature that forwards to it."
 
+  release_timeout_minutes: "How many minutes a dfe-fleet rebuild follows the member's release run before it gives up. Unset takes the tool's default for the member's language. Set it past the longest run the member's own CI allows, so CI's verdict always arrives first."
+
   # `licence` records what the repo DECLARES, in the repo's own words, and
   # `none-declared` there is a reading rather than an omission in the graph.
   # `classification` always has an answer, and `classification_source` says
@@ -376,6 +378,8 @@ nodes:
     classification: product
     classification_source: in-repo
     default_in_pass: true
+    # A release ran 4h16m on 2026-10-11, and its build job alone may run 360 minutes.
+    release_timeout_minutes: "420"
     artefacts:
       - kind: container
         registry: ghcr
@@ -747,8 +751,8 @@ edges:
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:3497"
-    note: "Lockstep by policy: the content block is tagged with the stack release, stated at versions.yaml:3495."
+    evidence: "dfe-infra/versions.yaml"
+    note: "The pin is content.dfe-schemas in the current stack. Lockstep by policy: the content block is tagged with the stack release."
 
   # --- logreducer ----------------------------------------------------------
 
@@ -864,8 +868,8 @@ edges:
     to: dfe-infra
     kind: version-pin
     type: lockstep
-    evidence: "dfe-infra/versions.yaml:3499"
-    note: "Lockstep by the same content-block policy at versions.yaml:3495."
+    evidence: "dfe-infra/versions.yaml"
+    note: "The pin is content.dfe-deploy in the current stack. Lockstep by the same content-block policy."
 
   # --- the components into dfe-engine --------------------------------------
   # dfe-engine authors these apps' configs, so it carries a hand-written copy
