@@ -15,9 +15,14 @@ scripts wipe and reseed every account. So the posture is off unless a deploy ask
 for it, refused outside a dev posture by every layer that sees the flag, and forced
 off by stack-deploy when the flag is absent.
 
+The engine cases render the deployed Application: the cluster secret's posture and
+e2e annotation reach dfe-extras' dfe-engine-env ConfigMap through the appset's env
+and e2eServer parameters, and the engine pod reads that ConfigMap.
+
     python3 -m pytest scripts/tests/test_e2e_posture.py -q
 
-Needs `helm` on PATH; the one kubectl case skips without kubectl.
+Needs `helm` on PATH and the scalo-service library (_weave.library) for the one
+case that renders the engine pod; the one kubectl case skips without kubectl.
 """
 
 import argparse
@@ -34,9 +39,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from _gate import CELLS, effective_env, golden
+from _weave import render_app, render_extras, weave
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-ops"
-ENGINE_CHART = REPO_ROOT / "helm" / "charts" / "dfe-engine"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 
@@ -51,62 +58,70 @@ sys.modules["dfeops_e2e_posture"] = dfeops
 _loader.exec_module(dfeops)
 
 
-# --- the engine chart ----------------------------------------------------------
-def render_engine(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["helm", "template", "dfe-engine", str(ENGINE_CHART),
-         "--show-only", "templates/deployment.yaml", *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+# --- the engine ------------------------------------------------------------------
+ENGINE = "dfe-engine"
+ENGINE_CELLS = [c for c in CELLS if c[0] == ENGINE]
+
+
+def engine_env(posture: str, e2e: str | None = None) -> dict[str, str]:
+    """The literal env the engine is handed for a cluster secret's posture and e2e key.
+
+    None leaves the key off the cluster secret, as one written before it existed.
+    """
+    annotations = {} if e2e is None else {ANNOTATION: e2e}
+    docs = render_extras(ENGINE, "slim", "local", env=posture, annotations=annotations)
+    configmap = next(
+        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )
-
-
-def engine_env(*args: str) -> dict[str, str | None]:
-    out = render_engine(*args)
-    assert out.returncode == 0, out.stderr
-    deployment = next(d for d in yaml.safe_load_all(out.stdout) if d)
-    container = deployment["spec"]["template"]["spec"]["containers"][0]
-    return {e["name"]: e.get("value") for e in container["env"]}
+    return configmap["data"]
 
 
 def test_the_engine_ships_with_the_posture_off() -> None:
-    env = engine_env("--set", "env=local")
+    """Every deployed cell tells the engine the posture its cluster secret declares."""
+    for cell in ENGINE_CELLS:
+        docs = golden(*cell)
+        env = effective_env(docs, f"Deployment/{ENGINE}")
+        deployment = next(
+            d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
+        )
+        assert env["DFE_ENV"] == deployment["metadata"]["labels"]["dfe.hyperi.io/env"], cell
+        assert "DFE_E2E_SERVER" not in env, cell
+    env = engine_env("local")
     assert env["DFE_ENV"] == "local"
     assert "DFE_E2E_SERVER" not in env
 
 
 def test_the_posture_runs_the_engine_as_test_with_the_routes_on() -> None:
-    """The seeders accept no posture but test, so the engine is told test."""
-    for flag in ("--set", "--set-string"):
-        env = engine_env("--set", "env=local", flag, "e2eServer=true")
-        assert env["DFE_ENV"] == "test", flag
-        assert env["DFE_E2E_SERVER"] == "true", flag
+    """The seeders accept no posture but test, so the engine pod is told test."""
+    docs = render_app(ENGINE, "slim", "local", env="local", annotations={ANNOTATION: "true"})
+    env = effective_env(docs, f"Deployment/{ENGINE}")
+    assert env["DFE_ENV"] == "test"
+    assert env["DFE_E2E_SERVER"] == "true"
 
 
 def test_an_explicit_false_is_off() -> None:
     """A cluster secret always carries the key, false included."""
-    env = engine_env("--set", "env=local", "--set-string", "e2eServer=false")
+    env = engine_env("local", "false")
     assert env["DFE_ENV"] == "local"
     assert "DFE_E2E_SERVER" not in env
 
 
 def test_every_dev_posture_may_carry_it() -> None:
     for posture in DEV_POSTURES:
-        assert engine_env("--set", f"env={posture}", "--set", "e2eServer=true")["DFE_ENV"] == "test"
+        assert engine_env(posture, "true")["DFE_ENV"] == "test", posture
 
 
-def test_a_production_posture_refuses_it() -> None:
+@pytest.mark.parametrize("posture", ["production", "staging", "customer-acme"])
+def test_a_production_posture_refuses_it(posture: str) -> None:
     """The routes wipe every account, so the render stops rather than mounting them."""
-    for posture in ("production", "staging", "customer-acme"):
-        out = render_engine("--set", f"env={posture}", "--set", "e2eServer=true")
-        assert out.returncode != 0, posture
-        assert "dev posture" in out.stderr, out.stderr
+    with pytest.raises(weave().WeaveError, match="dev posture"):
+        engine_env(posture, "true")
 
 
 def test_a_value_that_is_not_a_boolean_is_refused() -> None:
     """A truthy string would otherwise switch the routes on."""
-    out = render_engine("--set", "env=local", "--set-string", "e2eServer=yes")
-    assert out.returncode != 0
-    assert "true or false" in out.stderr, out.stderr
+    with pytest.raises(weave().WeaveError, match="true or false"):
+        engine_env("local", "yes")
 
 
 # --- the appset ------------------------------------------------------------------

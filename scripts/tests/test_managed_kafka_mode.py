@@ -23,12 +23,14 @@ resolves a broker, and bootstrap.sh sets the annotation for exactly the three
 managed providers. The protocol travels the same way: all three serve TLS only,
 so bootstrap.sh derives SASL_SSL for them and the cluster secret carries it.
 
+The apps render through scripts/dfe-weave, which executes layer2-apps' values
+block for the cluster secret's annotations; the loader needs the scalo-service
+library (_weave.library), the engine's env renders from dfe-extras offline.
+
     python3 scripts/tests/test_managed_kafka_mode.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import re
 import shutil
@@ -40,6 +42,8 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import effective_env, golden, object_id
+from _weave import render_app, render_extras
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
@@ -71,6 +75,18 @@ MANAGED_OVERLAY = (
 
 MANAGED_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 IN_CLUSTER_PROVIDERS = ("strimzi", "redpanda")
+
+# The cluster secret bootstrap.sh writes for an MSK broker, as layer2-apps reads it.
+MANAGED_ANNOTATIONS = {
+    "dfe.hyperi.io/kafka_mode": "external",
+    "dfe.hyperi.io/kafka_provider": "msk",
+    "dfe.hyperi.io/kafka_bootstrap": MANAGED_BOOTSTRAP,
+    "dfe.hyperi.io/kafka_bootstrap_iam": MANAGED_IAM,
+    "dfe.hyperi.io/kafka_security_protocol": "SASL_SSL",
+}
+
+# Where the apps render: the scale tier on aws, the cascade BASE_CASCADE names.
+APP_CELL = ("scale", "aws")
 
 
 def render(chart: str, *, values: list[Path] | None = None, sets: tuple[str, ...] = ()) -> list[dict]:
@@ -136,12 +152,15 @@ def test_the_managed_overlay_points_the_apps_at_the_broker() -> None:
            rendered["kafka"]["mode"] == "cluster"
            and rendered["kafka"]["bootstrapServers"].endswith(".svc.cluster.local:9092"),
            f"got {rendered['kafka']}")
-    docs = with_managed("dfe-loader")
-    deployment = next(d for d in docs if d.get("kind") == "Deployment")
-    env = {e["name"]: e.get("value", "") for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    docs = render_app("dfe-loader", *APP_CELL, annotations=MANAGED_ANNOTATIONS)
+    env = effective_env(docs, "Deployment/dfe-loader")
     brokers = [v for k, v in env.items() if "BROKER" in k or "BOOTSTRAP" in k]
     expect("the loader dials the managed broker", MANAGED_BOOTSTRAP in brokers,
            f"got {brokers}")
+    in_cluster = effective_env(golden("dfe-loader", *APP_CELL), "Deployment/dfe-loader")
+    expect("and an in-cluster deploy keeps the profile's broker",
+           in_cluster.get("DFE_LOADER_KAFKA_BROKERS") == rendered["kafka"]["bootstrapServers"],
+           f"got {in_cluster.get('DFE_LOADER_KAFKA_BROKERS')!r}")
 
 
 def test_the_managed_overlay_opens_the_broker_egress() -> None:
@@ -289,21 +308,20 @@ def test_the_size_travels_bootstrap_to_the_engine_chart() -> None:
 
 
 def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
-    """What the appset renders for a managed broker, as the engine chart reads it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        overlay = Path(tmp) / "managed.yaml"
-        overlay.write_text(MANAGED_OVERLAY + "  messageMaxBytes: '8388608'\n",
-                           encoding="utf-8", newline="\n")
-        docs = render("dfe-engine", values=[*BASE_CASCADE, overlay])
-    deployment = next(d for d in docs if d.get("kind") == "Deployment")
-    env = {e["name"]: e.get("value") for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+    """What the appset renders for a managed broker, as the engine's env carries it.
+
+    dfe-extras writes the engine's env into dfe-engine-env, which the engine's
+    thin chart reads through envFrom.
+    """
+    facts = {**MANAGED_ANNOTATIONS, MESSAGE_SIZE_ANNOTATION: "8388608"}
+    docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
+    env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
     expect("the engine creates its topics at the managed size",
            env.get("DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
            f"got {env.get('DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
-    in_cluster = next(d for d in render("dfe-engine") if d.get("kind") == "Deployment")
-    names = {e["name"] for e in in_cluster["spec"]["template"]["spec"]["containers"][0]["env"]}
+    in_cluster = effective_env(golden("dfe-engine", *APP_CELL), "Deployment/dfe-engine")
     expect("an in-cluster broker leaves the engine's default",
-           "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in names, "the variable was rendered")
+           "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")
 
 
 def main() -> int:

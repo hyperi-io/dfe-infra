@@ -1992,13 +1992,6 @@ def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(monkeypa
     )
 
 
-def test_a_wait_that_asks_only_for_synced_reads_no_rollout(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _mock_run(monkeypatch, ONE_HEALTHY_APP)
-    ok, _ = u.wait_for_argo("kc", argocd_namespace="argocd", timeout=15, rollout_namespace="dfe", require_healthy=False)
-    assert ok is True
-    assert len(calls) == 1
-
-
 DFE_NAMESPACE_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/dfe_namespace}"
 
 
@@ -3411,7 +3404,7 @@ def test_check_argo_apps_fails_an_app_still_on_the_old_ref(monkeypatch: pytest.M
     assert "1.0.0" not in detail  # the stale ref came out of the cluster Secret
 
 
-def test_check_argo_apps_without_health_counts_a_synced_app_but_not_a_stale_or_unsynced_one(
+def test_check_argo_apps_fails_a_degraded_a_stale_and_an_unsynced_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def app(name: str, revision: str, sync: str, health: str) -> dict:
@@ -3419,17 +3412,16 @@ def test_check_argo_apps_without_health_counts_a_synced_app_but_not_a_stale_or_u
                 "status": {"sync": {"status": sync}, "health": {"status": health}}}
 
     degraded = {"items": [app("vrl", "2.0.0", "Synced", "Degraded"), app("ui", "2.0.0", "Synced", "Healthy")]}
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(degraded)), _proc(0, stdout=json.dumps(degraded)))
-    assert u.check_argo_apps("kc", stale_revision="1.0.0", require_healthy=False) == (True, "2 Application(s) Synced")
+    _mock_run(monkeypatch, _proc(0, stdout=json.dumps(degraded)))
     ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
     assert "1 app(s) not Synced/Healthy: vrl (sync Synced, health Degraded)" in detail
 
     behind = {"items": [app("vrl", "2.0.0", "OutOfSync", "Healthy"), app("ui", "1.0.0", "Synced", "Healthy")]}
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(behind)))
-    ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0", require_healthy=False)
+    ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
-    assert detail.startswith("2 app(s) not Synced: vrl (sync OutOfSync, health Healthy), ui (still renders")
+    assert detail.startswith("2 app(s) not Synced/Healthy: vrl (sync OutOfSync, health Healthy), ui (still renders")
 
 
 # ---------------------------------------------------------------------------

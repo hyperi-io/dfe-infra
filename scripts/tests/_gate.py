@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         _gate.py
-#  Purpose:      The chart-switch gate the test_weave_* files assert: the
-#                component matrix, each cell's two renders, the accepted
-#                diffs, and the checks that compare the renders.
+#  Purpose:      The thin-chart render matrix: each cell rendered live, its
+#                committed golden copy, and the checks the tests run over both.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The chart-switch gate, shared by test_weave_identity.py, test_weave_runtime.py,
-test_weave_exposure.py, test_weave_value_map.py and test_weave_published.py.
+"""The thin-chart render matrix, shared by test_thin_renders.py and the tests reading it.
 
-Each cell of the matrix is one component on one profile and cloud, rendered twice
-through scripts/dfe-weave: its 2.2.0 chart, and its thin chart beside dfe-extras
-with the integration values under argocd/values/apps. published_render() renders
-the cell's thin chart as the registry serves it instead of as assembled here. A component joins the gate
-as a row of COMPONENTS, an entry in fixtures/weave-accepted-diffs.yaml and an
-entry in scripts/weave/value-map.yaml; every test parametrises over COMPONENTS.
-A component another appset deploys names it in APPSETS, and instance values its
-2.2.0 chart refuses to render without go in INSTANCE.
+Each cell is one component on one profile and cloud, or one scenario on
+slim/local, rendered through scripts/dfe-weave as Argo deploys it: the thin chart
+beside dfe-extras, with the integration values under argocd/values/apps. cell()
+renders it live, golden() reads the copy committed under fixtures/thin-renders,
+and test_thin_renders.py holds the two equal. A test asserting a property of what
+deploys reads golden(), which needs neither helm nor the registry. A test turning
+a dial renders live through _weave.render_app.
 
-Renders are cached for the run, so the four files share them. A test that
-changes one works on a copy.
+A component joins the matrix as a row of COMPONENTS. A component another appset
+deploys names it in APPSETS, and instance values it refuses to render without go
+in INSTANCE. published_render() renders a cell's thin chart as the registry serves
+it instead of as assembled here.
+
+The goldens hold each image tag and digest versions.yaml pins as a token naming
+the pin (PIN_TOKEN), so a release that moves a pin leaves them alone. golden()
+puts the current values back.
+
+The leading underscore keeps pytest from collecting this module as a test file.
 """
 
 import contextlib
@@ -29,16 +34,14 @@ import copy
 import functools
 import json
 import re
-import tempfile
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from _weave import TESTS, published_chart, render_app, weave
+from _weave import REPO_ROOT, TESTS, deploy_repo, published_chart, render_app
 
-# The deploy.service of each component the gate covers, in the order they switch.
+# The deploy.service of each component the matrix covers.
 COMPONENTS = (
     "dfe-ui",
     "hyperdx",
@@ -59,9 +62,9 @@ MATRIX = [(c, p, k) for c in COMPONENTS for p in PROFILES for k in CLOUDS]
 # The appset a component's Application comes from, where it is not layer2-apps.yaml.
 APPSETS: dict[str, Path] = {"culvert": Path("argocd/appsets/layer2-edge.yaml")}
 
-# The instance values a deployer has to write before a component's 2.2.0 chart renders
-# at all, per cloud. culvert reads local.yaml's receiver `listeners` unless it restates
-# its own, and edge-aws.yaml's external PKI needs its Secret named.
+# The instance values a deployer has to write before a component renders at all, per
+# cloud. culvert reads local.yaml's receiver `listeners` unless it restates its own,
+# and edge-aws.yaml's external PKI needs its Secret named.
 INSTANCE: dict[str, dict[str, dict]] = {
     "culvert": {
         "local": {
@@ -91,7 +94,14 @@ SCENARIOS: dict[str, dict] = {
 }
 DEFAULT = "default"
 
-ACCEPTED = TESTS / "fixtures" / "weave-accepted-diffs.yaml"
+# Every cell: the matrix on the default scenario, then each scenario on slim/local.
+CELLS = [(s, p, k, DEFAULT) for s, p, k in MATRIX] + [
+    (s, "slim", "local", scenario) for s in COMPONENTS for scenario in SCENARIOS
+]
+
+GOLDENS = TESTS / "fixtures" / "thin-renders"
+VERSIONS = REPO_ROOT / "versions.yaml"
+
 ABSENT = "<absent>"
 NAMESPACE = "dfe"
 
@@ -99,6 +109,21 @@ NAMESPACE = "dfe"
 # publishes the API server's CA as this ConfigMap.
 CLUSTER_PROVIDED = {("ConfigMap", "kube-root-ca.crt")}
 
+WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet")
+PROBES = ("startupProbe", "livenessProbe", "readinessProbe")
+# Kubernetes fills these in when a probe leaves them out, so they compare as set.
+PROBE_DEFAULTS = {
+    "initialDelaySeconds": 0,
+    "timeoutSeconds": 1,
+    "periodSeconds": 10,
+    "successThreshold": 1,
+    "failureThreshold": 3,
+}
+# What Kubernetes gives a Deployment that names no strategy.
+DEFAULT_STRATEGY = {
+    "type": "RollingUpdate",
+    "rollingUpdate": {"maxUnavailable": "25%", "maxSurge": "25%"},
+}
 # What Kubernetes gives a pod that leaves these out, so leaving one out compares as setting it.
 POD_DEFAULTS = {
     "automountServiceAccountToken": True,
@@ -111,85 +136,45 @@ POD_DEFAULTS = {
 # ---------------------------------------------------------------------- renders
 
 
-@dataclass(frozen=True, slots=True)
-class Cell:
-    """One component's two renders, for one profile, cloud and scenario."""
-
-    service: str
-    profile: str
-    cloud: str
-    scenario: str
-    old: list[dict]
-    new: list[dict]
-
-    def __str__(self) -> str:
-        return f"{self.service} {self.profile}/{self.cloud} ({self.scenario})"
-
-    def mutable(self) -> Cell:
-        """A copy whose renders a test may change."""
-        return Cell(
-            self.service,
-            self.profile,
-            self.cloud,
-            self.scenario,
-            copy.deepcopy(self.old),
-            copy.deepcopy(self.new),
-        )
-
-
 @contextlib.contextmanager
 def _cell_options(service: str, cloud: str, scenario: str) -> Iterator[dict]:
-    """The dfe-weave options a cell renders with: its facts, appset and deploy repo."""
+    """The render options a cell takes: its facts, appset and deploy repo."""
     shape = SCENARIOS.get(scenario, {"facts": {}, "infra": None})
     instance = INSTANCE.get(service, {}).get(cloud)
-    with tempfile.TemporaryDirectory(prefix="dfe-gate-deploy-") as tmp:
-        options: dict = dict(shape["facts"])
-        if service in APPSETS:
-            options["appset"] = APPSETS[service]
-        if shape["infra"] is not None:
-            infra = Path(tmp) / "infra"
-            infra.mkdir()
-            (infra / "common.yaml").write_text(
-                yaml.safe_dump(shape["infra"]), encoding="utf-8", newline="\n"
-            )
-            options["deploy_repo"] = Path(tmp)
-        if instance is not None:
-            body = {"deploy": {"service": service, "instance": "default"}, **instance}
-            values = Path(tmp) / "values"
-            values.mkdir()
-            (values / f"{service}-default-values.yaml").write_text(
-                yaml.safe_dump(body), encoding="utf-8", newline="\n"
-            )
-            options["deploy_repo"] = Path(tmp)
+    options: dict = dict(shape["facts"])
+    if service in APPSETS:
+        options["appset"] = APPSETS[service]
+    if shape["infra"] is None and instance is None:
+        yield options
+        return
+    with deploy_repo(service, overlay=instance, infra=shape["infra"]) as root:
+        options["deploy_repo"] = root
         yield options
 
 
 @functools.cache
-def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Cell:
-    """Both renders of one component, cached for the run."""
+def _rendered(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict, ...]:
     with _cell_options(service, cloud, scenario) as options:
-        old = render_app(service, profile, cloud, "old", **options)
-        new = render_app(service, profile, cloud, "new", **options)
-    return Cell(service, profile, cloud, scenario, old, new)
+        return tuple(render_app(service, profile, cloud, **options))
+
+
+def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> list[dict]:
+    """One cell rendered live, rendered once per run; the copy returned is the caller's."""
+    return copy.deepcopy(list(_rendered(service, profile, cloud, scenario)))
 
 
 @functools.cache
+def _published(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict, ...]:
+    chart = published_chart(service)
+    with _cell_options(service, cloud, scenario) as options:
+        return tuple(render_app(service, profile, cloud, chart=chart, **options))
+
+
 def published_render(
     service: str, profile: str, cloud: str, scenario: str = DEFAULT
 ) -> list[dict]:
-    """The new render of a cell from the thin chart the registry serves, cached for the run.
-
-    Read as cell() reads its assembled chart, so the two compare leaf for leaf.
-    """
-    chart = published_chart(service)
-    with _cell_options(service, cloud, scenario) as options:
-        return render_app(service, profile, cloud, "new", chart=chart, **options)
-
-
-def cells(service: str) -> list[Cell]:
-    """Every cell of a component: the matrix, then each scenario."""
-    found = [cell(service, p, k) for p in PROFILES for k in CLOUDS]
-    return found + [cell(service, "slim", "local", s) for s in SCENARIOS]
+    """A cell rendered from the thin chart the registry serves, read as cell() reads its own."""
+    return copy.deepcopy(list(_published(service, profile, cloud, scenario)))
 
 
 def object_id(doc: dict) -> str:
@@ -197,190 +182,95 @@ def object_id(doc: dict) -> str:
     return f"{doc.get('kind')}/{doc.get('metadata', {}).get('name')}"
 
 
-# --------------------------------------------------------------- accepted diffs
+# ---------------------------------------------------------------------- goldens
+
+# A pin in a golden file: the versions.yaml key whose current value stood there.
+PIN_TOKEN = "<pin:{}>"
+PIN_TOKEN_RE = re.compile(r"<pin:([A-Za-z0-9_.-]+)>")
+# The pins worth tokenising: digests, and version tags of three numbered parts or more.
+PIN_VALUE_RE = re.compile(r"^(sha256:[0-9a-f]{64}|v?\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.+-]+)?)$")
+# The current stack's sections whose pins reach a render.
+PIN_SECTIONS = ("apps", "content", "digests", "services", "services-digests")
+# A thin chart's version is its image tag less the v, so each app and content tag
+# yields a pin of its own under this prefix: the helm.sh/chart label carries it.
+CHART_VERSION = "chart-version"
+VERSIONED_SECTIONS = ("apps", "content")
 
 
-@dataclass(frozen=True, slots=True)
-class Diff:
-    """One leaf that differs between the renders: ``old`` or ``new`` is ABSENT where missing."""
-
-    object: str
-    path: str
-    old: object
-    new: object
-
-    def __str__(self) -> str:
-        return f"{self.object} {self.path}: {_canon(self.old)} -> {_canon(self.new)}"
-
-
-def _canon(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
-
-
-def _glob(pattern: str) -> re.Pattern[str]:
-    """``*`` matches any run of characters; everything else is literal, brackets included."""
-    return re.compile(".*".join(re.escape(part) for part in pattern.split("*")))
-
-
-def _pinned(pin: object, value: object) -> bool:
-    """Whether a value is the one an entry pins; a string pin with ``*`` in it is a glob."""
-    if isinstance(pin, str) and "*" in pin and isinstance(value, str):
-        return bool(_glob(pin).fullmatch(value))
-    return _canon(pin) == _canon(value)
-
-
-@dataclass(frozen=True, slots=True)
-class Accepted:
-    """One accepted diff: object and path globs, the values when pinned, and the reason."""
-
-    object: str
-    path: str
-    reason: str
-    old: object = ABSENT
-    new: object = ABSENT
-    pins_old: bool = False
-    pins_new: bool = False
-    scenarios: tuple[str, ...] = ()
-
-    def matches(self, diff: Diff, scenario: str) -> bool:
-        """Whether this entry accepts ``diff`` in ``scenario``."""
-        if self.scenarios and scenario not in self.scenarios:
-            return False
-        if not _glob(self.object).fullmatch(diff.object):
-            return False
-        if not _glob(self.path).fullmatch(diff.path):
-            return False
-        if self.pins_old and not _pinned(self.old, diff.old):
-            return False
-        return not (self.pins_new and not _pinned(self.new, diff.new))
-
-    def __str__(self) -> str:
-        return f"{self.object} {self.path}"
-
-
-@dataclass(frozen=True, slots=True)
-class Accepts:
-    """A component's accepted diffs: objects only the new render has, objects only the
-    2.2.0 render has, and leaf diffs."""
-
-    added: dict[str, str]
-    diffs: tuple[Accepted, ...]
-    removed: dict[str, str] = field(default_factory=dict)
-
-
-class AcceptedError(Exception):
-    """fixtures/weave-accepted-diffs.yaml does not have the shape the gate reads."""
-
-
-def _entry(service: str, raw: object) -> Accepted:
-    if not isinstance(raw, dict):
-        raise AcceptedError(f"{service}: a diff entry is not a mapping: {raw!r}")
-    unknown = set(raw) - {"object", "path", "old", "new", "reason", "scenarios"}
-    if unknown:
-        raise AcceptedError(f"{service}: {raw} carries {sorted(unknown)}")
-    for key in ("object", "path", "reason"):
-        if not isinstance(raw.get(key), str) or not raw[key].strip():
-            raise AcceptedError(f"{service}: {raw} has no {key}")
-    scenarios = tuple(raw.get("scenarios") or ())
-    stray = [s for s in scenarios if s not in SCENARIOS and s != DEFAULT]
-    if stray:
-        raise AcceptedError(f"{service}: {raw['object']} {raw['path']} names scenarios {stray}")
-    return Accepted(
-        object=raw["object"],
-        path=raw["path"],
-        reason=raw["reason"],
-        old=raw.get("old", ABSENT),
-        new=raw.get("new", ABSENT),
-        pins_old="old" in raw,
-        pins_new="new" in raw,
-        scenarios=scenarios,
-    )
-
-
-EVERY = "*"
+def golden_path(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Path:
+    """Where a cell's golden render is committed."""
+    name = f"{profile}-{cloud}" if scenario == DEFAULT else f"{profile}-{cloud}-{scenario}"
+    return GOLDENS / service / f"{name}.yaml"
 
 
 @functools.cache
-def accepted() -> dict[str, Accepts]:
-    """The accepted diffs by section: a deploy.service, or ``*`` for every component.
+def pins() -> dict[str, str]:
+    """Each pin a render can carry, ``<section>.<key>`` -> value, in the current stack.
 
-    Raises:
-        AcceptedError: The file has an entry the gate cannot read.
+    ``chart-version.<key>`` is the thin chart version an ``apps`` or ``content``
+    tag names.
     """
-    data = yaml.safe_load(ACCEPTED.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise AcceptedError(f"{ACCEPTED} is not a mapping of component to its diffs")
+    data = yaml.safe_load(VERSIONS.read_text(encoding="utf-8")) or {}
+    stack = (data.get("stacks") or {}).get(str(data.get("current", ""))) or {}
     found = {}
-    for service, body in data.items():
-        if not isinstance(body, dict) or set(body) - {"added", "removed", "diffs"}:
-            raise AcceptedError(f"{service}: takes `added`, `removed` and `diffs` only")
-        added = body.get("added") or {}
-        removed = body.get("removed") or {}
-        for kind, objects in (("added", added), ("removed", removed)):
-            if not all(isinstance(r, str) and r.strip() for r in objects.values()):
-                raise AcceptedError(f"{service}: every {kind} object needs its reason")
-        # A pruned claim comes back empty, so no reason accepts one.
-        claims = sorted(o for o in removed if o.startswith("PersistentVolumeClaim/"))
-        if claims:
-            raise AcceptedError(f"{service}: a claim cannot be accepted as removed: {claims}")
-        found[service] = Accepts(
-            added=dict(added),
-            diffs=tuple(_entry(service, e) for e in body.get("diffs") or []),
-            removed=dict(removed),
-        )
+    for section in PIN_SECTIONS:
+        for key, value in sorted((stack.get(section) or {}).items()):
+            if not isinstance(value, str) or not PIN_VALUE_RE.fullmatch(value):
+                continue
+            found[f"{section}.{key}"] = value
+            if section in VERSIONED_SECTIONS and value.startswith("v"):
+                found[f"{CHART_VERSION}.{key}"] = value.removeprefix("v")
     return found
 
 
-def accepts(service: str) -> Accepts:
-    """One component's accepted diffs, its own section after the ``*`` one."""
-    none = Accepts(added={}, diffs=())
-    every, own = accepted().get(EVERY, none), accepted().get(service, none)
-    return Accepts(
-        added={**every.added, **own.added},
-        diffs=every.diffs + own.diffs,
-        removed={**every.removed, **own.removed},
-    )
+def _pin_pattern(value: str) -> re.Pattern[str]:
+    """A pin's value standing alone: not inside a longer version, digest or word."""
+    return re.compile(rf"(?<![\w.]){re.escape(value)}(?![\w.]*[\w])")
 
 
-# --------------------------------------------------------------------- identity
+def mask(text: str) -> str:
+    """``text`` with every pin value replaced by its token, the longest values first.
 
-
-def identity_problems(
-    old: list[dict],
-    new: list[dict],
-    added: dict[str, str],
-    removed: dict[str, str] | None = None,
-) -> list[str]:
-    """How the new render fails to adopt every 2.2.0 object; empty is a pass.
-
-    Argo adopts a live object by (kind, name), so a lost or renamed object is
-    pruned and recreated, and a renamed claim comes back empty. A selector is
-    immutable. An object only the new render has must be in ``added``, an object
-    only the 2.2.0 render has must be in ``removed``, which Argo then prunes, and
-    no (kind, name) may render twice across the Application's two sources. A
-    claim is held whatever ``removed`` says.
+    A value two pins share takes the token of the key that sorts first, which
+    unmask() reads back to the same value.
     """
-    gone = set(removed or {})
-    facets = weave().diff_docs(old, new)
-    problems = []
-    lost = [o for o in facets["objects"]["only_old"] if o not in gone]
-    if lost:
-        problems.append(f"lost or renamed: {lost}")
-    if facets["pvcs"]["only_old"]:
-        problems.append(f"claims lost or renamed: {facets['pvcs']['only_old']}")
-    for key in facets["selector"]["differ"]:
-        if key in gone:
-            continue
-        old_selector = facets["selector"]["old"][key]
-        problems.append(f"{key} selector {old_selector} -> {facets['selector']['new'][key]}")
-    unlisted = sorted(set(facets["objects"]["only_new"]) - set(added))
-    if unlisted:
-        problems.append(f"added and not accepted: {unlisted}")
-    ids = [object_id(d) for d in new]
-    twice = sorted({i for i in ids if ids.count(i) > 1})
-    if twice:
-        problems.append(f"rendered twice: {twice}")
-    return problems
+    by_value: dict[str, str] = {}
+    for key, value in sorted(pins().items()):
+        by_value.setdefault(value, key)
+    for value in sorted(by_value, key=len, reverse=True):
+        text = _pin_pattern(value).sub(PIN_TOKEN.format(by_value[value]), text)
+    return text
+
+
+def unmask(text: str) -> str:
+    """``text`` with every token replaced by the current value of the pin it names.
+
+    Raises:
+        KeyError: A token names a pin the current stack does not carry.
+    """
+    current = pins()
+    return PIN_TOKEN_RE.sub(lambda m: current[m.group(1)], text)
+
+
+def golden_text(docs: list[dict]) -> str:
+    """A render as its golden file holds it: one YAML document per object, pins tokenised."""
+    return mask(yaml.safe_dump_all(docs, sort_keys=True, width=1 << 16))
+
+
+@functools.cache
+def _golden(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict, ...]:
+    text = golden_path(service, profile, cloud, scenario).read_text(encoding="utf-8")
+    return tuple(d for d in yaml.safe_load_all(unmask(text)) if isinstance(d, dict))
+
+
+def golden(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> list[dict]:
+    """A cell's committed golden render with today's pins; the copy returned is the caller's."""
+    return copy.deepcopy(list(_golden(service, profile, cloud, scenario)))
+
+
+def goldens(service: str) -> list[tuple[tuple[str, str, str, str], list[dict]]]:
+    """Every cell of one component with its golden render: the matrix, then each scenario."""
+    return [(c, golden(*c)) for c in CELLS if c[0] == service]
 
 
 # ---------------------------------------------------------------------- runtime
@@ -388,6 +278,10 @@ def identity_problems(
 
 class Keyed(dict):
     """A list Kubernetes merges by a key, held by that key so it compares item by item."""
+
+
+def _canon(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _join(path: str, key: str) -> str:
@@ -407,6 +301,36 @@ def _flatten(node: object, path: str, out: dict[str, object]) -> None:
             _flatten(value, _join(path, str(key)), out)
     else:
         out[path] = node
+
+
+def _pod_spec(doc: dict) -> dict:
+    return (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
+
+
+def port_numbers(docs: list[dict]) -> dict[str, int]:
+    """Container port name -> number across a render, for resolving named ports."""
+    numbers: dict[str, int] = {}
+    for doc in docs:
+        if doc.get("kind") not in WORKLOAD_KINDS:
+            continue
+        pod = _pod_spec(doc)
+        for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
+            for port in container.get("ports") or []:
+                if "name" in port:
+                    numbers.setdefault(port["name"], port.get("containerPort"))
+    return numbers
+
+
+def probe_view(probe: dict | None, numbers: dict[str, int]) -> dict | None:
+    """A probe with Kubernetes' defaults filled in and its named port resolved."""
+    if not probe:
+        return None
+    out = {**PROBE_DEFAULTS, **copy.deepcopy(probe)}
+    for handler in ("httpGet", "tcpSocket", "grpc"):
+        port = (out.get(handler) or {}).get("port")
+        if isinstance(port, str):
+            out[handler]["port"] = numbers.get(port, port)
+    return out
 
 
 def _effective_env(container: dict, configmaps: dict[str, dict]) -> Keyed:
@@ -431,8 +355,14 @@ def _effective_env(container: dict, configmaps: dict[str, dict]) -> Keyed:
     return Keyed(sorted(env.items()))
 
 
+def effective_env(docs: list[dict], workload: str) -> dict[str, object]:
+    """The main container's effective env of one workload (``Kind/name``) in a render."""
+    configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
+    doc = next(d for d in docs if object_id(d) == workload)
+    return dict(_effective_env(_pod_spec(doc)["containers"][0], configmaps))
+
+
 def _container(container: dict, configmaps: dict[str, dict], numbers: dict[str, int]) -> dict:
-    w = weave()
     out = {k: v for k, v in container.items() if k not in ("env", "envFrom")}
     out["env"] = _effective_env(container, configmaps)
     if container.get("envFrom"):
@@ -445,9 +375,9 @@ def _container(container: dict, configmaps: dict[str, dict], numbers: dict[str, 
         (m["mountPath"], {k: v for k, v in m.items() if k != "mountPath"})
         for m in container.get("volumeMounts") or []
     )
-    for probe in w.PROBES:
+    for probe in PROBES:
         if probe in out:
-            out[probe] = w._probe(out[probe], numbers)
+            out[probe] = probe_view(out[probe], numbers)
     return out
 
 
@@ -461,11 +391,10 @@ def _metadata(doc: dict) -> dict:
 
 
 def _workload(doc: dict, configmaps: dict[str, dict]) -> dict:
-    w = weave()
     spec = dict(doc.get("spec") or {})
     template = spec.pop("template", {}) or {}
     pod = {**POD_DEFAULTS, **(template.get("spec") or {})}
-    numbers = w._port_numbers([doc])
+    numbers = port_numbers([doc])
     containers = pod.pop("containers", None) or []
     pod["containers"] = Keyed(
         ("main" if i == 0 else c.get("name"), _container(c, configmaps, numbers))
@@ -482,7 +411,7 @@ def _workload(doc: dict, configmaps: dict[str, dict]) -> dict:
     pulls = pod.pop("imagePullSecrets", None) or []
     pod["imagePullSecrets"] = sorted(p["name"] if isinstance(p, dict) else p for p in pulls)
     if doc.get("kind") == "Deployment":
-        spec["strategy"] = spec.get("strategy") or w.DEFAULT_STRATEGY
+        spec["strategy"] = spec.get("strategy") or DEFAULT_STRATEGY
     meta = {
         k: v for k, v in (template.get("metadata") or {}).items() if k in ("labels", "annotations")
     }
@@ -510,13 +439,12 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
     carry Kubernetes' defaults with named ports resolved, and lists Kubernetes
     merges by key are compared by that key.
     """
-    w = weave()
     configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
-    numbers = w._port_numbers(docs)
+    numbers = port_numbers(docs)
     view = {}
     for doc in docs:
         kind = doc.get("kind")
-        if kind in w.WORKLOAD_KINDS:
+        if kind in WORKLOAD_KINDS:
             body = _workload(doc, configmaps)
         elif kind == "Service":
             body = _service(doc, numbers)
@@ -532,8 +460,8 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
     return view
 
 
-def runtime_diffs(old: list[dict], new: list[dict]) -> list[Diff]:
-    """Every leaf that differs in an object both renders hold."""
+def runtime_diffs(old: list[dict], new: list[dict]) -> list[str]:
+    """Every leaf that differs in an object both renders hold, as ``Kind/name path: a -> b``."""
     before, after = runtime_view(old), runtime_view(new)
     found = []
     for obj in sorted(set(before) & set(after)):
@@ -541,13 +469,8 @@ def runtime_diffs(old: list[dict], new: list[dict]) -> list[Diff]:
         for path in sorted(set(a) | set(b)):
             left, right = a.get(path, ABSENT), b.get(path, ABSENT)
             if _canon(left) != _canon(right):
-                found.append(Diff(obj, path, left, right))
+                found.append(f"{obj} {path}: {_canon(left)} -> {_canon(right)}")
     return found
-
-
-def unaccepted(diffs: list[Diff], entries: tuple[Accepted, ...], scenario: str) -> list[str]:
-    """The diffs no entry accepts."""
-    return [str(d) for d in diffs if not any(e.matches(d, scenario) for e in entries)]
 
 
 def render_differences(left: list[dict], right: list[dict]) -> list[str]:
@@ -556,21 +479,13 @@ def render_differences(left: list[dict], right: list[dict]) -> list[str]:
     ids_right = {object_id(d) for d in right}
     found = [f"only left: {o}" for o in sorted(ids_left - ids_right)]
     found += [f"only right: {o}" for o in sorted(ids_right - ids_left)]
-    return found + [str(d) for d in runtime_diffs(left, right)]
+    return found + runtime_diffs(left, right)
 
 
-def _images(docs: list[dict]) -> dict[str, str]:
-    """Each container's image by workload and container, the main one as ``main``."""
-    found = {}
-    for doc in docs:
-        if doc.get("kind") not in weave().WORKLOAD_KINDS:
-            continue
-        pod = (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
-        for i, c in enumerate(pod.get("containers") or []):
-            found[f"{object_id(doc)} {'main' if i == 0 else c.get('name')}"] = c.get("image", "")
-        for c in pod.get("initContainers") or []:
-            found[f"{object_id(doc)} init/{c.get('name')}"] = c.get("image", "")
-    return found
+def rendered_twice(docs: list[dict]) -> list[str]:
+    """Each ``Kind/name`` the render holds more than once, across the thin chart and dfe-extras."""
+    ids = [object_id(d) for d in docs]
+    return sorted({i for i in ids if ids.count(i) > 1})
 
 
 def forward_references(docs: list[dict]) -> list[str]:
@@ -584,9 +499,9 @@ def forward_references(docs: list[dict]) -> list[str]:
     configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
     found = []
     for doc in docs:
-        if doc.get("kind") not in weave().WORKLOAD_KINDS:
+        if doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
+        pod = _pod_spec(doc)
         for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
             declared = set()
             for source in container.get("envFrom") or []:
@@ -604,27 +519,13 @@ def forward_references(docs: list[dict]) -> list[str]:
     return found
 
 
-def image_problems(old: list[dict], new: list[dict]) -> list[str]:
-    """Each container whose image moved beyond its registry; empty is a pass.
-
-    The registry may move with global.registry. The name, tag and digest after it
-    may not: a switch that runs other bytes is a release, not a chart change.
-    """
-    before, after = _images(old), _images(new)
-    return [
-        f"{key}: {before[key]} -> {after[key]}"
-        for key in sorted(set(before) & set(after))
-        if before[key].rsplit("/", 1)[-1] != after[key].rsplit("/", 1)[-1]
-    ]
-
-
-def _refs(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
+def references(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
     """Every Secret and ConfigMap a workload names: (kind, name, optional, where)."""
     found = []
     for doc in docs:
-        if doc.get("kind") not in weave().WORKLOAD_KINDS:
+        if doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
+        pod = _pod_spec(doc)
         where = object_id(doc)
         for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
             at = f"{where} {container.get('name')}"
@@ -633,14 +534,8 @@ def _refs(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
                 for key, kind in (("secretKeyRef", "Secret"), ("configMapKeyRef", "ConfigMap")):
                     ref = source.get(key)
                     if ref:
-                        found.append(
-                            (
-                                kind,
-                                ref.get("name"),
-                                bool(ref.get("optional")),
-                                f"{at} env {entry['name']}",
-                            )
-                        )
+                        optional = bool(ref.get("optional"))
+                        found.append((kind, ref.get("name"), optional, f"{at} env {entry['name']}"))
             for source in container.get("envFrom") or []:
                 for key, kind in (("secretRef", "Secret"), ("configMapRef", "ConfigMap")):
                     ref = source.get(key)
@@ -649,52 +544,38 @@ def _refs(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
                             (kind, ref.get("name"), bool(ref.get("optional")), f"{at} envFrom")
                         )
         for volume in pod.get("volumes") or []:
+            at = f"{where} volume {volume.get('name')}"
             for item in [volume, *((volume.get("projected") or {}).get("sources") or [])]:
                 if "secret" in item:
                     ref = item["secret"]
                     name = ref.get("secretName") or ref.get("name")
-                    found.append(
-                        (
-                            "Secret",
-                            name,
-                            bool(ref.get("optional")),
-                            f"{where} volume {volume.get('name')}",
-                        )
-                    )
+                    found.append(("Secret", name, bool(ref.get("optional")), at))
                 if "configMap" in item:
                     ref = item["configMap"]
-                    found.append(
-                        (
-                            "ConfigMap",
-                            ref.get("name"),
-                            bool(ref.get("optional")),
-                            f"{where} volume {volume.get('name')}",
-                        )
-                    )
+                    found.append(("ConfigMap", ref.get("name"), bool(ref.get("optional")), at))
         for pull in pod.get("imagePullSecrets") or []:
             name = pull.get("name") if isinstance(pull, dict) else pull
             found.append(("Secret", name, False, f"{where} imagePullSecrets"))
     return found
 
 
-def unresolved_refs(old: list[dict], new: list[dict]) -> list[str]:
-    """Each Secret or ConfigMap the new render names that nothing provides; empty is a pass.
+def unresolved_refs(docs: list[dict], elsewhere: set[tuple[str, str]]) -> list[str]:
+    """Each Secret or ConfigMap a render names that nothing provides; empty is a pass.
 
     A reference resolves when it is optional, when the render holds the object (or an
-    ExternalSecret writing it), when the cluster provides it, or when 2.2.0 named it
-    too, which makes it a stack object some other chart provides.
+    ExternalSecret writing it), when the cluster provides it, or when ``elsewhere``
+    names it: a stack object another Application or bootstrap provides.
     """
-    provided = {(d.get("kind"), d.get("metadata", {}).get("name")) for d in new}
-    provided |= CLUSTER_PROVIDED
-    for doc in new:
+    provided = {(d.get("kind"), d.get("metadata", {}).get("name")) for d in docs}
+    provided |= CLUSTER_PROVIDED | elsewhere
+    for doc in docs:
         if doc.get("kind") == "ExternalSecret":
             target = (doc.get("spec") or {}).get("target") or {}
             provided.add(("Secret", target.get("name") or doc["metadata"]["name"]))
-    before = {(kind, name) for kind, name, _, _ in _refs(old)}
     return [
         f"{where} -> {kind} {name}"
-        for kind, name, optional, where in _refs(new)
-        if not optional and (kind, name) not in provided and (kind, name) not in before
+        for kind, name, optional, where in references(docs)
+        if not optional and (kind, name) not in provided
     ]
 
 
@@ -729,9 +610,6 @@ def route_problems(docs: list[dict]) -> list[str]:
                         f"which it does not serve"
                     )
     return found
-
-
-# --------------------------------------------------------------------- exposure
 
 
 def exposed(docs: list[dict]) -> dict[str, dict]:

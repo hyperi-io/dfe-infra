@@ -241,7 +241,7 @@ def _render(
 ) -> list[dict]:
     target = w.Target(service, "slim", cloud, namespace=namespace)
     inputs = w.Inputs(appset=appset(), chart=chart, deploy_repo=deploy, extras=False, helm=helm())
-    return w.render_app(target, "new", inputs).docs
+    return w.render_app(target, inputs).docs
 
 
 def _stand_in_env(

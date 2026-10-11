@@ -14,24 +14,29 @@ versions.yaml pins tag@sha256, `dfe-stack render` emits tag@sha256 and
 cluster, because the charts are what deploy. Registry tags are mutable, so a
 chart that renders a bare tag can pull bytes other than the ones verified.
 
-Five things are checked:
+Each DFE component is read off its deployed render: the thin chart beside
+dfe-extras, rendered live so a stale copy of a pin in a values file shows here.
 
-1. Every app whose digest versions.yaml records renders `:tag@sha256:<that>`.
-2. The library helper is OPTIONAL -- a chart with no digest renders exactly the
-   reference it rendered before, including with no `global:` block at all.
-3. The digest a chart carries IS the SSoT's, not a stale copy of it.
-4. A chart that builds its own reference rather than calling the helper -- the
+Six things are checked:
+
+1. Every component whose digest versions.yaml records renders `:tag@sha256:<that>`.
+2. The image helpers are OPTIONAL -- a deployment that clears the digest renders
+   the plain tag.
+3. The digest a values file carries IS the SSoT's, not a stale copy of it: the
+   engine image dfe-extras runs the hunt runner and keda shim on, and git-sync's.
+4. A reference built in the integration values rather than by a helper -- the
    hyperdx dashboards init container -- carries the digest too.
 5. The engine's content init containers run OTHER apps' images, so each one is
    checked against the pin for the app it speaks for.
+6. Every upstream image a chart runs carries the digest versions.yaml certified.
 
     python3 scripts/tests/test_image_digest_pin.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH; the thin-chart cases need the scalo-service library
+(_weave.library). No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
+import json
 import re
 import subprocess
 import sys
@@ -40,20 +45,26 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import COMPONENTS, cell
+from _weave import contract, render_app, render_extras, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
-REGISTRY = "ghcr.io/hyperi-io"
+# The registry a deployed render pulls every DFE image from: the cluster secret's.
+REGISTRY = weave().Target("", "", "").registry
+# The registry the engine's content entries name, whatever the deployment's is.
+CONTENT_REGISTRY = "ghcr.io/hyperi-io"
 
 # Containers in a DFE chart running an upstream image: their pin is a
 # services-digests key, not the chart's own app digest, so the app-wide
 # assertions skip them and each is checked against its own key instead.
 THIRD_PARTY_SIDECARS = frozenset({"git-sync", "git-sync-init"})
 
-# The engine's content init containers run ANOTHER app's pinned image, so the
-# chart-wide sweep would read them as the engine rendering the wrong reference.
-# Each is checked against its own app's pin instead.
+# Containers running ANOTHER app's pinned image -- the engine's content init
+# containers and the hyperdx dashboards init container -- which the app-wide sweep
+# would read as the wrong reference. Each is checked against its own app's pin.
 CONTENT_PREFIX = "content-"
+OTHER_APP_CONTAINERS = frozenset({"dashboards"})
 
 
 def _parse_nested(text: str) -> dict:
@@ -113,59 +124,69 @@ def images(docs: list[dict], want_container: str | None = None) -> list[str]:
                 if want_container:
                     wanted = name == want_container
                 else:
-                    wanted = name not in THIRD_PARTY_SIDECARS and not str(name).startswith(
-                        CONTENT_PREFIX
+                    wanted = (
+                        name not in THIRD_PARTY_SIDECARS | OTHER_APP_CONTAINERS
+                        and not str(name).startswith(CONTENT_PREFIX)
                     )
                 if wanted and container.get("image"):
                     found.append(container["image"])
     return found
 
 
+def app_pin(app: str) -> str:
+    """tag@sha256 for one app: its apps: tag (content: for an image another ships)."""
+    stack = current_stack()
+    tag = stack["apps"].get(app) or stack["content"].get(app)
+    return f"{tag}@{stack['digests'][app]}"
+
+
+def engine_pin() -> str:
+    return f"{REGISTRY}/dfe-engine:{app_pin('dfe-engine')}"
+
+
 def test_every_published_app_renders_its_digest() -> None:
     """The pin has to survive the chart, which is the only thing that deploys."""
-    stack = current_stack()
-    apps, digests = stack["apps"], stack["digests"]
-    for app in sorted(digests):
-        chart = CHARTS / app
-        if not (chart / "Chart.yaml").exists():
+    digests = current_stack()["digests"]
+    for service in COMPONENTS:
+        app = json.loads(contract(service).read_text(encoding="utf-8"))["app_name"]
+        expect(f"versions.yaml pins a digest for {app}", app in digests, f"{sorted(digests)}")
+        if app not in digests:
             continue
-        rendered = images(render(app, f"global.registry={REGISTRY}"))
-        want = f"{REGISTRY}/{app}:{apps[app]}@{digests[app]}"
+        rendered = images(cell(service, "slim", "local"))
+        want = f"{REGISTRY}/{app}:{app_pin(app)}"
         expect(
-            f"{app} renders tag@sha256 from the SSoT",
+            f"{service} renders tag@sha256 from the SSoT",
             rendered and all(i == want for i in rendered),
             f"wanted {want}, got {rendered}",
         )
 
 
 def test_the_engine_sidecar_workloads_carry_the_digest_too() -> None:
-    """hunt-runner and keda-shim run the ENGINE image out of the same chart."""
-    stack = current_stack()
-    want = f"{REGISTRY}/dfe-engine:{stack['apps']['dfe-engine']}@{stack['digests']['dfe-engine']}"
-    for template in ("hunt-runner", "keda-shim"):
-        docs = render("dfe-engine", f"global.registry={REGISTRY}", f"{template}.enabled=true")
+    """hunt-runner and keda-shim run the ENGINE image out of dfe-extras' own copy of the pin."""
+    want = engine_pin()
+    docs = render_extras("dfe-engine", "slim", "local")
+    for workload in ("dfe-hunt-runner", "dfe-keda-shim"):
         rendered = [
             i
             for doc in docs
-            if doc.get("metadata", {}).get("name", "").endswith(template)
+            if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == workload
             for i in images([doc])
         ]
         expect(
-            f"dfe-{template} renders the pinned engine digest",
+            f"{workload} renders the pinned engine digest",
             rendered and all(i == want for i in rendered),
             f"wanted {want}, got {rendered}",
         )
 
 
 def test_the_hyperdx_dashboards_init_container_carries_the_digest() -> None:
-    """A second copy of the engine pin, in a chart named after another app.
+    """A second copy of the engine pin, in the values of a chart named after another app.
 
-    Its own helper builds the reference, so dfe-common.image's digest branch
-    does not cover it -- this is the only thing that reads the rendered result.
+    The integration values build the reference, so no image helper's digest
+    branch covers it -- this is the only thing that reads the rendered result.
     """
-    stack = current_stack()
-    want = f"{REGISTRY}/dfe-engine:{stack['apps']['dfe-engine']}@{stack['digests']['dfe-engine']}"
-    rendered = images(render("hyperdx", f"global.registry={REGISTRY}"), want_container="dashboards")
+    want = engine_pin()
+    rendered = images(cell("hyperdx", "slim", "local"), want_container="dashboards")
     expect(
         "the hyperdx dashboards init container renders the pinned engine digest",
         rendered and all(i == want for i in rendered),
@@ -179,9 +200,7 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
     A tag moved without its digest here would mount one release's contract
     while the deployment runs another's.
     """
-    stack = current_stack()
-    apps, digests = stack["apps"], stack["digests"]
-    docs = render("dfe-engine", f"global.registry={REGISTRY}")
+    docs = cell("dfe-engine", "slim", "local")
     entries = {
         c["name"]: c["image"]
         for doc in docs
@@ -195,7 +214,7 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
     }
     contracts = [name for name in entries if name.endswith("-contract")]
     expect(
-        "the chart mounts a contract for every app that carries a settings surface",
+        "the engine mounts a contract for every app that carries a settings surface",
         len(contracts) == 7,
         f"{sorted(contracts)}",
     )
@@ -206,7 +225,7 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
     )
     for name, image in sorted(entries.items()):
         app = name[len(CONTENT_PREFIX) :].removesuffix("-contract").removesuffix("-catalogue")
-        want = f"{REGISTRY}/{app}:{apps[app]}@{digests[app]}"
+        want = f"{CONTENT_REGISTRY}/{app}:{app_pin(app)}"
         expect(
             f"{name} runs {app}'s own tag@sha256 from the SSoT",
             image == want,
@@ -215,25 +234,33 @@ def test_each_content_entry_runs_the_pin_of_the_app_it_speaks_for() -> None:
 
 
 def test_a_chart_with_no_digest_renders_what_it_always_did() -> None:
-    """The helper is optional: a chart carrying no digest still renders its tag.
+    """The helpers are optional: a deployment carrying no digest still renders its tag.
 
     The digest is emptied explicitly rather than borrowed from an app that has
-    not shipped one, which stops holding the day that app is published.
-    Rendered with no `global:` block at all, which is what bare `helm lint` and
-    a chart-only template do -- the nil-guard case.
+    not shipped one, which stops holding the day that app is published. Both
+    helpers are covered: the thin chart's, and the one dfe-extras builds the
+    engine's sidecar workloads with.
     """
     app = "dfe-transform-elastic"
     tag = current_stack()["apps"][app]
-    rendered = images(render(app, "image.digest="))
+    cleared = {"image": {"digest": ""}}
+    rendered = images(render_app(app, "slim", "local", overlay=cleared))
     expect(
-        "no digest and no global block still renders a plain repo:tag",
-        rendered == [f"{app}:{tag}"],
+        "a thin chart with no digest renders a plain registry/repo:tag",
+        rendered and all(i == f"{REGISTRY}/{app}:{tag}" for i in rendered),
         f"{rendered}",
+    )
+    engine_tag = current_stack()["apps"]["dfe-engine"]
+    sidecars = images(render_extras("dfe-engine", "slim", "local", overlay=cleared))
+    expect(
+        "and so does every dfe-extras workload running the engine image",
+        sidecars and all(i == f"{REGISTRY}/dfe-engine:{engine_tag}" for i in sidecars),
+        f"{sidecars}",
     )
 
 
 def test_the_hunt_runner_git_sync_images_carry_their_own_pin() -> None:
-    """The one upstream image inside a DFE-owned chart; it has its own SSoT key.
+    """The one upstream image inside a DFE workload; it has its own SSoT key.
 
     Both passes run it -- the init container that bounds the first sync and the
     sidecar that keeps the worktree current -- so both are checked.
@@ -243,7 +270,7 @@ def test_the_hunt_runner_git_sync_images_carry_their_own_pin() -> None:
         f"registry.k8s.io/git-sync/git-sync:{stack['services']['git-sync']}"
         f"@{stack['services-digests']['git-sync']}"
     )
-    docs = render("dfe-engine", f"global.registry={REGISTRY}", "huntRunner.enabled=true")
+    docs = render_extras("dfe-engine", "slim", "local")
     rendered = images(docs, want_container="git-sync-init") + images(
         docs, want_container="git-sync"
     )

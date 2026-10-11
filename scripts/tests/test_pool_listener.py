@@ -26,7 +26,8 @@ shorter than the sender's deadline, and retries that never re-send a request a
 pod already took.
 
 The listener objects are dfe-extras', rendered with each pool's chartName. The
-pool's own Service and the receiver's buffer are still read off its 2.2.0 chart.
+pool's own Service and the receiver's buffer are read off each cell's golden
+render (_gate.golden), on every cloud.
 
     python3 scripts/tests/test_pool_listener.py
 
@@ -41,6 +42,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, golden
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
@@ -165,15 +167,17 @@ def test_every_pool_gets_a_listener_on_the_mesh_profile() -> None:
 def test_the_backend_is_declared_cleartext_http2() -> None:
     """Without appProtocol the proxy dials the pool as HTTP/1.1 and gRPC resets."""
     for chart, port in sorted(POOLS.items()):
-        docs = render(chart, MESH_PROFILE)
-        pool = [s for s in of_kind(docs, "Service") if s["metadata"]["name"] == chart]
-        expect(f"{chart} has its own pool Service", len(pool) == 1, f"got {len(pool)}")
-        if not pool:
-            continue
-        ports = [p for p in pool[0]["spec"]["ports"] if p["port"] == port]
-        expect(f"{chart} declares h2c on {port}",
-               [p.get("appProtocol") for p in ports] == ["kubernetes.io/h2c"],
-               f"got {ports!r}")
+        for cloud in CLOUDS:
+            docs = golden(chart, MESH_PROFILE, cloud)
+            pool = [s for s in of_kind(docs, "Service") if s["metadata"]["name"] == chart]
+            expect(f"{chart} on {cloud} has its own pool Service", len(pool) == 1,
+                   f"got {len(pool)}")
+            if not pool:
+                continue
+            ports = [p for p in pool[0]["spec"]["ports"] if p["port"] == port]
+            expect(f"{chart} on {cloud} declares h2c on {port}",
+                   [p.get("appProtocol") for p in ports] == ["kubernetes.io/h2c"],
+                   f"got {ports!r}")
 
 
 def test_every_route_carries_its_own_policy() -> None:
@@ -334,29 +338,32 @@ def test_the_senders_are_allowed_to_reach_the_listener() -> None:
 
 def test_the_receiver_buffers_what_the_profile_says() -> None:
     """The brokerless profile's slack, in the file the app actually reads."""
-    docs = render("dfe-receiver", MESH_PROFILE)
-    cfg = next(
-        d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
-    )
-    buffer = yaml.safe_load(cfg["data"]["config.yaml"])["buffer"]
-    expect("the memory ceiling is stated, not auto-detected",
-           buffer["memory_limit"] == 3221225472, f"got {buffer.get('memory_limit')!r}")
-    expect("spillover is on", buffer["spillover"]["enabled"] is True, f"got {buffer!r}")
+    for cloud in CLOUDS:
+        docs = golden("dfe-receiver", MESH_PROFILE, cloud)
+        cfg = next(
+            d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
+        )
+        buffer = yaml.safe_load(cfg["data"]["config.yaml"])["buffer"]
+        expect(f"the memory ceiling is stated, not auto-detected, on {cloud}",
+               buffer["memory_limit"] == 3221225472, f"got {buffer.get('memory_limit')!r}")
+        expect(f"spillover is on, on {cloud}", buffer["spillover"]["enabled"] is True,
+               f"got {buffer!r}")
 
-    deployment = next(d for d in of_kind(docs, "Deployment"))
-    pod = deployment["spec"]["template"]["spec"]
-    mounts = {m["name"]: m["mountPath"] for m in pod["containers"][0]["volumeMounts"]}
-    expect("the spool path is mounted",
-           mounts.get("spool") == buffer["spillover"]["path"], f"got {mounts!r}")
-    volumes = {v["name"]: v for v in pod["volumes"]}
-    expect("and the volume is capped",
-           volumes.get("spool", {}).get("emptyDir", {}).get("sizeLimit") == "20Gi",
-           f"got {volumes.get('spool')!r}")
+        deployment = next(d for d in of_kind(docs, "Deployment"))
+        pod = deployment["spec"]["template"]["spec"]
+        mounts = {m["mountPath"]: m["name"] for m in pod["containers"][0]["volumeMounts"]}
+        spool = mounts.get(buffer["spillover"]["path"])
+        expect(f"the spool path is mounted on {cloud}", spool is not None, f"got {mounts!r}")
+        volumes = {v["name"]: v for v in pod["volumes"]}
+        expect(f"and the volume is capped on {cloud}",
+               volumes.get(spool, {}).get("emptyDir", {}).get("sizeLimit") == "20Gi",
+               f"got {volumes.get(spool)!r}")
 
-    quiet = render("dfe-receiver", "scale")
-    pod = next(d for d in of_kind(quiet, "Deployment"))["spec"]["template"]["spec"]
-    expect("no spool volume where a broker holds the records",
-           [v for v in pod["volumes"] if v["name"] == "spool"] == [], f"got {pod['volumes']!r}")
+        quiet = golden("dfe-receiver", "scale", cloud)
+        pod = next(d for d in of_kind(quiet, "Deployment"))["spec"]["template"]["spec"]
+        expect(f"no spool volume where a broker holds the records, on {cloud}",
+               [v for v in pod["volumes"] if "spool" in v["name"]] == [],
+               f"got {pod['volumes']!r}")
 
 
 def main() -> int:

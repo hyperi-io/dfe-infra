@@ -21,18 +21,14 @@ deploys, with a probe value, and the probe looked for in the objects:
   routing blocks, source bindings, table entries, reload settings, variants
 
 links_path is the exception: the engine's own record of where linked content
-came from, which no chart reads on either family.
+came from, which no chart reads.
 
-The chart family is the appset's own first source: an oci:// thin chart, or a
-dfe-common chart under helm/charts. The dfe-common charts mount no fileSets, so
-those cases are expected to fail until the appset deploys the thin charts. The
-thin render needs the scalo-service library (_weave.library).
+The chart is the appset's own first source, the thin chart, beside dfe-extras.
+The render needs the scalo-service library (_weave.library).
 """
 
 import functools
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 import yaml
@@ -40,7 +36,6 @@ import yaml
 from _weave import REPO_ROOT, render_app
 
 MANIFEST = REPO_ROOT / "apps.yaml"
-APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml"
 PROFILE = "single"
 CLOUD = "local"
 PROBE = "dfe-catalogue-probe"
@@ -50,14 +45,6 @@ PROBE = "dfe-catalogue-probe"
 def _apps() -> dict[str, dict]:
     doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
     return {name: raw or {} for name, raw in doc["apps"].items()}
-
-
-@functools.cache
-def deploys_thin_charts() -> bool:
-    """Whether the appset's chart source is an oci:// thin chart."""
-    doc = yaml.safe_load(APPSET.read_text(encoding="utf-8"))
-    chart = doc["spec"]["template"]["spec"]["sources"][0]
-    return str(chart.get("repoURL", "")).startswith("oci://")
 
 
 def _nested(path: str, value: object) -> dict:
@@ -73,27 +60,12 @@ def _nested(path: str, value: object) -> dict:
 
 def _render(service: str, overlay: dict) -> str:
     """The objects the appset's chart renders for an instance overlay, as one string."""
-    which = "new" if deploys_thin_charts() else "old"
-    with tempfile.TemporaryDirectory(prefix="dfe-catalogue-probe-") as tmp:
-        path = Path(tmp) / "values" / f"{service}-default-values.yaml"
-        path.parent.mkdir()
-        body = {"deploy": {"service": service, "instance": "default"}, **overlay}
-        path.write_text(yaml.safe_dump(body), encoding="utf-8", newline="\n")
-        docs = render_app(service, PROFILE, CLOUD, which, deploy_repo=Path(tmp))
-    return json.dumps(docs)
+    return json.dumps(render_app(service, PROFILE, CLOUD, overlay=overlay))
 
 
 def _file_set_cases() -> list:
-    expected_fail = pytest.mark.xfail(
-        not deploys_thin_charts(),
-        reason=(
-            "the appset still deploys the dfe-common charts, which mount no fileSets, "
-            "and this passes once it deploys the thin charts"
-        ),
-        strict=True,
-    )
     return [
-        pytest.param(service, fs, marks=expected_fail, id=f"{service}-{fs['name']}")
+        pytest.param(service, fs, id=f"{service}-{fs['name']}")
         for service, app in _apps().items()
         for fs in app.get("files") or []
     ]

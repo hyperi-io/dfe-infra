@@ -3,7 +3,7 @@
 #  File:         test_appset_oci_sources.py
 #  Purpose:      Prove every DFE component's Application pulls its thin chart
 #                over OCI by digest beside dfe-extras, with the value layers,
-#                refs and parameters the chart switch rests on.
+#                refs and parameters every render rests on.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -30,7 +30,6 @@ Needs helm on PATH (DFE_WEAVE_HELM).
 """
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -44,7 +43,6 @@ from _weave import (
     chart_name,
     drift,
     helm,
-    old_appset,
     weave,
 )
 
@@ -218,7 +216,7 @@ def test_both_helm_sources_read_the_value_layers_in_order(
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
 def test_no_helm_source_names_a_release(service: str, appset_name: str) -> None:
-    """The objects keep the app.kubernetes.io/instance the 2.2.0 charts gave them."""
+    """Each object's app.kubernetes.io/instance is the Application name, on both sources alike."""
     app = application(service, appset_name)
     assert app["metadata"]["name"] == f"{service}-default-in-cluster"
     for source in helm_sources(app):
@@ -380,19 +378,3 @@ def test_bootstrap_registers_a_pull_credential_for_every_chart() -> None:
     assert text.index("DFE_THIN_CHARTS=") < text.index('==> [7/7]'), (
         "the credentials must exist before the ApplicationSets are applied"
     )
-
-
-# ------------------------------------------------------- the 2.2.0 appsets kept
-
-
-@pytest.mark.parametrize("name", [APPS, EDGE])
-def test_the_kept_2_2_0_appsets_are_the_tagged_ones(name: str) -> None:
-    """Render (a) reads these copies, so they must be what 2.2.0 deployed."""
-    shown = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "show", f"2.2.0:argocd/appsets/{name}"],
-        capture_output=True,
-        check=False,
-    )
-    if shown.returncode != 0:
-        pytest.skip("the 2.2.0 tag is not in this checkout")
-    assert old_appset(name).read_bytes() == shown.stdout

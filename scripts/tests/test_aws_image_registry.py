@@ -29,10 +29,10 @@ FailedToRetrieveImagePullSecret on every pull.
 
     python3 scripts/tests/test_aws_image_registry.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH. dfe-ui renders through its Application (_weave.render_app),
+which needs the scalo-service library (_weave.library). No test runner, matching
+the other checks here.
 """
-
-from __future__ import annotations
 
 import re
 import subprocess
@@ -44,6 +44,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -55,6 +56,10 @@ REGISTRY = "registry.example.com/dfe"
 PULL_NAME = "ghcr-pull-secret"
 ANNOTATION = "dfe.hyperi.io/registry"
 PULL_ANNOTATION = "dfe.hyperi.io/image_pull_secret"
+
+# The component a layer2-apps Application deploys from its thin chart, beside the
+# first-party charts the other appsets deploy by path.
+THIN = "dfe-ui"
 
 # (appset file, ApplicationSet name) for every appset that layers a cloud overlay
 # over charts rendering dfe-common.imagePullSecrets.
@@ -68,7 +73,7 @@ PULL_APPSETS = (
 
 # One first-party chart per layer 2 appset, so a chart left without the
 # parameter shows up as its own failure rather than hiding behind a sibling.
-CHARTS = ("dfe-ui", "otel-collector", "dfe-toolbox")
+CHARTS = (THIN, "otel-collector", "dfe-toolbox")
 
 # Every cloud values file an appset layers on common.yaml.
 CLOUDS = ("aws.yaml", "azure.yaml", "gcp.yaml", "local.yaml", "local-dfe.yaml")
@@ -80,8 +85,15 @@ def render(
     """Every object one chart renders on a cloud cascade the appsets layer.
 
     pull_name stands in for what the appsets' values block hands the chart
-    when the cluster secret records one.
+    when the cluster secret records one. The thin-chart component renders through
+    its Application, whose cluster secret carries the registry and the pull
+    secret's name, an empty name being the record of none created.
     """
+    if chart == THIN:
+        annotations = {PULL_ANNOTATION: pull_name}
+        return render_app(
+            THIN, "scale", cloud.removesuffix(".yaml"), registry=registry, annotations=annotations
+        )
     cmd = [
         "helm", "template", "t", str(chart_dir(chart)),
         "-f", str(VALUES / "common.yaml"),
@@ -129,11 +141,43 @@ def test_every_dfe_image_carries_the_registry() -> None:
                 )
 
 
+def thin_layers() -> list[Path]:
+    """Every value file the thin-chart component's Application layers from this repo."""
+    apps = VALUES / "apps"
+    return [
+        VALUES / "common.yaml",
+        *(VALUES / cloud for cloud in CLOUDS),
+        *sorted(VALUES.glob("profile-*.yaml")),
+        apps / "_common.yaml",
+        *sorted((apps / THIN).glob("*.yaml")),
+    ]
+
+
+def registry_literals(data: object, path: str = "") -> list[str]:
+    """Each global.registry or image registry/repository key a values tree sets."""
+    found = []
+    if isinstance(data, dict):
+        for key, value in data.items():
+            where = f"{path}.{key}" if path else str(key)
+            named = where in ("global.registry", "image.registry", "image.repository")
+            if named and value not in (None, ""):
+                found.append(where)
+            found += registry_literals(value, where)
+    return found
+
+
 def test_the_cascade_alone_names_no_registry() -> None:
     """Every cloud file stays literal-free, so the appset parameter is the only
-    source and a chart deployed without it is a caught failure."""
+    source and a chart deployed without it is a caught failure.
+
+    The thin chart falls back to its contract's registry where no global.registry
+    reaches it, and the appset's parameter beats every values file, so for it the
+    rule is held on the files themselves.
+    """
     for cloud in CLOUDS:
         for chart in CHARTS:
+            if chart == THIN:
+                continue
             for spec in pod_specs(render(chart, "", cloud)):
                 for image in dfe_images(spec):
                     expect(
@@ -141,6 +185,15 @@ def test_the_cascade_alone_names_no_registry() -> None:
                         "/" not in image.split(":")[0],
                         f"{cloud} has grown a registry literal, a second source beside the dial",
                     )
+    for layer in thin_layers():
+        if not layer.is_file():
+            continue
+        found = registry_literals(yaml.safe_load(layer.read_text(encoding="utf-8")) or {})
+        expect(
+            f"{layer.relative_to(REPO_ROOT)} names no registry for {THIN}",
+            found == [],
+            f"{found}: a registry literal, a second source beside the dial",
+        )
 
 
 def pull_refs(spec: dict) -> list[str]:

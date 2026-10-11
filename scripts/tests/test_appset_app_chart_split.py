@@ -22,9 +22,9 @@ dfe.hyperi.io/edge, and its culvert half was moved out of layer2-apps. Both
 halves of that are pinned too: two appsets generating one name is a fight
 between controllers, and zero generating it is a deletion.
 
-The deploy-repo-driven appsets moved every component from its 2.2.0 chart to a
-thin chart pulled over OCI. Their Application names are pinned to the ones the
-2.2.0 appsets generated (fixtures/appsets-2.2.0), so Argo adopts the live objects.
+The deploy-repo-driven appsets deploy every component from a thin chart pulled
+over OCI. Their Application names are pinned per service, instance and cluster,
+so a chart source that moves leaves Argo adopting the live objects.
 
     python3 scripts/tests/test_appset_app_chart_split.py
 
@@ -44,7 +44,6 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
-OLD_APPSETS = REPO_ROOT / "scripts" / "tests" / "fixtures" / "appsets-2.2.0"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -102,8 +101,10 @@ CULVERT_GLOB = "values/culvert-*-values.yaml"
 # The name every deploy-repo-driven appset generates: one Application per
 # instance file, named for its service and instance and the cluster.
 DEPLOY_REPO_NAME = "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}"
-# Those appsets, which moved their components to thin charts.
+# Those appsets, which deploy their components from thin charts.
 DEPLOY_REPO_APPSETS = ("layer2-apps.yaml", "layer2-edge.yaml")
+# The ApplicationSets among them a deploy-repo file fans out, by name.
+DEPLOY_REPO_SETS = {"dfe-layer2-apps", "dfe-layer2-edge-culvert"}
 
 EDGE_KEY = "dfe.hyperi.io/edge"
 
@@ -304,34 +305,41 @@ def test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it() -> None:
            chart)
 
 
-def test_the_deploy_repo_appsets_keep_the_names_2_2_0_generated() -> None:
-    """The chart moved from helm/charts to OCI; the Application it renders into did not.
+def name_problems(names: dict[str, str]) -> list[str]:
+    """How the deploy-repo appsets' Application names depart from the pinned ones."""
+    problems = []
+    if set(names) != DEPLOY_REPO_SETS:
+        problems.append(
+            f"deploy-repo ApplicationSets {sorted(names)}, not {sorted(DEPLOY_REPO_SETS)}"
+        )
+    problems += [
+        f"{appset} generates {name!r}, not {DEPLOY_REPO_NAME!r}"
+        for appset, name in sorted(names.items())
+        if name != DEPLOY_REPO_NAME
+    ]
+    return problems
 
-    A name that changed would delete every object the Application owns, PVCs
-    included, and create them again empty.
-    """
-    now, then = deploy_repo_names(APPSETS), deploy_repo_names(OLD_APPSETS)
-    expect("the same deploy-repo ApplicationSets as 2.2.0", set(now) == set(then),
-           f"{sorted(now)} vs {sorted(then)}")
-    for appset, name in sorted(then.items()):
-        expect(f"{appset} generates the name 2.2.0 did", now.get(appset) == name,
-               f"{now.get(appset)!r} vs {name!r}")
-        expect(f"{appset} names it per service, instance and cluster", name == DEPLOY_REPO_NAME,
-               name)
+
+def test_the_deploy_repo_appsets_name_each_application_per_instance() -> None:
+    """A name that changed would delete every object the Application owns, PVCs
+    included, and create them again empty."""
+    problems = name_problems(deploy_repo_names(APPSETS))
+    expect("each deploy-repo appset names its Application per service, instance and cluster",
+           problems == [], f"{problems}")
 
 
 def test_a_renamed_application_is_caught() -> None:
-    """The comparison above fails on a name that drops its instance segment."""
+    """The check above fails on a name that drops its instance segment."""
     with tempfile.TemporaryDirectory(prefix="appset-names-") as tmp:
         for name in DEPLOY_REPO_APPSETS:
             text = (APPSETS / name).read_text(encoding="utf-8")
             renamed = text.replace(DEPLOY_REPO_NAME, "{{ .deploy.service }}-{{ .name }}")
             (Path(tmp) / name).write_text(renamed, encoding="utf-8", newline="\n")
         found = deploy_repo_names(Path(tmp))
-    expect("a renamed Application differs from 2.2.0's",
+    expect("a renamed Application is caught",
            set(found.values()) == {"{{ .deploy.service }}-{{ .name }}"}
-           and found != deploy_repo_names(OLD_APPSETS),
-           found)
+           and len(name_problems(found)) == len(DEPLOY_REPO_SETS),
+           f"{found}")
 
 
 def test_every_component_renders_from_its_thin_chart() -> None:
@@ -542,7 +550,7 @@ def main() -> int:
         test_every_first_party_chart_is_reachable_through_the_shared_resolver()
         test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs()
         test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it()
-        test_the_deploy_repo_appsets_keep_the_names_2_2_0_generated()
+        test_the_deploy_repo_appsets_name_each_application_per_instance()
         test_a_renamed_application_is_caught()
         test_every_component_renders_from_its_thin_chart()
         test_exactly_one_applicationset_fans_out_the_tunnels_values_file()

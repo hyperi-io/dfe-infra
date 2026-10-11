@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         test_receiver_loader.py
 #  Purpose:      Prove the receiver on the direct transport is told to push to
-#                the loader over gRPC, at an address the loader chart renders.
+#                the loader over gRPC, at an address the loader's render serves.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -15,24 +15,24 @@ which it leaves to the deployment. A ConfigMap that names neither leaves a
 brokerless receiver refusing to start: "kafka.brokers is required when a
 destination is on the bus (destinations, or loader.transport: kafka)".
 
-    python3 scripts/tests/test_receiver_loader.py
+The default renders are the goldens (_gate.golden). The engine's routing sync and
+a deployer's own overlay render live, with the instance file the engine writes,
+which needs the scalo-service library (_weave.library).
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+    python3 scripts/tests/test_receiver_loader.py
 """
 
-import json
-import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
 
-from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, effective_env, golden
+from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-VALUES = REPO_ROOT / "argocd" / "values"
 NAMESPACE = "dfe"
 
 DIRECT_PROFILES = ("slim", "mesh")
@@ -43,45 +43,37 @@ GATEWAY_NAMESPACE = "envoy-gateway-system"
 
 # What the engine writes to values/dfe-receiver-<instance>-values.yaml on direct
 # after a routing sync: the default destination by name, and no loader address.
-ENGINE_OVERLAY = {"destinations": {"default": "loader", "rules": []}}
-
-
-def render(chart: str, profile: str, *extra: str) -> list[dict]:
-    """One chart under one profile, with the values cascade Argo layers."""
-    cmd = [
-        "helm", "template", chart, str(chart_dir(chart)),
-        "--namespace", NAMESPACE,
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"profile-{profile}.yaml"),
-        *extra,
-    ]
-    out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-    )
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart} on {profile}:\n{out.stderr}")
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
+ENGINE_OVERLAY = {"config": {"destinations": {"default": "loader", "rules": []}}}
 
 
 def of_kind(docs: list[dict], kind: str) -> list[dict]:
     return [d for d in docs if d.get("kind") == kind]
 
 
-def with_config(config: dict) -> tuple[str, str]:
-    return ("--set-json", f"config={json.dumps(config)}")
+def receiver_docs(profile: str, cloud: str = "local", overlay: dict | None = None) -> list[dict]:
+    """The receiver's render: its golden, or a live render with ``overlay`` as its instance file."""
+    if overlay is None:
+        return golden("dfe-receiver", profile, cloud)
+    return render_app("dfe-receiver", profile, cloud, overlay=overlay)
 
 
-def receiver_config(profile: str, *extra: str) -> dict:
+def receiver_config(docs: list[dict]) -> dict:
     cm = next(
-        d for d in of_kind(render("dfe-receiver", profile, *extra), "ConfigMap")
-        if d["metadata"]["name"] == "dfe-receiver-config"
+        d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
     )
     return yaml.safe_load(cm["data"]["config.yaml"]) or {}
 
 
-def container_env(docs: list[dict]) -> dict:
-    pod = of_kind(docs, "Deployment")[0]["spec"]["template"]["spec"]
-    return {e["name"]: e.get("value") for e in pod["containers"][0].get("env", [])}
+def endpoint_of(docs: list[dict]) -> str:
+    return (receiver_config(docs).get("loader") or {}).get("grpc_endpoint") or ""
+
+
+def service_address(endpoint: str) -> tuple[str, str, int | None]:
+    """The Service name, namespace and port a gRPC endpoint dials; a bare name is this namespace."""
+    parts = urlsplit(endpoint)
+    labels = (parts.hostname or "").split(".")
+    namespace = labels[1] if len(labels) > 1 else NAMESPACE
+    return labels[0], namespace, parts.port
 
 
 def on_the_bus(cfg: dict) -> list[str]:
@@ -113,23 +105,26 @@ def on_the_bus(cfg: dict) -> list[str]:
 def test_direct_starts_without_brokers() -> None:
     """The receiver's own startup rule, before and after the engine's routing sync."""
     for profile in DIRECT_PROFILES:
-        env = container_env(render("dfe-receiver", profile))
-        expect(f"{profile} hands the receiver no brokers", "DFE_RECEIVER_KAFKA_BROKERS" not in env,
-               f"got {env.get('DFE_RECEIVER_KAFKA_BROKERS')!r}")
-        seed = receiver_config(profile)
-        expect(f"{profile} seed config has no bus destination", on_the_bus(seed) == [],
-               f"got {on_the_bus(seed)!r} from {seed!r}")
-        synced = receiver_config(profile, *with_config(ENGINE_OVERLAY))
+        for cloud in CLOUDS:
+            docs = receiver_docs(profile, cloud)
+            env = effective_env(docs, "Deployment/dfe-receiver")
+            expect(f"{profile}/{cloud} hands the receiver no brokers",
+                   "DFE_RECEIVER_KAFKA_BROKERS" not in env,
+                   f"got {env.get('DFE_RECEIVER_KAFKA_BROKERS')!r}")
+            seed = receiver_config(docs)
+            expect(f"{profile}/{cloud} seed config has no bus destination", on_the_bus(seed) == [],
+                   f"got {on_the_bus(seed)!r} from {seed!r}")
+        synced = receiver_config(receiver_docs(profile, overlay=ENGINE_OVERLAY))
         expect(f"{profile} synced config has no bus destination", on_the_bus(synced) == [],
                f"got {on_the_bus(synced)!r} from {synced!r}")
 
 
 def test_slim_pushes_to_the_loader_over_grpc() -> None:
-    cfg = receiver_config("slim", *with_config(ENGINE_OVERLAY))
+    cfg = receiver_config(receiver_docs("slim", overlay=ENGINE_OVERLAY))
     loader = cfg.get("loader") or {}
     expect("slim sets loader.transport grpc", loader.get("transport") == "grpc", f"got {loader!r}")
     expect("slim dials the loader's Service in this namespace",
-           loader.get("grpc_endpoint") == f"http://dfe-loader.{NAMESPACE}.svc.cluster.local:6000",
+           service_address(loader.get("grpc_endpoint") or "") == ("dfe-loader", NAMESPACE, 6000),
            f"got {loader!r}")
     expect("an unmatched record goes to the loader",
            (cfg.get("destinations") or {}).get("default") == "loader", f"got {cfg!r}")
@@ -137,35 +132,35 @@ def test_slim_pushes_to_the_loader_over_grpc() -> None:
 
 def test_mesh_dials_the_loader_pool_listener() -> None:
     """A Service balances per connection, so on mesh the receiver dials the pool's alias."""
-    endpoint = (receiver_config("mesh").get("loader") or {}).get("grpc_endpoint")
-    expect("mesh dials the loader's alias in the gateway namespace",
-           endpoint == f"http://dfe-loader-mesh.{GATEWAY_NAMESPACE}.svc.cluster.local:6000",
-           f"got {endpoint!r}")
+    for cloud in CLOUDS:
+        endpoint = endpoint_of(receiver_docs("mesh", cloud))
+        expect(f"mesh/{cloud} dials the loader's alias in the gateway namespace",
+               endpoint == f"http://dfe-loader-mesh.{GATEWAY_NAMESPACE}.svc.cluster.local:6000",
+               f"got {endpoint!r}")
 
 
 def test_the_endpoint_is_a_service_the_loader_renders() -> None:
     for profile in DIRECT_PROFILES:
-        endpoint = (receiver_config(profile).get("loader") or {}).get("grpc_endpoint") or ""
-        parts = urlsplit(endpoint)
-        labels = (parts.hostname or "").split(".")
-        name, namespace = [*labels, "", ""][:2]
-        services = [
-            s for s in of_kind(render("dfe-loader", profile), "Service")
-            if s["metadata"]["name"] == name
-            and s["metadata"].get("namespace", NAMESPACE) == namespace
-        ]
-        expect(f"{profile}: {name}.{namespace} is a Service the loader chart renders",
-               len(services) == 1, f"got {len(services)} for {endpoint!r}")
-        ports = [p["port"] for s in services for p in s["spec"]["ports"]]
-        expect(f"{profile}: that Service answers on {parts.port}", parts.port in ports,
-               f"got {ports!r}")
+        for cloud in CLOUDS:
+            endpoint = endpoint_of(receiver_docs(profile, cloud))
+            name, namespace, port = service_address(endpoint)
+            services = [
+                s for s in of_kind(golden("dfe-loader", profile, cloud), "Service")
+                if s["metadata"]["name"] == name
+                and s["metadata"].get("namespace", NAMESPACE) == namespace
+            ]
+            expect(f"{profile}/{cloud}: {name}.{namespace} is a Service the loader's render holds",
+                   len(services) == 1, f"got {len(services)} for {endpoint!r}")
+            ports = [p["port"] for s in services for p in s["spec"]["ports"]]
+            expect(f"{profile}/{cloud}: that Service answers on {port}", port in ports,
+                   f"got {ports!r}")
 
 
 def test_the_loader_listens_where_the_receiver_dials() -> None:
     """The Service is not enough: the loader has to serve gRPC on that port on slim."""
-    port = urlsplit((receiver_config("slim").get("loader") or {}).get("grpc_endpoint") or "").port
-    docs = render("dfe-loader", "slim")
-    env = container_env(docs)
+    _, _, port = service_address(endpoint_of(receiver_docs("slim")))
+    docs = golden("dfe-loader", "slim", "local")
+    env = effective_env(docs, "Deployment/dfe-loader")
     expect("the loader runs the grpc transport on slim", env.get("DFE_LOADER_TRANSPORT") == "grpc",
            f"got {env.get('DFE_LOADER_TRANSPORT')!r}")
     expect("it binds the port the receiver dials",
@@ -183,22 +178,25 @@ def test_the_port_is_the_manifest_push_port() -> None:
     """apps.yaml is what the engine and the receiver's own default read the port from."""
     apps = yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))
     push = apps["apps"]["dfe-loader"]["endpoints"]["push"]["port"]
-    port = urlsplit((receiver_config("slim").get("loader") or {}).get("grpc_endpoint") or "").port
+    _, _, port = service_address(endpoint_of(receiver_docs("slim")))
     expect("the receiver dials apps.yaml dfe-loader.endpoints.push", port == push,
            f"got {port!r}, manifest {push!r}")
 
 
 def test_the_overlay_keeps_what_it_set() -> None:
-    """The engine writes destinations whole; the chart fills only what it left out."""
+    """The engine writes destinations whole; the integration values fill only what it left out."""
+    auth = {"grpc": {"endpoint": "http://dfe-transform-vrl-auth:6000"}}
     overlay = {
-        "destinations": {
-            "default": "dfe-transform-vrl-auth",
-            "rules": [],
-            "dfe-transform-vrl-auth": {"grpc": {"endpoint": "http://dfe-transform-vrl-auth:6000"}},
-        },
-        "loader": {"grpc_endpoint": "http://loader.elsewhere:7000", "transport": "kafka"},
+        "config": {
+            "destinations": {
+                "default": "dfe-transform-vrl-auth",
+                "rules": [],
+                "dfe-transform-vrl-auth": auth,
+            },
+            "loader": {"grpc_endpoint": "http://loader.elsewhere:7000", "transport": "kafka"},
+        }
     }
-    cfg = receiver_config("slim", *with_config(overlay))
+    cfg = receiver_config(receiver_docs("slim", overlay=overlay))
     destinations = cfg.get("destinations") or {}
     expect("the overlay's default destination wins",
            destinations.get("default") == "dfe-transform-vrl-auth", f"got {destinations!r}")
@@ -216,13 +214,16 @@ def test_the_overlay_keeps_what_it_set() -> None:
 
 def test_the_bus_profiles_leave_the_loader_alone() -> None:
     for profile in BUS_PROFILES:
-        cfg = receiver_config(profile)
-        expect(f"{profile} renders no loader block", "loader" not in cfg, f"got {cfg.get('loader')!r}")
-        expect(f"{profile} renders no destinations", "destinations" not in cfg,
-               f"got {cfg.get('destinations')!r}")
-        env = container_env(render("dfe-receiver", profile))
-        expect(f"{profile} still hands the receiver its brokers",
-               "DFE_RECEIVER_KAFKA_BROKERS" in env, f"got {sorted(env)!r}")
+        for cloud in CLOUDS:
+            docs = receiver_docs(profile, cloud)
+            cfg = receiver_config(docs)
+            expect(f"{profile}/{cloud} renders no loader block", "loader" not in cfg,
+                   f"got {cfg.get('loader')!r}")
+            expect(f"{profile}/{cloud} renders no destinations", "destinations" not in cfg,
+                   f"got {cfg.get('destinations')!r}")
+            env = effective_env(docs, "Deployment/dfe-receiver")
+            expect(f"{profile}/{cloud} still hands the receiver its brokers",
+                   "DFE_RECEIVER_KAFKA_BROKERS" in env, f"got {sorted(env)!r}")
 
 
 def main() -> int:

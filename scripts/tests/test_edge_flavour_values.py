@@ -18,10 +18,10 @@ A key moved out of `argocd/values/<cloud>.yaml` and into
 reads would silently change what that chart deploys. That is the rule these
 pin, along with the two keys deliberately left behind for exactly that reason.
 
-Needs `helm` on PATH for the render cases.
+Needs `helm` on PATH for the render cases. The tunnel renders through its edge
+Application (_weave.render_app), which needs the scalo-service library
+(_weave.library); the receiver's default renders are the goldens (_gate.golden).
 """
-
-from __future__ import annotations
 
 import re
 import subprocess
@@ -32,6 +32,8 @@ import pytest
 import yaml
 
 from _charts import chart_dir
+from _gate import APPSETS, CLOUDS, PROFILES, golden, object_id
+from _weave import render_app, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -52,10 +54,13 @@ FLAVOURS = {
 
 # Culvert's own listeners, restated because Helm REPLACES a list and the on-prem
 # overlay sets the RECEIVER's list on the same key.
-TUNNEL_LISTENERS = (
-    '[{"name":"wireguard","port":51820,"protocol":"UDP","exposed":true},'
-    '{"name":"openvpn-udp","port":1194,"protocol":"UDP","exposed":true}]'
-)
+TUNNEL_LISTENERS = [
+    {"name": "wireguard", "port": 51820, "protocol": "UDP", "exposed": True},
+    {"name": "openvpn-udp", "port": 1194, "protocol": "UDP", "exposed": True},
+]
+
+# The Secret holding the tunnel's external PKI, which a deployment names.
+EXTERNAL_PKI = {"pki": {"existingSecret": "dfe-culvert-pki"}}
 
 
 def flavour_file(flavour: str) -> Path:
@@ -202,16 +207,29 @@ def test_no_tier_3_mechanism_has_a_key_in_the_dial() -> None:
 
 
 def test_the_receivers_own_exposure_mode_stayed_in_the_cloud_overlay() -> None:
-    """dfe-receiver is not an edge chart, so its door is not the module's key."""
-    assert readers(("exposure", "mode")) & {"charts/dfe-receiver"}
+    """dfe-receiver is not an edge component, so its door is not the module's key.
+
+    dfe-extras renders the receiver's ingest policy from it, so the receiver's own
+    render on each cloud follows the cloud overlay's mode.
+    """
+    assert readers(("exposure", "mode")) & {"charts/dfe-extras"}
     for cloud, mode in (("aws", "vpn"), ("gcp", "vpn"), ("azure", "vpn"), ("local", "internal")):
         tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8"))
         assert tree["exposure"]["mode"] == mode, cloud
+    policy = {
+        cloud: any(
+            object_id(d) == "NetworkPolicy/dfe-receiver-ingest"
+            for d in golden("dfe-receiver", "scale", cloud)
+        )
+        for cloud in CLOUDS
+    }
+    assert policy == {"local": False, "aws": True}, policy
 
 
 def test_the_edge_oidc_switch_stayed_where_kafbat_and_the_engine_read_it() -> None:
-    """Moving it would degrade kafbat's auth type and drop the engine's provider env."""
-    assert readers(("oidc", "enabled")) >= {"charts/kafbat", "charts/dfe-engine"}
+    """Moving it would degrade kafbat's auth type and drop the engine's provider env,
+    which dfe-extras renders into dfe-engine-env."""
+    assert readers(("oidc", "enabled")) >= {"charts/kafbat", "charts/dfe-extras"}
     tree = yaml.safe_load((VALUES / "aws.yaml").read_text(encoding="utf-8"))
     assert tree["oidc"]["enabled"] is True
 
@@ -295,67 +313,44 @@ def test_the_gateway_renders_under_every_flavour_cascade(flavour: str) -> None:
     assert ("Gateway", "dfe-gateway") in objects(text), sorted(objects(text))
 
 
+def tunnel(cloud: str, overlay: dict) -> list[dict]:
+    """culvert on scale through the edge appset, whose cloud fact picks the flavour file."""
+    return render_app("culvert", "scale", cloud, appset=APPSETS["culvert"], overlay=overlay)
+
+
 @pytest.mark.parametrize("flavour", sorted(FLAVOURS))
 def test_the_tunnel_renders_under_every_flavour_cascade(flavour: str) -> None:
     """External PKI needs the Secret the deployment's instance file names, so a
-    cloud flavour renders with one and the chart refuses without it."""
-    args = [
-        "--namespace", "dfe",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"{FLAVOURS[flavour]}.yaml"),
-        "-f", str(flavour_file(flavour)),
-        "--set", "domain=dfe.example.com",
-        "--set-json", f"listeners={TUNNEL_LISTENERS}",
-    ]
+    cloud flavour renders with one and dfe-extras refuses without it."""
+    overlay: dict = {"listeners": TUNNEL_LISTENERS}
     if flavour != "onprem":
-        args += ["--set", "pki.existingSecret=dfe-culvert-pki"]
-    text = render("culvert", *args)
-    assert ("Deployment", "dfe-culvert") in objects(text), sorted(objects(text))
+        overlay |= EXTERNAL_PKI
+    docs = tunnel(FLAVOURS[flavour], overlay)
+    assert "Deployment/dfe-culvert" in {object_id(d) for d in docs}, sorted(map(object_id, docs))
 
 
 def test_external_pki_with_no_secret_is_refused_by_name() -> None:
     """The cloud flavours set the mode; the deployment still has to name the Secret."""
-    out = subprocess.run(
-        ["helm", "template", "culvert", str(chart_dir("culvert")),
-         "-f", str(VALUES / "common.yaml"),
-         "-f", str(VALUES / "aws.yaml"),
-         "-f", str(VALUES / "edge-aws.yaml"),
-         "--set-json", f"listeners={TUNNEL_LISTENERS}"],
-        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
-    )
-    assert out.returncode != 0
-    assert "pki.mode is external with no pki.existingSecret" in out.stderr
+    message = re.escape("pki.mode is external with no pki.existingSecret")
+    with pytest.raises(weave().WeaveError, match=message):
+        tunnel("aws", {"listeners": TUNNEL_LISTENERS})
 
 
-def test_the_tunnel_takes_no_load_balancer_on_aws() -> None:
+@pytest.mark.parametrize("profile", PROFILES)
+def test_the_tunnel_takes_no_load_balancer_on_aws(profile: str) -> None:
     """A NodePort carries no per-byte charge, which is the whole AWS default."""
-    text = render(
-        "culvert",
-        "--namespace", "dfe",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / "aws.yaml"),
-        "-f", str(VALUES / "edge-aws.yaml"),
-        "--set", "pki.existingSecret=dfe-culvert-pki",
-        "--set-json", f"listeners={TUNNEL_LISTENERS}",
-    )
     kinds = {
-        d["metadata"]["name"]: d["spec"]["type"]
-        for d in yaml.safe_load_all(text) if d and d.get("kind") == "Service"
+        d["metadata"]["name"]: d["spec"].get("type", "ClusterIP")
+        for d in golden("culvert", profile, "aws") if d.get("kind") == "Service"
     }
     assert kinds["dfe-culvert-public-udp"] == "NodePort", kinds
 
 
-def test_the_receiver_still_renders_no_load_balancer_on_aws() -> None:
-    """The receiver is not an edge chart and reads no flavour file at all."""
-    text = render(
-        "dfe-receiver",
-        "--namespace", "dfe",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / "aws.yaml"),
-        "--set", "domain=dfe.example.com",
-    )
-    types = [
-        d["spec"]["type"]
-        for d in yaml.safe_load_all(text) if d and d.get("kind") == "Service"
-    ]
-    assert types == ["ClusterIP"], types
+@pytest.mark.parametrize("profile", PROFILES)
+def test_the_receiver_still_renders_no_load_balancer_on_aws(profile: str) -> None:
+    """The receiver is not an edge component and reads no flavour file at all."""
+    types = {
+        d["spec"].get("type", "ClusterIP")
+        for d in golden("dfe-receiver", profile, "aws") if d.get("kind") == "Service"
+    }
+    assert types == {"ClusterIP"}, types

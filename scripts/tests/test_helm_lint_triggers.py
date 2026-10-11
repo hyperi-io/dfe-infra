@@ -40,7 +40,6 @@ UPGRADE_INPUTS = (
     u.VERSIONS_FILE,
     u.DFE_STACK,
     u.ARGOCD_LOGIN,
-    u.VALUE_MAP,
     Path(u.__file__),
     Path(u.helm_releases.__file__),
     Path(u.argocd_release.__file__),

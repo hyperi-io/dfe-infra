@@ -14,7 +14,8 @@ The gateway chart decides which admin UIs a deployment serves, and the engine
 lists them from DFE_ADMIN_LINKS. The list is built from routeEnabled, the same
 call each HTTPRoute makes, so the proof that the two cannot disagree is that the
 list equals the rendered infra HTTPRoutes on every cloud, profile, edge login and
-deploy-repo shape layer2-edge.yaml can produce.
+deploy-repo shape layer2-edge.yaml can produce. The engine's side is read off its
+deployed render, the golden of each cell.
 
     python3 -m pytest scripts/tests/test_admin_links.py -q
 
@@ -32,6 +33,8 @@ import pytest
 import yaml
 
 from _charts import chart_dir
+from _gate import CLOUDS as ENGINE_CLOUDS
+from _gate import effective_env, golden
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GATEWAY = chart_dir("envoy-gateway-config")
@@ -218,19 +221,14 @@ def test_a_withheld_route_needs_no_label() -> None:
 
 
 # --- the engine reads it, and only where it runs -----------------------------
-def test_the_engine_reads_the_list_optionally_from_that_configmap() -> None:
+@pytest.mark.parametrize(("profile", "cloud"), list(itertools.product(PROFILES, ENGINE_CLOUDS)))
+def test_the_engine_reads_the_list_optionally_from_that_configmap(profile: str, cloud: str) -> None:
     """Optional, so an engine with no gateway, or started before it, still starts."""
     configmap, _ = admin_links(gateway(*cascade("local", "single", False, False)))
     (key,) = configmap["data"]
-    docs = render("dfe-engine", chart_dir("dfe-engine"))
-    deployment = next(
-        d for d in docs
-        if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dfe-engine"
-    )
-    env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert env["DFE_ADMIN_LINKS"]["valueFrom"] == {
-        "configMapKeyRef": {"name": configmap["metadata"]["name"], "key": key, "optional": True},
-    }
+    env = effective_env(golden("dfe-engine", profile, cloud), "Deployment/dfe-engine")
+    ref = {"name": configmap["metadata"]["name"], "key": key, "optional": True}
+    assert env["DFE_ADMIN_LINKS"] == {"valueFrom": {"configMapKeyRef": ref}}
 
 
 def appsets(filename: str) -> list[dict]:

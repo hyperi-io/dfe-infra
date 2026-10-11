@@ -8,51 +8,39 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Where dfe-ui's server side looks for the engine.
 
-The console's login and every server-rendered page fetch INTERNAL_API_URL. The
-chart derived its host from {project}-{env}, which is the namespace only when
-DFE_NAMESPACE happens to be dfe-<DFE_ENV>. A deploy with DFE_ENV=test and
-DFE_NAMESPACE=dfe-local rendered dfe-engine.dfe-test and the login page failed
-before it drew the form.
+The console's login and every server-rendered page fetch INTERNAL_API_URL. A host
+derived from {project}-{env} is the namespace only when DFE_NAMESPACE happens to
+be dfe-<DFE_ENV>: with DFE_ENV=test and DFE_NAMESPACE=dfe-local it names
+dfe-engine.dfe-test, and the login page fails before it draws the form.
+The deployed dfe-ui Application takes its namespace and posture from the cluster
+secret, and a deployer names an engine elsewhere in its instance values.
 
     python3 -m pytest scripts/tests/test_ui_engine_url.py -q
 
-Needs `helm` on PATH.
+Needs `helm` on PATH and the scalo-service library (_weave.library).
 """
 
-import subprocess
-from pathlib import Path
-
-import yaml
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-UI_CHART = REPO_ROOT / "helm" / "charts" / "dfe-ui"
+from _gate import effective_env
+from _weave import render_app
 
 
-def _internal_api_url(namespace: str, *sets: str) -> str:
-    cmd = ["helm", "template", "dfe-ui", str(UI_CHART), "--namespace", namespace,
-           "--show-only", "templates/deployment.yaml"]
-    for value in sets:
-        cmd += ["--set", value]
-    done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", check=True)
-    deployment = yaml.safe_load(done.stdout)
-    env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
-    return next(item["value"] for item in env if item["name"] == "INTERNAL_API_URL")
+def _internal_api_url(namespace: str, env: str, overlay: dict | None = None) -> object:
+    docs = render_app("dfe-ui", "slim", "local", namespace=namespace, env=env, overlay=overlay)
+    return effective_env(docs, "Deployment/dfe-ui")["INTERNAL_API_URL"]
 
 
 def test_the_engine_is_found_in_the_release_namespace_not_one_built_from_env() -> None:
-    assert _internal_api_url("dfe-local", "env=test") == (
+    assert _internal_api_url("dfe-local", "test") == (
         "http://dfe-engine.dfe-local.svc.cluster.local:8000"
     )
 
 
 def test_a_namespace_matching_the_env_convention_still_resolves() -> None:
-    assert _internal_api_url("dfe-prod", "env=prod") == (
+    assert _internal_api_url("dfe-prod", "prod") == (
         "http://dfe-engine.dfe-prod.svc.cluster.local:8000"
     )
 
 
 def test_an_explicit_url_still_wins() -> None:
-    assert _internal_api_url(
-        "dfe-local", "env=test", "config.internalApiUrl=http://engine.example:8000"
-    ) == "http://engine.example:8000"
+    overlay = {"extraEnv": {"INTERNAL_API_URL": "http://engine.example:8000"}}
+    assert _internal_api_url("dfe-local", "test", overlay) == "http://engine.example:8000"

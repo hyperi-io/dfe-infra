@@ -27,7 +27,7 @@ this fails when:
 
 An env var reaches the app's config unless NOT_APP_CONFIG says otherwise, so a
 new name fails here until someone decides which it is. The env ConfigMaps are
-rendered through test_dfe_extras.render_pair, with helm.
+rendered through _weave.render_extras, with helm.
 """
 
 import functools
@@ -37,14 +37,14 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_dfe_extras import ENV_CONFIGMAP, PROFILES, chart_name, render_pair
+from test_dfe_extras import ENV_CONFIGMAP
 
-from _weave import CONTRACTS, REPO_ROOT
+from _gate import PROFILES
+from _weave import CONTRACTS, REPO_ROOT, chart_name, render_extras
 
 MANIFEST = REPO_ROOT / "apps.yaml"
 SHARED_VALUES = REPO_ROOT / "argocd" / "values"
 APPS_VALUES = SHARED_VALUES / "apps"
-VALUE_MAP = REPO_ROOT / "scripts" / "weave" / "value-map.yaml"
 
 # The env-name shape dfe-engine tells a supplier env var from a values path by.
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -180,9 +180,8 @@ def _env_configmap(service: str) -> frozenset[str]:
     for profile in PROFILES:
         for cloud in CLOUDS:
             for infra in INFRA_VARIANTS:
-                extras = render_pair(service, profile, cloud, infra=infra, old=False).extras
-                for (kind, name), doc in extras.items():
-                    if kind == "ConfigMap" and name.endswith("-env"):
+                for doc in render_extras(service, profile, cloud, infra=infra):
+                    if doc["kind"] == "ConfigMap" and doc["metadata"]["name"].endswith("-env"):
                         found |= set(doc.get("data") or {})
     return frozenset(found)
 
@@ -334,19 +333,3 @@ def test_every_mounted_set_is_one_the_engine_writes(service: str) -> None:
         declared |= set(_load(path).get("fileSets") or {})
     managed = {fs["name"] for fs in _apps()[service].get("files") or []}
     assert declared <= managed
-
-
-@pytest.mark.parametrize(
-    ("service", "file_set"),
-    _file_sets(),
-    ids=[f"{name}-{fs['name']}" for name, fs in _file_sets()],
-)
-def test_the_value_map_moves_the_2_2_0_files_where_the_engine_writes(
-    service: str, file_set: dict
-) -> None:
-    keys = _load(VALUE_MAP)["apps"][service]["keys"]
-    targets = set()
-    for entry in keys.values():
-        to = (entry or {}).get("to")
-        targets |= set(to) if isinstance(to, list) else {to}
-    assert file_set["values_path"] in targets

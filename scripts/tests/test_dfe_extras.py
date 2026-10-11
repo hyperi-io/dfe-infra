@@ -2,62 +2,51 @@
 #  Project:      dfe-infra
 #  File:         test_dfe_extras.py
 #  Purpose:      Prove helm/charts/dfe-extras renders, per component and per
-#                profile, exactly the DFE-only objects the 2.2.0 chart renders,
-#                with unchanged (kind, name), and none the thin chart renders.
+#                profile, the DFE-only objects each golden holds, none named as
+#                the thin chart names its own, and refuses what no app can run.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The chart-switch gate for helm/charts/dfe-extras.
+"""helm/charts/dfe-extras, the DFE-only objects beside every thin chart.
 
     python3 -m pytest scripts/tests/test_dfe_extras.py -q
     DFE_WEAVE_HELM=<helm 4.2.4> python3 -m pytest scripts/tests/test_dfe_extras.py -q
 
 Argo adopts a live object by (kind, name), so a renamed object is pruned and
 recreated: a generated Secret is minted again, a PVC comes back empty. Each
-component is rendered twice through scripts/dfe-weave: its 2.2.0 chart, from the
-Application the 2.2.0 layer2-apps.yaml generates for it, and dfe-extras, as the
-dfe-extras source of the Application argocd/appsets/layer2-apps.yaml generates.
-The gate:
+component is rendered as the dfe-extras source of the Application
+argocd/appsets/layer2-apps.yaml generates for it (_weave.render_extras), which
+needs helm and nothing from a registry. The checks:
 
-- dfe-extras renders the objects the 2.2.0 DFE_ONLY_TEMPLATES render, less those
-  fixtures/weave-accepted-diffs.yaml lists removed, byte for byte once parsed or
-  apart from the diffs that fixture accepts, plus the <fullname>-env ConfigMap for
-  a component whose env the thin
-  chart reads through envFrom, holding the 2.2.0 container's literal env less the
-  names the thin chart's own env sets and the drops that fixture accepts
-- every other 2.2.0 object carries a name the thin chart renders (THIN_SUFFIXES),
-  and no dfe-extras object does, so nothing is lost or rendered twice
+- dfe-extras renders exactly the dfe-extras objects of each cell's golden
+  (fixtures/thin-renders), object for object and leaf for leaf, so a change to
+  this chart fails here before the goldens are rewritten
+- no dfe-extras object carries a name the thin chart renders (THIN_SUFFIXES),
+  so nothing is rendered twice
+- each conditional the profile matrix does not reach renders the object or env
+  value it exists to produce
+- each value the components cannot run with is refused by name
 
-Which objects are DFE-only is a fact about the 2.2.0 template that rendered
-them, not their name, so each 2.2.0 object keeps its `# Source:` template here.
-The dfe-ui and dfe-hyperdx thin-chart cases need the scalo-service library
-(_weave.library).
+The thin-chart cases need the scalo-service library (_weave.library).
 """
 
 import copy
 import importlib
-import json
 import re
 import subprocess
 import sys
-import tempfile
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
 from types import ModuleType
 
 import pytest
 import yaml
 
-from _gate import ABSENT, DEFAULT, accepts, runtime_diffs, unaccepted
-from _weave import REPO_ROOT, appset, helm, old_appset, render_app, weave
+from _gate import APPSETS, CLOUDS, INSTANCE, PROFILES, golden, object_id, render_differences
+from _weave import REPO_ROOT, chart_name, helm, render_app, render_extras, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
 EXTRAS = REPO_ROOT / EXTRAS_PATH
 VALUES = REPO_ROOT / "argocd" / "values"
-APPS = VALUES / "apps"
 
 # Every component the layer 2 appsets deploy, by deploy.service.
 COMPONENTS = (
@@ -73,38 +62,12 @@ COMPONENTS = (
     "hyperdx",
     "dfe-engine",
 )
-PROFILES = ("slim", "single", "scale", "mesh")
-CLOUDS = ("local", "aws")
-
-# The 2.2.0 templates whose objects dfe-extras renders, by chartName. Everything
-# else a 2.2.0 chart renders is the thin chart's.
-DFE_ONLY_TEMPLATES: dict[str, tuple[str, ...]] = {
-    "dfe-receiver": ("networkpolicy-ingest.yaml", "pool-listener.yaml"),
-    "dfe-loader": ("pool-listener.yaml",),
-    "dfe-archiver": ("pool-listener.yaml",),
-    "dfe-transform-vrl": ("pool-listener.yaml",),
-    "dfe-transform-vector": ("pool-listener.yaml",),
-    "dfe-transform-elastic": ("pool-listener.yaml",),
-    "dfe-fetcher": (),
-    "culvert": ("networkpolicy.yaml",),
-    "dfe-ui": ("externalsecret-nextauth.yaml",),
-    "dfe-hyperdx": ("generated-keys.yaml",),
-    "dfe-engine": (
-        "admin-secret.yaml",
-        "app-catalogue.yaml",
-        "hunt-runner-clickhouse.yaml",
-        "hunt-runner.yaml",
-        "jwt-secret.yaml",
-        "keda-shim.yaml",
-        "seed-accounts-secret.yaml",
-    ),
-}
 
 # The components whose env dfe-extras carries in a <fullname>-env ConfigMap.
 ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx", "dfe-receiver", "dfe-loader", "culvert")
 
-# The env scalo-service sets on every thin chart's container itself.
-LIBRARY_ENV = ("OTEL_SERVICE_NAME", "POD_NAMESPACE")
+# Each component's object name prefix where it is not its deploy.service.
+FULLNAMES = {"culvert": "dfe-culvert", "hyperdx": "dfe-hyperdx"}
 
 # What the scalo-service library names objects, per kind, after <fullname>: its
 # README's "What the library renders" table, with the fileSets and writable paths
@@ -136,129 +99,34 @@ CULVERT_LISTENERS = {
     ]
 }
 
+# What helm refuses a render with, as dfe-weave raises it.
+RenderError = weave().WeaveError
+
 type ObjectId = tuple[str, str]
 
 
-def chart_name(service: str) -> str:
-    """The chartName the appset hands dfe-extras for a deploy.service."""
-    return "dfe-hyperdx" if service == "hyperdx" else service
+def fullname(service: str) -> str:
+    """The name a component's thin chart gives its own objects."""
+    return FULLNAMES.get(service, service)
 
 
-def thin_ids(fullname: str) -> set[ObjectId]:
-    """Every (kind, name) the thin chart of a component named ``fullname`` can render."""
+def thin_ids(name: str) -> set[ObjectId]:
+    """Every (kind, name) the thin chart of a component named ``name`` can render."""
     found = set()
     for kind, suffixes in THIN_SUFFIXES.items():
-        found |= {(kind, fullname + suffix) for suffix in suffixes}
+        found |= {(kind, name + suffix) for suffix in suffixes}
     return found
 
 
 def base_overlay(service: str, cloud: str) -> dict | None:
-    """The instance values a component needs before 2.2.0 renders it at all."""
+    """The instance values a component needs before it renders at all."""
     return CULVERT_LISTENERS if (service, cloud) == ("culvert", "local") else None
 
 
 # ----------------------------------------------------------------- the renders
 
 
-class RenderError(Exception):
-    """A render helm refused, with helm's message."""
-
-
-@dataclass(slots=True)
-class Pair:
-    """One component's 2.2.0 render and its dfe-extras render.
-
-    Attributes:
-        service: The deploy.service rendered.
-        old: The 2.2.0 objects by (kind, name), each with the template that rendered it.
-        extras: The dfe-extras objects by (kind, name).
-    """
-
-    service: str
-    old: dict[ObjectId, tuple[str, dict]] = field(default_factory=dict)
-    extras: dict[ObjectId, dict] = field(default_factory=dict)
-
-    def dfe_only(self) -> dict[ObjectId, dict]:
-        """The 2.2.0 objects a DFE-only template rendered."""
-        templates = DFE_ONLY_TEMPLATES[chart_name(self.service)]
-        return {key: doc for key, (source, doc) in self.old.items() if source in templates}
-
-    def thin(self) -> dict[ObjectId, dict]:
-        """The 2.2.0 objects the thin chart takes over."""
-        dfe_only = self.dfe_only()
-        return {key: doc for key, (_, doc) in self.old.items() if key not in dfe_only}
-
-    def workload(self) -> dict:
-        """The component's own 2.2.0 Deployment."""
-        found = [doc for (kind, _), doc in self.thin().items() if kind == "Deployment"]
-        if len(found) != 1:
-            raise AssertionError(f"{self.service}: {len(found)} component Deployments, not one")
-        return found[0]
-
-
-def _documents(text: str) -> list[tuple[str, dict]]:
-    """Each object of a render, with the template file helm says it came from."""
-    found = []
-    for chunk in text.split("\n---"):
-        source = ""
-        for line in chunk.splitlines():
-            if line.startswith("# Source: "):
-                source = line.removeprefix("# Source: ").rsplit("/", 1)[-1]
-        doc = yaml.safe_load(chunk)
-        if isinstance(doc, dict):
-            found.append((source, doc))
-    return found
-
-
-def _template(source: dict, chart: Path, release: str, namespace: str, chain: list[dict]) -> str:
-    """``helm template`` one Application source: value files, inline values, parameters.
-
-    The layering is dfe-weave's render_source; this keeps helm's raw output,
-    which carries each object's template.
-    """
-    w = weave()
-    block = source.get("helm") or {}
-    cmd = [helm(), "template", release, str(chart), "--namespace", namespace]
-    cmd += [arg for layer in chain if layer["present"] for arg in ("--values", str(layer["path"]))]
-    with tempfile.TemporaryDirectory(prefix="dfe-extras-values-") as tmp:
-        inline = block.get("valuesObject")
-        text = yaml.safe_dump(inline) if isinstance(inline, dict) else block.get("values")
-        if text:
-            inline_file = Path(tmp) / "inline-values.yaml"
-            inline_file.write_text(text, encoding="utf-8", newline="\n")
-            cmd += ["--values", str(inline_file)]
-        for param in block.get("parameters") or []:
-            flag = "--set-string" if param.get("forceString") else "--set"
-            cmd += [flag, f"{param['name']}={w._argo_set_value(str(param.get('value', '')))}"]
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-        )
-    if out.returncode != 0:
-        raise RenderError(out.stderr.strip())
-    return out.stdout
-
-
-@contextmanager
-def deploy_repo(service: str, overlay: dict | None, infra: dict | None) -> Iterator[Path | None]:
-    """A deploy repo with the instance values and infra/common.yaml, or None for neither."""
-    if overlay is None and infra is None:
-        yield None
-        return
-    with tempfile.TemporaryDirectory(prefix="dfe-extras-deploy-") as tmp:
-        root = Path(tmp)
-        if overlay is not None:
-            body = {"deploy": {"service": service, "instance": "default"}, **overlay}
-            (root / "values").mkdir()
-            instance = root / "values" / f"{service}-default-values.yaml"
-            instance.write_text(yaml.safe_dump(body), encoding="utf-8", newline="\n")
-        if infra is not None:
-            (root / "infra").mkdir()
-            common = root / "infra" / "common.yaml"
-            common.write_text(yaml.safe_dump(infra), encoding="utf-8", newline="\n")
-        yield root
-
-
-def render_pair(
+def render(
     service: str,
     profile: str,
     cloud: str,
@@ -266,180 +134,52 @@ def render_pair(
     overlay: dict | None = None,
     infra: dict | None = None,
     annotations: dict[str, str] | None = None,
-    old: bool = True,
-    extras: bool = True,
-) -> Pair:
-    """Render dfe-extras and the 2.2.0 chart for one component.
-
-    Args:
-        service: deploy.service, e.g. ``dfe-engine`` or ``hyperdx``.
-        profile: The profile annotation.
-        cloud: The cloud annotation.
-        overlay: The deploy repo's instance values, the last layer of both renders.
-        infra: The deploy repo's infra/common.yaml.
-        annotations: Further cluster-secret annotations, which feed the appset's parameters.
-        old: Render the 2.2.0 chart.
-        extras: Render dfe-extras.
-
-    Returns:
-        The renders asked for.
+    **options: object,
+) -> list[dict]:
+    """dfe-extras for one component, with the deployer's instance values and infra/common.yaml.
 
     Raises:
-        RenderError: helm refused a render.
+        RenderError: helm refused the render.
     """
-    w = weave()
-    facts = tuple(sorted((annotations or {}).items()))
-    target = w.Target(service, profile, cloud, annotations=facts)
-    pair = Pair(service=service)
-    annotations = target.cluster_annotations()
-    infra_url = annotations[f"{w.ANNOTATION}repo_url"]
-    with deploy_repo(service, overlay, infra) as repo:
-        renders = []
-        if extras:
-            app = w.application(REPO_ROOT, appset(), target, repo, helm())
-            sources = app["spec"]["sources"]
-            source = w.extras_source(sources, chart_name(service), profile, infra_url)
-            renders.append((app, source, True))
-        if old:
-            app = w.application(REPO_ROOT, old_appset(), target, repo, helm())
-            chart = next(
-                s for s in app["spec"]["sources"] if "helm" in s and s.get("path") != EXTRAS_PATH
-            )
-            renders.append((app, chart, False))
-        for app, source, is_extras in renders:
-            spec = app["spec"]
-            sources = spec.get("sources") or [spec["source"]]
-            # The local copy of each repo the Application names, as render_app maps them.
-            layout = w._Layout(
-                tree=REPO_ROOT,
-                repos={
-                    infra_url: REPO_ROOT,
-                    annotations[f"{w.ANNOTATION}config_repo_url"]: repo,
-                },
-                refs={s["ref"]: s for s in sources if "ref" in s},
-                apps_dir=None,
-            )
-            namespace = spec.get("destination", {}).get("namespace") or target.namespace
-            path = source["path"]
-            release = source["helm"].get("releaseName") or app["metadata"]["name"]
-            raw_files = list(source["helm"].get("valueFiles") or [])
-            base = REPO_ROOT / path
-            chain = w.value_chain(raw_files, layout, base, REPO_ROOT, target, insert=is_extras)
-            text = _template(source, base, release, namespace, chain)
-            for template, doc in _documents(text):
-                key = (doc.get("kind"), doc["metadata"]["name"])
-                if is_extras:
-                    pair.extras[key] = doc
-                else:
-                    pair.old[key] = (template, doc)
-    return pair
+    return render_extras(
+        service,
+        profile,
+        cloud,
+        overlay=overlay,
+        infra=infra,
+        annotations=annotations or {},
+        **options,
+    )
 
 
-# --------------------------------------------------------------------- the gate
+def keyed(docs: list[dict]) -> dict[ObjectId, dict]:
+    return {(d.get("kind"), d["metadata"]["name"]): d for d in docs}
 
 
-def literal_env(container: dict) -> dict[str, str]:
-    """A container's literal env, as the kubelet reads it: in order, the last name winning.
+def env_data(docs: list[dict]) -> dict[str, str]:
+    """The data of the one <fullname>-env ConfigMap a render holds; empty where it holds none."""
+    found = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-env")]
+    assert len(found) <= 1, [d["metadata"]["name"] for d in found]
+    return (found[0].get("data") or {}) if found else {}
 
-    An entry the kubelet resolves (valueFrom, or a value carrying $(VAR), which
-    envFrom never expands) drops any earlier literal of its name.
+
+# --------------------------------------------------------------------- the checks
+
+
+def against_golden(extras: list[dict], whole: list[dict], thin: set[ObjectId]) -> list[str]:
+    """How a dfe-extras render departs from the dfe-extras part of a golden; empty is a pass.
+
+    The golden's dfe-extras part is every object the thin chart cannot name.
     """
-    found: dict[str, str] = {}
-    for entry in container.get("env") or []:
-        value = entry.get("value")
-        text = "" if value is None else str(value)
-        if "valueFrom" in entry or "$(" in text:
-            found.pop(entry["name"], None)
-        else:
-            found[entry["name"]] = text
-    return found
+    part = [d for d in whole if (d.get("kind"), d["metadata"]["name"]) not in thin]
+    return render_differences(part, extras)
 
 
-def _extra_env(path: Path) -> set[str]:
-    return set((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("extraEnv") or {})
-
-
-def env_left_out(service: str) -> set[str]:
-    """2.2.0 env names a <fullname>-env ConfigMap leaves out.
-
-    The thin chart's own env sets them: the component's integration values and
-    apps/_common.yaml in extraEnv, and scalo-service itself. Or
-    fixtures/weave-accepted-diffs.yaml accepts their drop.
-    """
-    names: set[str] = set()
-    own = sorted((APPS / service).glob("*.yaml"))
-    for path in own:
-        names |= _extra_env(path)
-    if own:
-        names |= _extra_env(APPS / "_common.yaml") | set(LIBRARY_ENV)
-    for entry in accepts(service).diffs:
-        dropped = re.fullmatch(r".*\.env\[(\w+)\]", entry.path)
-        if dropped and entry.pins_new and entry.new == ABSENT:
-            names.add(dropped.group(1))
-    return names
-
-
-def first_difference(old: object, new: object, path: str = "") -> str:
-    """The first path where two parsed objects differ, for a failure message."""
-    if isinstance(old, dict) and isinstance(new, dict):
-        for key in sorted(set(old) | set(new), key=str):
-            if old.get(key) != new.get(key):
-                return first_difference(old.get(key), new.get(key), f"{path}.{key}")
-    if isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
-        for index, (a, b) in enumerate(zip(old, new, strict=True)):
-            if a != b:
-                return first_difference(a, b, f"{path}[{index}]")
-    return f"{path or '.'}: 2.2.0 {json.dumps(old)[:200]} / dfe-extras {json.dumps(new)[:200]}"
-
-
-def accepted_change(service: str, old: dict, new: dict) -> bool:
-    """Whether every way a DFE-only object departs from 2.2.0 is a diff the fixture accepts.
-
-    fixtures/weave-accepted-diffs.yaml holds the same object to the same reason in
-    the chart-switch gate, so a fix such as the receiver's dead 8443 is listed once.
-    """
-    diffs = runtime_diffs([old], [new])
-    return bool(diffs) and unaccepted(diffs, accepts(service).diffs, DEFAULT) == []
-
-
-def gate(pair: Pair) -> list[str]:
-    """Every way dfe-extras departs from 2.2.0 for one render; empty is a pass."""
-    name = chart_name(pair.service)
-    problems = []
-    want = pair.dfe_only()
-    got = dict(pair.extras)
-    workload = pair.workload()
-    fullname = workload["metadata"]["name"]
-    if name in ENV_CONFIGMAP:
-        env = got.pop(("ConfigMap", f"{fullname}-env"), None)
-        container = workload["spec"]["template"]["spec"]["containers"][0]
-        left_out = env_left_out(pair.service)
-        wanted = {k: v for k, v in literal_env(container).items() if k not in left_out}
-        if env is None:
-            problems.append(f"no ConfigMap {fullname}-env")
-        elif (env.get("data") or {}) != wanted:
-            problems.append(
-                f"{fullname}-env " + first_difference(wanted, env.get("data") or {}, ".data")
-            )
-    removed = {tuple(obj.split("/", 1)) for obj in accepts(pair.service).removed}
-    missing = sorted(set(want) - set(got) - removed)
-    added = sorted(set(got) - set(want))
-    if missing:
-        problems.append(f"2.2.0 renders, dfe-extras does not: {missing}")
-    if added:
-        problems.append(f"dfe-extras renders, 2.2.0 does not: {added}")
-    for key in sorted(set(want) & set(got)):
-        if want[key] != got[key] and not accepted_change(pair.service, want[key], got[key]):
-            problems.append(f"{key} {first_difference(want[key], got[key])}")
-    thin = thin_ids(fullname)
-    homeless = sorted(set(pair.thin()) - thin)
-    if homeless:
-        problems.append(f"2.2.0 objects neither DFE-only nor the thin chart's: {homeless}")
-    guarded = GUARDED_KINDS.get(name, set())
-    twice = sorted(key for key in set(pair.extras) & thin if key[0] not in guarded)
-    if twice:
-        problems.append(f"dfe-extras renders names the thin chart renders: {twice}")
-    return problems
+def collisions(extras: list[dict], service: str) -> list[ObjectId]:
+    """Each dfe-extras object named as the thin chart names its own; empty is a pass."""
+    guarded = GUARDED_KINDS.get(service, set())
+    shared = set(keyed(extras)) & thin_ids(fullname(service))
+    return sorted(k for k in shared if k[0] not in guarded)
 
 
 # ------------------------------------------------------- per component, per profile
@@ -448,11 +188,16 @@ def gate(pair: Pair) -> list[str]:
 @pytest.mark.parametrize("cloud", CLOUDS)
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("service", COMPONENTS)
-def test_dfe_extras_renders_what_the_2_2_0_chart_renders(
-    service: str, profile: str, cloud: str
-) -> None:
-    pair = render_pair(service, profile, cloud, overlay=base_overlay(service, cloud))
-    assert gate(pair) == []
+def test_dfe_extras_renders_its_part_of_each_golden(service: str, profile: str, cloud: str) -> None:
+    """Rendered with the instance values and appset the golden's cell takes."""
+    options = {"appset": APPSETS[service]} if service in APPSETS else {}
+    overlay = INSTANCE.get(service, {}).get(cloud)
+    extras = render(service, profile, cloud, overlay=overlay, **options)
+    whole = golden(service, profile, cloud)
+    guarded = {k for k in keyed(whole) if k[0] in GUARDED_KINDS.get(service, set())}
+    thin = thin_ids(fullname(service)) - guarded
+    assert against_golden(extras, whole, thin) == []
+    assert collisions(extras, service) == []
 
 
 # Conditional objects and env the profile matrix does not reach, each with the
@@ -707,38 +452,37 @@ SCENARIOS = [
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud", "overlay", "expect"), SCENARIOS)
-def test_dfe_extras_follows_2_2_0_through_each_conditional(
+def test_dfe_extras_follows_each_conditional(
     service: str, profile: str, cloud: str, overlay: dict, expect: dict
 ) -> None:
     layered = {**(base_overlay(service, cloud) or {}), **overlay}
-    pair = render_pair(service, profile, cloud, overlay=layered)
-    assert gate(pair) == []
+    docs = render(service, profile, cloud, overlay=layered)
+    rendered = keyed(docs)
+    assert collisions(docs, service) == []
     for key in expect.get("present", []):
-        assert tuple(key) in pair.extras, f"the scenario renders no {key}"
+        assert tuple(key) in rendered, f"the scenario renders no {key}"
     for key in expect.get("absent", []):
-        assert tuple(key) not in pair.extras, f"the scenario still renders {key}"
-    fullname = pair.workload()["metadata"]["name"]
-    env = pair.extras.get(("ConfigMap", f"{fullname}-env"), {}).get("data") or {}
+        assert tuple(key) not in rendered, f"the scenario still renders {key}"
+    env = env_data(docs)
     for name, value in expect.get("env", {}).items():
         assert env.get(name) == value, f"{name} is {env.get(name)!r}"
     for name in expect.get("unset", []):
-        assert name not in env, f"{name} is set where 2.2.0 omits it"
+        assert name not in env, f"{name} is set where the component reads it unset"
 
 
 def test_the_e2e_posture_reaches_the_engine_env() -> None:
     """The appset's e2eServer parameter beats every values file, so the posture is a cluster fact."""
-    pair = render_pair("dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"})
-    assert gate(pair) == []
-    env = pair.extras[("ConfigMap", "dfe-engine-env")]["data"]
+    docs = render("dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"})
+    env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
     assert (env["DFE_ENV"], env["DFE_E2E_SERVER"]) == ("test", "true")
 
 
 def test_a_managed_broker_on_a_bus_profile_renders() -> None:
     """kafka.mode moved by the deployer to another bus keeps the profile's transport."""
-    infra = {"kafka": {"mode": "external", "bootstrapServers": "broker.example.com:9092", "messageMaxBytes": 2000000}}
-    pair = render_pair("dfe-engine", "scale", "aws", infra=infra)
-    assert gate(pair) == []
-    env = pair.extras[("ConfigMap", "dfe-engine-env")]["data"]
+    broker = {"mode": "external", "bootstrapServers": "broker.example.com:9092"}
+    infra = {"kafka": {**broker, "messageMaxBytes": 2000000}}
+    docs = render("dfe-engine", "scale", "aws", infra=infra)
+    env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
     assert env["DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"] == "2000000"
     assert env["DFE_TRANSPORT_DEFAULT"] == "bus"
 
@@ -746,30 +490,31 @@ def test_a_managed_broker_on_a_bus_profile_renders() -> None:
 # ---------------------------------------------------------------- expected fails
 
 
-def test_a_renamed_object_fails_the_gate() -> None:
-    """A name dfe-extras moves is a prune and a recreate, so the gate names both halves."""
-    renamed = {"fullnameOverride": "dfe-transform-vrl-renamed"}
-    pair = render_pair("dfe-transform-vrl", "mesh", "aws", overlay=renamed)
-    problems = gate(pair)
-    assert any("dfe-transform-vrl-mesh" in p and "does not" in p for p in problems), problems
-    assert any("dfe-transform-vrl-renamed-mesh" in p for p in problems), problems
+def test_a_renamed_object_departs_from_its_golden() -> None:
+    """A name dfe-extras moves is a prune and a recreate, so both halves are named."""
+    overlay = {"fullnameOverride": "dfe-transform-vrl-renamed"}
+    renamed = render("dfe-transform-vrl", "mesh", "aws", overlay=overlay)
+    whole = golden("dfe-transform-vrl", "mesh", "aws")
+    problems = against_golden(renamed, whole, thin_ids("dfe-transform-vrl"))
+    assert "only left: GRPCRoute/dfe-transform-vrl-mesh" in problems, problems
+    assert "only right: GRPCRoute/dfe-transform-vrl-renamed-mesh" in problems, problems
 
 
-def test_an_object_renamed_after_the_render_fails_the_gate() -> None:
-    pair = render_pair("dfe-engine", "single", "local")
-    doc = pair.extras.pop(("Deployment", "dfe-hunt-runner"))
-    doc = copy.deepcopy(doc)
-    doc["metadata"]["name"] = "dfe-hunt-runner-v2"
-    pair.extras[("Deployment", "dfe-hunt-runner-v2")] = doc
-    problems = gate(pair)
-    assert any("('Deployment', 'dfe-hunt-runner')" in p for p in problems), problems
-    assert any("('Deployment', 'dfe-hunt-runner-v2')" in p for p in problems), problems
+def test_an_object_renamed_after_the_render_departs_from_its_golden() -> None:
+    docs = render("dfe-engine", "single", "local")
+    runner = next(d for d in docs if object_id(d) == "Deployment/dfe-hunt-runner")
+    moved = copy.deepcopy(runner)
+    moved["metadata"]["name"] = "dfe-hunt-runner-v2"
+    docs = [d for d in docs if d is not runner] + [moved]
+    problems = against_golden(docs, golden("dfe-engine", "single", "local"), thin_ids("dfe-engine"))
+    assert "only left: Deployment/dfe-hunt-runner" in problems, problems
+    assert "only right: Deployment/dfe-hunt-runner-v2" in problems, problems
 
 
-def test_an_object_the_thin_chart_renders_too_fails_the_gate() -> None:
-    pair = render_pair("dfe-ui", "single", "local")
-    pair.extras[("ServiceAccount", "dfe-ui")] = {"kind": "ServiceAccount", "metadata": {"name": "dfe-ui"}}
-    assert any("names the thin chart renders" in p for p in gate(pair))
+def test_an_object_the_thin_chart_renders_too_is_caught() -> None:
+    docs = render("dfe-ui", "single", "local")
+    docs.append({"kind": "ServiceAccount", "metadata": {"name": "dfe-ui"}})
+    assert collisions(docs, "dfe-ui") == [("ServiceAccount", "dfe-ui")]
 
 
 @pytest.mark.parametrize(
@@ -786,7 +531,7 @@ def test_a_kafka_mode_the_profile_was_not_built_for_fails(
 ) -> None:
     for service in ("dfe-receiver", "dfe-fetcher"):
         with pytest.raises(RenderError) as refused:
-            render_pair(service, profile, "local", infra={"kafka": {"mode": mode}}, old=False)
+            render(service, profile, "local", infra={"kafka": {"mode": mode}})
         message = str(refused.value)
         assert f'kafka.mode "{mode}" runs the {runs} transport' in message, message
         assert f"the {profile} profile is built for {built}" in message, message
@@ -794,12 +539,10 @@ def test_a_kafka_mode_the_profile_was_not_built_for_fails(
 
 def test_culvert_policy_switched_on_in_a_layer_fails() -> None:
     with pytest.raises(RenderError, match="same name"):
-        render_pair("culvert", "scale", "aws", overlay={"networkPolicy": {"enabled": True}}, old=False)
+        render("culvert", "scale", "aws", overlay={"networkPolicy": {"enabled": True}})
 
 
-@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
-def test_internal_mode_refuses_an_exposed_grpc_listener(old: bool, extras: bool) -> None:
-    """The refusal moves with the receiver's DFE-only objects, so both charts carry it."""
+def test_internal_mode_refuses_an_exposed_grpc_listener() -> None:
     listeners = {
         "listeners": [
             {"name": "http", "port": 8080, "protocol": "TCP", "exposed": True},
@@ -807,18 +550,16 @@ def test_internal_mode_refuses_an_exposed_grpc_listener(old: bool, extras: bool)
         ]
     }
     with pytest.raises(RenderError, match='listener "grpc"') as refused:
-        render_pair("dfe-receiver", "slim", "local", overlay=listeners, old=old, extras=extras)
+        render("dfe-receiver", "slim", "local", overlay=listeners)
     assert 'exposure.mode is "internal"' in str(refused.value)
 
 
-@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
-def test_a_culvert_on_the_receivers_listeners_is_refused(old: bool, extras: bool) -> None:
+def test_a_culvert_on_the_receivers_listeners_is_refused() -> None:
     """local.yaml's list is the receiver's, so a culvert that does not restate its own has no tunnel."""
     with pytest.raises(RenderError, match="neither wireguard nor openvpn-udp"):
-        render_pair("culvert", "slim", "local", old=old, extras=extras)
+        render("culvert", "slim", "local")
 
 
-@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
 @pytest.mark.parametrize(
     ("overlay", "message"),
     [
@@ -844,10 +585,10 @@ def test_a_culvert_on_the_receivers_listeners_is_refused(old: bool, extras: bool
         ),
     ],
 )
-def test_culverts_refusals_move_with_it(overlay: dict, message: str, old: bool, extras: bool) -> None:
-    """The thin chart cannot refuse a value, so dfe-extras makes each refusal the culvert chart made."""
+def test_culverts_refusals(overlay: dict, message: str) -> None:
+    """The thin chart cannot refuse a value, so dfe-extras makes each refusal culvert needs."""
     with pytest.raises(RenderError, match=re.escape(message)):
-        render_pair("culvert", "scale", "aws", overlay=overlay, old=old, extras=extras)
+        render("culvert", "scale", "aws", overlay=overlay)
 
 
 @pytest.mark.parametrize(
@@ -862,13 +603,13 @@ def test_culverts_refusals_move_with_it(overlay: dict, message: str, old: bool, 
 def test_a_culvert_protocol_in_its_profile_is_refused(overlay: dict, protocol: str) -> None:
     """The contract would open a second wireguard port beside apps/culvert/values.yaml's."""
     with pytest.raises(RenderError, match=re.escape(f'config.protocol is "{protocol}"')) as refused:
-        render_pair("culvert", "scale", "aws", overlay=overlay, old=False)
+        render("culvert", "scale", "aws", overlay=overlay)
     assert "through CULVERT_PROTOCOL" in str(refused.value)
 
 
 def test_an_openvpn_profile_protocol_renders() -> None:
     """The control: a protocol that opens no gated port is left alone."""
-    assert render_pair("culvert", "scale", "aws", overlay={"config": {"protocol": "openvpn"}}, old=False).extras
+    assert render("culvert", "scale", "aws", overlay={"config": {"protocol": "openvpn"}})
 
 
 @pytest.mark.parametrize(
@@ -880,20 +621,17 @@ def test_an_openvpn_profile_protocol_renders() -> None:
     ],
     ids=["no-verify", "two-ca-sources", "plaintext-port"],
 )
-@pytest.mark.parametrize(("old", "extras"), [(True, False), (False, True)], ids=["2.2.0", "dfe-extras"])
 def test_a_clickhouse_tls_setup_the_loader_cannot_dial_is_refused(
-    clickhouse: dict, message: str, old: bool, extras: bool
+    clickhouse: dict, message: str
 ) -> None:
-    """The loader's refusals move with dfe-loader-env, so both charts carry them."""
+    """The loader's refusals move with dfe-loader-env."""
     with pytest.raises(RenderError, match=message):
-        render_pair(
-            "dfe-loader", "scale", "aws", overlay={"clickhouse": clickhouse}, old=old, extras=extras
-        )
+        render("dfe-loader", "scale", "aws", overlay={"clickhouse": clickhouse})
 
 
 def test_a_fullname_override_outside_the_project_fails() -> None:
     with pytest.raises(RenderError, match="does not start with"):
-        render_pair("dfe-loader", "mesh", "local", overlay={"fullnameOverride": "loader"}, old=False)
+        render("dfe-loader", "mesh", "local", overlay={"fullnameOverride": "loader"})
 
 
 @pytest.mark.parametrize(
@@ -910,7 +648,7 @@ def test_a_fullname_override_outside_the_project_fails() -> None:
 def test_a_project_other_than_dfe_is_refused(service: str, infra: dict, path: str, value: str) -> None:
     """Every component's names and the engine's prefix assume dfe, so either key refuses a rename."""
     with pytest.raises(RenderError, match=re.escape(f'dfe-extras: {path} is "{value}"')) as refused:
-        render_pair(service, "scale", "aws", infra=infra, old=False)
+        render(service, "scale", "aws", infra=infra)
     assert 'assume the project is "dfe"' in str(refused.value)
 
 
@@ -921,7 +659,7 @@ def test_a_project_other_than_dfe_is_refused(service: str, infra: dict, path: st
 )
 def test_the_project_dfe_renders(infra: dict | None) -> None:
     """The control: the default, and dfe spelled out under either key, are left alone."""
-    assert render_pair("dfe-loader", "scale", "aws", infra=infra, old=False).extras
+    assert render("dfe-loader", "scale", "aws", infra=infra)
 
 
 # ------------------------------------------------------------ self-monitoring telemetry
@@ -929,10 +667,10 @@ def test_the_project_dfe_renders(infra: dict | None) -> None:
 OTLP = "OTEL_EXPORTER_OTLP_ENDPOINT"
 
 
-def _extras_otlp(pair: Pair, workload: str) -> list[str]:
+def _extras_otlp(docs: list[dict], workload: str) -> list[str]:
     """The OTLP endpoints the one dfe-extras Deployment whose name holds ``workload`` exports to."""
     (deployment,) = [
-        doc for (kind, name), doc in pair.extras.items() if kind == "Deployment" and workload in name
+        d for d in docs if d["kind"] == "Deployment" and workload in d["metadata"]["name"]
     ]
     env = deployment["spec"]["template"]["spec"]["containers"][0].get("env") or []
     return [entry["value"] for entry in env if entry["name"] == OTLP]
@@ -956,7 +694,7 @@ def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
     workload: str, infra: dict, want: str | None
 ) -> None:
     """apps/_common.yaml's template, which derives the receiver mode dfe-common leaves empty."""
-    got = _extras_otlp(render_pair("dfe-engine", "scale", "local", infra=infra, old=False), workload)
+    got = _extras_otlp(render("dfe-engine", "scale", "local", infra=infra), workload)
     if want is None:
         assert got == []
     else:
@@ -966,7 +704,7 @@ def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
 
 def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:
     with pytest.raises(RenderError, match=re.escape("config.otlp.enabled is not true")):
-        render_pair("dfe-receiver", "scale", "aws", infra={"telemetry": {"mode": "receiver"}}, old=False)
+        render("dfe-receiver", "scale", "aws", infra={"telemetry": {"mode": "receiver"}})
 
 
 @pytest.mark.parametrize(
@@ -978,15 +716,12 @@ def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:
     ids=["listener-on", "named-endpoint"],
 )
 def test_receiver_mode_renders_once_something_listens(overlay: dict | None, telemetry: dict) -> None:
-    pair = render_pair(
-        "dfe-receiver", "scale", "aws", overlay=overlay, infra={"telemetry": telemetry}, old=False
-    )
-    assert pair.extras
+    assert render("dfe-receiver", "scale", "aws", overlay=overlay, infra={"telemetry": telemetry})
 
 
 def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collector() -> None:
-    pair = render_pair("culvert", "scale", "aws", infra={"telemetry": {"mode": "receiver"}}, old=False)
-    (policy,) = [doc for (kind, _), doc in pair.extras.items() if kind == "NetworkPolicy"]
+    docs = render("culvert", "scale", "aws", infra={"telemetry": {"mode": "receiver"}})
+    (policy,) = [d for d in docs if d["kind"] == "NetworkPolicy"]
     otlp = [rule for rule in policy["spec"]["egress"] if {"port": 4317, "protocol": "TCP"} in rule.get("ports", [])]
     receiver = {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-receiver"}}}
     assert [rule["to"] for rule in otlp] == [[receiver]]
@@ -1011,7 +746,7 @@ def test_a_component_with_no_dfe_only_objects_renders_nothing(name: str) -> None
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     assert out.returncode == 0, out.stderr
-    assert _documents(out.stdout) == []
+    assert [d for d in yaml.safe_load_all(out.stdout) if isinstance(d, dict)] == []
 
 
 def test_each_profile_declares_the_transport_its_kafka_mode_runs() -> None:
@@ -1045,7 +780,7 @@ def test_the_app_catalogue_is_the_manifest_at_the_repo_root() -> None:
 @pytest.mark.parametrize("profile", PROFILES)
 def test_no_object_is_rendered_by_both_charts(service: str, profile: str) -> None:
     """The thin chart assembled from the committed contract, beside dfe-extras."""
-    thin = render_app(service, profile, "aws", "new", extras=False)
-    extras = render_pair(service, profile, "aws", old=False).extras
+    thin = render_app(service, profile, "aws", extras=False)
+    extras = keyed(render(service, profile, "aws"))
     both = {(d.get("kind"), d["metadata"]["name"]) for d in thin} & set(extras)
     assert both == set()

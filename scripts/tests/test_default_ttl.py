@@ -13,26 +13,26 @@ DFE_CLICKHOUSE_DEFAULT_TTL_DAYS is the TTL every time-series table takes unless 
 source or a dfe-schemas definition declares its own. ONE workload applies it:
 dfe-engine, which is the only thing that applies schema at all. The value still
 has to travel env file -> cluster secret -> appset -> chart, or a deployment's
-retention silently stays at the shipped default.
+retention silently stays at the shipped default. On the deployed Application
+dfe-extras writes it into the dfe-engine-env ConfigMap the engine pod reads.
 
     python3 scripts/tests/test_default_ttl.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import CELLS, effective_env, golden
+from _weave import render_extras
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHARTS = REPO_ROOT / "helm" / "charts"
-ENGINE = CHARTS / "dfe-engine"
+ENGINE = "dfe-engine"
+EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 ENV_EXAMPLE = REPO_ROOT / "bootstrap" / "local.env.example"
@@ -47,47 +47,39 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import render_dial  # noqa: E402
 
 
-def render(chart: Path, *sets: str) -> list[dict]:
-    cmd = ["helm", "template", chart.name, str(chart), "--set", "global.registry=ghcr.io/example"]
-    for s in sets:
-        cmd += ["--set", s]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart.name} {sets}:\n{out.stderr}")
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
+def literal_env(annotations: dict[str, str]) -> dict[str, str]:
+    """The literal env dfe-extras hands the engine for a cluster secret's annotations."""
+    docs = render_extras(ENGINE, "slim", "local", annotations=annotations)
+    return next(
+        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+    )["data"]
 
 
-def container_env(docs: list[dict], kind: str, container: str) -> dict[str, str]:
-    """name -> literal value for one container's env, across the docs of a kind."""
-    for doc in docs:
-        if doc.get("kind") != kind:
-            continue
-        for c in doc["spec"]["template"]["spec"]["containers"]:
-            if c["name"] == container:
-                return {e["name"]: e["value"] for e in c.get("env") or [] if "value" in e}
-    raise SystemExit(f"no {kind} container {container!r} rendered")
-
-
-# --- the charts ----------------------------------------------------------------
+# --- the deployed engine -------------------------------------------------------
 def test_the_engine_ships_90_days() -> None:
-    env = container_env(render(ENGINE), "Deployment", "engine")
-    expect("the engine Deployment carries the TTL env", ENV_KEY in env, f"{sorted(env)}")
-    expect("and it defaults to 90", env.get(ENV_KEY) == "90", f"{env.get(ENV_KEY)}")
+    """A cluster secret carrying no retention leaves every deployed cell at 90."""
+    for cell in (c for c in CELLS if c[0] == ENGINE):
+        env = effective_env(golden(*cell), f"Deployment/{ENGINE}")
+        expect(f"{cell}: the engine Deployment carries the TTL env", ENV_KEY in env,
+               f"{sorted(env)}")
+        expect(f"{cell}: and it defaults to 90", env.get(ENV_KEY) == "90", f"{env.get(ENV_KEY)}")
 
 
 def test_the_engine_takes_the_value_it_is_given() -> None:
-    env = container_env(render(ENGINE, f"{PARAM}=30"), "Deployment", "engine")
-    expect("a set value renders", env.get(ENV_KEY) == "30", f"{env.get(ENV_KEY)}")
-    env = container_env(render(ENGINE, f"{PARAM}=0"), "Deployment", "engine")
-    expect("zero renders as zero, not as the default", env.get(ENV_KEY) == "0", f"{env.get(ENV_KEY)}")
+    env = literal_env({ANNOTATION: "30"})
+    expect("a cluster secret's value renders", env.get(ENV_KEY) == "30", f"{env.get(ENV_KEY)}")
+    env = literal_env({ANNOTATION: "0"})
+    expect("zero renders as zero, not as the default", env.get(ENV_KEY) == "0",
+           f"{env.get(ENV_KEY)}")
 
 
 def test_the_engine_ships_the_documented_default() -> None:
-    engine = yaml.safe_load((ENGINE / "values.yaml").read_text(encoding="utf-8"))
+    values = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))
+    retention = values["extras"]["defaults"][ENGINE]["retention"]
     expect(
-        "dfe-engine ships retention.defaultTtlDays at 90",
-        engine["retention"]["defaultTtlDays"] == 90,
-        f"{engine['retention']}",
+        "dfe-extras ships the engine's retention.defaultTtlDays at 90",
+        retention["defaultTtlDays"] == 90,
+        f"{retention}",
     )
 
 
