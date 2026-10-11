@@ -201,6 +201,8 @@ spec:
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
           name: serviceaccount-files
           readOnly: true
+        - mountPath: /var/lib/dfe-archiver/archive
+          name: archive
         workingDir: /tmp
       enableServiceLinks: false
       imagePullSecrets:
@@ -257,6 +259,8 @@ spec:
               - fieldRef:
                   fieldPath: metadata.namespace
                 path: namespace
+      - emptyDir: {}
+        name: archive
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject

@@ -11,8 +11,9 @@
 
 Its rootfs is read-only, so a `file://` destination with no writable volume
 behind it is an archiver that reports itself healthy and drops every record on
-an EROFS. argocd/values/apps/dfe-archiver/local-dfe.yaml therefore pairs the
-cloud's `archive.localPath` with the emptyDir it mounts there.
+an EROFS. argocd/values/apps/dfe-archiver/values.yaml therefore mounts an emptyDir
+at `archive.localPath`, whichever cloud file or overlay sets it, and at a default
+path nothing writes to when none does.
 
 Which topics it reads is not the deployment's to say: they are compiled from the
 sources that asked to be archived and arrive as `config.kafka.topics` in the
@@ -33,7 +34,6 @@ Needs `helm` on PATH and the scalo-service library (_weave.library).
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 from _expect import expect, standalone, summary
@@ -93,10 +93,6 @@ def test_local_disk_is_a_destination_and_a_volume() -> None:
            f"got {volume!r}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="argocd/values/apps/dfe-archiver mounts archive.localPath on local-dfe only",
-)
 def test_a_local_path_on_any_cloud_gets_its_volume() -> None:
     overlay = {"archive": {"localPath": LOCAL_PATH}}
     docs = render_app(ARCHIVER, BUS[0], "aws", overlay=overlay)
@@ -106,6 +102,7 @@ def test_a_local_path_on_any_cloud_gets_its_volume() -> None:
     mount, volume = mount_at(docs, LOCAL_PATH)
     expect("and a writable volume is mounted there", mount is not None and volume is not None,
            f"got mount {mount!r}")
+    expect("backed by an emptyDir", volume is not None and "emptyDir" in volume, f"got {volume!r}")
 
 
 def test_no_local_path_adds_neither() -> None:
@@ -238,6 +235,7 @@ def test_the_direct_transport_reads_no_topics() -> None:
 def main() -> int:
     with standalone():
         test_local_disk_is_a_destination_and_a_volume()
+        test_a_local_path_on_any_cloud_gets_its_volume()
         test_no_local_path_adds_neither()
         test_the_spool_lands_on_a_writable_volume()
         test_the_spool_volume_is_bounded()

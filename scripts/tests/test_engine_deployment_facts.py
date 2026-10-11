@@ -535,6 +535,8 @@ def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
     managed = {**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "8388608"}
     got = literal_env("single", annotations=managed).get(TOPIC_SIZE_ENV)
     expect("the cluster secret's size reaches the container", got == "8388608", f"got {got!r}")
+    got = literal_env("single", annotations={TOPIC_SIZE_ANNOTATION: "8388608"}).get(TOPIC_SIZE_ENV)
+    expect("and does with no kafka_mode beside it", got == "8388608", f"got {got!r}")
     # A values file reads a number as a float64, which renders as 1.6777216e+07 bare.
     got = literal_env("single", overlay={"kafka": {"messageMaxBytes": 16777216}}).get(
         TOPIC_SIZE_ENV

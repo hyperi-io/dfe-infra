@@ -21,15 +21,16 @@ flowchart LR
   (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim); nothing about
   KEDA changes between on-prem and cloud.
 - **Two triggers render and the HPA takes the higher.** The app charts ship both
-  `keda.cpu` (native scaler, nothing of ours in the path) and
-  `keda.pressure.enabled: true` -- the scalo ScalingPressure composite through the
-  fail-safe dfe-keda-shim. The shim matches the bare `scaling_pressure` gauge and
+  `keda.cpu` (native scaler, nothing of ours in the path) and a `metrics-api` entry in
+  `keda.extraTriggers` (`argocd/values/apps/_fragments/pressure-trigger.yaml`) -- the
+  scalo ScalingPressure composite through the fail-safe dfe-keda-shim. A tier or an
+  instance drops it by setting `keda.extraTriggers: []`. The shim matches the bare `scaling_pressure` gauge and
   any `<prefix>_scaling_pressure` for that ServiceName (dfe-engine#379), so the four
   wire names the Rust apps use today all resolve without an app release. The shim
-  address is derived from the release namespace (dfe-common.kedaShimAddress), so a
+  address is derived from the release namespace, so a
   deployment in any namespace resolves it without a values override;
   `keda.pressure.shimAddress` is for a shim outside the release namespace only.
-  dfe-transform-vector ships `keda.pressure.enabled: false`: it sets no `scaling_pressure` gauge, so cpu is its only live trigger.
+  dfe-transform-vector carries no pressure trigger: it sets no `scaling_pressure` gauge, so cpu is its only live trigger.
   `bootstrap/keda-scale-test.sh` proves the path on each deploy. Its scale-out bound
   is derived from the ScaledObject's own polling interval plus the HPA sync period
   rather than fixed (dfe-infra #275), and it exits 3 for UNPROVEN where the HPA read

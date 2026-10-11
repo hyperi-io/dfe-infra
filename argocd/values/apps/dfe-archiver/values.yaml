@@ -21,7 +21,19 @@ secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
   s3:
-    existingSecret: '{{ .Values.s3.secretName }}'
+    # An empty s3.secretName falls back to the library's own name, which the
+    # optional reference reads only where that Secret exists.
+    existingSecret: '{{ .Values.s3.secretName | default (printf "%s-s3" (include "scalo-service.fullname" .)) }}'
+
+# A file:// destination writes to archive.localPath on a read-only root
+# filesystem, so a writable directory is mounted there on every cloud. With no
+# local path it sits unused at its default.
+extraVolumes:
+  - name: archive
+    emptyDir: {}
+extraVolumeMounts:
+  - name: archive
+    mountPath: '{{ (.Values.archive | default dict).localPath | default "/var/lib/dfe-archiver/archive" }}'
 
 keda:
   cpu:
@@ -74,9 +86,9 @@ waitForEngine:
 # The archiver's own keys, read above and in the profile files through tpl.
 kafka:
   saslSecretName: dfe-kafka-user
-# archive.localPath comes from the cloud file or the overlay, beside a volume at
-# that path (apps/dfe-archiver/local-dfe.yaml). This file layers after the cloud
-# file, so a default here would beat it.
+# archive.localPath comes from the cloud file or the overlay, beside the volume
+# extraVolumes mounts at that path. This file layers after the cloud file, so a
+# default here would beat it.
 archive: {}
 s3:
   endpoint: ""

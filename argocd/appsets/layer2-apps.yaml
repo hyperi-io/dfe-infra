@@ -209,14 +209,15 @@ spec:
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
               {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
-              {{- if $kafkaMode }}
-              # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
-              # only case bootstrap.sh sets this annotation for, so an
-              # in-cluster deploy's kafka.mode stays whatever its profile
-              # overlay says. The profile's bootstrapServers names a Service
-              # that does not exist on a managed broker, so the endpoint the
-              # deploy was actually built with replaces it here.
+              {{- if or $kafkaMode $kafkaMessageMaxBytes }}
               kafka:
+                {{- if $kafkaMode }}
+                # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
+                # only case bootstrap.sh sets this annotation for, so an
+                # in-cluster deploy's kafka.mode stays whatever its profile
+                # overlay says. The profile's bootstrapServers names a Service
+                # that does not exist on a managed broker, so the endpoint the
+                # deploy was actually built with replaces it here.
                 mode: {{ $kafkaMode | quote }}
                 {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
                 bootstrapServers: {{ $kafkaBootstrap | quote }}
@@ -226,10 +227,11 @@ spec:
                 # common.yaml's in-cluster plain listener for every app.
                 securityProtocol: {{ $kafkaSecurityProtocol | quote }}
                 {{- end }}
+                {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
-                # The message size the managed broker was built with, so the
-                # topics dfe-engine creates are not left at the provider's
-                # default. Only dfe-engine reads it.
+                # The message size the broker was built with, whether or not
+                # kafka_mode is set, so the topics dfe-engine creates are not
+                # left at the broker's default. Only dfe-engine reads it.
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
                 {{- end }}
               {{- end }}
@@ -290,14 +292,16 @@ spec:
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
               {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
-              {{- if $kafkaMode }}
+              {{- if or $kafkaMode $kafkaMessageMaxBytes }}
               kafka:
+                {{- if $kafkaMode }}
                 mode: {{ $kafkaMode | quote }}
                 {{- if and (eq $kafkaMode "external") $kafkaBootstrap }}
                 bootstrapServers: {{ $kafkaBootstrap | quote }}
                 {{- end }}
                 {{- if and (eq $kafkaMode "external") $kafkaSecurityProtocol }}
                 securityProtocol: {{ $kafkaSecurityProtocol | quote }}
+                {{- end }}
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}

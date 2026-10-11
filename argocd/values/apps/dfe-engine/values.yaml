@@ -56,11 +56,12 @@ extraEnv:
         fieldPath: metadata.namespace
 
 # One init container per content pin in content.entries, each reading its pin by
-# name, so the ref has one copy. An overlay that adds or drops an entry restates
-# this list.
+# name, so the ref has one copy. One whose entry is dropped runs the engine image
+# and materialises nothing. dfe-extras refuses an entry with no container here, so
+# an overlay that adds one restates this list.
 initContainers:
   - name: content-dfe-receiver-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: &pull-policy '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
     securityContext: &init-security
       allowPrivilegeEscalation: false
@@ -73,6 +74,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-receiver-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-receiver"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -80,7 +87,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-receiver" "{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-receiver" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-receiver emitted its contract to $dir"
         else
@@ -90,7 +97,7 @@ initContainers:
       - name: content
         mountPath: '{{ .Values.content.mountPath }}'
   - name: content-dfe-loader-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -98,6 +105,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-loader-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-loader"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -105,7 +118,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-loader" "{{ range .Values.content.entries }}{{ if eq .name "dfe-loader-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-loader" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-loader emitted its contract to $dir"
         else
@@ -113,7 +126,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-archiver-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -121,6 +134,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-archiver-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-archiver"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -128,7 +147,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-archiver" "{{ range .Values.content.entries }}{{ if eq .name "dfe-archiver-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-archiver" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-archiver emitted its contract to $dir"
         else
@@ -136,7 +155,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-fetcher-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -144,6 +163,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-fetcher-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-fetcher"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -151,7 +176,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-fetcher" "{{ range .Values.content.entries }}{{ if eq .name "dfe-fetcher-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-fetcher" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-fetcher emitted its contract to $dir"
         else
@@ -159,7 +184,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-transform-vrl-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -167,6 +192,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-transform-vrl-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vrl"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -174,7 +205,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-transform-vrl" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vrl-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-transform-vrl" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-transform-vrl emitted its contract to $dir"
         else
@@ -182,7 +213,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-transform-vector-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -190,6 +221,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-transform-vector-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vector"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -197,7 +234,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-transform-vector" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-vector-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-transform-vector" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-transform-vector emitted its contract to $dir"
         else
@@ -205,7 +242,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-transform-elastic-contract
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -213,6 +250,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-transform-elastic-contract is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-elastic"
         # An image that carries no contract must not wedge the engine's
         # pod: the app exits non-zero on a write failure.
@@ -220,7 +263,7 @@ initContainers:
           # The contract names no image, so the writer records itself --
           # without this the engine cannot report which pin it read.
           printf '{"app": "%s", "ref": "%s", "emitted_at": "%s"}\n' \
-            "dfe-transform-elastic" "{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-contract" }}{{ .ref }}{{ end }}{{ end }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "dfe-transform-elastic" "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > "$dir/source.json"
           echo "content: dfe-transform-elastic emitted its contract to $dir"
         else
@@ -228,7 +271,7 @@ initContainers:
         fi
     volumeMounts: *content-mounts
   - name: content-dfe-transform-elastic-catalogue
-    image: '{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ .ref }}{{ end }}{{ end }}'
+    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
     imagePullPolicy: *pull-policy
     securityContext: *init-security
     command:
@@ -236,6 +279,12 @@ initContainers:
       - -c
       - |
         set -u
+        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ .ref }}{{ end }}{{ end }}"
+        # Its entry is gone from content.entries: this pod runs the engine image.
+        if [ -z "$ref" ]; then
+          echo "content: dfe-transform-elastic-catalogue is not in content.entries; nothing to materialise"
+          exit 0
+        fi
         dst="{{ .Values.content.mountPath }}/catalogue/{{ .Values.content.catalogueFile }}"
         mkdir -p "{{ .Values.content.mountPath }}/catalogue"
         # An image that predates emit-catalogue exits non-zero; the engine
