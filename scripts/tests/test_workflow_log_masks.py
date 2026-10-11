@@ -46,11 +46,11 @@ def _assumes_a_role(job: dict) -> bool:
     return any(str(step.get("uses", "")).startswith(ASSUMES_A_ROLE) for step in job.get("steps", []))
 
 
-def _handlers() -> list[tuple[str, str]]:
+def _handlers(workflows: dict[str, dict] | None = None) -> list[tuple[str, str]]:
     """Every (workflow file, job id) that assumes a role or passes a role or account variable on."""
     return [
         (name, job_id)
-        for name, doc in _workflows().items()
+        for name, doc in (_workflows() if workflows is None else workflows).items()
         for job_id, job in doc.get("jobs", {}).items()
         if _carries(job) or _assumes_a_role(job)
     ]
@@ -61,8 +61,13 @@ def _steps(name: str, job_id: str) -> list[dict]:
 
 
 def test_the_jobs_that_assume_a_role_are_found() -> None:
-    """The discovery above would pass vacuously if the pattern stopped matching."""
-    assert {("cloud-cycle.yml", "cycle"), ("cloud-reaper.yml", "reap")} <= set(_handlers())
+    """The discovery above would pass vacuously if the pattern stopped matching, and no
+    committed workflow assumes a role, so it is proved on workflows written here."""
+    assumes = {"jobs": {"run": {"steps": [{"uses": f"{ASSUMES_A_ROLE}{'0' * 40}"}]}}}
+    passes = {"jobs": {"run": {"steps": [{"env": {"ROLE": "${{ vars.EXAMPLE_ROLE }}"}}]}}}
+    boolean = {"jobs": {"run": {"steps": [{"env": {"HAS_ROLE": "${{ vars.EXAMPLE_ROLE != '' }}"}}]}}}
+    found = _handlers({"assumes.yml": assumes, "passes.yml": passes, "boolean.yml": boolean})
+    assert found == [("assumes.yml", "run"), ("passes.yml", "run")]
 
 
 @pytest.mark.parametrize(("name", "job_id"), _handlers())
