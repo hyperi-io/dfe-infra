@@ -3666,7 +3666,7 @@ stacks:
       dfe-hyperdx: "sha256:3e594123968b7775540c4e8ace4ca96585badc892d2e769764160f7bde63c6c5"
       culvert: "sha256:27666a427c2cf66d8a327874782bb47b108afebbb8c699f76155557bf4598a6e"
       # Tagged by toolbox.dfe-toolbox.
-      dfe-toolbox-base: "sha256:056ab60643f2a0814f3e4baacca2534ac852367e15ba22665caa869c043dcc4b"
+      dfe-toolbox-base: "sha256:a08e64b708d201e1e26823ba3ffc8d4a8e54a669713c4047d40715a6ea3522e5"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
@@ -3735,7 +3735,7 @@ stacks:
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.37.9"                  # 2026-10-02.
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
-      aws-session-manager-plugin: "1.2.889.0"  # Observed 2026-10-10 as what latest serves on amd64 and arm64. The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. Renovate watches the GitHub releases, which can land minutes before latest moves.
+      aws-session-manager-plugin: "1.2.896.0"  # Observed 2026-10-11 as what latest serves on amd64 and arm64 (release 2026-10-10). The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. Renovate watches the GitHub releases, which can land minutes before latest moves.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
