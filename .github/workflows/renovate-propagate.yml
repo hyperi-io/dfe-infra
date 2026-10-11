@@ -7,7 +7,10 @@
 #
 # Runs on PUSH, not pull_request: a pull_request run from a bot gets a read-only
 # token and cannot push. Renovate pushes its branches to this repo (never a
-# fork), so a push trigger is same-repo and the token is writable.
+# fork), so a push trigger is same-repo.
+#
+# The write-back goes through a GitHub App token, because a pull request updated
+# with GITHUB_TOKEN starts its pull_request runs waiting for a human's approval.
 name: Renovate propagate
 
 on:
@@ -15,12 +18,11 @@ on:
     branches:
       - 'renovate/**'
 
-# Least privilege: write the branch, read packages so ghcr digests resolve,
-# dispatch so the checks this job's own push cannot trigger get asked for.
+# Read packages so ghcr digests resolve, and write the commit status. The push
+# uses the App token, which these scopes do not govern.
 permissions:
-  contents: write
+  contents: read
   packages: read
-  actions: write
   statuses: write
 
 concurrency:
@@ -36,7 +38,20 @@ jobs:
     # their commit unaltered.
     if: github.actor == 'renovate[bot]'
     steps:
+      # contents:write on this repo alone, since the propagation commit is all it pushes.
+      - name: Mint a dfe-infra write token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       # Anonymous ghcr pulls are rate-limited and can fail outright; the token
       # this job already holds removes that as a failure mode.
@@ -65,7 +80,6 @@ jobs:
         run: python3 scripts/check_versions_drift.py
 
       - name: Push the propagation back onto the branch
-        id: push
         if: steps.drift.outcome == 'success'
         run: |
           set -euo pipefail
@@ -76,6 +90,7 @@ jobs:
             echo "SSoT and mirrors already agree; nothing to push."
             exit 0
           fi
+          # renovate.json's gitIgnoredAuthors names this author, so Renovate keeps rebasing the branch.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix(deps): propagate versions.yaml to the pin mirrors" \
@@ -83,12 +98,11 @@ jobs:
           # Explicit refspec rather than relying on checkout leaving a tracking
           # branch -- a detached HEAD would otherwise fail only at this step.
           git push origin "HEAD:${GITHUB_REF_NAME}"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      # A workflow_dispatch run does not attach to the PR, so a commit status is
-      # the only verdict from this job the PR shows. It carries the drift check's
-      # own exit, on the commit the branch now points at: the propagation when
-      # one was pushed, Renovate's commit otherwise.
+      # This run's own check sits on Renovate's commit, which a propagation push
+      # replaces as the PR head, so a commit status is the verdict the PR shows.
+      # It carries the drift check's own exit, on the commit the branch now
+      # points at: the propagation when one was pushed, Renovate's commit otherwise.
       - name: Report the drift check on the branch head
         if: steps.drift.outcome == 'success' || steps.drift.outcome == 'failure'
         env:
@@ -109,15 +123,6 @@ jobs:
             -f context="pin propagation" \
             -f description="${description}" \
             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
-      # The pull_request run for a bot-authored commit lands in `action_required`
-      # and waits for a human, so the branch would otherwise go unverified until
-      # someone noticed. workflow_dispatch is not gated that way.
-      - name: Ask for the checks the bot push cannot trigger
-        if: steps.push.outputs.pushed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run helm-lint.yml --ref "${GITHUB_REF_NAME}"
 
       - name: Fail the run when drift remains
         if: steps.drift.outcome == 'failure'
