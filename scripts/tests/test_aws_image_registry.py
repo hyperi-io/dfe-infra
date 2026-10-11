@@ -68,7 +68,6 @@ PULL_APPSETS = (
     ("layer2-data.yaml", "dfe-layer2-data"),
     ("layer2-platform.yaml", "dfe-layer2-platform"),
     ("layer2-deploy-repo.yaml", "dfe-layer2-deploy-repo"),
-    ("layer-scale.yaml", "dfe-scale-apps"),
 )
 
 # One first-party chart per layer 2 appset, so a chart left without the

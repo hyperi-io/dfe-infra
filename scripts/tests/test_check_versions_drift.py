@@ -206,38 +206,6 @@ def test_dropping_a_waiver_resurfaces_its_literals() -> None:
         drift.SWEEP_WAIVERS = original
 
 
-def test_no_check_reads_a_chart_no_appset_deploys() -> None:
-    """Argo deploys each component's thin chart, so a pin read from a hand chart guards nothing."""
-    reading = [
-        f"{c.label} ({c.file})"
-        for c in drift.CHECKS
-        if any(c.file.as_posix().startswith(f"{chart}/") for chart in drift.UNDEPLOYED_CHARTS)
-    ]
-    expect("no check reads an undeployed chart", reading == [], f"{reading}")
-
-
-def test_an_undeployed_chart_is_waived_until_it_leaves_the_tree() -> None:
-    """Its waiver goes stale once the chart is gone, so the entry cannot outlive it."""
-    original = drift.SWEEP_WAIVERS
-    try:
-        drift.SWEEP_WAIVERS = tuple(w for w in original if w[0] != "helm/charts/dfe-ui/*")
-        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p]
-        expect(
-            "dropping its waiver resurfaces the chart's appVersion",
-            any("helm/charts/dfe-ui/Chart.yaml" in p and "appVersion" in p for p in unswept),
-            f"got {unswept}",
-        )
-        drift.SWEEP_WAIVERS = (*original, ("helm/charts/dfe-gone/*", "*", "nothing"))
-        stale = [p for p in drift.reverse_sweep() if "[stale]" in p]
-        expect(
-            "and a waiver for a chart that has left is reported stale",
-            any("helm/charts/dfe-gone/*" in p for p in stale),
-            f"got {stale}",
-        )
-    finally:
-        drift.SWEEP_WAIVERS = original
-
-
 def test_fix_is_a_noop_when_nothing_drifts() -> None:
     writes, fixed, refused = drift.plan_fix(drift.load_versions())
     expect("--fix writes nothing when the tree is clean", writes == {}, f"{writes}")

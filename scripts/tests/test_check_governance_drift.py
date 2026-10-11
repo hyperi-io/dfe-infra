@@ -12,8 +12,8 @@
     python3 -m pytest scripts/tests/test_check_governance_drift.py -q
 
 The resolution sources are the committed ones (argocd/values, dfe-extras' defaults, the
-contract fixtures), so each case names a dial those hold today. A dial only the 2.2.0 chart
-holds comes from a chart directory written here.
+contract fixtures), so each case names a dial those hold today. A chart a case needs beyond
+them is a directory written here.
 """
 
 import importlib.util
@@ -72,21 +72,21 @@ def test_a_dial_nothing_reads_fails(
     assert f"holds {path!r}" in capsys.readouterr().err
 
 
-def test_a_key_only_the_2_2_0_chart_holds_is_a_warning(
+def test_a_thin_service_does_not_resolve_against_a_chart_of_its_name(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The thin chart is what deploys, so a same-named chart directory vouches for nothing."""
     chart = tmp_path / "charts" / "dfe-engine"
     chart.mkdir(parents=True)
     (chart / "Chart.yaml").write_text("name: dfe-engine\nversion: 0.0.0\n", encoding="utf-8")
-    (chart / "values.yaml").write_text("legacyOnly: true\n", encoding="utf-8")
+    (chart / "values.yaml").write_text("chartOnly: true\n", encoding="utf-8")
     code = check(
         tmp_path,
-        [dial("dfe-engine-default-values", "legacyOnly")],
+        [dial("dfe-engine-default-values", "chartOnly")],
         "--charts-dir",
         str(tmp_path / "charts"),
     )
-    err = capsys.readouterr().err
-    assert (code, "[warn]" in err, "1 warning(s)" in err) == (0, True, True)
+    assert (code, "holds 'chartOnly'" in capsys.readouterr().err) == (1, True)
 
 
 def test_a_service_with_no_thin_chart_still_resolves_against_its_chart(

@@ -241,9 +241,9 @@ def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> N
     on_disk = {
         chart_file.parent
         for chart_file in (REPO_ROOT / "helm").glob("*/*/Chart.yaml")
-        # helm/library holds the shared template library and helm/dfe-stack is
-        # the umbrella, neither of which renders as a chart of its own here.
-        if chart_file.parent.parent.name not in ("library", "dfe-stack")
+        # helm/library holds the shared template library, which renders no
+        # chart of its own here.
+        if chart_file.parent.parent.name != "library"
     }
     expect("every first-party chart sits in a tree _charts sweeps",
            {d.parent.name for d in on_disk} <= trees,

@@ -44,7 +44,7 @@
 #   scripts/validate-charts.sh                       # render-only, all charts
 #   DFE_KUBE_CONTEXT=<ctx> scripts/validate-charts.sh   # + server-side dry-run
 #   DFE_VALIDATE_VALUES="argocd/values/common.yaml argocd/values/local.yaml" \
-#     DFE_VALIDATE_CHARTS="dfe-receiver dfe-loader" scripts/validate-charts.sh
+#     DFE_VALIDATE_CHARTS="kafka clickhouse-cluster" scripts/validate-charts.sh
 #   DFE_KUBE_CONTEXT=<ctx> DFE_VALIDATE_APP_NS=<real app ns> \
 #     scripts/validate-charts.sh   # appns-gated objects need a namespace the
 #                                  # cluster actually has for the dry-run
@@ -82,13 +82,12 @@ for vf in ${VALUES_FILES}; do
   VALUES_ARGS+=(-f "${vf}")
 done
 
-# Where a chart of that name lives. The edge module's two sit under helm/edge,
-# and the gateway's directory name is not its chart name, so a path is resolved
-# here rather than built by concatenation.
+# Where a chart of that name lives. The edge gateway sits under helm/edge in a
+# directory that is not its chart name, so a path is resolved here rather than
+# built by concatenation.
 chart_dir() {
   case "$1" in
     envoy-gateway-config) echo "helm/edge/gateway" ;;
-    culvert)              echo "helm/edge/culvert" ;;
     *)                    echo "helm/charts/$1" ;;
   esac
 }

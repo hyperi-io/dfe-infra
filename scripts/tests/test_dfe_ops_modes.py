@@ -93,16 +93,6 @@ def test_the_clickhouse_operator_pin_is_the_same_on_both_scale_tiers() -> None:
     assert pin("dfe-mesh-operators") == pin("dfe-scale-operators")
 
 
-def test_the_scale_apps_appset_covers_both_scale_tiers() -> None:
-    appset = _appsets()["dfe-scale-apps"]
-    selector = appset["spec"]["generators"][0]["matrix"]["generators"][0]["clusters"]["selector"]
-    expression = next(
-        e for e in selector["matchExpressions"] if e["key"] == "dfe.hyperi.io/profile"
-    )
-    assert expression["operator"] == "In"
-    assert sorted(expression["values"]) == ["mesh", "scale"]
-
-
 def test_the_acceptance_transport_defaults_follow_the_mode() -> None:
     import argparse
 

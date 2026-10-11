@@ -24,7 +24,7 @@ The cluster secret's `dfe.hyperi.io/profile` label selects the tier;
 values merge in this order (later wins):
 
 ```
-helm/charts/<app>/values.yaml        chart defaults
+<chart>/values.yaml                  chart defaults (helm/charts/, or the app's thin chart)
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
 argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / mesh)

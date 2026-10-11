@@ -1097,30 +1097,6 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
     ),
 )
 
-# The hand-written app charts and the umbrella, which no appset deploys: each
-# component deploys from its published thin chart, pinned by chart-digests. The
-# repo-wide test sweeps skip the same list (scripts/tests/_charts.py).
-UNDEPLOYED_CHARTS = (
-    "helm/charts/dfe-archiver",
-    "helm/charts/dfe-engine",
-    "helm/charts/dfe-fetcher",
-    "helm/charts/dfe-loader",
-    "helm/charts/dfe-receiver",
-    "helm/charts/dfe-transform-elastic",
-    "helm/charts/dfe-transform-splack",
-    "helm/charts/dfe-transform-vector",
-    "helm/charts/dfe-transform-vrl",
-    "helm/charts/dfe-transform-wasm",
-    "helm/charts/dfe-ui",
-    "helm/charts/hyperdx",
-    "helm/edge/culvert",
-    "helm/dfe-stack",
-)
-SWEEP_WAIVERS += tuple(
-    (f"{chart}/*", "*", "a chart no appset deploys, so no literal in it pins what runs")
-    for chart in UNDEPLOYED_CHARTS
-)
-
 
 @cache
 def root_ignored_names() -> frozenset[str]:

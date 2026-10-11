@@ -48,7 +48,6 @@ GUARDED = (
     "layer2-data.yaml",
     "layer2-edge.yaml",
     "layer2-platform.yaml",
-    "layer-scale.yaml",
 )
 
 CHART_YAML = "apiVersion: v2\nname: guard\nversion: 0.0.0\n"

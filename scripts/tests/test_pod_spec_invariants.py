@@ -14,9 +14,9 @@
    namespace, so `svc/dfe-keda-shim` becomes
    `DFE_KEDA_SHIM_PORT="tcp://<ip>:8080"`. The engine reads that name as its own
    setting and parses it as an int (`settings.py`), so the pod dies at startup.
-   The dfe-engine chart's comment calls it live-proven across v1.10.4/5/6, and
-   the hunt-runner's says the first fix "claimed to kill the whole CLASS while
-   being applied to one Deployment in a chart that ships three". A sixth pod was
+   It was live-proven across engine v1.10.4/5/6, and the first fix "claimed to
+   kill the whole CLASS while being applied to one Deployment in a chart that
+   ships three". A sixth pod was
    still missing it in 2026-09. The class was right every time; its membership
    was written out by hand every time.
 
@@ -50,7 +50,7 @@ from pathlib import Path
 
 import yaml
 
-from _charts import CHART_TREES, UNDEPLOYED
+from _charts import CHART_TREES
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -111,12 +111,7 @@ def rendered() -> tuple[tuple[tuple[str, tuple[dict, ...]], ...], tuple[str, ...
     """
     covered: list[tuple[str, tuple[dict, ...]]] = []
     skipped: list[str] = []
-    charts = [
-        p
-        for root in CHART_TREES
-        for p in root.iterdir()
-        if (p / "Chart.yaml").exists() and p not in UNDEPLOYED
-    ]
+    charts = [p for root in CHART_TREES for p in root.iterdir() if (p / "Chart.yaml").exists()]
     renders = [(c.name, c, (), ()) for c in charts if c != EXTRAS]
     renders += [
         (f"dfe-extras/{c}", EXTRAS, (f"chartName={c}",), integration_values(c))

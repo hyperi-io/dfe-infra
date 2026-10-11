@@ -1,5 +1,5 @@
-# The bus: the fetcher's own flat env contract (DFE_FETCHER_*), empty where the
-# 2.2.0 chart left a variable out, which the app reads as unset.
+# The bus: the fetcher's own flat env contract (DFE_FETCHER_*), empty where a
+# variable does not apply, which the app reads as unset.
 extraEnv:
   # The deployment's broker, unless the overlay's config names its own.
   DFE_FETCHER_KAFKA_BROKERS: '{{ if not (dig "kafka" "brokers" "" (.Values.config | default dict)) }}{{ .Values.kafka.bootstrapServers }}{{ end }}'

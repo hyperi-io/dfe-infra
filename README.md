@@ -71,8 +71,9 @@ repos are suite members and what moves when one of them releases
 (`suite.yaml` is the source).
 
 - `terraform/` - reusable HCL modules (OpenTofu).
-- `helm/charts/` - one chart per DFE service and data component
-  (+ `helm/library/dfe-common` shared templates).
+- `helm/charts/` - the backing-service and platform charts and `dfe-extras`
+  (+ `helm/library/dfe-common` shared templates). Each DFE service deploys
+  from its own published thin chart.
 - `argocd/` - ApplicationSets, AppProjects, tier + cloud values.
 - `bootstrap/` - idempotent cluster bootstrap.
 - `versions.yaml` - single source for chart/operator/image pins, plus the
@@ -113,7 +114,7 @@ Design and the repo-by-repo map: [docs/architecture.md](docs/architecture.md).
 | `suite.yaml` | Membership and the edge graph. Every other repo's "where this sits" is generated from it, so it is the SSoT for what a release moves. |
 | `apps.yaml` | What an app IS: multiplicity, scaling, the files it consumes, its source binding. Adding an app is a manifest edit plus a chart, NEVER an engine release. |
 | `versions.yaml` | Every chart, operator and image pin, plus `digests:`, lockstep `content:` tags and `stack:` release metadata. |
-| `helm/charts/` | One chart per service, over `helm/library/dfe-common`. |
+| `helm/charts/` | The backing-service and platform charts, over `helm/library/dfe-common`, and `dfe-extras`, the DFE-only objects beside each service's published thin chart. |
 | `argocd/appsets/` | The layer ApplicationSets. `argocd/values/` holds the cascade: `common.yaml`, then the environment file, then the profile. |
 | `bootstrap/` | Idempotent cluster bootstrap, including the templates that WRITE the Argo cluster secret. |
 | `scripts/dfe-stack` | The stack CLI: render, pins, upgrade graph, release gate. |

@@ -11,7 +11,7 @@ config:
   destinations:
     default: loader
 
-# The buffer profile-mesh.yaml sizes under `receiver.buffer` for the 2.2.0 chart:
+# The buffer argocd/values/profile-mesh.yaml explains under `receiver.buffer`:
 # 3 GiB of memory and a 20 GiB node-local spool, read only with acknowledgements
 # off. The spool path is the contract's spool writable path, which mounts while
 # config.buffer.spillover.enabled is true.
