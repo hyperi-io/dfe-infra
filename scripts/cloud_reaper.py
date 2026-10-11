@@ -203,13 +203,16 @@ def gone_secret_addresses(state: Mapping[str, object]) -> list[str]:
     DescribeSecret is not tag-conditioned, so it tells the two cases apart.
     """
     root = (state.get("values") or {}).get("root_module") or {}  # type: ignore[union-attr]
-    by_secret: dict[str, list[str]] = {}
-    for resource in _state_resources(root):
-        attribute = _SECRET_ARN_ATTRIBUTE.get(str(resource.get("type")))
-        arn = str((resource.get("values") or {}).get(attribute or "", ""))  # type: ignore[union-attr]
-        if attribute and arn:
-            by_secret.setdefault(arn, []).append(str(resource["address"]))
-    return [address for arn, addresses in by_secret.items() if _secret_gone(arn) for address in addresses]
+    held = [r for r in _state_resources(root) if str(r.get("type")) in _SECRET_ARN_ATTRIBUTE]
+    gone = {arn for arn in {_owning_arn(r) for r in held} if arn and _secret_gone(arn)}
+    # The address is read off the resource itself, never off its values, which hold the secret.
+    return [str(r["address"]) for r in held if _owning_arn(r) in gone]
+
+
+def _owning_arn(resource: Mapping[str, object]) -> str:
+    """The ARN of the secret a secret or secret-version resource belongs to."""
+    attribute = _SECRET_ARN_ATTRIBUTE[str(resource.get("type"))]
+    return str((resource.get("values") or {}).get(attribute, ""))  # type: ignore[union-attr]
 
 
 def destroy_run(record: Mapping[str, object]) -> int:
