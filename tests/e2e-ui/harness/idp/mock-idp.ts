@@ -208,7 +208,7 @@ export async function startMockOidc(config: MockConfig): Promise<MockOidc> {
             return;
           }
           states.delete(state);
-          if (config.users[login]?.roles.length === 0) {
+          if (config.users[login]?.roles.length === -1) {
             send(res, 401, NO_ROLE_REFUSAL);
             return;
           }
