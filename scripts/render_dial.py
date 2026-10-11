@@ -683,11 +683,11 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
     return ranges
 
 
-TRUSTED_PROXY_PATH = ("edge", "product", "trusted_proxy_cidrs")
+PROXY_HOP_PATH = ("edge", "product", "trusted_proxy_cidrs")
 
 
-def _trusted_proxy_cidrs(dial: dict[str, object]) -> list[str]:
-    """edge.product.trusted_proxy_cidrs, with a /0 of either family refused.
+def _proxy_hop_cidrs(dial: dict[str, object]) -> list[str]:
+    """edge.product.trusted_proxy_cidrs, the CDN hops, with a /0 of either family refused.
 
     Every peer inside a /0 is trusted, so Envoy takes the client from the
     leftmost X-Forwarded-For entry, which the caller writes, and the fence
@@ -702,7 +702,7 @@ def _trusted_proxy_cidrs(dial: dict[str, object]) -> list[str]:
     Raises:
         DialError: An entry is not a CIDR range, or covers every address.
     """
-    ranges = _edge_cidrs(dial, TRUSTED_PROXY_PATH)
+    ranges = _edge_cidrs(dial, PROXY_HOP_PATH)
     everything = [cidr for cidr in ranges if ipaddress.ip_network(cidr, strict=False).prefixlen == 0]
     if everything:
         raise DialError(
@@ -1314,7 +1314,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "edge": _edge(dial),
         # Variables of their own, because a guarded run's overlay replaces one whole.
         "edge_allowed_cidrs": _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")),
-        "edge_trusted_proxy_cidrs": _trusted_proxy_cidrs(dial),
+        "edge_trusted_proxy_cidrs": _proxy_hop_cidrs(dial),
     }
 
 
@@ -1398,7 +1398,7 @@ def main() -> int:
         fence, fence_warnings = web_fence(
             _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")), edge_enums["edge.flavour"]
         )
-        _trusted_proxy_cidrs(dial)
+        _proxy_hop_cidrs(dial)
         controller_pool = _controller_pool(dial)
     except DialError as error:
         print(f"render_dial: {error}", file=sys.stderr)
