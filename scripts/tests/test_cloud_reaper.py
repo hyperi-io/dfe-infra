@@ -160,7 +160,9 @@ def _fail(stderr: str) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(["aws"], 1, stdout="", stderr=stderr)
 
 
-def _reap(monkeypatch: pytest.MonkeyPatch, bucket: FakeBucket, tofu_code: int = 0) -> tuple[list[str], list[tuple]]:
+def _reap(
+    monkeypatch: pytest.MonkeyPatch, bucket: FakeBucket, tofu_code: int = 0, state: dict | None = None
+) -> tuple[list[str], list[tuple]]:
     destroyed: list[tuple] = []
 
     def fake_tofu(args: list[str], cwd: Path, env: dict) -> int:
@@ -169,6 +171,7 @@ def _reap(monkeypatch: pytest.MonkeyPatch, bucket: FakeBucket, tofu_code: int = 
 
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", bucket.run_aws)
     monkeypatch.setattr(cloud_reaper, "run_tofu", fake_tofu)
+    monkeypatch.setattr(cloud_reaper, "state_json", lambda cwd, env: state or {})
     config = cloud_reaper.load_config(ENV)
     assert config is not None
     return cloud_reaper.reap_runs(config, NOW), destroyed
@@ -209,6 +212,85 @@ def test_a_failed_destroy_keeps_the_record_for_the_next_schedule(monkeypatch: py
     problems, _destroyed = _reap(monkeypatch, bucket, tofu_code=1)
     assert bucket.deleted == []
     assert any("tofu destroy failed" in p for p in problems)
+
+
+SECRET_GONE = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/ui/nextauth-AbCdEf"
+SECRET_LIVE = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/kafka/msk-AbCdEf"
+
+
+def _state_with_secrets() -> dict:
+    """A `tofu show -json` body: one secret removed outside tofu, one still held, in a child module."""
+    def secret(address: str, arn: str) -> list[dict]:
+        return [
+            {"address": address, "type": "aws_secretsmanager_secret", "values": {"arn": arn}},
+            {"address": f"{address}_version", "type": "aws_secretsmanager_secret_version",
+             "values": {"secret_id": arn, "secret_string": "never-printed"}},
+        ]
+
+    return {"values": {"root_module": {
+        "resources": [{"address": "aws_s3_bucket.logs", "type": "aws_s3_bucket", "values": {"arn": "arn:aws:s3:::x"}}],
+        "child_modules": [{"resources": [
+            *secret("module.secrets.aws_secretsmanager_secret.nextauth", SECRET_GONE),
+            *secret("module.secrets.aws_secretsmanager_secret.kafka", SECRET_LIVE),
+        ]}],
+    }}}
+
+
+class FakeBucketAndSecrets(FakeBucket):
+    """The state bucket, plus DescribeSecret answering NotFound for SECRET_GONE alone."""
+
+    def run_aws(self, args: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if args[:2] == ["secretsmanager", "describe-secret"]:
+            arn = args[args.index("--secret-id") + 1]
+            if arn == SECRET_GONE:
+                return _fail("An error occurred (ResourceNotFoundException) when calling the DescribeSecret operation")
+            return _ok({"ARN": arn})
+        return super().run_aws(args, **kwargs)
+
+
+def test_a_secret_removed_outside_tofu_leaves_the_state_before_the_destroy(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = cloud_run.state_key("dfe-e2e-runs", "run-old")
+    bucket = FakeBucketAndSecrets({"run-old": _record("run-old", NOW - 60)}, {state})
+    problems, calls = _reap(monkeypatch, bucket, state=_state_with_secrets())
+    assert problems == []
+    assert [c[0] for c in calls] == [
+        ("init", "-input=false", "-reconfigure"),
+        ("state", "rm", "module.secrets.aws_secretsmanager_secret.nextauth"),
+        ("state", "rm", "module.secrets.aws_secretsmanager_secret.nextauth_version"),
+        ("destroy", "-auto-approve", "-input=false"),
+    ]
+    assert bucket.deleted == ["dfe-e2e-runs/run-old/run.json"]
+
+
+def test_a_secret_scheduled_for_deletion_counts_as_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_k: _ok({"DeletedDate": "2026-10-10T08:00:00Z"}))
+    addresses = cloud_reaper.gone_secret_addresses(_state_with_secrets())
+    assert len(addresses) == 4
+
+
+def test_a_secret_whose_state_cannot_be_read_is_never_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_k: _fail("An error occurred (AccessDeniedException)"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="AccessDenied"):
+        cloud_reaper.gone_secret_addresses(_state_with_secrets())
+
+
+class FakeBucketDescribeDenied(FakeBucket):
+    def run_aws(self, args: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if args[:2] == ["secretsmanager", "describe-secret"]:
+            return _fail("An error occurred (AccessDeniedException) when calling the DescribeSecret operation")
+        return super().run_aws(args, **kwargs)
+
+
+def test_an_unreadable_secret_leaves_the_state_alone_and_still_destroys(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = cloud_run.state_key("dfe-e2e-runs", "run-old")
+    bucket = FakeBucketDescribeDenied({"run-old": _record("run-old", NOW - 60)}, {state})
+    problems, calls = _reap(monkeypatch, bucket, state=_state_with_secrets())
+    assert problems == []
+    assert [c[0][0] for c in calls] == ["init", "destroy"]
+
+
+def test_no_state_answer_prunes_nothing() -> None:
+    assert cloud_reaper.gone_secret_addresses({}) == []
 
 
 def test_an_expired_run_with_no_state_only_loses_its_record(monkeypatch: pytest.MonkeyPatch) -> None:
