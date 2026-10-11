@@ -600,13 +600,14 @@ def rebuild_rust(
 
 
 def _bump_py_constraint(repo: Path, version: str, *, package: str = "scalo") -> None:
-    """Rewrite the version floor in pyproject.toml, preserving extras.
+    """Rewrite the version floor in pyproject.toml, preserving extras and any other specifier.
 
     The dep is an extras-carrying constraint, e.g.
-    ``scalo[expression,http,metrics,opentelemetry]>=2.29.7``. A plain
+    ``scalo[expression,http,metrics,opentelemetry]>=2.29.7,<3``. A plain
     ``uv add`` rewrites the whole specifier and can silently drop the extras,
     which fails at RUNTIME rather than at build -- so the gates below would
-    never catch it.
+    never catch it. Only the ``>=`` floor moves; an upper bound such as ``<3``
+    stays.
 
     Args:
         repo: The consumer's checkout.
@@ -618,8 +619,8 @@ def _bump_py_constraint(repo: Path, version: str, *, package: str = "scalo") -> 
     """
     path = repo / "pyproject.toml"
     source = path.read_text(encoding="utf-8")
-    pattern = re.compile(rf'("{re.escape(package)}(?:\[[^\]]*\])?)>=[0-9][^"]*"')
-    updated, count = pattern.subn(lambda m: f'{m.group(1)}>={version}"', source)
+    pattern = re.compile(rf'("{re.escape(package)}(?:\[[^\]]*\])?)>=[0-9][^",;\s]*')
+    updated, count = pattern.subn(lambda m: f"{m.group(1)}>={version}", source)
     if not count:
         raise FleetError(f"no '{package}...>=X.Y.Z' constraint found in pyproject.toml")
     if updated != source:
