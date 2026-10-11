@@ -1,5 +1,7 @@
 # e2e-ui -- browser-level acceptance for the deployed DFE stack
 
+<!-- probe -->
+
 Playwright against a REAL deployment: OIDC flows, RBAC roles, org tenancy.
 Complements dfe-engine's API-level e2e -- this layer proves what a person at a
 browser actually gets.
