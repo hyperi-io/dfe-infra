@@ -10,9 +10,9 @@ door in `exposure.mode`.
 
 | mode | What renders | Client CIDR control |
 |---|---|---|
-| `public` (default) | one LoadBalancer per protocol family carrying the `exposed` listeners, plus a NetworkPolicy opening those ports | `exposure.public.loadBalancerSourceRanges` |
+| `public` (default) | one LoadBalancer per protocol family carrying every public port of the receiver's contract that its config turns on, plus a NetworkPolicy admitting the same ports | `exposure.public.loadBalancerSourceRanges` |
 | `internal` | ClusterIP only; the door is the Gateway HTTPRoute `routes.receiver` in envoy-gateway-config, on `receiver.{domain}` | the Gateway's own edge |
-| `vpn` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the VPN pods rather than the world | the VPN's own LoadBalancer, plus per-client PKI or OIDC |
+| `vpn` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the VPN pods, not the world, to the `listeners` marked `exposed` | the VPN's own LoadBalancer, plus per-client PKI or OIDC |
 
 `exposure.public` also takes `annotations` and `loadBalancerClass` for the load balancer controller, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. The render refuses scalo-service's own `publicService.*` keys on the receiver, because nothing builds its load balancer from them (`loadBalancerIP` is the appset's, carrying that address), and refuses `loadBalancerSourceRanges` beside any `serviceType` but `LoadBalancer`, where Kubernetes ignores it.
 
@@ -32,14 +32,21 @@ the per-IP rate limiter are the only other limits. A public deployment
 needs `loadBalancerSourceRanges`, or `server.auth.mode: bearer` with tokens
 in the engine's overlay, or both.
 
-A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). OTLP/gRPC 4317 and OTLP/HTTP 4318 are a separate pair that opens with `config.otlp.enabled`. `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths.
+A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths. Every other public listener in the receiver's contract opens with its own `config.<name>.enabled`, and in public mode reaches the load balancer and the policy with it:
 
-Client-CIDR filtering is the LoadBalancer's job, not the NetworkPolicy's:
-under the default `externalTrafficPolicy` kube-proxy SNATs external traffic
-to a node address, so an `ipBlock` would match the node rather than the
-client and drop traffic the LB had already allowed. The chart's ingest
-NetworkPolicy therefore opens the exposed ports and leaves the allow-list
-to the LB.
+| `<name>` | Ports |
+|---|---|
+| `otlp` | 4317 (gRPC), 4318 (HTTP) |
+| `lumberjack` | 5044 |
+| `splunk_hec` | 8088 |
+| `prometheus_rw` | 9091 |
+| `webhook` | 8090 |
+| `syslog` | 514 TCP and UDP, 6514 TCP |
+| `fluent` | 24224 |
+| `gelf` | 12201 |
+| `flow` | 2055, 4739 and 6343, all UDP |
+
+Client-CIDR filtering is the LoadBalancer's job, not the NetworkPolicy's: under the default `externalTrafficPolicy` kube-proxy SNATs external traffic to a node address, so an `ipBlock` would match the node rather than the client and drop traffic the LB had already allowed. The public-mode ingest NetworkPolicy therefore admits each port the load balancers serve from any source and leaves the allow-list to the LB. It renders from the same port list as the load balancers, in `extraObjects` of `argocd/values/apps/dfe-receiver/values.yaml`, and `exposure.networkPolicy.enabled: false` drops it. vpn mode's policy of the same name is dfe-extras', on the `exposed` listeners.
 
 ## Internal mode routes HTTP only
 
