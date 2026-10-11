@@ -362,6 +362,49 @@ def test_the_render_prints_the_edge_summary(tmp_path: Path) -> None:
     assert "bucket L" in result.stderr
 
 
+@pytest.mark.parametrize(("cidrs", "flavour", "said"), [
+    ([], "aws", "every web route answers 403 to every address"),
+    ([], "gcp", "every web route answers 403 to every address"),
+    ([], "azure", "every web route answers 403 to every address"),
+    ([], "onprem", "not internet-facing, so nothing is fenced"),
+    (["203.0.113.7/32", "198.51.100.0/24"], "aws", "203.0.113.7/32, 198.51.100.0/24"),
+])
+def test_the_web_fence_line_says_what_the_gateway_admits(cidrs: list[str], flavour: str, said: str) -> None:
+    line, warnings = render_dial.web_fence(cidrs, flavour)
+    assert said in line, line
+    assert warnings == []
+
+
+@pytest.mark.parametrize("everything", ["0.0.0.0/0", "::/0", "10.0.0.0/0"])
+def test_a_slash_zero_is_every_address_and_warns(everything: str) -> None:
+    """A /0 is the whole family whatever the address part says."""
+    line, warnings = render_dial.web_fence(["203.0.113.7/32", everything], "aws")
+    assert line.endswith("-- every address"), line
+    assert len(warnings) == 1, warnings
+    assert everything in warnings[0], warnings
+
+
+@pytest.mark.parametrize(("value", "said"), [
+    ('""', "web allow-list (edge.product.allowed_cidrs): empty -- the gateway is internet-facing"),
+    ('"0.0.0.0/0"', "render_dial: WARNING -- edge.product.allowed_cidrs carries 0.0.0.0/0"),
+])
+def test_the_render_prints_the_web_fence(value: str, said: str, tmp_path: Path) -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    line = '    allowed_cidrs: ""\n'
+    assert text.count(line) == 1, "the example's edge.product.allowed_cidrs moved; this test edits it in place"
+    (tmp_path / "deployment.yaml").write_text(
+        text.replace(line, f"    allowed_cidrs: {value}\n"), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "render_dial.py"),
+         "--dial", str(tmp_path / "deployment.yaml"),
+         "--out", str(tmp_path / "bootstrap.env")],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert said in result.stderr, result.stderr
+
+
 def test_the_render_says_where_otel_ingress_takes_its_token(tmp_path: Path) -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
     block = "    otel:\n      enabled: false\n      port: 4319\n      auth:\n        remoteKey: \"\"\n"
@@ -410,6 +453,9 @@ REFUSED_DIALS = {
     "an unknown controller pool": lambda text: text.replace(
         "  controller_pool: combined", "  controller_pool: nosuchpool"
     ),
+    "a trusted proxy range of every address": lambda text: text.replace(
+        '    trusted_proxy_cidrs: ""', "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0"
+    ),
 }
 
 # An env file an operator already holds, which a refused dial must not touch.
@@ -444,6 +490,14 @@ def test_a_refused_dial_leaves_an_existing_env_file_untouched(refusal: str, tmp_
     result = _render(REFUSED_DIALS[refusal](EXAMPLE.read_text(encoding="utf-8")), tmp_path)
     assert result.returncode == 1, result.stderr
     assert env.read_text(encoding="utf-8") == OPERATOR_ENV, result.stderr
+
+
+def test_a_trusted_proxy_range_of_every_address_is_refused_with_its_reason(tmp_path: Path) -> None:
+    result = _render(REFUSED_DIALS["a trusted proxy range of every address"](EXAMPLE.read_text(encoding="utf-8")),
+                     tmp_path)
+    assert result.returncode == 1, result.stderr
+    assert "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts every address" in result.stderr
+    assert "a header the client sets" in result.stderr
 
 
 def test_an_accepted_dial_still_writes_the_env_file(tmp_path: Path) -> None:

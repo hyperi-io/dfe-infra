@@ -14,7 +14,9 @@
 {{- /* The second wall. ui.allowed_cidrs is enforced at Envoy as well, so a
        misconfigured policy is not the only thing between the internet and a UI
        -- but this one is the WHOLE front door, ingest routes included, because
-       one Service carries every listener. */}}
+       one Service carries every listener. A range ingest needs beyond the list
+       goes in envoyGateway.service.loadBalancerSourceRanges: Envoy still holds
+       the web routes to the list. */}}
 {{- $sourceRanges := concat ($svc.loadBalancerSourceRanges | default list) $allowed | uniq }}
 {{- /* Every name this edge answers on, public and internal. external-dns picks
        the zone by matching the suffix, so the public names land in the
@@ -48,10 +50,16 @@ spec:
           image: {{ .Values.envoyGateway.proxy.image | quote }}
       envoyService:
         type: {{ $svc.type | default "LoadBalancer" }}
-        {{- if or $svc.annotations $hostnames }}
+        {{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
+        {{- if or $svc.annotations $hostnames $fence }}
         annotations:
           {{- with $svc.annotations }}
           {{- toYaml . | nindent 10 }}
+          {{- end }}
+          {{- /* What the web routes admit, for dfe-ops and anyone reading the
+                 Service: deny, listed or allow-all. */}}
+          {{- with $fence }}
+          dfe.hyperi.io/edge-fence: {{ . | quote }}
           {{- end }}
           {{- /* Written only once a public zone is named, so a deployment that
                  manages its own DNS by hand is untouched. The marker beside it

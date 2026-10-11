@@ -156,11 +156,12 @@ spec:
                 mode: {{ $kafkaMode | quote }}
               {{- end }}
               {{- if index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" }}
-              # The fence the dial or a guarded test run names; bootstrap.sh writes
-              # both annotations or neither, and they beat the deploy-repo overlay.
+              # The fence the dial or a guarded test run names, beating the
+              # deploy-repo overlay. The CDN ranges are written even when blank,
+              # so an overlay cannot keep trusting a range the dial dropped.
               ui:
                 allowed_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" | quote }}
-                trusted_proxy_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_trusted_proxy_cidrs" | quote }}
+                trusted_proxy_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_trusted_proxy_cidrs" | default "" | quote }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'

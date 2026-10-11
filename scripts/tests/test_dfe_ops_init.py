@@ -321,6 +321,21 @@ def test_telemetry_sink_uses_render_dial_validator() -> None:
         wiz.step_telemetry(io, answers)
 
 
+def test_a_trusted_proxy_range_of_every_address_is_refused_through_answers() -> None:
+    answers = {"ui_allowed_cidrs": "198.51.100.0/24", "ui_trusted_proxy_cidrs": "192.0.2.0/25, ::/0",
+               "ui_dfe_ui": "n", "public_zone": ""}
+    with pytest.raises(wiz.InitError, match="trusts every address"):
+        wiz.step_public_uis(wiz.WizardIO(answers=answers), wiz.Answers())
+
+
+def test_a_cdn_range_is_accepted_through_answers() -> None:
+    answers = {"ui_allowed_cidrs": "198.51.100.0/24", "ui_trusted_proxy_cidrs": "192.0.2.0/25",
+               "ui_dfe_ui": "n", "public_zone": ""}
+    collected = wiz.Answers()
+    wiz.step_public_uis(wiz.WizardIO(answers=answers), collected)
+    assert collected.ui_trusted_proxy_cidrs == "192.0.2.0/25"
+
+
 def test_ingest_gb_per_day_uses_resolve_sizing_validator() -> None:
     io = wiz.WizardIO(answers={"ingest_gb_per_day": "not-a-number"})
     answers = wiz.Answers()

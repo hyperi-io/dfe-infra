@@ -149,12 +149,12 @@ for r in links forgejo; do
 done
 
 echo ""
-echo "case 2 -- kill switch off: infra class gone, product and ingest stay"
+echo "case 2 -- kill switch off: infra class gone, product (HyperDX included) and ingest stay"
 R="$(render_names HTTPRoute --set exposure.infraUisExternal=false "${OTEL_ON[@]}")"
-for r in argocd hyperdx forgejo kafbat links; do
+for r in argocd forgejo kafbat links; do
   assert_absent "killswitch" "${r}" "${R}"
 done
-for r in dfe-ui dfe-engine otel; do
+for r in dfe-ui dfe-engine hyperdx otel; do
   assert_has "killswitch" "${r}" "${R}"
 done
 
@@ -254,7 +254,7 @@ assert_render_refused "ui-rate-limit-type-guard" "ui.rate_limit.enabled" --set-s
 assert_render_refused "ui-tls-hsts-type-guard" "ui.tls.hsts" --set-string ui.tls.hsts=true
 
 echo ""
-echo "case 15 -- the AWS cascade's own defaults render clean: OIDC on, no admin UI on the public edge"
+echo "case 15 -- the AWS cascade's own defaults render clean: OIDC on, no admin UI on the public edge, HyperDX beside the console"
 # Both files, in the order layer2-edge.yaml layers them: the edge module's tier
 # table sits on top of the cloud overlay, and the kill switch is in the former
 # while oidc.enabled stays in the latter.
@@ -262,10 +262,11 @@ R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-sys
   -f argocd/values/common.yaml -f argocd/values/aws.yaml -f argocd/values/edge-aws.yaml \
   --set appNamespace=dfe-local --set domain=dfe.example.com 2>/dev/null \
   | awk '/^kind: /{k=$2} /^  name: /{if (k=="HTTPRoute") print $2}')"
-for r in argocd hyperdx forgejo kafbat links otel; do
+for r in argocd forgejo kafbat links otel; do
   assert_absent "aws-overlay-default" "${r}" "${R}"
 done
-for r in dfe-ui dfe-engine; do
+# HyperDX is class product, so the console's Observe frame has a route to load.
+for r in dfe-ui dfe-engine hyperdx; do
   assert_has "aws-overlay-default" "${r}" "${R}"
 done
 

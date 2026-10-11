@@ -108,12 +108,12 @@ def admin_links(docs: tuple[dict, ...]) -> tuple[dict, list[dict]]:
 
 
 def infra_routes() -> dict[str, dict]:
-    """routeName -> its values entry, for every infra-class route the chart defines."""
+    """routeName -> its values entry, for every route the engine lists: infra class or an adminLink."""
     values = yaml.safe_load((GATEWAY / "values.yaml").read_text(encoding="utf-8"))
     return {
         route["routeName"]: route
         for route in values["routes"].values()
-        if route.get("class", "infra") == "infra"
+        if route.get("class", "infra") == "infra" or route.get("adminLink")
     }
 
 
@@ -180,12 +180,12 @@ def test_the_matrix_lists_every_infra_route_somewhere() -> None:
     assert seen == {route["adminLink"]["name"] for route in infra_routes().values()}
 
 
-def test_the_kill_switch_empties_the_list_and_keeps_the_configmap() -> None:
-    """An engine restarted after a lock-down must read none, not a stale list."""
+def test_the_kill_switch_leaves_only_the_product_links_and_keeps_the_configmap() -> None:
+    """An engine restarted after a lock-down must read no infra link, not a stale list."""
     docs = gateway(*cascade("local", "scale", True, True), "--set", "exposure.infraUisExternal=false")
     _, entries = admin_links(docs)
-    assert entries == []
-    assert served(docs) == []
+    assert [entry["name"] for entry in entries] == ["Search"]
+    assert listed(entries) == served(docs)
 
 
 def test_a_renamed_host_reaches_the_link() -> None:

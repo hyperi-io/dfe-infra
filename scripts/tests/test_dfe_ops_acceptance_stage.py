@@ -333,6 +333,28 @@ def test_a_nodeport_gateway_passes_with_a_note(
     assert "NodePort" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(("state", "said"), [
+    ("deny", "public web: CLOSED"),
+    ("allow-all", "WARNING: the gateway's allow-list admits every address"),
+    ("listed", "public web: fenced to edge.product.allowed_cidrs"),
+    (None, ""),
+])
+def test_the_fence_notice_reads_the_gateway_service(
+    monkeypatch: pytest.MonkeyPatch, state: str | None, said: str
+) -> None:
+    annotations = {dfeops.EDGE_FENCE_ANNOTATION: state} if state else {}
+    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
+                           "annotations": annotations}, "spec": {"type": "LoadBalancer"}}]
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    notice = dfeops.edge_fence_notice(["kubectl"])
+    assert (said in notice) if said else notice == "", notice
+
+
+def test_an_unreadable_service_gives_no_fence_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (1, {}, "Forbidden"))
+    assert dfeops.edge_fence_notice(["kubectl"]) == ""
+
+
 def test_expected_fail_only_clusterip_services_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cloud gateway whose load balancer never appeared must not pass as on-prem."""
     _envoy_services(monkeypatch)

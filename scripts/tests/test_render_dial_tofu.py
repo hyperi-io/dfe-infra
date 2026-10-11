@@ -582,6 +582,17 @@ def test_a_trusted_proxy_entry_with_no_prefix_is_refused_by_name() -> None:
         render(replace=bad)
 
 
+@pytest.mark.parametrize("trusted", ["0.0.0.0/0", "::/0", "192.0.2.0/25, ::/0", "192.0.2.0/25, 0.0.0.0/0"])
+def test_a_trusted_proxy_range_of_every_address_is_refused(trusted: str) -> None:
+    """Every peer is then trusted, so the fence reads a header the client writes."""
+    bad = (
+        "profile: scale",
+        f"profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24\n    trusted_proxy_cidrs: {trusted}\n",
+    )
+    with pytest.raises(render_dial.DialError, match=r"trusts every address"):
+        render(replace=bad)
+
+
 def test_a_gateway_allow_list_entry_with_no_prefix_is_refused_by_name() -> None:
     """A load balancer security group refuses a bare address, after the cluster is paid for."""
     bad = ("profile: scale", "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.10\n")

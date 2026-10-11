@@ -538,6 +538,19 @@ def test_cidr_filter_fails_when_an_off_list_public_address_gets_an_answer(
     assert "outside the allow-list" in check.evidence
 
 
+def test_cidr_filter_passes_when_envoy_refuses_an_off_list_address(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ingest widening the load balancer, the gateway's 403 is the fence that bit."""
+    gateway.routes[(PRODUCT, "/")] = 403
+    monkeypatch.setattr(probe, "_reach", _sourced_at(gateway, "198.51.100.9"))
+    check = probe.check_cidr_filter(
+        _settings(allowed_cidrs=("203.0.113.0/24",)), PRODUCT, "127.0.0.1"
+    )
+    assert check.verdict == probe.PASS
+    assert "answered 403" in check.evidence
+
+
 def test_cidr_filter_skips_rather_than_failing_a_deployment_probed_from_behind_nat(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -26,12 +26,21 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 | **dfe-receiver** | **Internet / user facing** | The ingest edge. Takes arbitrary data from whoever can route to it. The primary attack surface. |
 | **dfe-ui** | **User facing** | Browser-facing Next.js app, behind auth in every deployment that has an issuer. |
 | **dfe-hyperdx** | **User facing, authenticated** | Search and dashboards embedded in dfe-ui. Verifies the engine's token on every request and queries ClickHouse as the one ClickHouse user the engine hands that session: one HyperDX team per ClickHouse identity, and a team holding any other user's connection refuses the session. Admin surfaces are engine-only. Its own store holds every team's connection, the unrestricted platform reader's included, so a flaw that crosses the team fence reaches every org's data. |
+| The gateway's web routes | **Internet facing from `ui.allowed_cidrs` only** | On every cloud flavour Envoy refuses dfe-ui, dfe-hyperdx, the engine API and the admin UIs to an address off the list, and an EMPTY list refuses every address. Ingest routes are not fenced at Envoy. Envoy parses an outsider's request before the check, so an Envoy advisory is reachable. |
 | **culvert** | **Internet facing, opt-in** | The edge-fleet VPN (below). |
 | dfe-fetcher | Outbound only | Reaches external APIs, but **it initiates** every connection. Its ingest port is off by default. |
 | dfe-engine | CLI and API | Reachable by operators, not by the public. The API is authenticated. |
 | dfe-loader, dfe-archiver, dfe-transform-* | Not exposed | Consume from the broker and write to a datastore. On the direct transport, dfe-loader, dfe-archiver, dfe-transform-vrl and dfe-transform-vector each bind a plaintext, unauthenticated gRPC Push listener on a ClusterIP Service, port 6000 (`dfe-common.pushService`). dfe-transform-elastic's direct-transport listener is implemented but not wired in yet (dfe-transform-elastic#19). The namespace baseline NetworkPolicy (`dfe-ingress-policy`, `helm/charts/network-policies`) admits the gateway namespace and every DFE and otel namespace, so the listener is reachable only from pods in those namespaces, never from outside the cluster. |
 | ClickHouse, Kafka, the collector | Not exposed | Cluster-internal. On Kubernetes the apps reach ClickHouse over verified TLS (below). dfe-docker's `docs/operating.md` covers the Compose bindings. |
 | The collector's OTLP ingress | **Off by default. When a deployment sets `otel.ingress.enabled`: reachable from outside the cluster, authenticated** | `otel.<domain>` on the gateway reaches a second OTLP/HTTP receiver that refuses any request without the bearer token from the deployment's secret store. The check is the collector's own (`bearertokenauth`), so it holds however that port is reached. Before the token is checked, the collector's HTTP server and the extension parse an outsider's request: on such a deployment, grade an advisory in either as reachable. The in-cluster receiver on 4317/4318 stays unauthenticated and no route publishes it. |
+
+## The gateway's trusted proxy ranges
+
+No gateway listener believes `X-Forwarded-For` by default. The CIDR filter judges the TCP peer, which every flavour's load balancer delivers unchanged ([EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)), so a forged header from a client, the tunnel forwarder in an AWS public subnet, or any other host beside the load balancer passes nothing.
+
+`ui.trusted_proxy_cidrs` is the one way to change that: the public listeners (`https-public-*`) then read the header when the TCP peer is inside the list. Every host in a listed range can claim any client address, so it names a CDN's ranges and nothing shared. Treat a deployment that lists anything else as fenced to that whole range.
+
+The receiver route through the gateway is refused on an internet-facing Service unless `routes.receiver.authMode` says the receiver checks callers (`header` or `bearer`). The gateway cannot read the receiver's own values, so that key is only what the operator declared. Grade a deployment whose two values disagree by the receiver's.
 
 ## The edge tunnel
 

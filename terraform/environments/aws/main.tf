@@ -169,13 +169,12 @@ module "edge" {
   cluster_name = module.cluster.cluster_name
 
   // The public half, because the forwarder's Elastic IP is only delivered where
-  // the subnet routes at an internet gateway, and the gateway's load balancer sits there.
+  // the subnet routes at an internet gateway.
   network = {
-    vpc_id              = module.cluster.network.vpc_id
-    cidr                = module.cluster.network.cidr
-    azs                 = module.cluster.network.azs
-    public_subnet_ids   = module.cluster.network.public_subnet_ids
-    public_subnet_cidrs = module.cluster.network.public_subnet_cidrs
+    vpc_id            = module.cluster.network.vpc_id
+    cidr              = module.cluster.network.cidr
+    azs               = module.cluster.network.azs
+    public_subnet_ids = module.cluster.network.public_subnet_ids
   }
 
   // The group the nodes carry, so the forwarder's DNAT target is admitted at the

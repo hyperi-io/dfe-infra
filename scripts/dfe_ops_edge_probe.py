@@ -703,7 +703,9 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
     if not settings.allowed_cidrs:
         return Check(
             name, SKIP,
-            "edge.product.allowed_cidrs is empty -- every address may reach the listener",
+            "edge.product.allowed_cidrs is empty -- an internet-facing gateway then answers 403 "
+            "to every address and an on-prem one admits every address, so no off-list address "
+            "exists to test with",
         )
     listed = ", ".join(settings.allowed_cidrs)
     answer = _reach(Request(host=host, address=address))
@@ -712,6 +714,14 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
             name, PASS,
             f"{host} on {address} refused this machine, which is off the allow-list "
             f"{listed} ({answer.error})",
+        )
+    # Envoy's own refusal: the load balancer let the connection through, and the
+    # gateway's address rule turned the request away.
+    if answer.status == 403 and not address_in_cidrs(answer.source, settings.allowed_cidrs):
+        return Check(
+            name, PASS,
+            f"{host} on {address} answered 403 to {answer.source}, which is off the allow-list "
+            f"{listed}",
         )
     if address_in_cidrs(answer.source, settings.allowed_cidrs):
         return Check(

@@ -20,6 +20,8 @@ cruiseControlUi -- is the kafka chart deploying the Cruise Control UI? The
 otelIngress  -- is the otel-collector chart serving its bearer-token OTLP
   receiver? Same reason: both charts read otel.ingress.enabled.
 validateOtelIngress -- the switch's render guards, which templates/validate.yaml runs.
+validateReceiver -- refuses the receiver route on an internet-facing Service
+  unless routes.receiver.authMode names a mode that checks every caller.
 routeHost    -- subdomain label, from the route's hostname or hostnames[hostnameKey].
 routeNs      -- namespace of the route and of any SecurityPolicy targeting it.
 infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
@@ -78,6 +80,20 @@ true
 {{- end -}}
 {{- if and $ingress.enabled (not $ingress.auth.remoteKey) -}}
 {{- fail "otel.ingress.enabled is true and otel.ingress.auth.remoteKey is empty -- OTLP ingest from outside the cluster admits only a bearer token, and this key names where the deployment's secret store holds it. Store the token (property token) at a path such as <project>/<env>/otel/ingress and set otel.ingress.auth.remoteKey to it in the deploy repo's infra/common.yaml. There is no unauthenticated mode" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The receiver checks its own callers by config.server.auth.mode in its own
+       values, which this chart cannot read, so routes.receiver.authMode restates
+       it. Envoy terminates TLS, so only header and bearer authenticate a caller
+       arriving through this route. */ -}}
+{{- define "envoy-gateway-config.validateReceiver" -}}
+{{- $mode := lower (toString (.ctx.Values.routes.receiver.authMode | default "none")) -}}
+{{- if not (has $mode (list "none" "header" "bearer" "mtls" "both")) -}}
+{{- fail (printf "routes.receiver.authMode is %q -- it restates dfe-receiver's config.server.auth.mode, which is none, header, bearer, mtls or both" $mode) -}}
+{{- end -}}
+{{- if and .ctx.Values.envoyGateway.service.internetFacing (include "envoy-gateway-config.routeEnabled" (dict "ctx" .ctx "key" "receiver")) (not (has $mode (list "header" "bearer"))) -}}
+{{- fail (printf "routes.receiver.enabled is true on an internet-facing Service and routes.receiver.authMode is %q -- the route would take ingest from any address the load balancer admits, and the fence does not cover ingest. Set the receiver's own config.server.auth.mode to header or bearer and restate it here as routes.receiver.authMode (mtls and both need the client certificate, which Envoy terminates), or leave this route off and give the receiver its own load balancer" $mode) -}}
 {{- end -}}
 {{- end -}}
 
@@ -253,6 +269,11 @@ publicHost    -- the fully qualified public hostname of a route, taken from its
   listener owner so the listener, the certificate and the route share one name.
 publicPaths   -- JSON array of the PathPrefix values a public route matches.
 cidrList      -- a comma-separated dial scalar as a YAML list of trimmed entries.
+webFence      -- who the web routes admit: "deny" (internet-facing, no list),
+  "listed", "allow-all" (an entry is a /0), or "" (not internet-facing, no list).
+fenceAuthorization -- a SecurityPolicy authorization block that denies by
+  default and allows .cidrs; takes (dict "cidrs" <list> "indent" <n>).
+ingestRoutes  -- JSON array of the ingest-class route keys that render.
 validateUi    -- the render guards; templates/validate.yaml runs them.
 */}}
 
@@ -282,6 +303,52 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- end -}}
 {{- $out | toJson -}}
+{{- end -}}
+
+{{- /* A /0 of either family is every address, whatever the address part says. */ -}}
+{{- define "envoy-gateway-config.webFence" -}}
+{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .ctx.Values.ui.allowed_cidrs) | fromJsonArray -}}
+{{- if $allowed -}}
+{{- $state := "listed" -}}
+{{- range $allowed -}}
+{{- if hasSuffix "/0" . -}}
+{{- $state = "allow-all" -}}
+{{- end -}}
+{{- end -}}
+{{- $state -}}
+{{- else if .ctx.Values.envoyGateway.service.internetFacing -}}
+deny
+{{- end -}}
+{{- end -}}
+
+{{- /* Envoy Gateway's own CIDR alternatives (shared_types.go at v1.9.2),
+       anchored, with the prefix length bounded by the family. Its zone-indexed
+       fe80 form is left out: the Service API refuses a zone in a source range. */ -}}
+{{- define "envoy-gateway-config.cidrValid" -}}
+{{- $v4 := `^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/([0-9]|[12][0-9]|3[0-2])$` -}}
+{{- $v6 := `^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$` -}}
+{{- if or (regexMatch $v4 .) (regexMatch $v6 .) -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- /* No rules with an empty list, so the policy refuses every request. */ -}}
+{{- define "envoy-gateway-config.fenceAuthorization" -}}
+{{- $block := dict "defaultAction" "Deny" -}}
+{{- if .cidrs -}}
+{{- $_ := set $block "rules" (list (dict "name" "allow-listed-cidrs" "action" "Allow" "principal" (dict "clientCIDRs" .cidrs))) -}}
+{{- end -}}
+{{- dict "authorization" $block | toYaml | nindent (int .indent) -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.ingestRoutes" -}}
+{{- $keys := list -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if and (eq ($r.class | default "infra") "ingest") (include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key)) -}}
+{{- $keys = append $keys $key -}}
+{{- end -}}
+{{- end -}}
+{{- $keys | sortAlpha | toJson -}}
 {{- end -}}
 
 {{- define "envoy-gateway-config.publicRoutes" -}}
@@ -383,10 +450,33 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
        internetFacing is the chart's own cloud-agnostic signal (see
        values.yaml); it says nothing about ui.public_domain, so this fires
        whether or not any UI is ALSO published on its own public hostname. */ -}}
-{{- if and .ctx.Values.envoyGateway.service.internetFacing .ctx.Values.exposure.infraUisExternal -}}
+{{- $facing := .ctx.Values.envoyGateway.service.internetFacing -}}
+{{- if not (kindIs "bool" $facing) -}}
+{{- fail (printf "envoyGateway.service.internetFacing is %v (a %s), not a bool -- it decides whether every web route is fenced to ui.allowed_cidrs, and a quoted \"false\" is truthy. Write true or false unquoted" $facing (kindOf $facing)) -}}
+{{- end -}}
+{{- /* internetFacing is declared rather than derived, so false is held against
+       the markers the cloud itself reads: an explicit AWS internet-facing scheme,
+       or a GKE or AKS LoadBalancer with no internal marker, which both make public. */ -}}
+{{- $svc := .ctx.Values.envoyGateway.service -}}
+{{- if and (not $facing) (eq ($svc.type | default "LoadBalancer") "LoadBalancer") -}}
+{{- $annotations := $svc.annotations | default dict -}}
+{{- $clouds := list (toString .ctx.Values.cloud) (toString (dig "cloud" "" (.ctx.Values.global | default dict))) -}}
+{{- $consequence := "false turns off the web fence and the receiver route's caller-auth check" -}}
+{{- if eq (lower (toString (index $annotations "service.beta.kubernetes.io/aws-load-balancer-scheme" | default ""))) "internet-facing" -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false and envoyGateway.service.annotations sets service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing -- the load balancer is public, and %s. Set internetFacing: true, or make the scheme internal" $consequence) -}}
+{{- end -}}
+{{- $gke := list (index $annotations "networking.gke.io/load-balancer-type" | default "") (index $annotations "cloud.google.com/load-balancer-type" | default "") -}}
+{{- if and (has "gcp" $clouds) (not (has "internal" (list (lower (toString (index $gke 0))) (lower (toString (index $gke 1)))))) -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false on a GKE LoadBalancer Service with no networking.gke.io/load-balancer-type: Internal in envoyGateway.service.annotations -- GKE makes that load balancer public, and %s. Set internetFacing: true, or annotate the Service internal" $consequence) -}}
+{{- end -}}
+{{- if and (has "azure" $clouds) (ne (lower (toString (index $annotations "service.beta.kubernetes.io/azure-load-balancer-internal" | default ""))) "true") -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false on an AKS LoadBalancer Service with no service.beta.kubernetes.io/azure-load-balancer-internal: \"true\" in envoyGateway.service.annotations -- AKS makes that load balancer public, and %s. Set internetFacing: true, or annotate the Service internal" $consequence) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $facing .ctx.Values.exposure.infraUisExternal -}}
 {{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
 {{- if and (not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers)) (not $ui.allowed_cidrs) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, hyperdx, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs (with ui.trusted_proxy_cidrs), or leave exposure.infraUisExternal: false" -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs, or leave exposure.infraUisExternal: false" -}}
 {{- end -}}
 {{- end -}}
 
@@ -463,13 +553,25 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- end -}}
 
-{{- /* Envoy infers the client IP from X-Forwarded-For. With no trusted proxy
-       range it believes the leftmost entry, which the caller writes, so the
-       CIDR filter admits anyone who sends the right header. */ -}}
 {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" $ui.allowed_cidrs) | fromJsonArray -}}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" $ui.trusted_proxy_cidrs) | fromJsonArray -}}
-{{- if and $allowed (not $trusted) -}}
-{{- fail "ui.allowed_cidrs is set and ui.trusted_proxy_cidrs is empty -- Envoy would take the client address from the leftmost X-Forwarded-For entry, which the caller writes, so the filter would admit anyone who sends the right header. Name the load balancer's subnet CIDRs (and any CDN in front of it)" -}}
+{{- /* Envoy Gateway's CIDR type (api/v1alpha1/shared_types.go at v1.9.2) and
+       the Service's loadBalancerSourceRanges both refuse an entry with no
+       prefix length, but only at admission, where it surfaces as an Argo
+       SyncFailed on the whole edge. Same shape, anchored, checked here. */ -}}
+{{- range $field, $list := dict "ui.allowed_cidrs" $allowed "ui.trusted_proxy_cidrs" $trusted -}}
+{{- range $entry := $list -}}
+{{- if not (include "envoy-gateway-config.cidrValid" $entry) -}}
+{{- fail (printf "%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $field $entry) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Every peer inside a /0 is trusted, so Envoy takes the client from the
+       leftmost X-Forwarded-For entry, which the caller writes. */ -}}
+{{- range $entry := $trusted -}}
+{{- if hasSuffix "/0" $entry -}}
+{{- fail (printf "ui.trusted_proxy_cidrs carries %q, which trusts every address -- Envoy then takes the client from the leftmost X-Forwarded-For entry, which the caller writes, so a /0 trusted list makes the fence a header the client sets. Name only the ranges of the CDN or other L7 proxy in front" $entry) -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* Authentication on a public route is edge OIDC, or one of the three

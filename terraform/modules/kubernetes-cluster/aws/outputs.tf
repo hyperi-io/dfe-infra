@@ -35,14 +35,13 @@ output "cluster_security_group_id" {
 }
 
 output "network" {
-  description = "What a sibling module attaches to -- managed Kafka on private connectivity needs the same subnets and the same CIDR. public_subnet_cidrs are where an internet-facing load balancer sits, so they are the only hops the gateway trusts to name a client address."
+  description = "What a sibling module attaches to -- managed Kafka on private connectivity needs the same subnets and the same CIDR."
   value = {
-    vpc_id              = aws_vpc.this.id
-    cidr                = aws_vpc.this.cidr_block
-    azs                 = local.azs
-    private_subnet_ids  = [for az in local.azs : aws_subnet.private[az].id]
-    public_subnet_ids   = [for az in local.azs : aws_subnet.public[az].id]
-    public_subnet_cidrs = [for az in local.azs : aws_subnet.public[az].cidr_block]
+    vpc_id             = aws_vpc.this.id
+    cidr               = aws_vpc.this.cidr_block
+    azs                = local.azs
+    private_subnet_ids = [for az in local.azs : aws_subnet.private[az].id]
+    public_subnet_ids  = [for az in local.azs : aws_subnet.public[az].id]
   }
 }
 

@@ -1,4 +1,5 @@
 {{/* Renders nothing; exists so the exposure guards run in every mode. */}}
 {{- include "envoy-gateway-config.validateUi" (dict "ctx" .) -}}
 {{- include "envoy-gateway-config.validateOtelIngress" (dict "ctx" .) -}}
+{{- include "envoy-gateway-config.validateReceiver" (dict "ctx" .) -}}
 {{- $_ := include "envoy-gateway-config.engineDocs" (dict "ctx" .) -}}

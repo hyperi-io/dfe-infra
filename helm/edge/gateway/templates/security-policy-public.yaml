@@ -1,5 +1,6 @@
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
+{{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
 {{- $edgeRoutes := list }}
 {{- range $route := .Values.oidc.targetRoutes }}
 {{- $edgeRoutes = append $edgeRoutes $route.name }}
@@ -11,18 +12,23 @@
 {{- $hasProviders := and $.Values.oidc.enabled $.Values.oidc.providers }}
 {{- $edge := and $hasProviders (or $r.edgePolicy (has $r.routeName $edgeRoutes)) }}
 {{- if $edge }}
-{{- range $provider := $.Values.oidc.providers }}
+{{- $loginName := include "envoy-gateway-config.loginProviderName" (dict "ctx" $) }}
+{{- range $login := $.Values.oidc.providers }}
+{{- if eq $login.name $loginName }}
 ---
 # Edge login on the PUBLIC hostname. Its own redirectURL and its own cookie: an
 # OIDC session cookie is set on the host the user is on, and a session minted on
 # the internal name must not be replayable on the public one.
+# ONE policy per route, never one per provider: two SecurityPolicies naming the
+# same HTTPRoute conflict and only the oldest applies. oidc.loginProvider owns
+# the redirect; every provider stays a JWT issuer with an Allow rule of its own.
 # defaultAction Deny means a request that matches no rule is refused, so a token
 # carrying no groups claim -- or an address outside ui.allowed_cidrs -- is
 # turned away rather than admitted.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
-  name: dfe-public-oidc-{{ $provider.name }}-{{ $r.routeName }}
+  name: dfe-public-oidc-{{ $login.name }}-{{ $r.routeName }}
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
@@ -33,19 +39,20 @@ spec:
       name: {{ $r.routeName }}-public
   oidc:
     provider:
-      issuer: {{ $provider.issuerUrl }}
-    clientID: {{ $provider.clientId }}
+      {{- include "envoy-gateway-config.oidcProvider" (dict "provider" $login) | nindent 6 }}
+    clientID: {{ $login.clientId }}
     clientSecret:
-      name: {{ $provider.clientSecretName | default (printf "dfe-oidc-%s" $provider.name) }}
+      name: {{ $login.clientSecretName | default (printf "dfe-oidc-%s" $login.name) }}
       namespace: {{ $ns }}
     scopes:
-      {{- toYaml ($provider.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
+      {{- toYaml ($login.scopes | default (list "openid" "email" "profile" "groups")) | nindent 6 }}
     redirectURL: "https://{{ $host }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
     cookieNames:
       accessToken: dfe-{{ $r.routeName }}-public-access-token
   jwt:
     providers:
+      {{- range $provider := $.Values.oidc.providers }}
       - name: {{ $provider.name }}
         issuer: {{ $provider.issuerUrl }}
         remoteJWKS:
@@ -53,10 +60,19 @@ spec:
         extractFrom:
           cookies:
             - dfe-{{ $r.routeName }}-public-access-token
+      {{- end }}
+  {{- /* The jwt block already refuses a request with no valid token, and the
+         CRD rejects a jwt principal naming no claim, so a route with no group
+         check and no address list takes no authorization block at all. */}}
+  {{- if eq $fence "deny" }}
+  authorization:
+    defaultAction: Deny
+  {{- else if $r.edgePolicy }}
   authorization:
     defaultAction: Deny
     rules:
-      - name: allow-admin-groups
+      {{- range $provider := $.Values.oidc.providers }}
+      - name: allow-admin-groups-{{ $provider.name }}
         action: Allow
         {{- /* Every principal in a rule must match, so naming both the claim and
                the address ANDs them: the right group from the wrong address is
@@ -68,19 +84,22 @@ spec:
           {{- end }}
           jwt:
             provider: {{ $provider.name }}
-            {{- if $r.edgePolicy }}
             claims:
               - name: groups
                 valueType: StringArray
                 values:
                   {{- toYaml $.Values.adminGroups | nindent 18 }}
-            {{- end }}
+      {{- end }}
+  {{- else if $allowed }}
+  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+  {{- end }}
 {{- end }}
-{{- else if $allowed }}
+{{- end }}
+{{- else if or $allowed (eq $fence "deny") }}
 ---
 # The login on this route is the app's own, so the only thing the edge can add
 # is where a request may come from. Deny by default; the allow rule is the
-# address list.
+# address list, and with no list on an internet-facing gateway there is none.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -93,13 +112,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: {{ $r.routeName }}-public
-  authorization:
-    defaultAction: Deny
-    rules:
-      - name: allow-listed-cidrs
-        action: Allow
-        principal:
-          clientCIDRs:
-            {{- toYaml $allowed | nindent 12 }}
+  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
 {{- end }}
 {{- end }}

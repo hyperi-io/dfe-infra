@@ -51,8 +51,8 @@ renderer, not the wizard.
    wizard demands confirmation that OIDC will be wired up for it
    ([gateway-oidc.md](gateway-oidc.md)) and **refuses to continue without
    one** -- there is no OIDC dial field, so this is a wizard-side gate, not
-   a renderer validation. Then an optional CIDR allow-list with its
-   required trusted-proxy CIDRs, and the public DNS zone name. The answers
+   a renderer validation. Then an optional CIDR allow-list, any CDN's
+   ranges, and the public DNS zone name. The answers
    land in the dial's `edge:` block -- `dfe-ui` under `edge.product.public`
    and the admin UIs under `edge.admin_uis.public.*`, the one block that
    replaced the old top-level `ui:` and `ingest:`.

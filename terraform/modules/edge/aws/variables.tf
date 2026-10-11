@@ -22,13 +22,12 @@ variable "cluster_name" {
 }
 
 variable "network" {
-  description = "Where the tunnel forwarder lands and the gateway's load balancer sits (kubernetes-cluster/aws's network output). cidr scopes the forwarder's egress to the cluster's own nodes; azs and public_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. The forwarder holds an Elastic IP, which is only delivered where the subnet's route table sends 0.0.0.0/0 at an internet gateway, so it takes the PUBLIC list. public_subnet_cidrs are the hops gateway_trusted_proxy_cidrs is trusted beside. The IAM half of this module needs no network at all."
+  description = "Where the tunnel forwarder lands (kubernetes-cluster/aws's network output). cidr scopes the forwarder's egress to the cluster's own nodes; azs and public_subnet_ids are parallel lists, so the zone the forwarder pins to selects the subnet it launches in. The forwarder holds an Elastic IP, which is only delivered where the subnet's route table sends 0.0.0.0/0 at an internet gateway, so it takes the PUBLIC list. The IAM half of this module needs no network at all."
   type = object({
-    vpc_id              = string
-    cidr                = string
-    azs                 = list(string)
-    public_subnet_ids   = list(string)
-    public_subnet_cidrs = list(string)
+    vpc_id            = string
+    cidr              = string
+    azs               = list(string)
+    public_subnet_ids = list(string)
   })
 }
 
@@ -138,13 +137,19 @@ variable "gateway_allowed_cidrs" {
 }
 
 variable "gateway_trusted_proxy_cidrs" {
-  description = "Proxy ranges in front of the load balancer that may vouch for a client address, such as a CDN's: the dial's edge.product.trusted_proxy_cidrs. Always joined by network.public_subnet_cidrs, where the load balancer sits, and read only when gateway_allowed_cidrs is set."
+  description = "L7 proxies in front of the load balancer whose X-Forwarded-For names the client, such as a CDN's: the dial's edge.product.trusted_proxy_cidrs. Empty trusts no forwarded header. Read only when gateway_allowed_cidrs is set."
   type        = list(string)
   default     = []
 
   validation {
     condition     = alltrue([for cidr in var.gateway_trusted_proxy_cidrs : can(cidrhost(cidr, 0))])
     error_message = "every gateway_trusted_proxy_cidrs entry must be a CIDR range with its prefix length."
+  }
+
+  // Every peer inside a /0 is trusted, so Envoy takes the client from the leftmost X-Forwarded-For entry, which the caller writes.
+  validation {
+    condition     = alltrue([for cidr in var.gateway_trusted_proxy_cidrs : !endswith(trimspace(cidr), "/0")])
+    error_message = "a gateway_trusted_proxy_cidrs entry of /0 trusts every address, so the fence becomes an X-Forwarded-For header the client writes. Name only the ranges of the CDN or other L7 proxy in front."
   }
 }
 
