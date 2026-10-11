@@ -534,7 +534,7 @@ def test_an_org_scoped_group_renders_the_engine_shape() -> None:
 
 
 def test_every_shipped_group_is_linked_for_the_provider() -> None:
-    """The engine links a claim value by source_id alone, so an unlinked file grants nothing."""
+    """The engine links on source_provider and source_id, so a file missing either grants nothing."""
     files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
     for key, text in sorted(files.items()):
         body = json.loads(text)
