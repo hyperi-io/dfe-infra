@@ -81,20 +81,15 @@ BackendTLSPolicy targeting that Service, not on the SecurityPolicy.
 Envoy Gateway feature that flattens one, and inventing a workaround out of the
 patch policy does not change what the filter accepts.
 
-What that means in practice, proven on a live edge login: the engine receives
-`X-Oidc-Subject`, authenticates the user, and answers
+What that means in practice: the engine receives `X-Oidc-Subject` with no `X-Oidc-Groups`, so no linked group grants a role, and it refuses the request with 401 and creates no account:
 
 ```json
-{"user_id":"CgQ2MDAxEgRsZGFw","roles":[],"permissions":[],"groups":[]}
+{"code": "no_role_granted", "message": "OIDC login refused: no DFE group with a role is linked to your identity provider groups. Ask a DFE administrator to link one."}
 ```
 
-Authenticated, and authorized for nothing. `_resolve_group_grants` maps the
-groups header to roles, the header never arrives, so no role is resolved and
-every authorization check fails.
+`_resolve_group_grants` maps the groups header to roles, and the header never arrives.
 
-The way out is the engine reading the ID token itself rather than trusting a
-header the gateway cannot produce. Until that exists, edge OIDC gives you
-authentication and no authorization.
+The way out is the engine reading the ID token itself rather than trusting a header the gateway cannot produce. Until that exists, edge OIDC lets in only accounts an administrator has added to a group by hand.
 
 Two more things in the same path that do not meet at the Envoy Gateway this
 repo pins (`versions.yaml`, `envoy-gateway`):

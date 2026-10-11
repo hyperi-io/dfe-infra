@@ -6,10 +6,11 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
 // What each role can DO (status per probe) and SEE (org visibility): admin
-// passes authz everywhere, platform viewers read but never write, the
-// org-scoped viewer and the no-roles identity get data surfaces only or
-// nothing. The write probe sends an empty body: 422 proves authz passed
-// without mutating anything, 403 proves it never got that far.
+// passes authz everywhere, platform viewers read but never write, and the
+// org-scoped viewer gets data surfaces only. The no-roles identity holds no
+// token to probe with, since the engine refuses its login (oidc-rba.spec.ts).
+// The write probe sends an empty body: 422 proves authz passed without
+// mutating anything, 403 proves it never got that far.
 //
 // Requires the deployed engine wired to an IdP serving the shared fixture,
 // with the demo orgs registered, and E2E_FIXTURE_PASSWORD in the env.
@@ -35,7 +36,6 @@ const PROBES: Probe[] = [
       'dfe-analyst': 403,
       'dfe-viewer': 403,
       'dfe-operator': 403,
-      'dfe-nobody': 403,
     },
   },
   {
@@ -47,7 +47,6 @@ const PROBES: Probe[] = [
       'dfe-analyst': 200,
       'dfe-viewer': 200,
       'dfe-operator': 403,
-      'dfe-nobody': 403,
     },
   },
   {
@@ -59,7 +58,6 @@ const PROBES: Probe[] = [
       'dfe-analyst': 403,
       'dfe-viewer': 403,
       'dfe-operator': 403,
-      'dfe-nobody': 403,
     },
   },
 ];
@@ -68,7 +66,6 @@ const ORG_VISIBILITY: Record<string, 'all' | 'none'> = {
   'dfe-admin': 'all',
   'dfe-viewer': 'all',
   'dfe-test-org-viewer': 'none',
-  'dfe-nobody': 'none',
 };
 
 test.describe('per-role DO matrix', () => {

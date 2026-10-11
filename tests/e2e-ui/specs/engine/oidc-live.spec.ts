@@ -8,9 +8,9 @@
 // Run as the oidc-live project, never the engine one: a failed run's trace would
 // keep the typed password. Per provider: the IdP must accept the engine's
 // authorize request, then each expected user signs in through the IdP's own
-// page and must hold exactly its expected roles; a user expecting none must
-// also be refused a role-gated route. Each provider, and the whole project,
-// skips cleanly when its env is absent (tests/e2e-ui/README.md).
+// page and must hold exactly its expected roles; a user expecting none must be
+// refused at sign-in. Each provider, and the whole project, skips cleanly when
+// its env is absent (tests/e2e-ui/README.md).
 
 import { ENGINE_URL } from '../../harness/env';
 import { defineOidcLiveTests, loadLiveProviders } from '../../harness/oidc-live';

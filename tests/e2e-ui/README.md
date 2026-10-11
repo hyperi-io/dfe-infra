@@ -30,8 +30,8 @@ The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD` (and `
 `npx playwright test --project=oidc-live` signs in through hosted IdPs -- Okta, Entra ID, Google Workspace, or the Dex tester IdP -- on their own login pages, running the engine's real authorization-code flow. Wire the IdP into the deployment first with `dfe-ops idp wire-external` ([`docs/AUTH-TESTING.md`](../../docs/AUTH-TESTING.md)). Per provider it checks:
 
 - the IdP accepts the engine's authorize request: Google must not redirect to `/signin/oauth/error`, Okta must not answer 400, and Entra's 200 page must carry no `AADSTS` code
-- each expected user signs in and `/api/v1/auth/me` reports exactly its expected roles
-- a user expecting no roles is also refused `GET /api/v1/oidc-providers` with 403, because the engine admits any authenticated user with a zero-role account
+- each user expecting roles signs in and `/api/v1/auth/me` reports exactly those roles
+- a user expecting no roles is refused at the engine callback with 401 `no_role_granted`, and gets no token or `dfe_token` cookie
 
 Everything tenant-specific comes from env, never from this repo:
 
@@ -89,7 +89,8 @@ One harness, one Playwright project per deployed app, specs under
 - `specs/dfe-ui/smoke.spec.ts` -- the deployed dfe-ui serves its shell.
 - `specs/engine/oidc-rba.spec.ts` -- the twelve-user OIDC role matrix: real
   IdP redirect flow per fixture identity, then roles + org_ids asserted from
-  `/auth/me` against the hand-written truth table.
+  `/auth/me` against the hand-written truth table. The two identities holding
+  no role are asserted refused at the callback instead.
 - `specs/engine/oidc-live.spec.ts` -- sign-in through hosted IdPs against an
   env-provided expectations table, run as the `oidc-live` project (above).
   The per-IdP steps live in `harness/idp/`, the flow in `harness/oidc-live.ts`.

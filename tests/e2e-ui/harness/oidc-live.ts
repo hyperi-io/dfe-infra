@@ -8,7 +8,8 @@
 // The browser runs the engine's real authorization-code flow: the engine's
 // login with ?redirect=false hands back the authorize URL, the harness adds
 // login_hint, the IdP's own page signs the user in, and the engine's callback
-// mints the token whose /auth/me roles are checked against the expectations.
+// mints the token whose /auth/me roles are checked against the expectations. A
+// user expected to hold no role must instead be refused by that callback.
 // Every tenant value -- logins, provider names, passwords -- comes from env or
 // files the env names, never from this repository.
 
@@ -33,6 +34,7 @@ import {
   type IdpModule,
   type IdpUser,
 } from './idp/types';
+import { type CallbackResult, expectNoRoleRefusal, readCallback, sessionToken } from './oidc';
 
 export const IDP_MODULES: Record<IdpKind, IdpModule> = { dex, okta, entra, google };
 
@@ -51,9 +53,6 @@ export interface LiveProvider {
   readonly kind: IdpKind | undefined;
   readonly users: readonly LiveUser[];
 }
-
-// The engine route that answers 403 to a caller holding no role.
-export const ROLE_GATED_PATH = '/api/v1/oidc-providers';
 
 const LIVE_TIMEOUT_MS = 120_000;
 
@@ -202,20 +201,16 @@ export async function probeAuthorize(
   return idp.authorizeError({ status: response.status(), location, body });
 }
 
-export interface EngineSession {
-  readonly token: string;
-  readonly groups: readonly string[];
-}
-
-// Runs the whole flow in `page`: the engine session cookie set by the login call
-// rides the page's own context, so the callback finds its state and verifier.
+// Runs the whole flow in `page` and returns the callback's answer, admitted or refused:
+// the engine session cookie set by the login call rides the page's own context, so the
+// callback finds its state and verifier.
 export async function signInThroughIdp(
   page: Page,
   idp: IdpModule,
   engineUrl: string,
   provider: string,
   user: IdpUser,
-): Promise<EngineSession> {
+): Promise<CallbackResult> {
   const url = await authorizationUrl(page.request, engineUrl, provider, user.login);
   const callbackPath = `/api/v1/auth/oidc/${provider}/callback`;
   const callback = page.waitForResponse(
@@ -227,15 +222,7 @@ export async function signInThroughIdp(
   await page.goto(url);
   await idp.signIn(page, user, callback);
   const response = await callback;
-  const text = await response.text();
-  if (response.status() !== 200) {
-    throw new Error(`engine callback answered ${response.status()}: ${text.slice(0, 300)}`);
-  }
-  const body = JSON.parse(text) as { access_token?: unknown; groups?: unknown };
-  if (typeof body.access_token !== 'string') {
-    throw new Error('engine callback carried no access_token');
-  }
-  return { token: body.access_token, groups: isRoleList(body.groups) ? body.groups : [] };
+  return readCallback(response.status(), await response.text());
 }
 
 export async function engineRoles(
@@ -249,17 +236,6 @@ export async function engineRoles(
   expect(response.status(), '/auth/me with the minted token').toBe(200);
   const me = (await response.json()) as { roles?: unknown };
   return isRoleList(me.roles) ? [...me.roles].sort() : [];
-}
-
-export async function roleGatedStatus(
-  request: APIRequestContext,
-  engineUrl: string,
-  token: string,
-): Promise<number> {
-  const response = await request.get(`${engineUrl}${ROLE_GATED_PATH}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return response.status();
 }
 
 type UserPlan =
@@ -307,20 +283,19 @@ async function assertUser(
   );
   try {
     const page = await context.newPage();
-    const session = await signInThroughIdp(
+    const result = await signInThroughIdp(
       page,
       plan.idp,
       engineUrl,
       provider.provider,
       plan.user,
     );
-    const roles = await engineRoles(context.request, engineUrl, session.token);
-    expect(roles, `${user.fixture} roles`).toEqual([...user.roles].sort());
     if (user.roles.length === 0) {
-      // The engine admits any authenticated user with a zero-role account; refusal is authorisation.
-      const status = await roleGatedStatus(context.request, engineUrl, session.token);
-      expect(status, `${user.fixture} on ${ROLE_GATED_PATH}`).toBe(403);
+      await expectNoRoleRefusal(context, result, user.fixture);
+      return;
     }
+    const roles = await engineRoles(context.request, engineUrl, sessionToken(result));
+    expect(roles, `${user.fixture} roles`).toEqual([...user.roles].sort());
   } finally {
     await context.close();
   }
@@ -354,9 +329,11 @@ export function defineOidcLiveTests(
       });
 
       for (const user of provider.users) {
-        test(`${user.fixture} signs in with roles [${user.roles.join(', ')}]`, { tag }, async ({
-          browser,
-        }) => {
+        const title =
+          user.roles.length === 0
+            ? `${user.fixture} is refused at sign-in for holding no role`
+            : `${user.fixture} signs in with roles [${user.roles.join(', ')}]`;
+        test(title, { tag }, async ({ browser }) => {
           const plan = planUser(provider, user, env);
           if (plan.skip !== undefined) {
             test.skip(true, plan.skip);
