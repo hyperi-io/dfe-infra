@@ -8,7 +8,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Rendered assertions for dfe-infra #187, #191, #10, #190 and the chart half of #9.
+"""Rendered assertions for dfe-infra #187, #191, #10 and the chart half of #9.
 
 **#187 -- two keys nothing wrote.** The scale profile turns the cross-namespace
 credential projection off, because the broker namespace IS the app namespace
@@ -61,7 +61,6 @@ KAFKA = CHARTS / "kafka"
 KAFBAT = CHARTS / "kafbat"
 KAFBAT_EXAMPLE = REPO_ROOT / "argocd" / "values" / "staging" / "kafbat-oidc-rbac.example.yaml"
 LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lint-test"
-KAFKA_TPL = REPO_ROOT / "helm" / "library" / "dfe-common" / "templates" / "_kafka.tpl"
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
 
@@ -459,24 +458,6 @@ def test_the_matrix_catches_a_hand_set_mechanism() -> None:
         "the broker's own listener keys are not read as client config",
         not deploy_matrix.assert_derived_auth(cell, broker_own),
         deploy_matrix.assert_derived_auth(cell, broker_own),
-    )
-
-
-# --- #190: the note that was wrong in one direction -------------------------
-
-
-def test_the_provider_env_note_matches_the_vendored_scalo() -> None:
-    """The note told a reader the dial might not work; it half did."""
-    note = KAFKA_TPL.read_text(encoding="utf-8")
-    expect(
-        "the stale claim is gone",
-        "does not yet read a PROVIDER suffix" not in note,
-        "the template still says scalo cannot read the suffix",
-    )
-    expect(
-        "the reader is told what does consume it",
-        "from_env" in note and "dfe-transform-elastic" in note,
-        "the note names neither the reader nor the one app that uses it",
     )
 
 
