@@ -11,10 +11,24 @@ config:
   destinations:
     default: loader
 
-# The buffer argocd/values/profile-mesh.yaml explains under `receiver.buffer`:
-# 3 GiB of memory and a 20 GiB node-local spool, read only with acknowledgements
-# off. The spool path is the contract's spool writable path, which mounts while
-# config.buffer.spillover.enabled is true.
+# The buffer is READ ONLY WITH ACKNOWLEDGEMENTS OFF. With them on (the default)
+# the receiver builds no buffer or spool: it holds a sender's request until the
+# loader confirms delivery, and once that hold expires the sender gets a 503 and
+# retries from its own copy, however large the figures below.
+#
+# With acknowledgements off this is the slack in the whole chain. There is no
+# broker here, so what the receiver holds is the only thing between a loader
+# outage and the senders. An outage shorter than the buffer is invisible to
+# senders, a longer one back-pressures them (503) until the loader returns, and a
+# record held here has already had its 2xx, so it dies with the pod.
+#
+# 3 GiB of the pod's 4Gi limit, stated rather than left to the app's auto-detect,
+# which would take 85% (3.4 GiB) and leave too little for the request path and
+# the spool writer. Back-pressure starts at 80% of it, so 2.4 GiB. Then 20 GiB of
+# node-local spool per replica, on the contract's spool writable path, which
+# mounts while config.buffer.spillover.enabled is true. Two replicas holding
+# 23 GiB each, taking 10 MiB/s each, ride out about 39 minutes of loader outage
+# before a sender sees a 503.
 configOverrides:
   loader:
     transport: grpc

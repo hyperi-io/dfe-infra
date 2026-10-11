@@ -1539,7 +1539,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31-alpine"  # k8s links-page static server (helm/charts/links, dfe-infra#75). Non-root nginx (uid 101, listens 8080). THE TAG FLOATS -- upstream rebuilds 1.31-alpine in place, so re-resolve the digest on every refresh. services-digests.nginx-unprivileged pins it. The last nginx left in the stack now that the docker proxy is Envoy.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (helm/charts/dfe-engine, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
+      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (dfe-extras, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
 
     # Stage apps: DFE application services (ArgoCD wave 5, appsets/layer2-apps.yaml).
     # INTERNAL hyperi-io packages (no supply-chain cooldown) but each has its OWN
@@ -1595,7 +1595,7 @@ stacks:
       envoy-proxy: "sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66"         # envoyproxy/envoy:v1.39.0 (docker-only; k8s uses envoy-gateway). Resolved 2026-08-18 via buildx imagetools (manifest-list digest, multi-arch safe). Unlike the nginx tag it replaced, an Envoy vX.Y.Z tag is IMMUTABLE, so this only needs re-resolving when the version moves. Verified: dfe-docker config/proxy/envoy.yaml passes `envoy --mode validate` on this image, and it carries bash + grep for the compose healthcheck.
       nginx-unprivileged: "sha256:d9083fe47768377ef55dedafd67d4da7c2f2bc2bece7554954f29359deb0dce9"   # nginxinc/nginx-unprivileged:1.31-alpine (k8s links page; helm/charts/links values image.digest mirrors this, drift-checked). TAG FLOATS -- upstream rebuilds it in place, so re-resolve on every refresh. Re-resolved by `dfe-stack refresh-digests` via buildx imagetools (manifest-list digest, multi-arch safe).
       otel-collector: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"       # otel/opentelemetry-collector-contrib:0.158.0. ADDED 2026-08-18 for the DOCKER path (dfe-docker DFE_OTEL_COLLECTOR_VERSION): k8s reads services.otel-collector through the chart's own image.tag and never needed a digest here, so the version sat pinned with nothing to render. Resolved via buildx imagetools (manifest-list digest, multi-arch safe).
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; helm/charts/dfe-engine values huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
+      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; dfe-extras' huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
 
     # Content repos -- tagged in LOCKSTEP with this stack release (one name for
     # the whole set). PENDING entries have no release tag / published image yet;
@@ -1687,7 +1687,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31-alpine"  # k8s links-page static server (helm/charts/links, dfe-infra#75). Non-root nginx (uid 101, listens 8080). THE TAG FLOATS -- upstream rebuilds 1.31-alpine in place, so re-resolve the digest on every refresh. services-digests.nginx-unprivileged pins it. The last nginx left in the stack now that the docker proxy is Envoy.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (helm/charts/dfe-engine, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
+      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (dfe-extras, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
 
     # Stage apps: DFE application services (ArgoCD wave 5, appsets/layer2-apps.yaml).
     # INTERNAL hyperi-io packages (no supply-chain cooldown) but each has its OWN
@@ -1708,7 +1708,7 @@ stacks:
       dfe-transform-elastic: "2.2.0" # NOT YET PUBLISHED to GHCR (alpha)
       dfe-transform-splack: "2.2.0"  # NOT YET PUBLISHED to GHCR (alpha)
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
-      # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
+      # (layer2-edge.yaml). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
       # rather than the internal exemption above: v2.1.14 released 2026-08-31,
       # verified via `gh api repos/hyperi-io/culvert/releases`. v2.1.15
@@ -1754,7 +1754,7 @@ stacks:
       envoy-proxy: "sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66"         # envoyproxy/envoy:v1.39.0 (docker-only; k8s uses envoy-gateway). Resolved 2026-08-18 via buildx imagetools (manifest-list digest, multi-arch safe). Unlike the nginx tag it replaced, an Envoy vX.Y.Z tag is IMMUTABLE, so this only needs re-resolving when the version moves. Verified: dfe-docker config/proxy/envoy.yaml passes `envoy --mode validate` on this image, and it carries bash + grep for the compose healthcheck.
       nginx-unprivileged: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"   # nginxinc/nginx-unprivileged:1.31-alpine (k8s links page; helm/charts/links values image.digest mirrors this, drift-checked). TAG FLOATS -- upstream rebuilds it in place, so re-resolve on every refresh. Re-resolved by `dfe-stack refresh-digests` via buildx imagetools (manifest-list digest, multi-arch safe).
       otel-collector: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"       # otel/opentelemetry-collector-contrib:0.158.0. ADDED 2026-08-18 for the DOCKER path (dfe-docker DFE_OTEL_COLLECTOR_VERSION): k8s reads services.otel-collector through the chart's own image.tag and never needed a digest here, so the version sat pinned with nothing to render. Resolved via buildx imagetools (manifest-list digest, multi-arch safe).
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; helm/charts/dfe-engine values huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
+      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; dfe-extras' huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
 
     # Content repos -- tagged in LOCKSTEP with this stack release (one name for
     # the whole set). PENDING entries have no release tag / published image yet;
@@ -1767,8 +1767,8 @@ stacks:
       # Authored files an app SHIPS and the engine SERVES, pinned separately from
       # the app image the profile deploys: the reference pipelines move on their
       # own cadence, and a deployment that runs no transform still shows them.
-      # The engine chart materialises these into content.mountPath and seeds its
-      # library from them (helm/charts/dfe-engine, DFE_LIBRARY_SEED_DIR).
+      # The engine's content init containers materialise these into content.mountPath,
+      # and the engine seeds its library from them (DFE_LIBRARY_SEED_DIR).
       #
       # NOT YET FETCHABLE, both of them. Neither release carries the files as an
       # asset (`gh release view <tag> --json assets` returns []) and neither
@@ -1893,7 +1893,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31-alpine"  # k8s links-page static server (helm/charts/links, dfe-infra#75). Non-root nginx (uid 101, listens 8080). THE TAG FLOATS -- upstream rebuilds 1.31-alpine in place, so re-resolve the digest on every refresh. services-digests.nginx-unprivileged pins it. The last nginx left in the stack now that the docker proxy is Envoy.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (helm/charts/dfe-engine, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
+      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (dfe-extras, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
 
     # Stage apps: DFE application services (ArgoCD wave 5, appsets/layer2-apps.yaml).
     # INTERNAL hyperi-io packages (no supply-chain cooldown) but each has its OWN
@@ -1916,7 +1916,7 @@ stacks:
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
-      # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
+      # (layer2-edge.yaml). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
       # rather than the internal exemption above: v2.1.14 released 2026-08-31,
       # verified via `gh api repos/hyperi-io/culvert/releases`. v2.1.15
@@ -1963,7 +1963,7 @@ stacks:
       envoy-proxy: "sha256:d59f7f5fa10cff6d5892b6c5e7df5c9297ddfb2c3683e33fbfb82da24de4fa66"         # envoyproxy/envoy:v1.39.0 (docker-only; k8s uses envoy-gateway). Resolved 2026-08-18 via buildx imagetools (manifest-list digest, multi-arch safe). Unlike the nginx tag it replaced, an Envoy vX.Y.Z tag is IMMUTABLE, so this only needs re-resolving when the version moves. Verified: dfe-docker config/proxy/envoy.yaml passes `envoy --mode validate` on this image, and it carries bash + grep for the compose healthcheck.
       nginx-unprivileged: "sha256:aa8c9087d36d93e9d650c5365f883b421e8214aedbad24ade52b844c583358f1"   # nginxinc/nginx-unprivileged:1.31-alpine (k8s links page; helm/charts/links values image.digest mirrors this, drift-checked). TAG FLOATS -- upstream rebuilds it in place, so re-resolve on every refresh. Re-resolved by `dfe-stack refresh-digests` via buildx imagetools (manifest-list digest, multi-arch safe).
       otel-collector: "sha256:c5918f78992ee73b0d6f0e599423ac5ec52dd5d9726733114d6eca53d5a32ed5"       # otel/opentelemetry-collector-contrib:0.158.0. ADDED 2026-08-18 for the DOCKER path (dfe-docker DFE_OTEL_COLLECTOR_VERSION): k8s reads services.otel-collector through the chart's own image.tag and never needed a digest here, so the version sat pinned with nothing to render. Resolved via buildx imagetools (manifest-list digest, multi-arch safe).
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; helm/charts/dfe-engine values huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
+      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; dfe-extras' huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
 
     # Content repos -- tagged in LOCKSTEP with this stack release (one name for
     # the whole set). PENDING entries have no release tag / published image yet;
@@ -2107,7 +2107,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31.6-alpine"  # k8s links-page static server (helm/charts/links, dfe-infra#75) and the Cruise Control UI server. Non-root nginx (uid 101, listens 8080). The exact patch tag the floating 1.31-alpine resolved to on 2026-10-01 -- the same index digest, matched among the registry's 1.31 tags; nginx 1.31.6 released 2026-09-15. Upstream still rebuilds a patch tag in place when its Alpine base moves, so services-digests.nginx-unprivileged is what pins the bytes. The last nginx left in the stack now that the docker proxy is Envoy.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (helm/charts/dfe-engine, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
+      git-sync: "v4.7.1"             # k8s-only sidecar image: pulls the deploy repo's hunts + rules into the dfe-hunt-runner pod (dfe-extras, dfe-infra#212). v4.7.1 2026-07-16, verified via `gh api repos/kubernetes/git-sync/releases` (clears the 7-day cooldown); kubernetes/git-sync publishes no LTS line. Runs non-root on the DFE uid 1000 with a read-only rootfs. services-digests.git-sync pins it.
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
       aws-msk-iam-auth: "2.3.9"      # NOT an image: the jar the AWS MSK bootstrap Job fetches at run time (helm/charts/kafka, kafka.mode=external + kafka.provider=msk). apache/kafka ships kafka-acls.sh and kafka-topics.sh but not the SASL/IAM login module, and that Job is the one DFE path that authenticates by IAM rather than SCRAM -- MSK ACLs live in the Kafka data plane, so no tofu apply can write the first one. Release v2.3.9 2026-09-24, read via `gh api repos/aws/aws-msk-iam-auth/releases`; aws/aws-msk-iam-auth publishes no LTS line. There is no registry digest to resolve, so the chart pins the release's published sha256 of aws-msk-iam-auth-<version>-all.jar beside the version and the init container refuses a download that does not match.
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
@@ -2138,7 +2138,7 @@ stacks:
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       # ghcr.io/hyperi-io/culvert -- the edge-fleet VPN, opt-in per deployment
-      # (helm/charts/culvert). PUBLIC container and an Apache-2.0 general-OSS
+      # (layer2-edge.yaml). PUBLIC container and an Apache-2.0 general-OSS
       # repo, so it takes the 7-day supply-chain cooldown like a third party
       # rather than the internal exemption above: v2.1.15 released 2026-09-09,
       # verified via `gh api repos/hyperi-io/culvert/releases`; cooldown cleared
@@ -2196,7 +2196,7 @@ stacks:
       envoy-proxy: "sha256:460f8c329f24b2e1c7c5af64cb314a6f351ad1c262ba77b135ac46b35ebd5f85"         # envoyproxy/envoy:v1.39.2 (docker-only; k8s uses envoy-gateway). Resolved via buildx imagetools (manifest-list digest, multi-arch safe). An Envoy vX.Y.Z tag is IMMUTABLE, so this only needs re-resolving when the version moves. Verified: dfe-docker config/proxy/envoy.yaml and config/proxy/hyperdx.yaml pass `envoy --mode validate` on this image, and it carries bash + grep for the compose healthcheck.
       nginx-unprivileged: "sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083"   # nginxinc/nginx-unprivileged:1.31.6-alpine (k8s links page and Cruise Control UI; helm/charts/links and helm/charts/kafka values image.digest mirror this, drift-checked). Upstream re-pushed the tag 2026-10-05; 1.31-alpine resolves to the same index digest. Re-resolved by `dfe-stack refresh-digests`.
       otel-collector: "sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6"       # otel/opentelemetry-collector-contrib:0.162.0 (both paths: dfe-docker DFE_OTEL_COLLECTOR_VERSION, and helm/charts/otel-collector values image.digest mirrors it, drift-checked). Resolved via buildx imagetools (manifest-list digest, multi-arch safe).
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; helm/charts/dfe-engine values huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
+      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1 (k8s only; dfe-extras' huntRunner.gitSync.image.digest mirrors this, drift-checked). Manifest-LIST digest, so it is multi-arch safe. Resolved 2026-09-04 off the registry v2 API (registry.k8s.io redirects to the Artifact Registry mirrors; the same digest came back from australia-southeast1 and us-central1).
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0 (k8s only; bootstrap/templates/local-path-helper-pod.yaml mirrors it, drift-checked). Index digest, read 2026-10-01 via `docker buildx imagetools inspect`; `latest` resolved to the same digest that day.
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9 (k8s only; helm/charts/forgejo values image.digest mirrors it, drift-checked). Index digest, read via `docker buildx imagetools inspect`.
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine (k8s only; bootstrap/templates/valkey.yaml mirrors it, drift-checked). Index digest, read via `docker buildx imagetools inspect`.
@@ -2386,7 +2386,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/charts/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.17"            # 2026-10-06. scalo-py 2.31.1, wstunnel 10.7.1.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
@@ -2582,7 +2582,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
@@ -2795,7 +2795,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
@@ -3008,7 +3008,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
@@ -3221,7 +3221,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.

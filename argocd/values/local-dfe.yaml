@@ -10,7 +10,6 @@
 # be a customer's. The charts/appsets hardcode none of it.
 global:
   cloud: local-dfe
-  region: local
   domain: dfe.example.com
 
 domain: dfe.example.com

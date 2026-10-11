@@ -3,8 +3,8 @@ dfe-extras.render -- render one body for the components that carry it.
 
 Takes (dict "root" . "charts" (list <chartName>...) "body" <define name>). The
 body runs only when chartName is one of `charts`, against the component context
-(dfe-extras.context), so a template ported from a 2.2.0 chart reads .Values,
-.Chart.AppVersion and $ exactly as it did there.
+(dfe-extras.context), so it reads .Values, .Chart.AppVersion and $ as the
+component's own chart would.
 */}}
 {{- define "dfe-extras.render" -}}
 {{- $root := .root -}}
@@ -21,9 +21,9 @@ context of the component chartName names.
 
 Its Values are the layered values with that component's defaults
 (extras.defaults.<chartName>) filled in under them, key by key, so a layer that
-sets a key -- false and empty included -- wins as it did over the 2.2.0 chart's
-own values.yaml. Its Chart.AppVersion is extras.appVersions.<chartName>, the
-version the 2.2.0 chart labelled its objects with.
+sets a key -- false and empty included -- wins, as it does over a chart's own
+values.yaml. Its Chart.AppVersion is extras.appVersions.<chartName>, the version
+its objects are labelled with.
 
 fullnameOverride, when set, names the component the way the thin chart names
 it: the component is fullnameOverride less the "<project>-" prefix, so every
@@ -90,8 +90,8 @@ apps/_common.yaml's telemetry.otlpEndpointTemplate. Empty means export nothing.
 dfe-extras.envConfigMap -- the <fullname>-env ConfigMap: every literal entry of
 an env list, as data. Takes (dict "ctx" <component context> "env" <env list YAML>).
 
-The list is the 2.2.0 container's env block, conditionals and all, so a variable
-stays absent where 2.2.0 omits it. An entry the kubelet resolves (valueFrom, or a
+The list is the component's env block, conditionals and all, so a variable stays
+absent where its condition is off. An entry the kubelet resolves (valueFrom, or a
 value carrying $(VAR), which envFrom never expands) is left to the thin chart's
 env. Names are read in order and the last one wins, as the kubelet reads env.
 */}}

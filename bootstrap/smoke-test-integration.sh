@@ -245,7 +245,7 @@ echo "=== CORE 0: schema control (dfe-engine reports its bootstrap converged) ==
 # script does not hold, so the failure message points there instead.
 ENGINE_WAIT="${DFE_ENGINE_WAIT:-300}"
 ENGINE_WAIT_INTERVAL="${DFE_ENGINE_WAIT_INTERVAL:-5}"
-# The thin chart names the container after the chart, not the 2.2.0 chart's `engine`.
+# The thin chart names the main container after the chart.
 engine_readyz() {
   kubectl -n "$NS_APP" exec deploy/dfe-engine -c dfe-engine -- \
     curl -fsS --max-time 5 http://localhost:8000/readyz 2>/dev/null

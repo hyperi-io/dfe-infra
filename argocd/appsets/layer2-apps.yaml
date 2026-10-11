@@ -68,8 +68,8 @@ spec:
                 - path: "values/culvert-*-values.yaml"
   template:
     metadata:
-      # Unchanged from the 2.2.0 charts: Argo's tracking id is built from the
-      # name, so it adopts every live object rather than deleting and rebuilding.
+      # Argo's tracking id is built from the name, so a renamed Application
+      # deletes and rebuilds every object it owns.
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
       namespace: argocd
       annotations:
@@ -141,8 +141,8 @@ spec:
             # branch) is injected from the SAME config_repo_url/revision annotation
             # Argo reads (the `values` ref + the git generator). No second place to
             # set the deploy repo, so the engine's write target cannot drift from
-            # what Argo reads. Only the dfe-engine chart has a gitops block; other
-            # charts ignore these params.
+            # what Argo reads. Only dfe-extras reads them, for the engine's env and
+            # its hunt runner, and every thin chart ignores them.
             parameters:
               # The registry every dfe-* image is pulled from. `index` returns an
               # empty string for a missing annotation, and an empty parameter

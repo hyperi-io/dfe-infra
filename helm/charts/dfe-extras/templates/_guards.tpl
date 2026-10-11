@@ -27,9 +27,10 @@ dfe-extras.projectGuard -- fail the render when the project is not dfe.
 
 The suite's service names (dfe-receiver, dfe-loader, ...), the engine's dfe- name
 prefix and the push and wait-for-engine addresses all assume it, so a renamed
-project renders objects nothing points at. `project` is the 2.2.0 key and
-`global.project` the thin chart's (argocd/values/common.yaml sets it to dfe), and
-a deployer reaches both from $values/infra/common.yaml or the instance overlay.
+project renders objects nothing points at. `project` is dfe-extras' own key
+(extras.defaults) and `global.project` the thin chart's (argocd/values/common.yaml
+sets it to dfe), and a deployer reaches both from $values/infra/common.yaml or the
+instance overlay.
 */}}
 {{- define "dfe-extras.projectGuard" -}}
 {{- $global := .Values.global | default dict -}}

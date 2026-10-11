@@ -3,8 +3,9 @@
 #  File:         test_receiver_ingress.py
 #  Purpose:      Prove the AWS cascade never renders a per-GB load balancer for
 #                the receiver's ingest ports by default, that culvert stays off
-#                one too under the SAME unmodified cascade, and that the
-#                explicit public opt-in still works.
+#                one too under the SAME unmodified cascade, that the
+#                explicit public opt-in still works, and that its ingest
+#                policy admits every port its load balancers serve.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -24,6 +25,9 @@ pass, which culvert must not read as its own tunnel-login switch: culvert's OIDC
 fields live under vpn.oidc.*, and its render under the unmodified cascade is
 what a real AWS deploy gets.
 
+In public mode the load balancers serve the contract's public ports the config
+turns on, and the ingest NetworkPolicy must admit each one or the pod drops it.
+
 The default renders are the goldens (_gate.golden). The dial cases render live,
 which needs the scalo-service library (_weave.library).
 
@@ -33,7 +37,7 @@ which needs the scalo-service library (_weave.library).
 import sys
 
 from _expect import expect, standalone, summary
-from _gate import APPSETS, INSTANCE, effective_env, golden
+from _gate import APPSETS, INSTANCE, SCENARIOS, effective_env, golden, rendered_twice
 from _weave import render_app, weave
 
 # The annotations docs/deployment/aws.md documents for the costed public
@@ -43,6 +47,11 @@ NLB_ANNOTATIONS = {
     "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
     "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
 }
+
+# Contract ports the receiver serves only once its config turns them on, each marked
+# public: OTLP over gRPC and HTTP, and syslog over TCP, UDP and TLS.
+LISTENERS_ON = {"config": {"otlp": {"enabled": True}, "syslog": {"enabled": True}}}
+TURNED_ON = {(4317, "TCP"), (4318, "TCP"), (514, "TCP"), (514, "UDP"), (6514, "TCP")}
 
 
 def culvert(overlay: dict) -> list[dict]:
@@ -180,6 +189,49 @@ def test_the_ingest_networkpolicy_admits_culvert_not_the_internet() -> None:
            f"got {rule.get('from')!r}")
 
 
+def load_balancer_ports(docs: list[dict]) -> set[tuple[int, str]]:
+    """Each port and protocol a Service labelled public serves on its load balancer."""
+    return {
+        (port["port"], port.get("protocol", "TCP"))
+        for doc in docs
+        if doc.get("kind") == "Service"
+        and doc["metadata"].get("labels", {}).get("dfe.hyperi.io/exposure") == "public"
+        for port in doc["spec"].get("ports", [])
+    }
+
+
+def policy_ports(docs: list[dict]) -> set[tuple[int, str]]:
+    """Each port and protocol the ingest NetworkPolicy admits."""
+    policy = one(docs, "NetworkPolicy", "dfe-receiver-ingest")
+    return {
+        (port["port"], port.get("protocol", "TCP"))
+        for rule in policy["spec"]["ingress"]
+        for port in rule.get("ports", [])
+    }
+
+
+def test_the_ingest_policy_admits_every_port_the_public_load_balancer_serves() -> None:
+    """A port on the load balancer that the policy does not admit is dropped at the pod."""
+    infra = SCENARIOS["public-ingest"]["infra"]
+    cells = {
+        "the public-ingest golden": golden("dfe-receiver", "slim", "local", "public-ingest"),
+        "public ingest with OTLP and syslog on": render_app(
+            "dfe-receiver", "slim", "local", overlay=LISTENERS_ON, infra=infra
+        ),
+    }
+    for label, docs in cells.items():
+        served = load_balancer_ports(docs)
+        admitted = policy_ports(docs)
+        expect(f"{label}: the load balancer serves a port", bool(served), f"got {served}")
+        expect(f"{label}: the policy admits exactly the load balancer's ports",
+               admitted == served, f"policy {sorted(admitted)}, load balancer {sorted(served)}")
+        expect(f"{label}: each object renders once", rendered_twice(docs) == [],
+               f"got {rendered_twice(docs)}")
+    turned_on = load_balancer_ports(cells["public ingest with OTLP and syslog on"])
+    expect("the listeners turned on reach the load balancer", TURNED_ON <= turned_on,
+           f"missing {sorted(TURNED_ON - turned_on)}")
+
+
 def main() -> int:
     with standalone():
         test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service()
@@ -189,6 +241,7 @@ def main() -> int:
         test_the_old_oidc_path_still_fails_under_the_aws_cascade()
         test_an_explicit_public_opt_in_renders_the_annotated_load_balancer()
         test_the_ingest_networkpolicy_admits_culvert_not_the_internet()
+        test_the_ingest_policy_admits_every_port_the_public_load_balancer_serves()
         return summary()
 
 
