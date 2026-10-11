@@ -194,7 +194,7 @@ def _secret_gone(arn: str) -> bool:
     return bool(body.get("DeletedDate"))
 
 
-def gone_secret_addresses(state: Mapping[str, object]) -> list[str]:
+def stale_state_addresses(state: Mapping[str, object]) -> list[str]:
     """State addresses of secrets, and their versions, that the account no longer holds.
 
     The reaper may read a secret's value only while the secret carries the run tag, so a
@@ -236,7 +236,7 @@ def destroy_run(record: Mapping[str, object]) -> int:
         returncode = run_tofu(["init", "-input=false", "-reconfigure"], root, env)
         if returncode == 0:
             try:
-                gone = gone_secret_addresses(state_json(root, env))
+                gone = stale_state_addresses(state_json(root, env))
             except cloud_sweep.CloudSweepError as exc:
                 print(f"run {record['run_id']}: could not check its secrets, destroying as is: {exc}", file=sys.stderr)
                 gone = []

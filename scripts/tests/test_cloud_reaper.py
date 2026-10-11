@@ -264,14 +264,14 @@ def test_a_secret_removed_outside_tofu_leaves_the_state_before_the_destroy(monke
 
 def test_a_secret_scheduled_for_deletion_counts_as_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_k: _ok({"DeletedDate": "2026-10-10T08:00:00Z"}))
-    addresses = cloud_reaper.gone_secret_addresses(_state_with_secrets())
+    addresses = cloud_reaper.stale_state_addresses(_state_with_secrets())
     assert len(addresses) == 4
 
 
 def test_a_secret_whose_state_cannot_be_read_is_never_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_k: _fail("An error occurred (AccessDeniedException)"))
     with pytest.raises(cloud_sweep.CloudSweepError, match="AccessDenied"):
-        cloud_reaper.gone_secret_addresses(_state_with_secrets())
+        cloud_reaper.stale_state_addresses(_state_with_secrets())
 
 
 class FakeBucketDescribeDenied(FakeBucket):
@@ -290,7 +290,7 @@ def test_an_unreadable_secret_leaves_the_state_alone_and_still_destroys(monkeypa
 
 
 def test_no_state_answer_prunes_nothing() -> None:
-    assert cloud_reaper.gone_secret_addresses({}) == []
+    assert cloud_reaper.stale_state_addresses({}) == []
 
 
 def test_an_expired_run_with_no_state_only_loses_its_record(monkeypatch: pytest.MonkeyPatch) -> None:
