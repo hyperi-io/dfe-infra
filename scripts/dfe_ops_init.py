@@ -448,12 +448,20 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
     a.ui_allowed_cidrs = ask(
         io, "ui_allowed_cidrs", "UI allow-list CIDRs, comma-separated (blank = any address)", a.ui_allowed_cidrs,
     )
+    def validate_trusted(raw: str) -> str:
+        try:
+            render_dial._trusted_proxy_cidrs(_wrap(render_dial.TRUSTED_PROXY_PATH, raw))
+        except render_dial.DialError as err:
+            raise ValueError(str(err)) from err
+        return raw
+
     if a.ui_allowed_cidrs:
         a.ui_trusted_proxy_cidrs = ask(
             io, "ui_trusted_proxy_cidrs",
             "CDN or other L7 proxy CIDRs in front of the public hostnames (blank = none, "
             "the client address is read from the connection; never a load balancer subnet)",
             a.ui_trusted_proxy_cidrs,
+            validate=validate_trusted,
         )
     a.public_zone = ask(io, "public_zone", "Public DNS zone (blank = no public UI is reachable yet)", a.public_zone)
 

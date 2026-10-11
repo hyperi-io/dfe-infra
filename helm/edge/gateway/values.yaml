@@ -38,7 +38,8 @@ envoyGateway:
     # public unless annotated internal) and the chart needs ONE stable field to
     # check regardless of cloud. False on every on-prem overlay; true in
     # edge-aws.yaml, edge-gcp.yaml and edge-azure.yaml. True turns on the web
-    # fence (templates/security-policy-fence.yaml) and validateUi's guard.
+    # fence (templates/security-policy-fence.yaml) and validateUi's guard. False
+    # is refused where the cloud's own markers say the load balancer is public.
     internetFacing: false
   # The data-plane image both EnvoyProxy resources run, set here so it is the
   # services.envoy-gateway-proxy pin rather than the controller's compiled
@@ -358,7 +359,7 @@ ui:
   # Envoy unchanged. Name only an L7 proxy that writes X-Forwarded-For, such as a
   # CDN in front of the public hostnames -- never an L4 load balancer or a subnet
   # other hosts share, because any host in a listed range can claim any address.
-  # Internal listeners never read the header.
+  # A /0 of either family is refused. Internal listeners never read the header.
   trusted_proxy_cidrs: ""
 
   # Rate limiting sized for a handful of humans, so a credential-stuffing run

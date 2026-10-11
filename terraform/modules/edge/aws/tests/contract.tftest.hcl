@@ -922,6 +922,19 @@ run "rejects_a_proxy_range_with_no_prefix" {
   ]
 }
 
+run "rejects_a_proxy_range_of_every_address" {
+  command = plan
+
+  variables {
+    gateway_allowed_cidrs       = ["198.51.100.10/32"]
+    gateway_trusted_proxy_cidrs = ["192.0.2.0/24", "::/0"]
+  }
+
+  expect_failures = [
+    var.gateway_trusted_proxy_cidrs,
+  ]
+}
+
 run "rejects_an_allow_list_entry_with_no_prefix" {
   command = plan
 

@@ -47,6 +47,11 @@ re-exposing an admin UI on a public load balancer is always a deliberate
 choice with either OIDC or a CIDR fence behind it, never a one-line flip
 that quietly ships with no edge auth.
 
+## Upgrading a cloud deployment
+
+- Set `ui.allowed_cidrs` (the dial's `edge.product.allowed_cidrs`) before upgrading. An internet-facing Gateway with an empty list answers 403 on every web route from the first sync.
+- The trusted ranges a deployment already runs with live on its Argo CD cluster secret, in `dfe.hyperi.io/edge_trusted_proxy_cidrs`, and stay trusted until `bootstrap.sh` runs again. Only bootstrap writes that annotation, and `dfe-ops refresh` and `dfe-ops upgrade` leave it alone. Re-run bootstrap after upgrading, or remove the annotation, so a load balancer's subnets stop being believed.
+
 ## The client address the fence judges
 
 The fence judges the TCP peer. No listener believes `X-Forwarded-For` unless `ui.trusted_proxy_cidrs` names the hops in front, so neither a client nor a host beside the load balancer, such as the tunnel forwarder in an AWS public subnet, can claim a listed address. With no client-IP detection, Envoy Gateway v1.9.2 sets `use_remote_address` and trusts no hop (`internal/xds/translator/listener.go`).
@@ -92,7 +97,7 @@ cert-manager's Pod Identity role (`tls.public`).
 
 ## What fails the render
 
-Six things fail the render rather than shipping a weaker edge:
+Eight things fail the render rather than shipping a weaker edge:
 
 - **A public UI with no authentication.** Edge OIDC (`edgePolicy`, or
   `oidc.targetRoutes` naming the route, with a provider configured) counts,
@@ -102,9 +107,19 @@ Six things fail the render rather than shipping a weaker edge:
   The chart cannot read the receiver's `config.server.auth.mode`, so
   `routes.receiver.authMode` restates it, and only `header` or `bearer`
   renders. Envoy terminates TLS, so `mtls` never sees a client certificate.
+- **`internetFacing: false` on a load balancer the cloud makes public.** The
+  key is declared, not derived, so `false` is refused beside
+  `service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing`, and on
+  GCP or Azure (`cloud` or `global.cloud`) on a LoadBalancer Service with no
+  `networking.gke.io/load-balancer-type: Internal` or
+  `service.beta.kubernetes.io/azure-load-balancer-internal: "true"`.
 - **An entry in either list that is not a CIDR range**, such as a bare address.
   Envoy Gateway and the load balancer would refuse it at admission, failing the
   whole gateway sync.
+- **A `/0` of either family in `trusted_proxy_cidrs`.** Every peer is then
+  trusted, so Envoy takes the client from the leftmost `X-Forwarded-For`
+  entry, which the caller writes. `render_dial.py`, `bootstrap.sh` and the aws
+  root refuse it too.
 - **`rate_limit.scope: global`**, which needs a Redis backend named in the
   EnvoyGateway install config.
 - **`waf.mode` other than `none`.** A WAF terminates TLS above Envoy, which

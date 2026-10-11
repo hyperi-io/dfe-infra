@@ -510,3 +510,73 @@ def test_an_unknown_receiver_auth_mode_is_refused_by_name() -> None:
     out = helm("onprem", "--set", "routes.receiver.authMode=token")
     assert out.returncode != 0, "an unknown mode rendered"
     assert 'routes.receiver.authMode is "token"' in out.stderr, out.stderr
+
+
+# --- a trusted range of every address -----------------------------------------------
+def test_a_trusted_slash_zero_would_let_the_caller_name_the_client() -> None:
+    """Why it is refused: every peer is trusted, so the leftmost entry is the client."""
+    policy = {"spec": {"clientIPDetection": {"xForwardedFor": {"trustedCIDRs": ["0.0.0.0/0"]}}}}
+    assert client_address(policy, STRANGER, ["203.0.113.7"]) == "203.0.113.7"
+    assert client_address(policy, STRANGER, ["203.0.113.7", "192.0.2.11"]) == "203.0.113.7"
+
+
+@pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
+@pytest.mark.parametrize("trusted", [
+    ["0.0.0.0/0"], ["::/0"], ["192.0.2.0/25", "::/0"], ["192.0.2.0/25", "0.0.0.0/0", "2001:db8:cd::/48"],
+], ids=["v4", "v6", "v6-among-ranges", "v4-among-ranges"])
+def test_a_trusted_range_of_every_address_is_refused(flavour: str, trusted: list[str]) -> None:
+    out = helm(flavour, *PUBLIC, *allow(",".join(ALLOWED)), *trust(trusted))
+    assert out.returncode != 0, f"{trusted} rendered"
+    assert "which trusts every address" in out.stderr, out.stderr
+    assert "a /0 trusted list makes the fence a header the client sets" in out.stderr, out.stderr
+
+
+# --- internetFacing held against the cloud's own markers ----------------------------
+NOT_FACING = ("--set", "envoyGateway.service.internetFacing=false")
+GKE_INTERNAL = {"networking.gke.io/load-balancer-type": "Internal"}
+AKS_INTERNAL = {"service.beta.kubernetes.io/azure-load-balancer-internal": "true"}
+
+
+def annotate(annotations: dict[str, str]) -> tuple[str, ...]:
+    return ("--set-json", f"envoyGateway.service.annotations={json.dumps(annotations)}")
+
+
+def test_an_aws_internet_facing_scheme_refuses_internet_facing_false() -> None:
+    """edge-aws.yaml sets the scheme, so an overlay flipping the switch alone is caught."""
+    for extra in ((), RECEIVER_ON):
+        out = helm("aws", *NOT_FACING, *extra)
+        assert out.returncode != 0, f"rendered with {extra}"
+        assert "envoyGateway.service.internetFacing is false" in out.stderr, out.stderr
+        assert "service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing" in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize(("flavour", "annotations", "named"), [
+    ("gcp", {}, "networking.gke.io/load-balancer-type: Internal"),
+    ("gcp", {"networking.gke.io/load-balancer-type": "External"}, "networking.gke.io/load-balancer-type: Internal"),
+    ("azure", {}, "service.beta.kubernetes.io/azure-load-balancer-internal"),
+    ("azure", {"service.beta.kubernetes.io/azure-load-balancer-internal": "false"},
+     "service.beta.kubernetes.io/azure-load-balancer-internal"),
+], ids=["gcp-no-marker", "gcp-external", "azure-no-marker", "azure-false"])
+def test_a_public_by_default_load_balancer_refuses_internet_facing_false(
+    flavour: str, annotations: dict[str, str], named: str
+) -> None:
+    out = helm(flavour, *NOT_FACING, *(annotate(annotations) if annotations else ()))
+    assert out.returncode != 0, f"{flavour} {annotations} rendered"
+    assert "envoyGateway.service.internetFacing is false" in out.stderr, out.stderr
+    assert named in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize(("flavour", "annotations"), [
+    ("aws", {"service.beta.kubernetes.io/aws-load-balancer-scheme": "internal"}),
+    ("gcp", GKE_INTERNAL),
+    ("gcp", {"cloud.google.com/load-balancer-type": "Internal"}),
+    ("azure", AKS_INTERNAL),
+], ids=["aws-internal", "gcp-internal", "gcp-internal-legacy", "azure-internal"])
+def test_an_internal_load_balancer_renders_with_internet_facing_false(flavour: str, annotations: dict[str, str]) -> None:
+    docs = render(flavour, *NOT_FACING, *annotate(annotations))
+    assert gateway_fence(docs) is None
+
+
+@pytest.mark.parametrize("flavour", ["gcp", "azure"])
+def test_a_service_that_is_not_a_load_balancer_is_not_held_to_the_marker(flavour: str) -> None:
+    render(flavour, *NOT_FACING, "--set", "envoyGateway.service.type=ClusterIP")

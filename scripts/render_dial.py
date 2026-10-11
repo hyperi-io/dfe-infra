@@ -683,6 +683,37 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
     return ranges
 
 
+TRUSTED_PROXY_PATH = ("edge", "product", "trusted_proxy_cidrs")
+
+
+def _trusted_proxy_cidrs(dial: dict[str, object]) -> list[str]:
+    """edge.product.trusted_proxy_cidrs, with a /0 of either family refused.
+
+    Every peer inside a /0 is trusted, so Envoy takes the client from the
+    leftmost X-Forwarded-For entry, which the caller writes, and the fence
+    admits whoever names a listed address in that header.
+
+    Args:
+        dial: The parsed dial.
+
+    Returns:
+        The parsed ranges, empty when the key is unset.
+
+    Raises:
+        DialError: An entry is not a CIDR range, or covers every address.
+    """
+    ranges = _edge_cidrs(dial, TRUSTED_PROXY_PATH)
+    everything = [cidr for cidr in ranges if ipaddress.ip_network(cidr, strict=False).prefixlen == 0]
+    if everything:
+        raise DialError(
+            f"edge.product.trusted_proxy_cidrs carries {', '.join(everything)}, which trusts "
+            "every address -- Envoy then takes the client from the leftmost X-Forwarded-For "
+            "entry, which the caller writes, so a /0 trusted list makes the fence a header the "
+            "client sets. Name only the ranges of the CDN or other L7 proxy in front"
+        )
+    return ranges
+
+
 # The flavours whose gateway Service argocd/values/edge-<flavour>.yaml marks
 # internet-facing, which is what fences every web route to the allow-list.
 INTERNET_FACING_FLAVOURS = ("aws", "gcp", "azure")
@@ -1283,7 +1314,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "edge": _edge(dial),
         # Variables of their own, because a guarded run's overlay replaces one whole.
         "edge_allowed_cidrs": _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")),
-        "edge_trusted_proxy_cidrs": _edge_cidrs(dial, ("edge", "product", "trusted_proxy_cidrs")),
+        "edge_trusted_proxy_cidrs": _trusted_proxy_cidrs(dial),
     }
 
 
@@ -1367,6 +1398,7 @@ def main() -> int:
         fence, fence_warnings = web_fence(
             _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")), edge_enums["edge.flavour"]
         )
+        _trusted_proxy_cidrs(dial)
         controller_pool = _controller_pool(dial)
     except DialError as error:
         print(f"render_dial: {error}", file=sys.stderr)

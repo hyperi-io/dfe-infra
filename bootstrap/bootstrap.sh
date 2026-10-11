@@ -499,6 +499,16 @@ if [[ -z "${DFE_EDGE_ALLOWED_CIDRS}" && -n "${DFE_EDGE_TRUSTED_PROXY_CIDRS}" ]];
   echo "ERROR: DFE_EDGE_TRUSTED_PROXY_CIDRS is set and DFE_EDGE_ALLOWED_CIDRS is empty -- the trusted ranges only say which address the allow-list judges, so with no list they do nothing. Set the list, or clear DFE_EDGE_TRUSTED_PROXY_CIDRS" >&2
   exit 1
 fi
+# Every peer inside a /0 is trusted, so Envoy takes the client from the leftmost
+# X-Forwarded-For entry, which the caller writes.
+dfe_trusted_cidrs=()
+IFS=',' read -r -a dfe_trusted_cidrs <<< "${DFE_EDGE_TRUSTED_PROXY_CIDRS}"
+for dfe_trusted_cidr in "${dfe_trusted_cidrs[@]}"; do
+  if [[ "${dfe_trusted_cidr// /}" == */0 ]]; then
+    echo "ERROR: DFE_EDGE_TRUSTED_PROXY_CIDRS carries ${dfe_trusted_cidr// /}, which trusts every address -- Envoy then takes the client from the leftmost X-Forwarded-For entry, which the caller writes, so a /0 trusted list makes the fence a header the client sets. Name only the ranges of the CDN or other L7 proxy in front" >&2
+    exit 1
+  fi
+done
 export DFE_EDGE_ALLOWED_CIDRS_ANNOTATION="${DFE_EDGE_ALLOWED_CIDRS:+dfe.hyperi.io/edge_allowed_cidrs: \"${DFE_EDGE_ALLOWED_CIDRS}\"}"
 export DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION="${DFE_EDGE_TRUSTED_PROXY_CIDRS:+dfe.hyperi.io/edge_trusted_proxy_cidrs: \"${DFE_EDGE_TRUSTED_PROXY_CIDRS}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
@@ -930,6 +940,11 @@ if [[ -z "${DFE_CA_PERSIST:-}" ]]; then
     DFE_CA_PERSIST="false"
   fi
 fi
+# The edge tier table layer2-edge.yaml layers for this cloud.
+case "${DFE_CLOUD}" in
+  local|local-dfe|rancher) ca_edge_flavour="onprem" ;;
+  *) ca_edge_flavour="${DFE_CLOUD}" ;;
+esac
 if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
   echo "  Vault/OpenBao issuer mode seeded -- the estate PKI owns the root, nothing to persist"
 elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
@@ -942,18 +957,18 @@ elif [[ "${DFE_CA_PERSIST}" != "true" ]]; then
     echo "  DFE_CA_PERSIST=true to force it."
   fi
 elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-  echo "[DRY-RUN] helm template envoy-gateway-config -f common.yaml -f ${DFE_CLOUD}.yaml -f profile-${DFE_PROFILE}.yaml --set domain=${DFE_DOMAIN} --set tls.internalCA.persist.enabled=true -s templates/internal-ca-persist.yaml | kubectl apply -f -"
+  echo "[DRY-RUN] helm template envoy-gateway-config -f common.yaml -f ${DFE_CLOUD}.yaml -f edge-${ca_edge_flavour}.yaml -f profile-${DFE_PROFILE}.yaml --set domain=${DFE_DOMAIN} --set tls.internalCA.persist.enabled=true -s templates/internal-ca-persist.yaml | kubectl apply -f -"
 else
   kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
   # --show-only still renders EVERY template before filtering to the one named,
-  # and _routes.tpl's routeHost helper fail()s on a route whose hostname it
-  # cannot resolve against the chart's own bare defaults. Layer the same value
-  # files Argo does (argocd/appsets/layer2-platform.yaml), in the same order,
-  # so this render sees what a real deploy would.
+  # and the chart's render guards fail() on values a real deploy never carries.
+  # Layer the same value files Argo does (argocd/appsets/layer2-edge.yaml), in
+  # the same order, so this render sees what a real deploy would.
   ca_value_files=()
   for ca_values_file in \
     "${REPO_ROOT}/argocd/values/common.yaml" \
     "${REPO_ROOT}/argocd/values/${DFE_CLOUD}.yaml" \
+    "${REPO_ROOT}/argocd/values/edge-${ca_edge_flavour}.yaml" \
     "${REPO_ROOT}/argocd/values/profile-${DFE_PROFILE}.yaml"; do
     [[ -f "${ca_values_file}" ]] && ca_value_files+=(-f "${ca_values_file}")
   done

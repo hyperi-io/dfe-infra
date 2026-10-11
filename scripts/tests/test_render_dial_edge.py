@@ -453,6 +453,9 @@ REFUSED_DIALS = {
     "an unknown controller pool": lambda text: text.replace(
         "  controller_pool: combined", "  controller_pool: nosuchpool"
     ),
+    "a trusted proxy range of every address": lambda text: text.replace(
+        '    trusted_proxy_cidrs: ""', "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0"
+    ),
 }
 
 # An env file an operator already holds, which a refused dial must not touch.
@@ -487,6 +490,14 @@ def test_a_refused_dial_leaves_an_existing_env_file_untouched(refusal: str, tmp_
     result = _render(REFUSED_DIALS[refusal](EXAMPLE.read_text(encoding="utf-8")), tmp_path)
     assert result.returncode == 1, result.stderr
     assert env.read_text(encoding="utf-8") == OPERATOR_ENV, result.stderr
+
+
+def test_a_trusted_proxy_range_of_every_address_is_refused_with_its_reason(tmp_path: Path) -> None:
+    result = _render(REFUSED_DIALS["a trusted proxy range of every address"](EXAMPLE.read_text(encoding="utf-8")),
+                     tmp_path)
+    assert result.returncode == 1, result.stderr
+    assert "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts every address" in result.stderr
+    assert "a header the client sets" in result.stderr
 
 
 def test_an_accepted_dial_still_writes_the_env_file(tmp_path: Path) -> None:

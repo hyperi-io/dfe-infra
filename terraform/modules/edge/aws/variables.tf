@@ -145,6 +145,12 @@ variable "gateway_trusted_proxy_cidrs" {
     condition     = alltrue([for cidr in var.gateway_trusted_proxy_cidrs : can(cidrhost(cidr, 0))])
     error_message = "every gateway_trusted_proxy_cidrs entry must be a CIDR range with its prefix length."
   }
+
+  // Every peer inside a /0 is trusted, so Envoy takes the client from the leftmost X-Forwarded-For entry, which the caller writes.
+  validation {
+    condition     = alltrue([for cidr in var.gateway_trusted_proxy_cidrs : !endswith(trimspace(cidr), "/0")])
+    error_message = "a gateway_trusted_proxy_cidrs entry of /0 trusts every address, so the fence becomes an X-Forwarded-For header the client writes. Name only the ranges of the CDN or other L7 proxy in front."
+  }
 }
 
 variable "egress_addresses" {

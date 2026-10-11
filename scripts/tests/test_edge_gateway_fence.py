@@ -84,6 +84,15 @@ def test_a_list_with_no_cdn_writes_the_list_alone() -> None:
     assert done.stdout.splitlines() == [f'{ALLOWED_KEY}: "{ALLOWED}"', ""]
 
 
+@pytest.mark.parametrize("trusted", ["0.0.0.0/0", "::/0", "192.0.2.0/25, ::/0", "192.0.2.0/25,0.0.0.0/0"])
+def test_expected_fail_a_trusted_range_of_every_address_is_refused(trusted: str) -> None:
+    """Every peer is then trusted, so the fence reads a header the client writes."""
+    done = _run_block(DFE_EDGE_ALLOWED_CIDRS=ALLOWED, DFE_EDGE_TRUSTED_PROXY_CIDRS=trusted)
+    assert done.returncode == 1, done.stdout
+    assert "which trusts every address" in done.stderr, done.stderr
+    assert done.stdout == ""
+
+
 def test_expected_fail_cdn_ranges_with_no_list_are_refused_by_name() -> None:
     """The appset carries them only beside a list, so alone they would vanish without a word."""
     done = _run_block(DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)

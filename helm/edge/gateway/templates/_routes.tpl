@@ -454,6 +454,25 @@ true
 {{- if not (kindIs "bool" $facing) -}}
 {{- fail (printf "envoyGateway.service.internetFacing is %v (a %s), not a bool -- it decides whether every web route is fenced to ui.allowed_cidrs, and a quoted \"false\" is truthy. Write true or false unquoted" $facing (kindOf $facing)) -}}
 {{- end -}}
+{{- /* internetFacing is declared rather than derived, so false is held against
+       the markers the cloud itself reads: an explicit AWS internet-facing scheme,
+       or a GKE or AKS LoadBalancer with no internal marker, which both make public. */ -}}
+{{- $svc := .ctx.Values.envoyGateway.service -}}
+{{- if and (not $facing) (eq ($svc.type | default "LoadBalancer") "LoadBalancer") -}}
+{{- $annotations := $svc.annotations | default dict -}}
+{{- $clouds := list (toString .ctx.Values.cloud) (toString (dig "cloud" "" (.ctx.Values.global | default dict))) -}}
+{{- $consequence := "false turns off the web fence and the receiver route's caller-auth check" -}}
+{{- if eq (lower (toString (index $annotations "service.beta.kubernetes.io/aws-load-balancer-scheme" | default ""))) "internet-facing" -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false and envoyGateway.service.annotations sets service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing -- the load balancer is public, and %s. Set internetFacing: true, or make the scheme internal" $consequence) -}}
+{{- end -}}
+{{- $gke := list (index $annotations "networking.gke.io/load-balancer-type" | default "") (index $annotations "cloud.google.com/load-balancer-type" | default "") -}}
+{{- if and (has "gcp" $clouds) (not (has "internal" (list (lower (toString (index $gke 0))) (lower (toString (index $gke 1)))))) -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false on a GKE LoadBalancer Service with no networking.gke.io/load-balancer-type: Internal in envoyGateway.service.annotations -- GKE makes that load balancer public, and %s. Set internetFacing: true, or annotate the Service internal" $consequence) -}}
+{{- end -}}
+{{- if and (has "azure" $clouds) (ne (lower (toString (index $annotations "service.beta.kubernetes.io/azure-load-balancer-internal" | default ""))) "true") -}}
+{{- fail (printf "envoyGateway.service.internetFacing is false on an AKS LoadBalancer Service with no service.beta.kubernetes.io/azure-load-balancer-internal: \"true\" in envoyGateway.service.annotations -- AKS makes that load balancer public, and %s. Set internetFacing: true, or annotate the Service internal" $consequence) -}}
+{{- end -}}
+{{- end -}}
 {{- if and $facing .ctx.Values.exposure.infraUisExternal -}}
 {{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
 {{- if and (not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers)) (not $ui.allowed_cidrs) -}}
@@ -545,6 +564,13 @@ true
 {{- if not (include "envoy-gateway-config.cidrValid" $entry) -}}
 {{- fail (printf "%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $field $entry) -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Every peer inside a /0 is trusted, so Envoy takes the client from the
+       leftmost X-Forwarded-For entry, which the caller writes. */ -}}
+{{- range $entry := $trusted -}}
+{{- if hasSuffix "/0" $entry -}}
+{{- fail (printf "ui.trusted_proxy_cidrs carries %q, which trusts every address -- Envoy then takes the client from the leftmost X-Forwarded-For entry, which the caller writes, so a /0 trusted list makes the fence a header the client sets. Name only the ranges of the CDN or other L7 proxy in front" $entry) -}}
 {{- end -}}
 {{- end -}}
 
