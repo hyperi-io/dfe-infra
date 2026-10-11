@@ -89,7 +89,7 @@ What that means in practice: the engine receives `X-Oidc-Subject` with no `X-Oid
 
 `_resolve_group_grants` maps the groups header to roles, and the header never arrives.
 
-The way out is the engine reading the ID token itself rather than trusting a header the gateway cannot produce. Until that exists, edge OIDC lets in only accounts an administrator has added to a group by hand.
+The way out is the engine reading the ID token itself rather than trusting a header the gateway cannot produce. Until that exists, edge OIDC admits only an account an administrator has added to a group by hand, and on this path even that account resolves no role: roles here come from IdP-linked groups alone, so it is authenticated and authorized for nothing.
 
 Two more things in the same path that do not meet at the Envoy Gateway this
 repo pins (`versions.yaml`, `envoy-gateway`):
