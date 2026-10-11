@@ -1,17 +1,13 @@
-# Runs on every PR and push to main.
+# Starts on every PR and push to main, and runs when the OpenTofu tree changed.
 # Validates every OpenTofu module and environment root, and runs the module tests.
 name: OpenTofu Validate
 
+# No `paths:` here: a PR outside them would start no run, and a required check
+# that never reports blocks the merge. The `changes` job applies the filter.
 on:
   push:
     branches: [main]
-    paths:
-      - 'terraform/**'
-      - '.github/workflows/tf-validate.yml'
   pull_request:
-    paths:
-      - 'terraform/**'
-      - '.github/workflows/tf-validate.yml'
 
 # Nothing in this workflow writes through the token.
 permissions:
@@ -26,8 +22,87 @@ env:
   TOFU_VERSION: "1.12.7"
 
 jobs:
+  # Both validate jobs need this one and run unless it positively found nothing
+  # in PATHS, so a failure here runs them rather than skipping them.
+  changes:
+    name: changed paths (tofu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    env:
+      # One pattern a line, an exact path or `dir/**`; a `#` line is a note.
+      PATHS: |
+        terraform/**
+        .github/workflows/tf-validate.yml
+    steps:
+      # Depth 2 carries a pull request merge commit's two parents.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Match the changed files against PATHS
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          mapfile -t patterns < <(grep -Ev '^[[:space:]]*(#|$)' <<< "$PATHS")
+          for p in "${patterns[@]}"; do
+            stem=${p%/\*\*}
+            if [[ $stem == *'*'* ]]; then
+              echo "::error::'$p' is neither an exact path nor dir/**, the two forms this filter reads"
+              exit 1
+            fi
+          done
+          changed="$RUNNER_TEMP/changed"
+          all=false
+          case "$EVENT" in
+            pull_request)
+              # The checkout is the merge commit, whose first parent is the base branch tip.
+              if git rev-parse -q --verify 'HEAD^2' > /dev/null; then
+                git diff --no-renames --name-only -z 'HEAD^1' HEAD > "$changed"
+              else
+                all=true
+              fi
+              ;;
+            push)
+              if [[ $BEFORE =~ ^0*$ ]] || ! git fetch -q --no-tags --depth=1 origin "$BEFORE"; then
+                all=true
+              else
+                git diff --no-renames --name-only -z "$BEFORE" HEAD > "$changed"
+              fi
+              ;;
+            *)
+              all=true
+              ;;
+          esac
+          relevant=$all
+          if [[ $all == false ]]; then
+            while [[ $relevant == false ]] && IFS= read -r -d '' f; do
+              for p in "${patterns[@]}"; do
+                if [[ $p == */'**' ]]; then
+                  prefix=${p%\*\*}
+                  if [[ $f == "$prefix"* ]]; then relevant=true; fi
+                elif [[ $f == "$p" ]]; then
+                  relevant=true
+                fi
+                if [[ $relevant == true ]]; then
+                  echo "in PATHS: $f"
+                  break
+                fi
+              done
+            done < "$changed"
+          fi
+          echo "event $EVENT, run every check: $all, relevant: $relevant"
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
   validate:
     name: validate + test (tofu)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-24.04
     steps:
@@ -67,6 +142,8 @@ jobs:
   # it passes them, and a root is what an operator actually applies.
   validate-roots:
     name: validate environment roots (tofu)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
