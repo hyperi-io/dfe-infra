@@ -15,7 +15,7 @@
 
     scripts/dfe-sweep                                       # text report
     scripts/dfe-sweep --format json > sweep.json
-    scripts/dfe-sweep --members                             # membership only, no API calls
+    scripts/dfe-sweep --members                             # membership only, one search per topic
     scripts/dfe-sweep --check-bridge                        # and prove the bridge is a subset
     scripts/dfe-sweep --format slack --report-url https://example.com/r
     scripts/dfe-sweep --format slack --report-file sweep-report.txt > sweep-slack.json
@@ -30,8 +30,10 @@ versions.yaml (``latest``, falling back to ``current`` when ``latest`` is empty)
 under its ``apps:`` and ``content:`` maps; a commented-out pin is not a member, so uncommenting
 one is the whole change that brings a repo in. Every suite.yaml node is a member unless it is
 marked ``default_in_pass: false``. suite.yaml's build-cycle in-edges, walked transitively from
-the stack, add every repo it depends on; the infra repo is always in; then the ``include`` and
-``exclude`` settings apply. Each member is printed with every reason it is in.
+the stack, add every repo it depends on; the infra repo is always in; every unarchived repo in
+the org carrying one of the ``member_topics`` is in, so tagging a repo is the whole change that
+brings it in; then the ``include`` and ``exclude`` settings apply. Each member is printed with
+every reason it is in.
 
 SEVERITY. Only a severity a security tool assigned is ever critical: a Dependabot or repository
 advisory's, or a code-scanning rule's security severity. A code-scanning rule without one takes
@@ -60,7 +62,8 @@ label, or carrying that label anywhere else, is reported as label drift.
 
 ``--check-bridge`` also reads the org's open Dependabot, code-scanning and secret-scanning
 alerts, the steady state of what the org webhook alert bridge forwards, and fails if one on a
-member is missing from the sweep. Open alerts on repos that are not members are listed too.
+member is missing from the sweep. Alerts on repos that are not members are out of scope and
+not reported.
 
 SLACK. The sweep never posts to Slack and never reads a Slack token: ``--format slack`` prints
 one JSON object to stdout for a separate poster, which owns the channel and the credential.
@@ -182,6 +185,7 @@ class Options:
         versions_file: The versions.yaml membership is read from.
         suite_dir: The checkout whose suite.yaml dfe-stack reads.
         stack: The stack pointer.
+        topics: Repo topics whose every unarchived repo in the org is a member.
         include: Names or slugs added to the derived membership.
         exclude: Names or slugs removed from it.
         output: ``text``, ``json`` or ``slack``.
@@ -198,6 +202,7 @@ class Options:
     versions_file: Path
     suite_dir: Path
     stack: str
+    topics: tuple[str, ...]
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     output: str
@@ -332,6 +337,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         versions_file=_path(_text(picked, "versions_file")),
         suite_dir=_path(_text(picked, "suite_dir")),
         stack=_text(picked, "stack"),
+        topics=_names(settings.get("member_topics"), "member_topics"),
         include=_names(args.include if args.include is not None else settings.get("include"),
                        "include"),
         exclude=_names(args.exclude if args.exclude is not None else settings.get("exclude"),
@@ -459,12 +465,14 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
     options = effective(settings, args)
     root = sweep.read_versions(options.versions_file)
     graph = load_graph(dfe_infra=options.suite_dir)
+    api = functools.partial(sweep.gh_api, timeout=options.gh_timeout)
     stack, members, notes = sweep.resolve_members(
         root,
         graph,
         org=options.org,
         pointer=options.stack,
         infra=options.infra,
+        topics=sweep.topic_members(options.org, options.topics, api),
         include=options.include,
         exclude=options.exclude,
     )
@@ -475,7 +483,6 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         print(_members_report(stack, members, options.output), flush=True)
         return EXIT_OK
 
-    api = functools.partial(sweep.gh_api, timeout=options.gh_timeout)
     graphql = functools.partial(sweep.gh_graphql, timeout=options.gh_timeout)
     try:
         (limit,) = api("rate_limit", RATE_LIMIT_JQ, False)
@@ -509,7 +516,7 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         except sweep.GhError as exc:
             raise FleetError(f"cannot read the org alert lists for --check-bridge: {exc}") from exc
         missing, outside = sweep.bridge_gap(alerts, results)
-        bridge = sweep.bridge_section(missing, outside, len(alerts))
+        bridge = sweep.bridge_section(missing, len(alerts) - len(outside))
         gap = bool(missing)
 
     report = sweep.build_report(stack, results, options.config.tools, bridge)
@@ -580,7 +587,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="also write the text report here, whatever --format prints (setting: report_file)",
     )
     parser.add_argument(
-        "--members", action="store_true", help="print the membership and stop, no API calls"
+        "--members",
+        action="store_true",
+        help="print the membership and stop; reads only the member topics' repo lists",
     )
     parser.add_argument(
         "--check-bridge",

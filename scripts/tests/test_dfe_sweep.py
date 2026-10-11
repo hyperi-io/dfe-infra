@@ -970,7 +970,7 @@ EVERYTHING = [
 
 def test_the_slack_summary_never_passes_eight_lines() -> None:
     many = EVERYTHING + [_finding(f"repo-{n}", "code_scanning", n, "high") for n in range(300)]
-    bridge = sweep.bridge_section([_alert("dependabot", "o/r", "https://example.com/1")], [], 9)
+    bridge = sweep.bridge_section([_alert("dependabot", "o/r", "https://example.com/1")], 9)
     unreadable = [sweep.Unreadable("example-org/dfe-engine", "backlog", "no scope")]
     report = _slack_report(many, issues=50, bridge=bridge, unreadable=unreadable)
     summary = sweep.render_slack(report)["summary"].splitlines()
@@ -990,7 +990,7 @@ def test_an_all_clear_sweep_is_a_two_line_summary() -> None:
     clear = sweep.render_slack(_slack_report())["summary"].splitlines()
     assert clear[1] == "All clear: nothing open on any member."
     assert len(clear) == 2
-    held = sweep.bridge_section([], [], 4)
+    held = sweep.bridge_section([], 4)
     assert len(sweep.render_slack(_slack_report(bridge=held))["summary"].splitlines()) == 2
 
 
@@ -1529,11 +1529,97 @@ def test_the_bridge_reads_the_three_org_lists_without_secret_values() -> None:
 
 def test_a_bridge_gap_is_in_the_report() -> None:
     missing = [_alert("dependabot", "o/r", "https://example.com/1")]
-    bridge = sweep.bridge_section(missing, [], 3)
+    bridge = sweep.bridge_section(missing, 3)
     report = sweep.build_report("2.2.0", [], [], bridge, generated_at="t")
-    assert report["bridge"]["org_alerts"] == 3
+    assert report["bridge"]["member_alerts"] == 3
     assert "MISSING o/r dependabot: https://example.com/1" in sweep.render_text(report)
     json.dumps(report)
+
+
+def test_alerts_on_non_members_stay_out_of_every_output() -> None:
+    alerts = [
+        _alert("dependabot", "example-org/dfe-engine", "https://example.com/d/1"),
+        _alert("code_scanning", "example-org/side-project", "https://example.com/c/9"),
+    ]
+    missing, outside = sweep.bridge_gap(alerts, [_result()])
+    bridge = sweep.bridge_section(missing, len(alerts) - len(outside))
+    report = sweep.build_report("2.2.0", [_result()], [], bridge, generated_at="t")
+    outputs = [
+        json.dumps(report),
+        sweep.render_text(report),
+        json.dumps(sweep.render_slack(report)),
+    ]
+    assert report["bridge"]["member_alerts"] == 1
+    assert not any("side-project" in out or "non-member" in out for out in outputs)
+
+
+def test_a_bridge_with_no_gap_adds_no_summary_line() -> None:
+    report = _slack_report(EVERYTHING, bridge=sweep.bridge_section([], 6))
+    summary = sweep.render_slack(report)["summary"]
+    assert "bridge" not in summary.lower()
+
+
+# ---------------------------------------------------------------------------
+# Member topics
+# ---------------------------------------------------------------------------
+
+
+def test_a_member_topic_brings_a_repo_in(tmp_path: Path) -> None:
+    topics = {
+        "macbash": ("example-org/macbash", ["hyperi-common"]),
+        "dfe-engine": ("example-org/dfe-engine", ["dfe-suite"]),
+    }
+    _, members, _ = _resolve(_root(tmp_path), topics=topics)
+    assert members["macbash"].why == ("topic hyperi-common",)
+    assert members["macbash"].repo == "example-org/macbash"
+    assert members["dfe-engine"].why == ("stack apps", "topic dfe-suite")
+
+
+def test_an_exclude_beats_a_member_topic(tmp_path: Path) -> None:
+    topics = {"macbash": ("example-org/macbash", ["hyperi-common"])}
+    _, members, notes = _resolve(_root(tmp_path), topics=topics, exclude=["macbash"])
+    assert "macbash" not in members
+    assert notes == []
+
+
+def test_topic_members_reads_each_topic_and_skips_archived_repos() -> None:
+    calls: list[str] = []
+    rows = {
+        "dfe-suite": [{"name": "dfe-engine", "full_name": "o/dfe-engine", "archived": False}],
+        "hyperi-common": [
+            {"name": "scalo-py", "full_name": "o/scalo-py", "archived": False},
+            {"name": "old-lib", "full_name": "o/old-lib", "archived": True},
+            {"name": "dfe-engine", "full_name": "o/dfe-engine", "archived": False},
+        ],
+    }
+
+    def api(endpoint: str, jq: str, paginate: bool) -> list[dict]:
+        calls.append(endpoint)
+        assert jq == sweep.TOPIC_JQ
+        assert paginate
+        return rows[endpoint.split("topic%3A")[1].split("&")[0]]
+
+    found = sweep.topic_members("o", ["dfe-suite", "hyperi-common"], api)
+    assert found == {
+        "dfe-engine": ("o/dfe-engine", ["dfe-suite", "hyperi-common"]),
+        "scalo-py": ("o/scalo-py", ["hyperi-common"]),
+    }
+    assert calls[0] == "search/repositories?q=org%3Ao%20topic%3Adfe-suite&per_page=100"
+
+
+def test_a_topic_that_cannot_be_listed_fails_the_run() -> None:
+    def api(endpoint: str, jq: str, paginate: bool) -> list[dict]:
+        raise sweep.GhError(endpoint, 403, "rate limited (HTTP 403)")
+
+    with pytest.raises(FleetError, match="topic 'dfe-suite'"):
+        sweep.topic_members("o", ["dfe-suite"], api)
+
+
+def test_no_member_topics_makes_no_call() -> None:
+    def api(endpoint: str, jq: str, paginate: bool) -> list[dict]:
+        raise AssertionError(endpoint)
+
+    assert sweep.topic_members("o", [], api) == {}
 
 
 # ---------------------------------------------------------------------------

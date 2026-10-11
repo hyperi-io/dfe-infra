@@ -23,9 +23,10 @@ sweep:
   suite_dir: "."
   # latest (falling back to current when latest is empty), current, or a stack key.
   stack: latest
-  # Names or owner/name slugs, applied after the derived membership. The two
-  # libraries here are suite nodes held out of release passes by default_in_pass.
-  include: [factbook-rs, clickhouse-dfe]
+  # Every unarchived repo in the org carrying one of these topics is a member. Empty for none.
+  member_topics: [dfe-suite, hyperi-common]
+  # Names or owner/name slugs, applied after the derived membership.
+  include: []
   exclude: []
   tools:
     dependabot: true
