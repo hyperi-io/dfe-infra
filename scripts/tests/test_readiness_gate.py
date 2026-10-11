@@ -699,11 +699,17 @@ def test_the_gate_says_when_the_ingress_token_is_missing() -> None:
 def destroyed_namespaces() -> set[str]:
     """Every namespace destroy.sh removes, off its own delete calls."""
     text = DESTROY.read_text(encoding="utf-8", errors="replace")
+    # A loop over "${NAME[@]}" reads the one-line NAME=(...) array assigned at the top.
+    arrays = {
+        name: words.split() for name, words in re.findall(r"^([A-Z_]+)=\(([^)]*)\)$", text, re.M)
+    }
     names: set[str] = set()
     for line in text.splitlines():
         listed = re.search(r"^for ns in (.+); do$", line.strip())
         if listed:
-            names.update(listed.group(1).split())
+            for word in listed.group(1).split():
+                array = re.fullmatch(r'"\$\{([A-Z_]+)\[@\]\}"', word)
+                names.update(arrays.get(array.group(1), [word]) if array else [word])
             continue
         single = re.search(r"delete ns \"?([A-Za-z0-9-]+)\"?\s", line) or re.search(
             r"^delete_namespace \"?([A-Za-z0-9-]+)\"?$", line.strip()
