@@ -1,0 +1,59 @@
+# Runs on every PR and push to main that touches the browser suite.
+# Typechecks the e2e-ui harness and runs its OIDC self-test against the local
+# mock IdP, which needs no cluster, no live IdP and no secret.
+name: e2e-ui harness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/e2e-ui/**'
+      - '.github/workflows/e2e-ui.yml'
+  pull_request:
+    paths:
+      - 'tests/e2e-ui/**'
+      - '.github/workflows/e2e-ui.yml'
+
+# Nothing in this workflow writes through the token.
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: e2e-ui typecheck + OIDC harness self-test
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tests/e2e-ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 24 is the Active LTS major hyperi-ci's versions.yaml sets for TypeScript CI.
+      # No cache: the install is six packages, and a restored cache is one more input to trust.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # npm ci fails on a lockfile that disagrees with package.json and checks every
+      # tarball against its integrity hash. Nothing in the tree needs an install script.
+      - name: Install from the committed lockfile
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # From the repo root, so tsc prints repo-relative paths and its errors annotate the file in the PR.
+      - name: Typecheck the harness
+        working-directory: .
+        run: tests/e2e-ui/node_modules/.bin/tsc --noEmit -p tests/e2e-ui/tsconfig.json
+
+      # The self-test runs headless, so the Chromium headless shell is the only browser it opens.
+      - name: Install the Chromium headless shell
+        run: node_modules/.bin/playwright install --with-deps --only-shell chromium
+
+      # The project keeps no trace, screenshot or video (playwright.config.ts), and no step uploads the report.
+      - name: OIDC harness self-test against the mock IdP
+        run: node_modules/.bin/playwright test --project=oidc-live-selftest
