@@ -10,7 +10,8 @@
 #   3. else cuts the `current` tag, then renders + signs + publishes the manifest
 #      INLINE (folded from the old stack-manifest.yml -- a GITHUB_TOKEN-pushed tag
 #      does NOT re-trigger a separate workflow, so publishing must live here).
-#   4. on a release-maturity tag, auto-advances the `latest` pointer.
+#   4. on a release-maturity tag, advances the `latest` pointer through a pull
+#      request that merges once main's required checks pass on it.
 #
 # NEVER hand-tag: humans curate `current` + the stacks entry; this cuts the tag.
 name: Stack Release
@@ -24,7 +25,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # push the tag + latest-advance commit + the GH release
+  contents: write   # push the tag + the GH release; the `latest` PR uses an App token
   packages: write   # push the OCI artifact
   id-token: write   # cosign keyless via GitHub OIDC
 
@@ -89,6 +90,8 @@ jobs:
             echo "cut=true" >> "$GITHUB_OUTPUT"
             echo "will cut ${CURRENT}"
           fi
+          MATURITY=$(python3 scripts/dfe-stack maturity --stack "$CURRENT")
+          echo "maturity=${MATURITY}" >> "$GITHUB_OUTPUT"
 
       - name: Cut the tag
         if: steps.ver.outputs.cut == 'true'
@@ -121,11 +124,11 @@ jobs:
         if: steps.ver.outputs.cut == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          MATURITY: ${{ steps.ver.outputs.maturity }}
         run: |
           set -euo pipefail
           TAG="${{ steps.ver.outputs.current }}"
           # Only a release-maturity tag may become GitHub's "Latest"; an rc or beta publishes as a prerelease.
-          MATURITY=$(python3 scripts/dfe-stack maturity --stack "$TAG")
           KIND=(--prerelease --latest=false)
           if [ "$MATURITY" = "release" ]; then KIND=(--latest); fi
           gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes "${KIND[@]}" || true
@@ -160,20 +163,99 @@ jobs:
           cosign sign --yes \
             "ghcr.io/${{ github.repository_owner }}/dfe-stack-manifest@${{ steps.oras_push.outputs.digest }}"
 
-      - name: Auto-advance `latest` on a release-maturity tag
-        if: steps.ver.outputs.cut == 'true'
+      # main takes no update without its required checks, so `latest` moves through a
+      # pull request, opened with the App's token because one opened with GITHUB_TOKEN
+      # starts its checks waiting for a human's approval.
+      - name: Mint a dfe-infra token for the `latest` pull request
+        id: latest-token
+        if: steps.ver.outputs.cut == 'true' && steps.ver.outputs.maturity == 'release'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+          permission-statuses: read
+
+      # A checkout of its own, so the branch push carries the App token rather than
+      # the GITHUB_TOKEN the first checkout persisted.
+      - name: Check out main with the App token
+        if: steps.ver.outputs.cut == 'true' && steps.ver.outputs.maturity == 'release'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .latest
+          token: ${{ steps.latest-token.outputs.token }}
+
+      - name: Advance `latest` through a pull request
+        if: steps.ver.outputs.cut == 'true' && steps.ver.outputs.maturity == 'release'
+        working-directory: .latest
+        env:
+          GH_TOKEN: ${{ steps.latest-token.outputs.token }}
+          TAG: ${{ steps.ver.outputs.current }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.ver.outputs.current }}"
-          MATURITY=$(python3 scripts/dfe-stack maturity --stack "$TAG")
-          if [ "$MATURITY" = "release" ]; then
-            git config user.name "hyperi-ci"
-            git config user.email "ci@hyperi.io"
-            git pull --rebase origin main   # avoid a non-fast-forward if main moved
+          branch="stack-latest/${TAG}"
+          title="chore: advance latest -> ${TAG}"
+          git config user.name "hyperi-ci"
+          git config user.email "ci@hyperi.io"
+          # A branch and pull request left by an earlier run at this tag are reused, not refused.
+          lease=$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)
+          pr=$(gh pr list --head "$branch" --base main --state open --json url --jq '.[0].url // ""')
+          for attempt in 1 2 3; do
+            echo "attempt ${attempt}: ${branch} from the current main"
+            git fetch -q --no-tags --depth=1 origin main
+            git checkout -q -B "$branch" FETCH_HEAD
             python3 scripts/dfe-stack set-latest "$TAG"
-            git add versions.yaml
-            git commit -m "chore: advance latest -> ${TAG} [skip ci]"
-            git push origin HEAD:main
-          else
-            echo "maturity ${MATURITY} -- latest pointer unchanged (prerelease)"
-          fi
+            if git diff --quiet -- versions.yaml; then
+              echo "main already points latest at ${TAG}"
+              exit 0
+            fi
+            git commit -q -m "$title" -- versions.yaml
+            head=$(git rev-parse HEAD)
+            git push -q --force-with-lease="refs/heads/${branch}:${lease}" origin "HEAD:refs/heads/${branch}"
+            lease=$head
+            if [ -z "$pr" ]; then
+              pr=$(gh pr create --base main --head "$branch" --title "$title" \
+                --body "Stack Release moves the top-level \`latest:\` pointer onto ${TAG}, a release-maturity stack.")
+            fi
+            # gh pr checks fails at once while the head carries no check, so it waits for the head and its first check.
+            registered=false
+            for _ in $(seq 40); do
+              if [ "$(gh pr view "$pr" --json headRefOid --jq .headRefOid)" = "$head" ] \
+                && gh pr checks "$pr" --json name --jq length > /dev/null 2>&1; then
+                registered=true
+                break
+              fi
+              sleep 15
+            done
+            if [ "$registered" != true ]; then
+              echo "::error::no check registered on ${head} within 10 minutes; ${pr} is left open"
+              exit 1
+            fi
+            if ! timeout 60m gh pr checks "$pr" --watch --fail-fast --interval 30; then
+              echo "::error::a check on ${head} failed or did not finish; ${pr} is left open"
+              exit 1
+            fi
+            # A required check can report after the others finish, so a refused merge is retried before it is judged.
+            state=UNKNOWN
+            for _ in $(seq 10); do
+              if gh pr merge "$pr" --squash --match-head-commit "$head"; then
+                echo "latest -> ${TAG} merged through ${pr}"
+                exit 0
+              fi
+              state=$(gh pr view "$pr" --json mergeStateStatus --jq .mergeStateStatus || echo UNKNOWN)
+              # DIRTY is a conflict with what main took since the branch was cut, so the branch is rebuilt on main.
+              if [ "$state" = DIRTY ]; then
+                continue 2
+              fi
+              sleep 30
+            done
+            echo "::error::${pr} stayed unmergeable (${state}) on ${head}"
+            exit 1
+          done
+          echo "::error::${branch} still conflicted with main after 3 attempts; ${pr} is left open"
+          exit 1

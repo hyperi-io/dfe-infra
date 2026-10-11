@@ -8,21 +8,24 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for the PATHS filter of .github/workflows/helm-lint.yml and the triggers around it.
+"""Tests for the paths filter of .github/workflows/helm-lint.yml and the triggers around it.
 
     python3 -m pytest scripts/tests/test_helm_lint_triggers.py -q
 
-A pull request touching only a file outside PATHS skips every guard and merges unchecked.
+A pull request touching only a file outside the paths skips every guard and merges unchecked.
 The upgrade inputs come from the constants the upgrade module itself reads, so a new input it
 grows is held to the same filter without this file being edited. The rest come from the globs
 the other tests walk, and from the top-level names their sources name.
 
 The filter lives in each workflow's `changes` job rather than in `on.<event>.paths`: a
 workflow a path filter never starts reports no check at all, and a required check that never
-reports blocks the merge, where a job skipped by its `if:` reports and passes.
+reports blocks the merge, where a job skipped by its `if:` reports and passes. Every `changes`
+job runs the one script in .github/actions/changes, handing it that workflow's paths, and the
+script itself runs here against a scratch repository for each verdict it can reach.
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -36,6 +39,8 @@ import dfe_ops_upgrade as u  # noqa: E402
 
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 WORKFLOW = WORKFLOWS / "helm-lint.yml"
+ACTION = REPO_ROOT / ".github" / "actions" / "changes" / "action.yml"
+ACTION_REF = "./.github/actions/changes"
 # The workflows whose jobs are required checks on main, each filtered by its `changes` job.
 GATED = ("helm-lint.yml", "e2e-ui.yml", "tf-validate.yml")
 RUN_UNLESS_NOTHING_RELEVANT = "!cancelled() && needs.changes.outputs.relevant != 'false'"
@@ -59,6 +64,7 @@ UPGRADE_INPUTS = (
 # directories, written as the globs those modules walk. No other workflow runs them.
 TEST_READ_GLOBS = (
     ".github/workflows/*.yml",  # test_workflow_log_masks, test_cloud_reaper, test_toolbox_inputs
+    ".github/actions/**/action.yml",  # this file
     "docs/**/*.md",  # test_no_cost_figures
     "terraform/**/*.tf",  # test_no_cost_figures, the drift check's sweep
     "sizing/**/*.yaml",  # test_validate_sizing, test_no_cost_figures
@@ -85,10 +91,20 @@ def _triggers(doc: dict) -> dict:
     return doc.get("on", doc.get(True))  # YAML 1.1 reads a bare `on` as true
 
 
-def _filters() -> list[str]:
-    """The patterns in the `changes` job's PATHS, the way its script reads them: `#` lines are notes."""
-    text = _load(WORKFLOW.name)["jobs"]["changes"]["env"]["PATHS"]
+def _filter_step(name: str) -> dict:
+    """The step of a workflow's `changes` job that runs the shared filter."""
+    steps = [step for step in _load(name)["jobs"]["changes"]["steps"] if step.get("uses") == ACTION_REF]
+    assert len(steps) == 1, f"{name}'s changes job runs {ACTION_REF} {len(steps)} times"
+    return steps[0]
+
+
+def _patterns(text: str) -> list[str]:
+    """The patterns in a paths block, the way the filter's script reads them: `#` lines are notes."""
     return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+
+
+def _filters() -> list[str]:
+    return _patterns(_filter_step(WORKFLOW.name)["with"]["paths"])
 
 
 def _covers(patterns: list[str], path: str) -> bool:
@@ -97,7 +113,7 @@ def _covers(patterns: list[str], path: str) -> bool:
 
 
 def test_the_filters_use_only_the_two_forms_the_script_reads() -> None:
-    assert _filters(), "PATHS is empty, so every test below would pass"
+    assert _filters(), "helm-lint.yml's paths are empty, so every test below would pass"
     assert [p for p in _filters() if "*" in p.removesuffix("/**")] == []
 
 
@@ -111,7 +127,10 @@ def test_a_gated_workflow_starts_on_every_pull_request_and_every_push_to_main(na
 @pytest.mark.parametrize("name", GATED)
 def test_every_check_in_a_gated_workflow_runs_unless_its_filter_found_nothing(name: str) -> None:
     jobs = _load(name)["jobs"]
-    assert "PATHS" in jobs["changes"]["env"], f"{name}'s changes job carries no PATHS"
+    step = _filter_step(name)
+    assert _patterns(step["with"]["paths"]), f"{name} hands the filter no pattern"
+    wired = f"${{{{ steps.{step['id']}.outputs.relevant }}}}"
+    assert jobs["changes"]["outputs"]["relevant"] == wired, f"{name}'s changes job does not export the verdict"
     for job_id, job in jobs.items():
         if job_id == "changes":
             continue
@@ -120,11 +139,18 @@ def test_every_check_in_a_gated_workflow_runs_unless_its_filter_found_nothing(na
         assert RUN_UNLESS_NOTHING_RELEVANT in condition, f"{name}:{job_id} if: {condition}"
 
 
+@pytest.mark.parametrize("name", GATED)
+def test_the_filter_script_lives_only_in_the_shared_action(name: str) -> None:
+    """A copy left in one workflow drifts from the script the others run."""
+    scripts = [step.get("name") for step in _load(name)["jobs"]["changes"]["steps"] if "run" in step]
+    assert scripts == [], f"{name}'s changes job runs its own script: {scripts}"
+
+
 @pytest.mark.parametrize("path", UPGRADE_INPUTS, ids=lambda p: p.relative_to(REPO_ROOT).as_posix())
 def test_every_file_the_upgrade_tooling_reads_starts_the_guards(path: Path) -> None:
     assert path.is_file(), path
     relative = path.relative_to(REPO_ROOT).as_posix()
-    assert _covers(_filters(), relative), f"{relative} is not in helm-lint.yml's PATHS"
+    assert _covers(_filters(), relative), f"{relative} is not in helm-lint.yml's paths"
 
 
 def _test_reads() -> list[str]:
@@ -137,7 +163,7 @@ def test_every_file_the_other_tests_read_starts_the_guards() -> None:
     assert reads, "the globs match nothing, so this test would pass for any filter"
     outside = [path for path in reads if not _covers(filters, path)]
     shown = f"{outside[:8]} and {len(outside) - 8} more" if len(outside) > 8 else f"{outside}"
-    assert outside == [], f"read by a test, outside helm-lint.yml's PATHS: {shown}"
+    assert outside == [], f"read by a test, outside helm-lint.yml's paths: {shown}"
 
 
 def test_every_top_level_name_a_test_source_reads_is_in_the_filters() -> None:
@@ -153,4 +179,127 @@ def test_every_top_level_name_a_test_source_reads_is_in_the_filters() -> None:
     filters = _filters()
     reached = {n for n in named if any(p == n or p.startswith(f"{n}/") for p in filters)}
     missing = sorted(named - reached)
-    assert missing == [], f"named by a test, absent from helm-lint.yml's PATHS: {missing}"
+    assert missing == [], f"named by a test, absent from helm-lint.yml's paths: {missing}"
+
+
+# --- the shared filter's own verdicts ---------------------------------------------------------
+
+_GIT_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def _git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
+        cwd=repo, env={**_GIT_ENV, "HOME": str(repo.parent)}, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=True,
+    )
+    return done.stdout.strip()
+
+
+def _filter_script() -> str:
+    doc = yaml.safe_load(ACTION.read_text(encoding="utf-8"))
+    (step,) = doc["runs"]["steps"]
+    assert doc["runs"]["using"] == "composite"
+    assert doc["outputs"]["relevant"]["value"] == f"${{{{ steps.{step['id']}.outputs.relevant }}}}"
+    return step["run"]
+
+
+@pytest.fixture
+def merged(tmp_path: Path) -> tuple[Path, str]:
+    """A repository at a pull request merge commit whose second parent changed terraform/x.tf only.
+
+    Its origin is itself, so the push path's fetch of the event's `before` commit resolves.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "terraform").mkdir()
+    (repo / "terraform" / "x.tf").write_text("# x\n", encoding="utf-8")
+    _git(repo, "add", "terraform/x.tf")
+    _git(repo, "commit", "-q", "-m", "change")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+    _git(repo, "remote", "add", "origin", str(repo))
+    return repo, base
+
+
+def _run_filter(repo: Path, paths: str, event: str, before: str = "") -> tuple[subprocess.CompletedProcess, str]:
+    output = repo.parent / "github_output"
+    output.write_text("", encoding="utf-8")
+    env = {**_GIT_ENV, "HOME": str(repo.parent), "PATHS": paths, "EVENT": event, "BEFORE": before,
+           "RUNNER_TEMP": str(repo.parent), "GITHUB_OUTPUT": str(output)}
+    # The runner's own invocation for a composite step with `shell: bash`.
+    done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _filter_script()],
+                          cwd=repo, env=env, capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", check=False)
+    return done, output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("paths", "verdict"),
+    [
+        ("terraform/**\n", "true"),
+        ("# a note\nterraform/x.tf\n", "true"),
+        # README.md changed on main before the pull request, so its diff does not carry it.
+        ("helm/**\nREADME.md\n", "false"),
+    ],
+)
+def test_a_pull_request_is_relevant_only_when_its_merge_diff_touches_the_paths(
+    merged: tuple[Path, str], paths: str, verdict: str
+) -> None:
+    repo, _base = merged
+    done, output = _run_filter(repo, paths, "pull_request")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == f"relevant={verdict}\n"
+
+
+@pytest.mark.parametrize(("paths", "verdict"), [("terraform/**\n", "true"), ("helm/**\n", "false")])
+def test_a_push_is_relevant_only_when_its_range_touches_the_paths(
+    merged: tuple[Path, str], paths: str, verdict: str
+) -> None:
+    repo, base = merged
+    done, output = _run_filter(repo, paths, "push", before=base)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == f"relevant={verdict}\n"
+
+
+@pytest.mark.parametrize(
+    ("event", "before", "checkout"),
+    [
+        ("push", "0" * 40, None),  # a new branch has no range to diff
+        ("push", "f" * 40, None),  # a `before` the remote no longer has
+        ("pull_request", "", "HEAD^2"),  # no merge commit to diff against its base
+        ("workflow_dispatch", "", None),
+    ],
+)
+def test_an_event_with_no_diff_to_read_runs_every_check(
+    merged: tuple[Path, str], event: str, before: str, checkout: str | None
+) -> None:
+    repo, _base = merged
+    if checkout:
+        _git(repo, "checkout", "-q", checkout)
+    done, output = _run_filter(repo, "helm/**\n", event, before=before)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "relevant=true\n"
+
+
+@pytest.mark.parametrize("paths", ["helm/*.yaml\n", "**/x.tf\n", "# only a note\n\n"])
+def test_a_paths_block_the_script_cannot_read_fails_rather_than_skipping(
+    merged: tuple[Path, str], paths: str
+) -> None:
+    repo, _base = merged
+    done, output = _run_filter(repo, paths, "pull_request")
+    assert done.returncode == 1
+    assert "::error::" in done.stdout
+    assert output == ""
+
+
+def test_the_workflows_name_the_action_these_tests_run() -> None:
+    """Inputs reach the script through its env, never spliced into the shell text."""
+    assert (REPO_ROOT / ACTION_REF.removeprefix("./") / "action.yml").resolve() == ACTION.resolve()
+    assert "${{" not in _filter_script()
