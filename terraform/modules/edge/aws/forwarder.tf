@@ -51,15 +51,15 @@ locals {
   )
 
   // The listener ports culvert exposes, each with the nodePort its Service
-  // pins. The names and the listen ports match helm/edge/culvert/values.yaml's
-  // `listeners` list, which is the SSoT for both.
+  // pins. The names and the listen ports match the `defaultListeners` list in
+  // argocd/values/apps/culvert/values.yaml, which is the SSoT for both.
   tunnel_ports = concat(
     [{ name = "wireguard", port = 51820, node_port = var.tunnel.node_ports.wireguard }],
     var.tunnel.openvpn ? [{ name = "openvpn-udp", port = 1194, node_port = var.tunnel.node_ports.openvpn }] : [],
   )
 
   // Empty is not "unset" -- it is 0.0.0.0/0, and an edge fleet dialling in from
-  // anywhere is the normal case (helm/edge/culvert/values.yaml says the same).
+  // anywhere is the normal case.
   tunnel_source_ranges = length(var.tunnel.source_ranges) > 0 ? var.tunnel.source_ranges : ["0.0.0.0/0"]
 
   // One ingress rule per listener per allowed range, so a range added to the
@@ -147,8 +147,8 @@ resource "aws_vpc_security_group_egress_rule" "forwarder_nodes" {
 // instance carrying the cluster tag.
 // UDP alone: every listener in tunnel_ports is UDP and the refresh script's DNAT
 // chain is `-p udp` throughout, so a TCP rule here would admit a port nothing
-// forwards to. The chart's OpenVPN TCP fallback is a commented-out listener
-// (helm/edge/culvert/values.yaml) and travels through neither.
+// forwards to. culvert's OpenVPN TCP fallback is a listener no default list
+// carries, and travels through neither.
 resource "aws_vpc_security_group_ingress_rule" "node_port" {
   for_each = local.forwarder_enabled ? { for p in local.tunnel_ports : p.name => p } : {}
 

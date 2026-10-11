@@ -256,7 +256,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap"
 SCRIPTS = REPO_ROOT / "scripts"
 HELM_CHARTS = REPO_ROOT / "helm" / "charts"
+# The DFE-only objects beside each component's thin chart, and the integration values both read.
+EXTRAS_CHART = HELM_CHARTS / "dfe-extras"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
+APPS_VALUES = ARGO_VALUES / "apps"
 DFE_STACK = SCRIPTS / "dfe-stack"
 DRIFT_CHECK = SCRIPTS / "check_versions_drift.py"
 NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
@@ -352,9 +355,34 @@ def _bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
         return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_AWS_SM
     return BOOTSTRAP_REQUIRED
 
-# A representative set of app charts is rendered alongside the mode's substrate
-# charts, so an app-side profile break is caught before deploy.
+# A representative set of apps whose dfe-extras objects are rendered alongside the
+# mode's backing-service charts, so an app-side profile break is caught before deploy.
 _PREFLIGHT_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine")
+
+
+def _extras_render(app: str, mode: str) -> list[str]:
+    """The `helm template` of dfe-extras for one app, layered as layer2-apps.yaml layers it.
+
+    Args:
+        app: The app's deploy.service, which picks its objects and its values directory.
+        mode: One of MODES.
+
+    Returns:
+        The command, short of the deploy-time facts a caller adds.
+    """
+    files = [
+        ARGO_VALUES / "common.yaml",
+        REPO_ROOT / profiles.PROFILES[mode].argocd_values,
+        APPS_VALUES / "_common.yaml",
+        APPS_VALUES / app / "values.yaml",
+        APPS_VALUES / app / f"profile-{mode}.yaml",
+    ]
+    cmd = ["helm", "template", app, str(EXTRAS_CHART)]
+    for path in files:
+        if path.is_file():
+            cmd += ["-f", str(path)]
+    return [*cmd, "--set", f"chartName={app}", "--set", f"profile={mode}"]
+
 
 # --- kubeconfig defaults -----------------------------------------------------
 DEFAULT_USER = "ubuntu"
@@ -1036,7 +1064,7 @@ def _secret_value(kube: list[str], namespace: str, name: str, key: str) -> str:
     return base64.b64decode(raw).decode("utf-8") if raw else ""
 
 
-# helm/charts/dfe-fetcher/values.yaml credentials.secretName, and the two keys
+# argocd/values/apps/dfe-fetcher/values.yaml credentials.secretName, and the two keys
 # the fetcher's cloudwatch_logs service reads out of it. The Secret's keys are
 # the fetcher's environment names; a secrets store names the same two values its
 # own way, so each is looked up under either.
@@ -1638,7 +1666,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
 # _APP_NS resolves to the deployment's own app namespace. The SSoT for the set:
 # bootstrap/access-summary.sh prints this rather than keeping its own copy.
 _APP_NS = "\0app\0"
-# helm/charts/dfe-engine/values.yaml auth.* defaults, used when the engine
+# dfe-extras' extras.defaults.dfe-engine.auth.* defaults, used when the engine
 # Deployment cannot be read; both names are values, so neither is a constant.
 _ENGINE_ADMIN = ("dfe-engine-admin", "admin-password")
 _ENGINE_BREAKGLASS = ("dfe-engine-breakglass", "breakglass-password")
@@ -1934,6 +1962,47 @@ def _chart_values(chart: Path, mode: str, cloud: str = "") -> dict:
     return merged
 
 
+def _component_values(service: str, mode: str, cloud: str = "") -> dict:
+    """One component's values as dfe-extras reads them, beside the component's thin chart.
+
+    The layers argocd/appsets/layer2-apps.yaml hands both sources, over the
+    component's defaults in dfe-extras (extras.defaults.<service>), which a layer
+    that sets a key overrides.
+
+    Args:
+        service: The component's deploy.service, which names its defaults and values directory.
+        mode: One of MODES.
+        cloud: The argocd/values/<cloud>.yaml overlay, skipped when empty.
+
+    Returns:
+        The merged values.
+    """
+    from ruamel.yaml import YAML
+
+    yaml = YAML(typ="safe")
+    extras = yaml.load((EXTRAS_CHART / "values.yaml").read_text(encoding="utf-8")) or {}
+    # Loaded fresh on every call, so the layers can merge into it in place.
+    merged: dict = ((extras.get("extras") or {}).get("defaults") or {}).get(service) or {}
+    files = [ARGO_VALUES / "common.yaml"]
+    if cloud:
+        files.append(ARGO_VALUES / f"{cloud}.yaml")
+    files += [
+        REPO_ROOT / profiles.PROFILES[mode].argocd_values,
+        APPS_VALUES / "_common.yaml",
+        APPS_VALUES / service / "values.yaml",
+    ]
+    if cloud:
+        files.append(APPS_VALUES / service / f"{cloud}.yaml")
+    files.append(APPS_VALUES / service / f"profile-{mode}.yaml")
+    for path in files:
+        if not path.is_file():
+            continue
+        doc = yaml.load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict):
+            _merge_values(merged, doc)
+    return merged
+
+
 def _broker_credential_from_store(mode: str, cloud: str = "") -> bool:
     """Whether a profile's broker takes its client credential from the secrets store.
 
@@ -2019,9 +2088,9 @@ def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
     ):
         uses.append("the internal CA root it persists across rebuilds (DFE_CA_PERSIST)")
 
-    ui = _chart_values(HELM_CHARTS / "dfe-ui", mode, cloud).get("config") or {}
+    ui = _component_values("dfe-ui", mode, cloud).get("config") or {}
     if ui.get("nextauthSecretName") and ui.get("secretStoreName") == STORE_NAME:
-        uses.append("the console's NextAuth secret (externalsecret-nextauth.yaml)")
+        uses.append("the console's NextAuth secret (dfe-extras ui-externalsecret-nextauth.yaml)")
 
     collector = _chart_values(HELM_CHARTS / "otel-collector", mode, cloud)
     ingress = (collector.get("otel") or {}).get("ingress") or {}
@@ -3431,8 +3500,10 @@ def _offline_preflight(args: argparse.Namespace) -> int:
     common = ARGO_VALUES / "common.yaml"
     profile = REPO_ROOT / profiles.PROFILES[args.mode].argocd_values
 
-    # 5. Render the mode's charts at the pinned versions (catch a broken profile
-    #    offline). helm optional -- a missing binary warns, it does not fail.
+    # 5. Render the mode's charts (catch a broken profile offline): each backing-
+    #    service chart, and dfe-extras for each app, whose thin chart is pulled over
+    #    OCI at deploy and so is not rendered here. helm optional -- a missing
+    #    binary warns, it does not fail.
     if shutil.which("helm") is None:
         print("  [warn] helm not on PATH -- skipping the chart-render pre-flight.", file=sys.stderr)
     else:
@@ -3442,24 +3513,30 @@ def _offline_preflight(args: argparse.Namespace) -> int:
         # project the credential into). Offline there is no annotation, so feed a
         # synthetic one -- this is a structural render check, the output is
         # discarded, and the fail-fast still guards real deploys.
-        for chart in (*profiles.substrate(args.mode), *_PREFLIGHT_APPS):
-            tmp = tempfile.mkdtemp(prefix=f"dfe-render-{chart}-")
+        layers = ["-f", str(common), "-f", str(profile)]
+        renders = [
+            (chart, ["helm", "template", chart, str(HELM_CHARTS / chart), *layers])
+            for chart in profiles.substrate(args.mode)
+        ]
+        renders += [
+            (f"dfe-extras {app}", _extras_render(app, args.mode)) for app in _PREFLIGHT_APPS
+        ]
+        for label, cmd in renders:
+            tmp = tempfile.mkdtemp(prefix="dfe-render-")
             try:
                 rc, _out, err = _run_text(
-                    [
-                        "helm", "template", chart, str(HELM_CHARTS / chart),
-                        "-f", str(common), "-f", str(profile),
-                        "--set", "appNamespace=preflight",
-                        "--output-dir", tmp,
-                    ]
+                    [*cmd, "--set", "appNamespace=preflight", "--output-dir", tmp]
                 )
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
             if rc != 0:
-                print(f"  [FAIL] helm render {chart} ({args.mode}): {_last_line(err)}", file=sys.stderr)
+                print(
+                    f"  [FAIL] helm render {label} ({args.mode}): {_last_line(err)}",
+                    file=sys.stderr,
+                )
                 hard_fail += 1
             else:
-                print(f"  [ok]   helm render {chart} ({args.mode})", file=sys.stderr)
+                print(f"  [ok]   helm render {label} ({args.mode})", file=sys.stderr)
 
     # 6. The engine mounts apps.yaml, which is what makes a new or changed app a
     #    manifest edit rather than an engine release. A deploy that renders no
@@ -3473,11 +3550,7 @@ def _offline_preflight(args: argparse.Namespace) -> int:
         )
     else:
         rc, out, err = _run_text(
-            [
-                "helm", "template", "dfe-engine", str(HELM_CHARTS / "dfe-engine"),
-                "-f", str(common), "-f", str(profile),
-                "--set", "appNamespace=preflight",
-            ]
+            [*_extras_render("dfe-engine", args.mode), "--set", "appNamespace=preflight"]
         )
         # Whole lines, not substrings: a renamed variable still contains the old
         # name, and the check would keep passing over it.
@@ -3485,7 +3558,10 @@ def _offline_preflight(args: argparse.Namespace) -> int:
             what
             for what, marker in (
                 ("the manifest", composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ") + "\n"),
-                ("DFE_APP_CATALOGUE_FILE", "name: DFE_APP_CATALOGUE_FILE\n"),
+                (
+                    "DFE_APP_CATALOGUE_FILE",
+                    "  DFE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n",
+                ),
             )
             if marker not in out
         ]

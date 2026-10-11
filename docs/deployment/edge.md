@@ -1,7 +1,7 @@
 # The edge module
 
-The public gateway (`helm/edge/gateway`) and the fleet tunnel
-(`helm/edge/culvert`) are one add-on, deployed by
+The public gateway (`helm/edge/gateway`) and the fleet tunnel (culvert's
+published thin chart, beside `helm/charts/dfe-extras`) are one add-on, deployed by
 `argocd/appsets/layer2-edge.yaml`: everything that decides whether traffic from
 outside reaches a DFE workload.
 

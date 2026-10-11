@@ -50,14 +50,12 @@ from pathlib import Path
 
 import yaml
 
+from _charts import CHART_TREES, UNDEPLOYED
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-# Both chart roots: the app charts, and the edge module's two. A chart that moves
-# between them must stay under these invariants rather than dropping out of the
-# sweep, which is the hole the coverage check below exists to catch.
-CHART_ROOTS = (REPO_ROOT / "helm" / "charts", REPO_ROOT / "helm" / "edge")
 VALUES = REPO_ROOT / "argocd" / "values"
+EXTRAS = REPO_ROOT / "helm" / "charts" / "dfe-extras"
 
 BASE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml"]
 
@@ -67,39 +65,69 @@ POD_PARENTS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "ReplicaSet"}
 # Charts this cascade cannot reach, and why. A chart that stops rendering without
 # being named here fails the coverage check rather than dropping out quietly.
 UNRENDERABLE = {
-    # culvert fails its own listeners guard: the cascade names no tunnel
-    # protocol, and a server accepting neither is a deliberate render error.
-    "culvert",
+    # culvert's objects fail its own listeners guard: the cascade's listeners are
+    # the receiver's, and a server accepting no tunnel is a deliberate render error.
+    "dfe-extras/culvert",
 }
 
 
-def render(chart: Path) -> list[dict] | None:
+def render(chart: Path, *sets: str, layers: tuple[Path, ...] = ()) -> list[dict] | None:
     """Rendered docs, or None when the chart needs values this cascade lacks."""
     cmd = ["helm", "template", chart.name, str(chart)]
-    for v in BASE_CASCADE:
+    for v in (*BASE_CASCADE, *layers):
         if v.exists():
             cmd += ["-f", str(v)]
     # The appsets pass these as helm parameters rather than values files; some
     # charts refuse to render without them.
     cmd += ["--set", "appNamespace=dfe-local", "--set", "kafka.mode=single"]
+    for s in sets:
+        cmd += ["--set", s]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
         return None
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
+def extras_components() -> list[str]:
+    """The components dfe-extras renders objects for, each named by its chartName."""
+    values = yaml.safe_load((EXTRAS / "values.yaml").read_text(encoding="utf-8"))
+    return sorted(values["extras"]["appVersions"])
+
+
+def integration_values(component: str) -> tuple[Path, ...]:
+    """The per-app layers layer2-apps.yaml adds for a component on the local cloud."""
+    service = "hyperdx" if component == "dfe-hyperdx" else component
+    apps = VALUES / "apps"
+    return (apps / "_common.yaml", apps / service / "values.yaml", apps / service / "local.yaml")
+
+
 @cache
 def rendered() -> tuple[tuple[tuple[str, tuple[dict, ...]], ...], tuple[str, ...]]:
-    """Every chart rendered once: (chart, docs) pairs, plus the names that would not."""
+    """Every deployed chart rendered once: (chart, docs) pairs, plus the names that would not.
+
+    dfe-extras renders nothing without a chartName, so it is rendered once per
+    component, over that component's integration values, each entry named
+    dfe-extras/<component>.
+    """
     covered: list[tuple[str, tuple[dict, ...]]] = []
     skipped: list[str] = []
-    charts = [p for root in CHART_ROOTS for p in root.iterdir() if (p / "Chart.yaml").exists()]
-    for chart in sorted(charts, key=lambda p: p.name):
-        docs = render(chart)
+    charts = [
+        p
+        for root in CHART_TREES
+        for p in root.iterdir()
+        if (p / "Chart.yaml").exists() and p not in UNDEPLOYED
+    ]
+    renders = [(c.name, c, (), ()) for c in charts if c != EXTRAS]
+    renders += [
+        (f"dfe-extras/{c}", EXTRAS, (f"chartName={c}",), integration_values(c))
+        for c in extras_components()
+    ]
+    for name, chart, sets, layers in sorted(renders):
+        docs = render(chart, *sets, layers=layers)
         if docs is None:
-            skipped.append(chart.name)
+            skipped.append(name)
         else:
-            covered.append((chart.name, tuple(docs)))
+            covered.append((name, tuple(docs)))
     return tuple(covered), tuple(skipped)
 
 

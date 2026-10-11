@@ -151,4 +151,4 @@ hostname and serves the wildcard certificate as normal.
 
 - [index.md](index.md) - the deploy layers and the values cascade
 - `helm/edge/gateway/values.yaml` - the `oidc` and `jwtAuthn` keys
-- `helm/charts/dfe-engine/values.yaml` - the `auth`, `oidc` and `authConfig` keys
+- `helm/charts/dfe-extras/values.yaml` - the engine's `auth` and `authConfig` defaults, under `extras.defaults.dfe-engine`

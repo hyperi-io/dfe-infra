@@ -57,24 +57,20 @@ setup() {
 # --- Invariant 2: Secrets are ESO/Terraform managed ---
 
 @test "dfe-engine OIDC secrets reference K8s Secrets, not dfe-engine endpoints" {
-    # Scoped to the engine pod, the one holding the credential: the hunt runner's
-    # readiness wait polls the engine too, and that is start order, not a secret source.
-    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --show-only templates/deployment.yaml \
-        --set global.registry=ghcr.io/test \
+    # The engine's env ConfigMap from dfe-extras, the settings the engine pod reads:
+    # a provider's credential is a secretKeyRef the thin chart's extraEnv carries,
+    # so it never appears here, and nothing here points the engine at itself.
+    run helm template test "${REPO_ROOT}/helm/charts/dfe-extras/" \
+        --show-only templates/engine-env.yaml \
+        --set chartName=dfe-engine \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
         --set 'oidc.providers[0].secretName=dfe-oidc-google' \
         --set 'oidc.providers[0].envMappings.DFE_OIDC_GOOGLE_CLIENT_ID=client-id'
     [ "$status" -eq 0 ]
-
-    # The pod carries other secretKeyRefs, so the provider's own entry is the one read.
-    local entry
-    entry=$(printf '%s\n' "$output" | grep -A4 -e '- name: DFE_OIDC_GOOGLE_CLIENT_ID')
-    [[ "${entry}" == *"secretKeyRef:"* ]]
-    [[ "${entry}" == *"name: dfe-oidc-google"* ]]
-    [[ "${entry}" == *"key: client-id"* ]]
-    [[ ! "${entry}" == *"value:"* ]]
+    [[ "$output" == *"kind: ConfigMap"* ]]
+    [[ ! "$output" == *"DFE_OIDC_GOOGLE_CLIENT_ID"* ]]
+    [[ ! "$output" == *"client-id"* ]]
 
     [[ ! "$output" == *"http://dfe-engine"* ]]
     [[ ! "$output" == *"https://dfe-engine"* ]]
@@ -102,8 +98,8 @@ setup() {
         --set domain=example.com || exit_code=$?
     [ "$exit_code" -eq 0 ]
 
-    helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --set global.registry=ghcr.io/test || exit_code=$?
+    helm template test "${REPO_ROOT}/helm/charts/dfe-extras/" \
+        --set chartName=dfe-engine || exit_code=$?
     [ "$exit_code" -eq 0 ]
 }
 

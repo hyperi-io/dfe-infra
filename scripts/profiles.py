@@ -87,16 +87,12 @@ class Profile:
     lane_floor: int = 0
     # The appset profile values file the cluster annotation selects.
     argocd_values: str = ""
-    # The values file that shapes the same tier under the dfe-stack umbrella.
-    umbrella_profile: str = ""
     # Compose only: the Kubernetes profile this one is the projection of, and
     # the key it is written under in dfe-docker's service_profiles.yaml.
     mirrors: str = ""
     compose_profile: str = ""
 
 
-# slim is the umbrella chart's DEFAULT values, so its umbrella_profile is
-# values.yaml itself -- an overlay restating the defaults would be a second copy.
 PROFILES: dict[str, Profile] = {
     "slim": Profile(
         platform=KUBERNETES,
@@ -105,7 +101,6 @@ PROFILES: dict[str, Profile] = {
         capacity_floor=(2.0, 4 * 1024**3, 1),
         lane_floor=6 * 1024**3,
         argocd_values="argocd/values/profile-slim.yaml",
-        umbrella_profile="helm/dfe-stack/values.yaml",
         description="one node of everything, gRPC transport, no broker",
     ),
     "single": Profile(
@@ -115,7 +110,6 @@ PROFILES: dict[str, Profile] = {
         capacity_floor=(4.0, 8 * 1024**3, 1),
         lane_floor=10 * 1024**3,
         argocd_values="argocd/values/profile-single.yaml",
-        umbrella_profile="helm/dfe-stack/profiles/single.yaml",
         description="one node of everything WITH a non-operator broker",
     ),
     "scale": Profile(
@@ -125,7 +119,6 @@ PROFILES: dict[str, Profile] = {
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-scale.yaml",
-        umbrella_profile="helm/dfe-stack/profiles/scale.yaml",
         description="HA replicas, operator ClickHouse cluster and Strimzi Kafka",
     ),
     "mesh": Profile(
@@ -136,7 +129,6 @@ PROFILES: dict[str, Profile] = {
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-mesh.yaml",
-        umbrella_profile="helm/dfe-stack/profiles/mesh.yaml",
         description="scale's HA sizing and ClickHouse cluster, gRPC transport, no broker",
     ),
     "docker-slim": Profile(

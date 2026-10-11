@@ -806,55 +806,113 @@ def test_the_apps_sub_block_excludes_digests() -> None:
     )
 
 
-def test_bump_app_moves_a_chart_kept_outside_helm_charts() -> None:
-    """culvert's chart is helm/edge/culvert, so a helm/charts/<name> path finds no chart."""
+# A stack whose app pins a published thin chart, beside one whose chart is not out yet.
+_BUMP_PINS = (
+    'current: "2.0.0"\n'
+    "stacks:\n"
+    "  1.0.0:\n"
+    "    apps:\n"
+    '      culvert: "v1.0.0"\n'
+    "    chart-digests:\n"
+    '      culvert: "sha256:chart-old"   # 1.0.0\n'
+    "  2.0.0:\n"
+    "    apps:\n"
+    '      culvert: "v1.0.0"\n'
+    '      dfe-new: "v0.1.0"\n'
+    "    digests:\n"
+    '      culvert: "sha256:aaa"\n'
+    "    chart-digests:\n"
+    '      culvert: "sha256:chart-old"   # 1.0.0\n'
+    '      dfe-new: "unpublished"\n'
+)
+
+
+def _bump_over(
+    pins: str, app: str, version: str, served: dict
+) -> tuple[int | None, str, str, list[tuple[str, str, str]]]:
+    """bump-app over pins with tag_digest answering from served.
+
+    Returns (exit or None on a refusal, versions.yaml after, output or the refusal, reads).
+    """
     import argparse
     import contextlib
     import io
     import tempfile
 
+    asked: list[tuple[str, str, str]] = []
+
+    def tag_digest(org: str, package: str, tag: str, registry: str = "") -> str | None:
+        asked.append((org, package, tag))
+        return served.get((package, tag))
+
     with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td)
-        versions = tmp / "versions.yaml"
-        versions.write_text(
-            'current: "2.0.0"\n'
-            "stacks:\n"
-            "  2.0.0:\n"
-            "    apps:\n"
-            '      culvert: "v1.0.0"\n'
-            "    digests:\n"
-            '      culvert: "sha256:aaa"\n',
-            encoding="utf-8",
-            newline="\n",
-        )
-        chart = tmp / "helm" / "edge" / "culvert" / "Chart.yaml"
-        chart.parent.mkdir(parents=True)
-        chart.write_text('name: culvert\nappVersion: "v1.0.0"\n', encoding="utf-8", newline="\n")
-        original = stack.REPO_ROOT
-        stack.REPO_ROOT = tmp
+        versions = Path(td) / "versions.yaml"
+        versions.write_text(pins, encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT, stack.registry_pins.tag_digest
+        stack.REPO_ROOT, stack.registry_pins.tag_digest = Path(td), tag_digest
         out = io.StringIO()
+        rc: int | None = None
         try:
             with contextlib.redirect_stdout(out):
                 rc = stack.cmd_bump_app(
-                    argparse.Namespace(app="culvert", version="v1.0.1", stack=None, dry_run=False)
+                    argparse.Namespace(
+                        app=app, version=version, stack=None, dry_run=False,
+                        registry="ghcr.io/hyperi-io",
+                    )
                 )
+        except SystemExit as exc:
+            out.write(str(exc))
         finally:
-            stack.REPO_ROOT = original
+            stack.REPO_ROOT, stack.registry_pins.tag_digest = original
+        return rc, versions.read_text(encoding="utf-8"), out.getvalue(), asked
 
-        written = versions.read_text(encoding="utf-8")
-        expect("bump-app exits 0", rc == 0, out.getvalue())
-        expect(
-            "the edge chart's appVersion moves",
-            'appVersion: "v1.0.1"' in chart.read_text(encoding="utf-8"),
-            chart.read_text(encoding="utf-8"),
-        )
-        expect("the stack's apps pin moves with it", 'culvert: "v1.0.1"' in written, written)
-        expect("the digest is left for resolve_pins", 'culvert: "sha256:aaa"' in written, written)
-        expect(
-            "and the report names the chart it wrote",
-            "helm/edge/culvert/Chart.yaml" in out.getvalue(),
-            out.getvalue(),
-        )
+
+def test_bump_app_moves_the_tag_and_the_thin_chart_together() -> None:
+    """Argo pulls the chart by digest alone, so a tag moved without it deploys the old release."""
+    served = {("charts/culvert", "1.0.1"): "sha256:chart-new"}
+    rc, written, out, asked = _bump_over(_BUMP_PINS, "culvert", "v1.0.1", served)
+    current = written.split("  2.0.0:\n", 1)[1]
+    expect("bump-app exits 0", rc == 0, out)
+    expect("the apps pin moves", 'culvert: "v1.0.1"' in current, current)
+    expect(
+        "the chart digest moves to the chart of that version, noted by version",
+        'culvert: "sha256:chart-new"   # 1.0.1' in current,
+        current,
+    )
+    expect(
+        "the chart is read under charts/ at the tag less its v",
+        asked == [("hyperi-io", "charts/culvert", "1.0.1")],
+        f"{asked}",
+    )
+    expect("the image digest is left for resolve_pins", 'culvert: "sha256:aaa"' in current, current)
+    expect(
+        "an older stack keeps the chart it shipped",
+        'culvert: "sha256:chart-old"   # 1.0.0' in written.split("  2.0.0:\n", 1)[0],
+        written,
+    )
+
+
+def test_bump_app_refuses_a_tag_whose_chart_is_not_published() -> None:
+    rc, written, out, _ = _bump_over(_BUMP_PINS, "culvert", "v1.0.1", {})
+    expect("it refuses", rc is None, out)
+    expect("naming the chart it could not find", "charts/culvert:1.0.1 is not published" in out, out)
+    expect("and writes nothing", written == _BUMP_PINS, written)
+
+
+def test_bump_app_keeps_an_unpublished_chart_unpublished() -> None:
+    rc, written, out, _ = _bump_over(_BUMP_PINS, "dfe-new", "v0.2.0", {})
+    expect("bump-app exits 0", rc == 0, out)
+    expect("the tag moves", 'dfe-new: "v0.2.0"' in written, written)
+    expect("the chart entry stays unpublished", 'dfe-new: "unpublished"' in written, written)
+
+
+def test_bump_app_refuses_an_app_with_no_chart_entry() -> None:
+    pins = _BUMP_PINS.replace('      dfe-new: "unpublished"\n', "")
+    rc, written, out, asked = _bump_over(pins, "dfe-new", "v0.2.0", {})
+    expect("it refuses", rc is None, out)
+    expect("naming the entry to add", "no chart-digests entry for dfe-new" in out, out)
+    expect("without a registry read", not asked, f"{asked}")
+    expect("and writes nothing", written == pins, written)
 
 
 def _constraints_fixture(tmp: Path, from_name: str) -> dict:
@@ -1025,7 +1083,7 @@ def _cut_into(
         return stack.cmd_cut(
             argparse.Namespace(
                 version="9.9.0-rc.3", from_stack=None, maturity=None,
-                apps=None, org="test-org", dry_run=False,
+                apps=None, org="test-org", dry_run=False, registry="ghcr.io/test-org",
             )
         )
     finally:
@@ -1327,6 +1385,7 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
                     apps=None,
                     org="test-org",
                     dry_run=False,
+                    registry="ghcr.io/test-org",
                 )
             )
         except SystemExit as exc:
@@ -1339,6 +1398,116 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
             expect("it refuses rather than shipping an unpinned app", False, "cut returned")
         finally:
             stack.REPO_ROOT, stack._latest_published = original_root, original_published
+
+
+# The cut fixture with a thin chart per app: an-app's published at its tag, and one
+# for an app whose chart is not out yet.
+_CHART_CUT_FIXTURE = _CUT_FIXTURE.replace(
+    '    digests:\n      an-app: "sha256:bbb"\n',
+    '    digests:\n      an-app: "sha256:bbb"\n'
+    "    chart-digests:\n"
+    '      an-app: "sha256:chart-two"   # 2.0.0\n'
+    '      other-app: "unpublished"\n',
+).replace(
+    '  9.9.0-rc.2:\n    maturity: "rc"\n    apps:\n      an-app: "v2.0.0"\n',
+    '  9.9.0-rc.2:\n    maturity: "rc"\n    apps:\n      an-app: "v2.0.0"\n      other-app: "v0.1.0"\n',
+)
+
+
+def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]]]:
+    """A cut over the chart fixture: an-app has published v3.0.0, other-app nothing.
+
+    Returns (the refusal, or None when the cut wrote, versions.yaml after, chart reads).
+    """
+    import argparse
+    import tempfile
+
+    asked: list[tuple[str, str, str]] = []
+
+    def tag_digest(org: str, package: str, tag: str, registry: str = "") -> str | None:
+        asked.append((org, package, tag))
+        return served.get((package, tag))
+
+    def latest(org: str, app: str) -> tuple[str, str] | None:
+        return ("v3.0.0", "sha256:img-three") if app == "an-app" else None
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(_CHART_CUT_FIXTURE, encoding="utf-8", newline="\n")
+        original = (
+            stack.REPO_ROOT,
+            stack._latest_published,
+            stack.registry_pins.head_commit,
+            stack.registry_pins.tag_digest,
+        )
+        stack.REPO_ROOT = tmp
+        stack._latest_published = latest
+        stack.registry_pins.head_commit = lambda org, repo, ref="main": _OLD_SHA
+        stack.registry_pins.tag_digest = tag_digest
+        refusal = None
+        try:
+            stack.cmd_cut(
+                argparse.Namespace(
+                    version="9.9.0-rc.3", from_stack=None, maturity=None, apps=None,
+                    org="test-org", dry_run=False, registry="ghcr.io/test-org",
+                )
+            )
+        except SystemExit as exc:
+            refusal = str(exc)
+        finally:
+            (
+                stack.REPO_ROOT,
+                stack._latest_published,
+                stack.registry_pins.head_commit,
+                stack.registry_pins.tag_digest,
+            ) = original
+        return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8"), asked
+
+
+def test_a_cut_repins_each_thin_chart_at_the_version_its_tag_names() -> None:
+    """Nothing else writes chart-digests, and the appsets deploy the chart it names."""
+    refusal, text, asked = _chart_cut({("charts/an-app", "3.0.0"): "sha256:chart-three"})
+    expect("the cut writes the file", refusal is None, f"{refusal}")
+    cut = stack.parse_simple_yaml(text)["stacks"]["9.9.0-rc.3"]
+    expect("the app tag moved", cut["apps"]["an-app"] == "v3.0.0", f"{cut['apps']}")
+    expect(
+        "its chart digest moved with it",
+        cut["chart-digests"]["an-app"] == "sha256:chart-three",
+        f"{cut['chart-digests']}",
+    )
+    expect(
+        "noted by the chart version it pins",
+        'an-app: "sha256:chart-three"   # 3.0.0' in _cut_block(text),
+        _cut_block(text),
+    )
+    expect(
+        "each chart is read at its tag less the v, under the cut's org",
+        ("test-org", "charts/an-app", "3.0.0") in asked
+        and ("test-org", "charts/other-app", "0.1.0") in asked,
+        f"{asked}",
+    )
+    expect(
+        "a chart not published yet stays unpublished",
+        cut["chart-digests"]["other-app"] == "unpublished",
+        f"{cut['chart-digests']}",
+    )
+    expect(
+        "the source stack keeps the chart it shipped",
+        stack.parse_simple_yaml(text)["stacks"]["9.9.0-rc.2"]["chart-digests"]["an-app"]
+        == "sha256:chart-two",
+        text,
+    )
+
+
+def test_a_cut_refuses_a_moved_app_whose_chart_is_not_published() -> None:
+    """The tag would move and the appset would keep deploying the previous chart."""
+    refusal, text, _ = _chart_cut({})
+    expect(
+        "it refuses, naming the chart",
+        refusal is not None and "charts/an-app:3.0.0 is not published" in refusal,
+        f"{refusal}",
+    )
+    expect("and leaves versions.yaml as it found it", text == _CHART_CUT_FIXTURE, text)
 
 
 def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:

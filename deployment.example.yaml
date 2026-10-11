@@ -292,7 +292,7 @@ edge:
         podLabel: dfe-culvert
       networkPolicy:
         enabled: true
-    ## THE FLEET TUNNEL (helm/edge/culvert). The module OFFERS it; a deployment
+    ## THE FLEET TUNNEL (culvert's thin chart). The module OFFERS it; a deployment
     ## turns it on, which is why this is off by default. Turning it on is the
     ## engine writing values/culvert-<instance>-values.yaml into the deploy repo
     ## (docs/deployment/edge-vpn.md), not a flag this renderer applies.
@@ -321,9 +321,9 @@ edge:
       ## NodePort flavour it lands on the forwarder's security group, because
       ## Kubernetes filters on this field for a LoadBalancer only.
       loadBalancerSourceRanges: ""
-      ## The nodePort helm/edge/culvert/values.yaml pins for each exposed
-      ## listener. Pinned rather than allocated, because whatever stands in
-      ## front of a NodePort has to be told the number before the Service
+      ## The nodePort argocd/values/apps/culvert/values.yaml pins for each
+      ## exposed listener. Pinned rather than allocated, because whatever stands
+      ## in front of a NodePort has to be told the number before the Service
       ## exists -- change these only alongside that file.
       node_ports:
         wireguard: 31820

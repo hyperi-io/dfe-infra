@@ -11,10 +11,13 @@ It is OFF unless a deployment asks for it, and it is offered on the `scale` and
 
 ## What it is
 
-`helm/edge/culvert` deploys [culvert](https://github.com/hyperi-io/culvert),
-a VPN server that speaks OpenVPN and WireGuard at once. The chart is
-dfe-infra's, as for every other app in the suite; the image is pinned by tag
-and digest in `versions.yaml` (`apps.culvert`, `digests.culvert`).
+culvert's thin chart deploys [culvert](https://github.com/hyperi-io/culvert),
+a VPN server that speaks OpenVPN and WireGuard at once. The chart is published
+beside the image, as for every other app in the suite, and
+`helm/charts/dfe-extras` renders the tunnel's NetworkPolicy, environment and
+guards beside it. `versions.yaml` pins the image by tag and digest
+(`apps.culvert`, `digests.culvert`) and the chart by digest
+(`chart-digests.culvert`).
 
 Two doors, both on one public LoadBalancer:
 
@@ -57,8 +60,8 @@ availability zone.
 The forwarder is a small SSM-managed instance holding an Elastic IP, with no
 inbound ssh rule of any kind, admitting the tunnel's own UDP listeners from
 `edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as everywhere
-else here) and DNATing each to the nodePort `helm/edge/culvert/values.yaml`
-pins, across whichever nodes are running. It reads that node list from
+else here) and DNATing each to the nodePort culvert's `defaultListeners` pin in
+`argocd/values/apps/culvert/values.yaml`, across whichever nodes are running. It reads that node list from
 `ec2:DescribeInstances` -- its only grant -- once a minute, which is why the
 flavour overlay sets `externalTrafficPolicy: Cluster`: any node has to forward,
 whichever one holds the pod. EKS gives a managed node group the cluster's own
@@ -100,7 +103,7 @@ flowchart LR
     C -.->|denied| CH[ClickHouse]
 ```
 
-- **The NetworkPolicy** (`helm/edge/culvert/templates/networkpolicy.yaml`)
+- **The NetworkPolicy** (`helm/charts/dfe-extras/templates/culvert-networkpolicy.yaml`)
   selects the receiver pods BY LABEL, so it is exact whatever the addressing
   is. Client traffic is SNATed onto the pod address on its way out of the
   tunnel, so what the pod may reach is what a client may reach.

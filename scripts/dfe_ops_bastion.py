@@ -102,7 +102,7 @@ DEFAULT_WAIT_TIMEOUT = 300.0
 DEFAULT_POLL_INTERVAL = 5.0
 
 # --- the fleet tunnel ---------------------------------------------------------
-# The hub is culvert (helm/edge/culvert), and everything below reaches it
+# The hub is culvert (its thin chart, beside dfe-extras), and everything below reaches it
 # through its own CLI in its own pod. Nothing here talks to the tunnel directly.
 
 # The Argo cluster secret bootstrap.sh writes, and the annotation on it carrying
@@ -137,8 +137,8 @@ PRIVATE_KEY_PLACEHOLDER = "YOUR_PRIVATE_KEY_HERE"
 # issued it, so `down` revokes THAT peer rather than guessing at a name.
 ADMIN_STATE = REPO_ROOT / ".tmp" / "bastion-admin-peer.json"
 DEFAULT_ADMIN_TTL_MINUTES = 60
-# Mirrors peers.classes.admin.reach in helm/edge/culvert/values.yaml -- the
-# ports an appliance accepts from the admin peer on its tunnel interface.
+# Mirrors dfe-extras' culvert default peers.classes.admin.reach -- the ports
+# an appliance accepts from the admin peer on its tunnel interface.
 ADMIN_REACH = (22, 443)
 # Whether the hub can carry an admin that dials in AS A PEER. culvert installs
 # the client-to-client DROP over every pair of tunnel interfaces before the
@@ -147,7 +147,7 @@ ADMIN_REACH = (22, 443)
 # `join` refuses until it lands. `hub` routes instead and needs none of it.
 ADMIN_PEER_SUPPORTED = False
 # The WireGuard /24 culvert carves out of vpn.clientCIDR, read off the pod's own
-# environment rather than recomputed here (helm/edge/culvert/_helpers.tpl).
+# environment rather than recomputed here (dfe-extras culvert-env.yaml).
 WG_NETWORK_ENV = "CULVERT_WG_NETWORK"
 
 
@@ -853,7 +853,7 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
         if args.port not in ADMIN_REACH:
             raise BastionError(
                 f"port {args.port} is outside the admin class's reach {list(ADMIN_REACH)}"
-                " (peers.classes.admin.reach in helm/edge/culvert/values.yaml)"
+                " (peers.classes.admin.reach in dfe-extras' culvert defaults)"
             )
         pod = _culvert_pod(namespace)
         peers = _peers(namespace, pod)

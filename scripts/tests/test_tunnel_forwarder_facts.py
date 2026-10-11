@@ -36,7 +36,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
-CULVERT_VALUES = REPO_ROOT / "helm" / "edge" / "culvert" / "values.yaml"
+# culvert's integration values, whose Services pin the nodePorts, and dfe-extras,
+# whose culvert defaults carry the client range and the admin class.
+CULVERT_VALUES = REPO_ROOT / "argocd" / "values" / "apps" / "culvert" / "values.yaml"
+EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
 FORWARDER_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "forwarder.tf"
 EDGE_VARIABLES_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
 AWS_ROOT_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
@@ -47,6 +50,26 @@ FACTS = {
     "DFE_TUNNEL_ADDRESS": "dfe.hyperi.io/tunnel_address",
     "DFE_TUNNEL_ZONE": "dfe.hyperi.io/tunnel_zone",
 }
+
+
+def _merge(base: dict, layer: dict) -> dict:
+    """Helm's values merge: a map merges key by key, anything else replaces."""
+    for key, value in layer.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _extras_defaults() -> dict:
+    """dfe-extras' culvert defaults."""
+    return yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"]["defaults"]["culvert"]
+
+
+def _culvert_values() -> dict:
+    """The values culvert deploys with: dfe-extras' defaults under its integration values."""
+    return _merge(_extras_defaults(), yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8")))
 
 
 def _render(**env: str) -> str:
@@ -134,7 +157,7 @@ def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class(
 def test_the_root_and_the_chart_agree_on_the_reserved_client_range() -> None:
     """The toolbox's reach-back egress is aimed at the range appliances are
     issued out of, and no tofu input carries it."""
-    values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
+    values = _culvert_values()
     match = re.search(r"^\s*tunnel_client_cidr\s*=\s*\"([^\"]+)\"", AWS_ROOT_MAIN.read_text(encoding="utf-8"), re.M)
     assert match is not None, "the aws root declares no tunnel_client_cidr local"
     assert match.group(1) == values["vpn"]["clientCIDR"]
@@ -143,7 +166,7 @@ def test_the_root_and_the_chart_agree_on_the_reserved_client_range() -> None:
 def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:
     """One list is a security-group rule and the other is a NetworkPolicy, so a
     drift opens one and not the other and neither reports it."""
-    values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
+    values = _culvert_values()
     match = re.search(r"^TUNNEL_ADMIN_REACH = \(([^)]*)\)", RENDER_DIAL.read_text(encoding="utf-8"), re.M)
     assert match is not None, "render_dial.py declares no TUNNEL_ADMIN_REACH"
     ports = [int(item) for item in match.group(1).split(",") if item.strip()]
@@ -151,8 +174,16 @@ def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:
 
 
 def _culvert_listeners() -> dict[str, dict]:
+    """The listeners culvert's Services expose where no layer names its own."""
     values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
-    return {entry["name"]: entry for entry in values["listeners"]}
+    return {entry["name"]: entry for entry in values.get("listeners") or values["defaultListeners"]}
+
+
+def test_dfe_extras_admits_the_listeners_the_services_expose() -> None:
+    """dfe-extras' tunnel policy reads its own default list, so a drift opens a
+    port the Service does not expose, or exposes one the policy drops."""
+    listeners = {entry["name"]: entry for entry in _extras_defaults()["listeners"]}
+    assert listeners == _culvert_listeners()
 
 
 def _tf_default(name: str) -> int:

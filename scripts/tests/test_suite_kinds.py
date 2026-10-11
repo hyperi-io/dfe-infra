@@ -571,7 +571,7 @@ class PinTests(unittest.TestCase):
             "to": "dfe-infra",
             "kind": "image-pin",
             "type": "lockstep",
-            "evidence": "dfe-infra/Chart.yaml:6",
+            "evidence": "dfe-infra/versions.yaml",
         }
         result = check_image_pin(
             edge, producer_version="2.5.0", consumer_repo=self.repo
@@ -579,6 +579,7 @@ class PinTests(unittest.TestCase):
         assert result.moved
         assert result.action == ACTION_BUMP_APP
         assert "dfe-stack bump-app dfe-engine 2.5.0" in result.detail
+        assert "repins the thin chart" in result.detail
 
     def test_a_version_pin_hands_back_the_pin_to_move(self) -> None:
         edge = {

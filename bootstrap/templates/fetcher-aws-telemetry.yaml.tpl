@@ -6,7 +6,7 @@
 #
 # THIS IS A STARTER FRAGMENT, not a wired dfe-fetcher instance. A real fetcher
 # deployment is engine-authored -- one Argo Application per source, built from
-# apps.yaml routing into helm/charts/dfe-fetcher's config.sources -- and this
+# apps.yaml routing into the fetcher instance's config.sources -- and this
 # repo does not run dfe-engine. The ConfigMap below carries the sources:
 # stanza an operator or dfe-engine folds into that instance's config.sources,
 # in dfe-fetcher's own config schema (dfe-fetcher/docs/cloud-setup/aws.md,

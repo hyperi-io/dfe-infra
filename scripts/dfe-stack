@@ -67,9 +67,10 @@ Examples:
     python3 scripts/dfe-stack suite --render-docs
 
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
-verify, refresh-digests, platforms and a release-maturity release-gate read the
-registry through `docker buildx imagetools`, which authenticates from the docker
-credential store and needs no gh scope.
+verify, refresh-digests, platforms, a release-maturity release-gate, and the
+chart-digests reads cut and bump-app make, read the registry through `docker
+buildx imagetools`, which authenticates from the docker credential store and
+needs no gh scope.
 
 cut still needs the GH packages API, because listing an app's published tags to
 pick the highest has no imagetools equivalent. That API wants the
@@ -793,6 +794,71 @@ def chart_pins(v: dict) -> list[tuple[str, str, str, str]]:
     return rows
 
 
+def _rewrite_chart_pin(block: list[str], service: str, digest: str, version: str) -> bool:
+    """Set chart-digests.<service> to digest, its trailing note to the chart version."""
+    i = _scalar_line(block, "chart-digests", service)
+    if i is None:
+        return False
+    m = re.match(rf'^(\s+{re.escape(service)}:\s*)"[^"]*"(\s*)', block[i])
+    gap = m.group(2) or "  "
+    block[i] = f'{m.group(1)}"{digest}"{gap}# {version}\n'
+    return True
+
+
+def repin_charts(
+    block: list[str], org: str, host: str, held: list[str], only: str | None = None
+) -> list[str]:
+    """Move each chart-digests entry in a stack block to the chart its tags now name.
+
+    Argo pulls a thin chart by this digest alone, and the chart pins its image, so
+    an app tag that moves without its chart digest keeps deploying the old release.
+    Refuses rather than guesses: a chart nothing tags, a registry that cannot be
+    read, or a published chart whose new version is missing stops the caller
+    before it writes. An entry still "unpublished" stays so until its chart is.
+
+    Args:
+        block: The stack block's lines, rewritten in place.
+        org: The registry org the charts are published under.
+        host: The registry host.
+        held: Lines for the entries left as they were, appended to.
+        only: The one service to move; every entry when None.
+
+    Returns:
+        One line per entry moved.
+    """
+    pins = next(iter(parse_simple_yaml("".join(block)).values()), {})
+    moved: list[str] = []
+    for service, chart, version, current in chart_pins(pins if isinstance(pins, dict) else {}):
+        if only is not None and service != only:
+            continue
+        ref = f"{host}/{org}/charts/{chart}:{version}"
+        if not version:
+            raise SystemExit(
+                f"error: chart-digests.{service} is pinned, but nothing in the stack tags {chart}"
+            )
+        try:
+            digest = registry_pins.tag_digest(org, f"charts/{chart}", version, registry=host)
+        except registry_pins.RegistryError as exc:
+            raise SystemExit(f"error: cannot read {ref}: {exc}") from exc
+        if digest is None:
+            if current == UNPUBLISHED_CHART:
+                held.append(f"chart {chart} {version} (not published yet)")
+                continue
+            raise SystemExit(
+                f"error: {ref} is not published, so chart-digests.{service} would keep "
+                f"deploying the chart it pins now -- publish the chart before moving the tag"
+            )
+        if digest == current:
+            held.append(f"chart {chart} {version} (already pinned)")
+            continue
+        if not _rewrite_chart_pin(block, service, digest, version):
+            raise SystemExit(
+                f"error: no chart-digests.{service} line in the stack block to rewrite"
+            )
+        moved.append(f"chart {chart} -> {version}")
+    return moved
+
+
 def _pin_matches(label: str, org: str, package: str, tag: str, digest: str, host: str) -> bool:
     """Read one tag's digest from the registry and print ok, DRIFT or ERROR against the pin."""
     try:
@@ -1149,14 +1215,14 @@ def cmd_set_latest(args: argparse.Namespace) -> int:
 
 
 def cmd_bump_app(args: argparse.Namespace) -> int:
-    """Pin an app to a new image version, in BOTH places that must agree.
+    """Pin an app to a new image version, and its thin chart to the chart of that version.
 
-    versions.yaml `apps.<name>` and the app chart's Chart.yaml `appVersion` are
-    drift-checked against each other (check_versions_drift.py), so bumping one by
-    hand and forgetting the other turns the drift check red. This does both, or
-    neither: each rewrite asserts it matched EXACTLY once, so a renamed key or a
-    reformatted line fails loudly rather than silently no-op'ing and leaving a stale
-    pin that looks bumped.
+    `apps.<name>` names the release, and `chart-digests.<service>` is what Argo
+    actually pulls, so a tag moved without its chart digest keeps deploying the
+    old release. This moves both inside one stack block, or neither: the tag
+    rewrite asserts it matched EXACTLY once, and the chart is read from the
+    registry at the new version before anything is written. The image digest is
+    resolve_pins.py's to set.
 
     Idempotent -- re-running with the same version is a no-op that still reports.
     """
@@ -1172,10 +1238,10 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     stack = args.stack or load_root().get("current")
     if not stack:
         raise SystemExit("error: no --stack given and no `current:` pointer to fall back on")
-    start, end = _block_span(lines, stack)
+    block_start, block_end = _block_span(lines, stack)
     # Narrow again to `apps:`. A stack repeats every app name under `digests:`
     # too, so the whole block still holds two lines per app.
-    start, end = _sub_block_span(lines, start, end, "apps")
+    start, end = _sub_block_span(lines, block_start, block_end, "apps")
 
     matches = [
         i for i in range(start, end) if re.match(rf'^\s+{re.escape(name)}:\s*"[^"]*"', lines[i])
@@ -1189,33 +1255,38 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     lines[i] = re.sub(
         rf'^(\s+{re.escape(name)}:\s*)"[^"]*"', rf'\1"{version}"', lines[i]
     )
-    vnew = "".join(lines)
 
-    # The drift check owns where each chart lives; culvert's is under helm/edge.
-    from check_versions_drift import chart_dir
-
-    crel = f"{chart_dir(name)}/Chart.yaml"
-    cpath = REPO_ROOT / crel
-    if not cpath.exists():
-        raise SystemExit(f"error: {cpath} not found -- no chart to keep in step with versions.yaml")
-    ctext = cpath.read_text()
-    cnew, cn = re.subn(r'(?m)^(appVersion:\s*)"[^"]*"', rf'\1"{version}"', ctext, count=1)
-    if cn != 1:
-        raise SystemExit(f"error: {cpath} has no appVersion scalar to rewrite (matched {cn})")
+    block = lines[block_start:block_end]
+    pinned = next(iter(parse_simple_yaml("".join(block)).values()), {}).get("chart-digests", {})
+    service = next((s for s in pinned if _CHART_NAMES.get(s, s) == name), None)
+    if service is None:
+        raise SystemExit(
+            f"error: stack {stack} pins no chart-digests entry for {name} -- add one "
+            f'("{UNPUBLISHED_CHART}" until its chart is published) and re-run'
+        )
+    host, _, org = args.registry.partition("/")
+    if not org:
+        raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
+    held: list[str] = []
+    moved = repin_charts(block, org, host, held, only=service)
+    lines[block_start:block_end] = block
 
     if args.dry_run:
-        print(f"dry-run: {name} -> {version} in stack {stack} (versions.yaml + {cpath.name})")
+        print(f"dry-run: {name} -> {version} in stack {stack}")
+        for line in moved + held:
+            print(f"  {line}")
         return 0
 
-    # Write both only after BOTH matched, so a failure never leaves them disagreeing.
-    vpath.write_text(vnew)
-    cpath.write_text(cnew)
+    # Written once both the tag and the chart resolved, so a refusal leaves the file as it was.
+    vpath.write_text("".join(lines))
     print(f"{name} -> {version} (stack {stack})")
     print(f"  versions.yaml apps.{name}")
-    print(f"  {crel} appVersion")
-    # An app can be mirrored beyond its own chart -- the engine pin also drives
-    # the hyperdx dashboards tag.
-    print("  next: check_versions_drift.py --fix, for any other mirror of this pin")
+    for line in moved + held:
+        print(f"  versions.yaml chart-digests.{service}: {line}")
+    print(
+        "  next: resolve_pins.py --write for the image digest, then "
+        "check_versions_drift.py --fix for the appset and dfe-extras copies"
+    )
     return 0
 
 
@@ -1423,7 +1494,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
     Clones the `--from` block as the SHAPE, so a key cannot be dropped by
     omission, then moves each DFE-owned app to its newest published release and
-    repins the matching digest. Third-party pins carry over untouched: those are
+    repins the matching image digest, then repins every thin chart at the version
+    its tag names (repin_charts). Third-party pins carry over untouched: those are
     Renovate's to move, and several are deliberately held below a ceiling (the
     ClickHouse LTS line, the Kafka version strimzi supports).
 
@@ -1495,6 +1567,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
         moved.append(f"{app} {current} -> {tag}")
 
     moved += _stamp_git_content(block, from_pins, args.org, held)
+    # After the tags move, so each chart is read at the version its tag now names.
+    host = args.registry.partition("/")[0]
+    moved += repin_charts(block, args.org, host, held)
 
     print(f"cut {new} from {from_name}")
     for line in moved:
@@ -1640,7 +1715,7 @@ def main() -> int:
 
     p = sub.add_parser(
         "bump-app",
-        help="pin an app to a new image version in versions.yaml AND its Chart.yaml",
+        help="pin an app to a new image version and its thin chart's digest at that version",
     )
     p.add_argument("app", help="app name, e.g. dfe-engine (the versions.yaml apps.<name> key)")
     p.add_argument("version", help='image version, e.g. v1.10.6')

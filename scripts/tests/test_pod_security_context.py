@@ -114,7 +114,7 @@ def test_a_non_default_uid_still_renders() -> None:
 
 
 def test_disabled_renders_no_pod_security_context() -> None:
-    """culvert manages its own; the helper must then emit nothing at all."""
+    """A chart that manages its own pod context needs the helper to emit nothing at all."""
     spec = pod_spec("--set", "podSecurityContext.enabled=false")
     expect("no pod securityContext", "securityContext" not in spec, repr(spec.get("securityContext")))
 
@@ -128,11 +128,8 @@ def test_the_container_context_drops_every_capability() -> None:
 
 
 def test_the_root_workloads_go_through_the_helper() -> None:
-    """culvert and the log daemonset are the two pods that must run as uid 0."""
-    for chart, template, name in (
-        ("culvert", "templates/deployment.yaml", "culvert"),
-        ("otel-collector", "templates/daemonset.yaml", "otel"),
-    ):
+    """The log daemonset is the chart pod here that must run as uid 0."""
+    for chart, template, name in (("otel-collector", "templates/daemonset.yaml", "otel"),):
         text = render(chart_dir(chart), name, "--show-only", template)
         sc = docs(text)[0]["spec"]["template"]["spec"]["securityContext"]
         expect(f"{chart} runs as root", sc.get("runAsUser") == 0, repr(sc))

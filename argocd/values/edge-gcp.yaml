@@ -1,5 +1,5 @@
 # THE EDGE MODULE, GCP FLAVOUR -- the tier table for helm/edge/gateway and
-# helm/edge/culvert, in one file. argocd/appsets/layer2-edge.yaml layers this
+# culvert's thin chart, in one file. argocd/appsets/layer2-edge.yaml layers this
 # after argocd/values/gcp.yaml and no other appset reads it, so a key here
 # reaches the two edge charts alone.
 #

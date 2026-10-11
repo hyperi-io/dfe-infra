@@ -145,8 +145,8 @@ edge_kinds:
     gates: [human-read]
 
   image-pin:
-    means: "The consumer pins the producer's container image, as a tag plus the digest that makes the tag immutable."
-    check: "Bump the tag and re-resolve the digest, then let the drift check confirm the chart's appVersion and the digest mirror agree with the pin."
+    means: "The consumer pins the producer's container image, as a tag plus the digest that makes the tag immutable, and the thin chart published at that tag."
+    check: "Move the tag with `dfe-stack bump-app`, which repins the thin chart's digest at the new version, re-resolve the image digest, then let the drift check carry both into every copy."
     gates: [check_versions_drift.py]
 
   version-pin:
@@ -566,9 +566,8 @@ nodes:
         registry: ghcr
         public: true
     # The optional edge-fleet VPN, and the only member with a PUBLIC container.
-    # It publishes no Helm chart, so helm/edge/culvert is dfe-infra's own --
-    # the same arrangement as every other app here -- and versions.yaml pins
-    # its image like any other. Its only suite edge is the scalo-py dependency.
+    # Its thin chart is published beside its image, like every other app here,
+    # and versions.yaml pins both. Its only suite edge is the scalo-py dependency.
     # Its in-repo marker states the numeric tier 4, which is the org
     # property's general-oss.
 
@@ -784,13 +783,13 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-engine/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-engine
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:122"
-    note: "A second copy of the engine tag: the hyperdx chart runs the engine image as the dashboards init container."
+    evidence: "dfe-infra/argocd/values/apps/hyperdx/values.yaml:105"
+    note: "A second copy of the engine tag: dfe-hyperdx's thin chart runs the engine image as the dashboards init container."
 
   # --- dfe-infra -----------------------------------------------------------
 
@@ -815,56 +814,57 @@ edges:
     note: "Rendered from a local dfe-infra checkout when one is named, else pulled from the signed OCI stack manifest. Nothing is committed on the dfe-docker side. A second consumer of the same manifest sits at ops/daemon-update/self_update.py:249."
 
   # --- the components into dfe-infra ---------------------------------------
-  # Each chart's appVersion must equal the versions.yaml pin, and the digest
-  # mirror must equal the digest. The drift check enforces both, which is
-  # what makes these lockstep rather than potential.
+  # The current stack pins each app's tag, its image digest and its thin
+  # chart's digest. check_suite_drift.py holds each edge to a pin the stack
+  # still carries, and the drift check holds every copy of it, which is what
+  # makes these lockstep rather than potential.
 
   - from: dfe-loader
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-loader/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-receiver
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-receiver/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-fetcher
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-fetcher/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-archiver
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-archiver/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-transform-vrl
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-transform-vrl/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-transform-vector
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-transform-vector/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-transform-elastic
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-transform-elastic/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-ui
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-ui/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
   - from: dfe-hyperdx
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/hyperdx/values.yaml:16"
-    note: "The only chart naming a registry literally rather than composing one from the global registry. Its release tag is also pinned in the content block at versions.yaml:2650."
+    evidence: "dfe-infra/versions.yaml"
+    note: "Tagged under content: rather than apps:, in lockstep with the stack release; its thin chart is chart-digests.hyperdx."
   - from: dfe-deploy
     to: dfe-infra
     kind: version-pin

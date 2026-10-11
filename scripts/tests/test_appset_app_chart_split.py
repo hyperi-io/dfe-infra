@@ -247,10 +247,8 @@ def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> N
     expect("every first-party chart sits in a tree _charts sweeps",
            {d.parent.name for d in on_disk} <= trees,
            sorted({d.parent.name for d in on_disk} - trees))
-    # The same map is restated in two other languages, and a chart that moves has
-    # to move in all three: the drift checker resolves a pin's file from it, and
-    # validate-charts.sh prints [SKIP] rather than failing when a path is wrong.
-    drift = (SCRIPTS / "check_versions_drift.py").read_text(encoding="utf-8")
+    # The same map is restated in bash, and a chart that moves has to move in
+    # both: validate-charts.sh prints [SKIP] rather than failing when a path is wrong.
     validate = (SCRIPTS / "validate-charts.sh").read_text(encoding="utf-8")
     for directory in sorted(on_disk):
         declared = yaml.safe_load((directory / "Chart.yaml").read_text(encoding="utf-8"))["name"]
@@ -259,8 +257,6 @@ def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> N
         if directory.parent.name == "charts":
             continue
         relative = str(directory.relative_to(REPO_ROOT))
-        expect(f"check_versions_drift.py resolves {declared} to {relative}",
-               f'"{declared}": "{relative}"' in drift, f"no {declared} entry naming {relative}")
         expect(f"validate-charts.sh resolves {declared} to {relative}",
                re.search(rf"^\s*{re.escape(declared)}\)\s+echo \"{re.escape(relative)}\"", validate, re.M)
                is not None,

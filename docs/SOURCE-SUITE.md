@@ -102,7 +102,7 @@ proof is rows arriving on their own within a poll interval. A sixth env file
 names the upstream (`.tmp/aws-test.env`: `DFE_AWS_REGION`,
 `DFE_AWS_LOG_GROUP`), and `--fetcher-credentials-vault-path kv/<path>` reads
 `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` out of the secrets store into
-the Secret the chart names (`helm/charts/dfe-fetcher` `credentials.secretName`)
+the Secret the fetcher reads (`argocd/values/apps/dfe-fetcher` `credentials.secretName`)
 before the source is created, so no run mints it by hand; nothing is written to
 AWS. The test account's CloudWatch Logs group is empty by construction, so
 CloudTrail is the service that proves anything.

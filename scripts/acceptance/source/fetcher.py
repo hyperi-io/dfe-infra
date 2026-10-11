@@ -32,7 +32,7 @@ HEADER = "common-header/timeseries"
 HEADER_VERSION = "1.0.1"
 SCHEMA_VERSION = "1.0.0"
 # The AWS credential fields the source stanza references. The values live in the
-# deployment's fetcher credential Secret (helm/charts/dfe-fetcher values
+# deployment's fetcher credential Secret (argocd/values/apps/dfe-fetcher values
 # credentials.secretName), so only the variable NAMES are ever written to git.
 ACCESS_KEY_ENV = "AWS_ACCESS_KEY_ID"
 SECRET_KEY_ENV = "AWS_SECRET_ACCESS_KEY"

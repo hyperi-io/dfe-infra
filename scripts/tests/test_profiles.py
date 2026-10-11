@@ -66,11 +66,10 @@ def test_the_fragment_answers_no_for_an_unset_profile() -> None:
     assert done.returncode == 1
 
 
-def test_every_kubernetes_mode_has_both_profile_files() -> None:
+def test_every_kubernetes_mode_has_its_profile_file() -> None:
     for mode in profiles.MODES:
         profile = profiles.PROFILES[mode]
         assert (REPO_ROOT / profile.argocd_values).is_file(), mode
-        assert (REPO_ROOT / profile.umbrella_profile).is_file(), mode
 
 
 def test_every_compose_profile_mirrors_a_kubernetes_one() -> None:

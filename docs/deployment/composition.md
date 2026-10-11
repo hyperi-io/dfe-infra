@@ -50,15 +50,15 @@ which the bundled deploy repo seeds on a fresh deployment -- one
 file. The forgejo chart's own default is empty on purpose: a list there would be
 a second copy of the composition that nothing keeps in step.
 
-The engine reflects the whole manifest, not only the derived set, so each chart
+The engine reflects the whole manifest, not only the derived set, so the chart
 that mounts it carries its own copy:
 
     python3 scripts/composition.py --write-catalogue
 
-That writes `helm/charts/dfe-extras/files/apps.yaml` and `helm/charts/dfe-engine/files/apps.yaml` -- the manifest byte for
-byte, under a generated banner -- which the chart mounts as a ConfigMap and
-points `DFE_APP_CATALOGUE_FILE` at. The pod template checksums it, so a manifest
-edit rolls the engine and `GET /api/v1/apps` answers with the new shape at the
+That writes `helm/charts/dfe-extras/files/apps.yaml` -- the manifest byte for
+byte, under a generated banner -- which dfe-extras mounts as a ConfigMap and
+points `DFE_APP_CATALOGUE_FILE` at. Reloader restarts the engine when that
+ConfigMap changes, so a manifest edit rolls it and `GET /api/v1/apps` answers with the new shape at the
 stack revision carrying it. An engine with no mount falls back to the snapshot
 baked into its image, and adding an app would then need an engine release, so
 `dfe-ops stack-deploy` fails its pre-flight when the copy is stale or the render

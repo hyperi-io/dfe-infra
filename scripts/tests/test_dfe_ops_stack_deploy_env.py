@@ -28,8 +28,12 @@ from __future__ import annotations
 import argparse
 import importlib.machinery
 import importlib.util
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-ops"
@@ -388,3 +392,65 @@ def test_the_store_consumers_follow_the_charts() -> None:
     # aws.yaml turns the gateway's OIDC on, and its client secret lives in the store.
     aws = dfeops._store_consumers("single", {"DFE_CLOUD": "aws"})
     assert any("OIDC" in use for use in aws), aws
+
+
+def test_the_console_nextauth_secret_is_a_store_consumer_when_a_layer_names_the_store(
+    monkeypatch,
+) -> None:
+    """dfe-extras renders the NextAuth ExternalSecret off the layers over its dfe-ui defaults."""
+    tracked = dfeops._component_values
+    assert tracked("dfe-ui", "single").get("config", {}).get("nextauthSecretName"), (
+        "dfe-extras' dfe-ui defaults name the NextAuth secret"
+    )
+    assert not [u for u in dfeops._store_consumers("single", {}) if "NextAuth" in u]
+
+    def store_named(service: str, mode: str, cloud: str = "") -> dict:
+        values = tracked(service, mode, cloud)
+        if service == "dfe-ui":
+            values.setdefault("config", {})["secretStoreName"] = dfeops.STORE_NAME
+        return values
+
+    monkeypatch.setattr(dfeops, "_component_values", store_named)
+    uses = dfeops._store_consumers("single", {})
+    assert any("NextAuth" in use for use in uses), uses
+
+
+def test_the_component_values_layer_the_appset_files_over_the_extras_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A layer that sets a key wins; a key no layer sets keeps the dfe-extras default."""
+    extras = tmp_path / "dfe-extras"
+    extras.mkdir()
+    (extras / "values.yaml").write_text(
+        "extras:\n  defaults:\n    dfe-ui:\n      config:\n"
+        "        nextauthSecretName: from-defaults\n        secretStoreName: ''\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    apps = tmp_path / "apps"
+    (apps / "dfe-ui").mkdir(parents=True)
+    (apps / "dfe-ui" / "values.yaml").write_text(
+        "config:\n  secretStoreName: from-the-layer\n", encoding="utf-8", newline="\n"
+    )
+    monkeypatch.setattr(dfeops, "EXTRAS_CHART", extras)
+    monkeypatch.setattr(dfeops, "APPS_VALUES", apps)
+    config = dfeops._component_values("dfe-ui", "single").get("config", {})
+    assert config.get("secretStoreName") == "from-the-layer", config
+    assert config.get("nextauthSecretName") == "from-defaults", config
+
+
+@pytest.mark.parametrize("mode", dfeops.MODES)
+def test_the_preflight_renders_each_apps_extras_and_finds_the_catalogue(mode: str) -> None:
+    """The offline render stack-deploy gates on: dfe-extras per app, the engine's catalogue in it."""
+    if shutil.which("helm") is None:
+        pytest.skip("helm is not on PATH")
+    for app in dfeops._PREFLIGHT_APPS:
+        done = subprocess.run(
+            [*dfeops._extras_render(app, mode), "--set", "appNamespace=preflight"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+        assert done.returncode == 0, f"{app} ({mode}): {done.stderr}"
+        if app == "dfe-engine":
+            banner = dfeops.composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ")
+            assert banner in done.stdout, "the app catalogue ConfigMap carries the manifest"
+            assert "  DFE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n" in done.stdout

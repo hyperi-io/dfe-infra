@@ -50,7 +50,7 @@ A client authenticates with its own PKI certificate, and with OIDC when `vpn.oid
 
 ## In-cluster transport
 
-A deployment that carries a CA runs its in-cluster hops over TLS with verification on; one without stays on plain HTTP, because there is nothing to verify against. A Kubernetes deployment with the edge module on (bootstrap's default) carries one: bootstrap.sh detects or installs cert-manager, and the gateway chart's `dfe-internal-ca` ClusterIssuer signs. dfe-docker Compose, the `helm/dfe-stack` trial, and a cluster with the edge module off stay on HTTP unless an issuer is named in `clickhouse.tls.issuerRef`.
+A deployment that carries a CA runs its in-cluster hops over TLS with verification on; one without stays on plain HTTP, because there is nothing to verify against. A Kubernetes deployment with the edge module on (bootstrap's default) carries one: bootstrap.sh detects or installs cert-manager, and the gateway chart's `dfe-internal-ca` ClusterIssuer signs. dfe-docker Compose and a cluster with the edge module off stay on HTTP unless an issuer is named in `clickhouse.tls.issuerRef`.
 
 | Hop | Transport |
 |---|---|

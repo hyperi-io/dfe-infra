@@ -412,13 +412,13 @@ ADDRESS_MODES = ("byo", "forwarder")
 # case `toolbox` -- family t, arch arm64, generation newest, size small), and
 # within one burstable family the baseline rises with the size.
 TUNNEL_FORWARDER_TYPE = "t4g.small"
-# The nodePort helm/edge/culvert/values.yaml pins for each exposed listener.
-# Pinned rather than allocated, because whatever stands in front of a NodePort
-# has to be told the number before the Service exists.
+# The nodePort argocd/values/apps/culvert/values.yaml `defaultListeners` pins for
+# each exposed listener. Pinned rather than allocated, because whatever stands in
+# front of a NodePort has to be told the number before the Service exists.
 TUNNEL_NODE_PORTS = {"wireguard": 31820, "openvpn": 31194}
 # The appliance ports an operator's reach-back initiates to, which the toolbox
-# security group opens against the tunnel's client range. Mirrors
-# helm/edge/culvert/values.yaml peers.classes.admin.reach.
+# security group opens against the tunnel's client range. Mirrors dfe-extras'
+# culvert default peers.classes.admin.reach.
 TUNNEL_ADMIN_REACH = (22, 443)
 # The upstream change the admin PEER shape waits on, and the two dial fields
 # that belong to it. Until it lands neither reaches a rendered resource, so a
