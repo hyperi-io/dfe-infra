@@ -522,10 +522,7 @@ SHAPE = {
     "loadBalancerSourceRanges": ["198.51.100.0/24"],
     "annotations": {"service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"},
 }
-OPT_IN = {
-    "exposure": {"mode": "public", "public": SHAPE},
-    "publicService": {"enabled": True, "loadBalancerIP": ADDRESS, **SHAPE},
-}
+OPT_IN = {"exposure": {"mode": "public", "public": SHAPE}}
 DEAD_PORT = "8443/TCP"
 
 
@@ -571,7 +568,7 @@ def test_the_receiver_front_door_on_each_cloud(cloud: str) -> None:
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
 def test_a_deployment_opting_into_a_load_balancer_keeps_its_shape(cloud: str) -> None:
-    """The opt-in a cloud file's comment documents, with the cluster secret's pinned address."""
+    """The opt-in docs/INGEST-EDGE.md documents, with the cluster secret's pinned address."""
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     balancers = load_balancers(_receiver(cloud, OPT_IN, facts))
     assert balancers == {
@@ -592,26 +589,60 @@ def test_the_cluster_secret_address_reaches_the_thin_load_balancer() -> None:
     assert balancers["Service/dfe-receiver-public"].get("loadBalancerIP") == ADDRESS
 
 
+def test_the_overlay_address_applies_where_the_cluster_secret_has_none() -> None:
+    other = "203.0.113.20"
+    overlay = {"exposure": {"public": {"loadBalancerIP": other}}}
+    alone = load_balancers(_receiver("local-dfe", overlay))
+    assert alone["Service/dfe-receiver-public"].get("loadBalancerIP") == other
+    facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
+    pinned = load_balancers(_receiver("local-dfe", overlay, facts))
+    assert pinned["Service/dfe-receiver-public"].get("loadBalancerIP") == ADDRESS
+
+
+def test_a_vpn_or_internal_receiver_renders_no_load_balancer() -> None:
+    for cloud, mode in (("aws", "vpn"), ("local", "internal")):
+        assert load_balancers(_receiver(cloud, {"exposure": {"mode": mode, "public": SHAPE}})) == {}
+
+
 @pytest.mark.parametrize(
     ("overlay", "message"),
     [
         (
-            {"exposure": {"mode": "public"}, "publicService": {"enabled": False}},
-            'exposure.mode is "public" but publicService.enabled is not true',
+            {"exposure": {"mode": "public"}, "publicService": {"enabled": True}},
+            "publicService.enabled is true",
         ),
         (
             {"exposure": {"mode": "vpn"}, "publicService": {"enabled": True}},
-            'publicService.enabled is true but exposure.mode is "vpn"',
+            "publicService.enabled is true",
         ),
         (
-            {"exposure": {"mode": "internal"}, "publicService": {"enabled": True}},
-            'publicService.enabled is true but exposure.mode is "internal"',
+            {"exposure": {"mode": "public"}, "publicService": SHAPE},
+            "set exposure.public.",
+        ),
+        (
+            {"exposure": {"mode": "public"}, "publicService": {"type": "NodePort"}},
+            "set exposure.public.serviceType instead",
+        ),
+        (
+            {
+                "exposure": {
+                    "mode": "public",
+                    "public": {"serviceType": "NodePort", "loadBalancerSourceRanges": ["198.51.100.0/24"]},
+                }
+            },
+            "Kubernetes only filters on that field for a LoadBalancer",
         ),
     ],
-    ids=["public-mode-no-balancer", "balancer-in-vpn-mode", "balancer-in-internal-mode"],
+    ids=[
+        "library-balancer-public",
+        "library-balancer-vpn",
+        "library-keys",
+        "library-type",
+        "allow-list-on-a-node-port",
+    ],
 )
-def test_a_load_balancer_and_a_mode_that_disagree_are_refused(overlay: dict, message: str) -> None:
-    """A policy opened for a load balancer that does not exist, or one no policy admits."""
+def test_a_front_door_key_that_would_reach_nothing_is_refused(overlay: dict, message: str) -> None:
+    """A load balancer with no allow-list, or an allow-list Kubernetes ignores, never renders."""
     with pytest.raises(weave().WeaveError) as refused:
         _receiver("aws", overlay)
     assert message in str(refused.value)

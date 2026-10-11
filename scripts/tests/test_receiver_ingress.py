@@ -146,12 +146,14 @@ def test_the_old_oidc_path_still_fails_under_the_aws_cascade() -> None:
 
 
 def test_an_explicit_public_opt_in_renders_the_annotated_load_balancer() -> None:
+    """The keys docs/INGEST-EDGE.md and deployment.example.yaml document."""
     overlay = {
-        "exposure": {"mode": "public"},
-        "publicService": {
-            "enabled": True,
-            "annotations": NLB_ANNOTATIONS,
-            "loadBalancerSourceRanges": ["203.0.113.0/24"],
+        "exposure": {
+            "mode": "public",
+            "public": {
+                "annotations": NLB_ANNOTATIONS,
+                "loadBalancerSourceRanges": ["203.0.113.0/24"],
+            },
         },
     }
     docs = render_app("dfe-receiver", "scale", "aws", overlay=overlay)
