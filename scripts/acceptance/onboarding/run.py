@@ -82,8 +82,10 @@ def _label(*names: str) -> re.Pattern[str]:
     """Match a field by its label, with or without the console's required marker.
 
     A required field's accessible name carries the asterisk the console renders
-    beside it ("Username *"), and an optional one a trailing space ("Name "), so
-    an exact match finds neither. Anchoring keeps "Name" off "Username".
+    beside it, after the label ("Username *") or, where the browser counts a
+    ``::before`` marker, before it ("* Username"). An optional one may end in a
+    space ("Name "), so an exact match finds none of them. Anchoring keeps "Name"
+    off "Username".
 
     Args:
         *names: Every label the field has carried across console releases; any
@@ -93,7 +95,7 @@ def _label(*names: str) -> re.Pattern[str]:
         A pattern for the field's accessible name.
     """
     alternatives = "|".join(re.escape(name) for name in names)
-    return re.compile(rf"^\s*(?:{alternatives})\s*\*?\s*$")
+    return re.compile(rf"^\s*\*?\s*(?:{alternatives})\s*\*?\s*$")
 
 
 class Driver:
