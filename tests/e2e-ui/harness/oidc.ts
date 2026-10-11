@@ -20,7 +20,7 @@ export const OIDC_PROVIDER = process.env.E2E_OIDC_PROVIDER ?? 'dex';
 export const FIXTURE_PASSWORD = process.env.E2E_FIXTURE_PASSWORD ?? '';
 
 // The code the engine's callback answers 401 with for a user holding no role.
-const NO_ROLE_GRANTED = 'no_role_granted';
+const NO_ROLE_GRANTED: number = 'no_role_granted';
 
 // The engine's session cookie, set only on an admitted sign-in.
 const ENGINE_SESSION_COOKIE = 'dfe_token';
