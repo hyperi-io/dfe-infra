@@ -3587,7 +3587,7 @@ stacks:
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.1"            # 2026-08-21, LTS. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/karpenter-pools is checked against this release's CRDs, so they move together.
       # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
-      karpenter-al2023-ami: "v20260930"  # 2026-10-01. helm/charts/karpenter-pools uses it as the EC2NodeClass alias al2023@v20260930.
+      karpenter-al2023-ami: "v20261003"  # 2026-10-01. helm/charts/karpenter-pools uses it as the EC2NodeClass alias al2023@v20260930.
 
     # Datastores, brokers and telemetry: Argo waves 4-5 (appsets/layer2-data.yaml).
     services:
