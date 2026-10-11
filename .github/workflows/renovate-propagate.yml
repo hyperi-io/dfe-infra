@@ -80,7 +80,6 @@ jobs:
         run: python3 scripts/check_versions_drift.py
 
       - name: Push the propagation back onto the branch
-        id: push
         if: steps.drift.outcome == 'success'
         run: |
           set -euo pipefail
@@ -99,7 +98,6 @@ jobs:
           # Explicit refspec rather than relying on checkout leaving a tracking
           # branch -- a detached HEAD would otherwise fail only at this step.
           git push origin "HEAD:${GITHUB_REF_NAME}"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       # This run's own check sits on Renovate's commit, which a propagation push
       # replaces as the PR head, so a commit status is the verdict the PR shows.
