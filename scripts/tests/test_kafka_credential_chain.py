@@ -34,6 +34,10 @@ password-only secret in its own namespace, keyed on a store path nothing seeds.
 These tests render the appset's own values block for each broker and carry it
 through the kafka chart, the way Argo does.
 
+The broker side of each tier is the kafka and kafbat charts under layer2-data's
+value files and parameters; the app side is every component's golden under
+fixtures/thin-renders, which test_thin_renders.py holds equal to what Argo deploys.
+
     python3 scripts/tests/test_kafka_credential_chain.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
@@ -49,13 +53,14 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, COMPONENTS, effective_env, golden
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 KAFKA = CHARTS / "kafka"
+KAFBAT = CHARTS / "kafbat"
+KAFBAT_EXAMPLE = REPO_ROOT / "argocd" / "values" / "staging" / "kafbat-oidc-rbac.example.yaml"
 LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lint-test"
-STACK = REPO_ROOT / "helm" / "dfe-stack"
-PROFILES = STACK / "profiles"
 KAFKA_TPL = REPO_ROOT / "helm" / "library" / "dfe-common" / "templates" / "_kafka.tpl"
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
@@ -89,8 +94,21 @@ CONTRACT_TABLE = {
 # exists to answer it.
 WITH_REGISTRY = {"confluent-cloud", "redpanda", "redpanda-no-tls", "redpanda-cloud"}
 
-# The charts naming dfe-kafka-user keys in a non-optional secretKeyRef.
-SECRET_CONSUMERS = ("dfe-receiver", "dfe-loader", "kafbat", "dfe-engine")
+# The components naming dfe-kafka-user keys in a non-optional secretKeyRef, on the
+# bus tiers, beside kafbat.
+SECRET_CONSUMERS = (
+    "dfe-archiver",
+    "dfe-engine",
+    "dfe-fetcher",
+    "dfe-loader",
+    "dfe-receiver",
+    "dfe-transform-elastic",
+    "dfe-transform-vector",
+    "dfe-transform-vrl",
+)
+
+# What layer2-data hands every chart for an in-cluster broker on its own cluster.
+IN_CLUSTER_FACTS = ("appNamespace=dfe", "env=dev", "kafka.provider=strimzi")
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -139,10 +157,50 @@ def build_harness_deps() -> None:
     build_deps(LIBRARY_HARNESS)
 
 
-def stack(profile: str) -> list[dict]:
-    """The umbrella rendered with one profile overlay."""
-    build_deps(STACK)
-    return render(STACK, values=(PROFILES / profile,))
+def layer2_data(chart: Path, profile: str, cloud: str, infra: dict | None = None) -> list[dict]:
+    """One layer2-data chart as its Application renders it for an in-cluster broker.
+
+    valueFiles in order -- the deployer's infra/<chart>.yaml last when given --
+    then the parameters, which is Argo's own precedence. The appset's values block
+    adds nothing for a broker no managed annotation names.
+    """
+    cascade = [
+        ARGO_VALUES / "common.yaml",
+        ARGO_VALUES / f"{cloud}.yaml",
+        ARGO_VALUES / f"profile-{profile}.yaml",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        if infra is not None:
+            overlay = Path(tmp) / f"{chart.name}.yaml"
+            overlay.write_text(yaml.safe_dump(infra), encoding="utf-8", newline="\n")
+            cascade.append(overlay)
+        return render(chart, *IN_CLUSTER_FACTS, f"cloud={cloud}", values=tuple(cascade))
+
+
+def kafbat_infra(profile: str, cloud: str) -> dict:
+    """The deployer's infra/kafbat.yaml naming the tier's broker.
+
+    kafbat's cluster list is per deployment; argocd/values/staging carries the
+    shape, which is taken from there with the tier's own bootstrap address.
+    """
+    example = yaml.safe_load(KAFBAT_EXAMPLE.read_text(encoding="utf-8"))
+    clusters = [dict(c) for c in example["kafka"]["clusters"]]
+    bootstrap = bootstrap_servers(profile, cloud)
+    for cluster in clusters:
+        cluster["bootstrapServers"] = bootstrap
+    return {"kafka": {"clusters": clusters}}
+
+
+def bootstrap_servers(profile: str, cloud: str) -> str:
+    """The broker address the tier hands its apps, read off the archiver's render."""
+    env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
+    return str(env.get("KAFKA_BROKERS"))
+
+
+def app_side(profile: str, cloud: str) -> list[dict]:
+    """Every component's render on one tier and cloud, plus kafbat's."""
+    docs = [doc for service in COMPONENTS for doc in golden(service, profile, cloud)]
+    return docs + layer2_data(KAFBAT, profile, cloud, kafbat_infra(profile, cloud))
 
 
 def derived(provider: str) -> dict[str, str]:
@@ -192,31 +250,36 @@ def written_keys(docs: list[dict], secret: str) -> set[str]:
 
 def test_the_scale_profile_writes_the_keys_its_apps_read() -> None:
     """The defect: turning the projection off dropped username and the mechanism."""
-    docs = stack("scale.yaml")
-    written = written_keys(docs, "dfe-kafka-user")
-    expect(
-        "the scale render writes username into dfe-kafka-user",
-        "username" in written,
-        f"got {sorted(written)}",
-    )
-    expect(
-        "and sasl.mechanism",
-        "sasl.mechanism" in written,
-        f"got {sorted(written)}",
-    )
+    for cloud in CLOUDS:
+        written = written_keys(layer2_data(KAFKA, "scale", cloud), "dfe-kafka-user")
+        expect(
+            f"the scale render writes username into dfe-kafka-user [{cloud}]",
+            "username" in written,
+            f"got {sorted(written)}",
+        )
+        expect(
+            f"and sasl.mechanism [{cloud}]",
+            "sasl.mechanism" in written,
+            f"got {sorted(written)}",
+        )
 
 
 def test_every_consumer_key_is_one_the_scale_render_supplies() -> None:
     """A secretKeyRef on a missing KEY starts no container and writes no log."""
-    docs = stack("scale.yaml")
-    read = secret_key_refs(docs, "dfe-kafka-user")
-    expect("the consumers do read that secret", read, "no chart referenced dfe-kafka-user")
-    written = written_keys(docs, "dfe-kafka-user") | {"password"}
-    expect(
-        "every key the apps read is written by the same render",
-        read <= written,
-        f"unwritten: {sorted(read - written)}",
-    )
+    for cloud in CLOUDS:
+        apps = app_side("scale", cloud)
+        read = secret_key_refs(apps, "dfe-kafka-user")
+        expect(f"the consumers do read that secret [{cloud}]", read,
+               "nothing referenced dfe-kafka-user")
+        for service in SECRET_CONSUMERS:
+            own = secret_key_refs(golden(service, "scale", cloud), "dfe-kafka-user")
+            expect(f"{service} reads it on the scale tier [{cloud}]", own, "no reference")
+        written = written_keys(layer2_data(KAFKA, "scale", cloud), "dfe-kafka-user")
+        expect(
+            f"every key the apps read is written by the scale tier's broker [{cloud}]",
+            read <= written,
+            f"unwritten: {sorted(read - written)}",
+        )
 
 
 def test_the_keys_do_not_depend_on_the_projection_flag() -> None:
@@ -263,13 +326,19 @@ def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
 
 def test_the_single_tier_still_carries_the_same_shape() -> None:
     """Both tiers present one credential shape, so clients are identical."""
-    docs = stack("single.yaml")
-    written = written_keys(docs, "dfe-kafka-user")
-    expect(
-        "the single render writes all three keys",
-        {"username", "password", "sasl.mechanism"} <= written,
-        f"got {sorted(written)}",
-    )
+    for cloud in CLOUDS:
+        written = written_keys(layer2_data(KAFKA, "single", cloud), "dfe-kafka-user")
+        expect(
+            f"the single render writes all three keys [{cloud}]",
+            {"username", "password", "sasl.mechanism"} <= written,
+            f"got {sorted(written)}",
+        )
+        read = secret_key_refs(app_side("single", cloud), "dfe-kafka-user")
+        expect(
+            f"and every key the single tier's apps read [{cloud}]",
+            bool(read) and read <= written,
+            f"read {sorted(read)}",
+        )
 
 
 # --- #191 and #10: the provider table ---------------------------------------
@@ -326,25 +395,36 @@ def test_an_unknown_provider_refuses_to_render() -> None:
 
 
 def test_kafbat_matches_the_broker_in_its_own_render() -> None:
-    """The defect: one render carried both the wrong protocol and the right one."""
-    for profile in ("single.yaml", "scale.yaml"):
-        docs = stack(profile)
-        config = [
-            d for d in docs
-            if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("kafbat-config")
-        ]
-        expect(f"{profile}: kafbat renders a config", len(config) == 1, f"got {len(config)}")
-        cluster = yaml.safe_load(config[0]["data"]["application-local.yml"])["kafka"]["clusters"][0]
-        expect(
-            f"{profile}: kafbat speaks SASL_PLAINTEXT to a DFE-owned broker",
-            cluster["properties"]["security.protocol"] == "SASL_PLAINTEXT",
-            f"got {cluster['properties']['security.protocol']}",
-        )
-        expect(
-            f"{profile}: on the mechanism the broker serves",
-            cluster["properties"]["sasl.mechanism"] == "SCRAM-SHA-512",
-            f"got {cluster['properties']['sasl.mechanism']}",
-        )
+    """The defect: one tier carried both the wrong protocol and the right one."""
+    for profile in ("single", "scale"):
+        for cloud in CLOUDS:
+            at = f"{profile}/{cloud}"
+            config = [
+                d for d in layer2_data(KAFBAT, profile, cloud, kafbat_infra(profile, cloud))
+                if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("kafbat-config")
+            ]
+            expect(f"{at}: kafbat renders a config", len(config) == 1, f"got {len(config)}")
+            if not config:
+                continue
+            clusters = yaml.safe_load(config[0]["data"]["application-local.yml"])["kafka"]
+            cluster = clusters["clusters"][0]
+            expect(
+                f"{at}: kafbat speaks SASL_PLAINTEXT to a DFE-owned broker",
+                cluster["properties"]["security.protocol"] == "SASL_PLAINTEXT",
+                f"got {cluster['properties']['security.protocol']}",
+            )
+            expect(
+                f"{at}: on the mechanism the broker serves",
+                cluster["properties"]["sasl.mechanism"] == "SCRAM-SHA-512",
+                f"got {cluster['properties']['sasl.mechanism']}",
+            )
+            env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
+            protocol = env.get("KAFKA_SECURITY_PROTOCOL")
+            expect(
+                f"{at}: the same protocol the tier's apps dial",
+                cluster["properties"]["security.protocol"] == protocol,
+                f"apps dial {protocol!r}",
+            )
 
 
 def test_the_matrix_expects_what_the_chart_derives() -> None:

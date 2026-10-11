@@ -1,46 +1,48 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         _weave.py
-#  Purpose:      Render and diff an app through scripts/dfe-weave for the
-#                chart-switch gate tests, so each gate test is a call and an
-#                assert.
+#  Purpose:      Render an app through scripts/dfe-weave for the thin-chart
+#                tests, so each test is a call and an assert.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""render_app and diff_app -- scripts/dfe-weave, called from a test.
+"""render_app and render_extras -- scripts/dfe-weave, called from a test.
 
-Render (a) is the 2.2.0 chart under helm/charts, layered as the 2.2.0 appsets
-layer it (fixtures/appsets-2.2.0). Render (b) is the thin chart assembled from
-the app's contract beside helm/charts/dfe-extras, layered as
-argocd/appsets/layer2-apps.yaml layers it, with the per-app integration values
-from argocd/values/apps. A gate test is then a few lines:
+render_app is the thin chart assembled from the app's contract beside
+helm/charts/dfe-extras, layered as argocd/appsets/layer2-apps.yaml layers it, with
+the per-app integration values from argocd/values/apps. render_extras is the
+dfe-extras source alone, which needs no contract or library. A test turning a
+dial hands the deployer's instance values as ``overlay`` and the deploy repo's
+infra/common.yaml as ``infra``:
 
-    from _weave import diff_app
+    from _weave import render_app, render_extras
 
-    def test_receiver_keeps_its_objects() -> None:
-        report = diff_app("dfe-receiver", "scale", "aws")
-        assert report["failed"] == [], report["facets"]["objects"]
+    def test_the_loader_takes_its_grace() -> None:
+        overlay = {"terminationGracePeriodSeconds": 0}
+        docs = render_app("dfe-loader", "slim", "local", overlay=overlay)
+        ...
 
 Contracts are read from fixtures/contracts/<service>.json, keyed by the
 ``deploy.service`` the appset generates from (``hyperdx``, not ``dfe-hyperdx``).
-Render (b) needs the scalo-service library: DFE_WEAVE_LIBRARY names a chart
+The thin chart needs the scalo-service library: DFE_WEAVE_LIBRARY names a chart
 directory, and without it the pinned release is pulled anonymously from GHCR by
-its manifest digest, once per run. DFE_WEAVE_HELM picks the helm binary, default
-``helm`` on PATH.
+its manifest digest, once per run. Each component's thin chart is assembled once
+per run with the image pins versions.yaml carries. DFE_WEAVE_HELM picks the helm
+binary, default ``helm`` on PATH.
 
-An appset under argocd/appsets is routed by render: (a) reads its 2.2.0 copy,
-unless ``old_ref`` names a git ref, and (b) reads a copy whose chart pins not
-yet published carry RENDER_DIGEST, because the appset refuses to render them.
-appset() and old_appset() give those paths to a test calling dfe-weave itself.
+An appset under argocd/appsets is read from a copy whose chart pins not yet
+published carry RENDER_DIGEST, because the appset refuses to render them.
+appset() gives that path to a test calling dfe-weave itself.
 
 published_chart() pulls the thin chart the registry serves, by the digest
-versions.yaml chart-digests pins, for render (b) to take as ``chart``. It uses
+versions.yaml chart-digests pins, for render_app to take as ``chart``. It uses
 whatever credentials helm already holds, which a private chart needs.
 
 The leading underscore keeps pytest from collecting this module as a test file.
 """
 
+import contextlib
 import functools
 import importlib.machinery
 import importlib.util
@@ -49,6 +51,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
@@ -61,17 +64,13 @@ SCRIPT = REPO_ROOT / "scripts" / "dfe-weave"
 CONTRACTS = TESTS / "fixtures" / "contracts"
 APPSETS = Path("argocd/appsets")
 
-# The layer 2 appsets byte for byte as the 2.2.0 tag carries them. Render (a) reads
-# these: the reworked appsets pull each thin chart over OCI and name no 2.2.0 chart.
-OLD_APPSETS = TESTS / "fixtures" / "appsets-2.2.0"
-
-# The chart digest render (b) reads for a map entry not yet published. The thin
+# The chart digest a render reads for a map entry not yet published. The thin
 # chart is assembled locally, so the digest only has to have the shape the appset
 # accepts.
 RENDER_DIGEST = "sha256:" + "ab" * 32
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
-# The scalo-service release render (b) uses when DFE_WEAVE_LIBRARY is unset. The
+# The scalo-service release a render uses when DFE_WEAVE_LIBRARY is unset. The
 # pull names the manifest digest, so a re-pushed tag cannot change what renders.
 LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
 LIBRARY_VERSION = "2.14.4"
@@ -147,6 +146,29 @@ def contract(service: str) -> Path:
 def chart_name(service: str) -> str:
     """The thin chart's name, which its contract's app_name sets."""
     return "dfe-hyperdx" if service == "hyperdx" else service
+
+
+@functools.cache
+def _assembled(service: str, library_dir: Path) -> tuple[tempfile.TemporaryDirectory, Path]:
+    """One component's thin chart, assembled and built once per run.
+
+    Cached with its scratch directory, as _pulled_library is, so every render of a
+    component shares the one assembly.
+    """
+    w = weave()
+    raw, parsed = w.read_contract(contract(service))
+    tag, digest = w.pinned_image(REPO_ROOT, str(parsed.get("app_name")))
+    scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-thin-{service}-")
+    chart = w.assemble(
+        raw, library_dir, Path(scratch.name), version=tag.removeprefix("v"), tag=tag, digest=digest
+    )
+    w.build_dependency(helm(), chart)
+    return scratch, chart
+
+
+def assembled_chart(service: str) -> Path:
+    """The thin chart for a component, from its committed contract and the pinned library."""
+    return _assembled(service, library())[1]
 
 
 def chart_digest(service: str) -> str:
@@ -237,41 +259,63 @@ def _pinned_appsets() -> tuple[tempfile.TemporaryDirectory, Path]:
 
 
 def appset(name: str | Path = "layer2-apps.yaml") -> Path:
-    """argocd/appsets/<name> as render (b) reads it, every unpublished chart pinned."""
+    """argocd/appsets/<name> as a render reads it, every unpublished chart pinned."""
     return _pinned_appsets()[1] / Path(name).name
 
 
-def old_appset(name: str | Path = "layer2-apps.yaml") -> Path:
-    """argocd/appsets/<name> as the 2.2.0 tag carries it, which render (a) reads."""
-    return OLD_APPSETS / Path(name).name
-
-
-def _routed(given: Path | None, which: str, old_ref: str | None) -> Path:
-    """The appset a render reads: one under argocd/appsets goes to its copy for the render."""
+def _routed(given: Path | None) -> Path:
+    """The appset a render reads: one under argocd/appsets goes to its pinned copy."""
     path = Path(given) if given is not None else weave().APPSET
     if path.is_absolute() or path.parent != APPSETS:
         return path
-    if which == "old":
-        return path if old_ref else old_appset(path)
     return appset(path)
 
 
-def _inputs(service: str, which: str, options: dict) -> object:
-    assembles = which == "new" and options.get("chart") is None
+@contextlib.contextmanager
+def deploy_repo(
+    service: str, instance: str = "default", overlay: dict | None = None, infra: dict | None = None
+) -> Iterator[Path]:
+    """A deploy repo holding ``overlay`` as the instance file and ``infra`` as infra/common.yaml.
+
+    Either may be None, which leaves that layer missing as the appset allows.
+    """
+    with tempfile.TemporaryDirectory(prefix="dfe-weave-deploy-") as tmp:
+        root = Path(tmp)
+        if overlay is not None:
+            body = {"deploy": {"service": service, "instance": instance}, **overlay}
+            values = root / "values"
+            values.mkdir()
+            (values / f"{service}-{instance}-values.yaml").write_text(
+                yaml.safe_dump(body), encoding="utf-8", newline="\n"
+            )
+        if infra is not None:
+            (root / "infra").mkdir()
+            (root / "infra" / "common.yaml").write_text(
+                yaml.safe_dump(infra), encoding="utf-8", newline="\n"
+            )
+        yield root
+
+
+def _inputs(service: str, options: dict) -> object:
+    thin = options.pop("thin", True)
+    chart = options.pop("chart", None)
+    given_contract = options.pop("contract", None)
     chart_library = options.pop("library", None)
-    if assembles and chart_library is None:
-        chart_library = library()
-    old_ref = options.pop("old_ref", None)
+    if thin and chart is None and given_contract is None and chart_library is None:
+        chart = assembled_chart(service)
+    elif thin and chart is None:
+        given_contract = given_contract or contract(service)
+        chart_library = chart_library or library()
     return weave().Inputs(
         repo=options.pop("repo", REPO_ROOT),
-        appset=_routed(options.pop("appset", None), which, old_ref),
-        old_ref=old_ref,
+        appset=_routed(options.pop("appset", None)),
         deploy_repo=options.pop("deploy_repo", None),
         apps_dir=options.pop("apps_dir", None),
-        contract=options.pop("contract", contract(service) if assembles else None),
+        contract=given_contract,
         library=chart_library,
-        chart=options.pop("chart", None),
+        chart=chart,
         extras=options.pop("extras", True),
+        thin=thin,
         helm=options.pop("helm", helm()),
     )
 
@@ -283,30 +327,39 @@ def _target(service: str, profile: str, cloud: str, options: dict) -> object:
     return w.Target(service, profile, cloud, annotations=annotations, labels=labels, **options)
 
 
-def render_app(service: str, profile: str, cloud: str, which: str, **options: object) -> list[dict]:
-    """One render's objects: ``which`` is ``old`` (the 2.2.0 chart) or ``new`` (the thin chart).
+def render_app(service: str, profile: str, cloud: str, **options: object) -> list[dict]:
+    """One app's objects: its thin chart beside dfe-extras, as its Application deploys them.
 
     Options are the dfe-weave inputs (``appset``, ``apps_dir``, ``deploy_repo``,
-    ``old_ref``, ``contract``, ``library``, ``chart``, ``extras``, ``helm``) and the cluster
-    facts (``instance``, ``namespace``, ``registry``, ``domain``, ``env``, and
-    dicts ``annotations`` and ``labels``). ``appset`` is routed as the module says.
+    ``contract``, ``library``, ``chart``, ``extras``, ``thin``, ``helm``), the
+    deployer's ``overlay`` and ``infra`` values in place of a ``deploy_repo``, and
+    the cluster facts (``instance``, ``namespace``, ``registry``, ``domain``,
+    ``env``, and dicts ``annotations`` and ``labels``). ``appset`` is routed as the
+    module says.
+
+    Raises:
+        WeaveError: The appset or a chart refused the render, with its message.
     """
     options = dict(options)
-    inputs = _inputs(service, which, options)
-    target = _target(service, profile, cloud, options)
-    return weave().render_app(target, which, inputs).docs
+    overlay = options.pop("overlay", None)
+    infra = options.pop("infra", None)
+    if overlay is None and infra is None:
+        inputs = _inputs(service, options)
+        target = _target(service, profile, cloud, options)
+        return weave().render_app(target, inputs).docs
+    if options.get("deploy_repo") is not None:
+        raise ValueError("pass overlay and infra, or deploy_repo, not both")
+    instance = str(options.get("instance", "default"))
+    with deploy_repo(service, instance, overlay, infra) as root:
+        options["deploy_repo"] = root
+        inputs = _inputs(service, options)
+        target = _target(service, profile, cloud, options)
+        return weave().render_app(target, inputs).docs
 
 
-def diff_app(service: str, profile: str, cloud: str, **options: object) -> dict:
-    """The dfe-weave diff report for one app: ``report["facets"][name]["status"]`` and ``failed``.
+def render_extras(service: str, profile: str, cloud: str, **options: object) -> list[dict]:
+    """The dfe-extras objects alone for one app, with render_app's options.
 
-    Takes the same options as render_app. Each render reads its own appset, so the
-    two are rendered here and reported by dfe-weave's make_report.
+    No contract or library is read, so the render runs offline.
     """
-    w = weave()
-    old_inputs = _inputs(service, "old", dict(options))
-    options = dict(options)
-    new_inputs = _inputs(service, "new", options)
-    target = _target(service, profile, cloud, options)
-    old = w.render_app(target, "old", old_inputs)
-    return w.make_report(target, old, w.render_app(target, "new", new_inputs))
+    return render_app(service, profile, cloud, thin=False, **options)

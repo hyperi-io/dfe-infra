@@ -10,29 +10,29 @@
 """Where a transform pushes its output on the direct transport.
 
 The engine compiles `sink.endpoint` into each transform instance's overlay: the
-loader's Service off the mesh, the loader pool's alias on it. A chart that
-overwrites it pins every transform to whichever loader pod its one gRPC
-connection lands on. The chart's own value is the default for the window before
-the engine's first routing sync, built by the same rule as the receiver's.
+loader's Service off the mesh, the loader pool's alias on it. Integration values
+that overwrite it pin every transform to whichever loader pod its one gRPC
+connection lands on. The integration values' own endpoint is the default for the
+window before the engine's first routing sync, built by the same rule as the
+receiver's.
+
+The default renders are the goldens (_gate.golden). The engine's overlay renders
+live, which needs the scalo-service library (_weave.library).
 
     python3 scripts/tests/test_transform_loader.py
-
-Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-import json
-import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
 
-from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, golden
+from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-VALUES = REPO_ROOT / "argocd" / "values"
 NAMESPACE = "dfe"
 
 TRANSFORMS = ("dfe-transform-vrl", "dfe-transform-vector")
@@ -52,127 +52,124 @@ ENGINE_SINK = {
 }
 
 
-def render(chart: str, profile: str, *extra: str) -> list[dict]:
-    """One chart under one profile, with the values cascade Argo layers."""
-    cmd = [
-        "helm", "template", chart, str(chart_dir(chart)),
-        "--namespace", NAMESPACE,
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"profile-{profile}.yaml"),
-        *extra,
-    ]
-    out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-    )
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart} on {profile}:\n{out.stderr}")
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
-
-
 def of_kind(docs: list[dict], kind: str) -> list[dict]:
     return [d for d in docs if d.get("kind") == kind]
 
 
-def with_config(config: dict) -> tuple[str, str]:
-    return ("--set-json", f"config={json.dumps(config)}")
+def app_config(docs: list[dict], service: str) -> dict:
+    cm = next(d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == f"{service}-config")
+    (text,) = cm["data"].values()
+    return yaml.safe_load(text) or {}
 
 
-def app_config(chart: str, profile: str, *extra: str) -> dict:
-    cm = next(
-        d for d in of_kind(render(chart, profile, *extra), "ConfigMap")
-        if d["metadata"]["name"] == f"{chart}-config"
-    )
-    return yaml.safe_load(cm["data"]["config.yaml"]) or {}
+def sink(service: str, profile: str, cloud: str = "local", overlay: dict | None = None) -> dict:
+    """A transform's sink block: its golden's, or a live render's with ``overlay`` as its instance."""
+    if overlay is None:
+        docs = golden(service, profile, cloud)
+    else:
+        docs = render_app(service, profile, cloud, overlay=overlay)
+    return app_config(docs, service).get("sink") or {}
 
 
-def sink_endpoint(chart: str, profile: str, *extra: str) -> str:
-    return (app_config(chart, profile, *extra).get("sink") or {}).get("endpoint") or ""
+def service_address(endpoint: str) -> tuple[str, str, int | None]:
+    """The Service name, namespace and port a gRPC endpoint dials; a bare name is this namespace."""
+    parts = urlsplit(endpoint)
+    labels = (parts.hostname or "").split(".")
+    namespace = labels[1] if len(labels) > 1 else NAMESPACE
+    return labels[0], namespace, parts.port
 
 
 def test_slim_dials_the_loader_service() -> None:
-    for chart in TRANSFORMS:
-        endpoint = sink_endpoint(chart, "slim")
-        expect(f"{chart} on slim dials the loader's Service in this namespace",
-               endpoint == f"http://dfe-loader.{NAMESPACE}.svc.cluster.local:6000",
-               f"got {endpoint!r}")
+    for service in TRANSFORMS:
+        for cloud in CLOUDS:
+            endpoint = sink(service, "slim", cloud).get("endpoint") or ""
+            expect(f"{service} on slim/{cloud} dials the loader's Service in this namespace",
+                   service_address(endpoint) == ("dfe-loader", NAMESPACE, 6000),
+                   f"got {endpoint!r}")
 
 
 def test_mesh_dials_the_loader_pool_listener() -> None:
     """A Service balances per connection, so on mesh the transform dials the pool's alias."""
-    for chart in TRANSFORMS:
-        endpoint = sink_endpoint(chart, "mesh")
-        expect(f"{chart} on mesh dials the loader's alias in the gateway namespace",
-               endpoint == MESH_ALIAS, f"got {endpoint!r}")
+    for service in TRANSFORMS:
+        for cloud in CLOUDS:
+            endpoint = sink(service, "mesh", cloud).get("endpoint")
+            expect(f"{service} on mesh/{cloud} dials the loader's alias in the gateway namespace",
+                   endpoint == MESH_ALIAS, f"got {endpoint!r}")
 
 
 def test_the_engine_endpoint_wins() -> None:
-    """The overlay's compiled endpoint reaches the app. The chart fills only a gap."""
-    for chart in TRANSFORMS:
+    """The overlay's compiled endpoint reaches the app. The integration values fill only a gap."""
+    for service in TRANSFORMS:
         for profile in DIRECT_PROFILES:
             want = ENGINE_SINK[profile]
-            sink = app_config(chart, profile, *with_config({"sink": want})).get("sink") or {}
-            expect(f"{chart} on {profile} keeps the engine's endpoint",
-                   sink.get("endpoint") == want["endpoint"], f"got {sink!r}")
-            expect(f"{chart} on {profile} keeps the engine's routing key",
-                   sink.get("topic") == want["topic"], f"got {sink!r}")
+            got = sink(service, profile, overlay={"config": {"sink": want}})
+            expect(f"{service} on {profile} keeps the engine's endpoint",
+                   got.get("endpoint") == want["endpoint"], f"got {got!r}")
+            expect(f"{service} on {profile} keeps the engine's routing key",
+                   got.get("topic") == want["topic"], f"got {got!r}")
 
 
 def test_an_overlay_cannot_move_the_transport() -> None:
     """The endpoint is a default, but the transport is still the deployment's."""
-    for chart in TRANSFORMS:
-        overlay = {"sink": {"transport": "bus", "endpoint": "http://loader.elsewhere:7000"}}
-        sink = app_config(chart, "slim", *with_config(overlay)).get("sink") or {}
-        expect(f"{chart}: an overlay endpoint wins",
-               sink.get("endpoint") == "http://loader.elsewhere:7000", f"got {sink!r}")
-        expect(f"{chart}: an overlay transport does not",
-               sink.get("transport") == "direct", f"got {sink!r}")
+    for service in TRANSFORMS:
+        moved = {"transport": "bus", "endpoint": "http://loader.elsewhere:7000"}
+        overlay = {"config": {"sink": moved}}
+        got = sink(service, "slim", overlay=overlay)
+        expect(f"{service}: an overlay endpoint wins",
+               got.get("endpoint") == "http://loader.elsewhere:7000", f"got {got!r}")
+        expect(f"{service}: an overlay transport does not",
+               got.get("transport") == "direct", f"got {got!r}")
 
 
 def test_the_transforms_dial_what_the_receiver_dials() -> None:
-    """Three charts build the loader address by one rule; this catches one drifting."""
+    """Three integration files build the loader address by one rule; this catches one drifting."""
     for profile in DIRECT_PROFILES:
-        receiver = (app_config("dfe-receiver", profile).get("loader") or {}).get("grpc_endpoint")
-        for chart in TRANSFORMS:
-            endpoint = sink_endpoint(chart, profile)
-            expect(f"{chart} on {profile} dials the receiver's loader address",
-                   endpoint == receiver, f"got {endpoint!r}, receiver {receiver!r}")
+        for cloud in CLOUDS:
+            receiver_docs = golden("dfe-receiver", profile, cloud)
+            receiver = (app_config(receiver_docs, "dfe-receiver").get("loader") or {}).get(
+                "grpc_endpoint"
+            )
+            for service in TRANSFORMS:
+                endpoint = sink(service, profile, cloud).get("endpoint")
+                expect(f"{service} on {profile}/{cloud} dials the receiver's loader address",
+                       endpoint == receiver, f"got {endpoint!r}, receiver {receiver!r}")
 
 
 def test_the_endpoint_is_a_service_the_loader_renders() -> None:
-    for chart in TRANSFORMS:
+    for service in TRANSFORMS:
         for profile in DIRECT_PROFILES:
-            endpoint = sink_endpoint(chart, profile)
-            parts = urlsplit(endpoint)
-            labels = (parts.hostname or "").split(".")
-            name, namespace = [*labels, "", ""][:2]
-            services = [
-                s for s in of_kind(render("dfe-loader", profile), "Service")
-                if s["metadata"]["name"] == name
-                and s["metadata"].get("namespace", NAMESPACE) == namespace
-            ]
-            expect(f"{chart} on {profile}: {name}.{namespace} is a Service the loader renders",
-                   len(services) == 1, f"got {len(services)} for {endpoint!r}")
-            ports = [p["port"] for s in services for p in s["spec"]["ports"]]
-            expect(f"{chart} on {profile}: that Service answers on {parts.port}",
-                   parts.port in ports, f"got {ports!r}")
+            for cloud in CLOUDS:
+                endpoint = sink(service, profile, cloud).get("endpoint") or ""
+                name, namespace, port = service_address(endpoint)
+                services = [
+                    s for s in of_kind(golden("dfe-loader", profile, cloud), "Service")
+                    if s["metadata"]["name"] == name
+                    and s["metadata"].get("namespace", NAMESPACE) == namespace
+                ]
+                where = f"{service} on {profile}/{cloud}"
+                expect(f"{where}: {name}.{namespace} is a Service the loader's render holds",
+                       len(services) == 1, f"got {len(services)} for {endpoint!r}")
+                ports = [p["port"] for s in services for p in s["spec"]["ports"]]
+                expect(f"{where}: that Service answers on {port}", port in ports, f"got {ports!r}")
 
 
 def test_the_port_is_the_manifest_push_port() -> None:
     """apps.yaml is what the engine compiles the overlay's endpoint from."""
     apps = yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))
     push = apps["apps"]["dfe-loader"]["endpoints"]["push"]["port"]
-    for chart in TRANSFORMS:
-        port = urlsplit(sink_endpoint(chart, "slim")).port
-        expect(f"{chart} dials apps.yaml dfe-loader.endpoints.push", port == push,
+    for service in TRANSFORMS:
+        _, _, port = service_address(sink(service, "slim").get("endpoint") or "")
+        expect(f"{service} dials apps.yaml dfe-loader.endpoints.push", port == push,
                f"got {port!r}, manifest {push!r}")
 
 
 def test_the_bus_profiles_name_no_endpoint() -> None:
-    for chart in TRANSFORMS:
+    for service in TRANSFORMS:
         for profile in BUS_PROFILES:
-            sink = app_config(chart, profile).get("sink") or {}
-            expect(f"{chart} on {profile} renders no sink endpoint", "endpoint" not in sink,
-                   f"got {sink!r}")
+            for cloud in CLOUDS:
+                got = sink(service, profile, cloud)
+                expect(f"{service} on {profile}/{cloud} renders no sink endpoint",
+                       "endpoint" not in got, f"got {got!r}")
 
 
 def main() -> int:

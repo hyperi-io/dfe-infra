@@ -94,10 +94,6 @@ After the walk `apply` reads every other bootstrap pin of the target stack the s
 
 An Argo CD that `bootstrap/argocd_release.py` does not recognise as `bootstrap.sh`'s own reads `[ADOPTED]` and is left to its owner, the same call `bootstrap.sh` makes before it upgrades Argo. Nothing tells a cert-manager or external-secrets `bootstrap.sh` installed from one it adopted, so their command says to run it only where this deploy installed them. A `bootstrap.sh` re-run skips a running install of either unless `DFE_FORCE_INSTALL=true`.
 
-### Onto the thin charts
-
-A move to a stack carrying `chart-digests:`, from one that does not, puts the apps on thin charts, and `apply` adds a stage either side of the first one that moves an Argo-managed component. `overlay-vocabulary`, before it, copies each set value in `values/*-values.yaml` to the key `scripts/weave/value-map.yaml` names and keeps the 2.2.0 key, so the 2.2.0 charts render as before. `podSecurityContext.seccompProfileType` alone moves out, because the thin chart would copy it into the pod spec. The stage never overwrites a key already set, prints what it cannot carry for a hand edit, as `plan` does, and commits nothing on a second run. `--stop-before` that first stage leaves the rewrite committed and nothing else moved. `enrichment-tables`, after it, names each table file in its app's config under the mount `apps.yaml` declares. A transform that reads a table fails to compile on the thin chart until that entry exists, so the wait after the retarget asks only that every Application has synced the new ref, and the `enrichment-tables` wait asks for health.
-
 ## Re-size
 
 Re-run the sizing resolver with a new estimate, focus or ratio and diff the

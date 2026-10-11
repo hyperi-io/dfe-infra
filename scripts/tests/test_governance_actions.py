@@ -13,14 +13,14 @@
     env DFE_DEPLOY_ROOT=../dfe-deploy python3 -m pytest scripts/tests/test_governance_actions.py -q
 
 An action writes dials into values/<service>-<instance>-values.yaml, the file the layer 2 appset
-layers last. scripts/check_governance_drift.py proves each dial's key exists in the 2.2.0 charts,
-and a key that exists says nothing about whether the keys beside it still agree. hunts-pause once
+layers last. scripts/check_governance_drift.py proves each dial's key is one the deployed chart
+reads, and a key that exists says nothing about whether the keys beside it agree. hunts-pause once
 set huntRunner.enabled false and left secrets.hunt-runner.enabled on: dfe-extras stopped minting
 hunt-runner-clickhouse, the engine Deployment still read it through a required secretKeyRef, and
 the engine pod stayed in CreateContainerConfigError.
 
 Every helmvars change of every action is applied over the instance file and rendered, dfe-engine
-on slim/local and scale/aws, through the appset, value files and dfe-extras the gate renders. A
+on slim/local and scale/aws, through the appset, value files and dfe-extras the goldens render. A
 pod may not read a Secret the unchanged render mints and the action's render no longer does, and
 hunts-resume must render what hunts-pause started from.
 
@@ -33,15 +33,14 @@ Rendering needs the scalo-service library (_weave.library).
 
 import functools
 import os
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 import yaml
 
-from _gate import COMPONENTS, object_id, render_differences
-from _weave import REPO_ROOT, render_app, weave
+from _gate import COMPONENTS, WORKLOAD_KINDS, object_id, render_differences
+from _weave import REPO_ROOT, render_app
 
 CELLS = (("slim", "local"), ("scale", "aws"))
 SLIM = ("slim", "local")
@@ -100,13 +99,7 @@ def instance_of(name: str) -> tuple[str, str]:
 
 def render_with(service: str, instance: str, profile: str, cloud: str, values: dict) -> list[dict]:
     """The thin path of one instance with ``values`` in its deploy repo file."""
-    with tempfile.TemporaryDirectory(prefix="dfe-governance-") as tmp:
-        root = Path(tmp)
-        instance_file = root / "values" / f"{service}-{instance}-values.yaml"
-        instance_file.parent.mkdir()
-        body = {"deploy": {"service": service, "instance": instance}, **values}
-        instance_file.write_text(yaml.safe_dump(body), encoding="utf-8", newline="\n")
-        return render_app(service, profile, cloud, "new", deploy_repo=root, instance=instance)
+    return render_app(service, profile, cloud, overlay=values, instance=instance)
 
 
 @functools.cache
@@ -120,7 +113,7 @@ def unchanged(service: str, instance: str, profile: str, cloud: str) -> list[dic
 
 def pod_of(doc: dict) -> dict:
     """The pod spec of a workload, empty for any other object."""
-    if doc.get("kind") not in weave().WORKLOAD_KINDS:
+    if doc.get("kind") not in WORKLOAD_KINDS:
         return {}
     return (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
 

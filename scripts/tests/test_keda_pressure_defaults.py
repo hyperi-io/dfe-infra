@@ -10,18 +10,22 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Render assertions for the KEDA pressure trigger defaults.
 
-Two defects this pins. The library default named namespace `dfe` literally, so a
-deployment anywhere else rendered a metric URL that never answered -- and a KEDA
+Two defects this pins. A shim address naming namespace `dfe` literally renders,
+for a deployment anywhere else, a metric URL that never answers -- and a KEDA
 external metric that errors stops the HPA scaling at all, CPU trigger included
-(dfe-infra#301). And the app charts shipped the trigger off, so the composite the
-apps emit drove nothing (dfe-infra#302, dfe-infra#303).
+(dfe-infra#301). And an app shipped with the trigger off leaves the composite the
+apps emit driving nothing (dfe-infra#302, dfe-infra#303).
+
+Each app's ScaledObject comes from its thin chart, its triggers from its
+integration values under argocd/values/apps (the pressure-trigger fragment), and
+the hunt runner's from dfe-extras. What deploys by default is read off the
+goldens; a namespace or a dial is rendered.
 
     python3 scripts/tests/test_keda_pressure_defaults.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH; the rendered cases need the scalo-service library
+(_weave.library). No test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import subprocess
 import sys
@@ -30,31 +34,32 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, PROFILES, golden
+from _weave import render_app, render_extras
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 
-# Every app chart whose ScaledObject carries the pressure trigger. dfe-fetcher is
-# absent on purpose: it sets keda.enabled false and renders no ScaledObject.
-# dfe-transform-vector is CPU_ONLY_CHARTS below.
-PRESSURE_CHARTS = [
+# Every app whose ScaledObject carries the pressure trigger. dfe-fetcher is absent
+# on purpose: it renders no ScaledObject. dfe-transform-vector is CPU_ONLY_APPS.
+PRESSURE_APPS = [
     "dfe-archiver",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
     "dfe-transform-vrl",
-    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
-    # uncomment when they ship.
-    # "dfe-transform-splack",
-    # "dfe-transform-wasm",
 ]
 
-# App charts that ship the cpu trigger alone, because the app sets no
-# scaling_pressure gauge for the pressure trigger to read.
-CPU_ONLY_CHARTS = [
+# Apps that ship the cpu trigger alone, because the app sets no scaling_pressure
+# gauge for the pressure trigger to read.
+CPU_ONLY_APPS = [
     "dfe-transform-vector",
 ]
+
+# The brokerless minimum tier, which runs on cpu alone.
+CPU_ONLY_TIER = "slim"
+PRESSURE_PROFILES = [p for p in PROFILES if p != CPU_ONLY_TIER]
 
 
 def render(chart: str, *args: str, namespace: str = "dfe") -> list[dict]:
@@ -63,6 +68,10 @@ def render(chart: str, *args: str, namespace: str = "dfe") -> list[dict]:
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {chart} {args}:\n{out.stderr}")
     return [d for d in yaml.safe_load_all(out.stdout) if d]
+
+
+def kinds(docs: list[dict], scaler_name: str) -> list[str]:
+    return sorted(t.get("type") for t in triggers(docs, scaler_name))
 
 
 def triggers(docs: list[dict], scaler_name: str) -> list[dict]:
@@ -80,28 +89,32 @@ def metrics_api_url(docs: list[dict], scaler_name: str) -> str:
 
 
 def test_every_app_chart_ships_the_pressure_trigger() -> None:
-    for chart in PRESSURE_CHARTS:
-        rendered = triggers(render(chart), f"{chart}-scaler")
-        kinds = sorted(t.get("type") for t in rendered)
-        expect(
-            f"{chart} renders both the cpu and metrics-api triggers by default",
-            kinds == ["cpu", "metrics-api"],
-            f"got {kinds}",
-        )
+    for app in PRESSURE_APPS:
+        for profile in PRESSURE_PROFILES:
+            for cloud in CLOUDS:
+                got = kinds(golden(app, profile, cloud), f"{app}-scaler")
+                expect(
+                    f"{app} {profile}/{cloud} renders both the cpu and metrics-api triggers",
+                    got == ["cpu", "metrics-api"],
+                    f"got {got}",
+                )
 
 
 def test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone() -> None:
-    for chart in CPU_ONLY_CHARTS:
-        rendered = triggers(render(chart), f"{chart}-scaler")
-        kinds = sorted(t.get("type") for t in rendered)
-        expect(f"{chart} renders the cpu trigger alone", kinds == ["cpu"], f"got {kinds}")
+    for app in CPU_ONLY_APPS:
+        for profile in PROFILES:
+            for cloud in CLOUDS:
+                got = kinds(golden(app, profile, cloud), f"{app}-scaler")
+                expect(f"{app} {profile}/{cloud} renders the cpu trigger alone", got == ["cpu"],
+                       f"got {got}")
 
 
 def test_the_shim_address_follows_the_release_namespace() -> None:
-    for chart in PRESSURE_CHARTS:
-        url = metrics_api_url(render(chart, namespace="dfe-local"), f"{chart}-scaler")
+    for app in PRESSURE_APPS:
+        docs = render_app(app, "single", "local", namespace="dfe-local")
+        url = metrics_api_url(docs, f"{app}-scaler")
         expect(
-            f"{chart}'s shim URL names the release namespace, not a literal dfe",
+            f"{app}'s shim URL names the release namespace, not a literal dfe",
             "dfe-keda-shim.dfe-local.svc.cluster.local:8080" in url,
             url,
         )
@@ -109,15 +122,9 @@ def test_the_shim_address_follows_the_release_namespace() -> None:
 
 def test_an_explicit_shim_address_still_wins() -> None:
     """A shim outside the release namespace stays reachable through the override."""
-    url = metrics_api_url(
-        render(
-            "dfe-loader",
-            "--set",
-            "keda.pressure.shimAddress=shim.elsewhere.svc.cluster.local:9090",
-            namespace="dfe-local",
-        ),
-        "dfe-loader-scaler",
-    )
+    elsewhere = {"keda": {"pressure": {"shimAddress": "shim.elsewhere.svc.cluster.local:9090"}}}
+    docs = render_app("dfe-loader", "single", "local", namespace="dfe-local", overlay=elsewhere)
+    url = metrics_api_url(docs, "dfe-loader-scaler")
     expect(
         "keda.pressure.shimAddress overrides the derived address",
         url.startswith("http://shim.elsewhere.svc.cluster.local:9090/"),
@@ -126,22 +133,16 @@ def test_an_explicit_shim_address_still_wins() -> None:
 
 
 def test_pressure_can_still_be_turned_off() -> None:
-    """profile-slim turns it off, so the dial has to reach the rendered triggers."""
-    rendered = triggers(
-        render("dfe-loader", "--set", "keda.pressure.enabled=false"), "dfe-loader-scaler"
-    )
-    kinds = sorted(t.get("type") for t in rendered)
-    expect(
-        "keda.pressure.enabled=false leaves the cpu trigger alone",
-        kinds == ["cpu"],
-        f"got {kinds}",
-    )
+    """The slim tier turns it off by clearing keda.extraTriggers in each app's
+    profile-slim.yaml, so a deployment's own instance values reach the same dial."""
+    docs = render_app("dfe-loader", "single", "local", overlay={"keda": {"extraTriggers": []}})
+    got = kinds(docs, "dfe-loader-scaler")
+    expect("keda.extraTriggers=[] leaves the cpu trigger alone", got == ["cpu"], f"got {got}")
 
 
 def test_the_hunt_runner_shim_address_follows_the_namespace_too() -> None:
-    docs = render(
-        "dfe-engine", "--set", "huntRunner.autoscaling.enabled=true", namespace="dfe-local"
-    )
+    scaled = {"huntRunner": {"autoscaling": {"enabled": True}}}
+    docs = render_extras("dfe-engine", "slim", "local", namespace="dfe-local", overlay=scaled)
     url = metrics_api_url(docs, "dfe-hunt-runner-scaler")
     expect(
         "the hunt-runner backlog trigger names the release namespace",
@@ -156,13 +157,11 @@ def overlay(name: str) -> dict:
 
 def test_only_the_brokerless_minimum_tier_turns_pressure_off() -> None:
     """slim runs no broker and caps at 2 replicas, so cpu is the whole signal."""
-    for name in ("slim", "single", "mesh", "scale"):
-        off = overlay(f"profile-{name}").get("keda", {}).get("pressure", {}).get("enabled")
-        expect(
-            f"profile-{name} pressure posture",
-            (off is False) if name == "slim" else (off is None),
-            f"keda.pressure.enabled={off!r}",
-        )
+    for profile in PROFILES:
+        for app in PRESSURE_APPS:
+            got = kinds(golden(app, profile, "local"), f"{app}-scaler")
+            want = ["cpu"] if profile == CPU_ONLY_TIER else ["cpu", "metrics-api"]
+            expect(f"{app} on {profile} pressure posture", got == want, f"got {got}")
 
 
 def test_the_scale_ceiling_divides_the_partition_count() -> None:
@@ -190,19 +189,6 @@ def test_the_scale_ceiling_divides_the_partition_count() -> None:
     )
 
 
-def test_the_umbrella_profile_carries_the_same_ceiling() -> None:
-    """helm/dfe-stack/profiles/scale.yaml mirrors the Argo overlay by declaration."""
-    umbrella = yaml.safe_load(
-        (REPO_ROOT / "helm" / "dfe-stack" / "profiles" / "scale.yaml").read_text()
-    )
-    expect(
-        "the umbrella scale profile matches the Argo overlay's KEDA ceiling",
-        umbrella["dfe-loader"]["keda"]["maxReplicaCount"]
-        == overlay("profile-scale")["keda"]["maxReplicaCount"],
-        str(umbrella["dfe-loader"]["keda"]),
-    )
-
-
 def main() -> int:
     with standalone():
         test_every_app_chart_ships_the_pressure_trigger()
@@ -213,7 +199,6 @@ def main() -> int:
         test_the_hunt_runner_shim_address_follows_the_namespace_too()
         test_only_the_brokerless_minimum_tier_turns_pressure_off()
         test_the_scale_ceiling_divides_the_partition_count()
-        test_the_umbrella_profile_carries_the_same_ceiling()
         return summary()
 
 

@@ -7,28 +7,32 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Assertions for huntRunner.gitSync in the dfe-engine chart.
+"""Assertions for huntRunner.gitSync on the deployed dfe-engine Application.
 
 The runner reads hunt and rule YAML off disk (dfe_engine.hunt_runner.spec_loader,
 on every reload tick), so a directory nothing fills means no hunt has ever run
 (dfe-infra#212). A template that renders is not evidence of that: the values are.
+dfe-extras renders the runner beside the engine's thin chart, so the default
+shape is read off the golden render and each switch is rendered through dfe-extras.
 
-Seven things are checked:
+Eight things are checked:
 
 1. The sidecar reaches the SAME repo, branch and credential as the engine, off
-   `gitops.*`. A second copy of any of the three could point somewhere else.
+   `gitops.*`, which the appset fills from the cluster secret. A second copy of
+   any of the three could point somewhere else.
 2. The FIRST sync is bounded. The sidecar retries forever, which on its own
    reproduces #212: a bad credential leaves the link absent and the runner
    Running with zero hunts, so an init container has to fail the pod instead.
 3. The runner's DFE_HUNTS_DIR and DFE_HUNTS_RULES_DIR resolve THROUGH git-sync's
    link into the synced subtree, on a volume both containers mount.
-4. The sidecar is hardened like the runner: non-root pod context, read-only
+4. The runner leaves DFE_SCHEMAS_DIR to the image, since nothing seeds one here.
+5. The sidecar is hardened like the runner: non-root pod context, read-only
    rootfs, all capabilities dropped, and its own HOME rather than the runner's.
-5. Disabled, the pod is a single container again and nothing references the
+6. Disabled, the pod is a single container again and nothing references the
    deploy repo -- the pre-#212 shape, so the switch is a real off.
-6. No deploy repo (gitops.enabled=false) means no sidecar: there is nothing to
+7. No deploy repo (gitops.enabled=false) means no sidecar: there is nothing to
    sync and the credential Secret does not exist.
-7. The pod waits for the engine to report ready before the runner starts. The
+8. The pod waits for the engine to report ready before the runner starts. The
    runner exits without the coordination tables the engine's schema phase
    creates, and it shares the engine's sync wave, so the wait is the only thing
    holding it back. git-sync-init joins the same initContainers list.
@@ -38,46 +42,55 @@ Seven things are checked:
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
-import subprocess
 import sys
-from pathlib import Path
 
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import NAMESPACE, effective_env, golden
+from _weave import REPO_ROOT, render_extras
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHART = REPO_ROOT / "helm" / "charts" / "dfe-engine"
-REGISTRY = "ghcr.io/hyperi-io"
+ENGINE = "dfe-engine"
+EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
+ENGINE_VALUES = REPO_ROOT / "argocd" / "values" / "apps" / ENGINE / "values.yaml"
+# A deployment's own deploy repo, as its cluster secret names it.
+DEPLOY_REPO = {
+    "dfe.hyperi.io/config_repo_url": "https://git.example.org/acme/dfe-deploy.git",
+    "dfe.hyperi.io/config_repo_revision": "release",
+}
 
 
-def render(*sets: str) -> dict:
-    """The hunt-runner Deployment, or {} when the template renders nothing."""
-    cmd = [
-        "helm",
-        "template",
-        "dfe-engine",
-        str(CHART),
-        "--set",
-        f"global.registry={REGISTRY}",
-        "--show-only",
-        "templates/hunt-runner.yaml",
-    ]
-    for s in sets:
-        cmd += ["--set", s]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {sets}:\n{out.stderr}")
-    for doc in yaml.safe_load_all(out.stdout):
-        if doc and doc.get("kind") == "Deployment":
+def runner_defaults() -> dict:
+    """The engine defaults dfe-extras renders the runner from."""
+    values = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))
+    return values["extras"]["defaults"][ENGINE]
+
+
+def gitsync_defaults() -> dict:
+    return runner_defaults()["huntRunner"]["gitSync"]
+
+
+def config_mount() -> str:
+    """The engine's config mount, as its integration values set it."""
+    return yaml.safe_load(ENGINE_VALUES.read_text(encoding="utf-8"))["config"]["mountPath"]
+
+
+def runner(docs: list[dict]) -> dict:
+    """The hunt-runner Deployment, or {} when the render holds none."""
+    for doc in docs:
+        if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "dfe-hunt-runner":
             return doc
     return {}
 
 
-def chart_values() -> dict:
-    return yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
+def deployed() -> list[dict]:
+    """What a default slim deployment renders for the engine."""
+    return golden(ENGINE, "slim", "local")
+
+
+def render(overlay: dict | None = None, **options: object) -> dict:
+    """The hunt-runner Deployment dfe-extras renders under these instance values."""
+    return runner(render_extras(ENGINE, "slim", "local", overlay=overlay, **options))
 
 
 def pod(doc: dict) -> dict:
@@ -110,6 +123,12 @@ def secret_refs(c: dict) -> dict:
     return found
 
 
+def secret_ref(entry: object) -> tuple[str, str] | None:
+    """(secret, key) of one effective env entry, or None when it is a literal."""
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    return (ref["name"], ref["key"]) if ref else None
+
+
 def flag(c: dict, name: str) -> str | None:
     """The value of a `--name=value` arg, or None."""
     for arg in c.get("args") or []:
@@ -125,36 +144,45 @@ def mount_of(c: dict, volume: str) -> dict:
     return {}
 
 
+def engine_env_data(docs: list[dict]) -> dict:
+    """The literal env dfe-extras hands the engine, from its dfe-engine-env ConfigMap."""
+    for doc in docs:
+        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == f"{ENGINE}-env":
+            return doc["data"]
+    return {}
+
+
 def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
-    """Repo, branch and credential are the gitops.* values, not a second copy.
+    """Repo, branch and credential are the engine's gitops.* values, not a second copy.
 
     The appset injects gitops.repoUrl and gitops.branch from the cluster-secret
     annotations so the engine's write target equals the repo Argo reads. A pin
     of its own here would let the runner watch a repo nobody writes.
     """
-    values = chart_values()
-    sidecar = container(render(), "git-sync")
+    docs = deployed()
+    engine = effective_env(docs, f"Deployment/{ENGINE}")
+    sidecar = container(runner(docs), "git-sync")
     expect("the sidecar renders by default", bool(sidecar), "no git-sync container")
     if not sidecar:
         return
 
     expect(
-        "--repo is gitops.repoUrl",
-        flag(sidecar, "repo") == values["gitops"]["repoUrl"],
-        f"{flag(sidecar, 'repo')}",
+        "--repo is the repo the engine writes",
+        flag(sidecar, "repo") == engine.get("DFE_GITOPS_REPO_URL"),
+        f"{flag(sidecar, 'repo')} vs {engine.get('DFE_GITOPS_REPO_URL')}",
     )
     expect(
-        "--ref is gitops.branch",
-        flag(sidecar, "ref") == values["gitops"]["branch"],
-        f"{flag(sidecar, 'ref')}",
+        "--ref is the branch the engine writes",
+        flag(sidecar, "ref") == engine.get("DFE_GITOPS_BRANCH"),
+        f"{flag(sidecar, 'ref')} vs {engine.get('DFE_GITOPS_BRANCH')}",
     )
     refs = secret_refs(sidecar)
-    want_secret = values["gitops"]["credentialsSecret"]
     expect(
         "it reuses the engine's deploy-repo credential, both keys",
-        refs.get("GITSYNC_USERNAME") == (want_secret, "username")
-        and refs.get("GITSYNC_PASSWORD") == (want_secret, "password"),
-        f"{refs}",
+        refs.get("GITSYNC_USERNAME") == secret_ref(engine.get("DFE_GITOPS_USERNAME"))
+        and refs.get("GITSYNC_PASSWORD") == secret_ref(engine.get("DFE_GITOPS_TOKEN"))
+        and refs.get("GITSYNC_USERNAME") is not None,
+        f"{refs} vs {engine.get('DFE_GITOPS_USERNAME')} {engine.get('DFE_GITOPS_TOKEN')}",
     )
     expect(
         "a fetch failure retries instead of killing the pod",
@@ -167,6 +195,18 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
         f"{flag(sidecar, 'period')}",
     )
 
+    moved = render_extras(ENGINE, "slim", "local", annotations=DEPLOY_REPO)
+    moved_sidecar = container(runner(moved), "git-sync")
+    literal = engine_env_data(moved)
+    expect(
+        "a deployment's own deploy repo moves the sidecar and the engine together",
+        flag(moved_sidecar, "repo") == literal.get("DFE_GITOPS_REPO_URL")
+        == DEPLOY_REPO["dfe.hyperi.io/config_repo_url"]
+        and flag(moved_sidecar, "ref") == literal.get("DFE_GITOPS_BRANCH")
+        == DEPLOY_REPO["dfe.hyperi.io/config_repo_revision"],
+        f"{moved_sidecar.get('args')} vs {literal.get('DFE_GITOPS_REPO_URL')}",
+    )
+
 
 def test_the_first_sync_is_bounded() -> None:
     """#212's shape again: retry-forever on the FIRST sync hides a bad credential.
@@ -175,10 +215,10 @@ def test_the_first_sync_is_bounded() -> None:
     the pod stays Running, so the init container is what turns that into a pod
     that never starts.
     """
-    values = chart_values()
-    gs = values["huntRunner"]["gitSync"]
-    doc = render()
+    gs = gitsync_defaults()
+    doc = runner(deployed())
     init = container(doc, "git-sync-init")
+    sidecar = container(doc, "git-sync")
     expect("an init container renders by default", bool(init), "no git-sync-init")
     if not init:
         return
@@ -196,8 +236,8 @@ def test_the_first_sync_is_bounded() -> None:
     )
     expect(
         "the sidecar still retries forever, once the first sync landed",
-        flag(container(doc, "git-sync"), "max-failures") == "-1",
-        f"{flag(container(doc, 'git-sync'), 'max-failures')}",
+        flag(sidecar, "max-failures") == "-1",
+        f"{flag(sidecar, 'max-failures')}",
     )
     expect(
         "it seeds the worktree the sidecar and the runner then use",
@@ -206,9 +246,9 @@ def test_the_first_sync_is_bounded() -> None:
     )
     expect(
         "off the same repo, ref and credential as the sidecar",
-        flag(init, "repo") == values["gitops"]["repoUrl"]
-        and flag(init, "ref") == values["gitops"]["branch"]
-        and secret_refs(init) == secret_refs(container(doc, "git-sync")),
+        flag(init, "repo") == flag(sidecar, "repo")
+        and flag(init, "ref") == flag(sidecar, "ref")
+        and secret_refs(init) == secret_refs(sidecar),
         f"{init.get('args')} {secret_refs(init)}",
     )
     expect(
@@ -225,11 +265,11 @@ def test_the_runner_reads_hunts_through_the_synced_link() -> None:
     git-sync writes <root>/<link>, so a path that misses the link reads a
     directory that only ever exists mid-fetch, or none at all.
     """
-    values = chart_values()
-    gs = values["huntRunner"]["gitSync"]
-    doc = render()
-    runner = container(doc, "hunt-runner")
-    env = env_of(runner)
+    gs = gitsync_defaults()
+    doc = runner(deployed())
+    hunt_runner = container(doc, "hunt-runner")
+    sidecar = container(doc, "git-sync")
+    env = env_of(hunt_runner)
 
     root = f"{gs['mountPath']}/repo"
     link = f"{root}/{gs['link']}"
@@ -245,24 +285,24 @@ def test_the_runner_reads_hunts_through_the_synced_link() -> None:
     )
     expect(
         "git-sync's root is a subdirectory, not the volume root",
-        flag(container(doc, "git-sync"), "root") == root,
-        f"{flag(container(doc, 'git-sync'), 'root')}",
+        flag(sidecar, "root") == root,
+        f"{flag(sidecar, 'root')}",
     )
     expect(
         "and the link it publishes is the one those paths cross",
-        flag(container(doc, "git-sync"), "link") == gs["link"],
-        f"{flag(container(doc, 'git-sync'), 'link')}",
+        flag(sidecar, "link") == gs["link"],
+        f"{flag(sidecar, 'link')}",
     )
 
     expect(
         "the runner mounts the synced volume read-only",
-        mount_of(runner, "deploy-repo").get("readOnly") is True,
-        f"{mount_of(runner, 'deploy-repo')}",
+        mount_of(hunt_runner, "deploy-repo").get("readOnly") is True,
+        f"{mount_of(hunt_runner, 'deploy-repo')}",
     )
     expect(
         "the sidecar mounts the same volume writable",
-        mount_of(container(doc, "git-sync"), "deploy-repo").get("readOnly") is None,
-        f"{mount_of(container(doc, 'git-sync'), 'deploy-repo')}",
+        mount_of(sidecar, "deploy-repo").get("readOnly") is None,
+        f"{mount_of(sidecar, 'deploy-repo')}",
     )
     volumes = {v["name"]: v for v in pod(doc)["volumes"]}
     expect(
@@ -278,7 +318,7 @@ def test_the_runner_leaves_the_schemas_dir_to_the_image() -> None:
     The engine daemon runs the bootstrap that fills a schemas directory; the
     runner does not, so an override here only shadows the tree the image ships.
     """
-    env = env_of(container(render(), "hunt-runner"))
+    env = env_of(container(runner(deployed()), "hunt-runner"))
     expect(
         "DFE_SCHEMAS_DIR is not set on the runner",
         "DFE_SCHEMAS_DIR" not in env,
@@ -288,7 +328,7 @@ def test_the_runner_leaves_the_schemas_dir_to_the_image() -> None:
 
 def test_the_sidecar_is_hardened_like_the_runner() -> None:
     """A sidecar with a writable rootfs would be the softest thing in the pod."""
-    doc = render()
+    doc = runner(deployed())
     sidecar = container(doc, "git-sync")
     sec = sidecar.get("securityContext", {})
     expect(
@@ -303,7 +343,7 @@ def test_the_sidecar_is_hardened_like_the_runner() -> None:
         pod(doc)["securityContext"]["runAsNonRoot"] is True,
         f"{pod(doc)['securityContext']}",
     )
-    home = chart_values()["huntRunner"]["gitSync"]["homePath"]
+    home = gitsync_defaults()["homePath"]
     expect(
         "it writes git config to its OWN HOME volume, not the runner's scratch",
         env_of(sidecar).get("HOME") == home
@@ -328,7 +368,7 @@ def test_the_sidecar_is_hardened_like_the_runner() -> None:
 
 def test_disabled_restores_the_single_container_pod() -> None:
     """The off switch has to be a real off, not a rename of the same pod."""
-    doc = render("huntRunner.gitSync.enabled=false")
+    doc = render({"huntRunner": {"gitSync": {"enabled": False}}})
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("only the runner remains", names == ["hunt-runner"], f"{names}")
     expect(
@@ -342,10 +382,11 @@ def test_disabled_restores_the_single_container_pod() -> None:
         f"{pod(doc)['volumes']}",
     )
     env = env_of(container(doc, "hunt-runner"))
+    mount = config_mount()
     expect(
         "the hunt directories fall back to the config mount",
-        env.get("DFE_HUNTS_DIR") == "/config/hunts"
-        and env.get("DFE_HUNTS_RULES_DIR") == "/config/rules",
+        env.get("DFE_HUNTS_DIR") == f"{mount}/hunts"
+        and env.get("DFE_HUNTS_RULES_DIR") == f"{mount}/rules",
         f"{env.get('DFE_HUNTS_DIR')} {env.get('DFE_HUNTS_RULES_DIR')}",
     )
 
@@ -356,7 +397,7 @@ def test_no_deploy_repo_means_no_sidecar() -> None:
     Rendering the sidecar anyway would wedge the pod in
     CreateContainerConfigError on a Secret nothing creates.
     """
-    doc = render("gitops.enabled=false")
+    doc = render({"gitops": {"enabled": False}})
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("the sidecar is not rendered", names == ["hunt-runner"], f"{names}")
     expect(
@@ -368,29 +409,40 @@ def test_no_deploy_repo_means_no_sidecar() -> None:
 
 def test_the_runner_waits_for_the_engine() -> None:
     """A fresh deploy restarted the runner on SchemaNotAppliedError until the schema landed."""
-    values = chart_values()
-    doc = render()
+    docs = deployed()
+    doc = runner(docs)
     expect(
         "the engine wait runs first, then the first sync",
         init_names(doc) == ["wait-for-engine", "git-sync-init"],
         f"{init_names(doc)}",
     )
+    service = next(
+        d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == ENGINE
+    )
+    port = next(p["port"] for p in service["spec"]["ports"] if p.get("name") == "http")
     script = (container(doc, "wait-for-engine").get("command") or [""])[-1]
-    # render() names no namespace, so the release's is helm's `default`.
-    want = f"http://dfe-engine.default.svc.cluster.local:{values['service']['port']}/readyz"
+    want = f"http://{ENGINE}.{NAMESPACE}.svc.cluster.local:{port}/readyz"
     expect("it polls the engine Service's /readyz", f'URL="{want}"' in script, script)
     expect(
-        "on the engine chart's own Service port",
-        values["waitForEngine"]["port"] == values["service"]["port"],
-        f"{values['waitForEngine']['port']} vs {values['service']['port']}",
+        "on the engine Service's own port",
+        runner_defaults()["waitForEngine"]["port"] == port,
+        f"{runner_defaults()['waitForEngine']['port']} vs {port}",
     )
-    off = render("waitForEngine.enabled=false")
+    elsewhere = render(namespace="dfe-local")
+    local_script = (container(elsewhere, "wait-for-engine").get("command") or [""])[-1]
+    expect(
+        "in the namespace the release lands in",
+        f'URL="http://{ENGINE}.dfe-local.svc.cluster.local:{port}/readyz"' in local_script,
+        local_script,
+    )
+    off = render({"waitForEngine": {"enabled": False}})
     expect(
         "switched off, only the first sync is left",
         init_names(off) == ["git-sync-init"],
         f"{init_names(off)}",
     )
-    bare = render("waitForEngine.enabled=false", "huntRunner.gitSync.enabled=false")
+    neither = {"waitForEngine": {"enabled": False}, "huntRunner": {"gitSync": {"enabled": False}}}
+    bare = render(neither)
     expect(
         "and with neither, the pod has no initContainers key",
         "initContainers" not in pod(bare),

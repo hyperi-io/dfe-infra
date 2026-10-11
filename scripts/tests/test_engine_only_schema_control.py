@@ -19,19 +19,17 @@ OpenTofu resource that creates a table renders green, lints green and passes a
 server-side dry-run, because neither the API server, helm nor tofu has an opinion
 about DDL in a string. So it is swept for, in the five trees that deploy things.
 
-Three assertions, each the reappearance of something this change deleted:
+Three assertions, each catching the return of something the engine now owns:
 
 1. No ClickHouse DDL under helm/, argocd/, bootstrap/, scripts/ or terraform/.
 2. No topic-creation step in the same trees, and no chart rendering a KafkaTopic.
 3. No schema-apply workload: no dfe-schema chart, no dfe-schema Application in an
-   appset, no dfe-schema dependency in the umbrella chart.
+   appset.
 
     python3 scripts/tests/test_engine_only_schema_control.py
 
 Needs `helm` on PATH. Runs under pytest too, which is how CI reaches it.
 """
-
-from __future__ import annotations
 
 import re
 import subprocess
@@ -45,7 +43,6 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
-STACK_CHART = REPO_ROOT / "helm" / "dfe-stack" / "Chart.yaml"
 
 # The trees that deploy or operate something.
 SWEPT = ("helm", "argocd", "bootstrap", "scripts", "terraform")
@@ -198,12 +195,6 @@ def test_no_appset_deploys_a_schema_application() -> None:
             not re.search(r"dfe-schema\b(?!s)", body),
             "still generated",
         )
-
-
-def test_the_umbrella_chart_has_no_schema_dependency() -> None:
-    chart = yaml.safe_load(STACK_CHART.read_text(encoding="utf-8"))
-    names = [d["name"] for d in chart.get("dependencies", [])]
-    expect("dfe-stack declares no dfe-schema dependency", "dfe-schema" not in names, f"got {names}")
 
 
 def main() -> int:

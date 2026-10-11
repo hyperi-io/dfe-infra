@@ -17,11 +17,14 @@ render is the thing that has to be stable, so the assertion is byte equality
 across two independent renders of the same inputs.
 
 The generated keys are dfe-extras objects (chartName dfe-engine, dfe-hyperdx).
-The pods that read them are still checked on the 2.2.0 charts.
+The pods that read them are checked on the deployed render: the golden of each
+cell, and the thin chart beside dfe-extras where a deployment turns a dial.
 
     python3 scripts/tests/test_render_stable.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH; the dial cases render the thin chart, which needs the
+scalo-service library (_weave.library). No test runner, matching the other checks
+here.
 """
 
 import re
@@ -33,13 +36,14 @@ import yaml
 
 from _charts import CHART_TREES
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, PROFILES, effective_env, golden
+from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
-ENGINE = CHARTS / "dfe-engine"
-HYPERDX = CHARTS / "hyperdx"
 EXTRAS = CHARTS / "dfe-extras"
 ENGINE_EXTRAS = "chartName=dfe-engine"
+CELLS = [(p, k) for p in PROFILES for k in CLOUDS]
 
 # A mint function guarded by a cluster read: the pairing that only works under
 # `helm install`, and silently re-mints under every `helm template`.
@@ -162,24 +166,39 @@ def test_the_seed_accounts_secret_no_longer_claims_the_admin_password() -> None:
                list(seed[0]["stringData"]) == ["seed-accounts"], f"got {seed[0]['stringData']}")
 
 
+def secret_ref(entry: object) -> tuple[str | None, str | None]:
+    """(secret, key) of one effective env entry; (None, None) for a literal or nothing."""
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    return (ref.get("name"), ref.get("key")) if ref else (None, None)
+
+
 def test_the_engine_reads_the_minted_secret() -> None:
-    """The chart wires what dfe-engine #300 reads, or the engine refuses to start."""
-    deployment = named(render(ENGINE), "Deployment", "dfe-engine")[0]
-    env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
-    ref = env["DFE_AUTH_LOCAL_ADMIN_PASSWORD"]["valueFrom"]["secretKeyRef"]
-    expect("the admin password comes from the minted Secret",
-           (ref["name"], ref["key"]) == ("dfe-engine-admin", "admin-password"), f"got {ref}")
-    literal = named(extras("dfe-engine"), "ConfigMap", "dfe-engine-env")[0]["data"]
-    expect("the Secret is named for the login page's fetch command",
-           literal.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
-           f"got {literal.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
-    expect("the namespace comes off the pod, so the command is complete",
-           env["DFE_DEPLOYMENT_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"]
-           == "metadata.namespace", f"got {env.get('DFE_DEPLOYMENT_NAMESPACE')}")
-    bg = env["DFE_AUTH_BREAKGLASS_PASSWORD"]["valueFrom"]["secretKeyRef"]
-    expect("the break-glass password comes from its own Secret",
-           (bg["name"], bg["key"]) == ("dfe-engine-breakglass", "breakglass-password"),
-           f"got {bg}")
+    """The deployment wires what dfe-engine #300 reads, or the engine refuses to start."""
+    for profile, cloud in CELLS:
+        where = f"{profile}/{cloud}"
+        docs = golden("dfe-engine", profile, cloud)
+        env = effective_env(docs, "Deployment/dfe-engine")
+        minted = {
+            d["spec"]["target"]["name"]: d["spec"]["target"]["template"]["data"]
+            for d in docs
+            if d.get("kind") == "ExternalSecret"
+        }
+        ref = secret_ref(env.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD"))
+        expect(f"{where}: the admin password comes from the minted Secret",
+               ref == ("dfe-engine-admin", "admin-password") and ref[1] in minted.get(ref[0], {}),
+               f"got {ref}, minted {sorted(minted)}")
+        expect(f"{where}: the Secret is named for the login page's fetch command",
+               env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
+               f"got {env.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
+        namespace = (env.get("DFE_DEPLOYMENT_NAMESPACE") or {}).get("valueFrom") or {}
+        expect(f"{where}: the namespace comes off the pod, so the command is complete",
+               namespace.get("fieldRef", {}).get("fieldPath") == "metadata.namespace",
+               f"got {env.get('DFE_DEPLOYMENT_NAMESPACE')}")
+        bg = secret_ref(env.get("DFE_AUTH_BREAKGLASS_PASSWORD"))
+        expect(f"{where}: the break-glass password comes from its own minted Secret",
+               bg == ("dfe-engine-breakglass", "breakglass-password")
+               and bg[1] in minted.get(bg[0], {}),
+               f"got {bg}, minted {sorted(minted)}")
 
 
 def test_a_non_dev_posture_cannot_render_without_minting() -> None:
@@ -220,12 +239,9 @@ HYPERDX_KEYS = (
 )
 
 
-def hyperdx_env(out: str, name: str) -> dict:
-    """One env entry of the hyperdx container, or {} when absent."""
-    deployment = next(d for d in docs(out) if d.get("kind") == "Deployment")
-    container = next(c for c in deployment["spec"]["template"]["spec"]["containers"]
-                     if c["name"] == "hyperdx")
-    return next((e for e in container["env"] if e["name"] == name), {})
+def hyperdx_env(rendered: list[dict], name: str) -> object:
+    """One effective env entry of the dfe-hyperdx container, or {} when absent."""
+    return effective_env(rendered, "Deployment/dfe-hyperdx").get(name, {})
 
 
 def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
@@ -233,7 +249,6 @@ def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
     first = extras("dfe-hyperdx")
     expect("dfe-extras renders the hyperdx objects byte-identically twice",
            first == extras("dfe-hyperdx"), "two renders of the same inputs differ")
-    pod = render(HYPERDX)
     for env, secret, key, value, _ in HYPERDX_KEYS:
         gens = named(first, "Password", f"{secret}-gen")
         es = named(first, "ExternalSecret", secret)
@@ -258,22 +273,23 @@ def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
             expect(f"an uninstall keeps {env}",
                    es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
                    == "keep", f"got {es[0]['metadata'].get('annotations')}")
-        ref = hyperdx_env(pod, env).get("valueFrom", {}).get("secretKeyRef", {})
-        expect(f"hyperdx reads {env} from the minted Secret",
-               (ref.get("name"), ref.get("key")) == (secret, key), f"got {ref}")
+        for profile, cloud in CELLS:
+            ref = secret_ref(hyperdx_env(golden("hyperdx", profile, cloud), env))
+            expect(f"{profile}/{cloud}: hyperdx reads {env} from the minted Secret",
+                   ref == (secret, key), f"got {ref}")
 
 
 def test_hyperdx_keys_can_come_from_the_deployment() -> None:
     for env, secret, _, _, block in HYPERDX_KEYS:
-        out = extras("dfe-hyperdx", f"{block}.create=false")
-        expect(f"{block}.create=false renders no generator",
-               named(out, "Password", f"{secret}-gen") == [], "a generator rendered")
-        expect(f"{block}.create=false renders no ExternalSecret",
-               named(out, "ExternalSecret", secret) == [], "an ExternalSecret rendered")
-        pod = render(HYPERDX, f"{block}.create=false")
-        ref = hyperdx_env(pod, env).get("valueFrom", {}).get("secretKeyRef", {})
+        rendered = render_app("hyperdx", "slim", "local", overlay={block: {"create": False}})
+        objects = [f"{d['kind']}/{d['metadata']['name']}" for d in rendered]
+        for kind in ("Password", "ExternalSecret", "Secret"):
+            name = f"{secret}-gen" if kind == "Password" else secret
+            expect(f"{block}.create=false renders no {kind}",
+                   f"{kind}/{name}" not in objects, f"got {objects}")
+        ref = secret_ref(hyperdx_env(rendered, env))
         expect(f"the pod still reads the deployment's {env} Secret",
-               ref.get("name") == secret, f"got {ref}")
+               ref[0] == secret, f"got {ref}")
 
 
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:

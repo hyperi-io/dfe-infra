@@ -10,61 +10,31 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """The receiver's ingress door must not be priced by volume on AWS, because DFE
-pushes terabytes a day through it -- docs/deployment/aws.md#receiver-ingress
-carries the rates. argocd/values/aws.yaml defaults exposure.mode to vpn and
+pushes terabytes a day through it -- docs/deployment/aws.md carries the rates.
+argocd/values/aws.yaml defaults exposure.mode to vpn and
 argocd/values/edge-aws.yaml points culvert at a NodePort instead of a
 LoadBalancer; this proves both hold under the REAL cascade each Application
-gets, not just the chart's own defaults, and that the costed public opt-in
-still renders correctly for a deployer who wants it. The two cascades differ:
-the receiver is fanned out by layer2-apps and reads no flavour file, while
-culvert is one of the edge module's two Applications and reads edge-aws.yaml.
+gets, and that the costed public opt-in still renders correctly for a deployer
+who wants it. The two cascades differ: the receiver is fanned out by layer2-apps
+and reads no flavour file, while culvert is one of the edge module's two
+Applications and reads edge-aws.yaml.
 
-The cascade also sets oidc.enabled: true for the gateway's edge OIDC in the
-SAME pass, which used to break culvert's render outright (it read the same
-top-level oidc.enabled as its own tunnel-login switch). That collision is
-fixed by moving culvert's OIDC fields to vpn.oidc.* -- this module renders
-culvert under the unmodified cascade with no isolating override, matching
-what a real AWS deploy actually gets.
+The cascade also sets oidc.enabled: true for the gateway's edge OIDC in the SAME
+pass, which culvert must not read as its own tunnel-login switch: culvert's OIDC
+fields live under vpn.oidc.*, and its render under the unmodified cascade is
+what a real AWS deploy gets.
+
+The default renders are the goldens (_gate.golden). The dial cases render live,
+which needs the scalo-service library (_weave.library).
 
     python3 scripts/tests/test_receiver_ingress.py
-
-Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
-import json
-import subprocess
 import sys
-from pathlib import Path
 
-import yaml
-
-from _charts import chart_dir
 from _expect import expect, standalone, summary
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHARTS = REPO_ROOT / "helm" / "charts"
-VALUES = REPO_ROOT / "argocd" / "values"
-
-# The valueFiles order an AWS deploy actually gets (layer2-data /
-# layer2-platform's own cascade), matching test_storage_model.py's
-# test_the_aws_cascade_is_what_turns_pod_identity_on.
-AWS_CASCADE = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
-
-# The edge module's own cascade, which layer2-edge.yaml layers for the tunnel:
-# the same files plus the flavour overlay the module's tier table lives in.
-EDGE_AWS_CASCADE = [
-    VALUES / "common.yaml",
-    VALUES / "aws.yaml",
-    VALUES / "edge-aws.yaml",
-    VALUES / "profile-scale.yaml",
-]
-
-# The Secret holding ca.crt, server.crt and server.key. The cloud flavours set
-# pki.mode: external and the chart refuses to render until a deployment names
-# one, so every culvert render under that cascade supplies it.
-EXTERNAL_PKI = ["--set", "pki.existingSecret=dfe-culvert-pki"]
+from _gate import APPSETS, INSTANCE, effective_env, golden
+from _weave import render_app, weave
 
 # The annotations docs/deployment/aws.md documents for the costed public
 # opt-in -- proven here to reach the rendered Service verbatim.
@@ -75,25 +45,19 @@ NLB_ANNOTATIONS = {
 }
 
 
-def render(chart: str, *args: str, values: list[Path] | None = None) -> list[dict]:
-    cmd = ["helm", "template", chart, str(chart_dir(chart))]
-    for v in values or AWS_CASCADE:
-        cmd += ["-f", str(v)]
-    cmd += list(args)
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart} {args}:\n{out.stderr}")
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
+def culvert(overlay: dict) -> list[dict]:
+    """culvert on scale/aws through the edge appset, with ``overlay`` over its instance values."""
+    body = {**INSTANCE["culvert"]["aws"], **overlay}
+    return render_app("culvert", "scale", "aws", appset=APPSETS["culvert"], overlay=body)
 
 
-def render_error(chart: str, *args: str, values: list[Path] | None = None) -> str:
-    """The stderr of a render that MUST fail. Empty string means it did not."""
-    cmd = ["helm", "template", chart, str(chart_dir(chart))]
-    for v in values or AWS_CASCADE:
-        cmd += ["-f", str(v)]
-    cmd += list(args)
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return "" if out.returncode == 0 else out.stderr
+def refusal(fn, *args: object) -> str:
+    """The message of a render that MUST fail. Empty string means it did not."""
+    try:
+        fn(*args)
+    except weave().WeaveError as refused:
+        return str(refused)
+    return ""
 
 
 def one(docs: list[dict], kind: str, name: str) -> dict:
@@ -103,16 +67,11 @@ def one(docs: list[dict], kind: str, name: str) -> dict:
     raise SystemExit(f"no {kind}/{name} in the render")
 
 
-def env_of(deployment: dict) -> dict[str, str]:
-    container = deployment["spec"]["template"]["spec"]["containers"][0]
-    return {e["name"]: e.get("value", "") for e in container.get("env", [])}
-
-
 def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None:
-    docs = render("dfe-receiver")
+    docs = golden("dfe-receiver", "scale", "aws")
     services = [d for d in docs if d.get("kind") == "Service"]
     expect("exactly one Service renders", len(services) == 1, f"got {len(services)}")
-    expect("and it is ClusterIP", services[0]["spec"]["type"] == "ClusterIP",
+    expect("and it is ClusterIP", services[0]["spec"].get("type", "ClusterIP") == "ClusterIP",
            f"got {services[0]['spec']}")
     labelled_public = [
         d for d in docs
@@ -125,11 +84,9 @@ def test_the_aws_cascade_renders_the_receiver_as_one_clusterip_service() -> None
 def test_the_aws_cascade_renders_culvert_with_no_load_balancer() -> None:
     """The real edge cascade, unmodified: aws.yaml sets oidc.enabled: true for
     the gateway's edge OIDC AND edge-aws.yaml sets exposure.serviceType:
-    NodePort for culvert in the same pass -- the two used to collide (culvert
-    read the same oidc.enabled as its own tunnel-login switch), which is fixed
-    by moving culvert's OIDC fields to vpn.oidc.*."""
-    docs = render("culvert", *EXTERNAL_PKI, values=EDGE_AWS_CASCADE)
-    types = {d["spec"]["type"] for d in docs if d.get("kind") == "Service"}
+    NodePort for culvert in the same pass."""
+    docs = golden("culvert", "scale", "aws")
+    types = {d["spec"].get("type", "ClusterIP") for d in docs if d.get("kind") == "Service"}
     expect("no Service is a LoadBalancer", "LoadBalancer" not in types, f"got {types}")
     expect("the public door is a NodePort instead", "NodePort" in types, f"got {types}")
 
@@ -138,48 +95,66 @@ def test_the_tunnels_allow_list_is_refused_where_it_would_not_filter() -> None:
     """Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer,
     and the AWS cascade makes culvert a NodePort -- so an allow-list set there
     is refused rather than rendered into a Service that ignores it."""
-    err = render_error("culvert", *EXTERNAL_PKI,
-                       "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}",
-                       values=EDGE_AWS_CASCADE)
+    ranges = {"exposure": {"loadBalancerSourceRanges": ["203.0.113.0/24"]}}
+    err = refusal(culvert, ranges)
     expect("an allow-list under NodePort is refused by name",
            "Kubernetes only filters on that field for a LoadBalancer" in err, err.strip()[-300:])
-    docs = render("culvert", *EXTERNAL_PKI,
-                  "--set", "exposure.serviceType=LoadBalancer",
-                  "--set", "exposure.externalTrafficPolicy=Local",
-                  "--set", "exposure.loadBalancerSourceRanges={203.0.113.0/24}",
-                  values=EDGE_AWS_CASCADE)
-    ranges = {
+    docs = culvert(
+        {
+            "exposure": {
+                "serviceType": "LoadBalancer",
+                "externalTrafficPolicy": "Local",
+                "loadBalancerSourceRanges": ["203.0.113.0/24"],
+            }
+        }
+    )
+    found = {
         tuple(d["spec"].get("loadBalancerSourceRanges", []))
-        for d in docs if d.get("kind") == "Service" and d["spec"]["type"] == "LoadBalancer"
+        for d in docs if d.get("kind") == "Service" and d["spec"].get("type") == "LoadBalancer"
     }
-    expect("and it still reaches a real LoadBalancer", ranges == {("203.0.113.0/24",)}, f"got {ranges}")
+    expect("and it still reaches a real LoadBalancer", found == {("203.0.113.0/24",)},
+           f"got {found}")
 
 
 def test_the_aws_cascades_edge_oidc_switch_renders_culvert_with_no_tunnel_login() -> None:
     """aws.yaml's oidc.enabled: true is the UIs' edge OIDC, not the tunnel's --
-    proves the cascade renders no CULVERT_OAUTH2_* var, the positive half of
-    the fix (the render succeeding is only half the proof)."""
-    env = env_of(one(render("culvert"), "Deployment", "dfe-culvert"))
-    expect("no CULVERT_OAUTH2_* var is rendered under the real AWS cascade",
-           not any(k.startswith("CULVERT_OAUTH2_") for k in env), f"got {env}")
+    the cascade sets no CULVERT_OAUTH2_* var, wherever culvert's env comes from.
+
+    The contract's optional oauth2 secret group still names its Secret keys, which
+    the tunnel reads only once a login is switched on, so an optional reference is
+    no setting.
+    """
+    env = effective_env(golden("culvert", "scale", "aws"), "Deployment/dfe-culvert")
+    set_here = {
+        name: value
+        for name, value in env.items()
+        if name.startswith("CULVERT_OAUTH2_")
+        and not (value.get("valueFrom", {}).get("secretKeyRef", {}).get("optional") is True
+                 if isinstance(value, dict) else False)
+    }
+    expect("no CULVERT_OAUTH2_* var is set under the real AWS cascade", set_here == {},
+           f"got {set_here}")
 
 
 def test_the_old_oidc_path_still_fails_under_the_aws_cascade() -> None:
     """A deploy-repo overlay layered after aws.yaml that still carries the old
     top-level oidc.issuer/oidc.clientId is refused, not silently ignored, even
     though aws.yaml's own oidc.enabled: true is already in the cascade."""
-    err = render_error("culvert", "--set", "oidc.issuer=https://idp.example.com")
+    err = refusal(culvert, {"oidc": {"issuer": "https://idp.example.com"}})
     expect("the old path is refused under the real cascade too",
            "move the tunnel's own OIDC client-auth fields to vpn.oidc" in err, err.strip()[-300:])
 
 
 def test_an_explicit_public_opt_in_renders_the_annotated_load_balancer() -> None:
-    docs = render(
-        "dfe-receiver",
-        "--set", "exposure.mode=public",
-        "--set-json", f"exposure.public.annotations={json.dumps(NLB_ANNOTATIONS)}",
-        "--set-json", 'exposure.public.loadBalancerSourceRanges=["203.0.113.0/24"]',
-    )
+    overlay = {
+        "exposure": {"mode": "public"},
+        "publicService": {
+            "enabled": True,
+            "annotations": NLB_ANNOTATIONS,
+            "loadBalancerSourceRanges": ["203.0.113.0/24"],
+        },
+    }
+    docs = render_app("dfe-receiver", "scale", "aws", overlay=overlay)
     public = one(docs, "Service", "dfe-receiver-public")
     expect("the opt-in renders a LoadBalancer", public["spec"]["type"] == "LoadBalancer",
            f"got {public['spec']}")
@@ -192,11 +167,11 @@ def test_an_explicit_public_opt_in_renders_the_annotated_load_balancer() -> None
 
 
 def test_the_ingest_networkpolicy_admits_culvert_not_the_internet() -> None:
-    docs = render("dfe-receiver")
-    policy = one(docs, "NetworkPolicy", "dfe-receiver-ingest")
+    policy = one(golden("dfe-receiver", "scale", "aws"), "NetworkPolicy", "dfe-receiver-ingest")
     rule = policy["spec"]["ingress"][0]
     expect("it admits the culvert pods by label",
-           rule.get("from") == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
+           rule.get("from")
+           == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
            f"got {rule.get('from')!r}")
     expect("no ipBlock names the whole internet",
            not any("ipBlock" in peer for peer in rule.get("from") or []),

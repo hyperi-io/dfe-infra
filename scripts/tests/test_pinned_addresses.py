@@ -16,10 +16,10 @@ profiles claim the same records, on a cluster that runs one at a time.
 
     python3 scripts/tests/test_pinned_addresses.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH. The receiver renders through its Application
+(_weave.render_app), which needs the scalo-service library (_weave.library). No
+test runner, matching the other checks here.
 """
-
-from __future__ import annotations
 
 import argparse
 import importlib.machinery
@@ -32,11 +32,10 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
+from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHARTS = REPO_ROOT / "helm" / "charts"
 GATEWAY = chart_dir("envoy-gateway-config")
-RECEIVER = CHARTS / "dfe-receiver"
 COMMON_VALUES = REPO_ROOT / "argocd" / "values" / "common.yaml"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 METALLB_POOL = REPO_ROOT / "bootstrap" / "templates" / "metallb-pool.yaml.tpl"
@@ -121,39 +120,45 @@ def test_the_address_does_not_displace_the_other_lb_fields() -> None:
 
 
 # --- the receiver's address --------------------------------------------------
+# The address a deployment pins arrives as this cluster-secret fact, which the appset
+# hands the receiver as publicService.loadBalancerIP.
+RECEIVER_ADDRESS = {"dfe.hyperi.io/receiver_address": "192.0.2.11"}
+
+
+def receiver(cloud: str, annotations: dict | None = None, overlay: dict | None = None) -> list:
+    """The receiver on scale, as its Application renders it on one cloud values file."""
+    return render_app(
+        "dfe-receiver", "scale", cloud, annotations=annotations or {}, overlay=overlay
+    )
+
+
 def test_an_unset_receiver_address_leaves_the_pool_to_choose() -> None:
-    svc = one(render(RECEIVER), "Service", "dfe-receiver-public")
+    svc = one(receiver("local-dfe"), "Service", "dfe-receiver-public")
     expect("the default public Service pins no address",
            "loadBalancerIP" not in svc["spec"], f"got {svc['spec']}")
 
 
 def test_a_set_receiver_address_reaches_the_public_service() -> None:
-    docs = render(RECEIVER, "exposure.public.loadBalancerIP=192.0.2.11")
-    svc = one(docs, "Service", "dfe-receiver-public")
+    svc = one(receiver("local-dfe", RECEIVER_ADDRESS), "Service", "dfe-receiver-public")
     expect("the configured address is on the public TCP Service",
            svc["spec"].get("loadBalancerIP") == "192.0.2.11", f"got {svc['spec']}")
 
 
 def test_the_udp_door_takes_its_own_address() -> None:
     """Two Services cannot hold one address, so only the TCP door is pinned."""
-    docs = render(
-        RECEIVER,
-        "exposure.public.loadBalancerIP=192.0.2.11",
-        "listeners[0].name=http", "listeners[0].port=8080",
-        "listeners[0].protocol=TCP", "listeners[0].exposed=true",
-        "listeners[1].name=netflow", "listeners[1].port=2055",
-        "listeners[1].protocol=UDP", "listeners[1].exposed=true",
-    )
+    netflow = {"extraPorts": [{"name": "netflow", "port": 2055, "protocol": "UDP", "public": True}]}
+    docs = receiver("local-dfe", RECEIVER_ADDRESS, netflow)
     udp = one(docs, "Service", "dfe-receiver-public-udp")
     expect("the UDP LoadBalancer is not pinned to the TCP address",
            "loadBalancerIP" not in udp["spec"], f"got {udp['spec']}")
+    tcp = one(docs, "Service", "dfe-receiver-public")
+    expect("the TCP LoadBalancer still is",
+           tcp["spec"].get("loadBalancerIP") == "192.0.2.11", f"got {tcp['spec']}")
 
 
 def test_an_internal_receiver_renders_no_public_service_at_all() -> None:
-    docs = render(RECEIVER, "exposure.mode=internal",
-                  "exposure.public.loadBalancerIP=192.0.2.11",
-                  "listeners[0].name=http", "listeners[0].port=8080",
-                  "listeners[0].protocol=TCP", "listeners[0].exposed=true")
+    """local.yaml's exposure.mode internal, with an address on the cluster secret anyway."""
+    docs = receiver("local", RECEIVER_ADDRESS)
     names = [d["metadata"]["name"] for d in docs if d.get("kind") == "Service"]
     expect("internal exposure renders the ClusterIP Service alone",
            names == ["dfe-receiver"], f"got {names}")

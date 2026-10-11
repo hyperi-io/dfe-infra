@@ -17,8 +17,6 @@ longer matches its mode fails here instead of mid-deploy.
     python3 -m pytest scripts/tests/test_dfe_ops_modes.py -q
 """
 
-from __future__ import annotations
-
 import importlib.machinery
 import importlib.util
 import sys
@@ -29,7 +27,6 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-ops"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
-STACK_PROFILES = REPO_ROOT / "helm" / "dfe-stack" / "profiles"
 LAYER_SCALE = REPO_ROOT / "argocd" / "appsets" / "layer-scale.yaml"
 
 # dfe-ops carries no extension, so it is loaded by path rather than imported.
@@ -72,17 +69,6 @@ def test_the_mesh_argocd_profile_keeps_the_scale_clickhouse_cluster() -> None:
     assert mesh["clickhouse"] == scale["clickhouse"]
     assert mesh["kafbat"]["enabled"] is False
     assert mesh["clusterTelemetry"]["kafka"]["enabled"] is False
-
-
-def test_the_stack_profile_disables_kafka_and_keeps_the_cluster() -> None:
-    mesh = _load(STACK_PROFILES / "mesh.yaml")
-    scale = _load(STACK_PROFILES / "scale.yaml")
-    assert "kafka" not in mesh
-    assert mesh["kafbat"]["enabled"] is False
-    assert mesh["dfe-receiver"]["kafka"]["mode"] == "disabled"
-    assert mesh["dfe-loader"]["kafka"]["mode"] == "disabled"
-    assert mesh["clickhouse-cluster"] == scale["clickhouse-cluster"]
-    assert scale["kafka"]["kafka"]["mode"] == "cluster"
 
 
 def test_the_mesh_operators_appset_selects_its_own_profile() -> None:

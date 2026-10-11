@@ -12,83 +12,122 @@
 
 `GET /api/v1/system/deployment` answers what this deployment IS -- its tier, the
 transports it carries, the versions it runs -- and every one of those is a fact
-the chart injects. Two are new here: the profile, which comes from the SAME
-cluster-secret annotation that selects argocd/values/profile-<x>.yaml, and the
-dfe-ui pin, which Helm cannot read off a sibling chart and so is mirrored into
-the engine's values under check_versions_drift.py.
+the deployment injects. The profile comes from the SAME cluster-secret annotation
+that selects argocd/values/profile-<x>.yaml, and the dfe-ui pin, which Helm cannot
+read off a sibling chart, is mirrored into dfe-extras' values under
+check_versions_drift.py.
 
 `GET /api/v1/apps` answers the same way. The app manifest is dfe-infra's
-apps.yaml, and Helm reads only files inside a chart, so the chart carries the
-copy scripts/composition.py renders and mounts it -- which is what makes a new
-or changed app a manifest edit rather than an engine release.
+apps.yaml, and Helm reads only files inside a chart, so dfe-extras carries the
+copy scripts/composition.py renders and the engine mounts it -- which is what
+makes a new or changed app a manifest edit rather than an engine release.
+
+Each fact is read off the deployed render: the golden of each cell, the engine's
+thin chart beside dfe-extras, which writes the engine's literal env into the
+dfe-engine-env ConfigMap the pod reads. A dial a deployer turns is rendered as
+its instance values or its deploy repo's infra/common.yaml; a cluster fact as a
+cluster-secret annotation.
 
     python3 scripts/tests/test_engine_deployment_facts.py
 
-Needs `helm` on PATH. No test runner, matching the other checks here.
+Needs `helm` on PATH; the cases that render the engine pod need the scalo-service
+library (_weave.library). No test runner, matching the other checks here.
 """
 
-from __future__ import annotations
-
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import yaml
 
 from _expect import expect, standalone, summary
+from _gate import CLOUDS, PROFILES, effective_env, golden
+from _weave import REPO_ROOT, render_app, render_extras, weave
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-ENGINE_CHART = REPO_ROOT / "helm" / "charts" / "dfe-engine"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml"
 VALUES = REPO_ROOT / "argocd" / "values"
+EXTRAS = REPO_ROOT / "helm" / "charts" / "dfe-extras"
 
-PROFILES = ("slim", "single", "scale", "mesh")
+ENGINE = "dfe-engine"
+WORKLOAD = f"Deployment/{ENGINE}"
+CELLS = [(p, k) for p in PROFILES for k in CLOUDS]
+BUS_PROFILES = ("single", "scale")
 
 # The cluster-secret annotation that is the SSoT for the tier at render time.
 PROFILE_ANNOTATION = "dfe.hyperi.io/profile"
 
-# Where the chart mounts the manifest, and what it points the engine at.
+# Where the engine mounts the manifest, and what it points the engine at.
 CATALOGUE_CONFIGMAP = "dfe-engine-app-catalogue"
 CATALOGUE_FILE = "/etc/dfe-engine/catalogue/apps.yaml"
 
-# One per deployment-supplied auth ConfigMap the init container copies in.
-AUTH_CHECKSUMS = ("checksum/oidc-providers", "checksum/auth-groups", "checksum/ca-bundle")
+# The Reloader annotations that roll the engine when a ConfigMap it reads changes.
+RELOAD_AUTO = "reloader.stakater.com/auto"
+RELOAD_CONFIGMAPS = "configmap.reloader.stakater.com/reload"
+
+# authConfig key -> the pod volume the auth seed init container copies it from.
+AUTH_VOLUMES = {
+    "providersConfigMap": "oidc-providers",
+    "groupsConfigMap": "auth-groups",
+    "caBundleConfigMap": "ca-bundle",
+}
+
+# A managed broker's cluster secret, as bootstrap.sh writes it: RFC 2606 names only.
+MANAGED_BROKER = {
+    "dfe.hyperi.io/kafka_mode": "external",
+    "dfe.hyperi.io/kafka_bootstrap": "b-1.kafka.example.com:9096",
+    "dfe.hyperi.io/kafka_security_protocol": "SASL_SSL",
+}
 
 
-def render(*args: str, chart: Path = ENGINE_CHART) -> str:
-    cmd = ["helm", "template", "dfe-engine", str(chart), *args]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if out.returncode != 0:
-        raise SystemExit(f"helm template failed for dfe-engine {args}:\n{out.stderr}")
-    return out.stdout
+def nested(dotted: dict[str, object]) -> dict:
+    """Instance values from `a.b.c: value` pairs."""
+    out: dict = {}
+    for path, value in dotted.items():
+        *parents, leaf = path.split(".")
+        node = out
+        for key in parents:
+            node = node.setdefault(key, {})
+        node[leaf] = value
+    return out
 
 
-def documents(*args: str, chart: Path = ENGINE_CHART) -> list[dict]:
-    return [d for d in yaml.safe_load_all(render(*args, chart=chart)) if d]
-
-
-def pod_template(*args: str, chart: Path = ENGINE_CHART) -> dict:
-    deployment = next(
-        d
-        for d in documents(*args, chart=chart)
-        if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dfe-engine"
+def deployment(docs: list[dict], name: str = ENGINE) -> dict:
+    return next(
+        d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == name
     )
-    return deployment["spec"]["template"]
 
 
-def engine_env(*args: str) -> dict[str, str | None]:
-    container = pod_template(*args)["spec"]["containers"][0]
-    return {e["name"]: e.get("value") for e in container["env"]}
+def pod_spec(docs: list[dict], name: str = ENGINE) -> dict:
+    return deployment(docs, name)["spec"]["template"]["spec"]
+
+
+def engine_env(docs: list[dict]) -> dict[str, object]:
+    """The engine container's env as the kubelet hands it."""
+    return effective_env(docs, WORKLOAD)
+
+
+def literal_env(profile: str = "slim", **options: object) -> dict[str, str]:
+    """The literal env dfe-extras hands the engine, from its dfe-engine-env ConfigMap."""
+    docs = render_extras(ENGINE, profile, "local", **options)
+    return next(
+        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+    )["data"]
+
+
+def refusal(profile: str = "slim", **options: object) -> str:
+    """The render's refusal, or empty when it rendered."""
+    try:
+        render_extras(ENGINE, profile, "local", **options)
+    except weave().WeaveError as exc:
+        return str(exc)
+    return ""
 
 
 def test_the_profile_reaches_the_engine() -> None:
-    for profile in PROFILES:
-        env = engine_env("--set", f"profile={profile}")
+    for profile, cloud in CELLS:
+        env = engine_env(golden(ENGINE, profile, cloud))
         expect(
-            f"{profile} is passed to the engine",
+            f"{profile}/{cloud} is passed to the engine",
             env.get("DFE_PROFILE") == profile,
             f"got {env.get('DFE_PROFILE')!r}",
         )
@@ -96,9 +135,10 @@ def test_the_profile_reaches_the_engine() -> None:
 
 def test_an_unset_profile_renders_no_variable() -> None:
     """Absent beats empty: the engine's default already means unknown."""
+    env = engine_env(render_app(ENGINE, "", "local"))
     expect(
-        "no profile renders no DFE_PROFILE",
-        "DFE_PROFILE" not in engine_env(),
+        "a cluster secret naming no profile renders no DFE_PROFILE",
+        "DFE_PROFILE" not in env,
         "the variable was rendered with nothing in it",
     )
 
@@ -129,42 +169,35 @@ def test_the_profile_comes_from_the_annotation_that_picks_the_values_file() -> N
 
 
 def test_the_ui_pin_reaches_the_engine() -> None:
-    env = engine_env()
-    expect(
-        "the engine is told the ui version",
-        bool(env.get("DFE_UI_VERSION")),
-        f"got {env.get('DFE_UI_VERSION')!r}",
-    )
+    for profile, cloud in CELLS:
+        env = engine_env(golden(ENGINE, profile, cloud))
+        expect(
+            f"{profile}/{cloud}: the engine is told the ui version",
+            bool(env.get("DFE_UI_VERSION")),
+            f"got {env.get('DFE_UI_VERSION')!r}",
+        )
 
 
 def test_the_ui_pin_is_the_one_the_ui_chart_deploys() -> None:
     """A stale mirror would have the console report a version nobody is running."""
-    ui_chart = (REPO_ROOT / "helm" / "charts" / "dfe-ui" / "Chart.yaml").read_text(
-        encoding="utf-8"
+    deployed, _ = weave().pinned_image(REPO_ROOT, "dfe-ui")
+    told = literal_env().get("DFE_UI_VERSION")
+    expect(
+        "the engine reports the tag the dfe-ui thin chart runs",
+        told == deployed,
+        f"engine says {told!r}, the dfe-ui chart runs {deployed!r}",
     )
-    deployed = re.search(r'appVersion:\s*"([^"]+)"', ui_chart)
-    expect("the ui chart pins an appVersion", deployed is not None, "no appVersion found")
-    if deployed:
-        expect(
-            "and the engine reports that same version",
-            engine_env().get("DFE_UI_VERSION") == deployed.group(1),
-            f"engine says {engine_env().get('DFE_UI_VERSION')!r}, ui chart {deployed.group(1)!r}",
-        )
 
 
 def test_the_manifest_reaches_the_engine() -> None:
     """Without the mount the engine answers off the snapshot in its image."""
+    manifest = (EXTRAS / "files" / "apps.yaml").read_text(encoding="utf-8")
     for profile in PROFILES:
-        args = (
-            "-f",
-            str(VALUES / "common.yaml"),
-            "-f",
-            str(VALUES / f"profile-{profile}.yaml"),
-        )
+        docs = golden(ENGINE, profile, "local")
         catalogue = next(
             (
                 d
-                for d in documents(*args)
+                for d in docs
                 if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == CATALOGUE_CONFIGMAP
             ),
             None,
@@ -177,35 +210,27 @@ def test_the_manifest_reaches_the_engine() -> None:
         if catalogue:
             expect(
                 f"{profile} mounts the manifest this repo declares",
-                catalogue["data"]["apps.yaml"]
-                == (ENGINE_CHART / "files" / "apps.yaml").read_text(encoding="utf-8"),
-                "the rendered catalogue is not the chart's copy of apps.yaml",
+                catalogue["data"]["apps.yaml"] == manifest,
+                "the rendered catalogue is not dfe-extras' copy of apps.yaml",
             )
         expect(
             f"{profile} points the engine at the mounted file",
-            engine_env(*args).get("DFE_APP_CATALOGUE_FILE") == CATALOGUE_FILE,
-            f"got {engine_env(*args).get('DFE_APP_CATALOGUE_FILE')!r}",
+            engine_env(docs).get("DFE_APP_CATALOGUE_FILE") == CATALOGUE_FILE,
+            f"got {engine_env(docs).get('DFE_APP_CATALOGUE_FILE')!r}",
         )
 
 
 def test_the_engine_reads_the_manifest_off_that_configmap() -> None:
     """An env var naming a path nothing mounted fails the engine at startup."""
-    template = pod_template()
-    volume = next(
-        (v for v in template["spec"]["volumes"] if v["name"] == "app-catalogue"), None
-    )
+    spec = pod_spec(golden(ENGINE, "slim", "local"))
+    volume = next((v for v in spec["volumes"] if v["name"] == "app-catalogue"), None)
     expect(
         "the catalogue volume is the rendered ConfigMap",
-        volume is not None and volume["configMap"]["name"] == CATALOGUE_CONFIGMAP,
+        volume is not None and volume.get("configMap", {}).get("name") == CATALOGUE_CONFIGMAP,
         f"got {volume!r}",
     )
     mount = next(
-        (
-            m
-            for m in template["spec"]["containers"][0]["volumeMounts"]
-            if m["name"] == "app-catalogue"
-        ),
-        None,
+        (m for m in spec["containers"][0]["volumeMounts"] if m["name"] == "app-catalogue"), None
     )
     expect(
         "and it is mounted where the env var looks",
@@ -214,68 +239,66 @@ def test_the_engine_reads_the_manifest_off_that_configmap() -> None:
     )
 
 
-def test_a_manifest_edit_moves_the_pod_template() -> None:
+def test_a_manifest_edit_rolls_the_engine() -> None:
     """The engine reads the manifest once at startup, so a ConfigMap-only change
-    would sit in etcd unread until something else rolled the pod."""
-    with tempfile.TemporaryDirectory(prefix="dfe-engine-chart-") as tmp:
-        edited = Path(tmp) / "dfe-engine"
-        shutil.copytree(ENGINE_CHART, edited)
-        manifest = edited / "files" / "apps.yaml"
-        manifest.write_text(
-            manifest.read_text(encoding="utf-8").replace(
-                "scale_deployed: true", "scale_deployed: false", 1
-            ),
-            encoding="utf-8",
-        )
-        before = pod_template()["metadata"]["annotations"].get("checksum/app-catalogue")
-        after = pod_template(chart=edited)["metadata"]["annotations"].get(
-            "checksum/app-catalogue"
-        )
-        expect("the pod template carries a catalogue checksum", bool(before), "no annotation")
+    would sit in etcd unread until something else rolled the pod. Reloader rolls
+    the Deployment when a ConfigMap its reload annotation names changes."""
+    for profile, cloud in CELLS:
+        metadata = deployment(golden(ENGINE, profile, cloud))["metadata"]
+        annotations = metadata.get("annotations") or {}
+        watched = (annotations.get(RELOAD_CONFIGMAPS) or "").split(",")
         expect(
-            "and a manifest edit moves it",
-            before != after,
-            "the checksum is unchanged, so the edit would never reach a pod",
+            f"{profile}/{cloud}: Reloader rolls the engine when the catalogue changes",
+            annotations.get(RELOAD_AUTO) == "true" and CATALOGUE_CONFIGMAP in watched,
+            f"annotations: {annotations}",
         )
 
 
 def test_an_auth_configmap_edit_can_reach_the_engine() -> None:
-    """The init container copies the three auth ConfigMaps once at pod start, and
-    the umbrella installs no Reloader, so without a checksum an edit sits unread."""
-    args = (
-        "--set", "authConfig.providersConfigMap=dfe-oidc-providers",
-        "--set", "authConfig.groupsConfigMap=dfe-auth-groups",
-        "--set", "authConfig.caBundleConfigMap=dfe-ca-bundle",
+    """The init container copies the three auth ConfigMaps once at pod start, so an
+    edit reaches the engine only through a roll. Reloader's auto mode rolls the
+    Deployment when a ConfigMap the pod mounts changes, so each must be mounted."""
+    names = {key: f"dfe-{volume}" for key, volume in AUTH_VOLUMES.items()}
+    docs = render_app(ENGINE, "slim", "local", overlay={"authConfig": names})
+    annotations = deployment(docs)["metadata"].get("annotations") or {}
+    expect(
+        "the engine Deployment is under Reloader's auto mode",
+        annotations.get(RELOAD_AUTO) == "true",
+        f"annotations: {annotations}",
     )
-    annotations = pod_template(*args)["metadata"]["annotations"]
-    for key in AUTH_CHECKSUMS:
+    volumes = {v["name"]: v for v in pod_spec(docs)["volumes"]}
+    for key, volume in AUTH_VOLUMES.items():
         expect(
-            f"the pod template carries {key}",
-            bool(annotations.get(key)),
-            f"annotations: {sorted(annotations)}",
+            f"the pod mounts the ConfigMap authConfig.{key} names",
+            volumes.get(volume, {}).get("configMap", {}).get("name") == names[key],
+            f"got {volumes.get(volume)!r}",
         )
 
 
-def test_an_unset_auth_configmap_renders_no_checksum() -> None:
-    """A checksum over a ConfigMap this deployment does not mount is noise."""
-    annotations = pod_template()["metadata"]["annotations"]
-    for key in AUTH_CHECKSUMS:
-        expect(
-            f"no {key} when nothing supplies that ConfigMap",
-            key not in annotations,
-            f"annotations: {sorted(annotations)}",
-        )
+def test_an_unset_auth_configmap_is_not_mounted() -> None:
+    """A deployment that supplies no auth ConfigMap gives the pod nothing to wait on."""
+    for profile, cloud in CELLS:
+        volumes = {v["name"]: v for v in pod_spec(golden(ENGINE, profile, cloud))["volumes"]}
+        for key, volume in AUTH_VOLUMES.items():
+            source = volumes.get(volume, {})
+            expect(
+                f"{profile}/{cloud}: no ConfigMap backs {volume} when authConfig.{key} is unset",
+                "configMap" not in source and "emptyDir" in source,
+                f"got {source!r}",
+            )
 
 
 def test_the_engine_gets_a_boot_budget() -> None:
-    """Liveness starts at 10s. First boot seeds every registry and reconciles the
-    ClickHouse fence, and k8s suspends liveness while a startupProbe runs."""
-    probe = pod_template()["spec"]["containers"][0].get("startupProbe")
+    """First boot seeds every registry and reconciles the ClickHouse fence, and k8s
+    suspends liveness while a startupProbe runs."""
+    container = pod_spec(golden(ENGINE, "slim", "local"))["containers"][0]
+    probe = container.get("startupProbe")
     expect("the engine container has a startupProbe", probe is not None, "none rendered")
     if probe:
         expect(
-            "and it targets the health port the other probes use",
-            probe["httpGet"] == {"path": "/livez", "port": "obs"},
+            "and it targets the health port and path the liveness probe uses",
+            probe["httpGet"] == container["livenessProbe"]["httpGet"]
+            and probe["httpGet"]["path"] == "/livez",
             f"got {probe['httpGet']!r}",
         )
         expect(
@@ -286,12 +309,7 @@ def test_the_engine_gets_a_boot_budget() -> None:
 
 
 def shim_container() -> dict:
-    deployment = next(
-        d
-        for d in documents()
-        if d.get("kind") == "Deployment" and d["metadata"]["name"] == "dfe-keda-shim"
-    )
-    return deployment["spec"]["template"]["spec"]["containers"][0]
+    return pod_spec(golden(ENGINE, "slim", "local"), "dfe-keda-shim")["containers"][0]
 
 
 def mebibytes(quantity: str) -> int:
@@ -329,12 +347,12 @@ def test_the_keda_shim_has_room_for_the_engine_image() -> None:
 
 
 def test_an_external_tls_clickhouse_is_expressible() -> None:
-    """The chart hardcoded secure false, so a deployment whose ClickHouse speaks
-    TLS could not be rendered at all (#277). A render with no CA stays plaintext;
-    the Argo cascade's TLS is test_clickhouse_tls.py's."""
-    env = engine_env()
+    """A deployment whose ClickHouse speaks TLS could not be rendered at all (#277).
+    A deployment that turns TLS off stays plaintext; the cascade's own TLS is
+    test_clickhouse_tls.py's."""
+    env = engine_env(golden(ENGINE, "slim", "local", "clickhouse-plaintext"))
     expect(
-        "a render with no CA is plaintext",
+        "a deployment with TLS off is plaintext",
         env.get("DFE_CLICKHOUSE_SECURE") == "false",
         f"got {env.get('DFE_CLICKHOUSE_SECURE')!r}",
     )
@@ -348,11 +366,14 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
         "DFE_CLICKHOUSE_VERIFY" not in env,
         "there is no certificate to verify on 8123",
     )
-    tls = engine_env(
-        "--set", "clickhouse.mode=external",
-        "--set", "clickhouse.tls.enabled=true",
-        "--set", "clickhouse.tls.verify=false",
-    )
+    external = {
+        "clickhouse": {
+            "mode": "external",
+            "host": "clickhouse.example.com",
+            "tls": {"enabled": True, "verify": False, "ca": {"secretName": ""}},
+        }
+    }
+    tls = literal_env("scale", infra=external)
     expect(
         "a TLS ClickHouse renders secure",
         tls.get("DFE_CLICKHOUSE_SECURE") == "true",
@@ -373,14 +394,12 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
 def test_the_token_lifetime_is_a_dial() -> None:
     expect(
         "unset leaves the engine's own default",
-        "DFE_API_JWT_EXPIRE_MINUTES" not in engine_env(),
+        "DFE_API_JWT_EXPIRE_MINUTES" not in engine_env(golden(ENGINE, "slim", "local")),
         "the variable was rendered with nothing behind it",
     )
-    expect(
-        "and a deployment can shorten it",
-        engine_env("--set", "api.jwtExpireMinutes=15").get("DFE_API_JWT_EXPIRE_MINUTES") == "15",
-        "the dial did not reach the container",
-    )
+    shortened = literal_env(overlay=nested({"api.jwtExpireMinutes": 15}))
+    got = shortened.get("DFE_API_JWT_EXPIRE_MINUTES")
+    expect("and a deployment can shorten it", got == "15", f"got {got!r}")
 
 
 # The engine's optional auth and session settings (dfe-infra#475): each values key
@@ -397,22 +416,14 @@ AUTH_DIALS = {
 }
 
 
-def refusal(*args: str) -> str:
-    """The render's stderr, or empty when it rendered."""
-    out = subprocess.run(
-        ["helm", "template", "dfe-engine", str(ENGINE_CHART), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-    )
-    return out.stderr if out.returncode != 0 else ""
-
-
 def test_an_unset_auth_dial_renders_no_variable() -> None:
     """Absent, the engine takes its own default; an empty variable is not absent."""
-    for args in ((), ("-f", str(VALUES / "common.yaml"))):
-        env = engine_env(*args)
+    for profile, cloud in CELLS:
+        env = engine_env(golden(ENGINE, profile, cloud))
         for key, name in AUTH_DIALS.items():
             got = env.get(name)
-            expect(f"unset {key} renders no {name} {args}", name not in env, f"got {got!r}")
+            expect(f"{profile}/{cloud}: unset {key} renders no {name}", name not in env,
+                   f"got {got!r}")
 
 
 def test_each_auth_dial_reaches_the_engine() -> None:
@@ -426,8 +437,7 @@ def test_each_auth_dial_reaches_the_engine() -> None:
         "auth.loginThrottle.clientFailures": "10",
         "auth.loginThrottle.maxDelaySeconds": "600",
     }
-    args = [arg for key, value in sets.items() for arg in ("--set", f"{key}={value}")]
-    env = engine_env(*args)
+    env = engine_env(render_app(ENGINE, "slim", "local", overlay=nested(sets)))
     for key, value in sets.items():
         name = AUTH_DIALS[key]
         expect(f"{key}={value} renders {name}", env.get(name) == value, f"got {env.get(name)!r}")
@@ -436,20 +446,18 @@ def test_each_auth_dial_reaches_the_engine() -> None:
 def test_a_zero_key_lifetime_is_rendered_not_dropped() -> None:
     """0 is a key with no expiry, the one value a truthiness test would lose."""
     name = AUTH_DIALS["auth.apiKeyDefaultTtlDays"]
-    got = engine_env("--set", "auth.apiKeyDefaultTtlDays=0").get(name)
+    got = literal_env(overlay=nested({"auth.apiKeyDefaultTtlDays": 0})).get(name)
     expect("apiKeyDefaultTtlDays=0 reaches the engine as 0", got == "0", f"got {got!r}")
 
 
 def test_a_count_from_a_values_file_renders_whole() -> None:
     """A values-file number is a float64, which renders 1e+06 bare."""
-    with tempfile.TemporaryDirectory(prefix="dfe-engine-auth-dials-") as tmp:
-        overlay = Path(tmp) / "dials.yaml"
-        overlay.write_text(
-            "api:\n  maxSessionMinutes: 1000000\n"
-            "auth:\n  loginThrottle:\n    maxDelaySeconds: 900\n    enabled: true\n",
-            encoding="utf-8", newline="\n",
-        )
-        env = engine_env("-f", str(overlay))
+    dials = {
+        "api.maxSessionMinutes": 1000000,
+        "auth.loginThrottle.maxDelaySeconds": 900,
+        "auth.loginThrottle.enabled": True,
+    }
+    env = literal_env(overlay=nested(dials))
     expect("maxSessionMinutes renders as whole minutes",
            env.get("DFE_API_MAX_SESSION_MINUTES") == "1000000",
            f"got {env.get('DFE_API_MAX_SESSION_MINUTES')!r}")
@@ -464,19 +472,19 @@ def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
     """The engine reads any word but true, 1 and yes as false, and stops at
     startup on a count under its floor, so each is refused by name instead."""
     cases = (
-        ("api.docsEnabled=yes", "api.docsEnabled"),
-        ("auth.loginThrottle.enabled=off", "auth.loginThrottle.enabled"),
-        ("auth.loginThrottle.usernameFailures=0", "auth.loginThrottle.usernameFailures"),
-        ("auth.loginThrottle.clientFailures=0", "auth.loginThrottle.clientFailures"),
-        ("auth.loginThrottle.maxDelaySeconds=0", "auth.loginThrottle.maxDelaySeconds"),
-        ("api.maxSessionMinutes=0", "api.maxSessionMinutes"),
-        ("api.maxSessionMinutes=1.5", "api.maxSessionMinutes"),
-        ("auth.apiKeyDefaultTtlDays=-1", "auth.apiKeyDefaultTtlDays"),
-        ("auth.apiKeyDefaultTtlDays=90d", "auth.apiKeyDefaultTtlDays"),
+        ("api.docsEnabled", "yes"),
+        ("auth.loginThrottle.enabled", "off"),
+        ("auth.loginThrottle.usernameFailures", 0),
+        ("auth.loginThrottle.clientFailures", 0),
+        ("auth.loginThrottle.maxDelaySeconds", 0),
+        ("api.maxSessionMinutes", 0),
+        ("api.maxSessionMinutes", 1.5),
+        ("auth.apiKeyDefaultTtlDays", -1),
+        ("auth.apiKeyDefaultTtlDays", "90d"),
     )
-    for value, key in cases:
-        err = refusal("--set", value)
-        expect(f"{value} is refused naming {key}", key in err, f"stderr={err[-300:]!r}")
+    for key, value in cases:
+        err = refusal(overlay=nested({key: value}))
+        expect(f"{key}={value!r} is refused naming {key}", key in err, f"refusal={err[-300:]!r}")
 
 
 FORWARDED_ENV = "DFE_API_FORWARDED_ALLOW_IPS"
@@ -488,63 +496,57 @@ def test_the_proxy_hops_default_to_the_deployments_pod_range() -> None:
     common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
     pod_cidr = common["networkModel"]["podCIDR"]
     expect("common.yaml declares a pod range", bool(pod_cidr), f"got {pod_cidr!r}")
-    cascade = ("-f", str(VALUES / "common.yaml"))
-    got = engine_env(*cascade).get(FORWARDED_ENV)
-    expect("the Argo cascade trusts that range", got == pod_cidr, f"got {got!r}")
-    moved = engine_env(*cascade, "--set", "networkModel.podCIDR=10.42.0.0/16")
+    for profile, cloud in CELLS:
+        got = engine_env(golden(ENGINE, profile, cloud)).get(FORWARDED_ENV)
+        expect(f"{profile}/{cloud}: the deployment trusts that range", got == pod_cidr,
+               f"got {got!r}")
+    moved = literal_env(infra={"networkModel": {"podCIDR": "10.42.0.0/16"}})
     expect("and follows it when a deployment moves it",
            moved.get(FORWARDED_ENV) == "10.42.0.0/16", f"got {moved.get(FORWARDED_ENV)!r}")
 
 
 def test_a_named_hop_list_beats_the_pod_range() -> None:
     hops = "10.42.7.0/24,10.42.8.0/24"
-    with tempfile.TemporaryDirectory(prefix="dfe-engine-hops-") as tmp:
-        overlay = Path(tmp) / "hops.yaml"
-        overlay.write_text(f'api:\n  forwardedAllowIps: "{hops}"\n', encoding="utf-8", newline="\n")
-        got = engine_env("-f", str(VALUES / "common.yaml"), "-f", str(overlay)).get(FORWARDED_ENV)
+    got = literal_env(overlay={"api": {"forwardedAllowIps": hops}}).get(FORWARDED_ENV)
     expect("api.forwardedAllowIps wins", got == hops, f"got {got!r}")
 
 
 def test_a_render_with_no_pod_range_keeps_the_engines_default() -> None:
-    """A standalone render knows no pod range, and the engine's loopback default
-    fails closed there."""
-    got = engine_env().get(FORWARDED_ENV)
+    """A deployment that declares no pod range trusts no hop, and the engine's
+    loopback default fails closed there."""
+    got = literal_env(infra={"networkModel": {"podCIDR": ""}}).get(FORWARDED_ENV)
     expect("no pod range renders no hop list", got is None, f"got {got!r}")
 
 
 TOPIC_SIZE_ENV = "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"
+TOPIC_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 
 def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
     """A managed broker refuses a record above its provider default, so the
     engine's own topics take the size the landing topics were created at."""
-    expect(
-        "unset leaves the engine's own default",
-        TOPIC_SIZE_ENV not in engine_env(),
-        "the variable was rendered with nothing behind it",
-    )
+    for profile in BUS_PROFILES:
+        expect(
+            f"{profile}: unset leaves the engine's own default",
+            TOPIC_SIZE_ENV not in engine_env(golden(ENGINE, profile, "local")),
+            "the variable was rendered with nothing behind it",
+        )
     # layer2-apps.yaml hands the annotation over as a quoted string.
-    got = engine_env("--set-string", "kafka.messageMaxBytes=8388608").get(TOPIC_SIZE_ENV)
-    expect("the appset's string reaches the container", got == "8388608", f"got {got!r}")
+    managed = {**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "8388608"}
+    got = literal_env("single", annotations=managed).get(TOPIC_SIZE_ENV)
+    expect("the cluster secret's size reaches the container", got == "8388608", f"got {got!r}")
     # A values file reads a number as a float64, which renders as 1.6777216e+07 bare.
-    with tempfile.TemporaryDirectory(prefix="dfe-engine-topic-size-") as tmp:
-        overlay = Path(tmp) / "size.yaml"
-        overlay.write_text("kafka:\n  messageMaxBytes: 16777216\n", encoding="utf-8", newline="\n")
-        got = engine_env("-f", str(overlay)).get(TOPIC_SIZE_ENV)
+    got = literal_env("single", overlay={"kafka": {"messageMaxBytes": 16777216}}).get(
+        TOPIC_SIZE_ENV
+    )
     expect("a number from a values file renders as whole bytes", got == "16777216", f"got {got!r}")
 
 
 def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     """A unit suffix would reach the engine as a setting it cannot parse."""
-    out = subprocess.run(
-        ["helm", "template", "dfe-engine", str(ENGINE_CHART),
-         "--set-string", "kafka.messageMaxBytes=16MiB"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-    )
+    err = refusal("single", annotations={**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "16MiB"})
     expect(
-        "the render refuses it by name",
-        out.returncode != 0 and "kafka.messageMaxBytes" in out.stderr,
-        f"rc={out.returncode} stderr={out.stderr[-300:]!r}",
+        "the render refuses it by name", "kafka.messageMaxBytes" in err, f"refusal={err[-300:]!r}"
     )
 
 
@@ -556,29 +558,22 @@ def test_the_boot_topic_pass_is_turned_on_only_on_the_bus() -> None:
     deployment left to the derived default loses every source's topics on a broker
     rebuild, and a brokerless one has no broker to ask."""
     for mode in ("single", "cluster", "external"):
-        got = engine_env("--set", f"kafka.mode={mode}").get(ENSURE_TOPICS_ENV)
+        got = literal_env("single", infra={"kafka": {"mode": mode}}).get(ENSURE_TOPICS_ENV)
         expect(f"kafka.mode={mode} turns the boot pass on", got == "true", f"got {got!r}")
-    got = engine_env().get(ENSURE_TOPICS_ENV)
+    got = engine_env(render_app(ENGINE, "", "local")).get(ENSURE_TOPICS_ENV)
     expect("an unset kafka.mode is the bus and turns it on", got == "true", f"got {got!r}")
-    got = engine_env("--set", "kafka.mode=disabled").get(ENSURE_TOPICS_ENV)
+    got = literal_env("slim", infra={"kafka": {"mode": "disabled"}}).get(ENSURE_TOPICS_ENV)
     expect("a brokerless deployment renders no dial", got is None, f"got {got!r}")
 
 
 def test_each_profile_sets_the_boot_topic_pass_by_its_transport() -> None:
     transports = set()
-    for profile in PROFILES:
-        env = engine_env(
-            "-f",
-            str(VALUES / "common.yaml"),
-            "-f",
-            str(VALUES / f"profile-{profile}.yaml"),
-            "--set",
-            f"profile={profile}",
-        )
+    for profile, cloud in CELLS:
+        env = engine_env(golden(ENGINE, profile, cloud))
         transports.add(env.get("DFE_TRANSPORT_DEFAULT"))
         expected = "true" if env.get("DFE_TRANSPORT_DEFAULT") == "bus" else None
         expect(
-            f"{profile} sets the boot topic pass only when it carries a bus",
+            f"{profile}/{cloud} sets the boot topic pass only when it carries a bus",
             env.get(ENSURE_TOPICS_ENV) == expected,
             f"transport={env.get('DFE_TRANSPORT_DEFAULT')!r} dial={env.get(ENSURE_TOPICS_ENV)!r}",
         )
@@ -590,22 +585,15 @@ def test_each_profile_sets_the_boot_topic_pass_by_its_transport() -> None:
 
 
 def test_every_profile_still_renders_with_the_real_overlays() -> None:
-    for profile in PROFILES:
-        env = engine_env(
-            "-f",
-            str(VALUES / "common.yaml"),
-            "-f",
-            str(VALUES / f"profile-{profile}.yaml"),
-            "--set",
-            f"profile={profile}",
-        )
+    for profile, cloud in CELLS:
+        env = engine_env(golden(ENGINE, profile, cloud))
         expect(
-            f"{profile} renders the engine with its tier",
+            f"{profile}/{cloud} renders the engine with its tier",
             env.get("DFE_PROFILE") == profile,
             f"got {env.get('DFE_PROFILE')!r}",
         )
         expect(
-            f"{profile} still carries the transport facts",
+            f"{profile}/{cloud} still carries the transport facts",
             env.get("DFE_TRANSPORT_DEFAULT") in ("bus", "direct"),
             f"got {env.get('DFE_TRANSPORT_DEFAULT')!r}",
         )
@@ -620,9 +608,9 @@ def main() -> int:
         test_the_ui_pin_is_the_one_the_ui_chart_deploys()
         test_the_manifest_reaches_the_engine()
         test_the_engine_reads_the_manifest_off_that_configmap()
-        test_a_manifest_edit_moves_the_pod_template()
+        test_a_manifest_edit_rolls_the_engine()
         test_an_auth_configmap_edit_can_reach_the_engine()
-        test_an_unset_auth_configmap_renders_no_checksum()
+        test_an_unset_auth_configmap_is_not_mounted()
         test_the_engine_gets_a_boot_budget()
         test_the_keda_shim_gets_a_boot_budget()
         test_the_keda_shim_has_room_for_the_engine_image()
