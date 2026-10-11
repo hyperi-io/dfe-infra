@@ -3587,7 +3587,7 @@ stacks:
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.1"            # 2026-08-21, LTS. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/karpenter-pools is checked against this release's CRDs, so they move together.
       # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
-      karpenter-al2023-ami: "v20260930"  # 2026-10-01. helm/charts/karpenter-pools uses it as the EC2NodeClass alias al2023@v20260930.
+      karpenter-al2023-ami: "v20261003"  # 2026-10-08, inside the 7-day cooldown, which is waived until 2.2 GA. NVIDIA-only changes over v20260930 and the same kernel 6.12.110, whose kswapd panic (awslabs/amazon-eks-ami#2845, open) reaches 1.34-1.35 nodes but not the 6.18 kernel 1.36 nodes boot. helm/charts/karpenter-pools uses it as the EC2NodeClass alias al2023@v20261003.
 
     # Datastores, brokers and telemetry: Argo waves 4-5 (appsets/layer2-data.yaml).
     services:
