@@ -319,11 +319,18 @@ SCENARIOS = [
         },
         id="hyperdx-header-dev-and-tls",
     ),
+    # Public mode's ingest policy is the thin chart's, from the ports its load balancers serve.
     pytest.param(
         "dfe-receiver", "single", "local",
         {"exposure": {"mode": "public"}},
-        {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
+        {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-public",
+    ),
+    pytest.param(
+        "dfe-receiver", "single", "local",
+        {"exposure": {"mode": "vpn"}},
+        {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
+        id="receiver-vpn",
     ),
     pytest.param(
         "dfe-receiver", "scale", "aws",

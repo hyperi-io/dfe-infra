@@ -53,13 +53,12 @@ host_implies_tls), so any other TLS address fails the render here.
 {{- end }}
 
 {{/*
-dfe-loader.env -- the loader container's env list, as the 2.2.0 deployment
-wrote it, less the entries the thin chart's own env carries: the SASL and
-ClickHouse password references (the contract's kafka and clickhouse groups),
-the namespace, the OTLP identity and endpoint, and the version-check overrides.
-dfe-loader-env carries what is left, so each variable stays absent where 2.2.0
-left it out, and the render keeps 2.2.0's refusals of a ClickHouse TLS setup
-the loader cannot dial.
+dfe-loader.env -- the loader container's env entries the thin chart's own env
+does not carry. The thin chart carries the SASL and ClickHouse password
+references (the contract's kafka and clickhouse groups), the namespace, the OTLP
+identity and endpoint, and the version-check overrides. dfe-loader-env carries
+these entries, each only while its condition holds, and the render refuses a
+ClickHouse TLS setup the loader cannot dial.
 */}}
 {{- define "dfe-loader.env" -}}
 {{- $caBundle := include "dfe-loader.clickhouseCaBundle" . }}

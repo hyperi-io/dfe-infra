@@ -5,8 +5,8 @@
 chartName: ""
 
 # This chart's own settings. Every other key is a value the component reads: the
-# same layers reach this chart and the component's thin chart, so a key keeps the
-# path the 2.2.0 component chart gave it.
+# same layers reach this chart and the component's thin chart, so both read a key
+# at one path.
 extras:
   # The transport each profile's values are built for. dfe-common.transport derives
   # the one a deployment runs from kafka.mode, and the render fails where the two
@@ -34,17 +34,17 @@ extras:
     culvert: "v2.1.18"
     dfe-hyperdx: "v0.3.3"
 
-  # Each component's defaults for the keys its objects read, as its 2.2.0 chart
-  # declared them. A layer that sets a key wins, false and empty included.
+  # Each component's defaults for the keys its objects read. A layer that sets a
+  # key wins, false and empty included.
   defaults:
     dfe-receiver:
       project: dfe
       component: receiver
       env: local
       cloud: local
-      # The ingest NetworkPolicy opens the exposed ones; internal mode refuses an
-      # exposed listener other than http. A layer replaces the whole list. The
-      # receiver binds nothing on 8443, so no entry opens it.
+      # The vpn-mode ingest NetworkPolicy opens the exposed ones, and internal mode
+      # refuses an exposed listener other than http. A layer replaces the whole
+      # list. The receiver binds nothing on 8443, so no entry opens it.
       listeners:
         - { name: http, port: 8080, protocol: TCP, exposed: true }
         - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false, appProtocol: kubernetes.io/h2c }

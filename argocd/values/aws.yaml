@@ -19,7 +19,7 @@ storageClass: gp3
 # module reads as well.
 
 # The engine's runtime store is a PVC against the cluster's default
-# StorageClass (dfe-engine chart config.persistence) -- no per-cloud
+# StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
 # storage seam needed.
 
 # ClickHouse's object store is the bucket the cluster module creates

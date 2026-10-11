@@ -27,9 +27,9 @@ dfe-ui and dfe-hyperdx export over OTLP/HTTP, so their own integration values mo
 the resolved endpoint from the collector's 4317 to its 4318, and dfe-ui names the
 protocol (OTLP_HTTP).
 
-Receiver mode with no receiverEndpoint is the one place the thin charts derive what the
-2.2.0 helper does not: the receiver's OTLP port from its contract, in the release
-namespace. The parity checks name an endpoint for that mode, and the derived default
+Receiver mode with no receiverEndpoint is the one place the thin charts derive what
+dfe-common.otelEndpoint does not: the receiver's OTLP port from its contract, in the
+release namespace. The parity checks name an endpoint for that mode, and the derived default
 is held against fixtures/contracts/dfe-receiver.json.
 
 Telemetry settings and `cloud` reach each render through a deploy repo's infra/common.yaml,
@@ -70,8 +70,8 @@ def _for(service: str, endpoint: str) -> str:
 
 
 # What each telemetry.mode needs beyond common.yaml, as a deployment's infra/common.yaml sets it.
-# The 2.2.0 helper derives no receiver endpoint, so the parity checks name one, as they name
-# the external one. The thin charts' derived default has its own tests below.
+# dfe-common.otelEndpoint derives no receiver endpoint, so the parity checks name one, as they
+# name the external one. The thin charts' derived default has its own tests below.
 MODES = {
     "hyperdx": {},
     "receiver": {"receiverEndpoint": "dfe-receiver.dfe.svc.cluster.local:4317"},
@@ -452,7 +452,7 @@ def test_an_override_without_a_scheme_is_exported_as_written(
     deploy_for: Callable[[dict], Path],
     expected: Callable[[dict], str],
 ) -> None:
-    # The 2.2.0 helper adds http:// here, the library does not: common.yaml says so.
+    # dfe-common.otelEndpoint adds http:// here, the library does not: common.yaml says so.
     overlay = _overlay("hyperdx", False, endpoint="collector.example.net:4317")
     docs = _render(thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver")
     assert _env_values(docs, ENDPOINT) == ["collector.example.net:4317"]

@@ -1,11 +1,10 @@
 {{/*
-dfe-receiver.env -- the receiver container's env list, as the 2.2.0 deployment
-wrote it, less the entries the thin chart's own env carries: the SASL secret
-references (the contract's kafka group), the namespace, the OTLP identity and
-endpoint, and the version-check overrides. DFE_RECEIVER_BIND_ADDRESS goes too:
-the contract fixes the http port at 8080, the app's own default bind address.
-dfe-receiver-env carries what is left, so each variable stays absent where
-2.2.0 left it out.
+dfe-receiver.env -- the receiver container's env entries the thin chart's own env
+does not carry. The thin chart carries the SASL secret references (the
+contract's kafka group), the namespace, the OTLP identity and endpoint, and the
+version-check overrides. There is no DFE_RECEIVER_BIND_ADDRESS: the contract
+fixes the http port at 8080, the app's own default bind address.
+dfe-receiver-env carries these entries, each only while its condition holds.
 */}}
 {{- define "dfe-receiver.env" -}}
 {{- if (include "dfe-common.transportIsBus" .) }}
