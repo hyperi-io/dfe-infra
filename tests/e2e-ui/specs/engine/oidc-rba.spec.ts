@@ -6,9 +6,10 @@
 // Copyright: (c) 2026 HYPERI PTY LIMITED
 //
 // The whole RBAC chain, per user: real IdP redirect flow -> engine callback
-// -> minted token -> /auth/me roles and org_ids. The table is the independent
-// oracle (docs/AUTH-TESTING.md); a drifted group file or claim mapping fails
-// the row that names the broken identity.
+// -> minted token -> /auth/me roles and org_ids. A row expecting no roles is
+// refused at the callback instead, with no token and no session. The table is
+// the independent oracle (docs/AUTH-TESTING.md); a drifted group file or claim
+// mapping fails the row that names the broken identity.
 //
 // Requires the tester IdP serving bootstrap/fixtures/tester-idp-users.toml
 // (`dfe-ops idp deploy`), the engine wired to it with the group map in
@@ -17,7 +18,12 @@
 
 import { ENGINE_URL } from '../../harness/env';
 import { expect, test } from '../../harness/fixtures';
-import { engineOidcLogin, FIXTURE_PASSWORD } from '../../harness/oidc';
+import {
+  engineOidcCallback,
+  engineOidcLogin,
+  expectNoRoleRefusal,
+  FIXTURE_PASSWORD,
+} from '../../harness/oidc';
 
 interface Expectation {
   readonly user: string;
@@ -25,8 +31,8 @@ interface Expectation {
   readonly orgIds: string[];
 }
 
-// dfe-nested-member expects NO roles: nested group membership verifiably does
-// not reach the groups claim, so only direct groups grant.
+// dfe-nested-member expects NO roles and is refused at login: nested group
+// membership verifiably does not reach the groups claim, so only direct groups grant.
 const TRUTH_TABLE: Expectation[] = [
   { user: 'dfe-test', roles: ['admin', 'data_viewer'], orgIds: [] },
   { user: 'dfe-admin', roles: ['admin'], orgIds: [] },
@@ -53,6 +59,17 @@ test.describe('OIDC login and role resolution', () => {
   );
 
   for (const expected of TRUTH_TABLE) {
+    if (expected.roles.length === 0) {
+      test(`${expected.user} is refused at login`, async ({ page }) => {
+        const result = await engineOidcCallback(
+          page,
+          expected.user,
+          FIXTURE_PASSWORD,
+        );
+        await expectNoRoleRefusal(page.context(), result, expected.user);
+      });
+      continue;
+    }
     test(`${expected.user} resolves its fixture roles`, async ({ page }) => {
       const session = await engineOidcLogin(
         page,

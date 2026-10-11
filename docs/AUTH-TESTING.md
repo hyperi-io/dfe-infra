@@ -31,12 +31,12 @@ The set is wider than a happy-path login on purpose:
 | `dfe-admin` | `dfe-admins` | The allow-everything baseline |
 | `dfe-test-org-viewer` | `dfe-test-org-viewers`, scoped to `test_org` | An org-scoped role binds at that org and names it in `org_ids` |
 | `dfe-multi-viewer` | `dfe-multi-viewers`, system scope over `test_org` and `test_org_2` | One group confers two orgs, and an org role held at system scope does not over-grant |
-| `dfe-nobody` | `dfe-nogroup`, which maps to no role | Authentication succeeds and authorisation denies -- every screen refuses |
-| `dfe-nested-member` | `dfe-nested-child`, which nests `dfe-nested-parent` | Nested membership never reaches the groups claim, so only direct groups grant |
+| `dfe-nobody` | `dfe-nogroup`, which maps to no role | The IdP authenticates the user and the engine refuses the login with 401 `no_role_granted`, creating no account |
+| `dfe-nested-member` | `dfe-nested-child`, which nests `dfe-nested-parent` | Nested membership never reaches the groups claim and `dfe-nested-child` grants nothing, so the login is refused like `dfe-nobody`'s |
 
 `dfe-infra-admin`, `dfe-infra-viewer`, `dfe-analyst`, `dfe-analyst-viewer`, `dfe-viewer` and `dfe-operator` carry one role group each.
 
-`dfe-nobody` is the one people forget. A feature that renders for a user with no roles is a bug, and it is the cheapest one to catch.
+`dfe-nobody` is the one people forget. A login that succeeds for a user with no roles is a bug, and it is the cheapest one to catch.
 
 ## Real providers
 

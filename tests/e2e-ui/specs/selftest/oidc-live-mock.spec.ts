@@ -20,6 +20,7 @@ import { google } from '../../harness/idp/google';
 import { GOOGLE_SESSION_COOKIE, type MockOidc, startMockOidc } from '../../harness/idp/mock-idp';
 import { okta } from '../../harness/idp/okta';
 import { type IdpKind } from '../../harness/idp/types';
+import { expectNoRoleRefusal, readCallback, sessionToken } from '../../harness/oidc';
 import {
   defineOidcLiveTests,
   IDP_MODULES,
@@ -136,6 +137,29 @@ test.describe('harness checks', () => {
     ]);
     expect(() => parseExpectations({ users: {} }, 'inline')).toThrow(/provider/);
     expect(() => parseExpectations({ provider: 'p', users: { a: {} } }, 'inline')).toThrow(/roles/);
+  });
+
+  test('the callback reader tells a no-role refusal from a session', () => {
+    const refused = readCallback(401, '{"code": "no_role_granted", "message": "refused"}');
+    expect([refused.status, refused.code, refused.token]).toEqual([401, 'no_role_granted', undefined]);
+    expect(() => sessionToken(refused)).toThrow(/answered 401 no_role_granted/);
+    const admitted = readCallback(200, '{"access_token": "minted", "groups": ["g"]}');
+    expect([sessionToken(admitted), admitted.groups]).toEqual(['minted', ['g']]);
+    expect(readCallback(502, '<html>bad gateway</html>').detail).toContain('bad gateway');
+  });
+
+  test('a session minted for a user expecting no role fails the refusal check', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    try {
+      const admitted = readCallback(200, '{"access_token": "minted"}');
+      await expect(expectNoRoleRefusal(context, admitted, 'fixture')).rejects.toThrow(
+        /callback status/,
+      );
+    } finally {
+      await context.close();
+    }
   });
 
   test('a probe-only provider joins the expectations ones', () => {

@@ -44,6 +44,14 @@ export interface MockOidc {
 export const GOOGLE_SESSION_COOKIE = 'mock_google_session';
 const ENGINE_SESSION_COOKIE = 'mock_engine_session';
 
+// The engine's literal refusal body, kept apart from the harness constants it is checked against.
+const NO_ROLE_REFUSAL = JSON.stringify({
+  code: 'no_role_granted',
+  message:
+    'OIDC login refused: no DFE group with a role is linked to your identity provider groups. ' +
+    'Ask a DFE administrator to link one.',
+});
+
 function esc(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
@@ -200,6 +208,10 @@ export async function startMockOidc(config: MockConfig): Promise<MockOidc> {
             return;
           }
           states.delete(state);
+          if (config.users[login]?.roles.length === 0) {
+            send(res, 401, NO_ROLE_REFUSAL);
+            return;
+          }
           send(res, 200, JSON.stringify({
             access_token: `mock.${login}`,
             token_type: 'bearer',
@@ -211,15 +223,13 @@ export async function startMockOidc(config: MockConfig): Promise<MockOidc> {
         }
       }
 
-      if (url.pathname === '/api/v1/auth/me' || url.pathname === '/api/v1/oidc-providers') {
+      if (url.pathname === '/api/v1/auth/me') {
         const token = (req.headers.authorization ?? '').replace(/^Bearer /, '');
         const user = config.users[token.replace(/^mock\./, '')];
         if (user === undefined) {
           send(res, 401, '{"detail":"unauthorised"}');
-        } else if (url.pathname === '/api/v1/auth/me') {
-          send(res, 200, JSON.stringify({ roles: user.roles, org_ids: [] }));
         } else {
-          send(res, user.roles.includes('admin') ? 200 : 403, '[]');
+          send(res, 200, JSON.stringify({ roles: user.roles, org_ids: [] }));
         }
         return;
       }
