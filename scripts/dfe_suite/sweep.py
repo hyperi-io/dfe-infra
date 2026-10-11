@@ -189,6 +189,7 @@ BRIDGE_JQ = (
     ".[] | {html_url, number, created_at, repo: .repository.full_name,"
     " repo_id: .repository.id} | tojson"
 )
+TOPIC_JQ = ".items[] | {name, full_name, archived} | tojson"
 
 # Only a severity a security tool assigned reaches critical: an advisory's, or a code-scanning
 # rule's security severity. Every other mapping below tops out at high.
@@ -590,13 +591,14 @@ def resolve_members(
     org: str,
     pointer: str,
     infra: str,
+    topics: dict[str, tuple[str, list[str]]] | None = None,
     include: Iterable[str] = (),
     exclude: Iterable[str] = (),
 ) -> tuple[str, list[Member], list[str]]:
-    """Derive the members: stack, suite.yaml nodes, the stack's producers, infra, then config.
+    """Derive the members: stack, suite.yaml nodes, the stack's producers, infra, topics, then config.
 
     A suite.yaml node with ``default_in_pass: false`` is in only when the stack pins it, the
-    walk reaches it, or the include list names it.
+    walk reaches it, a member topic tags it, or the include list names it.
 
     Args:
         root: The parsed versions.yaml.
@@ -604,6 +606,7 @@ def resolve_members(
         org: The owner for a name suite.yaml gives no repo for.
         pointer: The stack pointer, see stack_name.
         infra: The infra repo's suite name.
+        topics: Repos carrying a member topic, from topic_members.
         include: Names or ``owner/name`` slugs to add.
         exclude: Names or slugs to drop; applied last, so it beats every other reason.
 
@@ -626,6 +629,9 @@ def resolve_members(
         why.setdefault(producer, []).append(f"dependency of {', '.join(consumers)}")
     why.setdefault(infra, []).append("infra")
     slugs: dict[str, str] = {}
+    for member, (slug, carried) in (topics or {}).items():
+        slugs[member] = slug
+        why.setdefault(member, []).append(f"topic {', '.join(carried)}")
     for entry in split_names(include):
         member = entry.rsplit("/", 1)[-1]
         if "/" in entry:
@@ -643,6 +649,30 @@ def resolve_members(
             notes.append(f"exclude {entry!r} matches no member")
         members = kept
     return name, members, notes
+
+
+def topic_members(org: str, topics: Iterable[str], api: Api) -> dict[str, tuple[str, list[str]]]:
+    """The unarchived repos in ``org`` carrying each topic, by name.
+
+    Returns:
+        Each repo's ``owner/name`` slug and the topics that brought it in.
+
+    Raises:
+        FleetError: If a topic cannot be listed; a short membership would hide its findings.
+    """
+    found: dict[str, tuple[str, list[str]]] = {}
+    for topic in split_names(topics):
+        endpoint = f"search/repositories?q={quote(f'org:{org} topic:{topic}')}&per_page=100"
+        try:
+            rows = api(endpoint, TOPIC_JQ, True)
+        except GhError as exc:
+            raise FleetError(f"cannot list the repos carrying topic {topic!r}: {exc}") from exc
+        for row in rows:
+            if row.get("archived"):
+                continue
+            name = _text(row.get("name"))
+            found.setdefault(name, (_text(row.get("full_name")), []))[1].append(topic)
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -1696,12 +1726,11 @@ def render_summary(report: dict, model: BacklogModel) -> list[str]:
     return lines
 
 
-def bridge_section(missing: list[BridgeAlert], outside: list[BridgeAlert], total: int) -> dict:
-    """The bridge check's outcome for the report."""
+def bridge_section(missing: list[BridgeAlert], member_alerts: int) -> dict:
+    """The bridge check's outcome for the report; alerts on non-members are out of scope."""
     return {
-        "org_alerts": total,
+        "member_alerts": member_alerts,
         "missing": [asdict(a) for a in missing],
-        "outside_members": [asdict(a) for a in outside],
     }
 
 
@@ -1750,14 +1779,10 @@ def render_text(report: dict, model: BacklogModel | None = None) -> str:
     bridge = report.get("bridge")
     if bridge is not None:
         lines.append(
-            f"BRIDGE: {bridge['org_alerts']} open org alert(s), "
-            f"{len(bridge['missing'])} on members missing from the sweep, "
-            f"{len(bridge['outside_members'])} on non-members"
+            f"BRIDGE: {bridge['member_alerts']} open alert(s) on members, "
+            f"{len(bridge['missing'])} missing from the sweep"
         )
         lines.extend(f"  MISSING {a['repo']} {a['tool']}: {a['url']}" for a in bridge["missing"])
-        lines.extend(
-            f"  outside {a['repo']} {a['tool']}: {a['url']}" for a in bridge["outside_members"]
-        )
         lines.append("")
     totals = report["totals"]
     severities = ", ".join(f"{s} {n}" for s, n in totals["by_severity"].items())
@@ -2004,11 +2029,6 @@ def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
         lines.append(
             f"*Alert bridge gap*: {len(bridge['missing'])} org alert(s) on members missing "
             f"from the sweep"
-        )
-    elif bridge is not None:
-        lines.append(
-            f"Alert bridge is a subset: {bridge['org_alerts']} open org alerts, "
-            f"{len(bridge['outside_members'])} on non-members"
         )
     return "\n".join(lines[:SLACK_SUMMARY_LINES])
 
