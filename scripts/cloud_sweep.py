@@ -924,22 +924,46 @@ def _delete_vpc_endpoint(r: Resource, region: str) -> None:
     _wait_until(lambda: _vpc_endpoint_gone(r.id, region))
 
 
+def _pod_identity_association_gone(cluster_and_id: str, region: str) -> bool:
+    """True once EKS no longer knows the association, which deleting its cluster does too.
+
+    The ARN's resource part is `podidentityassociation/<cluster>/<association id>`.
+    """
+    cluster, _, association = cluster_and_id.partition("/")
+    if not cluster or not association:
+        return False
+    try:
+        run_aws(
+            ["eks", "describe-pod-identity-association", "--cluster-name", cluster,
+             "--association-id", association],
+            region,
+        )
+    except CloudSweepError as exc:
+        if "ResourceNotFoundException" in str(exc):
+            return True
+        raise
+    return False
+
+
 def tagging_hit_gone(resource: Resource, region: str) -> bool:
-    """True when a tagging-API hit names an EC2 object or KMS key AWS reports gone.
+    """True when a tagging-API hit names an EC2 object, KMS key or EKS association AWS reports gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
-    volumes and KMS keys after they go. One still deleting or shutting down is not gone, a KMS key
-    scheduled for deletion is, and any other hit is not judged and reads as present.
+    volumes, KMS keys and EKS pod identity associations after they go. One still deleting or
+    shutting down is not gone, a KMS key scheduled for deletion is, and any other hit is not
+    judged and reads as present.
 
     Raises:
         CloudSweepError: The describe call failed for any reason but NotFound.
     """
     parts = resource.id.split(":", 5)
-    if resource.kind not in ("tagged:ec2", "tagged:kms") or len(parts) < 6:
+    if resource.kind not in ("tagged:ec2", "tagged:kms", "tagged:eks") or len(parts) < 6:
         return False
     resource_type, _, bare_id = parts[5].partition("/")
     if resource.kind == "tagged:kms":
         return resource_type == "key" and _kms_key_gone(bare_id, region)
+    if resource.kind == "tagged:eks":
+        return resource_type == "podidentityassociation" and _pod_identity_association_gone(bare_id, region)
     if resource_type == "volume":
         return _ebs_volume_gone(bare_id, region)
     if resource_type == "natgateway":
