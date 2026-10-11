@@ -32,8 +32,9 @@ Configuration is environment only:
 under the prefix: one that fails `cloud_run.record_problems` is reported and
 left alone, an unexpired one is left alone, and an expired one gets `tofu
 destroy` against its own per-run state, from a copy of this checkout's
-terraform/ tree so no run sees another's overlay. A successful destroy removes
-the record. Then `cloud_sweep.py --expired --grace 0 --delete` in every region,
+terraform/ tree so no run sees another's overlay. A secret Secrets Manager no
+longer holds is dropped from that state first, since the reaper's tag-scoped
+read cannot refresh it. A successful destroy removes the record. Then `cloud_sweep.py --expired --grace 0 --delete` in every region,
 with the state bucket excluded. Exit 0 means nothing expired remains; exit 1
 names what does, so the scheduled run goes red; exit 2 is a configuration error.
 """
@@ -147,6 +148,73 @@ def run_tofu(args: list[str], cwd: Path, env: Mapping[str, str]) -> int:
     return subprocess.run([shutil.which("tofu") or "tofu", *args], cwd=cwd, env=dict(env), check=False).returncode
 
 
+def state_json(cwd: Path, env: Mapping[str, str]) -> dict:
+    """`tofu show -json` of the initialised root, held in memory only: it carries secret values.
+
+    Empty when tofu cannot answer, which leaves the destroy to report its own failure.
+    """
+    try:
+        done = subprocess.run(
+            [shutil.which("tofu") or "tofu", "show", "-json"], cwd=cwd, env=dict(env),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+    except OSError:
+        return {}
+    if done.returncode != 0:
+        return {}
+    try:
+        return json.loads(done.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+# The state's secret resources, and the attribute naming the secret each belongs to.
+_SECRET_ARN_ATTRIBUTE = {"aws_secretsmanager_secret": "arn", "aws_secretsmanager_secret_version": "secret_id"}
+
+
+def _state_resources(module: Mapping[str, object]) -> list[Mapping[str, object]]:
+    """Every resource in one `tofu show -json` module and the modules below it."""
+    found = list(module.get("resources", []))  # type: ignore[arg-type]
+    for child in module.get("child_modules", []):  # type: ignore[union-attr]
+        found += _state_resources(child)
+    return found
+
+
+def _secret_gone(arn: str) -> bool:
+    """True when Secrets Manager no longer has the secret, or has it scheduled for deletion."""
+    region = arn.split(":")[3] if arn.count(":") >= 6 else ""
+    if not region:
+        return False
+    try:
+        body = cloud_sweep.run_aws(["secretsmanager", "describe-secret", "--secret-id", arn], region)
+    except cloud_sweep.CloudSweepError as exc:
+        if "ResourceNotFoundException" in str(exc):
+            return True
+        raise
+    return bool(body.get("DeletedDate"))
+
+
+def stale_state_addresses(state: Mapping[str, object]) -> list[str]:
+    """State addresses of secrets, and their versions, that the account no longer holds.
+
+    The reaper may read a secret's value only while the secret carries the run tag, so a
+    secret removed outside tofu answers its refresh with AccessDenied rather than NotFound,
+    and the provider keeps it in state: every destroy then fails on the same two reads.
+    DescribeSecret is not tag-conditioned, so it tells the two cases apart.
+    """
+    root = (state.get("values") or {}).get("root_module") or {}  # type: ignore[union-attr]
+    held = [r for r in _state_resources(root) if str(r.get("type")) in _SECRET_ARN_ATTRIBUTE]
+    gone = {arn for arn in {_owning_arn(r) for r in held} if arn and _secret_gone(arn)}
+    # The address is read off the resource itself, never off its values, which hold the secret.
+    return [str(r["address"]) for r in held if _owning_arn(r) in gone]
+
+
+def _owning_arn(resource: Mapping[str, object]) -> str:
+    """The ARN of the secret a secret or secret-version resource belongs to."""
+    attribute = _SECRET_ARN_ATTRIBUTE[str(resource.get("type"))]
+    return str((resource.get("values") or {}).get(attribute, ""))  # type: ignore[union-attr]
+
+
 def destroy_run(record: Mapping[str, object]) -> int:
     """`tofu destroy` one run against its own state, from a private copy of terraform/."""
     tf_root = str(record["tf_root"])
@@ -167,6 +235,15 @@ def destroy_run(record: Mapping[str, object]) -> int:
         (root / OVERLAY_NAME).write_text(json.dumps(record["tfvars"]), encoding="utf-8", newline="\n")
         returncode = run_tofu(["init", "-input=false", "-reconfigure"], root, env)
         if returncode == 0:
+            try:
+                gone = stale_state_addresses(state_json(root, env))
+            except cloud_sweep.CloudSweepError as exc:
+                print(f"run {record['run_id']}: could not check its secrets, destroying as is: {exc}", file=sys.stderr)
+                gone = []
+            for address in gone:
+                returncode = run_tofu(["state", "rm", address], root, env)
+                if returncode != 0:
+                    return returncode
             returncode = run_tofu(["destroy", "-auto-approve", "-input=false"], root, env)
         return returncode
 
