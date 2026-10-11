@@ -66,7 +66,9 @@ does, so a component whose tag stays put while its digest moves still moves.
                and after the retarget below, each Application must also show
                a `status.reconciledAt` from after that change, since until
                Argo compares it again its Synced and Healthy are the state
-               from before. After a stage that bumps the
+               from before. An Application of pinned Helm charts that Argo
+               last compared against its current spec is exempt, since
+               neither change can move it. After a stage that bumps the
                Strimzi operator, wait again on every Kafka CR's
                `status.operatorLastSuccessfulVersion` reaching the new
                operator version, under the same bound. A rollout has finished
@@ -651,10 +653,32 @@ def check_cluster_reachable(kubeconfig: str | None, timeout: str = "10s") -> tup
     return True, _last_line(result.stdout) or "cluster reachable"
 
 
+def _sources(holder: dict) -> list[dict]:
+    """The sources an Application spec or its status.sync.comparedTo names.
+
+    comparedTo carries both keys on a multi-source Application, so a non-empty
+    `sources` list wins over `source`.
+    """
+    listed = [src for src in holder.get("sources") or [] if isinstance(src, dict)]
+    if listed:
+        return listed
+    return [holder["source"]] if isinstance(holder.get("source"), dict) else []
+
+
 def _source_revisions(app: dict) -> list[str]:
-    spec = app.get("spec") or {}
-    sources = [spec["source"]] if isinstance(spec.get("source"), dict) else list(spec.get("sources") or [])
-    return [str(src.get("targetRevision") or "") for src in sources if isinstance(src, dict)]
+    return [str(src.get("targetRevision") or "") for src in _sources(app.get("spec") or {})]
+
+
+def _pinned_chart_as_compared(app: dict) -> bool:
+    """Whether every source is a Helm chart and Argo last compared exactly these sources.
+
+    A chart source is fixed by the version its spec names, so neither a deploy
+    repo push nor a target_revision move changes it without changing the spec,
+    and a changed spec leaves comparedTo behind until Argo compares it again.
+    """
+    sources = _sources(app.get("spec") or {})
+    compared = _sources(((app.get("status") or {}).get("sync") or {}).get("comparedTo") or {})
+    return bool(sources) and all(src.get("chart") for src in sources) and sources == compared
 
 
 def _argo_time(value: object) -> datetime | None:
@@ -692,7 +716,10 @@ def check_argo_apps(
     one until the ApplicationSet controller regenerates it. With
     `reconciled_after`, an Application whose `status.reconciledAt` is earlier,
     or absent, also fails: until Argo compares an Application against the
-    change again, its Synced and Healthy are the state from before it.
+    change again, its Synced and Healthy are the state from before it. The
+    exception is an Application made only of Helm chart sources that Argo last
+    compared against its current spec, which neither change can move, so its
+    Synced and Healthy stand without a fresh reconcile.
     """
     rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "applications.argoproj.io")
     if rc != 0:
@@ -701,15 +728,22 @@ def check_argo_apps(
     if not items:
         return False, f"no Argo Applications found in {namespace}"
     bad = []
+    unmoved = 0
     for app in items:
         name = (app.get("metadata") or {}).get("name", "<unnamed>")
         status = app.get("status") or {}
         sync = (status.get("sync") or {}).get("status") or "Unknown"
         health = (status.get("health") or {}).get("status") or "Unknown"
         reconciled = _argo_time(status.get("reconciledAt"))
+        before_change = reconciled_after is not None and (
+            reconciled is None or reconciled < reconciled_after
+        )
+        if before_change and _pinned_chart_as_compared(app):
+            before_change = False
+            unmoved += 1
         if stale_revision and stale_revision in _source_revisions(app):
             bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
-        elif reconciled_after and (reconciled is None or reconciled < reconciled_after):
+        elif before_change:
             seen = status.get("reconciledAt") or "never"
             bad.append(f"{name} (last reconciled {seen}, before this change)")
         elif sync != "Synced" or health != "Healthy":
@@ -717,7 +751,13 @@ def check_argo_apps(
     if bad:
         extra = f", +{len(bad) - 6} more" if len(bad) > 6 else ""
         return False, f"{len(bad)} app(s) not Synced/Healthy: {', '.join(bad[:6])}{extra}"
-    since = ", each reconciled since this change" if reconciled_after else ""
+    since = ""
+    if reconciled_after and unmoved:
+        since = (
+            f", each reconciled since this change but {unmoved} pinned Helm chart(s) it cannot move"
+        )
+    elif reconciled_after:
+        since = ", each reconciled since this change"
     return True, f"{len(items)} Application(s) Synced and Healthy{since}"
 
 
@@ -1750,8 +1790,8 @@ def wait_for_argo(
     now=time.monotonic,
 ) -> tuple[bool, str]:
     """Block until check_argo_apps reports every Application Synced and
-    Healthy (none on `stale_revision`, and each reconciled at or after
-    `reconciled_after`), or `timeout` seconds pass.
+    Healthy (none on `stale_revision`, and each the change can move
+    reconciled at or after `reconciled_after`), or `timeout` seconds pass.
 
     With `rollout_namespace`, every rollout there must also have finished,
     inside the same `timeout`; the timeout detail names each Application not

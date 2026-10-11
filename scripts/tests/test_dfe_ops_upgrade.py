@@ -3518,6 +3518,86 @@ def test_wait_for_argo_times_out_naming_each_app_still_on_the_state_from_before_
     )
 
 
+def _chart_app(name: str, reconciled_at: str, version: str, compared: str | None = None) -> dict:
+    """A Helm-repo Application, as layer1-addons renders keda, with the chart version Argo last compared."""
+    app = _reconciled_app(name, reconciled_at)
+    source = {"repoURL": "https://charts.example.net", "chart": name, "targetRevision": version}
+    app["spec"] = {"source": source}
+    # Argo's comparedTo carries an empty `sources` beside `source` on a single-source Application.
+    app["status"]["sync"]["comparedTo"] = {"source": {**source, "targetRevision": compared or version}, "sources": []}
+    return app
+
+
+def test_a_pinned_chart_argo_compared_against_its_spec_needs_no_reconcile_after_the_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(monkeypatch, _apps(
+        _reconciled_app("loader", "2026-10-11T03:00:07Z"),
+        _chart_app("keda", "2026-10-11T02:51:00Z", "2.21.0"),
+        _chart_app("reloader", "2026-10-11T02:52:00Z", "2.2.18"),
+    ))
+    assert u.check_argo_apps("kc", reconciled_after=CHANGE) == (
+        True, "3 Application(s) Synced and Healthy, each reconciled since this change but 2 pinned Helm chart(s) it cannot move"
+    )
+
+
+def test_a_chart_whose_spec_moved_since_argo_compared_it_still_waits_for_a_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The regenerated ApplicationSet names a new keda version Argo has not compared yet.
+    _mock_run(monkeypatch, _apps(_chart_app("keda", "2026-10-11T02:51:00Z", "2.22.0", compared="2.21.0")))
+    ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
+    assert ok is False
+    assert detail == "1 app(s) not Synced/Healthy: keda (last reconciled 2026-10-11T02:51:00Z, before this change)"
+
+
+def test_a_chart_reading_values_from_a_repository_still_waits_for_a_reconcile(monkeypatch: pytest.MonkeyPatch) -> None:
+    chart = {"repoURL": "https://charts.example.net", "chart": "kafbat", "targetRevision": "1.4.0"}
+    values = {"repoURL": "https://git.example.net/deploy.git", "targetRevision": "main", "ref": "values"}
+    app = _reconciled_app("kafbat", "2026-10-11T02:51:00Z")
+    app["spec"] = {"sources": [chart, values]}
+    app["status"]["sync"]["comparedTo"] = {"source": {"repoURL": ""}, "sources": [chart, values]}
+    _mock_run(monkeypatch, _apps(app))
+    ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
+    assert ok is False
+    assert detail == "1 app(s) not Synced/Healthy: kafbat (last reconciled 2026-10-11T02:51:00Z, before this change)"
+
+
+def test_a_pinned_chart_still_has_to_be_synced_and_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _chart_app("keda", "2026-10-11T02:51:00Z", "2.21.0")
+    app["status"]["health"]["status"] = "Degraded"
+    _mock_run(monkeypatch, _apps(app))
+    ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
+    assert ok is False
+    assert detail == "1 app(s) not Synced/Healthy: keda (sync Synced, health Degraded)"
+
+
+def test_wait_for_argo_after_a_retarget_does_not_wait_on_the_helm_repo_apps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every repository-sourced Application reconciled after the retarget; the Helm-repo ones are on Argo's own cycle."""
+    settled = _apps(
+        _reconciled_app("otel-collector", "2026-10-11T03:00:05Z"),
+        *[_chart_app(chart, "2026-10-11T02:56:00Z", "1.0.0") for chart in ("keda", "metrics-server", "reloader")],
+    )
+    calls = _mock_run(monkeypatch, settled)
+    clock, sleeps, fake_sleep = _clock()
+
+    ok, detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=900, stale_revision="1.0.0-rc.1", reconciled_after=CHANGE,
+        sleep=fake_sleep, now=lambda: clock["t"],
+    )
+
+    assert ok is True, detail
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_sources_prefers_a_listed_sources_over_the_single_source() -> None:
+    listed = [{"repoURL": "a"}, {"repoURL": "b"}]
+    assert u._sources({"source": {"repoURL": ""}, "sources": listed}) == listed
+    assert u._sources({"source": {"repoURL": "a"}, "sources": []}) == [{"repoURL": "a"}]
+    assert u._sources({}) == []
+
+
 def test_change_moment_drops_the_fraction_argo_does_not_stamp() -> None:
     moment = u.change_moment()
     assert moment.microsecond == 0

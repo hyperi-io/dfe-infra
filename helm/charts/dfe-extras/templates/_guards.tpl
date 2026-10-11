@@ -45,6 +45,24 @@ instance overlay.
 {{- end -}}
 
 {{/*
+dfe-extras.telemetryModeGuard -- the refusal of a telemetry.mode no OTLP endpoint
+resolves from.
+
+apps/_common.yaml's otlpEndpointTemplate names an endpoint for hyperdx, receiver and
+external, and none for prometheus by design. Any other value also resolves to an
+empty endpoint, which every app reads as "export nothing", so a typo would switch
+the stack's self-monitoring off with no error. Unset reads as hyperdx, as the
+template reads it.
+*/}}
+{{- define "dfe-extras.telemetryModeGuard" -}}
+{{- $mode := toString ((.Values.telemetry | default dict).mode | default "hyperdx") -}}
+{{- $known := list "hyperdx" "receiver" "external" "prometheus" -}}
+{{- if not (has $mode $known) -}}
+{{- fail (printf "dfe-extras: telemetry.mode is %q, which resolves no OTLP endpoint, so every app would export nothing -- set it to one of %s in the deploy repo's infra/common.yaml" $mode (join ", " $known)) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.receiverExposureGuard -- the receiver's internal-mode refusal.
 
 Internal mode routes through the cluster Gateway, and the only gateway path the

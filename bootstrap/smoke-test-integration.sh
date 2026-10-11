@@ -272,11 +272,12 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== CORE 1: self-telemetry pipeline (infra OTel -> HyperDX -> ClickHouse) ==="
-# The stack instruments itself: each app/daemonset emits OTLP -> otel gateway ->
-# HyperDX -> ClickHouse otel tables. A row NEWER than the freshness window proves
-# the pipeline is STREAMING right now (instrumentation live + ingest live), not
-# that some old row exists. This is the single strongest self-monitoring assert.
+echo "=== CORE 1: self-telemetry pipeline (infra OTel -> collector gateway -> ClickHouse) ==="
+# The stack instruments itself: each app/daemonset emits OTLP to the otel gateway,
+# whose clickhouse exporter writes the otel tables HyperDX reads. A row NEWER than
+# the freshness window proves the pipeline is STREAMING right now (instrumentation
+# live + ingest live), not that some old row exists. This is the single strongest
+# self-monitoring assert.
 #
 # POLL, do not sample once: a stack whose collectors became Ready seconds ago has
 # exported nothing yet, so one SELECT reports a streaming pipeline as a dead one

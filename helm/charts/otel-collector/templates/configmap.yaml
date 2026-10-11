@@ -183,10 +183,9 @@ data:
                 - targets: ["127.0.0.1:{{ .Values.clusterTelemetry.selfTelemetry.port }}"]
             {{- end }}
             {{- if .Values.clusterTelemetry.dfeServices.enabled }}
-            # The DFE services expose /metrics but only PUSH OTLP when built with
-            # scalo's otel-metrics feature, which the Rust six are not (scalo-rs#28).
-            # Scraping the exposition every chart already annotates is what gets
-            # records_*, buffer_* and rdkafka_* into otel_metrics_* meanwhile.
+            # The DFE services also push these metrics over OTLP, with no replica
+            # identity on the pushed resource, so this job is the only per-pod copy
+            # of them in otel_metrics_*.
             # Discovery is by annotation, so a new DFE service needs no edit here.
             - job_name: dfe-services
               scrape_interval: {{ .Values.clusterTelemetry.dfeServices.collectionInterval }}
