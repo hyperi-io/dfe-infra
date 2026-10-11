@@ -22,15 +22,15 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.20"
-    dfe-ui: "v1.7.10"
-    dfe-receiver: "v1.15.43"
-    dfe-loader: "v1.18.47"
-    dfe-archiver: "v1.7.29"
-    dfe-fetcher: "v1.4.33"
-    dfe-transform-vrl: "v1.1.31"
-    dfe-transform-vector: "v1.0.46"
-    dfe-transform-elastic: "v1.1.10"
+    dfe-engine: "v1.22.27"
+    dfe-ui: "v1.7.13"
+    dfe-receiver: "v1.15.44"
+    dfe-loader: "v1.18.48"
+    dfe-archiver: "v1.7.31"
+    dfe-fetcher: "v1.4.35"
+    dfe-transform-vrl: "v1.1.32"
+    dfe-transform-vector: "v1.0.47"
+    dfe-transform-elastic: "v1.1.11"
     culvert: "v2.1.18"
     dfe-hyperdx: "v0.3.3"
 
@@ -257,11 +257,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:abb04a159ab2947363d45fad2fb7f0f1395b6d9d50a119e0a8228067068045c9"
+        digest: "sha256:55e4ca48a250fdda198a5be6e8d05157cfc6802a759c40821a28ce33e03a61b6"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.10"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.13"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
