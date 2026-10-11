@@ -18,10 +18,10 @@ commonLabels:
 
 telemetry:
   # The OTLP endpoint common.yaml's telemetry.mode selects, over global.project
-  # because a thin chart has no top-level project. scalo-service reads an empty
-  # otel.endpoint as "export nothing", so common.yaml's empty value is resolved here
-  # and carried by extraEnv. prometheus mode resolves to an empty string, which an
-  # app reads as "export nothing".
+  # because a thin chart has no top-level project. scalo-service sets no OTLP
+  # variable for an empty otel.endpoint, which leaves an app on its own default, so
+  # the endpoint is resolved here and carried by extraEnv. prometheus mode renders
+  # the variable set and empty, which scalo's OTLP exporters read as off.
   # receiver mode with no receiverEndpoint derives the receiver's OTLP/gRPC port (the
   # otlp-grpc port of its contract, 4317) in the release namespace. The receiver
   # binds it only while its config.otlp.enabled is true.

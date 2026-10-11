@@ -67,8 +67,9 @@ tolerations: []
 # so monitoring need not depend on the data pipeline working. Every app resolves
 # its OTLP endpoint from telemetry.mode, through apps/_common.yaml's
 # telemetry.otlpEndpointTemplate:
-#   hyperdx   (DEFAULT) -- push OTLP straight to HyperDX's own collector, so
-#             monitoring does NOT rely on receiver/loader/ClickHouse being up.
+#   hyperdx   (DEFAULT) -- push OTLP to the stack's collector gateway, which
+#             writes ClickHouse's otel tables itself, so monitoring does not
+#             depend on the receiver or loader.
 #   receiver  -- push through the dfe-receiver ingest path (reuses the scalable
 #             pipeline; for truly large scale).
 #   external  -- push to a deployer-supplied OTLP endpoint (their own backend).
@@ -208,9 +209,9 @@ user:
       - otel
 
 # Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
-# cluster mode: override host with the operator's service (confirm name at deploy);
-# external mode: override host with the supplied endpoint. (Seam: per-deploy this
-# should come from the dfe.hyperi.io/clickhouse_host annotation.)
+# cluster mode: profile-scale.yaml and profile-mesh.yaml name the operator's headless Service;
+# external mode: override host with the supplied endpoint.
+# A deployment overrides host in its deploy repo's infra/common.yaml, layered after the profile file.
 clickhouse:
   host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123

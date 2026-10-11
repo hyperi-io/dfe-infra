@@ -91,7 +91,6 @@ metadata:
     # Infrastructure outputs (from Terraform)
     dfe.hyperi.io/storage_class: "${DFE_STORAGE_CLASS}"
     dfe.hyperi.io/dfe_namespace: "${DFE_NAMESPACE}"
-    dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
     dfe.hyperi.io/kafka_provider: "${DFE_KAFKA_PROVIDER}"
     # "external" for a managed broker (msk, confluent-cloud, redpanda-cloud),
