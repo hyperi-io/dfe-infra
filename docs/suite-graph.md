@@ -453,10 +453,11 @@ either side changes no file in the other, so a build pass has nothing to check.
 
 dfe-transform-wasm and dfe-transform-splack are coming, not members: both are
 alpha and neither has a release tag. Their `versions.yaml` pins are commented
-out and their charts stay in the tree as placeholders, so each joins the file
-when its first tag exists.
+out and neither has a chart here, so each joins the file when its first tag
+exists.
 
-Both are listed under `non_members` with the reason, because a chart with no
+dfe-toolbox and dfe-extras are charts this repo builds itself, so neither is a
+member. Both are listed under `non_members` with the reason, because a chart with no
 member is otherwise an advisory on every drift-check run, and an
 advisory nobody can act on trains the reader to skip the ones that mean
 something. The listing is checked rather than trusted: `check_suite_drift.py`

@@ -79,8 +79,8 @@ def test_hyperdx_that_does_not_answer_ready_fails() -> None:
 
 
 def test_the_engine_schema_check_asks_the_thin_chart_container() -> None:
-    # The 2.2.0 chart's `engine` container does not exist under the thin chart, so
-    # `-c engine` failed a converged engine.
+    # The thin chart names the container dfe-engine, after the chart, so a check
+    # asking for `-c engine` fails a converged engine.
     stdout = smoke({"engine_schema": True}, DFE_ENGINE_WAIT="0")
 
     expect("a converged engine passes", f"[PASS] {ENGINE_SCHEMA}" in stdout, stdout)

@@ -1,12 +1,12 @@
 # dfe-engine's integration values over its thin chart, layered after
-# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
-# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
-# read here through tpl and by dfe-extras, which renders the hunt runner, the keda
-# shim, the minted Secrets, the app catalogue and the dfe-engine-env ConfigMap.
+# apps/_common.yaml: the engine's wiring, under the keys the scalo-service
+# library reads. The keys below them are the engine's own dials, read here
+# through tpl and by dfe-extras, which renders the hunt runner, the keda shim,
+# the minted Secrets, the app catalogue and the dfe-engine-env ConfigMap.
 
-# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
-# where 2.2.0 left it out. Reloader restarts the pod when either ConfigMap
-# changes, as the 2.2.0 catalogue checksum rolled it.
+# The env dfe-extras renders under conditionals, so a variable stays absent
+# where its condition is off. Reloader restarts the pod when either ConfigMap
+# changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -15,13 +15,13 @@ reload:
     - dfe-engine-env
     - dfe-engine-app-catalogue
 
-# The engine's pod token stays mounted, as in 2.2.0: a deployment may log the
-# engine in to OpenBao with Kubernetes auth. The data-plane apps keep the library's
+# The engine's pod token is mounted: a deployment may log the engine in to
+# OpenBao with Kubernetes auth. The data-plane apps keep the library's
 # default of no token.
 serviceAccount:
   mountToken: true
 
-# The contract's secret groups, on the Secrets the 2.2.0 chart named.
+# The contract's secret groups, on the Secrets these values name.
 secrets:
   clickhouse:
     existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
@@ -312,9 +312,9 @@ extraVolumes:
   - name: deploy-repo
     emptyDir: {}
   # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # DFE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. The
-  # 2.2.0 chart mounted the CA from a Secret, else a ConfigMap, and tpl picks the
-  # volume type the same way.
+  # DFE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. tpl
+  # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
+  # from a ConfigMap.
   - name: clickhouse-ca
     '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
       '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
@@ -348,7 +348,7 @@ extraVolumeMounts:
     mountPath: /etc/dfe/clickhouse-ca
     readOnly: true
 
-# The 2.2.0 chart's keys, read above through tpl and by dfe-extras. Keys
+# The engine's own keys, read above through tpl and by dfe-extras. Keys
 # common.yaml sets (clickhouse.*) are not restated, as this file layers after it.
 content:
   mountPath: /etc/dfe-engine/content

@@ -1,10 +1,9 @@
-# Operators and apps the scale tiers need, selected by dfe.hyperi.io/profile.
+# Operators the scale tiers need, selected by dfe.hyperi.io/profile.
 # dfe-scale-operators: Strimzi + the ClickHouse operator, profile scale only.
 # dfe-mesh-operators: the ClickHouse operator alone, profile mesh only
 # (that tier runs no broker).
 # dfe-redpanda-operator: scale plus an explicit redpanda provider opt-in.
-# dfe-scale-apps: the per-source transform workers, on both scale tiers; the
-# element list is empty by default (see its own header).
+# The transforms deploy from their thin charts through layer2-apps.yaml.
 # slim + single clusters match none of these: slim has no Kafka at all, and single
 # runs a NON-operator single broker (kafka-single.yaml) that needs no operator.
 apiVersion: argoproj.io/v1alpha1
@@ -209,123 +208,6 @@ spec:
       syncPolicy:
         automated:
           prune: false
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
-          - RespectIgnoreDifferences=true
----
-apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: dfe-scale-apps
-  namespace: argocd
-spec:
-  goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
-  generators:
-    - matrix:
-        generators:
-          - clusters:
-              selector:
-                matchLabels:
-                  argocd.argoproj.io/secret-type: cluster
-                  dfe.hyperi.io/managed: "true"
-                matchExpressions:
-                  - key: dfe.hyperi.io/profile
-                    operator: In
-                    values: [scale, mesh]
-          - list:
-              elements:
-                # Kafka itself moved to layer2-data (mode-driven, all profiles).
-                # layer-scale keeps the Strimzi operator (dfe-scale-operators) +
-                # the Kafka-dependent transforms.
-                #
-                # NO transforms are deployed by default, and that is deliberate.
-                #
-                # A transform is PER-SOURCE and opt-in (the Source-Definition SSoT):
-                # it moves one topic to another, so it is meaningless until a Source
-                # says which. The default data path -- receiver -> Kafka -> loader ->
-                # ClickHouse -- has no transform hop at all.
-                #
-                # Every transform listed here was broken in deploy, two different ways:
-                #   - splack and wasm have no published image: their versions.yaml
-                #     pins are commented out, so they are excluded from every
-                #     rendered manifest and sat in ImagePullBackOff for the life of
-                #     the cluster. This restores the contract versions.yaml ALREADY
-                #     states: "An app with no digest here is NOT YET PUBLISHED and is
-                #     excluded from rendered manifests."
-                #   - vrl / vector ARE published, but their sourceTopic/destTopic are
-                #     empty ("set per deployment") and nothing set them, so they died
-                #     on "sink.topic must not be empty" and crashlooped.
-                #
-                # Between them they jammed `dfe-ops verify`, whose gate is
-                # all-pods-Ready -- so unconfigured, unshippable transforms were
-                # blocking the default E2E acceptance for the whole deploy.
-                #
-                # elastic is no longer in that set: it publishes images (v1.1.2 on
-                # GHCR as a multi-arch index) and its pin moves with the rc.14 cut.
-                # Its chart also has no topic dials to set -- PR #344 removed
-                # sourceTopic, destTopic and consumerGroup because the app reads
-                # none of them, and the engine compiles its routing from the source.
-                #
-                # To deploy vrl or vector: give it a Source-driven config
-                # (sourceTopic + destTopic) and add it back here. For splack and
-                # wasm, a published image and a digest in versions.yaml come first.
-                #
-                # dfe-transform-splack and dfe-transform-wasm are coming: alpha,
-                # unpublished, and their versions.yaml pins are commented out, so
-                # they cannot be added back here until both are uncommented.
-                []
-  template:
-    metadata:
-      name: '{{ .app }}-{{ .name }}'
-      namespace: argocd
-      annotations:
-        argocd.argoproj.io/sync-wave: '{{ .wave }}'
-    spec:
-      project: '{{ .appProject }}'
-      source:
-        repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
-        targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
-        path: 'helm/charts/{{ .app }}'
-        helm:
-          valueFiles:
-            - "../../../argocd/values/common.yaml"
-            - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
-            - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-          parameters:
-            # The registry every dfe-* image is pulled from, guarded exactly as
-            # in layer2-apps: a missing annotation fails the render rather than
-            # sending each image to Docker Hub.
-            - name: global.registry
-              value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
-          # `values` (a YAML string) rather than a structured block, same reason
-          # layer2-apps.yaml gives: a conditional cannot live in a field this
-          # file's own tests parse as plain YAML before any Go templating runs.
-          values: |
-            {{- $pullSecret := "ghcr-pull-secret" }}
-            {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
-            {{- if $pullSecret }}
-            # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
-            imagePullSecrets:
-              - {{ $pullSecret | quote }}
-            {{- end }}
-      destination:
-        server: '{{ .server }}'
-        namespace: '{{ if .namespace }}{{ .namespace }}{{ else }}{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}{{ end }}'
-      # Replica count belongs to KEDA's HPA, so selfHeal must not revert a scale as
-      # drift. RespectIgnoreDifferences applies the rule during sync, not only in
-      # the diff view. The charts omit `replicas:` under KEDA too
-      # (dfe-common.replicas) -- this covers charts this repo does not own.
-      ignoreDifferences:
-        - group: apps
-          kind: Deployment
-          jsonPointers:
-            - /spec/replicas
-      syncPolicy:
-        automated:
-          prune: true
           selfHeal: true
         syncOptions:
           - CreateNamespace=true

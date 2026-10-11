@@ -37,7 +37,7 @@ noting it was done, for politeness.
 | Bootstrap | `bootstrap/` | bare-cluster Layer 0: detect-or-install for StorageClass, cert-manager, ESO, DFE's own Argo CD |
 | ApplicationSets | `argocd/appsets/` | layer1 addons, layer2 data + apps (git-files fan-out over the deploy repo's `values/*-values.yaml`), scale-tier operators |
 | Tier values | `argocd/values/` | `profile-{slim,single,scale}.yaml` + `common.yaml` + per-cloud overlays |
-| App charts | `helm/charts/` | one base chart per dfe-* service + backing services (clickhouse-cluster, kafka, ferretdb, hyperdx, forgejo, kafbat, otel-collector) |
+| Charts | `helm/charts/` | backing services (clickhouse-cluster, kafka, ferretdb, forgejo, kafbat, otel-collector), platform charts and dfe-extras. Each dfe-* service deploys from its published thin chart |
 | Chart library | `helm/library/dfe-common` | shared templates (image, KEDA scaledobject, names, the wait-for-engine init container) |
 | Version pins | `versions.yaml` | single source for chart/operator/image versions |
 | Cloud prep | `terraform/` (OpenTofu-first, terraform-compatible) | secrets/IAM prep per cloud target |

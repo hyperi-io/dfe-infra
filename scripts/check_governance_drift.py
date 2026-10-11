@@ -23,8 +23,8 @@ An app is deployed from its thin chart (layer2-apps.yaml), so a path resolves
 when it is set in a values layer under argocd/values, in dfe-extras' defaults
 for the chart, or is one of the scalo-service library's per-group keys
 (secrets.<group>.enabled and the like) for a group the app's contract declares.
-A path only the 2.2.0 hand-written chart under helm/charts holds is a warning:
-nothing deploys that chart, so the thin chart may ignore the key.
+A service with no thin chart resolves against its own chart's values under
+helm/charts or helm/edge.
 
 This is key presence. Whether the keys of one action agree with each other (a
 Secret group left on beside the component that mints it) is
@@ -230,7 +230,6 @@ def main(argv: list[str] | None = None) -> int:
     thin_services = _thin_services()
     known = {*charts, *thin_services}
     failures = 0
-    warnings = 0
     checked = 0
     skipped_classes = 0
     for action_file in sorted(actions_dir.glob("*.yaml")):
@@ -274,20 +273,14 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             chart, _instance = resolved
             checked += 1
-            on_thin_path = chart in thin_services
-            declared_by = _thin_source(chart, str(path)) if on_thin_path else None
-            in_chart = _path_exists(charts.get(chart, {}), str(path))
+            if chart in thin_services:
+                declared_by = _thin_source(chart, str(path))
+            elif _path_exists(charts.get(chart, {}), str(path)):
+                declared_by = f"the {chart} chart's values"
+            else:
+                declared_by = None
             if declared_by:
                 print(f"  [ok]   {where}: {path} is declared by {declared_by}", file=sys.stderr)
-            elif in_chart and on_thin_path:
-                print(
-                    f"  [warn] {where}: only the 2.2.0 {chart} chart holds {path!r}, and "
-                    "nothing deploys that chart -- the thin chart may ignore the key",
-                    file=sys.stderr,
-                )
-                warnings += 1
-            elif in_chart:
-                print(f"  [ok]   {where}: {chart} values has {path}", file=sys.stderr)
             else:
                 print(
                     f"  [FAIL] {where}: no values layer, dfe-extras default or chart for "
@@ -300,8 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     verdict = "FAILED" if failures else "PASSED"
     print(
         f"=== governance drift check {verdict}: {checked} helmvars path(s) checked, "
-        f"{failures} failure(s), {warnings} warning(s), {skipped_classes} engine-class "
-        "change(s) skipped ===",
+        f"{failures} failure(s), {skipped_classes} engine-class change(s) skipped ===",
         file=sys.stderr,
     )
     return 1 if failures else 0

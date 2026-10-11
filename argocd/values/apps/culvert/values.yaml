@@ -1,12 +1,12 @@
 # culvert's integration values over its thin chart, layered after
-# apps/_common.yaml: the wiring the 2.2.0 culvert chart derived, under the keys the
-# scalo-service library reads. dfe-extras renders the CULVERT_* environment
-# (dfe-culvert-env), the tunnel NetworkPolicy and the refusals from the culvert
-# chart's own keys. This file layers after the cloud, edge and profile files, so
-# the keys they set -- exposure, pki.mode, peers, local.yaml's receiver
-# `listeners` -- have no default here.
+# apps/_common.yaml: the tunnel's wiring, under the keys the scalo-service
+# library reads. dfe-extras renders the CULVERT_* environment (dfe-culvert-env),
+# the tunnel NetworkPolicy and the refusals from culvert's own keys. This file
+# layers after the cloud, edge and profile files, so the keys they set --
+# exposure, pki.mode, peers, local.yaml's receiver `listeners` -- have no
+# default here.
 
-# The objects keep the culvert chart's names.
+# The objects are named dfe-culvert rather than after the release.
 fullnameOverride: dfe-culvert
 
 # The profile file alone, not its directory, so the profiles the image ships in

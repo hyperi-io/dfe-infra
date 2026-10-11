@@ -24,7 +24,7 @@ k8s path renders it, how the docker path renders it, and the cascade rule.
 
 | Class | Meaning | k8s render | docker render |
 |-------|---------|-----------|---------------|
-| A | dfe-* owned app (GHCR) | app chart appVersion == `apps.<n>`; image `tag@digest` | `.env` `DFE_<N>_VERSION=tag@digest` |
+| A | dfe-* owned app (GHCR) | published thin chart pinned by `chart-digests.<n>`, image `tag@digest` | `.env` `DFE_<N>_VERSION=tag@digest` |
 | B | third-party via an operator + a CR WE author | OUR chart templates the CR image/version from the SSoT logical version; the operator chart is a SEPARATE k8s-only pin | plain upstream image in `.env` |
 | C | upstream chart we do NOT template, k8s-ONLY | appset/chart pins the chart version | none (not in compose) |
 | D | third-party plain image in BOTH paths | OUR chart sets the image via values from the SSoT | same upstream image in `.env` |
@@ -37,10 +37,10 @@ k8s solves with different components). Rendering must emit these for docker only
 ## Class A - dfe-* owned apps
 
 Same GHCR image, same tag both paths. SSoT: `apps.<n>` (tag) + `digests.<n>`
-(sha256). k8s: `helm/charts/dfe-<n>` appVersion == `apps.<n>` (drift-check
-enforced); `dfe-common.image` renders `repo:<tag>` and a `tag@sha256` value is a
-valid pull spec, so the digest flows through values. docker: `.env`
-`DFE_<N>_VERSION=<tag>@<digest>`.
+(sha256). k8s: each app deploys from its published thin chart, at the version
+`apps.<n>` names less its `v`, pinned by `chart-digests.<n>`. The layer 2
+appsets carry a drift-checked copy of each chart digest, and the thin chart
+carries the image `tag@sha256`. docker: `.env` `DFE_<N>_VERSION=<tag>@<digest>`.
 
 | App | SSoT | docker `.env` var | Published? |
 |-----|------|-------------------|-----------|
@@ -57,14 +57,14 @@ valid pull spec, so the digest flows through values. docker: `.env`
 
 Notes:
 - dfe-transform-splack and dfe-transform-wasm are COMING, not members. Alpha and
-  unpublished, so their `apps:` pins are commented out and their charts stay in
-  the tree as placeholders. Every line to uncomment when they ship carries the
-  word `coming` beside one of the two names, so grep that.
+  unpublished, so their `apps:` pins are commented out and they have no chart.
+  Every line to uncomment when they ship carries the word `coming` beside one of
+  the two names, so grep that.
 - dfe-transform-elastic is PRE-GA/alpha and NOT published to GHCR (no digest).
   `dfe-stack` already excludes any app without a digest from rendered manifests -
   loudly. It stays excluded from a stack cut until it publishes. Do not render it.
-- dfe-hyperdx is the HyperDX fork. k8s chart pulls `ghcr.io/hyperi-io/dfe-hyperdx`
-  (tag = fork CODE_VERSION via appVersion). docker pulls
+- dfe-hyperdx is the HyperDX fork. Its k8s thin chart pulls
+  `<registry>/dfe-hyperdx` at `content.dfe-hyperdx`. docker pulls
   `ghcr.io/hyperi-io/hyperi-hyperdx` (NOTE: a DIFFERENT image name than k8s -
   `hyperi-hyperdx` vs `dfe-hyperdx`; reconcile the name, or the render must map
   the two). Its SSoT lives in `content.dfe-hyperdx` (PENDING-FIRST-IMAGE), not

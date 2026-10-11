@@ -10,9 +10,8 @@
 """Where a chart lives, for the tests that render it by name.
 
 Most charts sit at `helm/charts/<name>`, so most callers need nothing from
-this. The edge module keeps its two under `helm/edge`, and the gateway's
-directory name is not its chart name, so a path built by concatenation is
-wrong for them.
+this. The edge module keeps its gateway under `helm/edge`, in a directory
+that is not its chart name, so a path built by concatenation is wrong for it.
 
 The leading underscore keeps pytest from collecting this module as a test file.
 
@@ -23,19 +22,14 @@ The leading underscore keeps pytest from collecting this module as a test file.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 HELM = REPO_ROOT / "helm"
 
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
-from check_versions_drift import UNDEPLOYED_CHARTS  # noqa: E402
-
 # chart name -> directory, relative to helm/, for every chart outside
 # helm/charts. A name absent here takes the helm/charts default.
 ELSEWHERE = {
-    "culvert": "edge/culvert",
     "envoy-gateway-config": "edge/gateway",
 }
 
@@ -43,10 +37,6 @@ ELSEWHERE = {
 # an invariant over all of them -- a tree left out of one is a silent hole in
 # the check rather than a failure.
 CHART_TREES = (HELM / "charts", HELM / "edge")
-
-# The charts no appset deploys, as the drift check lists them. A sweep over
-# CHART_TREES skips them, since an invariant they break breaks nothing that runs.
-UNDEPLOYED = frozenset(REPO_ROOT / chart for chart in UNDEPLOYED_CHARTS)
 
 
 def chart_dir(name: str) -> Path:

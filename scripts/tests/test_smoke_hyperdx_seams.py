@@ -157,7 +157,7 @@ def run_smoke(
     """The smoke script against the local server, and what the server saw.
 
     The settings live in an envFrom ConfigMap, the thin chart's shape, unless
-    `in_deployment_env` puts them in the Deployment's own env, the 2.2.0 chart's.
+    `in_deployment_env` puts them in the Deployment's own env.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), Frontend)
     server.cfg = {
@@ -267,7 +267,7 @@ def test_a_pod_that_answers_nothing_passes_no_embed_check() -> None:
 
 
 def test_settings_in_the_deployment_env_read_the_same() -> None:
-    # The 2.2.0 chart set them on the Deployment; the thin chart moved them to a ConfigMap.
+    # The thin chart sets them in a ConfigMap, and the script reads the container's env either way.
     out, _ = run_smoke(in_deployment_env=True)
 
     for name in (JWKS, ES384, PING, TABLE, CSP, XFO):

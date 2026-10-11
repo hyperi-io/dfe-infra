@@ -382,8 +382,7 @@ nodes:
         public: false
 
   # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
-  # uncomment their versions.yaml pins and add them here when they ship. See
-  # non_members below, which is where the reason is recorded machine-readably.
+  # uncomment their versions.yaml pins and add them here when they ship.
 
   # --- ui ------------------------------------------------------------------
 
@@ -603,10 +602,6 @@ nodes:
 # joins the graph or loses its chart and this block cannot go stale silently.
 # ---------------------------------------------------------------------------
 non_members:
-
-  dfe-transform-wasm: "Coming: alpha, unpublished, and no release tag, so it fails the release-authority test above. Its versions.yaml pin is commented out and its chart stays as a placeholder; it becomes a node when it first tags."
-
-  dfe-transform-splack: "Coming: alpha, unpublished, and no release tag, same as dfe-transform-wasm. A rule-config chart riding the dfe-transform-vrl engine image rather than an image of its own."
 
   dfe-toolbox: "Not a repo: the chart and the dfe-toolbox-{base,aws,gcp,azure} image family are built from Dockerfiles in THIS repo (docker/dfe-toolbox/) off the stack's own toolbox: pins, so it has no upstream to hold a build-cycle edge against. A member is a repo that releases something this repo consumes; dfe-toolbox releases with dfe-infra because it IS dfe-infra."
 

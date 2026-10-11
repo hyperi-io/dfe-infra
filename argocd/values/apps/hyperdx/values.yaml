@@ -1,11 +1,11 @@
 # dfe-hyperdx's integration values over its thin chart, layered after
-# apps/_common.yaml: the wiring the 2.2.0 chart derived, under the keys the
-# scalo-service library reads. The keys below them are the 2.2.0 chart's own,
-# read here through tpl and by dfe-extras, which renders the generated keys and
-# the dfe-hyperdx-env ConfigMap.
+# apps/_common.yaml: HyperDX's wiring, under the keys the scalo-service library
+# reads. The keys below them are HyperDX's own dials, read here through tpl and
+# by dfe-extras, which renders the generated keys and the dfe-hyperdx-env
+# ConfigMap.
 
-# The env the 2.2.0 chart wrote under conditionals, so a variable stays absent
-# where 2.2.0 left it out. Reloader restarts the pod when the ConfigMap changes.
+# The env dfe-extras renders under conditionals, so a variable stays absent
+# where its condition is off. Reloader restarts the pod when the ConfigMap changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -13,7 +13,7 @@ reload:
   configmaps:
     - dfe-hyperdx-env
 
-# The contract's secret groups, on the Secrets the 2.2.0 chart named.
+# The contract's secret groups, on the Secrets these values name.
 secrets:
   session:
     existingSecret: '{{ .Values.sessionSecret.name }}'
@@ -67,9 +67,9 @@ extraVolumes:
   - name: dashboards
     emptyDir: {}
   # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. The 2.2.0
-  # chart mounted the CA from a Secret, else a ConfigMap, and tpl picks the volume
-  # type the same way.
+  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. tpl
+  # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
+  # from a ConfigMap.
   - name: clickhouse-ca
     '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
       '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
