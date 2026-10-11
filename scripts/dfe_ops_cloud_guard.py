@@ -38,9 +38,10 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
       from its dial, so applying the dial again stops on AlreadyExists after
       paying for part of a deployment.
 
-(c) and (d) leave out a NAT gateway, VPC endpoint or instance that EC2 reports
-deleted, terminated or not found, which the tagging API goes on listing for a
-while. One whose state cannot be read counts as present.
+(c) and (d) leave out a hit AWS reports deleted, terminated or not found, which
+the tagging API goes on listing for a while: an EC2 object, a KMS key scheduled
+for deletion, or an EKS pod identity association whose cluster is gone. One
+whose state cannot be read counts as present.
 
 It also refuses a dial whose tags.lifecycle is not ephemeral, because a
 persistent deployment's deletion protection would stop the teardown short.
@@ -395,8 +396,8 @@ class AwsGuard:
     def run_resources(self, keys: cloud_run.RunTagKeys, exclude_bucket: str) -> list:
         """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside.
 
-        A NAT gateway, VPC endpoint or instance the tagging API still lists after EC2 deleted it is
-        not one.
+        A hit the tagging API still lists after AWS deleted it is not one
+        (cloud_sweep.tagging_hit_gone names the classes it can judge).
         """
         found = cloud_sweep.AwsProvider(self.region).collect({}, exclude_bucket, run_key=keys.run)
         return [

@@ -235,8 +235,9 @@ run "redpanda_cloud_public_when_asked" {
 }
 
 // One principal at the on-prem grant set: topic * literal with Read, Write,
-// Create and Describe, and groups fenced to the dfe- prefix with Read and
-// Describe. Widening it here would make the cloud path looser than ours.
+// Create, Describe, Delete, Alter, DescribeConfigs and AlterConfigs, and groups
+// fenced to the dfe- prefix with Read and Describe. Widening it past on-prem
+// would make the cloud path looser than ours.
 run "redpanda_cloud_acls_at_on_prem_parity" {
   command = plan
 
@@ -245,8 +246,8 @@ run "redpanda_cloud_acls_at_on_prem_parity" {
   }
 
   assert {
-    condition     = length(redpanda_acl.topics) == 4
-    error_message = "the topic grant must be exactly Read, Write, Create and Describe"
+    condition     = toset([for acl in values(redpanda_acl.topics) : acl.operation]) == toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
+    error_message = "the topic grant must be exactly every topic call dfe-engine makes, as kafka-user.yaml gives on-prem"
   }
 
   assert {

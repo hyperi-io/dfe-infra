@@ -4,9 +4,10 @@
 // SASL/SCRAM: something has to be allowed to write the first ACL, and that
 // something must not be the credential DFE runs as. The manager account holds
 // CloudClusterAdmin and exists only for tofu; the DFE account holds the grant
-// set kafka-user.yaml already gives on-prem -- topic * with Read, Write, Create
-// and Describe, and consumer groups fenced to the dfe- prefix with Read and
-// Describe. No Delete, no Alter, no cluster operations.
+// set helm/charts/kafka/templates/kafka-user.yaml gives on-prem -- topic * with
+// Read, Write, Create, Describe, Delete, Alter, DescribeConfigs and
+// AlterConfigs, which is every topic call dfe-engine makes, and consumer groups
+// fenced to the dfe- prefix with Read and Describe. No cluster operations.
 //
 // The credential is an API key and secret used as SASL PLAIN. Confluent has no
 // SCRAM on any tier.
@@ -16,7 +17,7 @@
 // it -- inside the VPC, or behind a resolver rule that forwards into it.
 
 locals {
-  topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE"])
+  topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
 
   group_grants = toset(["READ", "DESCRIBE"])
 

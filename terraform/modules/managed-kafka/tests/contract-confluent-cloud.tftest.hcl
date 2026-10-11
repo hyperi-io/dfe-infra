@@ -326,8 +326,18 @@ run "confluent_cloud_acls_at_on_prem_parity" {
   }
 
   assert {
-    condition     = length(confluent_kafka_acl.dfe) == 6
-    error_message = "the grant set is four topic operations plus two consumer group operations"
+    condition     = length(confluent_kafka_acl.dfe) == 10
+    error_message = "the grant set is eight topic operations plus two consumer group operations"
+  }
+
+  assert {
+    condition     = toset([for acl in values(confluent_kafka_acl.dfe) : acl.operation if acl.resource_type == "TOPIC"]) == toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
+    error_message = "the topic grant must be every topic call dfe-engine makes, as kafka-user.yaml gives on-prem"
+  }
+
+  assert {
+    condition     = alltrue([for acl in values(confluent_kafka_acl.dfe) : acl.resource_type != "CLUSTER"])
+    error_message = "no cluster operation is granted to the DFE principal"
   }
 
   assert {

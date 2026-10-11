@@ -69,14 +69,15 @@ MSK_VALUES = {
     },
 }
 
-# The on-prem grants, read from helm/charts/kafka/templates/kafka-user.yaml.
-# Alter raises a topic's partition count; Delete is what deleting a source needs
-# to take its _land/_load pair with it.
-TOPIC_OPERATIONS = {"Read", "Write", "Create", "Describe", "Alter", "Delete"}
+# The on-prem grants, read from helm/charts/kafka/templates/kafka-user.yaml:
+# every topic call dfe-engine makes, which that file maps operation by operation.
+TOPIC_OPERATIONS = {
+    "Read", "Write", "Create", "Describe", "Alter", "Delete", "DescribeConfigs", "AlterConfigs",
+}
 GROUP_OPERATIONS = {"Read", "Describe"}
 # What on-prem deliberately withholds. A cluster operation is not in this set
 # because the word "Cluster" is checked on its own below.
-WITHHELD_OPERATIONS = {"AlterConfigs", "ClusterAction", "IdempotentWrite", "All"}
+WITHHELD_OPERATIONS = {"ClusterAction", "IdempotentWrite", "All"}
 
 
 def merged(*overlays: dict) -> dict:
@@ -192,7 +193,7 @@ def test_the_acls_are_the_on_prem_grants_and_nothing_more() -> None:
         parts = line.split()
         return {parts[i + 1] for i, p in enumerate(parts) if p == "--operation"}
 
-    expect("the topic grant is Read/Write/Create/Describe/Alter/Delete",
+    expect("the topic grant is every topic call dfe-engine makes",
            operations(topic[0]) == TOPIC_OPERATIONS, f"got {operations(topic[0])}")
     expect("the group grant is Read/Describe",
            operations(group[0]) == GROUP_OPERATIONS, f"got {operations(group[0])}")
@@ -223,6 +224,18 @@ def test_the_job_grants_exactly_what_the_kafkauser_grants() -> None:
     expect("the KafkaUser topic grant is the set this file names",
            acls["topic"] == TOPIC_OPERATIONS, f"got {acls['topic']}")
     expect("the KafkaUser group grant is the set this file names",
+           acls["group"] == GROUP_OPERATIONS, f"got {acls['group']}")
+
+
+def test_the_in_cluster_redpanda_user_grants_the_same_set() -> None:
+    docs = render(merged({"kafka": {"mode": "cluster", "provider": "redpanda",
+                                    "redpanda": {"acceptLicense": True}}}))
+    users = [d for d in docs if d.get("kind") == "User"]
+    expect("the redpanda path renders one User", len(users) == 1, f"got {len(users)}")
+    acls = {a["resource"]["type"]: set(a["operations"]) for a in users[0]["spec"]["authorization"]["acls"]}
+    expect("the User topic grant is the set this file names",
+           acls["topic"] == TOPIC_OPERATIONS, f"got {acls['topic']}")
+    expect("the User group grant is the set this file names",
            acls["group"] == GROUP_OPERATIONS, f"got {acls['group']}")
 
 
@@ -379,6 +392,7 @@ def main() -> int:
         test_the_job_needs_somewhere_to_connect_and_an_off_switch()
         test_the_acls_are_the_on_prem_grants_and_nothing_more()
         test_the_job_grants_exactly_what_the_kafkauser_grants()
+        test_the_in_cluster_redpanda_user_grants_the_same_set()
         test_the_principal_is_a_value()
         test_the_job_creates_no_topic()
         test_the_iam_jar_is_pinned_and_verified()

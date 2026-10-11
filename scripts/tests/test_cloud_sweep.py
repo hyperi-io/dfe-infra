@@ -633,6 +633,46 @@ def test_a_kms_key_scheduled_for_deletion_is_gone(
     assert call[call.index("--key-id") + 1] == KMS_ARN.rsplit("/", 1)[-1]
 
 
+POD_IDENTITY_ARN = f"arn:aws:eks:{REGION}:{ACCOUNT_ID}:podidentityassociation/dfe-example/a-0example"
+CLUSTER_NOT_FOUND = (
+    "An error occurred (ResourceNotFoundException) when calling the DescribePodIdentityAssociation "
+    "operation: No cluster found for name: dfe-example."
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "gone"),
+    [
+        pytest.param(_fail(CLUSTER_NOT_FOUND), True, id="cluster-gone"),
+        pytest.param(_ok({"association": {"associationId": "a-0example"}}), False, id="association-live"),
+    ],
+)
+def test_a_pod_identity_association_is_gone_with_its_cluster(
+    monkeypatch: pytest.MonkeyPatch, answer: subprocess.CompletedProcess, gone: bool
+) -> None:
+    """Deleting a cluster takes its associations, and the tagging API goes on listing them."""
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return answer
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(POD_IDENTITY_ARN, "tagged:eks"), REGION) is gone
+    (call,) = calls
+    assert call[call.index("--cluster-name") + 1] == "dfe-example"
+    assert call[call.index("--association-id") + 1] == "a-0example"
+
+
+def test_another_eks_class_is_never_judged_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("nothing is described for a class with no gone-check")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    hit = _tagging_hit(f"arn:aws:eks:{REGION}:{ACCOUNT_ID}:cluster/dfe-example", "tagged:eks")
+    assert cloud_sweep.tagging_hit_gone(hit, REGION) is False
+
+
 @pytest.mark.parametrize("arn", [NAT_ARN, ENDPOINT_ARN, INSTANCE_ARN, ENI_ARN, VOLUME_ARN])
 def test_a_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
     monkeypatch: pytest.MonkeyPatch, arn: str

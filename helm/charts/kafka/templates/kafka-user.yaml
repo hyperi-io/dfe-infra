@@ -26,22 +26,28 @@ spec:
   authorization:
     type: simple
     acls:
-      # Produce, consume, and the whole topic lifecycle dfe-engine drives. Create
-      # makes the declared bootstrap topic set at the engine's own startup --
-      # nothing else creates a topic on any tier. Alter raises a partition count
-      # when a source's throughput changes. Delete is what DELETE /sources/{name}
-      # needs: the same dial that made a source's _land/_load pair removes it,
-      # and without the grant deleting a source leaves its topics behind and
-      # costs the loader a partition assignment for a source nothing can write
-      # to. One principal serves both paths and the ACL is one wildcard rule, so
-      # the grant cannot be narrowed to the source topics alone.
+      # Produce, consume, and every topic call dfe-engine makes (TopicAdmin in
+      # its dfe_engine/kafka/topics.py). Create makes the declared
+      # bootstrap topic set at the engine's own startup -- nothing else creates
+      # a topic on any tier. Alter is CreatePartitions, which widens a topic
+      # when a source's throughput changes. Delete is what DELETE
+      # /sources/{name} needs to take a source's _land/_load pair with it.
+      # DescribeConfigs and AlterConfigs are the engine's topic status read and
+      # its incremental config converge, and the smoke suite's DLQ retention
+      # check reads the same config. One principal serves every path and the
+      # ACL is one wildcard rule, so the grant cannot be narrowed to the source
+      # topics alone. The managed bodies grant this set too: msk-bootstrap-job.yaml
+      # and terraform/modules/managed-kafka/{confluent,redpanda}-cloud/acls.tf.
       # EVERY CLUSTER OPERATION IS STILL WITHHELD: a compromised engine
-      # principal must not be able to reconfigure or take over the bus.
+      # principal must not be able to reconfigure or take over the bus. The
+      # engine's describe_cluster needs none -- the broker answers it to any
+      # authenticated client unless it asks for authorised operations, which
+      # the engine does not.
       - resource:
           type: topic
           name: "*"
           patternType: literal
-        operations: ["Read", "Write", "Create", "Describe", "Alter", "Delete"]
+        operations: ["Read", "Write", "Create", "Describe", "Alter", "Delete", "DescribeConfigs", "AlterConfigs"]
       - resource:
           type: group
           # patternType: prefix means the name IS the literal prefix -- do NOT
