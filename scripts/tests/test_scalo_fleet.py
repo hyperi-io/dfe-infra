@@ -964,6 +964,12 @@ class PyConstraintTests(unittest.TestCase):
         assert '"scalo[expression,http,metrics]>=2.29.10"' in text
         assert '"httpx>=0.27"' in text
 
+    def test_an_upper_bound_survives_the_floor_moving(self) -> None:
+        self._pyproject('dependencies = ["scalo[expression,http,metrics]>=2.31.5,<3"]\n')
+        sf._bump_py_constraint(self.repo, "2.31.6")
+        text = (self.repo / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"scalo[expression,http,metrics]>=2.31.6,<3"' in text
+
     def test_a_bare_scalo_constraint_also_moves(self) -> None:
         self._pyproject('dependencies = ["scalo>=2.0.0"]\n')
         sf._bump_py_constraint(self.repo, "2.29.10")
