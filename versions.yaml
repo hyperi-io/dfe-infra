@@ -3420,7 +3420,7 @@ stacks:
       envoy-gateway-proxy: "distroless-v1.39.2"  # 2026-10-01, fixes CVE-2026-35189. Replaces the distroless-v1.39.1 that Envoy Gateway v1.9.2 defaults to.
 
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
-    # check_versions_drift.py holds each chart's appVersion to its pin.
+    # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.20"        # 2026-10-10, amd64 and arm64. The image thin chart 1.22.20 pins. Records not_configured for a directory with no credential, fails a sync whose credential is refused and names that credential in the Google and Entra errors, keeps dulwich's full repack off the write path (dfe-engine#801 #802 #803 #804).
       dfe-ui: "v1.7.10"              # 2026-10-10, amd64 and arm64. The image thin chart 1.7.10 pins. Form errors show beside hints, a hunt edit keeps its source and target table changes, errors link to their fields and required ones are marked (dfe-ui#516 #518).
@@ -3434,7 +3434,7 @@ stacks:
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
-      # The edge-fleet VPN, opt in per deployment (helm/edge/culvert). A public Apache-2.0 repo.
+      # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
       culvert: "v2.1.18"            # 2026-10-09, amd64 and arm64. The image thin chart 2.1.18 pins.
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
@@ -3458,6 +3458,7 @@ stacks:
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
     # and refuse to render a service whose entry is not a sha256 digest: "unpublished" marks a chart
     # not published yet. The chart version is the app tag without its v, so it has no key here.
+    # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"                # 2.1.18
       dfe-archiver: "sha256:90f7d9ec8cddb4d18c41caca5e38ab21a96be7159ddceb1fa2899bb726da5aae"           # 1.7.29

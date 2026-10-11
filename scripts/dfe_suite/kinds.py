@@ -729,7 +729,7 @@ def check_image_pin(
     package: str | None = None,
     dry_run: bool = True,
 ) -> CheckResult:
-    """The tag and its digest mirror move together, in dfe-infra, not here."""
+    """The tag and its thin chart's digest move together, in dfe-infra, not here."""
     ref = _first(edge)
     app = str(edge.get("from") or "the app")
     return CheckResult(
@@ -737,8 +737,8 @@ def check_image_pin(
         _with_note(
             edge,
             f"{ref.describe()} pins the image. Run `dfe-stack bump-app {app} "
-            f"{producer_version}` in dfe-infra; the drift check confirms the "
-            f"appVersion and the digest mirror agree.",
+            f"{producer_version}` in dfe-infra, which repins the thin chart at "
+            f"that version; check_versions_drift.py --fix carries both into every copy.",
         ),
         ACTION_BUMP_APP,
     )
@@ -832,8 +832,8 @@ KIND_SUMMARY: dict[str, str] = {
         "a person to read"
     ),
     "image-pin": (
-        "hands back the `dfe-stack bump-app` command; the tag and digest move in "
-        "dfe-infra, not here"
+        "hands back the `dfe-stack bump-app` command; the tag and the thin chart's "
+        "digest move in dfe-infra, not here"
     ),
     "version-pin": "hands back the pin to move and the validation to re-run",
     "derived-pins": "nothing can drift, so the walk goes past it",

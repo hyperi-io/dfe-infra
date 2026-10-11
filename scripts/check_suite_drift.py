@@ -24,14 +24,16 @@
     python3 scripts/check_suite_drift.py [--repos DIR] [--ref REF] [--strict]
 
 FAIL (exit 1): a structural problem, an in-repo citation that no longer exists
-or no longer names the producer's package, a chart or pin that suite.yaml says
-exists and does not, a `non_members` entry that is also a node or that names
-nothing, or a docs diagram that differs from what the file generates.
+or no longer names the producer's package, an image-pin edge into dfe-infra
+whose producer the current versions.yaml stack no longer pins, a `non_members`
+entry that is also a node or that names nothing, or a docs diagram that
+differs from what the file generates.
 
-WARN (exit 0): a chart or versions.yaml app pin with no member, or a producer
-with out-edges and no diagram block on the docs page -- advisory, because a
-repo joins the suite when it tags and its chart may exist first. A name listed
-under `non_members` raises no advisory: the reason is recorded there instead.
+WARN (exit 0): a chart in the tree, a thin chart the stack pins, or a
+versions.yaml app pin with no member, or a producer with out-edges and no
+diagram block on the docs page -- advisory, because a repo joins the suite
+when it tags and its chart may exist first. A name listed under `non_members`
+raises no advisory: the reason is recorded there instead.
 
 SKIPPED: a citation into a member repo that is not on disk, or whose `--ref`
 (default origin/main) the clone does not have. Exit 0 by default so the
@@ -204,51 +206,90 @@ def check_citations(
     return fails, sorted(no_clone), sorted(no_ref)
 
 
-def check_charts(graph: dict) -> tuple[list[str], list[str], set[str]]:
-    """Every chart an edge cites exists; every dfe-* chart has a member (advisory).
-
-    Returns the chart names it looked at, so a `non_members` entry naming none
-    of them can be reported as stale.
-    """
-    fails: list[str] = []
-    warns: list[str] = []
-    declared = graph.get("non_members") or {}
-    cited_charts: set[str] = set()
-    for edge in graph["edges"]:
-        m = re.match(r"^dfe-infra/helm/charts/([^/]+)/", edge.get("evidence", ""))
-        if m:
-            cited_charts.add(m.group(1))
-            if not (CHARTS / m.group(1)).is_dir():
-                fails.append(f"{edge['from']} -> {edge['to']}: chart {m.group(1)} is gone")
-    charts = {p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")}
-    for chart in sorted(charts):
-        if chart not in cited_charts and chart not in declared:
-            warns.append(f"chart {chart} has no member in suite.yaml")
-    return fails, warns, charts
+# A thin chart's name is its deploy.service, except where the appset maps one.
+_THIN_CHART_NAMES = {"hyperdx": "dfe-hyperdx"}
 
 
-def check_app_pins(graph: dict) -> tuple[list[str], list[str], set[str]]:
-    """versions.yaml apps: keys with no member -- advisory, the pin may predate the tag.
+def read_stack() -> tuple[list[str], dict[str, set[str]]]:
+    """The current stack's section keys -- apps, content, digests, chart-digests.
 
     A versions.yaml this cannot read at all is a FAIL, not an advisory: with no
-    `current:` pointer or no apps block there is nothing to be advisory about,
-    and reporting zero advisories would read as a clean check.
+    `current:` pointer or no apps block there is nothing to check against, and
+    reporting zero findings would read as a clean check. A missing section
+    other than apps reads as empty.
     """
     text = VERSIONS.read_text(encoding="utf-8", errors="replace")
     current = re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE)
     if not current:
-        return ["versions.yaml has no `current:` pointer"], [], set()
+        return ["versions.yaml has no `current:` pointer"], {}
     block = re.search(rf"^  {re.escape(current.group(1))}:\n(.*?)(?=^  [0-9]|\Z)", text, re.MULTILINE | re.DOTALL)
-    apps = re.search(r"^    apps:\n(.*?)(?=^    [a-z]|\Z)", block.group(1), re.MULTILINE | re.DOTALL) if block else None
-    if not apps:
-        return [f"versions.yaml stack {current.group(1)} has no apps: block"], [], set()
+    sections: dict[str, set[str]] = {}
+    for name in ("apps", "content", "digests", "chart-digests"):
+        section = rf"^    {re.escape(name)}:\n(.*?)(?=^    [a-z]|\Z)"
+        found = re.search(section, block.group(1), re.MULTILINE | re.DOTALL) if block else None
+        if found:
+            keys = re.findall(r"^      ([A-Za-z0-9_.-]+):", found.group(1), re.MULTILINE)
+            sections[name] = set(keys)
+    if "apps" not in sections:
+        return [f"versions.yaml stack {current.group(1)} has no apps: block"], {}
+    return [], sections
+
+
+def check_charts(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], set[str]]:
+    """Every dfe-* chart in the tree and every thin chart the stack pins has a member (advisory).
+
+    Returns the chart names it looked at, so a `non_members` entry naming none
+    of them can be reported as stale.
+    """
     declared = graph.get("non_members") or {}
-    warns = []
-    keys = set(re.findall(r"^      ([A-Za-z0-9_.-]+):", apps.group(1), re.MULTILINE))
-    for key in sorted(keys):
-        if key not in graph["nodes"] and key not in declared:
-            warns.append(f"versions.yaml apps.{key} has no member in suite.yaml")
-    return [], warns, keys
+    charts = {p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")}
+    charts |= {_THIN_CHART_NAMES.get(s, s) for s in stack.get("chart-digests", set())}
+    warns = [
+        f"chart {chart} has no member in suite.yaml"
+        for chart in sorted(charts)
+        if chart not in graph["nodes"] and chart not in declared
+    ]
+    return warns, charts
+
+
+def check_app_pins(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], set[str]]:
+    """versions.yaml apps: keys with no member -- advisory, the pin may predate the tag."""
+    declared = graph.get("non_members") or {}
+    keys = stack.get("apps", set())
+    warns = [
+        f"versions.yaml apps.{key} has no member in suite.yaml"
+        for key in sorted(keys)
+        if key not in graph["nodes"] and key not in declared
+    ]
+    return warns, keys
+
+
+def check_image_pins(graph: dict, stack: dict[str, set[str]]) -> list[str]:
+    """Each image-pin edge into dfe-infra names a producer the current stack still pins.
+
+    The pin is a tag under apps: or content: and its digest under digests:, so
+    an edge whose producer lost either is describing a pin that is not there.
+    """
+    tagged = stack.get("apps", set()) | stack.get("content", set())
+    fails = []
+    for edge in graph["edges"]:
+        if edge.get("kind") != "image-pin" or edge.get("to") != "dfe-infra":
+            continue
+        producer = edge["from"]
+        missing = [
+            what
+            for what, present in (
+                ("tag under apps: or content:", producer in tagged),
+                ("digest under digests:", producer in stack.get("digests", set())),
+            )
+            if not present
+        ]
+        if missing:
+            fails.append(
+                f"{producer} -> dfe-infra image-pin: the current versions.yaml stack has no "
+                f"{' and no '.join(missing)} for {producer}"
+            )
+    return fails
 
 
 def check_non_members(graph: dict, named: set[str]) -> list[str]:
@@ -336,13 +377,15 @@ def main() -> int:
     if not fails:
         f, no_clone, no_ref = check_citations(graph, args.repos.resolve(), args.ref, git)
         fails += f
-        f, w, charts = check_charts(graph)
+        f, stack = read_stack()
         fails += f
-        warns += w
-        f, w, pins = check_app_pins(graph)
-        fails += f
-        warns += w
-        fails += check_non_members(graph, charts | pins)
+        if not f:
+            w, charts = check_charts(graph, stack)
+            warns += w
+            w, pins = check_app_pins(graph, stack)
+            warns += w
+            fails += check_image_pins(graph, stack)
+            fails += check_non_members(graph, charts | pins)
         warns += check_producer_diagrams(graph)
         f, s = check_docs(graph)
         fails += f

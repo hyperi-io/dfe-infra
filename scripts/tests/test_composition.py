@@ -137,7 +137,7 @@ def test_the_seeded_set_is_exactly_the_manifests_default() -> None:
         assert tuple(seeded) == composition.default_apps(mode), mode
 
 
-def test_the_engine_chart_carries_the_current_manifest() -> None:
+def test_the_chart_mounting_the_catalogue_carries_the_current_manifest() -> None:
     """A stale chart copy deploys the apps of whichever commit last rendered it."""
     assert composition.write_catalogue(check_only=True) == 0
 

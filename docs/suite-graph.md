@@ -324,8 +324,8 @@ flowchart LR
 ### The components
 
 Every deployed component is a producer too. A component release moves its image
-pin here - its chart's appVersion and the digest mirror, both held by the drift
-check - and nothing else, with two exceptions: dfe-engine authors the loader's
+pin here - the tag, the image digest and the thin chart's digest, every copy
+held by the drift check - and nothing else, with two exceptions: dfe-engine authors the loader's
 and the receiver's configs, so it carries a hand-written copy of each one's
 validation rules that no script can compare.
 

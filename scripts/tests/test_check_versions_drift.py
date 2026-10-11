@@ -45,6 +45,9 @@ drift = importlib.util.module_from_spec(spec)
 sys.modules["drift"] = drift
 spec.loader.exec_module(drift)
 
+# dfe-engine's thin-chart integration values, where the content entries' refs live.
+ENGINE_VALUES = Path("argocd/values/apps/dfe-engine/values.yaml")
+
 
 def test_sweep_is_clean_as_committed() -> None:
     problems = drift.reverse_sweep()
@@ -203,6 +206,38 @@ def test_dropping_a_waiver_resurfaces_its_literals() -> None:
         drift.SWEEP_WAIVERS = original
 
 
+def test_no_check_reads_a_chart_no_appset_deploys() -> None:
+    """Argo deploys each component's thin chart, so a pin read from a hand chart guards nothing."""
+    reading = [
+        f"{c.label} ({c.file})"
+        for c in drift.CHECKS
+        if any(c.file.as_posix().startswith(f"{chart}/") for chart in drift.UNDEPLOYED_CHARTS)
+    ]
+    expect("no check reads an undeployed chart", reading == [], f"{reading}")
+
+
+def test_an_undeployed_chart_is_waived_until_it_leaves_the_tree() -> None:
+    """Its waiver goes stale once the chart is gone, so the entry cannot outlive it."""
+    original = drift.SWEEP_WAIVERS
+    try:
+        drift.SWEEP_WAIVERS = tuple(w for w in original if w[0] != "helm/charts/dfe-ui/*")
+        unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p]
+        expect(
+            "dropping its waiver resurfaces the chart's appVersion",
+            any("helm/charts/dfe-ui/Chart.yaml" in p and "appVersion" in p for p in unswept),
+            f"got {unswept}",
+        )
+        drift.SWEEP_WAIVERS = (*original, ("helm/charts/dfe-gone/*", "*", "nothing"))
+        stale = [p for p in drift.reverse_sweep() if "[stale]" in p]
+        expect(
+            "and a waiver for a chart that has left is reported stale",
+            any("helm/charts/dfe-gone/*" in p for p in stale),
+            f"got {stale}",
+        )
+    finally:
+        drift.SWEEP_WAIVERS = original
+
+
 def test_fix_is_a_noop_when_nothing_drifts() -> None:
     writes, fixed, refused = drift.plan_fix(drift.load_versions())
     expect("--fix writes nothing when the tree is clean", writes == {}, f"{writes}")
@@ -261,7 +296,7 @@ def test_fix_moves_both_halves_of_a_contract_entry() -> None:
 
     writes, _, refused = drift.plan_fix(versions)
     expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
-    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    values = writes.get(ENGINE_VALUES, "")
     expect(
         "the loader's content entry carries the new tag@sha256",
         f'ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.99@{digest}"' in values,
@@ -282,11 +317,11 @@ def test_a_contract_entry_ref_is_visible_to_the_sweep() -> None:
     """
     original = drift.CHECKS
     try:
-        drift.CHECKS = [c for c in original if "dfe-loader contract entry" not in c.label]
+        drift.CHECKS = [c for c in original if "dfe-loader contract ref" not in c.label]
         unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
         expect(
             "the unchecked ref surfaces, and only that one",
-            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            len(unswept) == 1 and ENGINE_VALUES.as_posix() in unswept[0],
             f"got {unswept}",
         )
     finally:
@@ -307,7 +342,7 @@ def test_fix_moves_both_entries_one_app_backs() -> None:
 
     writes, _, refused = drift.plan_fix(versions)
     expect("propagation refuses nothing on a plain app bump", refused == [], f"{refused}")
-    values = writes.get(Path("helm/charts/dfe-engine/values.yaml"), "")
+    values = writes.get(ENGINE_VALUES, "")
     new_ref = f'ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.9.99@{digest}"'
     expect(
         "the contract and the catalogue entry both carry the new tag@sha256",
@@ -326,13 +361,13 @@ def test_the_catalogue_entry_ref_is_visible_to_the_sweep() -> None:
     """
     original = drift.CHECKS
     try:
-        drift.CHECKS = [c for c in original if "catalogue entry" not in c.label]
+        drift.CHECKS = [c for c in original if "catalogue ref" not in c.label]
         unswept = [p for p in drift.reverse_sweep() if "[unswept]" in p and "content ref" in p]
-        text = drift.read_source(Path("helm/charts/dfe-engine/values.yaml"))
+        text = drift.read_source(ENGINE_VALUES)
         line = text[: text.index("name: dfe-transform-elastic-catalogue")].count("\n") + 1
         expect(
             "the unchecked catalogue ref surfaces, and only that one",
-            len(unswept) == 1 and "dfe-engine/values.yaml" in unswept[0],
+            len(unswept) == 1 and ENGINE_VALUES.as_posix() in unswept[0],
             f"got {unswept}",
         )
         expect(

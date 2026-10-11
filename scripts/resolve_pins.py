@@ -13,8 +13,8 @@
 """resolve_pins -- pin a version, get (and set) its digest.
 
 versions.yaml splits each DFE app pin in two: the human-readable TAG in `apps:`
-(so the chart appVersion checks work) and the immutable DIGEST in `digests:`
-(the half that actually pins the pull). Choosing the tag is a decision; finding
+(which also names the thin chart's version) and the immutable DIGEST in
+`digests:` (the half that actually pins the pull). Choosing the tag is a decision; finding
 its sha is mechanical -- and today it is done by hand, in two repos, which is
 where the wrong sha creeps in. This resolves the digest for whatever tags the
 CURRENT stack's `apps:` holds and, on --write, sets `digests:` to match.
@@ -41,7 +41,8 @@ that must land inside the window (DFE-owned apps carry no upstream cooldown, so
 this is their normal path when pinning a just-cut release).
 
 Division of labour with the rest of the tooling (one SSoT per concern):
-  * `dfe-stack bump-app <app> <ver>` sets the TAG (apps: + Chart.yaml appVersion).
+  * `dfe-stack bump-app <app> <ver>` sets the TAG (apps:) and the thin chart's
+    digest at that version (chart-digests:).
   * this tool sets the DIGEST (digests:) to match the tags apps: holds.
   * `dfe-stack refresh-digests` does the same for the third-party
     services-digests: (via docker buildx), which this deliberately leaves alone.

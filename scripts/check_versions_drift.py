@@ -97,10 +97,9 @@ def load_versions(stack: str | None = None) -> dict[str, str]:
     without moving `current`.
 
     The selected stack id is also returned, as `pointers.current` -- the name
-    is kept rather than renamed to `pointers.selected` because every existing
-    Check against deployment.example.yaml / dfe-stack/Chart.yaml already reads
-    that key, and what those files SHOULD say is exactly "the stack being
-    audited", default or overridden.
+    is kept rather than renamed to `pointers.selected` because the Check against
+    deployment.example.yaml already reads that key, and what that file SHOULD
+    say is exactly "the stack being audited", default or overridden.
     """
     root = _parse_nested(VERSIONS_FILE.read_text())
     current = root.get("current")
@@ -510,13 +509,6 @@ CHECKS += [
         Path("deployment.example.yaml"),
         r"\nversion:\n\s*pin:\s*\"?([^\"\s#]+)",
     ),
-    # The trial umbrella advertises the stack version it composes.
-    Check(
-        "dfe-stack umbrella appVersion",
-        "pointers.current",
-        Path("helm/dfe-stack/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
 ]
 
 # OpenTofu provider constraints, which versions.yaml records as a mirror of the
@@ -612,13 +604,12 @@ CHECKS += [
     for f in files
 ]
 
-# DFE app charts: each chart's appVersion MUST equal versions.yaml apps.<name>.
-# This is the pin that actually drives the deployed image tag -- dfe-common.image
-# falls back to .Chart.AppVersion when image.tag is empty (the deploy default), so
-# drift here is a silent ImagePullBackOff on a real cluster. (This is exactly the
-# blanket-"2.2.0" bug the apps section warns about.) Generated from one list so a
-# new app chart is covered the moment its versions.yaml pin + chart exist.
-_APP_CHARTS = [
+# The DFE apps under versions.yaml apps:. Each deploys from its published thin
+# chart, which pins its own image, so the copies left to watch are the ones this
+# repo writes: the dfe-extras app versions below, and the content refs.
+# dfe-transform-splack and dfe-transform-wasm are coming: alpha and unpublished,
+# so they join when they ship and their versions.yaml pins come back.
+_APPS = [
     "dfe-engine",
     "dfe-ui",
     "dfe-receiver",
@@ -628,59 +619,14 @@ _APP_CHARTS = [
     "dfe-transform-vrl",
     "dfe-transform-vector",
     "dfe-transform-elastic",
-    # dfe-transform-splack and dfe-transform-wasm are coming: alpha, unpublished,
-    # uncomment when they ship and their versions.yaml pins come back.
-    # "dfe-transform-wasm",
-    # "dfe-transform-splack",
-    # The one app whose image is not published under the dfe- prefix; the chart
-    # spells its repository out, so only the tag and digest halves are checked.
     "culvert",
 ]
 
-# The charts that do not sit under helm/charts. The edge module keeps its two
-# in helm/edge, so every path built from a chart name is resolved through here
-# rather than by concatenation.
-_CHART_DIRS = {
-    "culvert": "helm/edge/culvert",
-    "envoy-gateway-config": "helm/edge/gateway",
-}
-
-
-def chart_dir(name: str) -> str:
-    """The directory holding the chart of that name."""
-    return _CHART_DIRS.get(name, f"helm/charts/{name}")
-
-
-CHECKS += [
-    Check(
-        f"{app} chart appVersion",
-        f"apps.{app}",
-        Path(f"{chart_dir(app)}/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    )
-    for app in _APP_CHARTS
-]
-
-# The other half of the same pin: a registry tag is mutable, so appVersion alone
-# lets a re-pushed tag land bytes other than the ones `dfe-stack verify`
-# certified. dfe-common.image appends image.digest as tag@sha256. Derived from
-# versions.yaml, so an app joins the moment it first publishes a digest and a
-# chart missing the mirror is reported rather than assumed deliberate.
-_DIGEST_MIRRORS = [app for app in _APP_CHARTS if f"digests.{app}" in load_versions()]
-CHECKS += [
-    Check(
-        f"{app} image digest",
-        f"digests.{app}",
-        Path(f"{chart_dir(app)}/values.yaml"),
-        r'digest:\s*"([^"]+)"',
-    )
-    for app in _DIGEST_MIRRORS
-]
-
-# The engine chart mounts each app's container contract by RUNNING that app's
-# pinned image, so every content entry carries another copy of the app pin.
-# BOTH halves are checked: the ref is tag@sha256 and a deployment pulls by
-# digest, so a tag rewritten on its own would name one release and run another.
+# The engine's content init containers mount each app's container contract by
+# RUNNING that app's pinned image, so every content entry carries another copy
+# of the app pin. BOTH halves are checked: the ref is tag@sha256 and a deployment
+# pulls by digest, so a tag rewritten on its own would name one release and run
+# another.
 _CONTRACT_ENTRIES = [
     "dfe-receiver",
     "dfe-loader",
@@ -712,18 +658,7 @@ def content_ref_pattern(role: str, app: str, half: str) -> str:
     return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
 
 
-CHECKS += [
-    Check(
-        f"{app} {role} entry image {half}",
-        f"{'apps' if half == 'tag' else 'digests'}.{app}",
-        Path("helm/charts/dfe-engine/values.yaml"),
-        content_ref_pattern(role, app, half),
-    )
-    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
-    for app in apps
-    for half in ("tag", "digest")
-]
-# The same entries in dfe-engine's thin-chart integration values, whose content
+# The entries sit in dfe-engine's thin-chart integration values, whose content
 # init containers read each ref from there.
 CHECKS += [
     Check(
@@ -737,26 +672,10 @@ CHECKS += [
     for half in ("tag", "digest")
 ]
 
-# The hyperdx chart runs an init container on the ENGINE image to materialise the
-# dashboards the engine owns. Helm cannot read a sibling chart's appVersion, so
-# the engine tag has a second copy here and needs watching like any other.
+# dfe-hyperdx's thin chart runs an init container on the ENGINE image to
+# materialise the dashboards the engine owns, so its integration values carry a
+# copy of the engine pin, both halves.
 CHECKS += [
-    Check(
-        "hyperdx dashboards init-container engine tag",
-        "apps.dfe-engine",
-        Path("helm/charts/hyperdx/values.yaml"),
-        r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
-    ),
-    # The immutable half of that same second copy: the init container pulls the
-    # engine image, so a re-pushed tag lands bytes `dfe-stack verify` never saw.
-    Check(
-        "hyperdx dashboards init-container engine digest",
-        "digests.dfe-engine",
-        Path("helm/charts/hyperdx/values.yaml"),
-        r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
-    ),
-    # The same init container on dfe-hyperdx's thin chart, whose integration values
-    # carry their own copy of the engine pin.
     Check(
         "hyperdx thin-chart dashboards init-container engine tag",
         "apps.dfe-engine",
@@ -768,49 +687,6 @@ CHECKS += [
         "digests.dfe-engine",
         Path("argocd/values/apps/hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
-    ),
-    # The chart directory is `hyperdx` while the pin is `apps.dfe-hyperdx`, so it
-    # does not fit _APP_CHARTS' name-derived path. Left unchecked it kept upstream
-    # HyperDX's own appVersion, which is not a tag the fork ever publishes.
-    Check(
-        "hyperdx chart appVersion",
-        "content.dfe-hyperdx",
-        Path("helm/charts/hyperdx/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    # The immutable half of that pin, which the same name mismatch kept out of
-    # _DIGEST_MIRRORS -- so versions.yaml carried digests.dfe-hyperdx while the
-    # chart rendered a bare tag. Anchored on the fork's repository line so it
-    # cannot match the dashboards digest, which is a different image.
-    Check(
-        "hyperdx fork image digest",
-        "digests.dfe-hyperdx",
-        Path("helm/charts/hyperdx/values.yaml"),
-        r'repository:\s*ghcr\.io/hyperi-io/dfe-hyperdx[^\n]*\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
-    ),
-    # The engine reports the deployment's dfe-ui version on
-    # GET /api/v1/system/deployment. Helm cannot read a sibling chart's
-    # appVersion, so the engine chart carries a second copy of the ui pin.
-    Check(
-        "dfe-ui version (engine values)",
-        "apps.dfe-ui",
-        Path("helm/charts/dfe-engine/values.yaml"),
-        r'uiVersion:\s*"([^"]+)"',
-    ),
-    # The git-sync sidecar in the hunt-runner pod: a THIRD-PARTY image in a chart
-    # whose own image is dfe-engine, so both halves are anchored on the repository
-    # line rather than on the file's first tag:/digest: (which are the engine's).
-    Check(
-        "hunt-runner git-sync image tag",
-        "services.git-sync",
-        Path("helm/charts/dfe-engine/values.yaml"),
-        r'git-sync/git-sync\n\s*tag:\s*"([^"@]+)"',
-    ),
-    Check(
-        "hunt-runner git-sync image digest",
-        "services-digests.git-sync",
-        Path("helm/charts/dfe-engine/values.yaml"),
-        r'git-sync/git-sync\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # bootstrap.sh writes this helperPod.yaml over upstream's, whose busybox has no tag.
     Check(
@@ -853,7 +729,7 @@ CHECKS += [
         _EXTRAS_VALUES,
         r"(?m)^    " + re.escape(app) + r':\s*"([^"]+)"',
     )
-    for app in [*_APP_CHARTS, "dfe-hyperdx"]
+    for app in [*_APPS, "dfe-hyperdx"]
 ]
 CHECKS += [
     # The engine family's image; its tag is empty, so the app version above is the tag.
@@ -1016,8 +892,7 @@ CHECKS += [
         Path("helm/charts/dfe-toolbox/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
     ),
-    # The immutable half: the chart's image is dfe-toolbox-base, not a
-    # _APP_CHARTS name, so _DIGEST_MIRRORS never picks it up.
+    # The immutable half, keyed by the image's own name, dfe-toolbox-base.
     Check(
         "dfe-toolbox chart image digest",
         "digests.dfe-toolbox-base",
@@ -1048,7 +923,7 @@ UNCONSUMED: dict[str, str] = {
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
     "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
-    "digests.*": "an app with no chart mirror yet -- a published app is checked against helm/charts/<app>/values.yaml image.digest instead",
+    "digests.*": "the immutable half of an app pin: its published thin chart carries it, dfe-stack render writes it into the docker .env, and dfe-stack verify holds it to the registry; the engine content refs and the dfe-extras engine image are checked individually",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually, and bootstrap.sh reads local-path-provisioner's at runtime",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",
     "stack.*": "upgrade-graph metadata, not a version pin",
@@ -1220,16 +1095,30 @@ SWEEP_WAIVERS: tuple[tuple[str, str, str], ...] = (
         "appVersion",
         "policy-only chart with no upstream to track",
     ),
-    (
-        "helm/charts/dfe-transform-wasm/Chart.yaml",
-        "appVersion",
-        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
-    ),
-    (
-        "helm/charts/dfe-transform-splack/Chart.yaml",
-        "appVersion",
-        "placeholder chart for an app that is coming; its versions.yaml pin is commented out, so there is no SSoT key to check it against",
-    ),
+)
+
+# The hand-written app charts and the umbrella, which no appset deploys: each
+# component deploys from its published thin chart, pinned by chart-digests. The
+# repo-wide test sweeps skip the same list (scripts/tests/_charts.py).
+UNDEPLOYED_CHARTS = (
+    "helm/charts/dfe-archiver",
+    "helm/charts/dfe-engine",
+    "helm/charts/dfe-fetcher",
+    "helm/charts/dfe-loader",
+    "helm/charts/dfe-receiver",
+    "helm/charts/dfe-transform-elastic",
+    "helm/charts/dfe-transform-splack",
+    "helm/charts/dfe-transform-vector",
+    "helm/charts/dfe-transform-vrl",
+    "helm/charts/dfe-transform-wasm",
+    "helm/charts/dfe-ui",
+    "helm/charts/hyperdx",
+    "helm/edge/culvert",
+    "helm/dfe-stack",
+)
+SWEEP_WAIVERS += tuple(
+    (f"{chart}/*", "*", "a chart no appset deploys, so no literal in it pins what runs")
+    for chart in UNDEPLOYED_CHARTS
 )
 
 

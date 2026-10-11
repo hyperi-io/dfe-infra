@@ -1,6 +1,6 @@
 # The edge module: the two charts that decide whether traffic from outside the
 # cluster reaches a DFE workload. The public gateway (helm/edge/gateway) and the
-# fleet tunnel (helm/edge/culvert) are one module because they are the same job
+# fleet tunnel (culvert's thin chart) are one module because they are the same job
 # -- a door -- and they are turned off together.
 #
 # THIS FILE SERVES NEW CLUSTERS ONLY. A cluster secret written before the edge

@@ -242,7 +242,7 @@ jobs:
       # A step of its own, not a pytest case: it fetches the engine's bundled
       # copy over the network (gh api), unlike --check-catalogue's pytest
       # case above, which stays offline. This repo holds the SSoT and already
-      # owns that check, so the third copy is compared here too (dfe-infra#306).
+      # owns that check, so the engine's copy is compared here too (dfe-infra#306).
       #
       # The read uses a GitHub App token scoped to dfe-engine, contents:read.
       # Exit 2 (snapshot unreadable) used to be logged and swallowed, which

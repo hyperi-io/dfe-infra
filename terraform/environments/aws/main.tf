@@ -502,7 +502,7 @@ locals {
   )
 
   // The reserved range every appliance's tunnel address is issued out of --
-  // helm/edge/culvert/values.yaml vpn.clientCIDR, which no tofu input carries.
+  // dfe-extras' culvert default vpn.clientCIDR, which no tofu input carries.
   // scripts/tests/test_tunnel_forwarder_facts.py holds the two in step.
   tunnel_client_cidr = "100.64.0.0/10"
 }

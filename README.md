@@ -152,10 +152,12 @@ same with `--producer dfe-infra`. Read those rather than trusting this summary.
 **Inbound, and it is the interesting direction.** Nearly every app repo is a
 producer INTO dfe-infra on an `image-pin` edge: dfe-engine, dfe-loader,
 dfe-receiver, dfe-fetcher, dfe-archiver, the three transforms, dfe-ui and
-dfe-hyperdx all pin their released image here, in `versions.yaml` and the
-matching chart. Lockstep -- bump the tag, re-resolve the digest, and let
-`check_versions_drift.py` confirm the chart's appVersion and the digest mirror
-agree. dfe-schemas and dfe-deploy arrive on `version-pin` edges instead.
+dfe-hyperdx all pin their released image here, in `versions.yaml`, beside the
+digest of the thin chart published at that tag. Lockstep -- `dfe-stack
+bump-app` moves the tag and repins the chart, `resolve_pins.py` re-resolves the
+image digest, and `check_versions_drift.py --fix` carries both into the appset
+and dfe-extras copies. dfe-schemas and dfe-deploy arrive on `version-pin` edges
+instead.
 
 dfe-engine is the one two-way neighbour: it pins its image here like the rest,
 AND this repo's `apps.yaml` is vendored into the engine as a byte copy, so a

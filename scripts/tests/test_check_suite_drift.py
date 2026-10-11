@@ -119,7 +119,7 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/helm/charts/dfe-app-b/Chart.yaml:6"
+    evidence: "dfe-infra/versions.yaml"
 lanes:
   - name: libraries
     members: [lib-a]
@@ -137,8 +137,11 @@ current: "1.0.0"
 stacks:
   1.0.0:
     apps:
-      app-b:
-        tag: "v1"
+      app-b: "v1"
+    digests:
+      app-b: "sha256:app-b-image"
+    chart-digests:
+      app-b: "sha256:app-b-chart"
 '''
 
 CHART = '''\
@@ -219,7 +222,8 @@ def build(
         shutil.copyfile(SCRIPTS / name, infra / "scripts" / name)
     _write(infra / "suite.yaml", suite)
     _write(infra / "versions.yaml", versions)
-    _write(infra / "helm/charts/dfe-app-b/Chart.yaml", CHART)
+    # A chart outside the dfe- prefix, which the member check leaves alone.
+    _write(infra / "helm/charts/kafka/Chart.yaml", CHART)
     if orphan_chart:
         _write(infra / "helm/charts/dfe-orphan/Chart.yaml", CHART)
 
@@ -389,9 +393,37 @@ def main() -> int:
             1,
             "file is gone",
             suite=SUITE.replace(
+                'evidence: "dfe-infra/versions.yaml"',
                 'evidence: "dfe-infra/helm/charts/dfe-app-b/Chart.yaml:6"',
-                'evidence: "dfe-infra/helm/charts/dfe-app-b/values.yaml:6"',
             ),
+        )
+        _one_case(
+            "an image-pin edge whose producer the stack no longer tags FAILs",
+            1,
+            "has no tag under apps: or content: for app-b",
+            versions=VERSIONS.replace('    apps:\n      app-b: "v1"\n', '    apps:\n      other: "v1"\n'),
+        )
+        _one_case(
+            "an image-pin edge whose producer has no digest FAILs",
+            1,
+            "has no digest under digests: for app-b",
+            versions=VERSIONS.replace('      app-b: "sha256:app-b-image"\n', ""),
+        )
+        _one_case(
+            "a producer tagged under content: is pinned",
+            0,
+            "OK -- suite.yaml",
+            versions=VERSIONS.replace(
+                '    apps:\n      app-b: "v1"\n',
+                '    apps:\n      other: "v1"\n    content:\n      app-b: "v1"\n',
+            ),
+            suite=SUITE + 'non_members:\n  other: "no release tag yet"\n',
+        )
+        _one_case(
+            "a thin chart the stack pins with no member is advisory",
+            0,
+            "WARN  chart ghost-chart has no member",
+            versions=VERSIONS + '      ghost-chart: "unpublished"\n',
         )
         _one_case(
             "a citation past the end of its file FAILs",
@@ -458,7 +490,7 @@ def main() -> int:
             "a versions.yaml app with no member is advisory",
             0,
             "WARN  versions.yaml apps.ghost",
-            versions=VERSIONS + "      ghost:\n        tag: \"v1\"\n",
+            versions=VERSIONS.replace('      app-b: "v1"\n', '      app-b: "v1"\n      ghost: "v1"\n'),
         )
         _one_case(
             "a producer with no diagram block is advisory",

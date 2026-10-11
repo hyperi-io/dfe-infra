@@ -28,12 +28,11 @@ GENERATED block, because Helm cannot read apps.yaml:
     python3 scripts/composition.py --write-seed
 
 Helm reads only files inside the chart directory, so the manifest the engine
-mounts and reflects is a copy each chart that mounts it carries, dfe-extras and
-the dfe-engine chart:
+mounts and reflects is a copy dfe-extras carries, beside the engine's thin chart:
 
     python3 scripts/composition.py --write-catalogue
 
-`scripts/tests/test_composition.py` fails when a committed block or a chart's
+`scripts/tests/test_composition.py` fails when a committed block or the chart's
 copy and this manifest disagree, so neither can quietly drift.
 
 Helm replaces a list rather than merging it, so a list item several apps share
@@ -59,16 +58,13 @@ import profiles
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "apps.yaml"
 
-# The engine chart's copy, mounted into the engine pod as the app catalogue.
-CHART_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-engine" / "files" / "apps.yaml"
-
 # dfe-extras' copy, which its app-catalogue ConfigMap mounts beside the thin chart.
 EXTRAS_MANIFEST = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "files" / "apps.yaml"
 
 # Every chart copy --write-catalogue renders and --check-catalogue holds.
-CATALOGUE_COPIES = (CHART_MANIFEST, EXTRAS_MANIFEST)
+CATALOGUE_COPIES = (EXTRAS_MANIFEST,)
 
-# The third copy: the snapshot bundled in the engine image, which answers when
+# The other copy: the snapshot bundled in the engine image, which answers when
 # no chart mount is present. dfe-infra holds the SSoT and already owns the
 # check, so this repo compares against it rather than trusting a stale image.
 ENGINE_REPO = "hyperi-io/dfe-engine"

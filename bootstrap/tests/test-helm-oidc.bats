@@ -1,8 +1,17 @@
 #!/usr/bin/env bats
 # Verify OIDC Helm templates render correctly and dfe-engine is not required.
+#
+# The engine's env comes from dfe-extras' dfe-engine-env ConfigMap, beside its
+# thin chart, so the engine's own settings are read off that render.
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
+}
+
+engine_env() {
+    helm template test "${REPO_ROOT}/helm/charts/dfe-extras/" \
+        --set chartName=dfe-engine \
+        --show-only templates/engine-env.yaml "$@"
 }
 
 @test "envoy-gateway-config renders without OIDC (simple auth mode)" {
@@ -80,38 +89,37 @@ setup() {
 @test "the engine does not trust identity headers just because OIDC is on" {
     # oidc.enabled is Envoy's OIDC REDIRECT; it does not inject verified headers.
     # Trusting them off that switch is how a forged header becomes an identity.
-    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --set global.registry=ghcr.io/test \
-        --set oidc.enabled=true
+    run engine_env --set oidc.enabled=true
     [ "$status" -eq 0 ]
+    [[ "$output" =~ "kind: ConfigMap" ]]
     [[ ! "$output" =~ "DFE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
 }
 
 @test "the engine trusts identity headers when the deployment says so" {
-    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --set global.registry=ghcr.io/test \
-        --set auth.trustProxyHeaders=true
+    run engine_env --set auth.trustProxyHeaders=true
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "DFE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
+    [[ "$output" =~ 'DFE_AUTH_TRUST_PROXY_AUTH_HEADERS: "true"' ]]
 }
 
 @test "dfe-engine renders without OIDC (simple auth mode)" {
-    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --set global.registry=ghcr.io/test
+    run engine_env
     [ "$status" -eq 0 ]
+    [[ "$output" =~ "kind: ConfigMap" ]]
     [[ ! "$output" =~ "DFE_OIDC" ]]
 }
 
-@test "dfe-engine renders with OIDC provider secrets" {
-    run helm template test "${REPO_ROOT}/helm/charts/dfe-engine/" \
-        --set global.registry=ghcr.io/test \
+@test "an OIDC provider secret never lands in the engine's env ConfigMap" {
+    # A provider's variables are secretKeyRefs, which reach the pod through the
+    # thin chart's extraEnv; a ConfigMap would carry the secret in the clear.
+    run engine_env \
         --set oidc.enabled=true \
         --set 'oidc.providers[0].name=google' \
         --set 'oidc.providers[0].secretName=dfe-oidc-google' \
         --set 'oidc.providers[0].envMappings.DFE_OIDC_GOOGLE_CLIENT_ID=client-id'
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "DFE_OIDC_GOOGLE_CLIENT_ID" ]]
-    [[ "$output" =~ "dfe-oidc-google" ]]
+    [[ "$output" =~ "kind: ConfigMap" ]]
+    [[ ! "$output" =~ "DFE_OIDC_GOOGLE_CLIENT_ID" ]]
+    [[ ! "$output" =~ "dfe-oidc-google" ]]
 }
 
 @test "SecurityPolicy targets HTTPRoute not Gateway" {
