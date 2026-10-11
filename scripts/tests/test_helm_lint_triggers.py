@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_helm_lint_triggers.py
-#  Purpose:      Guard the paths that start the Helm Lint workflow: every file the
-#                upgrade tooling and the other tests read starts it, on a push and on a
-#                pull request alike.
+#  Purpose:      Guard the paths that run the Helm Lint checks: every file the upgrade
+#                tooling and the other tests read is in the filter, and every workflow
+#                holding a check starts on every pull request so the check reports.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for the `paths:` filters of .github/workflows/helm-lint.yml.
+"""Tests for the PATHS filter of .github/workflows/helm-lint.yml and the triggers around it.
 
     python3 -m pytest scripts/tests/test_helm_lint_triggers.py -q
 
-A pull request touching only a file outside those filters runs none of the guards and
-merges unchecked. The upgrade inputs come from the constants the upgrade module itself reads,
-so a new input it grows is held to the same filter without this file being edited. The rest
-come from the globs the other tests walk, and from the top-level names their sources name.
+A pull request touching only a file outside PATHS skips every guard and merges unchecked.
+The upgrade inputs come from the constants the upgrade module itself reads, so a new input it
+grows is held to the same filter without this file being edited. The rest come from the globs
+the other tests walk, and from the top-level names their sources name.
+
+The filter lives in each workflow's `changes` job rather than in `on.<event>.paths`: a
+workflow a path filter never starts reports no check at all, and a required check that never
+reports blocks the merge, where a job skipped by its `if:` reports and passes.
 """
 
 import re
@@ -30,8 +34,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import dfe_ops_upgrade as u  # noqa: E402
 
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "helm-lint.yml"
-EVENTS = ("push", "pull_request")
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+WORKFLOW = WORKFLOWS / "helm-lint.yml"
+# The workflows whose jobs are required checks on main, each filtered by its `changes` job.
+GATED = ("helm-lint.yml", "e2e-ui.yml", "tf-validate.yml")
+RUN_UNLESS_NOTHING_RELEVANT = "!cancelled() && needs.changes.outputs.relevant != 'false'"
 
 # What `dfe-ops upgrade` and its tests read from the checkout; constraints/ is what
 # `dfe-stack compat-check --strict` reads for the target stack.
@@ -70,32 +77,54 @@ _NAMED_AT_ROOT = re.compile(
 )
 
 
-def _filters(event: str) -> list[str]:
-    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    triggers = doc.get("on", doc.get(True))  # YAML 1.1 reads a bare `on` as true
-    return triggers[event]["paths"]
+def _load(name: str) -> dict:
+    return yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
+
+
+def _triggers(doc: dict) -> dict:
+    return doc.get("on", doc.get(True))  # YAML 1.1 reads a bare `on` as true
+
+
+def _filters() -> list[str]:
+    """The patterns in the `changes` job's PATHS, the way its script reads them: `#` lines are notes."""
+    text = _load(WORKFLOW.name)["jobs"]["changes"]["env"]["PATHS"]
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
 
 
 def _covers(patterns: list[str], path: str) -> bool:
-    """Whether a filter names `path` as a file or under a `dir/**`, the two forms this workflow uses."""
+    """Whether a filter names `path` as a file or under a `dir/**`, the two forms the script reads."""
     return any(path.startswith(p.removesuffix("**")) if p.endswith("/**") else path == p for p in patterns)
 
 
-@pytest.mark.parametrize("event", EVENTS)
-def test_the_filters_use_only_the_two_forms_this_file_reads(event: str) -> None:
-    assert [p for p in _filters(event) if "*" in p.removesuffix("/**")] == []
+def test_the_filters_use_only_the_two_forms_the_script_reads() -> None:
+    assert _filters(), "PATHS is empty, so every test below would pass"
+    assert [p for p in _filters() if "*" in p.removesuffix("/**")] == []
 
 
-def test_a_push_and_a_pull_request_run_on_the_same_paths() -> None:
-    assert sorted(_filters("push")) == sorted(_filters("pull_request"))
+@pytest.mark.parametrize("name", GATED)
+def test_a_gated_workflow_starts_on_every_pull_request_and_every_push_to_main(name: str) -> None:
+    triggers = _triggers(_load(name))
+    assert triggers["pull_request"] is None, f"{name} filters pull_request: {triggers['pull_request']}"
+    assert triggers["push"] == {"branches": ["main"]}, f"{name} filters push: {triggers['push']}"
 
 
-@pytest.mark.parametrize("event", EVENTS)
+@pytest.mark.parametrize("name", GATED)
+def test_every_check_in_a_gated_workflow_runs_unless_its_filter_found_nothing(name: str) -> None:
+    jobs = _load(name)["jobs"]
+    assert "PATHS" in jobs["changes"]["env"], f"{name}'s changes job carries no PATHS"
+    for job_id, job in jobs.items():
+        if job_id == "changes":
+            continue
+        assert job.get("needs") == "changes", f"{name}:{job_id} does not need the changes job"
+        condition = str(job.get("if", ""))
+        assert RUN_UNLESS_NOTHING_RELEVANT in condition, f"{name}:{job_id} if: {condition}"
+
+
 @pytest.mark.parametrize("path", UPGRADE_INPUTS, ids=lambda p: p.relative_to(REPO_ROOT).as_posix())
-def test_every_file_the_upgrade_tooling_reads_starts_the_guards(event: str, path: Path) -> None:
+def test_every_file_the_upgrade_tooling_reads_starts_the_guards(path: Path) -> None:
     assert path.is_file(), path
     relative = path.relative_to(REPO_ROOT).as_posix()
-    assert _covers(_filters(event), relative), f"{relative} is not in helm-lint.yml's {event} paths"
+    assert _covers(_filters(), relative), f"{relative} is not in helm-lint.yml's PATHS"
 
 
 def _test_reads() -> list[str]:
@@ -103,17 +132,15 @@ def _test_reads() -> list[str]:
     return sorted(path.relative_to(REPO_ROOT).as_posix() for path in found)
 
 
-@pytest.mark.parametrize("event", EVENTS)
-def test_every_file_the_other_tests_read_starts_the_guards(event: str) -> None:
-    reads, filters = _test_reads(), _filters(event)
+def test_every_file_the_other_tests_read_starts_the_guards() -> None:
+    reads, filters = _test_reads(), _filters()
     assert reads, "the globs match nothing, so this test would pass for any filter"
     outside = [path for path in reads if not _covers(filters, path)]
     shown = f"{outside[:8]} and {len(outside) - 8} more" if len(outside) > 8 else f"{outside}"
-    assert outside == [], f"read by a test, outside helm-lint.yml's {event} paths: {shown}"
+    assert outside == [], f"read by a test, outside helm-lint.yml's PATHS: {shown}"
 
 
-@pytest.mark.parametrize("event", EVENTS)
-def test_every_top_level_name_a_test_source_reads_is_in_the_filters(event: str) -> None:
+def test_every_top_level_name_a_test_source_reads_is_in_the_filters() -> None:
     """A test reading a new top-level path fails here until the filter names it."""
     named = {
         name
@@ -123,7 +150,7 @@ def test_every_top_level_name_a_test_source_reads_is_in_the_filters(event: str) 
         if name and (REPO_ROOT / name).exists()
     }
     assert {"docs", "terraform", "README.md"} <= named, f"the scan found {sorted(named)}"
-    filters = _filters(event)
+    filters = _filters()
     reached = {n for n in named if any(p == n or p.startswith(f"{n}/") for p in filters)}
     missing = sorted(named - reached)
-    assert missing == [], f"named by a test, absent from helm-lint.yml's {event} paths: {missing}"
+    assert missing == [], f"named by a test, absent from helm-lint.yml's PATHS: {missing}"
