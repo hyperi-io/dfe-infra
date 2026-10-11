@@ -321,7 +321,7 @@ SCENARIOS = [
     ),
     pytest.param(
         "dfe-receiver", "single", "local",
-        {"exposure": {"mode": "public"}, "publicService": {"enabled": True}},
+        {"exposure": {"mode": "public"}},
         {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-public",
     ),

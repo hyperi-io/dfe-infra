@@ -55,10 +55,6 @@ extras:
           podLabel: dfe-culvert
         networkPolicy:
           enabled: true
-      # The thin chart's load balancer switch, as argocd/values/apps/dfe-receiver
-      # sets it; dfe-extras.receiverExposureGuard holds it to exposure.mode.
-      publicService:
-        enabled: true
       kafka:
         mode: ""
         bootstrapServers: ""

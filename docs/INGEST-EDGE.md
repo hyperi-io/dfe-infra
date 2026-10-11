@@ -14,6 +14,8 @@ door in `exposure.mode`.
 | `internal` | ClusterIP only; the door is the Gateway HTTPRoute `routes.receiver` in envoy-gateway-config, on `receiver.{domain}` | the Gateway's own edge |
 | `vpn` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the VPN pods rather than the world | the VPN's own LoadBalancer, plus per-client PKI or OIDC |
 
+`exposure.public` also takes `annotations` and `loadBalancerClass` for the load balancer controller, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. The render refuses scalo-service's own `publicService.*` keys on the receiver, because nothing builds its load balancer from them (`loadBalancerIP` is the appset's, carrying that address), and refuses `loadBalancerSourceRanges` beside any `serviceType` but `LoadBalancer`, where Kubernetes ignores it.
+
 ## The default is open
 
 **A default deploy is internet-facing on the ingest ports, and

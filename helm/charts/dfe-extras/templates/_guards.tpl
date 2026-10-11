@@ -56,20 +56,32 @@ vpn mode is not caught by this: the tunnel delivers a client onto the pod
 network and it dials the ClusterIP directly, so every exposed listener is
 reachable there without a gateway route.
 
-Public mode is the receiver's load balancer, which the thin chart renders from
-publicService.enabled while the ingest NetworkPolicy reads exposure.mode, so
-the two must agree: a load balancer with no policy admitting its ports drops
-every sender, and a policy opened for a load balancer that does not exist
-reads as exposed.
+Public mode is the receiver's load balancer, which argocd/values/apps/dfe-receiver
+renders from exposure.mode and exposure.public as docs/INGEST-EDGE.md documents
+them. scalo-service's own publicService reads none of
+exposure.public, so switched on it renders a second load balancer of the same
+name with no allow-list, and any other key set under it reaches nothing.
+loadBalancerIP is the appset's, carrying the cluster secret's receiver address.
+
+Kubernetes filters on loadBalancerSourceRanges for a LoadBalancer only, so an
+allow-list beside another serviceType is refused rather than ignored.
 */}}
 {{- define "dfe-extras.receiverExposureGuard" -}}
 {{- $mode := .Values.exposure.mode | default "public" }}
-{{- $balanced := eq (toString (dig "enabled" false (.Values.publicService | default dict))) "true" }}
-{{- if and (eq $mode "public") (not $balanced) }}
-{{- fail "dfe-receiver: exposure.mode is \"public\" but publicService.enabled is not true, so no load balancer renders -- set publicService.enabled: true beside it, or choose exposure.mode internal or vpn" }}
+{{- $renamed := dict "type" "serviceType" }}
+{{- range $key, $value := .Values.publicService | default dict }}
+{{- if eq $key "enabled" }}
+{{- if eq (toString $value) "true" }}
+{{- fail "dfe-receiver: publicService.enabled is true, which renders scalo-service's own load balancer beside the one exposure.mode public renders, under the same name and with none of the exposure.public keys -- leave it false, and set exposure.mode: public with exposure.public (docs/INGEST-EDGE.md)" }}
 {{- end }}
-{{- if and $balanced (ne $mode "public") }}
-{{- fail (printf "dfe-receiver: publicService.enabled is true but exposure.mode is %q, which reaches the receiver without a load balancer -- set exposure.mode: public, or publicService.enabled: false" $mode) }}
+{{- else if and (ne $key "loadBalancerIP") (not (empty $value)) }}
+{{- fail (printf "dfe-receiver: publicService.%s is set, and nothing renders the receiver's load balancer from it -- set exposure.public.%s instead (docs/INGEST-EDGE.md)" $key (get $renamed $key | default $key)) }}
+{{- end }}
+{{- end }}
+{{- $pub := .Values.exposure.public | default dict }}
+{{- $type := toString ($pub.serviceType | default "LoadBalancer") }}
+{{- if and (eq $mode "public") (ne $type "LoadBalancer") $pub.loadBalancerSourceRanges }}
+{{- fail (printf "dfe-receiver: exposure.public.loadBalancerSourceRanges is set with exposure.public.serviceType %q, and Kubernetes only filters on that field for a LoadBalancer -- put the allow-list in front of the node ports, or set serviceType: LoadBalancer" $type) }}
 {{- end }}
 {{- if eq $mode "internal" }}
 {{- range .Values.listeners }}

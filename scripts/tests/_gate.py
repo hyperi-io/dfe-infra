@@ -79,7 +79,8 @@ INSTANCE: dict[str, dict[str, dict]] = {
 }
 
 # Deployment shapes the profile matrix does not reach, each rendered on slim/local:
-# the cluster facts it changes, and the deploy repo's infra/common.yaml.
+# the cluster facts it changes, the deploy repo's infra/common.yaml, and the
+# components it renders for where it is not every one.
 SCENARIOS: dict[str, dict] = {
     "no-domain": {"facts": {"domain": ""}, "infra": None},
     "prometheus": {"facts": {}, "infra": {"telemetry": {"mode": "prometheus"}}},
@@ -91,12 +92,32 @@ SCENARIOS: dict[str, dict] = {
         },
     },
     "clickhouse-plaintext": {"facts": {}, "infra": {"clickhouse": {"tls": {"enabled": False}}}},
+    # The receiver's public door as docs/INGEST-EDGE.md documents it, with RFC 5737
+    # ranges standing in for the deployment's own senders.
+    "public-ingest": {
+        "facts": {},
+        "infra": {
+            "exposure": {
+                "mode": "public",
+                "public": {
+                    "annotations": {
+                        "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"
+                    },
+                    "loadBalancerSourceRanges": ["198.51.100.0/24", "203.0.113.0/24"],
+                },
+            }
+        },
+        "components": ("dfe-receiver",),
+    },
 }
 DEFAULT = "default"
 
 # Every cell: the matrix on the default scenario, then each scenario on slim/local.
 CELLS = [(s, p, k, DEFAULT) for s, p, k in MATRIX] + [
-    (s, "slim", "local", scenario) for s in COMPONENTS for scenario in SCENARIOS
+    (s, "slim", "local", scenario)
+    for s in COMPONENTS
+    for scenario, shape in SCENARIOS.items()
+    if s in shape.get("components", COMPONENTS)
 ]
 
 GOLDENS = TESTS / "fixtures" / "thin-renders"

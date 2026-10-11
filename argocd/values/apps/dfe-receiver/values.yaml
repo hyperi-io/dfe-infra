@@ -25,11 +25,42 @@ secrets:
 kafka:
   saslSecretName: dfe-kafka-user
 
-# The receiver's front door is a load balancer unless the cloud says otherwise:
-# apps/dfe-receiver/<cloud>.yaml turns it off where <cloud>.yaml sets
-# exposure.mode internal or vpn, and dfe-extras refuses the two disagreeing.
+# The receiver's front door, from exposure.mode and exposure.public as
+# docs/INGEST-EDGE.md documents them. scalo-service's publicService reads none of
+# the exposure.public keys, so it stays off and dfe-extras refuses it switched on.
 publicService:
-  enabled: true
+  enabled: false
+# The TCP door takes the cluster secret's receiver address, which the appset hands
+# in as publicService.loadBalancerIP, and exposure.public.loadBalancerIP without one.
+extraObjects:
+  - |
+    {{- $exposure := .Values.exposure | default dict -}}
+    {{- if eq (toString ($exposure.mode | default "public")) "public" -}}
+    {{- $pub := $exposure.public | default dict -}}
+    {{- $type := toString ($pub.serviceType | default "LoadBalancer") -}}
+    {{- $address := (.Values.publicService | default dict).loadBalancerIP | default $pub.loadBalancerIP -}}
+    {{- $groups := dict "public" list "public-udp" list -}}
+    {{- range (include "scalo-service.ports" . | fromJson).items -}}
+    {{- if .public -}}
+    {{- $suffix := ternary "public-udp" "public" (eq .protocol "UDP") -}}
+    {{- $_ := set $groups $suffix (append (get $groups $suffix) .) -}}
+    {{- end -}}
+    {{- end -}}
+    {{- range $suffix := list "public" "public-udp" -}}
+    {{- with get $groups $suffix -}}
+    {{- $spec := dict "type" $type "selector" (include "scalo-service.selectorLabelSet" $ | fromJson) "ports" (include "scalo-service.servicePorts" (dict "ports" .) | fromJson).items -}}
+    {{- if eq $type "LoadBalancer" -}}
+    {{- if and (eq $suffix "public") $address }}{{ $_ := set $spec "loadBalancerIP" $address }}{{ end -}}
+    {{- with $pub.loadBalancerClass }}{{ $_ := set $spec "loadBalancerClass" . }}{{ end -}}
+    {{- with $pub.loadBalancerSourceRanges }}{{ $_ := set $spec "loadBalancerSourceRanges" . }}{{ end -}}
+    {{- end -}}
+    {{- $meta := include "scalo-service.metadata" (dict "ctx" $ "name" (printf "%s-%s" (include "scalo-service.fullname" $) $suffix) "annotations" $pub.annotations) | fromYaml -}}
+    {{- $_ := set $meta "labels" (merge (dict "dfe.hyperi.io/exposure" "public") $meta.labels) }}
+    ---
+    {{ dict "apiVersion" "v1" "kind" "Service" "metadata" $meta "spec" $spec | toYaml }}
+    {{- end -}}
+    {{- end -}}
+    {{- end -}}
 
 # Keys written into the config file that no overlay beats: the
 # PushEvents server dfe-fetcher sends to on the direct transport, and the buffer
