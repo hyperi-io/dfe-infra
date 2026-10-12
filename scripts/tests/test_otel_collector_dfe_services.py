@@ -63,7 +63,8 @@ def test_an_empty_list_drops_no_pod() -> None:
     ("dfe-transform-elastic-1.1.12", True),
     ("dfe-ui-1.7.13", False),
     ("dfe-hyperdx-0.3.3", False),
-    ("culvert-2.1.18", False),
+    ("culvert-2.1.18", True),
+    ("culvert-exporter-1.0.0", False),
 ])
 def test_the_default_drops_the_charts_that_push(label: str, dropped: bool) -> None:
     (drop,) = chart_drops(dfe_services_relabels())
