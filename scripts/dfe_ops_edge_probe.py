@@ -44,7 +44,8 @@ through the gateway address, following redirects. A redirect loop, a 5xx, a 4xx
 other than 401/403/404, or no answer FAILs; a redirect off the deployment's domain
 is a login handed to an IdP and passes. A gateway that does not answer at all
 FAILs from inside exposure.selfRanges, which the gateway admits, and SKIPs with
-the reason from anywhere else. `--wait` re-probes every FAIL until its deadline.
+the reason from anywhere else. So does a Gateway that holds no address, judged on
+`--source` alone. `--wait` re-probes every FAIL until its deadline.
 The readiness gate runs it once every pod is Ready.
 """
 
@@ -1212,6 +1213,31 @@ def dead_door(kube: list[str], address: str, port: int, source: str) -> tuple[st
     return SKIP, f"this machine ({mine}) is outside {ranges_shown} -- probe from a host inside them"
 
 
+def addressless_door(kube: list[str], source: str) -> tuple[str, str]:
+    """(verdict, why) for a deployment whose Gateway holds no address yet.
+
+    A load balancer still being provisioned reads the same as one that never will
+    be, and with no address there is no route to weigh. So only a probe given its
+    own address (--source) that sits inside exposure.selfRanges calls it a failure,
+    and --wait gives the address time to arrive.
+    """
+    if not source:
+        return SKIP, "no Gateway holds an address to dial"
+    ranges, error = read_self_ranges(kube)
+    if error:
+        return SKIP, f"no Gateway holds an address to dial, and {error}"
+    ranges_shown = f"exposure.selfRanges ({', '.join(ranges) or 'none'})"
+    if address_in_cidrs(source, ranges):
+        return FAIL, (
+            f"no Gateway holds an address, and this machine ({source}) is inside "
+            f"{ranges_shown}, which expects a door it can reach"
+        )
+    return SKIP, (
+        f"no Gateway holds an address to dial, and this machine ({source}) is outside "
+        f"{ranges_shown}"
+    )
+
+
 def admin_ui_checks(
     kube: list[str],
     namespace: str,
@@ -1227,10 +1253,8 @@ def admin_ui_checks(
         return [Check("admin uis", SKIP, f"{ADMIN_LINKS_CONFIGMAP} lists no admin UI")]
     address = target or gateway_address(kube, gateway)
     if not address:
-        return [
-            Check(f"admin ui {link.name}", SKIP, "no Gateway holds an address to dial")
-            for link in links
-        ]
+        verdict, why = addressless_door(kube, source)
+        return [Check(f"admin ui {link.name}", verdict, why) for link in links]
     first = urlsplit(links[0].url)
     port = first.port or (HTTPS_PORT if first.scheme == "https" else HTTP_PORT)
     door = _reach(Request(host="", address=address, port=port, path="", tls=False))
@@ -1367,7 +1391,8 @@ def add_admin_probe_subparser(sub: argparse._SubParsersAction) -> None:
         "--source", default="", metavar="ADDRESS",
         help=f"the address the gateway sees this machine as, for a host behind NAT; empty "
              f"reads {PROBE_SOURCE_ENV}, then this machine's own route to the gateway. From "
-             f"inside exposure.selfRanges a gateway that does not answer fails rather than skips",
+             f"inside exposure.selfRanges a gateway that does not answer, or holds no address, "
+             f"fails rather than skips",
     )
     probe.set_defaults(func=cmd_admin_probe)
 

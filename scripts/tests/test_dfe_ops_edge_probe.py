@@ -1566,6 +1566,48 @@ def test_an_unreadable_cluster_secret_skips_and_says_so(
     assert "cannot read argocd/dfe-cluster" in check.evidence
 
 
+def test_expected_fail_no_gateway_address_from_inside_the_self_ranges_fails_every_ui(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A load balancer that never got an address is a door that is down, seen from inside."""
+    _cluster(monkeypatch, _configmap(ARGO, KAFBAT), [], SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    checks = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
+    assert [c.verdict for c in checks] == [probe.FAIL, probe.FAIL]
+    assert f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    assert probe.exit_code(checks) == 1
+
+
+def test_no_gateway_address_from_outside_the_self_ranges_skips_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), [], SELF_RANGES)
+    (check,) = probe.admin_ui_checks([], "dfe-local", source="192.0.2.50")
+    assert check.verdict == probe.SKIP, check
+    assert "this machine (192.0.2.50) is outside exposure.selfRanges" in check.evidence
+
+
+def test_no_gateway_address_with_an_unreadable_cluster_secret_skips_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), [], None)
+    (check,) = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
+    assert check.verdict == probe.SKIP, check
+    assert "cannot read argocd/dfe-cluster" in check.evidence
+
+
+def test_expected_fail_a_gateway_with_no_address_for_the_whole_wait_fails_the_verb(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), [], SELF_RANGES)
+    sleeps: list[float] = []
+    monkeypatch.setattr(probe.time, "sleep", sleeps.append)
+    assert probe.cmd_admin_probe(_admin_args(wait=0.02, source=RUNNER)) == 1
+    err = capsys.readouterr().err
+    assert sleeps, "a Gateway with no address, probed from inside the self ranges, was never retried"
+    assert "[FAIL] admin ui Argo CD" in err
+
+
 def test_a_door_that_answers_is_never_weighed_against_the_self_ranges(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
