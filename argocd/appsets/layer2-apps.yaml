@@ -100,14 +100,14 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"
-                "dfe-archiver" "sha256:a44710c2bd1b4f339202995c18b70008c656ae964180601b0e4b00142b40b820"
-                "dfe-engine" "sha256:db145691ec7612aca61db2e4c987e222ed8eb974a3d9546588c9ead7024fce66"
-                "dfe-fetcher" "sha256:c3ea75c9f0f523dee3d4eab7e25b7a13f512b1c4495b78513173454e0f857e81"
-                "dfe-loader" "sha256:64546190b3249a0acd3c78a89e8f741151222abe5519f88d2af2e559f82fa99e"
-                "dfe-receiver" "sha256:2e98cbf67dbad36f1ddd8f3f07a50817d99347196a3b43080ff62e6da4c296e5"
-                "dfe-transform-elastic" "sha256:0fefba1ac45ba8d7ed08c3ec797446751913b286ae3676fb6bf19285e9d39722"
-                "dfe-transform-vector" "sha256:42d6156b987cf008761ef4e8a828da3ffd9c1cde3c5640828f51bdfa5d5d95ee"
-                "dfe-transform-vrl" "sha256:0b25950e4906ff33cb3c3e637359423e5a267c986e9b6d83fb641410ce808ef7"
+                "dfe-archiver" "sha256:1e21071232b8c13b4d32c5a1fed35a15120f13b866267bccef825af9b5e9eaf2"
+                "dfe-engine" "sha256:679b47eed7e00c51a9f67b4aedcb7ea96e5719d9c6e16cca0c66a238da29e44b"
+                "dfe-fetcher" "sha256:c9de58b12d52a4c589a45fd44e2acfabbb406521127531646da12f20a52563e2"
+                "dfe-loader" "sha256:b5b7c062e2dd49d8fe618a174775d9063b6fb7c8f212985a3348274987e1ea45"
+                "dfe-receiver" "sha256:d8cc2160d489202f7f79bf78b2bb56c0b032d612f8e771a4dc3d3200eee32e33"
+                "dfe-transform-elastic" "sha256:fe239a266e628c5befb388b86caf35e65e66ff0aad49c7aabf99a86e608603cc"
+                "dfe-transform-vector" "sha256:9a8908549957292781e347af8313f5c1784fad14420d82d698a48b4664b6b857"
+                "dfe-transform-vrl" "sha256:3677109b2690c4918ddfe26b7b6606f7f3ebd996f8a0560160f117b101a3b32e"
                 "dfe-ui" "sha256:9087daf0fdec6d3ccedb972e71981a659730d66222506a4e0b820d11bc0d7520"
                 "hyperdx" "sha256:95a0ab3a12b56360d43cd22099d0ad7f19ec7a6065408459ce6f6a12a2f4cc00"
             -}}
