@@ -6,7 +6,6 @@
 # A wall a credential-stuffing run hits before it reaches the login. The counter
 # is per route per proxy replica, NOT per caller: two replicas serve twice this
 # rate in total, and one attacker and one analyst share the same bucket.
-# Per-caller counting is scope global, which this chart refuses (see values.yaml).
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:

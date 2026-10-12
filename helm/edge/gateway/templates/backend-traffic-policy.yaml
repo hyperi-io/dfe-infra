@@ -1,11 +1,12 @@
 {{- /* Internal names ride the same internet-facing load balancer as the public
-       ones, so they take the same wall; off the internet they stay unlimited. */}}
+       ones, so they take a limit too, and off the internet they stay unlimited. */}}
 {{- if and .Values.ui.rate_limit.enabled .Values.envoyGateway.service.internetFacing }}
 {{- range $key := include "envoy-gateway-config.webRouteKeys" (dict "ctx" .) | fromJsonArray }}
 {{- $r := index $.Values.routes $key }}
 ---
-# Per route per proxy replica, NOT per caller, exactly as the public routes'
-# limit (backend-traffic-policy-public.yaml).
+# One bucket per client address per route per proxy replica. A rule with no
+# client selector is one bucket every caller shares, so none is rendered, and a
+# source CIDR matches one address family, so each family has its own rule.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:
@@ -21,8 +22,14 @@ spec:
   rateLimit:
     local:
       rules:
-        - limit:
-            requests: {{ $.Values.ui.rate_limit.requests }}
+        {{- range $family := list "0.0.0.0/0" "::/0" }}
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: {{ $family | quote }}
+          limit:
+            requests: {{ int64 $.Values.ui.rate_limit.per_client_requests }}
             unit: {{ $.Values.ui.rate_limit.unit }}
+        {{- end }}
 {{- end }}
 {{- end }}

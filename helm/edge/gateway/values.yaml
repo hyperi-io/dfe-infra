@@ -374,14 +374,18 @@ ui:
   trusted_proxy_cidrs: ""
 
   # Rate limiting sized for a handful of humans, so a credential-stuffing run
-  # hits a wall before it hits the login. It covers every public route, and on an
-  # internet-facing Service every internal-name web route too, because those
-  # names ride the same internet-facing load balancer. LOCAL is per route per
-  # proxy replica, not per attacker -- per-attacker counting needs scope global,
-  # which needs Redis and an EnvoyGateway install change, so global is refused.
+  # hits a wall before it hits the login. LOCAL counts per proxy replica, and
+  # global, which needs Redis and an EnvoyGateway install change, is refused. Each public
+  # route has one bucket that every caller shares. On an internet-facing Service
+  # every internal-name web route is limited too, because those names ride the
+  # same load balancer, and there each client address gets its own bucket, so one
+  # caller's dashboard cannot empty the route for everyone else.
   rate_limit:
     enabled: true
     requests: 300           # a UI page load is a burst of tens; 5rps sustained clears it
+    # Internal-name routes, per client address: a 40-tile dashboard on a 10s
+    # refresh is 240 a minute, so five such users fit behind one NAT address.
+    per_client_requests: 1200
     unit: Minute            # Second | Minute | Hour | Day | Month | Year
     scope: local            # local only -- global is refused at render
 

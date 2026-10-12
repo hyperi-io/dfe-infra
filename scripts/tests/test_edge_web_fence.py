@@ -743,6 +743,88 @@ def test_internal_routes_off_the_internet_take_no_rate_limit() -> None:
     assert not {n for n in names if n.startswith("dfe-internal-")}, sorted(names)
 
 
+# --- internal names count per client address -------------------------------------
+FAMILIES = ["0.0.0.0/0", "::/0"]
+PER_CLIENT_DEFAULT = {"requests": 1200, "unit": "Minute"}
+
+
+def internal_rate_limit(docs: list[dict], route: str) -> dict:
+    (policy,) = [
+        p for p in of_kind(docs, "BackendTrafficPolicy")
+        if p["metadata"]["name"].startswith("dfe-internal-")
+        and [ref["name"] for ref in p["spec"]["targetRefs"]] == [route]
+    ]
+    return policy
+
+
+def buckets(policy: dict, client: str) -> set[tuple[int, str]]:
+    """Every bucket a request from `client` spends a token from.
+
+    Follows Envoy Gateway v1.9.2: every matching rule applies, a rule with no
+    selector is one bucket for the whole route, and a Distinct sourceCIDR rule is
+    one bucket per address inside its range (internal/xds/translator/ratelimit.go).
+    """
+    address = ipaddress.ip_address(client)
+    found: set[tuple[int, str]] = set()
+    for index, rule in enumerate(policy["spec"]["rateLimit"]["local"]["rules"]):
+        selectors = rule.get("clientSelectors", [])
+        if not selectors:
+            found.add((index, "every caller"))
+            continue
+        (selector,) = selectors
+        assert set(selector) == {"sourceCIDR"}, selector
+        source = selector["sourceCIDR"]
+        network = ipaddress.ip_network(source["value"])
+        if address.version == network.version and address in network:
+            found.add((index, client if source.get("type") == "Distinct" else source["value"]))
+    return found
+
+
+def test_every_internal_rate_limit_counts_per_client_address() -> None:
+    docs = render("aws", *EVERY_GROUP)
+    internal = [r["metadata"]["name"] for r in web_routes(docs) if not r["metadata"]["name"].endswith("-public")]
+    assert {"hyperdx", "dfe-engine-cli", "kafbat"} <= set(internal), internal
+    for name in internal:
+        rules = internal_rate_limit(docs, name)["spec"]["rateLimit"]["local"]["rules"]
+        assert [rule["clientSelectors"] for rule in rules] == [
+            [{"sourceCIDR": {"type": "Distinct", "value": family}}] for family in FAMILIES
+        ], name
+        assert all(rule["limit"] == PER_CLIENT_DEFAULT for rule in rules), rules
+
+
+def test_one_hyperdx_caller_cannot_empty_the_route_for_another() -> None:
+    """HyperDX on cloud answers only on its internal name, so this bucket is all of its traffic."""
+    policy = internal_rate_limit(render("aws", *FENCE), "hyperdx")
+    first, second = buckets(policy, ON_CONSOLE), buckets(policy, "203.0.113.7")
+    assert first, "an IPv4 caller is unlimited"
+    assert second, "an IPv4 caller is unlimited"
+    assert not first & second, (first, second)
+    assert buckets(policy, "2001:db8::1"), "an IPv6 caller is unlimited"
+    assert all(rule["limit"] == PER_CLIENT_DEFAULT for rule in policy["spec"]["rateLimit"]["local"]["rules"])
+
+
+def test_expected_fail_a_rule_with_no_selector_puts_every_caller_in_one_bucket() -> None:
+    """The control for the model above: a shared rule beside the per-client ones is caught."""
+    policy = internal_rate_limit(render("aws", *FENCE), "hyperdx")
+    policy["spec"]["rateLimit"]["local"]["rules"].append({"limit": {"requests": 300, "unit": "Minute"}})
+    assert buckets(policy, ON_CONSOLE) & buckets(policy, "203.0.113.7")
+
+
+def test_the_per_client_budget_is_its_own_key() -> None:
+    docs = render("aws", *PUBLIC, *FENCE, "--set", "ui.rate_limit.per_client_requests=50")
+    limits = [rule["limit"] for rule in internal_rate_limit(docs, "hyperdx")["spec"]["rateLimit"]["local"]["rules"]]
+    assert limits == [{"requests": 50, "unit": "Minute"}] * 2, limits
+    (public,) = [p for p in of_kind(docs, "BackendTrafficPolicy") if p["metadata"]["name"] == "dfe-public-dfe-ui-ratelimit"]
+    assert public["spec"]["rateLimit"]["local"]["rules"] == [{"limit": {"requests": 300, "unit": "Minute"}}]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "4294967296", '"1200"', "null"])
+def test_expected_fail_a_per_client_budget_outside_envoys_range_is_refused(value: str) -> None:
+    out = helm("aws", "--set-json", f"ui.rate_limit.per_client_requests={value}")
+    assert out.returncode != 0, f"{value} rendered"
+    assert "ui.rate_limit.per_client_requests" in out.stderr, out.stderr
+
+
 # --- the receiver route on an internet-facing Service ------------------------------
 @pytest.mark.parametrize("mode", [None, "none", "mtls", "both"])
 def test_the_receiver_route_is_refused_on_an_internet_facing_service_without_caller_auth(mode: str | None) -> None:

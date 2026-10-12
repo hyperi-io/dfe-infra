@@ -827,6 +827,12 @@ true
 {{- else if ne $ui.rate_limit.scope "local" -}}
 {{- fail (printf "ui.rate_limit.scope is %q -- the only scope this chart renders is local" $ui.rate_limit.scope) -}}
 {{- end -}}
+{{- /* Envoy Gateway's RateLimitValue.requests runs 0 to 4294967295
+       (api/v1alpha1/ratelimit_types.go at v1.9.2), and 0 refuses every caller. */ -}}
+{{- $perClient := $ui.rate_limit.per_client_requests -}}
+{{- if not (and (or (kindIs "int" $perClient) (kindIs "int64" $perClient) (kindIs "float64" $perClient)) (ge (int64 $perClient) 1) (le (int64 $perClient) 4294967295) (eq (float64 (int64 $perClient)) (float64 $perClient))) -}}
+{{- fail (printf "ui.rate_limit.per_client_requests is %v -- it is a whole number of requests per unit, 1 to 4294967295, that each client address gets on an internal-name route" $perClient) -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* The Cruise Control UI is a workload of the KAFKA chart, so a flag here
