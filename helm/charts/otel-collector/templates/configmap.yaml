@@ -183,10 +183,9 @@ data:
                 - targets: ["127.0.0.1:{{ .Values.clusterTelemetry.selfTelemetry.port }}"]
             {{- end }}
             {{- if .Values.clusterTelemetry.dfeServices.enabled }}
-            # The DFE services also push these metrics over OTLP, with no replica
-            # identity on the pushed resource, so this job is the only per-pod copy
-            # of them in otel_metrics_*.
             # Discovery is by annotation, so a new DFE service needs no edit here.
+            # Pods of the charts in dfeServices.pushedCharts are dropped: their app
+            # pushes the same metrics over OTLP with the pod as service.instance.id.
             - job_name: dfe-services
               scrape_interval: {{ .Values.clusterTelemetry.dfeServices.collectionInterval }}
               kubernetes_sd_configs:
@@ -198,6 +197,11 @@ data:
                 - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
                   action: keep
                   regex: dfe
+                {{- with .Values.clusterTelemetry.dfeServices.pushedCharts }}
+                - source_labels: [__meta_kubernetes_pod_label_helm_sh_chart]
+                  action: drop
+                  regex: {{ . | quote }}
+                {{- end }}
                 - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
                   action: replace
                   regex: ([^:]+)(?::\d+)?;(\d+)
