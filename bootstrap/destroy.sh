@@ -15,6 +15,8 @@ DELETE_TIMEOUT="120s"
 APPLICATIONS_WAIT=300
 # Seconds step 1 gives the load balancer controller to delete what it created.
 LOAD_BALANCERS_WAIT=300
+# Seconds step 1 gives Karpenter to drain and terminate the nodes its pools launched.
+NODECLAIMS_WAIT=600
 # The namespaces steps 4 and 8 delete. With dfe-* and keda they are every
 # namespace this teardown removes, and the only ones step 1 touches.
 DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
@@ -127,16 +129,54 @@ read_cluster_facts() {
     { read -r CLUSTER_CLOUD; read -r CLUSTER_REGION; read -r CLUSTER_NAME; read -r CLUSTER_VPC; read -r CLUSTER_RUN_TAGS; } <<<"${facts}" || true
 }
 
-# Every Application but the AWS Load Balancer Controller's, one name a line, and
-# none at all when the Applications cannot be listed.
-applications_but_the_load_balancer_controller() {
-    local listing name charts
-    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.sources[*].chart}{"\n"}{end}' 2>/dev/null)" || return 0
-    while read -r name charts; do
-        if [[ -n "${name}" && " ${charts} " != *" aws-load-balancer-controller "* ]]; then
-            echo "${name}"
+# "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools) or other -- and nothing when they cannot be listed.
+application_roles() {
+    local listing name sources role
+    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{"\n"}{end}' 2>/dev/null)" || return 0
+    while read -r name sources; do
+        [[ -n "${name}" ]] || continue
+        if [[ " ${sources} " == *" aws-load-balancer-controller "* ]]; then
+            role=lb
+        elif [[ " ${sources} " == *" karpenter "* ]]; then
+            role=karpenter
+        elif [[ " ${sources} " == *"/karpenter-pools "* ]]; then
+            role=pools
+        else
+            role=other
         fi
+        echo "${role} ${name}"
     done <<<"${listing}"
+}
+
+# Deletes without waiting the Applications in ${2} with role ${1}, failing when there are none.
+delete_applications_in_role() {
+    local want="${1}" role name names=()
+    while read -r role name; do
+        if [[ "${role}" == "${want}" && -n "${name}" ]]; then
+            names+=("${name}")
+        fi
+    done <<<"${2}"
+    (( ${#names[@]} > 0 )) || return 1
+    kubectl -n argocd delete applications.argoproj.io "${names[@]}" --wait=false 2>/dev/null || true
+}
+
+# Bounded, and an unreadable answer never reads as gone: a node still running when Karpenter goes holds the subnets tofu destroy deletes.
+await_nodeclaims_gone() {
+    local started now deadline nap claims=""
+    started="$(date +%s)"
+    deadline=$((started + NODECLAIMS_WAIT))
+    while :; do
+        if claims="$(kubectl get nodeclaims.karpenter.sh -o name 2>/dev/null)" && [[ -z "${claims}" ]]; then
+            return 0
+        fi
+        now="$(date +%s)"
+        (( now < deadline )) || break
+        nap=$((deadline - now))
+        (( nap <= 5 )) || nap=5
+        sleep "${nap}"
+    done
+    claims="${claims//$'\n'/ }"
+    echo "  WARN: Karpenter still holds ${claims:-NodeClaims the cluster would not list} after $((now - started))s, continuing; step 9 terminates a test run's nodes"
 }
 
 # Prints resource|namespace|name|deletionTimestamp|finalizers for each Gateway,
@@ -198,10 +238,11 @@ aws_error_code() {
     fi
 }
 
-# "delete <id>" or "keep <id> <why>" for each security group or network interface
-# in the aws JSON on stdin. Only one in the VPC named by ${2}, detached, and
-# carrying every run tag in the JSON object ${1} and every key=value after ${2}
-# is ever marked delete, so a filter the API did not apply widens nothing.
+# "delete <id>" or "keep <id> <why>" for each security group, network interface or
+# instance in the aws JSON on stdin. Only one in the VPC named by ${2}, detached,
+# not already terminating, and carrying every run tag in the JSON object ${1},
+# every key=value after ${2} and every bare key after ${2} with any value, is ever
+# marked delete, so a filter the API did not apply widens nothing.
 select_run_owned() {
     python3 -c '
 import json, sys
@@ -213,15 +254,20 @@ except ValueError:
     sys.exit(2)
 if not isinstance(need, dict) or not need or not all(isinstance(v, str) and v for v in need.values()):
     sys.exit(2)
-need.update(arg.split("=", 1) for arg in sys.argv[3:])
-for item in data.get("SecurityGroups", []) + data.get("NetworkInterfaces", []):
-    ident = item.get("GroupId") or item.get("NetworkInterfaceId")
+need.update(arg.split("=", 1) for arg in sys.argv[3:] if "=" in arg)
+present = [arg for arg in sys.argv[3:] if "=" not in arg]
+items = data.get("SecurityGroups", []) + data.get("NetworkInterfaces", [])
+items += [i for r in data.get("Reservations", []) for i in r.get("Instances", [])]
+for item in items:
+    ident = item.get("GroupId") or item.get("NetworkInterfaceId") or item.get("InstanceId")
     tags = {t.get("Key"): t.get("Value") for t in item.get("Tags") or item.get("TagSet") or []}
-    missing = sorted(k for k, v in need.items() if tags.get(k) != v)
+    missing = sorted([k for k, v in need.items() if tags.get(k) != v] + [k for k in present if not tags.get(k)])
     if item.get("VpcId") != sys.argv[2]:
         print("keep", ident, "it is outside the run VPC")
     elif item.get("Status", "available") != "available":
         print("keep", ident, "it is still attached")
+    elif (item.get("State") or {}).get("Name") in ("shutting-down", "terminated"):
+        print("keep", ident, "it is already terminating")
     elif missing:
         print("keep", ident, "it does not carry", ",".join(missing))
     else:
@@ -251,23 +297,66 @@ delete_detached_interfaces() {
     done <<<"${verdicts}"
 }
 
+# Success when the cluster secret names an AWS test run step 9 can sweep, and says why not otherwise.
+test_run_sweepable() {
+    if [[ "${CLUSTER_CLOUD}" != "aws" ]]; then
+        echo "  not an AWS cluster, so there is nothing to sweep"
+        return 1
+    fi
+    if [[ -z "${CLUSTER_RUN_TAGS}" || -z "${CLUSTER_VPC}" || -z "${CLUSTER_NAME}" || -z "${CLUSTER_REGION}" ]]; then
+        echo "  the cluster secret names no run tags, VPC, cluster or region, so nothing is marked as a test run's"
+        return 1
+    fi
+    if ! command -v aws >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        echo "  WARN: no aws CLI or python3 on PATH, so nothing was swept"
+        return 1
+    fi
+}
+
+# Only a test run's nodes are terminated: in its VPC, owned by its cluster, launched from a Karpenter pool and carrying every run tag.
+terminate_karpenter_nodes() {
+    local reservations verdicts verdict id why error nodes=()
+    if ! reservations="$(aws ec2 describe-instances --region "${CLUSTER_REGION}" --output json \
+        --filters "Name=vpc-id,Values=${CLUSTER_VPC}" "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
+        "Name=tag-key,Values=karpenter.sh/nodepool" "Name=instance-state-name,Values=pending,running,stopping,stopped" 2>/dev/null)"; then
+        echo "  WARN: could not list the instances in ${CLUSTER_VPC}"
+        return 0
+    fi
+    if ! verdicts="$(select_run_owned "${CLUSTER_RUN_TAGS}" "${CLUSTER_VPC}" "kubernetes.io/cluster/${CLUSTER_NAME}=owned" karpenter.sh/nodepool <<<"${reservations}")"; then
+        echo "  WARN: the run tags on the cluster secret are not a JSON object of strings, so no instance was terminated"
+        return 0
+    fi
+    while read -r verdict id why; do
+        if [[ -z "${id}" ]]; then
+            continue
+        elif [[ "${verdict}" != "delete" ]]; then
+            echo "  left instance ${id}: ${why}"
+        else
+            nodes+=("${id}")
+        fi
+    done <<<"${verdicts}"
+    if (( ${#nodes[@]} == 0 )); then
+        echo "  no node a Karpenter pool launched for this run is left in ${CLUSTER_VPC}"
+        return 0
+    fi
+    if ! error="$(aws ec2 terminate-instances --region "${CLUSTER_REGION}" --instance-ids "${nodes[@]}" 2>&1 >/dev/null)"; then
+        echo "  WARN: could not terminate ${nodes[*]}: $(aws_error_code "${error}")"
+        return 0
+    fi
+    echo "  terminating nodes Karpenter left running: ${nodes[*]}"
+    # The waiter gives up after its own 40 polls 15s apart, so this cannot stall the teardown.
+    if error="$(aws ec2 wait instance-terminated --region "${CLUSTER_REGION}" --instance-ids "${nodes[@]}" 2>&1 >/dev/null)"; then
+        echo "  terminated ${nodes[*]}"
+    else
+        echo "  WARN: ${nodes[*]} not yet terminated, continuing: $(aws_error_code "${error}")"
+    fi
+}
+
 # A security group the load balancer controller did not get to delete stops tofu
 # destroy deleting the VPC. Only a test run's are swept: in its VPC, carrying the
 # controller's cluster tag and every run tag the controller was told to apply.
 sweep_load_balancer_security_groups() {
     local groups verdicts verdict id why error swept=0
-    if [[ "${CLUSTER_CLOUD}" != "aws" ]]; then
-        echo "  not an AWS cluster, so there is nothing to sweep"
-        return 0
-    fi
-    if [[ -z "${CLUSTER_RUN_TAGS}" || -z "${CLUSTER_VPC}" || -z "${CLUSTER_NAME}" || -z "${CLUSTER_REGION}" ]]; then
-        echo "  the cluster secret names no run tags, VPC, cluster or region, so no security group is marked as a test run's"
-        return 0
-    fi
-    if ! command -v aws >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
-        echo "  WARN: no aws CLI or python3 on PATH, so no security group was swept"
-        return 0
-    fi
     if ! groups="$(aws ec2 describe-security-groups --region "${CLUSTER_REGION}" --output json \
         --filters "Name=vpc-id,Values=${CLUSTER_VPC}" "Name=tag:elbv2.k8s.aws/cluster,Values=${CLUSTER_NAME}" 2>/dev/null)"; then
         echo "  WARN: could not list the security groups in ${CLUSTER_VPC}"
@@ -320,18 +409,18 @@ run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete triggerauthentication --all -A --timeout=30s 2>/dev/null || true
 # The load balancer controller's own Application goes last, once it has released
-# every load balancer the others took with them.
+# every load balancer the others took with them. Karpenter's pools go once the
+# load balancers are released, and its controller once their nodes are gone.
 if [[ "${DRY_RUN}" != "true" ]]; then
-    other_applications=()
-    while read -r app; do
-        other_applications+=("${app}")
-    done < <(applications_but_the_load_balancer_controller)
-    if (( ${#other_applications[@]} > 0 )); then
-        kubectl -n argocd delete applications.argoproj.io "${other_applications[@]}" --wait=false 2>/dev/null || true
-    fi
+    roles="$(application_roles)"
+    delete_applications_in_role other "${roles}" || true
     release_load_balancers
+    if delete_applications_in_role pools "${roles}"; then
+        await_nodeclaims_gone
+    fi
 else
-    echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+    echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, Karpenter's and karpenter-pools, then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+    echo "[DRY-RUN] delete karpenter-pools, and wait up to ${NODECLAIMS_WAIT}s for Karpenter to remove every NodeClaim before its controller goes"
 fi
 # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
 # app.catalog.cattle.io and every Argo Application survives the teardown.
@@ -446,10 +535,14 @@ done
 # every other tenant's Service on the cluster.
 echo "  metallb-system and its address pool left in place -- an adopted LoadBalancer provider is never removed"
 
-echo "==> [9/9] Deleting load balancer security groups left in a test run's VPC"
+echo "==> [9/9] Removing the nodes and load balancer security groups left in a test run's VPC"
 if [[ "${DRY_RUN}" != "true" ]]; then
-    sweep_load_balancer_security_groups
+    if test_run_sweepable; then
+        terminate_karpenter_nodes
+        sweep_load_balancer_security_groups
+    fi
 else
+    echo "[DRY-RUN] terminate each instance in the run's VPC that a Karpenter pool launched for its cluster and that carries every run tag"
     echo "[DRY-RUN] delete each security group in the run's VPC carrying the load balancer controller's cluster tag and every run tag, with its detached network interfaces"
 fi
 

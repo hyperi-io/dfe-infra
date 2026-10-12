@@ -16,9 +16,13 @@
 #   held-polls         how many Service listings a deleted Service still shows
 #   services-unreadable  listing the Services fails
 #   cluster-facts      the five annotation lines read off the cluster secret
-# aws is a stub too: it logs every call to aws.log, answers the two describes
-# from security-groups.json and interfaces.json, and refuses every delete with
-# an error naming an account when aws-refuses exists.
+#   nodeclaim-polls    how many NodeClaim listings still show two NodeClaims once
+#                      karpenter-pools is deleted; before that they always show
+#   nodeclaims-unreadable  listing the NodeClaims fails
+# aws is a stub too: it logs every call to aws.log, answers the three describes
+# from security-groups.json, interfaces.json and instances.json, refuses every
+# delete with an error naming an account when aws-refuses exists, and refuses a
+# terminate the same way when terminate-refuses exists.
 # The clock is a file: `date +%s` reads it, sleep and each kubectl call advance
 # it, and trace.log stamps every kubectl call with it, so a test sees how long
 # a wait ran without waiting.
@@ -65,6 +69,19 @@ case "$*" in
     "-n argocd get secret dfe-cluster "*)
         [[ -f "${STUB_DIR}/cluster-facts" ]] && cat "${STUB_DIR}/cluster-facts"
         ;;
+    "-n argocd delete applications.argoproj.io "*karpenter-pools-dfe-aws-test*)
+        : > "${STUB_DIR}/pools-deleted"
+        ;;
+    "get nodeclaims.karpenter.sh "*)
+        [[ -f "${STUB_DIR}/nodeclaims-unreadable" ]] && exit 1
+        [[ -f "${STUB_DIR}/nodeclaim-polls" ]] || exit 0
+        left="$(cat "${STUB_DIR}/nodeclaim-polls")"
+        if [[ -f "${STUB_DIR}/pools-deleted" ]]; then
+            (( left > 0 )) || exit 0
+            echo $((left - 1)) > "${STUB_DIR}/nodeclaim-polls"
+        fi
+        printf '%s\n' nodeclaim.karpenter.sh/general-x7k2p nodeclaim.karpenter.sh/general-q9m4d
+        ;;
     "get services -A "*)
         [[ -f "${STUB_DIR}/services-unreadable" ]] && exit 1
         while IFS='|' read -r ns name finalizers; do
@@ -103,6 +120,15 @@ case "${1} ${2}" in
         ;;
     "ec2 describe-network-interfaces")
         cat "${STUB_DIR}/interfaces.json" 2>/dev/null || echo '{"NetworkInterfaces": []}'
+        ;;
+    "ec2 describe-instances")
+        cat "${STUB_DIR}/instances.json" 2>/dev/null || echo '{"Reservations": []}'
+        ;;
+    "ec2 terminate-instances")
+        if [[ -f "${STUB_DIR}/terminate-refuses" ]]; then
+            echo "An error occurred (UnauthorizedOperation) when calling the TerminateInstances operation: arn:aws:iam::000000000000:role/runner" >&2
+            exit 254
+        fi
         ;;
     "ec2 delete-"*)
         if [[ -f "${STUB_DIR}/aws-refuses" ]]; then
@@ -489,4 +515,168 @@ applications_wait_seconds() {
     [ "${controller}" -lt "${sweep}" ]
     [ ! -s "${STUB_DIR}/kubectl.log" ]
     [ ! -s "${STUB_DIR}/aws.log" ]
+}
+
+# An AWS deployment's Applications: both controllers, Karpenter's pools and one app,
+# with two NodeClaims that take ${1} listings to go once the pools are deleted.
+karpenter_deployment() {
+    printf '%s\n' \
+        'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller' \
+        'karpenter-dfe-aws-test karpenter' \
+        'karpenter-pools-dfe-aws-test  helm/charts/karpenter-pools' \
+        'dfe-receiver-default-dfe-aws-test  helm/charts/dfe-receiver' > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+# A run's Karpenter node, and five instances step 9 must leave: one with no run
+# tags, one of another cluster, a managed node group's, one in another VPC, and one
+# already shutting down.
+instances() {
+    local karpenter='{"Key": "karpenter.sh/nodepool", "Value": "general"}'
+    local owned='{"Key": "kubernetes.io/cluster/dfe-cycle", "Value": "owned"}'
+    local run='{"Key": "dfe-e2e", "Value": "r20261011t084205z-8e3968"}, {"Key": "expires-at", "Value": "2026-10-11T11:57:05Z"}'
+    printf '{"Reservations": [{"Instances": [%s, %s, %s, %s, %s, %s]}]}\n' \
+        "{\"InstanceId\": \"i-run\", \"VpcId\": \"vpc-0run\", \"State\": {\"Name\": \"running\"}, \"Tags\": [${karpenter}, ${owned}, ${run}]}" \
+        "{\"InstanceId\": \"i-no-run-tags\", \"VpcId\": \"vpc-0run\", \"State\": {\"Name\": \"running\"}, \"Tags\": [${karpenter}, ${owned}]}" \
+        "{\"InstanceId\": \"i-other-cluster\", \"VpcId\": \"vpc-0run\", \"State\": {\"Name\": \"running\"}, \"Tags\": [${karpenter}, {\"Key\": \"kubernetes.io/cluster/other\", \"Value\": \"owned\"}, ${run}]}" \
+        "{\"InstanceId\": \"i-node-group\", \"VpcId\": \"vpc-0run\", \"State\": {\"Name\": \"running\"}, \"Tags\": [${owned}, ${run}]}" \
+        "{\"InstanceId\": \"i-elsewhere\", \"VpcId\": \"vpc-other\", \"State\": {\"Name\": \"running\"}, \"Tags\": [${karpenter}, ${owned}, ${run}]}" \
+        "{\"InstanceId\": \"i-going\", \"VpcId\": \"vpc-0run\", \"State\": {\"Name\": \"shutting-down\"}, \"Tags\": [${karpenter}, ${owned}, ${run}]}" \
+        > "${STUB_DIR}/instances.json"
+}
+
+@test "Karpenter's pools go after the load balancers, and its controller only once every NodeClaim is gone" {
+    karpenter_deployment 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text others released pools last_claims controller
+    log_text="$(log)"
+    others="$(line_of '-n argocd delete applications.argoproj.io dfe-receiver-default-dfe-aws-test --wait=false' "${log_text}")"
+    released="$(last_line_of 'get services -A' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${others}" ]
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ "${others}" -lt "${released}" ]
+    [ "${released}" -lt "${pools}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    # Two listings still show the NodeClaims, the third finds them gone.
+    [ "$(grep -c -- '^get nodeclaims.karpenter.sh' <<<"${log_text}")" -eq 3 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "neither Karpenter Application goes with the first delete, and no delete names the controller" {
+    karpenter_deployment 0
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local first
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' "${STUB_DIR}/kubectl.log")"
+    [[ "${first}" == *"dfe-receiver-default-dfe-aws-test"* ]]
+    [[ "${first}" != *"karpenter"* ]]
+    [[ "${first}" != *"aws-load-balancer-controller"* ]]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' "${STUB_DIR}/kubectl.log")" -eq 0 ]
+}
+
+@test "NodeClaims that never go are named, and the teardown goes on at 600s" {
+    karpenter_deployment 100000
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" =~ WARN:\ Karpenter\ still\ holds\ nodeclaim.karpenter.sh/general-x7k2p\ nodeclaim.karpenter.sh/general-q9m4d\ after\ ([0-9]+)s ]]
+    [ "${BASH_REMATCH[1]}" -ge 600 ]
+    [ "${BASH_REMATCH[1]}" -le 605 ]
+    [[ "$(log)" == *"-n argocd delete applications.argoproj.io --all --wait=false"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
+}
+
+@test "a NodeClaim list the cluster will not answer is never read as gone" {
+    karpenter_deployment 0
+    touch "${STUB_DIR}/nodeclaims-unreadable"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" =~ WARN:\ Karpenter\ still\ holds\ NodeClaims\ the\ cluster\ would\ not\ list\ after\ ([0-9]+)s ]]
+    [ "${BASH_REMATCH[1]}" -ge 600 ]
+}
+
+@test "a cluster without karpenter-pools never waits on NodeClaims" {
+    gateway_behind_the_controller 0
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(log)" != *"nodeclaims"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "step 9 terminates the run's Karpenter node, before the security groups, and leaves every other instance" {
+    a_test_run
+    instances
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local aws_text terminate wait_line group
+    aws_text="$(aws_log)"
+    [[ "${aws_text}" == *"ec2 describe-instances --region us-west-2 --output json --filters Name=vpc-id,Values=vpc-0run Name=tag:kubernetes.io/cluster/dfe-cycle,Values=owned Name=tag-key,Values=karpenter.sh/nodepool Name=instance-state-name,Values=pending,running,stopping,stopped"* ]]
+    terminate="$(line_of 'ec2 terminate-instances --region us-west-2 --instance-ids i-run' "${aws_text}")"
+    wait_line="$(line_of 'ec2 wait instance-terminated --region us-west-2 --instance-ids i-run' "${aws_text}")"
+    group="$(line_of 'ec2 delete-security-group' "${aws_text}")"
+    [ -n "${terminate}" ]
+    [ -n "${wait_line}" ]
+    [ "${terminate}" -lt "${wait_line}" ]
+    [ "${wait_line}" -lt "${group}" ]
+    [ "$(grep -c -- 'terminate-instances' <<<"${aws_text}")" -eq 1 ]
+    [[ "$(grep -- 'terminate-instances' <<<"${aws_text}")" == *"--instance-ids i-run" ]]
+    [[ "${output}" == *"left instance i-no-run-tags: it does not carry dfe-e2e,expires-at"* ]]
+    [[ "${output}" == *"left instance i-other-cluster: it does not carry kubernetes.io/cluster/dfe-cycle"* ]]
+    [[ "${output}" == *"left instance i-node-group: it does not carry karpenter.sh/nodepool"* ]]
+    [[ "${output}" == *"left instance i-elsewhere: it is outside the run VPC"* ]]
+    [[ "${output}" == *"left instance i-going: it is already terminating"* ]]
+    [[ "${output}" == *"terminated i-run"* ]]
+}
+
+@test "no instance is looked for without the run tags on the cluster secret" {
+    a_test_run ""
+    instances
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [ ! -s "${STUB_DIR}/aws.log" ]
+    [[ "${output}" == *"names no run tags"* ]]
+}
+
+@test "a run with no Karpenter node left terminates nothing and says so" {
+    a_test_run
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(aws_log)" == *"ec2 describe-instances"* ]]
+    [[ "$(aws_log)" != *"terminate-instances"* ]]
+    [[ "${output}" == *"no node a Karpenter pool launched for this run is left in vpc-0run"* ]]
+}
+
+@test "a terminate AWS refuses is reported by its error code, and the security group sweep still runs" {
+    a_test_run
+    instances
+    security_groups
+    touch "${STUB_DIR}/terminate-refuses"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"WARN: could not terminate i-run: UnauthorizedOperation"* ]]
+    [[ "${output}" != *"000000000000"* ]]
+    [[ "$(aws_log)" != *"ec2 wait"* ]]
+    [[ "${output}" == *"deleted security group sg-run"* ]]
+}
+
+@test "the dry run names the NodeClaim wait before the controllers go, and the node backstop before the group sweep" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local nodeclaims controller nodes groups
+    nodeclaims="$(line_of 'wait up to 600s for Karpenter to remove every NodeClaim' "${output}")"
+    controller="$(line_of 'kubectl -n argocd delete applications.argoproj.io --all' "${output}")"
+    nodes="$(line_of 'terminate each instance in the run' "${output}")"
+    groups="$(line_of "delete each security group in the run's VPC" "${output}")"
+    [ -n "${nodeclaims}" ]
+    [ -n "${nodes}" ]
+    [ "${nodeclaims}" -lt "${controller}" ]
+    [ "${controller}" -lt "${nodes}" ]
+    [ "${nodes}" -lt "${groups}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
 }

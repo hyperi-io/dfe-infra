@@ -120,6 +120,7 @@ tier, by which dial key. What is AWS's own:
   `REDPANDA_CLIENT_SECRET` or fails. Until the root stops requiring it, either
   export those two with any value for the run, or destroy by target. Do NOT
   reach for `-exclude`: it cannot be combined with `-target`.
+- `bootstrap/destroy.sh` deletes karpenter-pools once the load balancers are released and keeps Karpenter itself until every NodeClaim is gone (up to 600s), because a node left running holds its subnets through its network interfaces and `tofu destroy` fails on them. On a test run its last step terminates any node a Karpenter pool launched for that run and cluster.
 - Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
   the Kubernetes workloads first -- anything that made a load balancer, a
   volume or a DNS record did so through a controller, and `tofu destroy`
