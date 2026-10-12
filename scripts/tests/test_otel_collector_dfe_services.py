@@ -48,8 +48,26 @@ def chart_drops(relabels: list[dict]) -> list[dict]:
     return [r for r in relabels if r.get("source_labels") == [CHART_LABEL]]
 
 
-def test_the_default_drops_no_pod() -> None:
-    assert chart_drops(dfe_services_relabels()) == []
+def test_an_empty_list_drops_no_pod() -> None:
+    assert chart_drops(dfe_services_relabels("clusterTelemetry.dfeServices.pushedCharts=")) == []
+
+
+@pytest.mark.parametrize(("label", "dropped"), [
+    ("dfe-engine-1.22.31", True),
+    ("dfe-receiver-1.15.45", True),
+    ("dfe-loader-1.18.50", True),
+    ("dfe-fetcher-1.4.36", True),
+    ("dfe-archiver-1.7.32", True),
+    ("dfe-transform-vrl-1.1.33", True),
+    ("dfe-transform-vector-1.0.48", True),
+    ("dfe-transform-elastic-1.1.12", True),
+    ("dfe-ui-1.7.13", False),
+    ("dfe-hyperdx-0.3.3", False),
+    ("culvert-2.1.18", False),
+])
+def test_the_default_drops_the_charts_that_push(label: str, dropped: bool) -> None:
+    (drop,) = chart_drops(dfe_services_relabels())
+    assert bool(re.fullmatch(drop["regex"], label)) is dropped
 
 
 def test_pushed_charts_drop_their_pods_after_the_dfe_keep() -> None:

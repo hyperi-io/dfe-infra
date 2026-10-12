@@ -42,6 +42,8 @@ extraEnv:
   CULVERT_OTEL_ENABLED: '{{ ternary "true" "false" (not (empty ((.Values.otel | default dict).endpoint | default (tpl .Values.telemetry.otlpEndpointTemplate .)))) }}'
   CULVERT_OTEL_ENDPOINT: '{{ (.Values.otel | default dict).endpoint | default (tpl .Values.telemetry.otlpEndpointTemplate .) }}'
   CULVERT_OTEL_PROTOCOL: grpc
+  # Serves /metrics on the metrics listener; without it the annotated scrape gets a 404.
+  CULVERT_METRICS_ENABLED: "true"
 
 # The tunnel's own OIDC secrets, from the Secret vpn.oidc.existingSecret names.
 # Optional, so a tunnel with OIDC off starts without it.

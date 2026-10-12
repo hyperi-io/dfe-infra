@@ -142,6 +142,8 @@ spec:
       automountServiceAccountToken: false
       containers:
       - env:
+        - name: CULVERT_METRICS_ENABLED
+          value: 'true'
         - name: CULVERT_OTEL_ENABLED
           value: 'true'
         - name: CULVERT_OTEL_ENDPOINT

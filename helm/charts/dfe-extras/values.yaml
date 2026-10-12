@@ -22,15 +22,15 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.27"
+    dfe-engine: "v1.22.31"
     dfe-ui: "v1.7.13"
-    dfe-receiver: "v1.15.44"
-    dfe-loader: "v1.18.48"
-    dfe-archiver: "v1.7.31"
-    dfe-fetcher: "v1.4.35"
-    dfe-transform-vrl: "v1.1.32"
-    dfe-transform-vector: "v1.0.47"
-    dfe-transform-elastic: "v1.1.11"
+    dfe-receiver: "v1.15.45"
+    dfe-loader: "v1.18.50"
+    dfe-archiver: "v1.7.32"
+    dfe-fetcher: "v1.4.36"
+    dfe-transform-vrl: "v1.1.33"
+    dfe-transform-vector: "v1.0.48"
+    dfe-transform-elastic: "v1.1.12"
     culvert: "v2.1.18"
     dfe-hyperdx: "v0.3.3"
 
@@ -266,7 +266,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:55e4ca48a250fdda198a5be6e8d05157cfc6802a759c40821a28ce33e03a61b6"
+        digest: "sha256:865ac5e79b8589c89ab96bb4b2f4f24c71c1e2306b511da8e6c31f0fb40a56e8"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
