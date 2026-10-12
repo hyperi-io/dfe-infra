@@ -908,6 +908,28 @@ def _ec2_fleet_gone(fleet_id: str, region: str) -> bool:
     return all(_ec2_instance_gone(instance_id, region) for instance_id in instance_ids)
 
 
+def _spot_request_gone(request_id: str, region: str) -> bool:
+    """True once AWS no longer knows the request, or it is closed or cancelled with no live instance.
+
+    The tagging API goes on listing a spot request EC2 has already purged.
+    """
+    try:
+        requests = run_aws(
+            ["ec2", "describe-spot-instance-requests", "--spot-instance-request-ids", request_id], region
+        ).get("SpotInstanceRequests", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    if not requests:
+        return True
+    request = requests[0]
+    if request.get("State") not in ("closed", "cancelled"):
+        return False
+    instance_id = request.get("InstanceId")
+    return not instance_id or _ec2_instance_gone(instance_id, region)
+
+
 def _ebs_volume_gone(volume_id: str, region: str) -> bool:
     """True once the volume is deleted, or AWS no longer lists it."""
     try:
@@ -1055,8 +1077,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
     """True when a tagging-API hit names an EC2 object, KMS key or EKS association AWS reports gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
-    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, instant EC2 fleets, KMS keys and
-    EKS pod identity associations after they go. One still deleting or shutting down is not gone, a KMS key
+    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, instant EC2 fleets, spot requests,
+    KMS keys and EKS pod identity associations after they go. One still deleting or shutting down is not gone, a KMS key
     scheduled for deletion is, and any other hit is not judged and reads as present.
 
     Raises:
@@ -1084,6 +1106,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
         return _network_interface_gone(bare_id, region)
     if resource_type == "fleet":
         return _ec2_fleet_gone(bare_id, region)
+    if resource_type == "spot-instances-request":
+        return _spot_request_gone(bare_id, region)
     return False
 
 
