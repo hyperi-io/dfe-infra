@@ -25,6 +25,23 @@ check() {
     fi
 }
 
+# Succeeds when Argo CD manages HTTPRoute argocd/argocd, or the Applications cannot be listed; the gateway renders it only with exposure.groups.admin and routes.argocd both on.
+argocd_route_wanted() {
+    local managed
+    managed="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*].status.resources[?(@.kind=="HTTPRoute")]}{.namespace}{"/"}{.name}{"\n"}{end}' 2>/dev/null)" || return 0
+    grep -qxF "argocd/argocd" <<<"${managed}"
+}
+
+# Accepted by every ancestor it reports, and by at least one: a SecurityPolicy's status is a gateway-api PolicyStatus, conditions per ancestor and none at the top level.
+policy_accepted() {
+    local states state
+    states="$(kubectl -n envoy-gateway-system get securitypolicy "${1}" -o jsonpath='{.status.ancestors[*].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" || return 1
+    [[ -n "${states}" ]] || return 1
+    for state in ${states}; do
+        [[ "${state}" == "True" ]] || return 1
+    done
+}
+
 echo "=== DFE Auth & Ingress Smoke Test ==="
 echo ""
 
@@ -40,7 +57,11 @@ echo ""
 echo "--- HTTPRoutes ---"
 check "dfe-ui HTTPRoute" "kubectl get httproute -A -o name | grep -q '/dfe-ui\$'"
 check "dfe-engine HTTPRoute" "kubectl get httproute -A -o name | grep -q '/dfe-engine\$'"
-check "argocd HTTPRoute" "kubectl -n argocd get httproute argocd"
+if argocd_route_wanted; then
+    check "argocd HTTPRoute" "kubectl -n argocd get httproute argocd"
+else
+    echo "  [SKIP] argocd HTTPRoute -- the gateway renders none (exposure.groups.admin or routes.argocd is off)"
+fi
 check "hyperdx HTTPRoute" "kubectl get httproute -A -o name | grep -q '/hyperdx\$'"
 
 echo ""
@@ -56,8 +77,7 @@ if [[ -n "${OIDC_POLICIES}" ]]; then
     while IFS= read -r policy; do
         policy_name="${policy##*/}"
         check "SecurityPolicy ${policy_name} exists" "true"
-        check "SecurityPolicy ${policy_name} accepted" \
-            "kubectl -n envoy-gateway-system get securitypolicy ${policy_name} -o jsonpath='{.status.conditions[?(@.type==\"Accepted\")].status}' | grep -q True"
+        check "SecurityPolicy ${policy_name} accepted" "policy_accepted ${policy_name}"
     done <<< "${OIDC_POLICIES}"
 else
     echo "  [SKIP] No OIDC SecurityPolicies found (oidc.enabled=false or no providers)"
