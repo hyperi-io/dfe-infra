@@ -71,6 +71,10 @@ metadata:
     # Karpenter -- what they create never sees the provider's default_tags.
     # Blank on every deployment that is not a test run.
     ${DFE_RUN_TAGS_ANNOTATION}
+    # The cloud root's whole tag set as one line of JSON, which layer2-edge.yaml
+    # hands the gateway chart for the internal CA's store entries. Blank on a
+    # cloud whose root writes none.
+    ${DFE_RESOURCE_TAGS_ANNOTATION}
     # Front-door addresses this deployment's DNS already names. Empty leaves the
     # choice to the LB pool, which is what re-rolls them on a rebuild.
     dfe.hyperi.io/gateway_address: "${DFE_GATEWAY_IP}"

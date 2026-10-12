@@ -43,13 +43,13 @@ rather than racing it. The root is reused; the leaf lifetimes rotate.
 | `DFE_CA_PERSIST` | bootstrap env | Whether bootstrap pre-applies the restore. Defaults on when `DFE_VAULT_SECRET_ID` is set. |
 | `DFE_CA_RESTORE_TIMEOUT` | bootstrap env | Seconds to wait for the restore (default 60). A first bootstrap times out by design. |
 
-The store path is `<project>/<env>/pki/internal-ca`, properties `tls_crt` and
-`tls_key` -- underscored, because the Vault provider reads a property as a gjson
-path and a dot means nesting.
+### The store
 
-On AWS Secrets Manager the external-secrets role can create, write, tag and describe secrets under `<project>/<env>/pki/` and nowhere else (`terraform/modules/secrets/aws-sm`). ESO creates the root under the account's `aws/secretsmanager` key, not the deployment's own, so it outlives the key a teardown schedules for deletion.
+The root is two entries, `<project>/<env>/pki/internal-ca-crt` (property `tls_crt`) and `<project>/<env>/pki/internal-ca-key` (property `tls_key`), because ESO checks `IfNotExists` per entry and the AWS provider checks the entry, not the property. The restore also reads `<project>/<env>/pki/internal-ca`, the single entry older releases wrote, and writes a complete pair from either layout or nothing. Properties are underscored because the Vault provider reads a property as a gjson path.
 
-On a first bootstrap the restore ExternalSecret stays `Ready=False`: there was nothing to restore, and once cert-manager mints the root a `CreatedOnce` ExternalSecret never writes again. `bootstrap/smoke-test.sh` does not count a `CreatedOnce` ExternalSecret whose Secret exists.
+On AWS Secrets Manager the external-secrets role can create, write, tag and describe secrets under `<project>/<env>/pki/` and nowhere else (`terraform/modules/secrets/aws-sm`). ESO creates the root under the account's `aws/secretsmanager` key, not the deployment's own, so it outlives the key a teardown schedules for deletion. The CA secrets carry the cloud root's governance tag set, run tags included (`DFE_RESOURCE_TAGS`).
+
+On a first bootstrap the restore ExternalSecret is `Ready=False` until the PushSecret stores the root; `CreatedOnce` then reads it once, writes it back, and stops. `bootstrap/smoke-test.sh` does not count a `CreatedOnce` ExternalSecret whose Secret exists.
 
 ## Estate-PKI mode (`tls.vault`)
 

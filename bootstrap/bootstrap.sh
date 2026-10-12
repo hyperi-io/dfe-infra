@@ -124,6 +124,11 @@
 #                            for karpenter-pools' karpenter.tags and the load
 #                            balancer controller's defaultTags; empty omits the
 #                            annotation (every deployment that is not a test run)
+#   DFE_RESOURCE_TAGS        the cloud root's whole tag set (governance plus run)
+#                            as one line of JSON, for the gateway chart's
+#                            tls.internalCA.persist.tags -- the tags ESO puts on
+#                            the CA root's store entries; empty omits the
+#                            annotation and the tags
 #   DFE_KAFKA_BROKER_HOSTS   derived, not set by the caller: every broker's bare
 #                            host (no port), comma separated, from
 #                            DFE_KAFKA_BOOTSTRAP. Empty on every provider but msk.
@@ -648,6 +653,12 @@ export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
 DFE_RUN_TAGS_YAML="${DFE_RUN_TAGS//\'/\'\'}"
 # shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
 export DFE_RUN_TAGS_ANNOTATION="${DFE_RUN_TAGS:+dfe.hyperi.io/run_tags: '${DFE_RUN_TAGS_YAML}'}"
+# The cloud root's whole tag set as one line of JSON, quoted the same way as the pools.
+export DFE_RESOURCE_TAGS="${DFE_RESOURCE_TAGS:-}"
+# shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
+DFE_RESOURCE_TAGS_YAML="${DFE_RESOURCE_TAGS//\'/\'\'}"
+# shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
+export DFE_RESOURCE_TAGS_ANNOTATION="${DFE_RESOURCE_TAGS:+dfe.hyperi.io/resource_tags: '${DFE_RESOURCE_TAGS_YAML}'}"
 
 echo "==> [0a/7] On-prem node-capacity preflight"
 # DFE_CLOUD=local is this script's own token for "we do not create these
@@ -982,10 +993,14 @@ else
     "${REPO_ROOT}/argocd/values/profile-${DFE_PROFILE}.yaml"; do
     [[ -f "${ca_values_file}" ]] && ca_value_files+=(-f "${ca_values_file}")
   done
+  # An account guardrail can refuse a CreateSecret that lacks the root's tags, and default_tags never reaches what ESO creates.
+  ca_tag_args=()
+  [[ -n "${DFE_RESOURCE_TAGS}" ]] && ca_tag_args=(--set-json "tls.internalCA.persist.tags=${DFE_RESOURCE_TAGS}")
   helm template dfe-internal-ca "${REPO_ROOT}/helm/edge/gateway" \
     --namespace cert-manager \
     --show-only templates/internal-ca-persist.yaml \
     "${ca_value_files[@]}" \
+    "${ca_tag_args[@]}" \
     --set "env=${DFE_ENV}" \
     --set "cloud=${DFE_CLOUD}" \
     --set "domain=${DFE_DOMAIN}" \

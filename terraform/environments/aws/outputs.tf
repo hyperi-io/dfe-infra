@@ -105,6 +105,11 @@ output "DFE_RUN_TAGS" {
   value       = length(local.run_tags) == 0 ? "" : jsonencode(local.run_tags)
 }
 
+output "DFE_RESOURCE_TAGS" {
+  description = "Every tag this root puts on what it creates -- the governance set plus a test run's tags -- as one line of JSON. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/resource_tags annotation and its own internal CA render, and layer2-edge.yaml turns the annotation into the gateway chart's tls.internalCA.persist.tags: the secrets ESO creates in Secrets Manager carry no default_tags."
+  value       = jsonencode(local.tags)
+}
+
 output "DFE_EKS_AUDIT_LOG_GROUP" {
   description = "The CloudWatch log group EKS's control-plane audit stream lands in -- unavoidable under either sink. No documented fetcher CloudWatch Logs source exists today, so this is named for when one does, not consumed by bootstrap.sh yet."
   value       = module.cluster.audit_log_group

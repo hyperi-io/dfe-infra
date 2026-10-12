@@ -14,9 +14,13 @@ trust a new certificate after every rebuild and the embedded HyperDX iframe
 failed outright -- an iframe cannot show the interstitial. Three things are
 asserted here, because each fails silently:
 
-- self-signed mode renders BOTH halves of the persistence pair against one store
-  path (a PushSecret that saves the root, an ExternalSecret that restores it),
-  and vault mode renders neither, since the estate PKI owns that root;
+- self-signed mode renders BOTH halves of the persistence pair against the same
+  store entries (a PushSecret that saves the root, an ExternalSecret that
+  restores it), and vault mode renders neither, since the estate PKI owns that
+  root;
+- the cert and the key each get a store entry of their own, because ESO checks
+  IfNotExists per data entry and the AWS provider asks only whether the entry
+  exists, and the restore takes a complete pair or writes nothing;
 - `dfe-ops ca` prints the PUBLIC half and the install lines for both operating
   systems, and never the private key;
 - `dfe-ops ca --status` distinguishes a restored root from a newly minted one,
@@ -69,6 +73,8 @@ def _load_dfe_ops():
 dfe_ops = _load_dfe_ops()
 
 STORE_PATH = "dfe/local/pki/internal-ca"
+CERT_ENTRY = f"{STORE_PATH}-crt"
+KEY_ENTRY = f"{STORE_PATH}-key"
 
 # A real ECDSA P-384 self-signed CA, so openssl parses it the way it parses the
 # one cert-manager mints. Regenerating it changes nothing but the fixture.
@@ -189,8 +195,19 @@ def run_ca(*argv: str, **overrides) -> str:
 PERSIST_ON = "tls.internalCA.persist.enabled=true"
 
 
-def test_self_signed_mode_renders_both_halves_against_one_path() -> None:
-    """Save and restore must name the SAME store path, or a rebuild mints again."""
+def persist_pair(*sets: str) -> tuple[dict, dict]:
+    """The PushSecret and the restore ExternalSecret for one set of values."""
+    docs = render(PERSIST_ON, *sets)
+    push = by_kind(docs, "PushSecret")[0]
+    restore = next(
+        d for d in by_kind(docs, "ExternalSecret")
+        if d["metadata"]["name"] == "dfe-internal-ca-restore"
+    )
+    return push, restore
+
+
+def test_self_signed_mode_renders_both_halves_against_the_same_entries() -> None:
+    """Save and restore must name the SAME store entries, or a rebuild mints again."""
     docs = render(PERSIST_ON)
     pushes = by_kind(docs, "PushSecret")
     restores = [
@@ -202,12 +219,20 @@ def test_self_signed_mode_renders_both_halves_against_one_path() -> None:
     if not (pushes and restores):
         return
     push, restore = pushes[0], restores[0]
-    push_keys = {d["match"]["remoteRef"]["remoteKey"] for d in push["spec"]["data"]}
-    restore_keys = {d["remoteRef"]["key"] for d in restore["spec"]["data"]}
+    push_refs = {
+        (d["match"]["remoteRef"]["remoteKey"], d["match"]["remoteRef"]["property"])
+        for d in push["spec"]["data"]
+    }
+    restore_refs = {(d["remoteRef"]["key"], d["remoteRef"]["property"]) for d in restore["spec"]["data"]}
     expect(
-        "both name the derived {project}/{env}/pki/internal-ca path",
-        push_keys == restore_keys == {STORE_PATH},
-        f"push={push_keys} restore={restore_keys}",
+        "both name the two entries derived from {project}/{env}/pki/internal-ca",
+        push_refs == restore_refs == {(CERT_ENTRY, "tls_crt"), (KEY_ENTRY, "tls_key")},
+        f"push={push_refs} restore={restore_refs}",
+    )
+    expect(
+        "and the restore still reads the single entry an older release wrote",
+        [d.get("extract", {}).get("key") for d in restore["spec"].get("dataFrom", [])] == [STORE_PATH],
+        f"{restore['spec'].get('dataFrom')}",
     )
     expect(
         "the restore only acts while the Secret is absent",
@@ -235,6 +260,173 @@ def test_self_signed_mode_renders_both_halves_against_one_path() -> None:
         push["spec"]["deletionPolicy"] == "None",
         f"{push['spec'].get('deletionPolicy')}",
     )
+
+
+# ESO v2.11.0 pushSecretEntry asks SecretExists once per data entry, before that
+# entry's own push, so the providers' two answers are the whole model.
+def aws_exists(store: dict[str, dict[str, str]], key: str, _prop: str) -> bool:
+    """providers/v1/aws/secretsmanager SecretExists: GetSecretValue on the key alone."""
+    return key in store
+
+
+def vault_exists(store: dict[str, dict[str, str]], key: str, prop: str) -> bool:
+    """providers/v1/vault SecretExists: reads the key, then looks for the property."""
+    return prop in store.get(key, {})
+
+
+def push_if_not_exists(entries: list[dict], exists, source: dict[str, str]) -> dict[str, dict[str, str]]:
+    """What an empty store holds after one IfNotExists reconcile of these entries."""
+    store: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        ref = entry["match"]["remoteRef"]
+        if exists(store, ref["remoteKey"], ref["property"]):
+            continue
+        store.setdefault(ref["remoteKey"], {})[ref["property"]] = source[entry["match"]["secretKey"]]
+    return store
+
+
+SOURCE = {"tls.crt": "MINTED-CRT", "tls.key": "MINTED-KEY"}
+
+# The PushSecret data the single-entry layout rendered: both properties on one key.
+SHARED_ENTRY_PUSH = [
+    {"match": {"secretKey": "tls.crt", "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_crt"}}},
+    {"match": {"secretKey": "tls.key", "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_key"}}},
+]
+
+
+def test_each_half_of_the_root_gets_its_own_store_entry() -> None:
+    """Two data entries on one key let the first one's create answer the second's existence check."""
+    push, _restore = persist_pair()
+    keys = [d["match"]["remoteRef"]["remoteKey"] for d in push["spec"]["data"]]
+    expect("two entries, one per half", sorted(keys) == sorted({CERT_ENTRY, KEY_ENTRY}), f"{keys}")
+
+
+def test_both_providers_store_both_halves() -> None:
+    """The AWS provider checks the key, Vault the property; each must end up holding the pair."""
+    push, _restore = persist_pair()
+    want = {CERT_ENTRY: {"tls_crt": "MINTED-CRT"}, KEY_ENTRY: {"tls_key": "MINTED-KEY"}}
+    for name, exists in (("aws", aws_exists), ("vault", vault_exists)):
+        got = push_if_not_exists(push["spec"]["data"], exists, SOURCE)
+        expect(f"{name} stores the cert and the key", got == want, f"{got}")
+
+
+def test_expected_fail_one_shared_entry_loses_the_key_on_aws() -> None:
+    """The control: the single-entry layout this replaces, run through the same model."""
+    aws = push_if_not_exists(SHARED_ENTRY_PUSH, aws_exists, SOURCE)
+    vault = push_if_not_exists(SHARED_ENTRY_PUSH, vault_exists, SOURCE)
+    expect("aws stores only the cert", aws == {STORE_PATH: {"tls_crt": "MINTED-CRT"}}, f"{aws}")
+    expect(
+        "while vault stores both, which is why only aws lost the root",
+        vault == {STORE_PATH: {"tls_crt": "MINTED-CRT", "tls_key": "MINTED-KEY"}},
+        f"{vault}",
+    )
+
+
+def read_store(restore: dict, store: dict[str, dict[str, str]]) -> dict[str, str]:
+    """The restore's data map: a key the store lacks is skipped under deletionPolicy Merge."""
+    data: dict[str, str] = {}
+    for src in restore["spec"].get("dataFrom", []):
+        data.update(store.get(src["extract"]["key"], {}))
+    for entry in restore["spec"]["data"]:
+        ref = entry["remoteRef"]
+        if ref["key"] not in store:
+            continue
+        if ref["property"] not in store[ref["key"]]:
+            # The AWS provider's plain error, which fails the whole read rather than skipping.
+            raise LookupError(f"key {ref['property']} does not exist in secret {ref['key']}")
+        data[entry["secretKey"]] = store[ref["key"]][ref["property"]]
+    return data
+
+
+def run_restore_template(restore: dict, data: dict[str, str]) -> tuple[bool, object]:
+    """The restore's tls.crt and tls.key templates over one read of the store.
+
+    helm runs the Go template engine and Sprig fail that ESO's v2 engine does. The
+    template reaches its data through index, so ESO's missingkey=error has no
+    field lookup to act on and both engines see a missing key as empty.
+    """
+    templates = restore["spec"]["target"]["template"]["data"]
+    with tempfile.TemporaryDirectory() as tmp:
+        chart = Path(tmp) / "restore"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text(
+            "apiVersion: v2\nname: restore\nversion: 0.1.0\n", encoding="utf-8", newline="\n"
+        )
+        body = "".join(f'{{{{- define "{k}" -}}}}{v}{{{{- end -}}}}\n' for k, v in templates.items())
+        body += "".join(f'{k}: {{{{ include "{k}" (.Values.data | default dict) | quote }}}}\n' for k in templates)
+        (chart / "templates" / "out.yaml").write_text(body, encoding="utf-8", newline="\n")
+        values = Path(tmp) / "data.yaml"
+        values.write_text(yaml.safe_dump({"data": data}), encoding="utf-8", newline="\n")
+        out = subprocess.run(
+            ["helm", "template", "restore", str(chart), "-f", str(values)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+    if out.returncode != 0:
+        return False, out.stderr
+    return True, yaml.safe_load(out.stdout)
+
+
+NEW_PAIR = {CERT_ENTRY: {"tls_crt": "NEW-CRT"}, KEY_ENTRY: {"tls_key": "NEW-KEY"}}
+OLD_PAIR = {STORE_PATH: {"tls_crt": "OLD-CRT", "tls_key": "OLD-KEY"}}
+OLD_CERT_ONLY = {STORE_PATH: {"tls_crt": "OLD-CRT"}}
+
+
+def test_the_restore_reads_back_what_either_provider_stored() -> None:
+    """Push then restore, end to end through the same model."""
+    push, restore = persist_pair()
+    for name, exists in (("aws", aws_exists), ("vault", vault_exists)):
+        store = push_if_not_exists(push["spec"]["data"], exists, SOURCE)
+        ok, got = run_restore_template(restore, read_store(restore, store))
+        expect(
+            f"{name}: the restored Secret is the minted pair",
+            ok and got == {"tls.crt": "MINTED-CRT", "tls.key": "MINTED-KEY"},
+            f"{got}",
+        )
+
+
+def test_the_restore_picks_a_complete_pair_and_never_mixes_layouts() -> None:
+    """Every store shape a deployment can be in: new, old, both, and half of each."""
+    _push, restore = persist_pair()
+    cases = (
+        ("the two-entry layout", NEW_PAIR, ("NEW-CRT", "NEW-KEY")),
+        ("a Vault store an older release wrote", OLD_PAIR, ("OLD-CRT", "OLD-KEY")),
+        ("an AWS store holding the old half-written entry too", {**NEW_PAIR, **OLD_CERT_ONLY},
+         ("NEW-CRT", "NEW-KEY")),
+        ("a new cert alone beside a complete old pair", {CERT_ENTRY: {"tls_crt": "NEW-CRT"}, **OLD_PAIR},
+         ("OLD-CRT", "OLD-KEY")),
+    )
+    for name, store, (crt, key) in cases:
+        ok, got = run_restore_template(restore, read_store(restore, store))
+        expect(f"{name}: restores {crt}/{key}", ok and got == {"tls.crt": crt, "tls.key": key}, f"{got}")
+
+
+def test_expected_fail_no_complete_pair_writes_nothing() -> None:
+    """Merge would otherwise write an empty TLS Secret that cert-manager then adopts."""
+    _push, restore = persist_pair()
+    expect(
+        "a missing source is skipped rather than failing the read",
+        restore["spec"]["target"].get("deletionPolicy") == "Merge",
+        f"{restore['spec']['target'].get('deletionPolicy')}",
+    )
+    for name, store in (("an empty store", {}), ("the old half-written AWS entry alone", OLD_CERT_ONLY),
+                        ("a new key alone", {KEY_ENTRY: {"tls_key": "NEW-KEY"}})):
+        ok, got = run_restore_template(restore, read_store(restore, store))
+        expect(
+            f"{name}: the template refuses, so nothing is written",
+            not ok and "the store holds no complete internal CA root" in str(got),
+            f"{got}",
+        )
+
+
+def test_a_custom_remote_key_moves_every_entry_with_it() -> None:
+    """The two entries and the old one all hang off remoteKey, so an override moves all three."""
+    push, restore = persist_pair("tls.internalCA.persist.remoteKey=acme/prod/pki/root")
+    push_keys = {d["match"]["remoteRef"]["remoteKey"] for d in push["spec"]["data"]}
+    expect("the push names both entries under it",
+           push_keys == {"acme/prod/pki/root-crt", "acme/prod/pki/root-key"}, f"{push_keys}")
+    expect("and the restore reads the old entry at it",
+           restore["spec"]["dataFrom"] == [{"extract": {"key": "acme/prod/pki/root"}}],
+           f"{restore['spec']['dataFrom']}")
 
 
 def test_the_store_properties_carry_no_dot() -> None:

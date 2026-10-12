@@ -169,12 +169,18 @@ tls:
       secretStoreName: dfe-secret-store
       secretStoreKind: ClusterSecretStore
       # KV path, the same {project}/{env}/<area>/<name> convention every other
-      # secret uses. Empty derives it.
+      # secret uses. Empty derives it. The root is stored as two entries beside
+      # it, <remoteKey>-crt and <remoteKey>-key; the path itself is only read,
+      # for a root stored there by an older release.
       remoteKey: ""
       # Underscored property names, NOT tls.crt/tls.key: the Vault provider reads
       # a property as a gjson path, where a dot means nesting.
       certProperty: tls_crt
       keyProperty: tls_key
+      # Tags on the two store entries the push creates. The AWS Secrets Manager
+      # provider applies them at CreateSecret; Vault ignores them. bootstrap.sh
+      # and layer2-edge.yaml fill this from the cloud root's DFE_RESOURCE_TAGS.
+      tags: {}
 
   acme:
     email: ""
