@@ -141,6 +141,8 @@ class FilebeatCase(Case):
     # ECS source.ip, which meta/beats/filebeat declares and the cisco_ios branch
     # reads out of the syslog body; the posted envelope carries no such field.
     TRANSFORMED_COLUMN = "source_ip"
+    # The field that column is filled from, as the corpus's expected events name it.
+    TRANSFORMED_FIELD = "source.ip"
     # The file sets the transform app declares (dfe-infra apps.yaml).
     PROGRAM_SET = "transforms"
     ENRICHMENT_SET = "enrichment"
@@ -448,12 +450,20 @@ class FilebeatCase(Case):
             f"{steps.MARKER}.run {run.run_id}, {strayed} strayed into dfe.main",
         )
         run.driver.record("dataset", *steps.dataset_outcome(run.store, self.name, self.MATCH_VALUE))
-        transformed = steps.wait_rows(
-            run.store, self.name, 1, self.TRANSFORM_DEADLINE, f"{corpus} AND {self._transformed}",
+        # Not every corpus line carries an address, so the bar is the corpus's own expected count.
+        expected = steps.expected_carrying(
+            run.engine_repo, run.transform_repo / self.CORPUS, run.args.per_module,
+            self.MODULES, self.TRANSFORMED_FIELD,
         )
+        transformed = steps.wait_rows(
+            run.store, self.name, expected, self.TRANSFORM_DEADLINE,
+            f"{corpus} AND {self._transformed}",
+        )
+        every = expected > 0 and transformed >= expected
         run.driver.record(
-            "transformed", "done" if transformed else "failed",
-            f"{transformed} corpus rows carry {self.TRANSFORMED_COLUMN}, which only the transform sets",
+            "transformed", "done" if every else "failed",
+            f"{transformed} of {self._posted} corpus rows carry {self.TRANSFORMED_COLUMN}, "
+            f"which only the transform sets; the corpus expects {expected}",
         )
         if run.args.via == "logstash":
             self._record_envelope(run)
