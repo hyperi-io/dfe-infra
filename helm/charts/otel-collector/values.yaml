@@ -186,7 +186,7 @@ clusterTelemetry:
     # Anchored regex over the pods' helm.sh/chart label (<chart>-<version>). A chart
     # belongs here only once the image it deploys pushes with replica identity: before
     # that, the push merges every replica into one series. Empty drops nothing.
-    pushedCharts: "dfe-(engine|receiver|loader|fetcher|archiver|transform-vrl|transform-vector|transform-elastic)-[0-9].*"
+    pushedCharts: "dfe-(engine|receiver|loader|fetcher|archiver|transform-vrl|transform-vector|transform-elastic)-[0-9].*|culvert-[0-9].*"
 
   # The data operators' own controller metrics: reconcile errors, work-queue depth,
   # API latency. Scraped rather than pushed because none of them speak OTLP.
