@@ -306,11 +306,13 @@ def _ingest_mode(dial: dict[str, object]) -> str:
 # blocks named after the things behind them.
 #
 # NOTHING HERE IS APPLIED BY THIS RENDERER except edge.enabled, which reaches
-# DFE_EDGE_ENABLED and the cluster-secret label, and edge.product.allowed_cidrs
-# and trusted_proxy_cidrs, which the --tofu render hands a cloud root. The rest is
-# validated, reported and copied by hand into the deploy repo's own values
-# overlay, the same convention the block it replaces followed. A bad value is
-# still refused here, by name, before an operator carries it forward.
+# DFE_EDGE_ENABLED and the cluster-secret label, and
+# edge.product.trusted_proxy_cidrs, which the --tofu render hands a cloud root.
+# The rest is validated, reported and copied by hand into the deploy repo's own
+# values overlay -- edge.product.allowed_cidrs as the gateway chart's
+# exposure.groups.<group>.allow, which only the deploy repo sets -- the same
+# convention the block it replaces followed. A bad value is still refused here,
+# by name, before an operator carries it forward.
 # deployment.example.yaml writes this block's booleans unquoted, unlike the rest
 # of the dial: a value copied verbatim into a real Helm values file has to
 # already be the type that file expects, where an unquoted true is a bool and a
@@ -720,11 +722,11 @@ INTERNET_FACING_FLAVOURS = ("aws", "gcp", "azure")
 
 
 def web_fence(cidrs: list[str], flavour: str) -> tuple[str, list[str]]:
-    """What edge.product.allowed_cidrs admits, and the warnings it earns.
+    """What edge.product.allowed_cidrs admits once pasted as an exposure group's allow list.
 
-    The gateway chart's webFence, read from the dial: on an internet-facing
-    flavour an empty list refuses every web route, and a /0 of either family
-    admits every address whatever the address part says.
+    The gateway chart's groupFence, read from the dial: on an internet-facing
+    flavour an empty list refuses every route of the group, and a /0 of either
+    family admits every address whatever the address part says.
 
     Args:
         cidrs: The parsed allow-list.
@@ -1312,8 +1314,8 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "tags": _tags(dial, cloud),
         "toolbox": _toolbox(dial),
         "edge": _edge(dial),
-        # Variables of their own, because a guarded run's overlay replaces one whole.
-        "edge_allowed_cidrs": _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")),
+        # A variable of its own, beside the guarded run's edge_self_ranges, which
+        # this render never writes because the dial carries no such fact.
         "edge_trusted_proxy_cidrs": _proxy_hop_cidrs(dial),
     }
 
@@ -1331,8 +1333,6 @@ def _render_tofu(dial: dict[str, object], out: Path | None) -> int:
     with destination.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(variables, indent=2) + "\n")
     print(f"render_dial: wrote {destination}", file=sys.stderr)
-    for line in web_fence(variables["edge_allowed_cidrs"], cloud)[1]:
-        print(f"render_dial: WARNING -- {line}", file=sys.stderr)
 
     root = TOFU_ROOTS / cloud
     rel = root.relative_to(REPO_ROOT) if root.is_relative_to(REPO_ROOT) else root
@@ -1457,7 +1457,11 @@ def main() -> int:
         + ("on" if edge_flags["edge.admin_uis.external"] else "off, every infra route is withdrawn"),
         file=sys.stderr,
     )
-    print(f"  web allow-list (edge.product.allowed_cidrs): {fence}", file=sys.stderr)
+    print(
+        "  web allow-list (edge.product.allowed_cidrs, pasted as exposure.groups.<group>.allow): "
+        f"{fence}",
+        file=sys.stderr,
+    )
     for line in fence_warnings:
         print(f"render_dial: WARNING -- {line}", file=sys.stderr)
     print(
@@ -1485,9 +1489,9 @@ def main() -> int:
         file=sys.stderr,
     )
     print(
-        "  this renderer applies none of it but edge.product.allowed_cidrs and"
-        " trusted_proxy_cidrs, which --tofu hands a cloud root -- paste the rest into the"
-        " deploy repo's values overlay",
+        "  this renderer applies none of it but edge.product.trusted_proxy_cidrs, which"
+        " --tofu hands a cloud root -- paste the rest into the deploy repo's values"
+        " overlay, the allow lists as exposure.groups in its infra/common.yaml",
         file=sys.stderr,
     )
 

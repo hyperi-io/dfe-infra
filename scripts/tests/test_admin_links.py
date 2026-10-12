@@ -185,7 +185,7 @@ def test_the_matrix_lists_every_infra_route_somewhere() -> None:
 
 def test_the_kill_switch_leaves_only_the_product_links_and_keeps_the_configmap() -> None:
     """An engine restarted after a lock-down must read no infra link, not a stale list."""
-    docs = gateway(*cascade("local", "scale", True, True), "--set", "exposure.infraUisExternal=false")
+    docs = gateway(*cascade("local", "scale", True, True), "--set", "exposure.groups.admin.enabled=false")
     _, entries = admin_links(docs)
     assert [entry["name"] for entry in entries] == ["Search"]
     assert listed(entries) == served(docs)

@@ -153,6 +153,7 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
         "s3_bucket_prefix",
         "inspector_ec2_exclusion",
         "cloudtrail",
+        "edge_self_ranges",
     }
     assert set(render()) == declared - {"node_pools", "resolved_shapes"} - guarded_run_only
 
@@ -545,23 +546,15 @@ def test_the_node_ports_default_to_what_the_culvert_chart_pins() -> None:
     assert ports == {"wireguard": 31820, "openvpn": 31194}
 
 
-def test_a_dial_with_no_gateway_allow_list_fences_nothing() -> None:
-    """Empty is the chart's own open default; the root then renders no fence at all."""
-    assert render()["edge_allowed_cidrs"] == []
-
-
-def test_the_gateway_allow_list_reaches_the_root() -> None:
-    """edge.product.allowed_cidrs was a key nothing read on a cloud deploy."""
-    asked = (
-        "profile: scale",
-        "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24, 203.0.113.0/24\n",
-    )
-    assert render(replace=asked)["edge_allowed_cidrs"] == ["198.51.100.0/24", "203.0.113.0/24"]
-
-
-def test_the_deprecated_ui_spelling_of_the_allow_list_still_reaches_the_root() -> None:
-    asked = ("profile: scale", "profile: scale\nui:\n  allowed_cidrs: 198.51.100.0/24\n")
-    assert render(replace=asked)["edge_allowed_cidrs"] == ["198.51.100.0/24"]
+@pytest.mark.parametrize("asked", [
+    ("profile: scale", "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24, 203.0.113.0/24\n"),
+    ("profile: scale", "profile: scale\nui:\n  allowed_cidrs: 198.51.100.0/24\n"),
+], ids=["edge-spelling", "deprecated-ui-spelling"])
+def test_expected_fail_the_gateway_allow_list_never_reaches_the_root(asked: tuple[str, str]) -> None:
+    """An allow list on the cluster secret beats the deploy repo at every sync, so it goes there by hand."""
+    variables = render(replace=asked)
+    assert "edge_allowed_cidrs" not in variables
+    assert "edge_self_ranges" not in variables
 
 
 def test_the_dials_trusted_proxies_reach_the_root() -> None:
@@ -594,10 +587,10 @@ def test_a_trusted_proxy_range_of_every_address_is_refused(trusted: str) -> None
 
 
 def test_a_gateway_allow_list_entry_with_no_prefix_is_refused_by_name() -> None:
-    """A load balancer security group refuses a bare address, after the cluster is paid for."""
-    bad = ("profile: scale", "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.10\n")
+    """The gateway refuses a bare address, so the dial refuses it before it is pasted."""
+    parsed = render_dial._parse_yaml_subset("edge:\n  product:\n    allowed_cidrs: 198.51.100.10\n")
     with pytest.raises(render_dial.DialError, match=r"edge\.product\.allowed_cidrs"):
-        render(replace=bad)
+        render_dial._edge_cidrs(parsed, ("edge", "product", "allowed_cidrs"))
 
 
 def test_a_nonsense_address_mode_is_refused_by_name() -> None:

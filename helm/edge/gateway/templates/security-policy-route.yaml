@@ -1,0 +1,32 @@
+{{- /* Two SecurityPolicies naming one HTTPRoute conflict and only the oldest
+       applies, so a route an OIDC policy already fronts carries the group's
+       rule inside that policy instead (security-policy.yaml,
+       security-policy-infra.yaml). */}}
+{{- $fronted := include "envoy-gateway-config.oidcFronted" (dict "ctx" .) | fromJsonArray }}
+{{- range $key := include "envoy-gateway-config.webRouteKeys" (dict "ctx" .) | fromJsonArray }}
+{{- $r := index $.Values.routes $key }}
+{{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
+{{- $group := include "envoy-gateway-config.routeGroup" (dict "ctx" $ "key" $key) }}
+{{- $authorization := include "envoy-gateway-config.groupAuthorization" (dict "ctx" $ "group" $group "indent" 2) }}
+{{- if and $authorization (not (has (printf "%s/%s" $ns $r.routeName) $fronted)) }}
+---
+# Who may reach this route by address: its exposure group's deny list first,
+# then its allow list and the cluster's own egress. It replaces dfe-edge-fence
+# for this route.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: dfe-{{ $group }}-{{ $r.routeName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+  annotations:
+    dfe.hyperi.io/exposure-group: {{ $group | quote }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $r.routeName }}
+  {{- $authorization }}
+{{- end }}
+{{- end }}

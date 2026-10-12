@@ -16,7 +16,7 @@ security-policy-infra.yaml: an OIDC login, then an authorization block that
 denies by default and allows only a groups claim naming one of adminGroups
 (argocd/values/common.yaml). A missing or empty adminGroups refuses to render. A
 route whose backend has no login of its own renders only behind that policy, and
-exposure.infraUisExternal: false takes the whole class off the edge.
+exposure.groups.admin.enabled: false takes the whole class off the edge.
 
 Each case renders the chart and reads the objects, so a template edit that
 widens the gate -- an Allow default, a second claim, a wildcard group, a route
@@ -315,10 +315,10 @@ def test_with_no_edge_login_no_login_less_route_renders() -> None:
 # --- the kill switch ------------------------------------------------------------
 def test_the_kill_switch_renders_no_infra_route() -> None:
     """Rendered with the edge login on, so every infra route would otherwise be served."""
-    docs = render(*OIDC, "--set", "exposure.infraUisExternal=false")
+    docs = render(*OIDC, "--set", "exposure.groups.admin.enabled=false")
     served = http_routes(docs)
     back = sorted(infra_names() & set(served))
-    expect("exposure.infraUisExternal: false renders no infra HTTPRoute", not back, f"got {back}")
+    expect("exposure.groups.admin.enabled: false renders no infra HTTPRoute", not back, f"got {back}")
     gated = sorted(
         p["metadata"]["name"] for p in of_kind(docs, "SecurityPolicy") if targets(p) & infra_names()
     )

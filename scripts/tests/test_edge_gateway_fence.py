@@ -1,19 +1,22 @@
 #  Project:      dfe-infra
 #  File:         scripts/tests/test_edge_gateway_fence.py
-#  Purpose:      Prove the public gateway's allow-list, and any CDN ranges beside
-#                it, travel from bootstrap's environment to the gateway chart, and
-#                that a deployment naming no fence renders exactly what it did.
+#  Purpose:      Prove the deployment's own egress addresses, and any CDN ranges
+#                in front of the gateway, travel from bootstrap's environment to
+#                the gateway chart, that no allow list rides the cluster secret,
+#                and that a deployment writing neither renders exactly what it did.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The gateway fence, from the cluster secret to the load balancer.
+"""The gateway's self ranges, from the cluster secret to the load balancer.
 
-The aws root emits DFE_EDGE_ALLOWED_CIDRS and DFE_EDGE_TRUSTED_PROXY_CIDRS
+The aws root emits DFE_EDGE_SELF_RANGES and DFE_EDGE_TRUSTED_PROXY_CIDRS
 (terraform/modules/edge/aws asserts how), bootstrap.sh writes them onto the
 cluster secret, and layer2-edge.yaml hands them to the gateway chart as
-ui.allowed_cidrs and ui.trusted_proxy_cidrs. A miss anywhere renders empty and
-leaves the load balancer open to every address, with no error at all.
+exposure.selfRanges and ui.trusted_proxy_cidrs. A miss anywhere renders empty
+with no error at all. Who may reach each surface is the chart's exposure.groups,
+which only the deploy repo sets: an allow list on the cluster secret would beat
+that overlay at every sync, which is what made the old list deploy-time only.
 
 The appset's values block is rendered here by helm, which runs the same Go
 template engine and Sprig functions Argo CD's goTemplate does.
@@ -35,20 +38,21 @@ CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tp
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 VALUES = REPO_ROOT / "argocd" / "values"
 
-ALLOWED = "198.51.100.3/32,203.0.113.7/32"
+SELF = "203.0.113.7/32,203.0.113.8/32"
 # A CDN's edge ranges: the only hops whose X-Forwarded-For the gateway believes.
 TRUSTED = "192.0.2.0/25,2001:db8:cd::/48"
-ALLOWED_KEY = "dfe.hyperi.io/edge_allowed_cidrs"
+SELF_KEY = "dfe.hyperi.io/edge_self_ranges"
 TRUSTED_KEY = "dfe.hyperi.io/edge_trusted_proxy_cidrs"
+RETIRED_KEY = "dfe.hyperi.io/edge_allowed_cidrs"
 
 
-# --- bootstrap.sh: the list alone or with CDN ranges, never the ranges alone ------
+# --- bootstrap.sh: each fact on its own annotation, a /0 refused ------------------
 
 
 def _bootstrap_block() -> str:
-    """bootstrap.sh's own fence block, run on its own rather than copied here."""
+    """bootstrap.sh's own block, run on its own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    start = lines.index('export DFE_EDGE_ALLOWED_CIDRS="${DFE_EDGE_ALLOWED_CIDRS:-}"')
+    start = lines.index('DFE_EDGE_SELF_RANGES="${DFE_EDGE_SELF_RANGES:-}"')
     end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION="))
     return "\n".join(lines[start : end + 1])
 
@@ -56,7 +60,7 @@ def _bootstrap_block() -> str:
 def _run_block(**env: str) -> subprocess.CompletedProcess:
     script = (
         _bootstrap_block()
-        + '\nprintf "%s\\n%s\\n" "$DFE_EDGE_ALLOWED_CIDRS_ANNOTATION" "$DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION"'
+        + '\nprintf "%s\\n%s\\n" "$DFE_EDGE_SELF_RANGES_ANNOTATION" "$DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION"'
     )
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
@@ -65,82 +69,53 @@ def _run_block(**env: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_a_fence_writes_both_annotations() -> None:
-    done = _run_block(DFE_EDGE_ALLOWED_CIDRS=ALLOWED, DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)
+def test_both_facts_write_both_annotations() -> None:
+    done = _run_block(DFE_EDGE_SELF_RANGES=SELF, DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)
     assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines() == [f'{ALLOWED_KEY}: "{ALLOWED}"', f'{TRUSTED_KEY}: "{TRUSTED}"']
+    assert done.stdout.splitlines() == [f'{SELF_KEY}: "{SELF}"', f'{TRUSTED_KEY}: "{TRUSTED}"']
 
 
-def test_no_fence_writes_neither() -> None:
+def test_neither_writes_neither() -> None:
     done = _run_block()
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines() == ["", ""]
 
 
-def test_a_list_with_no_cdn_writes_the_list_alone() -> None:
-    """The gateway judges the TCP peer, so a list needs no trusted range beside it."""
-    done = _run_block(DFE_EDGE_ALLOWED_CIDRS=ALLOWED)
+def test_cdn_ranges_stand_alone_now_that_no_list_rides_beside_them() -> None:
+    done = _run_block(DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)
     assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines() == [f'{ALLOWED_KEY}: "{ALLOWED}"', ""]
+    assert done.stdout.splitlines() == ["", f'{TRUSTED_KEY}: "{TRUSTED}"']
+
+
+def test_spaces_come_out_of_the_self_ranges() -> None:
+    """layer2-edge.yaml splits on commas alone, so a space would become part of a range."""
+    done = _run_block(DFE_EDGE_SELF_RANGES="203.0.113.7/32, 203.0.113.8/32")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[0] == f'{SELF_KEY}: "{SELF}"'
 
 
 @pytest.mark.parametrize("trusted", ["0.0.0.0/0", "::/0", "192.0.2.0/25, ::/0", "192.0.2.0/25,0.0.0.0/0"])
 def test_expected_fail_a_trusted_range_of_every_address_is_refused(trusted: str) -> None:
     """Every peer is then trusted, so the fence reads a header the client writes."""
-    done = _run_block(DFE_EDGE_ALLOWED_CIDRS=ALLOWED, DFE_EDGE_TRUSTED_PROXY_CIDRS=trusted)
+    done = _run_block(DFE_EDGE_SELF_RANGES=SELF, DFE_EDGE_TRUSTED_PROXY_CIDRS=trusted)
     assert done.returncode == 1, done.stdout
     assert "which trusts every address" in done.stderr, done.stderr
     assert done.stdout == ""
 
 
-def test_expected_fail_cdn_ranges_with_no_list_are_refused_by_name() -> None:
-    """The appset carries them only beside a list, so alone they would vanish without a word."""
-    done = _run_block(DFE_EDGE_TRUSTED_PROXY_CIDRS=TRUSTED)
-    assert done.returncode == 1
-    assert "DFE_EDGE_TRUSTED_PROXY_CIDRS is set and DFE_EDGE_ALLOWED_CIDRS is empty" in done.stderr
-
-
-def _fence_notice(**env: str) -> subprocess.CompletedProcess:
-    """bootstrap.sh's fence notice and the cloud test it calls, run on their own."""
-    lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    providers = next(line for line in lines if line.startswith("DFE_CLOUD_LB_PROVIDERS="))
-    helper = lines.index("dfe_cloud_programs_loadbalancers() {")
-    start = lines.index("dfe_edge_fence_notice() {")
-    call = lines.index("dfe_edge_fence_notice", start)
-    script = "\n".join([providers, *lines[helper : helper + 3], *lines[start : call + 1]])
-    return subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", script],
-        env={"PATH": "/usr/bin:/bin", "DFE_EDGE_ENABLED": "true", "DFE_EDGE_ALLOWED_CIDRS": "",
-             "DFE_CLOUD": "aws", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-    )
-
-
-@pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
-def test_no_fence_on_a_cloud_says_the_public_web_is_closed(cloud: str) -> None:
-    done = _fence_notice(DFE_CLOUD=cloud)
-    assert done.returncode == 0, done.stderr
-    assert "Public web: CLOSED" in done.stdout
-    assert done.stderr == ""
-
-
-@pytest.mark.parametrize(("cloud", "edge"), [("local", "true"), ("aws", "false")])
-def test_no_notice_where_nothing_is_internet_facing(cloud: str, edge: str) -> None:
-    done = _fence_notice(DFE_CLOUD=cloud, DFE_EDGE_ENABLED=edge)
-    assert (done.returncode, done.stdout, done.stderr) == (0, "", "")
-
-
-@pytest.mark.parametrize("fence", ["0.0.0.0/0", "203.0.113.7/32, ::/0", "10.0.0.0/0"])
-def test_an_allow_all_fence_is_a_warning(fence: str) -> None:
-    done = _fence_notice(DFE_EDGE_ALLOWED_CIDRS=fence)
-    assert done.returncode == 0, done.stderr
-    assert "WARNING: DFE_EDGE_ALLOWED_CIDRS carries" in done.stderr
-    assert "admits every address" in done.stderr
+@pytest.mark.parametrize("ranges", ["0.0.0.0/0", "203.0.113.7/32,::/0"])
+def test_expected_fail_a_self_range_of_every_address_is_refused(ranges: str) -> None:
+    """Every web group admits the self ranges, so a /0 opens them all."""
+    done = _run_block(DFE_EDGE_SELF_RANGES=ranges)
+    assert done.returncode == 1, done.stdout
+    assert "DFE_EDGE_SELF_RANGES carries" in done.stderr, done.stderr
     assert done.stdout == ""
 
 
-def test_a_listed_fence_says_nothing() -> None:
-    assert _fence_notice(DFE_EDGE_ALLOWED_CIDRS=ALLOWED).stderr == ""
+def test_bootstrap_no_longer_reads_or_writes_an_allow_list() -> None:
+    body = BOOTSTRAP.read_text(encoding="utf-8")
+    assert "DFE_EDGE_ALLOWED_CIDRS" not in body
+    assert RETIRED_KEY not in body
 
 
 def test_the_cluster_secret_carries_both_annotations() -> None:
@@ -149,17 +124,18 @@ def test_the_cluster_secret_carries_both_annotations() -> None:
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         env={
             "PATH": "/usr/bin:/bin",
-            "DFE_EDGE_ALLOWED_CIDRS_ANNOTATION": f'{ALLOWED_KEY}: "{ALLOWED}"',
+            "DFE_EDGE_SELF_RANGES_ANNOTATION": f'{SELF_KEY}: "{SELF}"',
             "DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION": f'{TRUSTED_KEY}: "{TRUSTED}"',
         },
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]
-    assert annotations[ALLOWED_KEY] == ALLOWED
+    assert annotations[SELF_KEY] == SELF
     assert annotations[TRUSTED_KEY] == TRUSTED
+    assert RETIRED_KEY not in annotations
 
 
-# --- layer2-edge.yaml: the appset hands the chart both keys ------------------------
+# --- layer2-edge.yaml: the appset hands the chart both facts and no allow list -------
 
 
 def _gateway_values_block() -> str:
@@ -179,29 +155,33 @@ def _render_values_block(tmp_path: Path, annotations: dict[str, str]) -> dict:
     cluster.write_text(yaml.safe_dump({"cluster": {"metadata": {"annotations": annotations}}}), encoding="utf-8")
     out = subprocess.run(
         ["helm", "template", "appset-values", str(chart), "-f", str(cluster)],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
     )
     assert out.returncode == 0, out.stderr
     return yaml.safe_load(out.stdout) or {}
 
 
-def test_the_appset_hands_the_gateway_both_halves_of_a_fence(tmp_path: Path) -> None:
-    values = _render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED, TRUSTED_KEY: TRUSTED})
-    assert values["ui"] == {"allowed_cidrs": ALLOWED, "trusted_proxy_cidrs": TRUSTED}
+def test_the_appset_hands_the_gateway_both_facts(tmp_path: Path) -> None:
+    values = _render_values_block(tmp_path, {SELF_KEY: SELF, TRUSTED_KEY: TRUSTED})
+    assert values["exposure"] == {"selfRanges": SELF.split(",")}
+    assert values["ui"] == {"trusted_proxy_cidrs": TRUSTED}
 
 
-def test_a_list_with_no_cdn_clears_any_trusted_range_an_overlay_carries(tmp_path: Path) -> None:
-    """An empty string beats the deploy-repo overlay, so a range the dial dropped is not still believed."""
-    values = _render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED})
-    assert values["ui"] == {"allowed_cidrs": ALLOWED, "trusted_proxy_cidrs": ""}
+def test_expected_fail_no_annotation_lands_on_an_exposure_group(tmp_path: Path) -> None:
+    """An inline value beats the deploy-repo overlay at every sync, so the groups stay the deploy repo's."""
+    values = _render_values_block(tmp_path, {SELF_KEY: SELF, TRUSTED_KEY: TRUSTED, RETIRED_KEY: "198.51.100.0/24"})
+    assert "groups" not in values.get("exposure", {}), values
+    assert "allowed_cidrs" not in values.get("ui", {}), values
 
 
-def test_a_cluster_with_no_fence_gets_no_ui_key_at_all(tmp_path: Path) -> None:
-    """An empty ui.allowed_cidrs would override a deployer's own overlay with nothing."""
-    assert "ui" not in _render_values_block(tmp_path, {})
+def test_a_cluster_with_neither_fact_gets_neither_key(tmp_path: Path) -> None:
+    """An empty value would override a deployer's own overlay with nothing."""
+    values = _render_values_block(tmp_path, {})
+    assert "exposure" not in values
+    assert "ui" not in values
 
 
-# --- the gateway chart: what the fence actually fences ------------------------------
+# --- the gateway chart: what the self ranges reach ------------------------------------
 
 
 def _gateway(*extra: str) -> list[dict]:
@@ -214,7 +194,7 @@ def _gateway(*extra: str) -> list[dict]:
          "--set", "appNamespace=dfe",
          "--set", "domain=dfe.example.com",
          *extra],
-        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, cwd=REPO_ROOT,
     )
     assert out.returncode == 0, out.stderr
     return [doc for doc in yaml.safe_load_all(out.stdout) if doc]
@@ -226,12 +206,24 @@ def _source_ranges(docs: list[dict]) -> list[str]:
 
 
 @pytest.mark.parametrize("cdn", [{TRUSTED_KEY: TRUSTED}, {}], ids=["cdn", "no cdn"])
-def test_the_fence_closes_the_aws_load_balancer_to_everyone_else(tmp_path: Path, cdn: dict[str, str]) -> None:
-    fence = tmp_path / "fence.yaml"
-    fence.write_text(yaml.safe_dump(_render_values_block(tmp_path, {ALLOWED_KEY: ALLOWED, **cdn})),
-                     encoding="utf-8")
-    assert _source_ranges(_gateway("-f", str(fence))) == ALLOWED.split(",")
+def test_the_self_ranges_close_the_aws_load_balancer_to_everyone_else(tmp_path: Path, cdn: dict[str, str]) -> None:
+    """With no exposure group list yet, the deployment's own egress is all the load balancer admits."""
+    facts = tmp_path / "facts.yaml"
+    facts.write_text(yaml.safe_dump(_render_values_block(tmp_path, {SELF_KEY: SELF, **cdn})), encoding="utf-8")
+    assert _source_ranges(_gateway("-f", str(facts))) == SELF.split(",")
 
 
-def test_no_fence_leaves_the_aws_load_balancer_as_it_was() -> None:
+def test_a_deploy_repo_list_joins_the_self_ranges_on_the_load_balancer(tmp_path: Path) -> None:
+    facts = tmp_path / "facts.yaml"
+    facts.write_text(yaml.safe_dump(_render_values_block(tmp_path, {SELF_KEY: SELF})), encoding="utf-8")
+    overlay = tmp_path / "infra-common.yaml"
+    overlay.write_text(yaml.safe_dump({"exposure": {"groups": {"console": {"allow": ["198.51.100.0/24"]}}}}),
+                       encoding="utf-8")
+    # Argo layers the deploy repo's file before the inline values; Helm merges both.
+    assert sorted(_source_ranges(_gateway("-f", str(overlay), "-f", str(facts)))) == sorted(
+        ["198.51.100.0/24", *SELF.split(",")]
+    )
+
+
+def test_no_fact_leaves_the_aws_load_balancer_as_it_was() -> None:
     assert _source_ranges(_gateway()) == []

@@ -33,14 +33,14 @@ output "tunnel_zone" {
   value       = local.forwarder_enabled ? local.forwarder_zone : ""
 }
 
-output "gateway_allowed_cidrs" {
-  description = "The gateway chart's ui.allowed_cidrs, comma-separated as that chart takes it: gateway_allowed_cidrs plus each egress address as a /32. Empty when gateway_allowed_cidrs is, so a deployment that names no fence gets none."
-  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(concat(var.gateway_allowed_cidrs, [for ip in var.egress_addresses : "${ip}/32"])))
+output "self_ranges" {
+  description = "The gateway chart's exposure.selfRanges, comma-separated: extra_self_ranges plus each egress address as a /32. A fact about this deployment, never an allow list, so it is written whatever the deployer's exposure groups say."
+  value       = join(",", distinct(concat(var.extra_self_ranges, [for ip in var.egress_addresses : "${ip}/32"])))
 }
 
 output "gateway_trusted_proxy_cidrs" {
-  description = "The gateway chart's ui.trusted_proxy_cidrs, comma-separated: gateway_trusted_proxy_cidrs once each, and nothing else. The NLB is L4 with IP targets and preserve_client_ip, so Envoy already sees the client as the TCP peer and no subnet of this VPC is trusted to rewrite it. Empty while gateway_allowed_cidrs is, because bootstrap refuses the ranges with no list."
-  value       = length(var.gateway_allowed_cidrs) == 0 ? "" : join(",", distinct(var.gateway_trusted_proxy_cidrs))
+  description = "The gateway chart's ui.trusted_proxy_cidrs, comma-separated: gateway_trusted_proxy_cidrs once each, and nothing else. The NLB is L4 with IP targets and preserve_client_ip, so Envoy already sees the client as the TCP peer and no subnet of this VPC is trusted to rewrite it."
+  value       = join(",", distinct(var.gateway_trusted_proxy_cidrs))
 }
 
 output "load_balancer_controller_role_arn" {

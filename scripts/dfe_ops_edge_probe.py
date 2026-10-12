@@ -166,7 +166,7 @@ class EdgeSettings:
     tls_min_version: str = "1.2"
     hsts: bool = True
     rate_limit_enabled: bool = True
-    rate_limit_requests: int = 300
+    rate_limit_requests: int = 6000
     rate_limit_unit: str = "Minute"
     allowed_cidrs: tuple[str, ...] = ()
     admin_uis_external: bool = False
@@ -233,7 +233,7 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
         tls_min_version=_scalar(tree, ("edge", "product", "tls", "min_version")) or "1.2",
         hsts=_flag(tree, ("edge", "product", "tls", "hsts"), True),
         rate_limit_enabled=_flag(tree, ("edge", "product", "rate_limit", "enabled"), True),
-        rate_limit_requests=_number(tree, ("edge", "product", "rate_limit", "requests"), 300),
+        rate_limit_requests=_number(tree, ("edge", "product", "rate_limit", "requests"), 6000),
         rate_limit_unit=_scalar(tree, ("edge", "product", "rate_limit", "unit")) or "Minute",
         # Through _scalar so the deprecated spelling is read too, and stripped of
         # the brackets an inline list carries, which the dial writes elsewhere.

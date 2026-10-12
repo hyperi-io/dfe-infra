@@ -130,14 +130,14 @@ variable "edge" {
   default = {}
 }
 
-variable "edge_allowed_cidrs" {
-  description = "Who may reach the public gateway, from the dial's edge.product.allowed_cidrs. A variable of its own rather than a field of edge, because a guarded test run replaces it with its runner's /32 in an overlay, and an overlay replaces a whole variable. Empty fences nothing; set, the edge module adds the NAT gateways' addresses (terraform/modules/edge/aws)."
+variable "edge_self_ranges" {
+  description = "Addresses beyond the NAT gateways that this deployment's own tooling reaches the public gateway from: a guarded test run sets its runner's /32 here in an overlay, which is why it is a variable of its own (an overlay replaces a whole variable). Joins the NAT addresses in the gateway chart's exposure.selfRanges, which every web exposure group admits. The deployer's allow lists are exposure.groups in the deploy repo, never this."
   type        = list(string)
   default     = []
 }
 
 variable "edge_trusted_proxy_cidrs" {
-  description = "L7 proxies in front of the public gateway whose X-Forwarded-For names the client, such as a CDN's, from the dial's edge.product.trusted_proxy_cidrs. Empty trusts no forwarded header, and none is trusted while edge_allowed_cidrs is empty."
+  description = "L7 proxies in front of the public gateway whose X-Forwarded-For names the client, such as a CDN's, from the dial's edge.product.trusted_proxy_cidrs. Empty trusts no forwarded header."
   type        = list(string)
   default     = []
 }

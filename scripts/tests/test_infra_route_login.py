@@ -182,7 +182,7 @@ def test_a_quoted_own_login_is_refused_by_name() -> None:
 
 
 def test_a_public_flag_on_a_withheld_route_is_refused_by_name() -> None:
-    err = refusal("--set", "ui.public_domain=example.com", "--set", "ui.public.links=true")
+    err = refusal("--set", "ui.public_domain=example.com", "--set", "exposure.groups.admin.tools.links=true")
     assert "routes.links has no login of its own" in err, err
 
 
@@ -194,7 +194,7 @@ def test_the_aws_defaults_are_the_switch_without_a_provider() -> None:
     assert aws["oidc"]["enabled"] is True
     assert "providers" not in aws["oidc"], aws["oidc"]
     assert edge["envoyGateway"]["service"]["internetFacing"] is True
-    assert edge["exposure"]["infraUisExternal"] is False
+    assert edge["exposure"]["groups"]["admin"]["enabled"] is False
 
 
 def test_the_aws_defaults_render_with_no_infra_route() -> None:
@@ -204,15 +204,18 @@ def test_the_aws_defaults_render_with_no_infra_route() -> None:
     assert {"dfe-ui", "dfe-engine", "hyperdx"} <= served, sorted(served)
 
 
+ADMIN_PUBLIC = ("--set", "exposure.groups.admin.enabled=true", "--set", "exposure.groups.admin.allowPublic=true")
+
+
 def test_oidc_switched_on_with_no_provider_does_not_satisfy_the_guard() -> None:
     """The switch alone renders no edge policy, so the admin UIs would sit bare."""
-    err = refusal("--set", "exposure.infraUisExternal=true", cascade=AWS)
+    err = refusal(*ADMIN_PUBLIC, cascade=AWS)
     assert "envoyGateway.service.internetFacing is true" in err, err
     assert "no edge OIDC provider" in err, err
 
 
 def test_a_provider_satisfies_the_guard_and_fronts_every_policy_route() -> None:
-    docs = render("--set", "exposure.infraUisExternal=true", *OIDC, cascade=AWS)
+    docs = render(*ADMIN_PUBLIC, *OIDC, cascade=AWS)
     assert {"argocd", "links", "cruise-control"} <= names(docs, "HTTPRoute")
     policies = names(docs, "SecurityPolicy")
     assert {"dfe-oidc-argocd-admin", "dfe-oidc-links-admin",

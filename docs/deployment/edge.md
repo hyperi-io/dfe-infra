@@ -22,11 +22,12 @@ The tier table is per flavour, in `argocd/values/edge-<flavour>.yaml`.
 Every surface falls into exactly one:
 
 - **(a) dfe-ui and HyperDX** -- the product's own console and the search it
-  frames, public on a cloud deploy to the addresses `edge.product.allowed_cidrs`
+  frames, public on a cloud deploy to the addresses `exposure.groups.console.allow`
   names, and to none while it is empty.
 - **(b) the engine API** -- on dfe-ui's own hostname, because the browser calls
-  it at that origin. The public route carries the path families a browser uses;
-  the CLI's families and SCIM are each their own opt-in.
+  it at that origin. Its browser families follow the console group; its CLI
+  families, `/openapi.json` and SCIM are a second route in the api group, with
+  its own list.
 - **(c) the admin UIs** -- Argo CD, Kafbat, Forgejo, links, Cruise Control. Off
   one at a time, behind a class-wide kill switch.
 - **(d) the ingest doors** -- the receiver and the OTLP route, plus the tunnel
@@ -54,7 +55,7 @@ own compute, the pricing model named, never a rate.
 | SCIM, `/api/v1/scim/v2` | b | 2 | off | `edge.engine_api.scim_public` | no spend |
 | TLS floor and HSTS | a b | 1 | on | `edge.product.tls` | none |
 | Rate limit, per proxy replica | a b | 1 | on | `edge.product.rate_limit` | none |
-| CIDR filter, at Envoy (web) and the load balancer (everything) | a b c d | 1 | empty, so every web route answers 403 | `edge.product.allowed_cidrs` | none |
+| CIDR filter per group, at Envoy (web) and the load balancer (the union, everything) | a b c d | 1 | empty, so every web route answers 403 | `exposure.groups.<group>.allow` and `.deny` in the deploy repo (`edge.product.allowed_cidrs` is the dial's note of it) | none |
 | A CDN's `X-Forwarded-For` believed on the public listeners | a b | 2 | none believed | `edge.product.trusted_proxy_cidrs` | no spend |
 | Edge OIDC on the admin routes | c | 1 | on | `edge.admin_uis.oidc` | none |
 | Admin UI routes, one at a time | c | 1 | off | `edge.admin_uis.public.*` | none |

@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         scripts/test-route-exposure.sh
 #  Purpose:      Assert the envoy-gateway-config route exposure cascade -- class
-#                default, per-route opt-out, and the infra kill switch that beats
-#                both -- plus which routes take the edge RBAC policy.
+#                default, per-route opt-out, and the exposure group switch that
+#                beats both -- plus which routes take the edge RBAC policy, the
+#                engine's browser/CLI split and the retired-key refusals.
 #  Language:     Bash
 #
 #  License:      BUSL-1.1
@@ -149,19 +150,36 @@ for r in links forgejo; do
 done
 
 echo ""
-echo "case 2 -- kill switch off: infra class gone, product (HyperDX included) and ingest stay"
-R="$(render_names HTTPRoute --set exposure.infraUisExternal=false "${OTEL_ON[@]}")"
+echo "case 2 -- admin group off: infra class gone, product (HyperDX included), api and ingest stay"
+R="$(render_names HTTPRoute --set exposure.groups.admin.enabled=false "${OTEL_ON[@]}")"
 for r in argocd forgejo kafbat links; do
-  assert_absent "killswitch" "${r}" "${R}"
+  assert_absent "admin-off" "${r}" "${R}"
 done
-for r in dfe-ui dfe-engine hyperdx otel; do
-  assert_has "killswitch" "${r}" "${R}"
+for r in dfe-ui dfe-engine dfe-engine-cli hyperdx otel; do
+  assert_has "admin-off" "${r}" "${R}"
 done
 
 echo ""
-echo "case 3 -- kill switch beats a per-route enabled:true"
-R="$(render_names HTTPRoute --set exposure.infraUisExternal=false --set routes.kafbat.enabled=true)"
-assert_absent "killswitch-absolute" "kafbat" "${R}"
+echo "case 3 -- a group switched off beats a per-route enabled:true"
+R="$(render_names HTTPRoute --set exposure.groups.admin.enabled=false --set routes.kafbat.enabled=true)"
+assert_absent "admin-off-absolute" "kafbat" "${R}"
+R="$(render_names HTTPRoute --set exposure.groups.console.enabled=false --set routes.dfeUi.enabled=true)"
+assert_absent "console-off-absolute" "dfe-ui" "${R}"
+
+echo ""
+echo "case 3b -- the console and api groups each take their own routes and nothing else"
+R="$(render_names HTTPRoute --set exposure.groups.console.enabled=false "${OTEL_ON[@]}")"
+for r in dfe-ui dfe-engine hyperdx; do
+  assert_absent "console-off" "${r}" "${R}"
+done
+for r in dfe-engine-cli argocd otel; do
+  assert_has "console-off" "${r}" "${R}"
+done
+R="$(render_names HTTPRoute --set exposure.groups.api.enabled=false)"
+assert_absent "api-off" "dfe-engine-cli" "${R}"
+for r in dfe-ui dfe-engine hyperdx argocd; do
+  assert_has "api-off" "${r}" "${R}"
+done
 
 echo ""
 echo "case 4 -- per-route opt-out removes only that route"
@@ -192,10 +210,10 @@ for p in dfe-oidc-kafbat-admin dfe-oidc-hyperdx-admin; do
 done
 
 echo ""
-echo "case 7 -- kill switch also withdraws the infra edge policies"
-R="$(render_names SecurityPolicy "${OIDC[@]}" --set deployRepo.bundled=true --set exposure.infraUisExternal=false)"
+echo "case 7 -- the admin group off also withdraws the infra edge policies"
+R="$(render_names SecurityPolicy "${OIDC[@]}" --set deployRepo.bundled=true --set exposure.groups.admin.enabled=false)"
 for p in dfe-oidc-argocd-admin dfe-oidc-forgejo-admin dfe-oidc-links-admin; do
-  assert_absent "killswitch-policy" "${p}" "${R}"
+  assert_absent "admin-off-policy" "${p}" "${R}"
 done
 
 echo ""
@@ -206,11 +224,12 @@ FULL="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-
   "${OTEL_ON[@]}" 2>/dev/null)"
 HTTPS_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: https$')"
 HTTP_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: http$')"
-if [ "${HTTPS_PINS}" -eq 8 ]; then
-  echo "  [PASS] sectionname-https: 8 internal routes pinned"
+# Nine: dfe-ui, both engine routes, argocd, hyperdx, kafbat, forgejo, links, otel.
+if [ "${HTTPS_PINS}" -eq 9 ]; then
+  echo "  [PASS] sectionname-https: 9 internal routes pinned"
   PASS=$((PASS+1))
 else
-  echo "  [FAIL] sectionname-https: expected 8, got ${HTTPS_PINS}"
+  echo "  [FAIL] sectionname-https: expected 9, got ${HTTPS_PINS}"
   FAIL=$((FAIL+1))
 fi
 if [ "${HTTP_PINS}" -eq 1 ]; then
@@ -221,32 +240,57 @@ else
   FAIL=$((FAIL+1))
 fi
 
-echo ""
-echo "case 9 -- internet-facing gateway with the kill switch on refuses with no OIDC and no CIDR fence"
-assert_render_refused "internet-facing-guard" "envoyGateway.service.internetFacing" \
-  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true
+FACING=(--set envoyGateway.service.internetFacing=true)
+ADMIN_LIST=(--set-json 'exposure.groups.admin.allow=["203.0.113.0/24"]')
 
 echo ""
-echo "case 10 -- the same combination renders once an OIDC provider is configured, not on the switch alone"
-assert_render_refused "internet-facing-oidc-no-provider" "no edge OIDC provider" \
-  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true --set oidc.enabled=true
-assert_render_succeeds "internet-facing-oidc" \
-  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true "${OIDC[@]}"
+echo "case 9 -- internet-facing with the admin group on and an empty admin list refuses, OIDC or not"
+assert_render_refused "admin-empty-list" "empty exposure.groups.admin.allow" "${FACING[@]}"
+assert_render_refused "admin-empty-list-oidc" "empty exposure.groups.admin.allow" "${FACING[@]}" "${OIDC[@]}"
 
 echo ""
-echo "case 11 -- or once an allow-list fences the load balancer instead"
-assert_render_succeeds "internet-facing-cidr" \
-  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=true \
-  --set ui.allowed_cidrs=203.0.113.0/24 --set ui.trusted_proxy_cidrs=203.0.113.0/24
+echo "case 10 -- allowPublic opens the empty list only behind an OIDC provider, not on the switch alone"
+assert_render_refused "admin-public-no-oidc" "no edge OIDC provider" \
+  "${FACING[@]}" --set exposure.groups.admin.allowPublic=true
+assert_render_refused "admin-public-oidc-no-provider" "no edge OIDC provider" \
+  "${FACING[@]}" --set exposure.groups.admin.allowPublic=true --set oidc.enabled=true
+assert_render_succeeds "admin-public-oidc" \
+  "${FACING[@]}" --set exposure.groups.admin.allowPublic=true "${OIDC[@]}"
 
 echo ""
-echo "case 12 -- internet-facing with the kill switch OFF (the edge-aws.yaml default) renders clean"
-assert_render_succeeds "internet-facing-killswitch-off" \
-  --set envoyGateway.service.internetFacing=true --set exposure.infraUisExternal=false
+echo "case 11 -- or once the admin group names who may reach it"
+assert_render_succeeds "admin-list" "${FACING[@]}" "${ADMIN_LIST[@]}" --set ui.trusted_proxy_cidrs=203.0.113.0/24
 
 echo ""
-echo "case 13 -- a ui.public.* value that survives as a string, not a bool, is refused by name"
-assert_render_refused "ui-public-type-guard" "ui.public.kafbat" --set-string ui.public.kafbat=false
+echo "case 12 -- internet-facing with the admin group OFF (the edge-aws.yaml default) renders clean"
+assert_render_succeeds "internet-facing-admin-off" "${FACING[@]}" --set exposure.groups.admin.enabled=false
+
+echo ""
+echo "case 13 -- a ui.public.* or admin tool value that survives as a string, not a bool, is refused by name"
+assert_render_refused "ui-public-type-guard" "ui.public.hyperdx" --set-string ui.public.hyperdx=false
+assert_render_refused "admin-tool-type-guard" "exposure.groups.admin.tools.kafbat" \
+  --set-string exposure.groups.admin.tools.kafbat=false
+assert_render_refused "group-switch-type-guard" "exposure.groups.console.enabled" \
+  --set-string exposure.groups.console.enabled=true
+assert_render_refused "group-list-type-guard" "never a comma-separated string" \
+  --set-string exposure.groups.console.allow=203.0.113.0/24
+assert_render_refused "unknown-admin-tool" "exposure.groups.admin.tools.hyperdx names no admin route" \
+  --set exposure.groups.admin.tools.hyperdx=true
+assert_render_refused "unknown-group" "exposure.groups.public is not an exposure group" \
+  --set exposure.groups.public.enabled=true
+
+echo ""
+echo "case 13b -- every retired key refuses to render and names its replacement"
+assert_render_refused "retired-allowed-cidrs" "ui.allowed_cidrs is retired" --set ui.allowed_cidrs=203.0.113.0/24
+assert_render_refused "retired-allowed-cidrs-empty" "exposure.groups.console.allow" --set-string ui.allowed_cidrs=""
+assert_render_refused "retired-kill-switch" "exposure.infraUisExternal is retired" \
+  --set exposure.infraUisExternal=false
+for name in kafbat argocd links forgejo; do
+  assert_render_refused "retired-ui-public-${name}" "exposure.groups.admin.tools.${name}" \
+    --set "ui.public.${name}=false"
+done
+assert_render_refused "retired-ui-public-cruise-control" "exposure.groups.admin.tools.cruiseControl" \
+  --set ui.public.cruise_control=true
 
 echo ""
 echo "case 14 -- same guard covers ui.rate_limit.enabled and ui.tls.hsts"
@@ -256,8 +300,8 @@ assert_render_refused "ui-tls-hsts-type-guard" "ui.tls.hsts" --set-string ui.tls
 echo ""
 echo "case 15 -- the AWS cascade's own defaults render clean: OIDC on, no admin UI on the public edge, HyperDX beside the console"
 # Both files, in the order layer2-edge.yaml layers them: the edge module's tier
-# table sits on top of the cloud overlay, and the kill switch is in the former
-# while oidc.enabled stays in the latter.
+# table sits on top of the cloud overlay, and the admin group switch is in the
+# former while oidc.enabled stays in the latter.
 R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-system \
   -f argocd/values/common.yaml -f argocd/values/aws.yaml -f argocd/values/edge-aws.yaml \
   --set appNamespace=dfe-local --set domain=dfe.example.com 2>/dev/null \
@@ -265,8 +309,9 @@ R="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-sys
 for r in argocd forgejo kafbat links otel; do
   assert_absent "aws-overlay-default" "${r}" "${R}"
 done
-# HyperDX is class product, so the console's Observe frame has a route to load.
-for r in dfe-ui dfe-engine hyperdx; do
+# HyperDX is class product, so the console's Observe frame has a route to load;
+# the api group is on and closed until it names a list.
+for r in dfe-ui dfe-engine dfe-engine-cli hyperdx; do
   assert_has "aws-overlay-default" "${r}" "${R}"
 done
 
@@ -308,10 +353,12 @@ route_paths() {
       $1 == "value:" { if (kind == "HTTPRoute" && name == want && $2 ~ /^\//) print $2 }'
 }
 
-# The engine team's answer (hyperi-io/dfe-engine#395), as the chart carries it.
+# The engine team's answer (hyperi-io/dfe-engine#395), as the chart carries it,
+# plus the two families neither list named: /api/v1/deployment, which dfe-ui's
+# Admin Tools page reads, and /api/v1/kafka/topics, a CLI family.
 BROWSER_PREFIXES=(
-  /api/v1/auth /api/v1/config/client /api/v1/system /api/v1/orgs /api/v1/sources
-  /api/v1/services /api/v1/field-maps
+  /api/v1/auth /api/v1/config/client /api/v1/deployment /api/v1/system /api/v1/orgs
+  /api/v1/sources /api/v1/services /api/v1/field-maps
   /api/v1/rules /api/v1/alerts /api/v1/transforms /api/v1/schemas /api/v1/hunts
   /api/v1/governance /api/v1/helm /api/v1/apps /api/v1/backing-services
   /api/v1/library /api/v1/gitops /api/v1/lifecycle /api/v1/repository
@@ -319,10 +366,11 @@ BROWSER_PREFIXES=(
 CLI_PREFIXES=(
   /api/v1/queries /api/v1/discovery /api/v1/sigma /api/v1/cel /api/v1/pipeline
   /api/v1/authoring /api/v1/app-contracts /api/v1/tasks /api/v1/synthetic-data
-  /api/v1/sample /api/v1/samples /api/v1/hyperdx /openapi.json
+  /api/v1/sample /api/v1/samples /api/v1/hyperdx /api/v1/kafka/topics /openapi.json
 )
-# Never on the public route, whatever the two opt-ins say.
+# Never on a public route, whatever the two opt-ins say.
 NEVER_PUBLIC=(/api/e2e /docs /redoc /livez /readyz)
+SCIM_ON=(--set exposure.groups.api.scim=true)
 
 echo ""
 echo "case 17 -- the browser's families answer on the product hostname, and only those"
@@ -331,40 +379,71 @@ for p in "${BROWSER_PREFIXES[@]}"; do
   assert_has "engine-browser" "${p}" "${P}"
 done
 assert_has "engine-browser" "/.well-known" "${P}"
-# 20 families plus /.well-known, and nothing that was not asked for.
-assert_count "engine-browser-total" 21 "$(printf '%s\n' "${P}" | grep -c .)"
+# 21 families plus /.well-known, and nothing that was not asked for.
+assert_count "engine-browser-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${CLI_PREFIXES[@]}" "${NEVER_PUBLIC[@]}"; do
   assert_absent "engine-browser" "${p}" "${P}"
 done
+assert_absent "engine-cli-public-default" "dfe-engine-cli-public" "$(aws_names HTTPRoute)"
 
 echo ""
-echo "case 18 -- cli_families_public adds the twelve CLI families and the spec they are generated from"
-P="$(route_paths dfe-engine-public --set ui.engine_api.cli_families_public=true)"
+echo "case 18 -- cli_families_public puts the api group's route, and only that, on the product hostname"
+P="$(route_paths dfe-engine-cli-public --set ui.engine_api.cli_families_public=true)"
 for p in "${CLI_PREFIXES[@]}"; do
   assert_has "engine-cli" "${p}" "${P}"
 done
-assert_count "engine-cli-total" 34 "$(printf '%s\n' "${P}" | grep -c .)"
-assert_absent "engine-cli" "/api/v1/scim/v2" "${P}"
+# 13 families plus the spec: 36 across the two routes, the 22 browser ones unchanged.
+assert_count "engine-cli-total" 14 "$(printf '%s\n' "${P}" | grep -c .)"
+for p in "${BROWSER_PREFIXES[@]}" /.well-known /api/v1/scim/v2; do
+  assert_absent "engine-cli" "${p}" "${P}"
+done
+P="$(route_paths dfe-engine-public --set ui.engine_api.cli_families_public=true)"
+assert_count "engine-browser-unmoved" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+for p in "${CLI_PREFIXES[@]}"; do
+  assert_absent "engine-browser-unmoved" "${p}" "${P}"
+done
 
 echo ""
-echo "case 19 -- scim_public is its own opt-in and adds that prefix alone"
-P="$(route_paths dfe-engine-public --set ui.engine_api.scim_public=true)"
+echo "case 19 -- scim_public needs the api group's scim, and then adds that prefix alone"
+P="$(route_paths dfe-engine-cli-public --set ui.engine_api.scim_public=true "${SCIM_ON[@]}")"
 assert_has "engine-scim" "/api/v1/scim/v2" "${P}"
-assert_count "engine-scim-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+assert_count "engine-scim-total" 1 "$(printf '%s\n' "${P}" | grep -c .)"
 assert_absent "engine-scim" "/api/v1/queries" "${P}"
+assert_render_refused "engine-scim-without-api-scim" "exposure.groups.api.scim is false" \
+  --set ui.engine_api.scim_public=true
+assert_render_refused "engine-public-cli-with-api-off" "exposure.groups.api.enabled is false" \
+  --set ui.engine_api.cli_families_public=true --set exposure.groups.api.enabled=false
 
 echo ""
-echo "case 20 -- the never-public paths stay off the route under every combination"
+echo "case 20 -- the never-public paths stay off both public routes under every combination"
 for flags in "" "--set ui.engine_api.cli_families_public=true" \
-             "--set ui.engine_api.scim_public=true" \
-             "--set ui.engine_api.cli_families_public=true --set ui.engine_api.scim_public=true"; do
-  # The flags are this script's own and are deliberately word-split.
-  # shellcheck disable=SC2086
-  P="$(route_paths dfe-engine-public ${flags})"
-  for p in "${NEVER_PUBLIC[@]}"; do
-    assert_absent "engine-never${flags:+ (${flags})}" "${p}" "${P}"
+             "--set ui.engine_api.scim_public=true --set exposure.groups.api.scim=true" \
+             "--set ui.engine_api.cli_families_public=true --set ui.engine_api.scim_public=true --set exposure.groups.api.scim=true"; do
+  for route in dfe-engine-public dfe-engine-cli-public; do
+    # The flags are this script's own and are deliberately word-split.
+    # shellcheck disable=SC2086
+    P="$(route_paths "${route}" ${flags})"
+    for p in "${NEVER_PUBLIC[@]}"; do
+      assert_absent "engine-never ${route}${flags:+ (${flags})}" "${p}" "${P}"
+    done
   done
 done
+
+echo ""
+echo "case 20b -- the internal names split the same way: no CLI path on the browser route, no browser path on the CLI route"
+P="$(route_paths dfe-engine)"
+assert_count "engine-internal-browser-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+for p in "${CLI_PREFIXES[@]}" /api/v1 /api/v1/scim/v2 /docs /redoc; do
+  assert_absent "engine-internal-browser" "${p}" "${P}"
+done
+P="$(route_paths dfe-engine-cli)"
+for p in "${CLI_PREFIXES[@]}" /docs /redoc; do
+  assert_has "engine-internal-cli" "${p}" "${P}"
+done
+for p in "${BROWSER_PREFIXES[@]}" /.well-known /api/v1 /api/v1/scim/v2; do
+  assert_absent "engine-internal-cli" "${p}" "${P}"
+done
+assert_has "engine-internal-cli-scim" "/api/v1/scim/v2" "$(route_paths dfe-engine-cli "${SCIM_ON[@]}")"
 
 echo ""
 echo "case 21 -- the engine rides dfe-ui's listener, so no listener and no certificate are added"
@@ -383,12 +462,20 @@ assert_has "engine-route-pin" "https-public-dfe-ui" \
   "$(aws_render --show-only templates/httproute-public.yaml | awk '/sectionName:/ { print $2 }')"
 
 echo ""
-echo "case 22 -- the CIDR fence, the rate limit and the edge login all cover the public engine route"
+echo "case 22 -- the CIDR fence, the rate limit and the edge login all cover the public engine routes"
 assert_has "engine-ratelimit" "dfe-public-dfe-engine-ratelimit" "$(aws_names BackendTrafficPolicy)"
-CIDR=(--set ui.allowed_cidrs=203.0.113.0/24 --set ui.trusted_proxy_cidrs=203.0.113.0/24)
+CIDR=(--set-json 'exposure.groups.console.allow=["203.0.113.0/24"]' --set ui.trusted_proxy_cidrs=203.0.113.0/24)
 assert_has "engine-cidr" "dfe-public-cidr-dfe-engine" "$(aws_names SecurityPolicy "${CIDR[@]}")"
 assert_has "engine-oidc" "dfe-public-oidc-acme-dfe-engine" \
   "$(aws_names SecurityPolicy "${OIDC[@]}")"
+CLI_PUBLIC=(--set ui.engine_api.cli_families_public=true)
+assert_has "engine-cli-cidr" "dfe-public-cidr-dfe-engine-cli" "$(aws_names SecurityPolicy "${CLI_PUBLIC[@]}")"
+assert_has "engine-cli-ratelimit" "dfe-public-dfe-engine-cli-ratelimit" \
+  "$(aws_names BackendTrafficPolicy "${CLI_PUBLIC[@]}")"
+# The CLI cannot follow an interactive redirect, so the engine's edge login
+# fronts the browser route alone.
+assert_absent "engine-cli-no-oidc" "dfe-public-oidc-acme-dfe-engine-cli" \
+  "$(aws_names SecurityPolicy "${OIDC[@]}" "${CLI_PUBLIC[@]}")"
 
 echo ""
 echo "case 23 -- either switch off the product surface or off the engine, and the public route goes"
@@ -402,72 +489,14 @@ assert_absent "engine-ui-private" "dfe-ui-public" \
   "$(aws_names HTTPRoute --set ui.public.dfe_ui=false)"
 
 echo ""
-echo "case 24 -- the internal engine route is the same object it was before the public one existed"
-# Byte-for-byte, because the internal route carries /openapi.json, and on this
-# render's dev posture /docs and /redoc, and a deployment's own tooling reaches
-# them on the private name.
-read -r -d '' INTERNAL_ENGINE <<'EOF'
----
-# Source: envoy-gateway-config/templates/httproute-dfe-engine.yaml
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: dfe-engine
-  namespace: dfe-local
-  labels:
-    app.kubernetes.io/name: "dfe-gateway"
-    app.kubernetes.io/instance: "envoy-gateway-config"
-    app.kubernetes.io/part-of: "dfe"
-    app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.0.0"
-    dfe.hyperi.io/env: "local"
-    dfe.hyperi.io/cloud: "local"
-  annotations:
-    dfe.hyperi.io/publish-dns: "true"
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: dfe-gateway
-      namespace: envoy-gateway-system
-      # See httproute-argocd.yaml: pinned off the plaintext :80 listener.
-      sectionName: https
-  hostnames:
-    - "dfe.dfe.example.com"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /api/v1
-        - path:
-            type: PathPrefix
-            value: /docs
-        - path:
-            type: PathPrefix
-            value: /redoc
-        - path:
-            type: PathPrefix
-            value: /openapi.json
-        - path:
-            type: PathPrefix
-            value: /.well-known
-      filters:
-        - type: ResponseHeaderModifier
-          responseHeaderModifier:
-            set:
-              - name: Strict-Transport-Security
-                value: "max-age=31536000; includeSubDomains"
-      backendRefs:
-        - name: dfe-engine
-          port: 8000
-          group: ""
-          kind: Service
-          weight: 1
-      timeouts:
-        request: "120s"
-EOF
+echo "case 24 -- the public flags leave both internal engine routes exactly as they were"
+# Byte-for-byte, because the internal CLI route carries /openapi.json, and on
+# this render's dev posture /docs and /redoc, and a deployment's own tooling
+# reaches them on the private name.
+INTERNAL_ENGINE="$(aws_render --show-only templates/httproute-dfe-engine.yaml "${SCIM_ON[@]}")"
+assert_count "internal-engine-routes" 2 "$(printf '%s\n' "${INTERNAL_ENGINE}" | grep -c '^kind: HTTPRoute')"
 assert_same "internal-engine-route" "${INTERNAL_ENGINE}" \
-  "$(aws_render --show-only templates/httproute-dfe-engine.yaml \
+  "$(aws_render --show-only templates/httproute-dfe-engine.yaml "${SCIM_ON[@]}" \
      --set ui.engine_api.cli_families_public=true --set ui.engine_api.scim_public=true)"
 
 echo ""

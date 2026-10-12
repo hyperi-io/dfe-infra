@@ -3,10 +3,10 @@
 {{- range $key := $public }}
 {{- $r := index $.Values.routes $key }}
 ---
-# A wall a credential-stuffing run hits before it reaches the login. The counter
-# is per route per proxy replica, NOT per caller: two replicas serve twice this
-# rate in total, and one attacker and one analyst share the same bucket.
-# Per-caller counting is scope global, which this chart refuses (see values.yaml).
+# A shared bucket is the wall a distributed credential-stuffing run hits before
+# it reaches the login, and a bucket per client address stops one caller
+# spending it alone. Both count per route per proxy replica, so two replicas
+# serve twice these rates in total.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:
@@ -24,8 +24,6 @@ spec:
            global body directly, and naming both is how they combine. */}}
     local:
       rules:
-        - limit:
-            requests: {{ $.Values.ui.rate_limit.requests }}
-            unit: {{ $.Values.ui.rate_limit.unit }}
+        {{- include "envoy-gateway-config.rateLimitRules" (dict "ctx" $ "shared" true) | nindent 8 }}
 {{- end }}
 {{- end }}
