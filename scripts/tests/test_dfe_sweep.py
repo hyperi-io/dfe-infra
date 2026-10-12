@@ -110,6 +110,27 @@ def test_latest_pointer_reads_the_latest_stack(tmp_path: Path) -> None:
     assert members["dfe-infra"].why == ("infra",)
 
 
+def test_derive_suite_off_keeps_only_infra_topics_and_include(tmp_path: Path) -> None:
+    topics = {"ops-tools": (f"{ORG}/ops-tools", ["infra-member"])}
+    _, members, _ = _resolve(
+        _root(tmp_path),
+        infra="hyperi-infra",
+        topics=topics,
+        include=("extra-repo",),
+        derive_suite=False,
+    )
+    assert list(members) == ["hyperi-infra", "ops-tools", "extra-repo"]
+    assert members["hyperi-infra"].why == ("infra",)
+    assert members["ops-tools"].why == ("topic infra-member",)
+    for name in ("dfe-engine", "dfe-loader", "dfe-schemas", "dfe-infra"):
+        assert name not in members
+
+
+def test_derive_suite_defaults_on(tmp_path: Path) -> None:
+    _, members, _ = _resolve(_root(tmp_path))
+    assert "dfe-engine" in members
+
+
 def test_a_commented_pin_is_not_a_member(tmp_path: Path) -> None:
     _, members, _ = _resolve(_root(tmp_path))
     for name in ("dfe-transform-wasm", "dfe-transform-splack", "dfe-docs"):
@@ -307,6 +328,17 @@ def test_the_command_line_wins_over_the_settings() -> None:
     assert options.include == ("a", "b", "c")
     assert options.output == "json"
     assert options.org == "o"
+
+
+def test_derive_suite_is_a_setting_defaulting_on() -> None:
+    assert _options([]).derive_suite is True
+    assert _options([], derive_suite=False).derive_suite is False
+
+
+@pytest.mark.parametrize("bad", ["false", 0, "no", None])
+def test_derive_suite_refuses_anything_but_a_boolean(bad: object) -> None:
+    with pytest.raises(FleetError, match="derive_suite"):
+        _options([], derive_suite=bad)
 
 
 def test_an_unset_flag_defers_to_the_settings() -> None:

@@ -188,6 +188,7 @@ class Options:
         topics: Repo topics whose every unarchived repo in the org is a member.
         include: Names or slugs added to the derived membership.
         exclude: Names or slugs removed from it.
+        derive_suite: False takes members only from infra, topics and include.
         output: ``text``, ``json`` or ``slack``.
         project_limit: Most org projects listed when finding each repo's backlog project.
         report_url: Where the full report is published, for the Slack cut-off line, or empty.
@@ -205,6 +206,7 @@ class Options:
     topics: tuple[str, ...]
     include: tuple[str, ...]
     exclude: tuple[str, ...]
+    derive_suite: bool
     output: str
     project_limit: int
     group_replies: int
@@ -248,6 +250,13 @@ def _count(value: object, key: str) -> int:
     if number < 1:
         raise _fail(key, value, wanted)
     return number
+
+
+def _flag(value: object, key: str) -> bool:
+    """A true/false setting, refused when it is anything else."""
+    if not isinstance(value, bool):
+        raise _fail(key, value, "true or false")
+    return value
 
 
 def _path(value: str) -> Path:
@@ -342,6 +351,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
                        "include"),
         exclude=_names(args.exclude if args.exclude is not None else settings.get("exclude"),
                        "exclude"),
+        derive_suite=_flag(settings.get("derive_suite", True), "derive_suite"),
         output=output,
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
         report_url=_report_url(pick(args.report_url, "report_url")),
@@ -475,6 +485,7 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         topics=sweep.topic_members(options.org, options.topics, api),
         include=options.include,
         exclude=options.exclude,
+        derive_suite=options.derive_suite,
     )
     for note in notes:
         warning(note)
