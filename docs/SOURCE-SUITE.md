@@ -22,7 +22,7 @@ product was driven.
 
 ## `filebeat` (the default case)
 
-The console creates the source -- Configuration tab (name, display name, description, Archive on, match `data_stream.dataset equals cisco_ios.log`, Elastic's own identifier for the source), Meta Schema tab (the
+The console creates the source -- Configuration tab (name, display name, description, Archive on, match `data_stream.dataset equals cisco_ios.log`, Elastic's own identifier for the source), Table Settings tab (the
 shipped `common-header/timeseries` 1.0.1 and `meta/beats/filebeat` 1.0.0), then
 the Transform tab that then becomes available (Define Transform -> `dfe-transform-vrl`). After
 the deploy the source's Processing tab puts the bundled
