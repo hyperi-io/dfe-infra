@@ -1,9 +1,15 @@
 {{- $ca := .Values.tls.internalCA -}}
 {{- $p := $ca.persist -}}
-{{- $key := $p.remoteKey | default (printf "%s/%s/pki/internal-ca" .Values.project .Values.env) -}}
+{{- $base := $p.remoteKey | default (printf "%s/%s/pki/internal-ca" .Values.project .Values.env) -}}
+{{- $certKey := printf "%s-crt" $base -}}
+{{- $keyKey := printf "%s-key" $base -}}
+{{- /* ESO's AWS provider sets managed-by itself and refuses a push that names it. */ -}}
+{{- $tags := omit ($p.tags | default dict) "managed-by" -}}
+{{- /* A complete pair from the two-entry layout, else from the single-entry one, else no write at all. */ -}}
+{{- $pick := `{{ if and (index . "cert") (index . "key") }}{{ index . "%[1]s" }}{{ else if and (index . "%[2]s") (index . "%[3]s") }}{{ index . "%[4]s" }}{{ else }}{{ fail "the store holds no complete internal CA root" }}{{ end }}` -}}
 {{- if include "envoy-gateway-config.internalRootPersisted" (dict "ctx" .) }}
-# Root PERSISTENCE for the self-signed internal CA (#238). Two halves against ONE
-# store path: the ExternalSecret RESTORES the root, the PushSecret SAVES it.
+# Root PERSISTENCE for the self-signed internal CA (#238). Two halves against the
+# same store entries: the ExternalSecret RESTORES the root, the PushSecret SAVES it.
 # First bootstrap: nothing to restore, cert-manager mints, the push stores it.
 # Later bootstraps: the restore writes dfe-internal-ca-tls and cert-manager
 # adopts a CA that already satisfies the Certificate spec.
@@ -21,9 +27,8 @@ metadata:
     # moment it adopts the restored root.
     helm.sh/resource-policy: keep
 spec:
-  # Only while dfe-internal-ca-tls is absent. Once it exists -- restored here or
-  # minted by cert-manager -- this never writes again, so it cannot fight
-  # cert-manager over a live root.
+  # CreatedOnce retries until its first successful read, writes that once, and
+  # never writes again, so it cannot fight cert-manager over a live root.
   refreshPolicy: CreatedOnce
   refreshInterval: "0"
   secretStoreRef:
@@ -34,21 +39,27 @@ spec:
     # Orphan, not Owner: no ownerReference, so pruning this ExternalSecret does
     # not garbage-collect the root out from under cert-manager.
     creationPolicy: Orphan
+    # Merge skips a source the store does not hold instead of failing the read, so only the template decides what is written.
+    deletionPolicy: Merge
     template:
       engineVersion: v2
       type: kubernetes.io/tls
       data:
-        tls.crt: "{{ `{{ .cert }}` }}"
-        tls.key: "{{ `{{ .key }}` }}"
+        tls.crt: {{ printf $pick "cert" $p.certProperty $p.keyProperty $p.certProperty | quote }}
+        tls.key: {{ printf $pick "key" $p.certProperty $p.keyProperty $p.keyProperty | quote }}
   data:
     - secretKey: cert
       remoteRef:
-        key: {{ $key }}
+        key: {{ $certKey }}
         property: {{ $p.certProperty }}
     - secretKey: key
       remoteRef:
-        key: {{ $key }}
+        key: {{ $keyKey }}
         property: {{ $p.keyProperty }}
+  # The single-entry layout, read whole because a property missing from it is an error on AWS rather than a skipped source.
+  dataFrom:
+    - extract:
+        key: {{ $base }}
 ---
 apiVersion: external-secrets.io/v1alpha1
 kind: PushSecret
@@ -72,15 +83,23 @@ spec:
   selector:
     secret:
       name: dfe-internal-ca-tls
+  # One store entry per key: ESO checks IfNotExists per data entry, and the AWS provider asks whether the entry exists, not the property.
   data:
+    {{- range $entry := list (list "tls.crt" $certKey $p.certProperty) (list "tls.key" $keyKey $p.keyProperty) }}
     - match:
-        secretKey: tls.crt
+        secretKey: {{ index $entry 0 }}
         remoteRef:
-          remoteKey: {{ $key }}
-          property: {{ $p.certProperty }}
-    - match:
-        secretKey: tls.key
-        remoteRef:
-          remoteKey: {{ $key }}
-          property: {{ $p.keyProperty }}
+          remoteKey: {{ index $entry 1 }}
+          property: {{ index $entry 2 }}
+      {{- if $tags }}
+      metadata:
+        apiVersion: kubernetes.external-secrets.io/v1alpha1
+        kind: PushSecretMetadata
+        spec:
+          tags:
+            {{- range $k, $v := $tags }}
+            {{ $k | quote }}: {{ $v | quote }}
+            {{- end }}
+      {{- end }}
+    {{- end }}
 {{- end }}

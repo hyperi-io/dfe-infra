@@ -156,7 +156,7 @@ run "an_out_of_range_window_is_refused" {
 }
 
 // The gateway chart's PushSecret creates the internal CA root at
-// <project>/<env>/pki/internal-ca; every other secret stays read-only to ESO.
+// <project>/<env>/pki/internal-ca-crt and -key; every other secret stays read-only to ESO.
 run "eso_writes_the_internal_ca_path_and_nothing_else" {
   command = plan
 
@@ -200,7 +200,7 @@ run "the_internal_ca_write_grant_follows_the_store_prefix" {
       contains(s.actions, "secretsmanager:CreateSecret")
       && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/pki/*"])
     ])
-    error_message = "ESO pushes to <store prefix>/<project>/<env>/pki/internal-ca, so the write grant must carry the prefix too"
+    error_message = "ESO pushes to <store prefix>/<project>/<env>/pki/internal-ca-crt and -key, so the write grant must carry the prefix too"
   }
 }
 

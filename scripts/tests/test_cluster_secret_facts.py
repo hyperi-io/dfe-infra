@@ -74,6 +74,9 @@ CONDITIONAL_FACTS = (
     # controller's resources both carry a test run's tags.
     ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer2-platform.yaml", "tags"),
     ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer1-addons.yaml", "defaultTags"),
+    # test_internal_ca_tags.py renders the appset to prove it lands on
+    # tls.internalCA.persist.tags, deeper than this file's line check reaches.
+    ("DFE_RESOURCE_TAGS", "dfe.hyperi.io/resource_tags", "layer2-edge.yaml", "tls"),
     # test_edge_gateway_fence.py renders the appset to prove the pairing this
     # file's line check cannot.
     ("DFE_EDGE_SELF_RANGES", "dfe.hyperi.io/edge_self_ranges", "layer2-edge.yaml", "selfRanges"),
@@ -100,6 +103,7 @@ CONDITIONAL_FACTS = (
 SINGLE_QUOTED = {
     "DFE_KARPENTER_POOLS": "DFE_KARPENTER_POOLS_YAML",
     "DFE_RUN_TAGS": "DFE_RUN_TAGS_YAML",
+    "DFE_RESOURCE_TAGS": "DFE_RESOURCE_TAGS_YAML",
 }
 
 

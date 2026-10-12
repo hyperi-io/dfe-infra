@@ -170,6 +170,15 @@ spec:
               ui:
                 trusted_proxy_cidrs: {{ $trusted | quote }}
               {{- end }}
+              # The cloud root's tag set, for the store entries the internal CA's
+              # PushSecret creates; parsed and re-emitted as JSON so every value
+              # stays a string.
+              {{- with index .metadata.annotations "dfe.hyperi.io/resource_tags" }}
+              tls:
+                internalCA:
+                  persist:
+                    tags: {{ . | fromJson | toJson }}
+              {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'
           ref: values
