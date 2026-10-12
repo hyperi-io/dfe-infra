@@ -594,6 +594,7 @@ def resolve_members(
     topics: dict[str, tuple[str, list[str]]] | None = None,
     include: Iterable[str] = (),
     exclude: Iterable[str] = (),
+    derive_suite: bool = True,
 ) -> tuple[str, list[Member], list[str]]:
     """Derive the members: stack, suite.yaml nodes, the stack's producers, infra, topics, then config.
 
@@ -609,6 +610,8 @@ def resolve_members(
         topics: Repos carrying a member topic, from topic_members.
         include: Names or ``owner/name`` slugs to add.
         exclude: Names or slugs to drop; applied last, so it beats every other reason.
+        derive_suite: False skips the stack, suite.yaml and producer reasons, so a sweep of
+            another estate takes only its infra repo, its topics and its include list.
 
     Returns:
         The stack key read, the members in discovery order, and one note per exclude entry
@@ -619,14 +622,15 @@ def resolve_members(
     """
     name = stack_name(root, pointer)
     why: dict[str, list[str]] = {}
-    for entry, section in stack_entries(root, name):
-        why.setdefault(entry, []).append(f"stack {section}")
-    seeds = list(why)
-    for member in suite_members(graph):
-        why.setdefault(member, []).append("suite member")
-    feeds = producers_of(graph, seeds)
-    for producer, consumers in feeds.items():
-        why.setdefault(producer, []).append(f"dependency of {', '.join(consumers)}")
+    if derive_suite:
+        for entry, section in stack_entries(root, name):
+            why.setdefault(entry, []).append(f"stack {section}")
+        seeds = list(why)
+        for member in suite_members(graph):
+            why.setdefault(member, []).append("suite member")
+        feeds = producers_of(graph, seeds)
+        for producer, consumers in feeds.items():
+            why.setdefault(producer, []).append(f"dependency of {', '.join(consumers)}")
     why.setdefault(infra, []).append("infra")
     slugs: dict[str, str] = {}
     for member, (slug, carried) in (topics or {}).items():
