@@ -1,5 +1,6 @@
 {{- define "dfe-extras.receiver.networkPolicyIngest" -}}
-{{- if and (eq (.Values.exposure.mode | default "public") "vpn") .Values.exposure.networkPolicy.enabled }}
+{{- $ingest := .Values.exposure.groups.ingest | default dict }}
+{{- if and (eq (toString $ingest.enabled) "true") (eq (toString $ingest.door) "tunnel") .Values.exposure.networkPolicy.enabled }}
 {{- $exposed := list }}
 {{- range .Values.listeners }}
   {{- if .exposed }}
@@ -16,10 +17,11 @@
 
   It admits the tunnel pods, by label. They SNAT a client onto the pod network,
   so selecting them is exact and needs no addressing, and it keeps the receiver
-  reachable ONLY through the tunnel in this mode.
+  reachable ONLY through the tunnel on this door.
 
-  Public mode's policy of the same name is argocd/values/apps/dfe-receiver's,
-  rendered from the ports its load balancers serve.
+  The load balancer door's policy of the same name is
+  argocd/values/apps/dfe-receiver's, rendered from the ports its load balancers
+  serve.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -27,7 +29,7 @@ metadata:
   name: {{ include "dfe-common.fullname" . }}-ingest
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
-    dfe.hyperi.io/exposure: vpn
+    dfe.hyperi.io/exposure: tunnel
 spec:
   podSelector:
     matchLabels:

@@ -1,0 +1,20 @@
+{{- define "dfe-extras.receiver.notes" -}}
+{{- $ingest := .Values.exposure.groups.ingest | default dict }}
+{{- $allow := $ingest.allow | default list }}
+{{- if and $ingest.enabled (eq (toString $ingest.door) "loadbalancer") }}
+{{- $everyone := list }}
+{{- range $allow }}{{ if hasSuffix "/0" (toString .) }}{{ $everyone = append $everyone (toString .) }}{{ end }}{{ end }}
+{{- if not $allow }}
+INGEST CLOSED. exposure.groups.ingest.door is loadbalancer and exposure.groups.ingest.allow
+is empty, so the receiver renders no load balancer. Set exposure.groups.ingest.allow to
+the senders' ranges.
+{{- else if $everyone }}
+WARNING: exposure.groups.ingest.allow carries {{ join "," $everyone }}, which admits every
+address -- the receiver's load balancer takes data from the whole internet, behind the
+receiver's own caller check only. Name the senders' ranges instead.
+{{- else }}
+The receiver's load balancer admits {{ join "," $allow }} and refuses every other address.
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-receiver") "body" "dfe-extras.receiver.notes") }}

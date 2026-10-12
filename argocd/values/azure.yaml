@@ -14,15 +14,10 @@ storageClass: managed-csi-premium
 # Service and culvert's PKI mode. That file carries the Azure tier table in one
 # place; what stays here is what a chart OUTSIDE the edge module reads as well.
 
-# THE RECEIVER'S FRONT DOOR -- same rule as AWS (argocd/values/aws.yaml's
-# exposure: block, docs/deployment/aws.md#receiver-ingress): Azure's load
-# balancers bill by volume too, so the receiver stays off one by default.
-# dfe-receiver is not an edge chart, so this key stays here. The receiver only:
-# culvert keeps its chart-default LoadBalancer on this flavour, so a deployment
-# that brings the tunnel pays Azure's per-GB rate on the tunnel's bytes until
-# edge-azure.yaml carries edge-aws.yaml's NodePort override as well.
-exposure:
-  mode: vpn
+# THE RECEIVER'S FRONT DOOR is exposure.groups.ingest (common.yaml), as on AWS:
+# its own load balancer, which renders only once the deploy repo names the
+# senders in exposure.groups.ingest.allow. Its values are
+# argocd/values/apps/dfe-receiver/azure.yaml.
 
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud

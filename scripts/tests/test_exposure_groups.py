@@ -183,13 +183,17 @@ RETIRED = (
     ("ui", "allowed_cidrs"),
     ("exposure", "infraUisExternal"),
     *(("ui", "public", name) for name in ("kafbat", "cruise_control", "argocd", "links", "forgejo")),
+    # The receiver's door and allow list before the ingest group.
+    ("exposure", "mode"),
+    ("exposure", "public", "loadBalancerSourceRanges"),
 )
 
 
 @pytest.mark.parametrize("path", [
     GATEWAY_VALUES,
     *sorted(VALUES.glob("*.yaml")),
-], ids=lambda p: p.name)
+    *sorted((VALUES / "apps").glob("*/*.yaml")),
+], ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_expected_fail_no_values_file_carries_a_retired_exposure_key(path: Path) -> None:
     found = [".".join(p) for p in leaf_paths(load(path)) if any(p[: len(r)] == r for r in RETIRED)]
     assert not found, f"{path.name} still sets {found}"

@@ -123,12 +123,15 @@ def test_the_address_does_not_displace_the_other_lb_fields() -> None:
 # The address a deployment pins arrives as this cluster-secret fact, which the appset
 # hands the receiver as publicService.loadBalancerIP.
 RECEIVER_ADDRESS = {"dfe.hyperi.io/receiver_address": "192.0.2.11"}
+# The load balancer door with an RFC 5737 sender range, set in the deploy repo.
+SENDERS_DOOR = {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": ["198.51.100.0/24"]}}}}
 
 
-def receiver(cloud: str, annotations: dict | None = None, overlay: dict | None = None) -> list:
+def receiver(cloud: str, annotations: dict | None = None, overlay: dict | None = None,
+             infra: dict | None = SENDERS_DOOR) -> list:
     """The receiver on scale, as its Application renders it on one cloud values file."""
     return render_app(
-        "dfe-receiver", "scale", cloud, annotations=annotations or {}, overlay=overlay
+        "dfe-receiver", "scale", cloud, annotations=annotations or {}, overlay=overlay, infra=infra
     )
 
 
@@ -156,11 +159,11 @@ def test_the_udp_door_takes_its_own_address() -> None:
            tcp["spec"].get("loadBalancerIP") == "192.0.2.11", f"got {tcp['spec']}")
 
 
-def test_an_internal_receiver_renders_no_public_service_at_all() -> None:
-    """local.yaml's exposure.mode internal, with an address on the cluster secret anyway."""
-    docs = receiver("local", RECEIVER_ADDRESS)
+def test_the_gateway_door_renders_no_public_service_at_all() -> None:
+    """local.yaml's door gateway, with an address on the cluster secret anyway."""
+    docs = receiver("local", RECEIVER_ADDRESS, infra=None)
     names = [d["metadata"]["name"] for d in docs if d.get("kind") == "Service"]
-    expect("internal exposure renders the ClusterIP Service alone",
+    expect("the gateway door renders the ClusterIP Service alone",
            names == ["dfe-receiver"], f"got {names}")
 
 
@@ -357,7 +360,7 @@ def main() -> int:
         test_an_unset_receiver_address_leaves_the_pool_to_choose()
         test_a_set_receiver_address_reaches_the_public_service()
         test_the_udp_door_takes_its_own_address()
-        test_an_internal_receiver_renders_no_public_service_at_all()
+        test_the_gateway_door_renders_no_public_service_at_all()
         test_the_cluster_secret_carries_both_addresses()
         test_the_appsets_pass_the_addresses_to_the_charts()
         test_the_env_contract_documents_the_new_keys()

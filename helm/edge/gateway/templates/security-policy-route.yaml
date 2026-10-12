@@ -3,7 +3,7 @@
        rule inside that policy instead (security-policy.yaml,
        security-policy-infra.yaml). */}}
 {{- $fronted := include "envoy-gateway-config.oidcFronted" (dict "ctx" .) | fromJsonArray }}
-{{- range $key := include "envoy-gateway-config.webRouteKeys" (dict "ctx" .) | fromJsonArray }}
+{{- range $key := include "envoy-gateway-config.fencedRouteKeys" (dict "ctx" .) | fromJsonArray }}
 {{- $r := index $.Values.routes $key }}
 {{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
 {{- $group := include "envoy-gateway-config.routeGroup" (dict "ctx" $ "key" $key) }}

@@ -42,16 +42,25 @@ extras:
       component: receiver
       env: local
       cloud: local
-      # The vpn-mode ingest NetworkPolicy opens the exposed ones, and internal mode
-      # refuses an exposed listener other than http. A layer replaces the whole
-      # list. The receiver binds nothing on 8443, so no entry opens it.
+      # The tunnel door's ingest NetworkPolicy opens the exposed ones, and the
+      # gateway door refuses an exposed listener other than http. A layer
+      # replaces the whole list. The receiver binds nothing on 8443, so no entry
+      # opens it.
       listeners:
         - { name: http, port: 8080, protocol: TCP, exposed: true }
         - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false, appProtocol: kubernetes.io/h2c }
+      # The door itself is exposure.groups.ingest, which argocd/values/common.yaml
+      # supplies in every cascade; this default, no public door, is what a render
+      # without that file gets.
       exposure:
-        mode: public                # public | internal | vpn
+        groups:
+          ingest:
+            enabled: false
+            allow: []
+            deny: []
+            door: tunnel
         vpn:
-          # Selector label of the tunnel pods the vpn-mode policy admits.
+          # Selector label of the tunnel pods the tunnel door's policy admits.
           podLabel: dfe-culvert
         networkPolicy:
           enabled: true

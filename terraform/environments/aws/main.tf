@@ -185,8 +185,9 @@ module "edge" {
   private_zone_arn               = module.cluster.private_zone_arn
   kms_key_arn                    = module.cluster.kms_key_arn
 
-  dns    = { public_zone = var.dns.public_zone }
-  tunnel = var.edge.tunnel
+  dns      = { public_zone = var.dns.public_zone }
+  tunnel   = var.edge.tunnel
+  receiver = var.edge.receiver
 
   extra_self_ranges           = var.edge_self_ranges
   gateway_trusted_proxy_cidrs = var.edge_trusted_proxy_cidrs

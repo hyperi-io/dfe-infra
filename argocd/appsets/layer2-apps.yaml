@@ -242,6 +242,17 @@ spec:
               imagePullSecrets:
                 - {{ $pullSecret | quote }}
               {{- end }}
+              {{- $eipAllocations := index .metadata.annotations "dfe.hyperi.io/receiver_eip_allocations" | default "" }}
+              {{- $subnets := index .metadata.annotations "dfe.hyperi.io/receiver_subnets" | default "" }}
+              {{- if and $eipAllocations (eq .deploy.service "dfe-receiver") }}
+              # The Elastic IPs the cloud root allocated for the receiver's NLB, one
+              # per public subnet in the same order. A fact, so the deploy repo's
+              # exposure.groups.ingest decides whether the NLB exists, never these.
+              exposure:
+                public:
+                  eipAllocations: {{ splitList "," $eipAllocations | toJson }}
+                  subnets: {{ splitList "," $subnets | toJson }}
+              {{- end }}
         # The DFE-only objects beside the thin chart. The chart source's value
         # files, parameters and inline values, plus chartName, the thin chart's
         # name, which picks this component's objects.
@@ -312,6 +323,14 @@ spec:
               {{- if $pullSecret }}
               imagePullSecrets:
                 - {{ $pullSecret | quote }}
+              {{- end }}
+              {{- $eipAllocations := index .metadata.annotations "dfe.hyperi.io/receiver_eip_allocations" | default "" }}
+              {{- $subnets := index .metadata.annotations "dfe.hyperi.io/receiver_subnets" | default "" }}
+              {{- if and $eipAllocations (eq .deploy.service "dfe-receiver") }}
+              exposure:
+                public:
+                  eipAllocations: {{ splitList "," $eipAllocations | toJson }}
+                  subnets: {{ splitList "," $subnets | toJson }}
               {{- end }}
         # This repo again, at the revision dfe-extras is read at: Argo reads one
         # revision per repo URL, and a second ref at another revision is read

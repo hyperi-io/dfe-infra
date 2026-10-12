@@ -37,26 +37,4 @@ spec:
       name: {{ .Values.gateway.name }}-http-redirect
   authorization:
     defaultAction: Allow
-{{- range $key := include "envoy-gateway-config.ingestRoutes" (dict "ctx" $) | fromJsonArray }}
-{{- $r := index $.Values.routes $key }}
----
-# An ingest door is not a web surface, so the fence above does not reach it.
-# Each backend checks its own callers -- the collector a bearer token, the
-# receiver the mode routes.receiver.authMode restates -- and the Service's
-# loadBalancerSourceRanges is what narrows who may connect.
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: SecurityPolicy
-metadata:
-  name: dfe-ingest-{{ $r.routeName }}
-  namespace: {{ include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
-  labels:
-    {{- include "dfe-common.labels" $ | nindent 4 }}
-spec:
-  targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: {{ $r.routeName }}
-  authorization:
-    defaultAction: Allow
-{{- end }}
 {{- end }}

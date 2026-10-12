@@ -25,6 +25,13 @@ envoyGateway:
     type: LoadBalancer
     externalIPs: []
 
+# The on-prem ingest door, as local.yaml sets it: receiver.{domain} on the
+# gateway, fenced by the ingest group's lists, which fence nothing while empty.
+exposure:
+  groups:
+    ingest:
+      door: gateway
+
 # Edge wildcard-cert issuer. The chart default (dfe-letsencrypt) renders a
 # ClusterIssuer only when tls.acme.email or tls.vault.server is set; with neither,
 # the gateway-shim requests against a ClusterIssuer that never exists ->

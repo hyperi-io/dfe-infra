@@ -12,10 +12,9 @@
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- /* The second wall. Each group's list is enforced at Envoy as well, so a
        misconfigured policy is not the only thing between the internet and a UI
-       -- but this one is the WHOLE front door, ingest routes included, because
-       one Service carries every listener. A range ingest needs beyond the web
-       groups goes in envoyGateway.service.loadBalancerSourceRanges: Envoy still
-       holds each web route to its own group. */}}
+       -- but this one is the WHOLE front door, because one Service carries
+       every listener: the web groups, and the ingest group while an ingest
+       route renders. Envoy still holds each route to its own group. */}}
 {{- $sourceRanges := include "envoy-gateway-config.lbSourceRanges" (dict "ctx" .) | fromJsonArray }}
 {{- /* Every name this edge answers on, public and internal. external-dns picks
        the zone by matching the suffix, so the public names land in the

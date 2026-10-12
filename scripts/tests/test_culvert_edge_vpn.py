@@ -464,11 +464,12 @@ def test_it_renders_on_every_profile_it_is_offered_in() -> None:
 
 
 def test_the_receiver_gains_a_third_exposure_rendering() -> None:
-    """aws.yaml's exposure.mode vpn: no load balancer, and an ingest policy admitting the tunnel."""
-    vpn = golden("dfe-receiver", "scale", "aws")
-    services = [d["metadata"]["name"] for d in vpn if d.get("kind") == "Service"]
-    expect("vpn mode publishes no LoadBalancer", services == ["dfe-receiver"], f"got {services}")
-    policy = one(vpn, "NetworkPolicy", "dfe-receiver-ingest")
+    """The tunnel door: no load balancer, and an ingest policy admitting the tunnel."""
+    tunnel_door = {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}}
+    tunnel = render_app("dfe-receiver", "scale", "aws", infra=tunnel_door)
+    services = [d["metadata"]["name"] for d in tunnel if d.get("kind") == "Service"]
+    expect("the tunnel door publishes no LoadBalancer", services == ["dfe-receiver"], f"got {services}")
+    policy = one(tunnel, "NetworkPolicy", "dfe-receiver-ingest")
     rule = policy["spec"]["ingress"][0]
     expect("and admits the tunnel pods by label",
            rule["from"] == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
@@ -482,13 +483,15 @@ def test_the_receiver_gains_a_third_exposure_rendering() -> None:
     expect("on the receiver's exposed listeners",
            {p["port"] for p in rule["ports"]} == exposed,
            f"got {[p['port'] for p in rule['ports']]}, exposed {sorted(exposed)}")
-    public = render_app("dfe-receiver", "scale", "local-dfe")
+    senders = {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": ["198.51.100.0/24"]}}}}
+    public = render_app("dfe-receiver", "scale", "local-dfe", infra=senders)
     public_policy = one(public, "NetworkPolicy", "dfe-receiver-ingest")
-    expect("public mode still names no source",
+    expect("the load balancer door still names no source",
            "from" not in public_policy["spec"]["ingress"][0],
            f"got {public_policy['spec']['ingress'][0]!r}")
-    # Internal mode still refuses a listener the cluster Gateway cannot route,
-    # and vpn mode deliberately does not -- the tunnel reaches every listener.
+    # The gateway door still refuses a listener the cluster Gateway cannot
+    # route, and the tunnel door deliberately does not -- the tunnel reaches
+    # every listener.
     syslog = {
         "listeners": [
             {"name": "http", "port": 8080, "protocol": "TCP", "exposed": True},
@@ -500,13 +503,13 @@ def test_the_receiver_gains_a_third_exposure_rendering() -> None:
         err = ""
     except weave().WeaveError as refused:
         err = str(refused)
-    expect("internal mode still refuses an unroutable listener",
-           'exposure.mode is "internal"' in err, err.strip()[-200:])
-    expect("vpn mode renders the same listeners",
-           render_app("dfe-receiver", "scale", "aws", overlay=syslog) != [], "refused")
-    internal = golden("dfe-receiver", "scale", "local")
-    policies = [d for d in internal if d.get("kind") == "NetworkPolicy"]
-    expect("internal mode renders no ingest policy", policies == [], f"got {policies}")
+    expect("the gateway door still refuses an unroutable listener",
+           "exposure.groups.ingest.door is gateway" in err, err.strip()[-200:])
+    expect("the tunnel door renders the same listeners",
+           render_app("dfe-receiver", "scale", "aws", overlay=syslog, infra=tunnel_door) != [], "refused")
+    gateway = golden("dfe-receiver", "scale", "local")
+    policies = [d for d in gateway if d.get("kind") == "NetworkPolicy"]
+    expect("the gateway door renders no ingest policy", policies == [], f"got {policies}")
 
 
 def test_the_vpn_is_not_seeded_into_any_deployment() -> None:

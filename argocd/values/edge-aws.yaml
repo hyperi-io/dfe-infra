@@ -10,8 +10,9 @@
 # model, never a rate (docs/deployment/aws.md#how-costs-are-described).
 #
 # A KEY STAYS IN aws.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT.
-# exposure.mode is the dfe-receiver chart's and kafbat and dfe-engine read
-# oidc.enabled, so moving either would change what a non-edge chart renders.
+# kafbat and dfe-engine read oidc.enabled, so moving it would change what a
+# non-edge chart renders. The receiver's own load balancer annotations are
+# argocd/values/apps/dfe-receiver/aws.yaml.
 
 # TIER 1 -- the HTTP plane's front door, owned by the AWS Load Balancer
 # Controller that layer1-addons installs on this cloud.
@@ -52,8 +53,8 @@ envoyGateway:
       service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 
 # The exposure key is shared by three charts and split by which one reads it:
-# the gateway reads groups, culvert serviceType and externalTrafficPolicy, and
-# dfe-receiver's own exposure.mode stays in aws.yaml.
+# the gateway and dfe-receiver read groups, culvert serviceType and
+# externalTrafficPolicy, and dfe-receiver exposure.public.
 exposure:
   groups:
     # TIER 1 -- the admin group, off here because the gateway Service above is
@@ -64,9 +65,9 @@ exposure:
     # internet-facing Service reads as "refuse every address".
     admin:
       enabled: false
-  # TIER 1 -- culvert must render NO LoadBalancer either, or the tunnel's own
-  # bytes hit the per-GB-processed NLB the receiver's `vpn` default exists to
-  # avoid. NodePort carries no per-byte charge; the deployer reaches it through
+  # TIER 1 -- culvert renders NO LoadBalancer, or the tunnel's own bytes hit a
+  # per-GB-processed NLB on top of whatever door the receiver has. NodePort
+  # carries no per-byte charge; the deployer reaches it through
   # an address they bring, e.g. an Elastic IP on a small forwarder instance in
   # the receiver's AZ. NodePort also makes exposure.loadBalancerSourceRanges
   # inert, so the tunnel's allow-list belongs on the node security group -- the

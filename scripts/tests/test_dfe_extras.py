@@ -319,18 +319,25 @@ SCENARIOS = [
         },
         id="hyperdx-header-dev-and-tls",
     ),
-    # Public mode's ingest policy is the thin chart's, from the ports its load balancers serve.
+    # The load balancer door's ingest policy is the thin chart's, from the ports its load balancers serve.
     pytest.param(
         "dfe-receiver", "single", "local",
-        {"exposure": {"mode": "public"}},
+        {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": ["198.51.100.0/24"]}}}},
         {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
-        id="receiver-public",
+        id="receiver-loadbalancer",
     ),
     pytest.param(
         "dfe-receiver", "single", "local",
-        {"exposure": {"mode": "vpn"}},
+        {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}},
         {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
-        id="receiver-vpn",
+        id="receiver-tunnel",
+    ),
+    # No public door renders no tunnel policy either.
+    pytest.param(
+        "dfe-receiver", "single", "local",
+        {"exposure": {"groups": {"ingest": {"enabled": False, "door": "tunnel"}}}},
+        {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
+        id="receiver-ingest-off",
     ),
     pytest.param(
         "dfe-receiver", "scale", "aws",
@@ -549,7 +556,7 @@ def test_culvert_policy_switched_on_in_a_layer_fails() -> None:
         render("culvert", "scale", "aws", overlay={"networkPolicy": {"enabled": True}})
 
 
-def test_internal_mode_refuses_an_exposed_grpc_listener() -> None:
+def test_the_gateway_door_refuses_an_exposed_grpc_listener() -> None:
     listeners = {
         "listeners": [
             {"name": "http", "port": 8080, "protocol": "TCP", "exposed": True},
@@ -558,7 +565,60 @@ def test_internal_mode_refuses_an_exposed_grpc_listener() -> None:
     }
     with pytest.raises(RenderError, match='listener "grpc"') as refused:
         render("dfe-receiver", "slim", "local", overlay=listeners)
-    assert 'exposure.mode is "internal"' in str(refused.value)
+    assert "exposure.groups.ingest.door is gateway" in str(refused.value)
+
+
+SENDERS = ["198.51.100.0/24"]
+
+
+def ingest(**fields: object) -> dict:
+    """An instance overlay setting the ingest group's fields over common.yaml's."""
+    return {"exposure": {"groups": {"ingest": fields}}}
+
+
+@pytest.mark.parametrize(("mode", "door"), [("public", "loadbalancer"), ("internal", "gateway"), ("vpn", "tunnel")])
+def test_expected_fail_the_retired_exposure_mode_names_its_door(mode: str, door: str) -> None:
+    with pytest.raises(RenderError) as refused:
+        render("dfe-receiver", "single", "aws", infra={"exposure": {"mode": mode}})
+    message = " ".join(str(refused.value).split())
+    assert f'exposure.mode is "{mode}" and retired' in message, message
+    assert f"{door} (" in message, message
+
+
+@pytest.mark.parametrize(
+    ("overlay", "message"),
+    [
+        pytest.param({"exposure": {"public": {"loadBalancerSourceRanges": SENDERS}}},
+                     "exposure.public.loadBalancerSourceRanges is retired", id="retired-source-ranges"),
+        pytest.param(ingest(allow=SENDERS, deny=["198.51.100.7/32"]),
+                     "exposure.groups.ingest.deny is [198.51.100.7/32] on door loadbalancer", id="deny-on-lb"),
+        pytest.param(ingest(enabled="true"), "exposure.groups.ingest.enabled is true (a string)", id="quoted-enabled"),
+        pytest.param(ingest(door="public"), 'exposure.groups.ingest.door is "public"', id="unknown-door"),
+        pytest.param(ingest(allow=["198.51.100.7"]), 'carries "198.51.100.7", which is not a CIDR', id="bare-address"),
+        pytest.param(ingest(allow="198.51.100.0/24"), "never a comma-separated string", id="string-list"),
+        pytest.param({"exposure": {"groups": {"ingest": {"allow": SENDERS}}, "public": {"serviceType": "NodePort"}}},
+                     'exposure.public.serviceType "NodePort"', id="allow-on-nodeport"),
+        pytest.param({"exposure": {"public": {"annotations": {
+            "service.beta.kubernetes.io/aws-load-balancer-security-groups": "sg-0"}}}},
+                     "aws-load-balancer-security-groups", id="named-security-group"),
+        pytest.param({"exposure": {"public": {"eipAllocations": ["eipalloc-1", "eipalloc-2"],
+                                              "subnets": ["subnet-1"]}}},
+                     "names 2 Elastic IPs and exposure.public.subnets 1 subnets", id="eip-count"),
+        pytest.param({"exposure": {"public": {"eipAllocations": ["eipalloc-1"], "subnets": ["subnet-1"],
+                                              "annotations": {}}}},
+                     "an Elastic IP attaches only to an internet-facing NLB", id="eip-internal"),
+    ],
+)
+def test_expected_fail_a_receiver_door_that_would_not_do_what_it_says_is_refused(overlay: dict, message: str) -> None:
+    with pytest.raises(RenderError) as refused:
+        render("dfe-receiver", "single", "gcp", overlay=overlay)
+    said = " ".join(str(refused.value).split())
+    assert message in said, said
+
+
+def test_deny_on_the_gateway_door_renders() -> None:
+    """Envoy enforces the deny list there, so the receiver has nothing to refuse."""
+    render("dfe-receiver", "single", "local", overlay=ingest(deny=["198.51.100.7/32"]))
 
 
 def test_a_culvert_on_the_receivers_listeners_is_refused() -> None:

@@ -62,7 +62,14 @@ from pathlib import Path
 from urllib.parse import SplitResult, urljoin, urlsplit
 
 from kubectl_cli import run_kubectl
-from render_dial import _EDGE_ALIASES
+from render_dial import (
+    _EDGE_ALIASES,
+    INGEST_AT,
+    DialError,
+    _edge_cidrs,
+    _ingest_door,
+    _ingest_retired,
+)
 from yaml_subset import YamlSubsetError, at, split_list
 from yaml_subset import parse as parse_yaml_subset
 
@@ -171,7 +178,11 @@ class EdgeSettings:
     allowed_cidrs: tuple[str, ...] = ()
     admin_uis_external: bool = False
     admin_uis_public: dict[str, bool] = field(default_factory=dict)
-    receiver_mode: str = ""
+    # edge.groups.ingest, the receiver's door; the door defaults to the cloud
+    # overlay's, as render_dial.py reads it.
+    ingest_enabled: bool = True
+    ingest_door: str = "loadbalancer"
+    ingest_allow: tuple[str, ...] = ()
     otel_enabled: bool = False
     # k8s.domain -- the internal wildcard the otel route answers on, which is not
     # the public zone edge.product.domain names.
@@ -225,6 +236,12 @@ def _number(tree: dict[str, object], path: tuple[str, ...], default: int) -> int
 
 def parse_edge(tree: dict[str, object]) -> EdgeSettings:
     """Turn a parsed dial into the expectation the checks measure against."""
+    try:
+        _ingest_retired(tree)
+        ingest_door = _ingest_door(tree)
+        ingest_allow = tuple(_edge_cidrs(tree, (*INGEST_AT, "allow")))
+    except DialError as error:
+        raise EdgeProbeError(str(error)) from error
     return EdgeSettings(
         enabled=_flag(tree, ("edge", "enabled"), True),
         flavour=_scalar(tree, ("edge", "flavour")) or "",
@@ -244,7 +261,9 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
         admin_uis_public={
             ui: _flag(tree, ("edge", "admin_uis", "public", ui), False) for ui in ADMIN_UIS
         },
-        receiver_mode=_scalar(tree, ("edge", "ingest", "receiver", "mode")) or "",
+        ingest_enabled=_flag(tree, (*INGEST_AT, "enabled"), True),
+        ingest_door=ingest_door,
+        ingest_allow=ingest_allow,
         otel_enabled=_flag(tree, ("edge", "ingest", "otel", "enabled"), False),
         cluster_domain=_scalar(tree, ("k8s", "domain")) or "",
         engine_with_product=_flag(tree, ("edge", "engine_api", "with_product"), True),
@@ -744,7 +763,10 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
 
 
 def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
-    """In vpn mode the receiver publishes no name and answers on none.
+    """With no public door the receiver publishes no name and answers on none.
+
+    No public door is the ingest group off, door tunnel, or door loadbalancer
+    with no allow list, which renders no load balancer at all.
 
     The gateway's own address carries listeners for the HTTP plane only, so a
     refusal there is true in every configuration and proves nothing on its own.
@@ -754,11 +776,13 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     gateway address is dialled only as the second half.
     """
     name = "receiver private"
-    if settings.receiver_mode != "vpn":
-        stated = settings.receiver_mode or "unset, so the cloud overlay decides"
+    closed = settings.ingest_door == "loadbalancer" and not settings.ingest_allow
+    if settings.ingest_enabled and settings.ingest_door != "tunnel" and not closed:
         return Check(
             name, SKIP,
-            f"edge.ingest.receiver.mode is {stated} -- a door other than the tunnel is intended",
+            f"edge.groups.ingest.door is {settings.ingest_door}"
+            + (f" admitting {', '.join(settings.ingest_allow)}" if settings.ingest_allow else "")
+            + " -- a public door is intended",
         )
 
     ports = ", ".join(str(port) for port in RECEIVER_INGEST_PORTS)
@@ -796,7 +820,7 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
         return Check(
             name, FAIL,
             f"{published} carries its own address and accepted a connection on "
-            f"{', '.join(answered)} -- the receiver is reachable without the tunnel",
+            f"{', '.join(answered)} -- the receiver is reachable with no public door intended",
         )
     return Check(
         name, PASS,

@@ -25,26 +25,34 @@ secrets:
 kafka:
   saslSecretName: dfe-kafka-user
 
-# The receiver's front door, from exposure.mode and exposure.public as
-# docs/INGEST-EDGE.md documents them. scalo-service's publicService reads none of
-# the exposure.public keys, so it stays off and dfe-extras refuses it switched on.
+# The receiver's front door, from exposure.groups.ingest (argocd/values/common.yaml)
+# and the load balancer's shape in exposure.public, as docs/INGEST-EDGE.md
+# documents them. scalo-service's publicService reads none of them, so it stays
+# off and dfe-extras refuses it switched on.
 publicService:
   enabled: false
-# Public mode renders the load balancers and the ingest NetworkPolicy from one list,
-# the contract's public ports the config turns on, so the policy admits every port
-# a load balancer serves. The TCP door takes publicService.loadBalancerIP, the
-# cluster secret's receiver address the appset hands in, else
-# exposure.public.loadBalancerIP. The policy names no source, because kube-proxy
-# SNATs a client to a node address and the client allow-list is the load
-# balancer's loadBalancerSourceRanges. exposure.networkPolicy.enabled: false drops
-# the policy, and dfe-extras renders the vpn-mode policy of the same name.
+# Door loadbalancer renders the load balancers and the ingest NetworkPolicy from
+# one list, the contract's public ports the config turns on, and only while
+# exposure.groups.ingest.allow names someone: an empty list is no public door.
+# The allow list is each load balancer's loadBalancerSourceRanges, and a /0 in it
+# marks the Service dfe.hyperi.io/ingest-fence: allow-all. The TCP door takes
+# publicService.loadBalancerIP, the cluster secret's receiver address the appset
+# hands in, else exposure.public.loadBalancerIP, and the Elastic IPs the appset
+# hands in as exposure.public.eipAllocations, one per subnet in
+# exposure.public.subnets. The policy names no source, because the allow list
+# is the load balancer's. exposure.networkPolicy.enabled: false drops the policy,
+# and dfe-extras renders the tunnel door's policy of the same name.
 extraObjects:
   - |
     {{- $exposure := .Values.exposure | default dict -}}
-    {{- if eq (toString ($exposure.mode | default "public")) "public" -}}
+    {{- $ingest := dig "groups" "ingest" dict $exposure -}}
+    {{- $allow := $ingest.allow | default list -}}
+    {{- if and (eq (toString $ingest.enabled) "true") (eq (toString $ingest.door) "loadbalancer") $allow -}}
     {{- $pub := $exposure.public | default dict -}}
     {{- $type := toString ($pub.serviceType | default "LoadBalancer") -}}
     {{- $address := (.Values.publicService | default dict).loadBalancerIP | default $pub.loadBalancerIP -}}
+    {{- $fence := "listed" -}}
+    {{- range $allow }}{{ if hasSuffix "/0" (toString .) }}{{ $fence = "allow-all" }}{{ end }}{{ end -}}
     {{- $groups := dict "public" list "public-udp" list -}}
     {{- $admitted := list -}}
     {{- range (include "scalo-service.ports" . | fromJson).items -}}
@@ -57,12 +65,20 @@ extraObjects:
     {{- range $suffix := list "public" "public-udp" -}}
     {{- with get $groups $suffix -}}
     {{- $spec := dict "type" $type "selector" (include "scalo-service.selectorLabelSet" $ | fromJson) "ports" (include "scalo-service.servicePorts" (dict "ports" .) | fromJson).items -}}
+    {{- $annotations := merge (dict "dfe.hyperi.io/ingest-fence" $fence) (deepCopy ($pub.annotations | default dict)) -}}
+    {{- if has $type (list "LoadBalancer" "NodePort") -}}
+    {{- with $pub.externalTrafficPolicy }}{{ $_ := set $spec "externalTrafficPolicy" . }}{{ end -}}
+    {{- end -}}
     {{- if eq $type "LoadBalancer" -}}
     {{- if and (eq $suffix "public") $address }}{{ $_ := set $spec "loadBalancerIP" $address }}{{ end -}}
     {{- with $pub.loadBalancerClass }}{{ $_ := set $spec "loadBalancerClass" . }}{{ end -}}
-    {{- with $pub.loadBalancerSourceRanges }}{{ $_ := set $spec "loadBalancerSourceRanges" . }}{{ end -}}
+    {{- $_ := set $spec "loadBalancerSourceRanges" $allow -}}
+    {{- if and (eq $suffix "public") $pub.eipAllocations -}}
+    {{- $_ := set $annotations "service.beta.kubernetes.io/aws-load-balancer-eip-allocations" (join "," $pub.eipAllocations) -}}
+    {{- $_ := set $annotations "service.beta.kubernetes.io/aws-load-balancer-subnets" (join "," $pub.subnets) -}}
     {{- end -}}
-    {{- $meta := include "scalo-service.metadata" (dict "ctx" $ "name" (printf "%s-%s" (include "scalo-service.fullname" $) $suffix) "annotations" $pub.annotations) | fromYaml -}}
+    {{- end -}}
+    {{- $meta := include "scalo-service.metadata" (dict "ctx" $ "name" (printf "%s-%s" (include "scalo-service.fullname" $) $suffix) "annotations" $annotations) | fromYaml -}}
     {{- $_ := set $meta "labels" (merge (dict "dfe.hyperi.io/exposure" "public") $meta.labels) }}
     ---
     {{ dict "apiVersion" "v1" "kind" "Service" "metadata" $meta "spec" $spec | toYaml }}

@@ -1,9 +1,11 @@
 {{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" . "key" "receiver") }}
-# The dfe-receiver ingest door for exposure.mode: internal -- machine ingest
-# (JSON POSTs to /ingest), never edge-OIDC'd because senders hold no browser
-# session. Caller authentication is the receiver's own server.auth, which
-# defaults to none; routes.receiver.authMode restates it, and validateReceiver
-# refuses this route on an internet-facing Service unless it checks callers.
+# The dfe-receiver ingest door for exposure.groups.ingest.door: gateway --
+# machine ingest (JSON POSTs to /ingest), never edge-OIDC'd because senders hold
+# no browser session. The ingest group's allow and deny lists fence it
+# (security-policy-route.yaml). Caller authentication is the receiver's own
+# server.auth, which defaults to none; routes.receiver.authMode restates it, and
+# validateReceiver refuses this route on an internet-facing Service unless it
+# checks callers.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

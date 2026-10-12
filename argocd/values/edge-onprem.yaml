@@ -11,10 +11,10 @@
 # about the node's own NIC and disk rather than a rate.
 #
 # A KEY STAYS IN local.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT.
-# exposure.mode: internal is the dfe-receiver chart's, and the `listeners:` list
-# beside it is the receiver's too -- culvert reads that same key, so a tunnel
-# here has to restate its own listeners in its instance values file or the
-# chart refuses to render at all.
+# exposure.groups.ingest.door: gateway is read by the dfe-receiver chart as well
+# as the gateway, and the `listeners:` list beside it is the receiver's too --
+# culvert reads that same key, so a tunnel here has to restate its own
+# listeners in its instance values file or the chart refuses to render at all.
 
 # TIER 1 -- the HTTP plane's front door, addressed by MetalLB on this flavour.
 envoyGateway:
@@ -34,14 +34,11 @@ envoyGateway:
 tls:
   issuerName: dfe-internal-ca
 
-# TIER 1 -- the receiver's ingest door in the receiver's `internal` mode
-# (receiver.{domain}), routed through the gateway because this flavour has no
-# cloud LoadBalancer provisioner of its own. Pairing this route with
-# exposure.mode: internal is what makes ingest reachable here, and breaking the
-# pair leaves an on-prem deployment with no ingest door at all.
-routes:
-  receiver:
-    enabled: true
+# TIER 1, and NOT a key in this file -- the receiver's ingest door is
+# receiver.{domain} on this gateway, because local.yaml and local-dfe.yaml set
+# exposure.groups.ingest.door: gateway and this flavour has no cloud
+# LoadBalancer provisioner of its own. The gateway renders the receiver route
+# from that one key, and the ingest group's lists fence it.
 
 exposure:
   # TIER 1 -- the tunnel takes a real LoadBalancer here, which is the culvert

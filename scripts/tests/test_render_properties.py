@@ -488,8 +488,9 @@ def test_a_public_service_switched_on_is_caught() -> None:
 
 # ------------------------------------------------------- the receiver's front door
 
-# Every cloud values file under argocd/values; local-dfe is the one that leaves the
-# receiver on its public default.
+# Every cloud values file under argocd/values. The on-prem files set the gateway
+# door and the clouds the load balancer door with no senders, so none renders a
+# load balancer by default.
 RECEIVER_CLOUDS = ("local", "local-dfe", "aws", "gcp", "azure")
 LB_FIELDS = (
     "type",
@@ -500,29 +501,25 @@ LB_FIELDS = (
 )
 # The receiver's load balancers and ingest policy ports on scale, per cloud file.
 FRONT_DOOR: dict[str, tuple[dict[str, dict], list[str]]] = {
-    "local": ({}, []),
-    "local-dfe": (
-        {
-            "Service/dfe-receiver-public": {
-                "ports": ["8080/TCP"],
-                "annotations": {},
-                "type": "LoadBalancer",
-            }
-        },
-        ["8080/TCP"],
-    ),
-    "aws": ({}, ["8080/TCP"]),
-    "gcp": ({}, ["8080/TCP"]),
-    "azure": ({}, ["8080/TCP"]),
+    cloud: ({}, []) for cloud in RECEIVER_CLOUDS
 }
 # RFC 5737 addresses and an illustrative class: no deployment's own.
 ADDRESS = "203.0.113.10"
-SHAPE = {
-    "loadBalancerClass": "service.k8s.aws/nlb",
-    "loadBalancerSourceRanges": ["198.51.100.0/24"],
-    "annotations": {"service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"},
+SENDERS = ["198.51.100.0/24"]
+SCHEME = {"service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"}
+SHAPE = {"loadBalancerClass": "service.k8s.aws/nlb", "annotations": SCHEME}
+OPT_IN = {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": SENDERS}}, "public": SHAPE}}
+# What each cloud's apps/dfe-receiver/<cloud>.yaml adds to the load balancer.
+CLOUD_SHAPE: dict[str, dict] = {
+    "aws": {"annotations": {
+        "service.beta.kubernetes.io/aws-load-balancer-type": "external",
+        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+        "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes": "preserve_client_ip.enabled=true",
+        "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules": "true",
+    }},
+    "gcp": {"externalTrafficPolicy": "Local"},
+    "azure": {"externalTrafficPolicy": "Local"},
 }
-OPT_IN = {"exposure": {"mode": "public", "public": SHAPE}}
 DEAD_PORT = "8443/TCP"
 
 
@@ -567,16 +564,21 @@ def test_the_receiver_front_door_on_each_cloud(cloud: str) -> None:
 
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
-def test_a_deployment_opting_into_a_load_balancer_keeps_its_shape(cloud: str) -> None:
-    """The opt-in docs/INGEST-EDGE.md documents, with the cluster secret's pinned address."""
+def test_a_deployment_naming_its_senders_keeps_its_shape(cloud: str) -> None:
+    """The door docs/INGEST-EDGE.md documents, with the cluster secret's pinned address."""
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     balancers = load_balancers(_receiver(cloud, OPT_IN, facts))
+    shape = CLOUD_SHAPE[cloud]
+    annotations = {**shape.get("annotations", {}), **SCHEME, "dfe.hyperi.io/ingest-fence": "listed"}
     assert balancers == {
         "Service/dfe-receiver-public": {
             "ports": ["8080/TCP"],
             "type": "LoadBalancer",
             "loadBalancerIP": ADDRESS,
-            **SHAPE,
+            "loadBalancerClass": SHAPE["loadBalancerClass"],
+            "loadBalancerSourceRanges": SENDERS,
+            "annotations": annotations,
+            **{k: v for k, v in shape.items() if k != "annotations"},
         }
     }
     assert ingest_ports(_receiver(cloud, OPT_IN, facts)) == ["8080/TCP"]
@@ -585,13 +587,13 @@ def test_a_deployment_opting_into_a_load_balancer_keeps_its_shape(cloud: str) ->
 def test_the_cluster_secret_address_reaches_the_thin_load_balancer() -> None:
     """The appset hands the cluster secret's receiver address to publicService.loadBalancerIP."""
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
-    balancers = load_balancers(_receiver("local-dfe", annotations=facts))
+    balancers = load_balancers(_receiver("local-dfe", OPT_IN, annotations=facts))
     assert balancers["Service/dfe-receiver-public"].get("loadBalancerIP") == ADDRESS
 
 
 def test_the_overlay_address_applies_where_the_cluster_secret_has_none() -> None:
     other = "203.0.113.20"
-    overlay = {"exposure": {"public": {"loadBalancerIP": other}}}
+    overlay = {"exposure": {**OPT_IN["exposure"], "public": {"loadBalancerIP": other}}}
     alone = load_balancers(_receiver("local-dfe", overlay))
     assert alone["Service/dfe-receiver-public"].get("loadBalancerIP") == other
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
@@ -599,58 +601,69 @@ def test_the_overlay_address_applies_where_the_cluster_secret_has_none() -> None
     assert pinned["Service/dfe-receiver-public"].get("loadBalancerIP") == ADDRESS
 
 
-def test_a_vpn_or_internal_receiver_renders_no_load_balancer() -> None:
-    for cloud, mode in (("aws", "vpn"), ("local", "internal")):
-        assert load_balancers(_receiver(cloud, {"exposure": {"mode": mode, "public": SHAPE}})) == {}
+@pytest.mark.parametrize(
+    ("cloud", "ingest"),
+    [
+        ("aws", {"door": "tunnel"}),
+        ("aws", {"enabled": False}),
+        ("aws", {"allow": []}),
+        ("local", {"door": "gateway"}),
+    ],
+    ids=["tunnel", "group-off", "no-senders", "gateway"],
+)
+def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(cloud: str, ingest: dict) -> None:
+    group = {"door": "loadbalancer", "allow": SENDERS, **ingest}
+    overlay = {"exposure": {"groups": {"ingest": group}, "public": SHAPE}}
+    assert load_balancers(_receiver(cloud, overlay)) == {}
 
 
 @pytest.mark.parametrize(
     ("overlay", "message"),
     [
         (
-            {"exposure": {"mode": "public"}, "publicService": {"enabled": True}},
+            {"publicService": {"enabled": True}},
             "publicService.enabled is true",
         ),
         (
-            {"exposure": {"mode": "vpn"}, "publicService": {"enabled": True}},
+            {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}, "publicService": {"enabled": True}},
             "publicService.enabled is true",
         ),
         (
-            {"exposure": {"mode": "public"}, "publicService": SHAPE},
+            {"publicService": SHAPE},
             "set exposure.public.",
         ),
         (
-            {"exposure": {"mode": "public"}, "publicService": {"type": "NodePort"}},
+            {"publicService": {"type": "NodePort"}},
             "set exposure.public.serviceType instead",
         ),
         (
-            {
-                "exposure": {
-                    "mode": "public",
-                    "public": {"serviceType": "NodePort", "loadBalancerSourceRanges": ["198.51.100.0/24"]},
-                }
-            },
-            "Kubernetes only filters on that field for a LoadBalancer",
+            {"exposure": {"groups": {"ingest": {"allow": SENDERS}}, "public": {"serviceType": "NodePort"}}},
+            "Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer",
+        ),
+        (
+            {"exposure": {"mode": "public"}},
+            "exposure.mode is \"public\" and retired",
         ),
     ],
     ids=[
-        "library-balancer-public",
-        "library-balancer-vpn",
+        "library-balancer",
+        "library-balancer-tunnel",
         "library-keys",
         "library-type",
         "allow-list-on-a-node-port",
+        "retired-mode",
     ],
 )
 def test_a_front_door_key_that_would_reach_nothing_is_refused(overlay: dict, message: str) -> None:
     """A load balancer with no allow-list, or an allow-list Kubernetes ignores, never renders."""
     with pytest.raises(weave().WeaveError) as refused:
         _receiver("aws", overlay)
-    assert message in str(refused.value)
+    assert message in " ".join(str(refused.value).split())
 
 
 def test_a_load_balancer_carrying_8443_is_caught() -> None:
     """The dead port put back on the load balancer fails the front-door table."""
-    dead = {"extraPorts": [{"name": "grpc-dead", "port": 8443, "public": True}]}
+    dead = {**OPT_IN, "extraPorts": [{"name": "grpc-dead", "port": 8443, "public": True}]}
     docs = _receiver("local-dfe", dead)
     assert DEAD_PORT in load_balancers(docs)["Service/dfe-receiver-public"]["ports"]
-    assert (load_balancers(docs), ingest_ports(docs)) != FRONT_DOOR["local-dfe"]
+    assert ingest_ports(docs) != ["8080/TCP"]

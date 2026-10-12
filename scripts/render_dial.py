@@ -236,64 +236,133 @@ def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False)
     return _coerce_flag(_scalar(dial, path), ".".join(path), default)
 
 
-# The receiver's own exposure.mode vocabulary (dfe-receiver/values.yaml).
-INGEST_MODES = ("public", "internal", "vpn")
+# The ingest exposure group's doors (argocd/values/common.yaml exposure.groups.ingest).
+INGEST_DOORS = ("loadbalancer", "gateway", "tunnel")
+INGEST_AT = ("edge", "groups", "ingest")
 
 # Where the cloud overlays live, read rather than restated: a hardcoded list of
-# "the clouds that default to vpn" drifts the moment one overlay changes, and
-# the drift shows up as a summary line that contradicts what deployed.
+# "the clouds whose door is the gateway" drifts the moment one overlay changes,
+# and the drift shows up as a summary line that contradicts what deployed.
 CLOUD_VALUES = REPO_ROOT / "argocd" / "values"
+INGEST_DOOR_PATH = ("exposure", "groups", "ingest", "door")
 
-# What each mode costs in kind, for the printed summary line.
-_INGEST_MODE_NOTE: dict[str, str] = {
-    "public": "LoadBalancer, billed per GB processed -- costed opt-in",
-    "internal": "routed through the cluster Gateway, still a LoadBalancer on most clouds",
-    "vpn": "no load balancer",
+# The receiver's door and what it opens, for the printed summary line.
+_INGEST_DOOR_NOTE: dict[str, str] = {
+    "loadbalancer": "the receiver's own load balancer, billed per GB processed",
+    "gateway": "receiver.<domain> on the gateway, http only",
+    "tunnel": "no public door; senders arrive over culvert or their own peering",
+}
+
+# The retired spellings of the receiver's door and allow list, each refused with
+# the key that replaced it.
+_INGEST_RETIRED: dict[tuple[str, ...], str] = {
+    ("edge", "ingest", "receiver", "mode"): "edge.groups.ingest.door",
+    ("ingest", "mode"): "edge.groups.ingest.door",
+    ("edge", "ingest", "receiver", "public", "loadBalancerSourceRanges"): "edge.groups.ingest.allow",
+    ("ingest", "public", "loadBalancerSourceRanges"): "edge.groups.ingest.allow",
 }
 
 
-def _overlay_ingest_mode(cloud: str) -> str | None:
-    """The exposure.mode argocd/values/<cloud>.yaml sets, or None when it sets none."""
-    if not cloud:
-        return None
-    overlay = CLOUD_VALUES / f"{cloud}.yaml"
-    try:
-        text = overlay.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    in_block = False
-    for line in text.splitlines():
-        if re.match(r"^exposure:\s*(#.*)?$", line):
-            in_block = True
+def _values_ingest_door(cloud: str) -> str | None:
+    """exposure.groups.ingest.door as argocd/values/<cloud>.yaml sets it, else common.yaml.
+
+    A small indentation walk rather than a YAML parse, because this renderer is
+    stdlib only and those files carry lists the restricted reader refuses.
+    """
+    for name in ([f"{cloud}.yaml"] if cloud else []) + ["common.yaml"]:
+        try:
+            text = (CLOUD_VALUES / name).read_text(encoding="utf-8")
+        except OSError:
             continue
-        if in_block:
-            if line.strip() and not line.startswith((" ", "\t", "#")):
-                in_block = False
+        stack: list[tuple[int, str]] = []
+        for line in text.splitlines():
+            match = re.match(r"^(\s*)([A-Za-z][\w-]*):\s*([^#]*?)\s*(#.*)?$", line)
+            if not match:
                 continue
-            match = re.match(r"^\s+mode:\s*([A-Za-z-]+)", line)
-            if match:
-                return match.group(1)
+            indent = len(match.group(1))
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            stack.append((indent, match.group(2)))
+            if tuple(key for _, key in stack) == INGEST_DOOR_PATH and match.group(3):
+                return match.group(3)
     return None
 
 
-def _ingest_mode(dial: dict[str, object]) -> str:
-    """Validate the receiver's door the same way _flag() guards a boolean field.
+def _ingest_door(dial: dict[str, object]) -> str:
+    """The receiver's door the dial names, else the one the cloud overlay sets.
 
-    Anything outside the receiver's own vocabulary is refused by name before an
-    operator carries it into a real Helm values overlay. This renderer writes no
-    DFE_INGEST_* key and applies nothing: the dial's `edge.ingest.receiver:`
-    block is copied by hand into a values overlay under `exposure:`, the same
-    convention the rest of the edge block follows. A dial that sets neither that
-    nor the deprecated `ingest.mode` therefore reports whatever the cloud
-    overlay sets, and the chart's own default (public) when it sets none.
+    Refused by name outside the chart's own vocabulary, before an operator
+    carries it into the deploy repo's infra/common.yaml.
     """
-    cloud = _text(dial, ("k8s", "cloud"))
-    fallback = _overlay_ingest_mode(cloud) or "public"
-    value, label = _edge_scalar(dial, ("edge", "ingest", "receiver", "mode"))
-    value = value or fallback
-    if value not in INGEST_MODES:
-        raise DialError(f"{label} must be one of {', '.join(INGEST_MODES)}, got {value!r}")
+    path = (*INGEST_AT, "door")
+    value = _scalar(dial, path) or _values_ingest_door(_text(dial, ("k8s", "cloud"))) or "loadbalancer"
+    if value not in INGEST_DOORS:
+        raise DialError(f"{'.'.join(path)} must be one of {', '.join(INGEST_DOORS)}, got {value!r}")
     return value
+
+
+def _ingest_retired(dial: dict[str, object]) -> None:
+    """Refuse a retired spelling of the receiver's door or allow list, naming its replacement."""
+    for old, new in _INGEST_RETIRED.items():
+        if at(dial, old) is not None:
+            raise DialError(
+                f"{'.'.join(old)} is retired -- the receiver's door is the ingest exposure group: "
+                f"set {new} instead, pasted as exposure.groups.ingest in the deploy repo's "
+                "infra/common.yaml. Door loadbalancer (was public) renders the receiver's own load "
+                "balancer only while edge.groups.ingest.allow names the senders; gateway was "
+                "internal; tunnel was vpn"
+            )
+
+
+# The tier-2 row for the receiver's own load balancer, which exists only on door
+# loadbalancer with senders named, so main() computes it rather than reading one key.
+INGEST_TIER2_KEY = "edge.groups.ingest"
+
+
+def ingest_opened(dial: dict[str, object], enums: dict[str, str], flags: dict[str, bool]) -> str:
+    """The door the receiver's own load balancer renders on, or "" when none renders."""
+    door = enums[".".join((*INGEST_AT, "door"))]
+    named = _edge_cidrs(dial, (*INGEST_AT, "allow"))
+    return door if flags[".".join((*INGEST_AT, "enabled"))] and door == "loadbalancer" and named else ""
+
+
+def ingest_fence(dial: dict[str, object], door: str, enabled: bool) -> tuple[str, list[str]]:
+    """What the ingest group opens, as the receiver and gateway charts render it.
+
+    Returns:
+        (the summary line's value, warning lines -- empty unless a /0 is listed).
+
+    Raises:
+        DialError: deny is set on door loadbalancer, where nothing enforces it.
+    """
+    allow = _edge_cidrs(dial, (*INGEST_AT, "allow"))
+    deny = _edge_cidrs(dial, (*INGEST_AT, "deny"))
+    if enabled and door == "loadbalancer" and deny:
+        raise DialError(
+            f"edge.groups.ingest.deny is {', '.join(deny)} on door loadbalancer, and nothing "
+            "enforces it there: cloud load balancer rules are allow-only and the receiver's "
+            "server.ip_filter is read from its config file, which no values layer derives from "
+            "the ingest group. Narrow edge.groups.ingest.allow, or use door gateway, where Envoy "
+            "refuses the deny list ahead of the allow list"
+        )
+    if not enabled:
+        return "off -- no public door", []
+    everything = [cidr for cidr in allow if ipaddress.ip_network(cidr, strict=False).prefixlen == 0]
+    warnings = []
+    if everything and door != "tunnel":
+        warnings.append(
+            f"edge.groups.ingest.allow carries {', '.join(everything)}, which admits every "
+            "address: the receiver takes data from the whole internet behind its own caller "
+            "check only. Name the senders' ranges instead"
+        )
+    note = _INGEST_DOOR_NOTE[door]
+    if door == "tunnel":
+        return f"tunnel -- {note}", []
+    if allow:
+        return f"{door} -- {note}, admitting {', '.join(allow)}", warnings
+    if door == "loadbalancer":
+        return "loadbalancer -- closed: no load balancer renders until edge.groups.ingest.allow names the senders", []
+    return f"gateway -- {note}, closed on an internet-facing gateway and unfenced elsewhere", []
 
 
 # ---------------------------------------------------------------------------
@@ -340,15 +409,12 @@ _EDGE_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "admin_uis", "public", "hyperdx"): ("ui", "public", "hyperdx"),
     ("edge", "admin_uis", "public", "argocd"): ("ui", "public", "argocd"),
     ("edge", "admin_uis", "public", "links"): ("ui", "public", "links"),
-    ("edge", "ingest", "receiver", "mode"): ("ingest", "mode"),
     ("edge", "ingest", "receiver", "public", "serviceType"): ("ingest", "public", "serviceType"),
     ("edge", "ingest", "receiver", "public", "loadBalancerIP"):
         ("ingest", "public", "loadBalancerIP"),
     ("edge", "ingest", "receiver", "public", "loadBalancerClass"):
         ("ingest", "public", "loadBalancerClass"),
     ("edge", "ingest", "receiver", "public", "annotations"): ("ingest", "public", "annotations"),
-    ("edge", "ingest", "receiver", "public", "loadBalancerSourceRanges"):
-        ("ingest", "public", "loadBalancerSourceRanges"),
     ("edge", "ingest", "receiver", "vpn", "podLabel"): ("ingest", "vpn", "podLabel"),
     ("edge", "ingest", "receiver", "networkPolicy", "enabled"):
         ("ingest", "networkPolicy", "enabled"),
@@ -381,7 +447,11 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
     # and OpenVPN over UDP; false opens 51820 alone at every layer.
     ("edge", "ingest", "tunnel", "openvpn"): True,
     ("edge", "ingest", "otel", "enabled"): False,
+    ("edge", "groups", "ingest", "enabled"): True,
     ("edge", "aws", "load_balancer_controller"): True,
+    # One Elastic IP per public subnet for the receiver's NLB, which takes them
+    # at creation only (terraform/modules/edge/aws/receiver.tf).
+    ("edge", "aws", "receiver_eips"): True,
 }
 
 # The flavour each k8s.cloud fact selects, matching the expression
@@ -440,7 +510,7 @@ _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "product", "rate_limit", "unit"): RATE_LIMIT_UNITS,
     ("edge", "product", "rate_limit", "scope"): RATE_LIMIT_SCOPES,
     ("edge", "product", "waf", "mode"): WAF_MODES,
-    ("edge", "ingest", "receiver", "mode"): INGEST_MODES,
+    (*INGEST_AT, "door"): INGEST_DOORS,
     ("edge", "ingest", "tunnel", "serviceType"): TUNNEL_SERVICE_TYPES,
     ("edge", "ingest", "tunnel", "externalTrafficPolicy"): TRAFFIC_POLICIES,
     ("edge", "ingest", "tunnel", "pki_mode"): PKI_MODES,
@@ -449,7 +519,7 @@ _EDGE_ENUMS: dict[tuple[str, ...], tuple[str, ...]] = {
 }
 
 # What each enum takes when the dial omits it. edge.flavour comes from k8s.cloud
-# and edge.ingest.receiver.mode from the cloud overlay, so neither is here.
+# and edge.groups.ingest.door from the cloud overlay, so neither is here.
 _EDGE_ENUM_DEFAULTS: dict[tuple[str, ...], str] = {
     ("edge", "product", "tls", "min_version"): "1.2",
     ("edge", "product", "rate_limit", "unit"): "Minute",
@@ -473,8 +543,9 @@ ADMIN_UIS = ("kafbat", "cruise_control", "hyperdx", "argocd", "links", "forgejo"
 # is tier 2 by EXPOSURE rather than by spend -- it opens a door on a hostname the
 # deployment already publishes, and adds no cloud resource at all.
 _EDGE_TIER2: tuple[tuple[str, tuple[object, ...], str, str], ...] = (
-    ("edge.ingest.receiver.mode", ("public",), "L",
-     "a load balancer billed per GB processed, against terabytes a day of ingest"),
+    (INGEST_TIER2_KEY, ("loadbalancer",), "L",
+     "the receiver's own load balancer, billed per GB processed, against terabytes a day of"
+     " ingest"),
     ("edge.ingest.tunnel.address.mode", ("forwarder",), "XS",
      "one small instance and one static address, both billed hourly"),
     ("edge.product.waf.mode", ("cloudfront",), "S",
@@ -562,8 +633,8 @@ def _edge_enums(dial: dict[str, object]) -> dict[str, str]:
     """Validate every `edge:` enum against the vocabulary its chart accepts."""
     out: dict[str, str] = {}
     for path, choices in _EDGE_ENUMS.items():
-        if path == ("edge", "ingest", "receiver", "mode"):
-            out[".".join(path)] = _ingest_mode(dial)
+        if path == (*INGEST_AT, "door"):
+            out[".".join(path)] = _ingest_door(dial)
             continue
         if path == ("edge", "flavour"):
             value, label = _edge_flavour(dial), "edge.flavour"
@@ -591,6 +662,7 @@ def _edge_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
             "families and /openapi.json, edge.engine_api.scim_public opens "
             "/api/v1/scim/v2. Delete the key"
         )
+    _ingest_retired(dial)
     _otel_refusals(dial, flags)
 
 
@@ -821,9 +893,11 @@ def _edge(dial: dict[str, object]) -> dict[str, object]:
     hand into a values overlay, the same convention the block it replaced
     followed (terraform/modules/edge/aws).
     """
+    _ingest_retired(dial)
     return {
         "enabled": _edge_bool(dial, ("edge", "enabled")),
         "tunnel": _edge_tunnel(dial),
+        "receiver": {"eips": _edge_bool(dial, ("edge", "aws", "receiver_eips"))},
     }
 
 
@@ -952,7 +1026,7 @@ CONTROLLER_POOLS = ("combined", "separate")
 
 
 def _controller_pool(dial: dict[str, object]) -> str:
-    """Validate kafka.controller_pool the same way _ingest_mode() guards its own.
+    """Validate kafka.controller_pool the same way _ingest_door() guards its own.
 
     Anything outside the chart's own vocabulary is refused by name before a
     resolve carries it into a values fragment. combined is the default because
@@ -1398,6 +1472,9 @@ def main() -> int:
         fence, fence_warnings = web_fence(
             _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")), edge_enums["edge.flavour"]
         )
+        ingest_door = edge_enums["edge.groups.ingest.door"]
+        ingest_on = edge_flags["edge.groups.ingest.enabled"]
+        ingest_line, ingest_warnings = ingest_fence(dial, ingest_door, ingest_on)
         _proxy_hop_cidrs(dial)
         controller_pool = _controller_pool(dial)
     except DialError as error:
@@ -1433,8 +1510,9 @@ def main() -> int:
 
     public = ["dfe-ui"] if edge_flags["edge.product.public"] else []
     public += [name for name in ADMIN_UIS if edge_flags[f"edge.admin_uis.public.{name}"]]
-    ingest_mode = edge_enums["edge.ingest.receiver.mode"]
-    tier2 = _edge_tier2_on(edge_enums, edge_flags)
+    tier2 = _edge_tier2_on(
+        {**edge_enums, INGEST_TIER2_KEY: ingest_opened(dial, edge_enums, edge_flags)}, edge_flags
+    )
     engine_api = _engine_api_summary(edge_flags)
 
     print(file=sys.stderr)
@@ -1465,10 +1543,12 @@ def main() -> int:
     for line in fence_warnings:
         print(f"render_dial: WARNING -- {line}", file=sys.stderr)
     print(
-        f"  receiver ingest door (edge.ingest.receiver.mode): {ingest_mode}"
-        f" -- {_INGEST_MODE_NOTE[ingest_mode]}",
+        "  receiver ingest door (edge.groups.ingest, pasted as exposure.groups.ingest): "
+        f"{ingest_line}",
         file=sys.stderr,
     )
+    for line in ingest_warnings:
+        print(f"render_dial: WARNING -- {line}", file=sys.stderr)
     print(
         "  fleet tunnel (edge.ingest.tunnel.enabled): "
         + ("on" if edge_flags["edge.ingest.tunnel.enabled"]

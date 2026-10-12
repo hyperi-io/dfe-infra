@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_render_dial_ingest.py
-#  Purpose:      Guard the dial's `ingest:` block -- ingest.mode reads through
-#                the receiver's own exposure.mode vocabulary, and a value
-#                outside it is refused by name before an operator carries it
-#                into a real Helm values overlay.
+#  Purpose:      Guard the dial's `edge.groups.ingest` block -- the receiver's
+#                door reads through the chart's own door vocabulary, the
+#                retired spellings are refused by name, a deny list is refused
+#                where nothing enforces it, and a /0 warns.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for render_dial.py's `ingest:` block validation (`_ingest_mode`).
+"""Tests for render_dial.py's ingest exposure group (`_ingest_door`, `ingest_fence`).
 
     python3 -m pytest scripts/tests/test_render_dial_ingest.py -q
 
-The receiver's ingress door on AWS/GCP/Azure must never be an unauthenticated
-internet-facing LoadBalancer by default -- every cloud front door bills by the
-GB and DFE pushes terabytes a day through the receiver. This covers the
-dial-side half of that: `ingest.mode` reads public/internal/vpn and nothing
-else, the fallback is the mode the cloud overlay applies (the chart's own
-default off cloud), and the render prints which mode a dial carries. The
-chart-side render (which Service kind each mode produces) is
-scripts/tests/test_receiver_ingress.py instead.
+The receiver's door is `exposure.groups.ingest` in the deploy repo, which the
+dial carries as `edge.groups.ingest` for an operator to paste. Door loadbalancer
+renders the receiver's own load balancer only once `allow` names the senders.
+The chart-side render is scripts/tests/test_receiver_ingress.py instead.
 """
 
 from __future__ import annotations
@@ -38,51 +34,88 @@ import render_dial  # noqa: E402
 from yaml_subset import parse as parse_dial  # noqa: E402
 
 
-def test_an_absent_block_takes_the_charts_own_default_off_cloud() -> None:
-    """No ingest: block and no cloud overlay -- dfe-receiver's own values.yaml
-    default (public) is what deploys, so that is what the summary reports."""
-    mode = render_dial._ingest_mode(parse_dial("substrate: k8s\n", source="test-dial"))
-    assert mode == "public"
+def dial(body: str) -> dict:
+    return parse_dial(body, source="test-dial")
 
 
-def test_an_absent_block_reports_the_cloud_overlays_vpn() -> None:
-    """On aws, gcp and azure the overlay sets exposure.mode: vpn, so a dial
-    that omits the block deploys with no load balancer and must say so."""
-    for cloud in ("aws", "gcp", "azure"):
-        dial = parse_dial(f"k8s:\n  cloud: {cloud}\n", source="test-dial")
-        assert render_dial._ingest_mode(dial) == "vpn"
+def test_an_absent_block_reports_the_cloud_overlays_door() -> None:
+    """The door is read from argocd/values, not restated: common.yaml's
+    loadbalancer on a cloud, local.yaml's gateway on-prem."""
+    for cloud, door in (("aws", "loadbalancer"), ("gcp", "loadbalancer"), ("azure", "loadbalancer"),
+                        ("local", "gateway"), ("local-dfe", "gateway"), ("", "loadbalancer")):
+        assert render_dial._ingest_door(dial(f"k8s:\n  cloud: {cloud}\n" if cloud else "substrate: k8s\n")) == door
+    assert render_dial._values_ingest_door("nosuchcloud") == "loadbalancer"
 
 
-def test_the_reported_fallback_is_read_from_the_overlay_not_a_list() -> None:
-    """Every overlay's own exposure.mode is what the fallback reports, so a
-    cloud whose overlay differs from aws cannot be reported as if it matched --
-    `local` renders internal, and a hardcoded cloud list used to say public."""
-    for cloud in ("aws", "gcp", "azure", "local"):
-        overlay = render_dial._overlay_ingest_mode(cloud)
-        dial = parse_dial(f"k8s:\n  cloud: {cloud}\n", source="test-dial")
-        assert render_dial._ingest_mode(dial) == overlay, cloud
-    assert render_dial._overlay_ingest_mode("local") == "internal"
-    assert render_dial._overlay_ingest_mode("nosuchcloud") is None
+def test_each_named_door_reads_through() -> None:
+    for door in render_dial.INGEST_DOORS:
+        assert render_dial._ingest_door(dial(f"edge:\n  groups:\n    ingest:\n      door: {door}\n")) == door
 
 
-def test_each_named_mode_reads_through() -> None:
-    for value in render_dial.INGEST_MODES:
-        dial = parse_dial(f"ingest:\n  mode: {value}\n", source="test-dial")
-        assert render_dial._ingest_mode(dial) == value
+def test_expected_fail_an_unknown_door_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"edge\.groups\.ingest\.door"):
+        render_dial._ingest_door(dial("edge:\n  groups:\n    ingest:\n      door: public\n"))
 
 
-def test_an_unknown_mode_is_refused_by_name() -> None:
-    dial = parse_dial("ingest:\n  mode: internet\n", source="test-dial")
-    with pytest.raises(render_dial.DialError, match=r"ingest\.mode"):
-        render_dial._ingest_mode(dial)
+@pytest.mark.parametrize(
+    ("body", "replacement"),
+    [
+        ("edge:\n  ingest:\n    receiver:\n      mode: public\n", "edge.groups.ingest.door"),
+        ("ingest:\n  mode: vpn\n", "edge.groups.ingest.door"),
+        ("edge:\n  ingest:\n    receiver:\n      public:\n        loadBalancerSourceRanges: []\n",
+         "edge.groups.ingest.allow"),
+        ("ingest:\n  public:\n    loadBalancerSourceRanges: [198.51.100.0/24]\n", "edge.groups.ingest.allow"),
+    ],
+)
+def test_expected_fail_the_retired_spellings_name_their_replacement(body: str, replacement: str) -> None:
+    with pytest.raises(render_dial.DialError) as refused:
+        render_dial._ingest_retired(dial(body))
+    assert "is retired" in str(refused.value)
+    assert f"set {replacement} instead" in str(refused.value)
 
 
-def test_the_shipped_example_dial_sets_the_safe_cloud_default() -> None:
-    """deployment.example.yaml documents vpn as the ingest.mode a cloud deploy
-    should carry -- prove the dial actually parses to that, not just the
-    comment text saying so."""
-    example = parse_dial(
-        (REPO_ROOT / "deployment.example.yaml").read_text(encoding="utf-8"),
-        source="deployment.example.yaml",
+def test_expected_fail_a_deny_list_on_the_load_balancer_door_is_refused() -> None:
+    parsed = dial("edge:\n  groups:\n    ingest:\n      allow: [198.51.100.0/24]\n      deny: [198.51.100.7/32]\n")
+    with pytest.raises(render_dial.DialError, match="nothing enforces it there"):
+        render_dial.ingest_fence(parsed, "loadbalancer", True)
+    line, warnings = render_dial.ingest_fence(parsed, "gateway", True)
+    assert line.startswith("gateway"), line
+    assert warnings == []
+
+
+@pytest.mark.parametrize(
+    ("door", "enabled", "allow", "said"),
+    [
+        ("loadbalancer", True, "[]", "loadbalancer -- closed: no load balancer renders"),
+        ("loadbalancer", True, "[198.51.100.0/24]", "admitting 198.51.100.0/24"),
+        ("gateway", True, "[]", "closed on an internet-facing gateway and unfenced elsewhere"),
+        ("tunnel", True, "[198.51.100.0/24]", "tunnel -- no public door"),
+        ("loadbalancer", False, "[198.51.100.0/24]", "off -- no public door"),
+    ],
+)
+def test_the_summary_says_what_the_door_opens(door: str, enabled: bool, allow: str, said: str) -> None:
+    line, warnings = render_dial.ingest_fence(dial(f"edge:\n  groups:\n    ingest:\n      allow: {allow}\n"),
+                                              door, enabled)
+    assert said in line, line
+    assert warnings == []
+
+
+@pytest.mark.parametrize("everything", ["0.0.0.0/0", "::/0"])
+def test_expected_fail_every_address_warns(everything: str) -> None:
+    line, warnings = render_dial.ingest_fence(
+        dial(f"edge:\n  groups:\n    ingest:\n      allow: [198.51.100.0/24, {everything}]\n"), "loadbalancer", True
     )
-    assert render_dial._ingest_mode(example) == "vpn"
+    assert everything in line
+    assert len(warnings) == 1, warnings
+    assert "admits every address" in warnings[0], warnings
+
+
+def test_the_shipped_example_dial_carries_the_cloud_door_closed() -> None:
+    """deployment.example.yaml documents a closed load balancer door; prove the
+    dial parses to that and to no retired key, not just the comment text."""
+    example = parse_dial((REPO_ROOT / "deployment.example.yaml").read_text(encoding="utf-8"),
+                         source="deployment.example.yaml")
+    render_dial._ingest_retired(example)
+    assert render_dial._ingest_door(example) == "loadbalancer"
+    line, _ = render_dial.ingest_fence(example, "loadbalancer", True)
+    assert "closed" in line, line

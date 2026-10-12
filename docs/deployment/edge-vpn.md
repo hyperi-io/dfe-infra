@@ -257,10 +257,13 @@ the module off -- the load balancer outlives the Application that asked for it.
 issued for, so it has to resolve to the LoadBalancer's address. Left empty it
 derives `{hostnames.vpn}.{domain}` from the deploy-config SSoT.
 
-Point the receiver at the tunnel with `exposure.mode: vpn` in its own overlay:
-that leaves it on a ClusterIP with no public address at all, and its ingest
-NetworkPolicy then admits the VPN pods instead of the world. Setting that mode
-WITHOUT deploying the VPN leaves the receiver with no external path.
+Point the receiver at the tunnel with `exposure.groups.ingest.door: tunnel` in
+the deploy repo's `infra/common.yaml`: that leaves it on a ClusterIP with no
+public address at all, and its ingest NetworkPolicy then admits the VPN pods
+instead of the world. Setting that door WITHOUT deploying the VPN leaves the
+receiver with no external path. A cloud deployment that reaches the receiver
+over the tunnel sets this explicitly, because the cloud default door is
+`loadbalancer`, whose policy does not admit the tunnel pods.
 
 ## Later
 

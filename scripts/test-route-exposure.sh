@@ -134,16 +134,29 @@ assert_render_succeeds() {
 echo "=== route exposure cascade ==="
 
 echo ""
-echo "case 1 -- all defaults: every UI with a login renders; links, forgejo and ingest stay off"
+echo "case 1 -- all defaults: every UI with a login renders and so does the on-prem receiver door; links, forgejo and otel stay off"
 R="$(render_names HTTPRoute)"
-for r in dfe-ui dfe-engine argocd hyperdx kafbat; do
+# local-dfe.yaml sets exposure.groups.ingest.door: gateway, the on-prem door.
+for r in dfe-ui dfe-engine argocd hyperdx kafbat receiver; do
   assert_has "default" "${r}" "${R}"
 done
 # links has no login of its own and edge OIDC is off; Forgejo is not deployed;
 # otel waits for otel.ingress.enabled.
-for r in links forgejo receiver otel; do
+for r in links forgejo otel; do
   assert_absent "default" "${r}" "${R}"
 done
+
+echo ""
+echo "case 1b -- the receiver route follows the ingest door, and the ingest group off takes both ingest routes"
+for door in loadbalancer tunnel; do
+  assert_absent "ingest-door-${door}" "receiver" \
+    "$(render_names HTTPRoute --set "exposure.groups.ingest.door=${door}" --set routes.receiver.enabled=true)"
+done
+R="$(render_names HTTPRoute --set exposure.groups.ingest.enabled=false "${OTEL_ON[@]}")"
+for r in receiver otel; do
+  assert_absent "ingest-off" "${r}" "${R}"
+done
+assert_has "ingest-off" "dfe-ui" "${R}"
 R="$(render_names HTTPRoute "${OIDC[@]}" --set deployRepo.bundled=true)"
 for r in links forgejo; do
   assert_has "default-with-login-and-forgejo" "${r}" "${R}"
@@ -224,12 +237,12 @@ FULL="$(helm template envoy-gateway-config "${CHART}" --namespace envoy-gateway-
   "${OTEL_ON[@]}" 2>/dev/null)"
 HTTPS_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: https$')"
 HTTP_PINS="$(printf '%s\n' "${FULL}" | grep -c 'sectionName: http$')"
-# Nine: dfe-ui, both engine routes, argocd, hyperdx, kafbat, forgejo, links, otel.
-if [ "${HTTPS_PINS}" -eq 9 ]; then
-  echo "  [PASS] sectionname-https: 9 internal routes pinned"
+# Ten: dfe-ui, both engine routes, argocd, hyperdx, kafbat, forgejo, links, otel, receiver.
+if [ "${HTTPS_PINS}" -eq 10 ]; then
+  echo "  [PASS] sectionname-https: 10 internal routes pinned"
   PASS=$((PASS+1))
 else
-  echo "  [FAIL] sectionname-https: expected 9, got ${HTTPS_PINS}"
+  echo "  [FAIL] sectionname-https: expected 10, got ${HTTPS_PINS}"
   FAIL=$((FAIL+1))
 fi
 if [ "${HTTP_PINS}" -eq 1 ]; then
@@ -240,7 +253,9 @@ else
   FAIL=$((FAIL+1))
 fi
 
-FACING=(--set envoyGateway.service.internetFacing=true)
+# Internet-facing on the cloud ingest door, as common.yaml sets it; the gateway
+# door there needs the receiver's caller auth (case 12b).
+FACING=(--set envoyGateway.service.internetFacing=true --set exposure.groups.ingest.door=loadbalancer)
 ADMIN_LIST=(--set-json 'exposure.groups.admin.allow=["203.0.113.0/24"]')
 
 echo ""
@@ -264,6 +279,14 @@ assert_render_succeeds "admin-list" "${FACING[@]}" "${ADMIN_LIST[@]}" --set ui.t
 echo ""
 echo "case 12 -- internet-facing with the admin group OFF (the edge-aws.yaml default) renders clean"
 assert_render_succeeds "internet-facing-admin-off" "${FACING[@]}" --set exposure.groups.admin.enabled=false
+
+echo ""
+echo "case 12b -- the gateway ingest door on an internet-facing Service needs the receiver's caller auth"
+assert_render_refused "ingest-gateway-door-no-auth" "exposure.groups.ingest.door is gateway on an internet-facing Service" \
+  --set envoyGateway.service.internetFacing=true --set exposure.groups.admin.enabled=false
+assert_render_succeeds "ingest-gateway-door-bearer" \
+  --set envoyGateway.service.internetFacing=true --set exposure.groups.admin.enabled=false \
+  --set routes.receiver.authMode=bearer
 
 echo ""
 echo "case 13 -- a ui.public.* or admin tool value that survives as a string, not a bool, is refused by name"

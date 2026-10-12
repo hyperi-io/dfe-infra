@@ -170,8 +170,9 @@ On a cloud deploy with an internet-facing Gateway Service, this defaults
 off instead -- see [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
 
 The `exposure:` key is shared with the dfe-receiver chart, which reads
-`exposure.mode` for its ingest door -- one block per deployment, each chart
-reading the keys it owns.
+`exposure.groups.ingest` for its ingest door and `exposure.public` for its load
+balancer's shape -- one block per deployment, each chart reading the keys it
+owns.
 
 ## Per-surface policy
 
@@ -185,8 +186,8 @@ reading the keys it owns.
 | Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |
 | Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
 | HyperDX | `hyperdx.{domain}` | product | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
-| otel OTLP ingest | `otel.{domain}` | ingest | no (`otel.ingress.enabled`) | bearer token, checked by the collector |
-| dfe-receiver ingest | `receiver.{domain}` | ingest | no | the receiver's own `server.auth`, restated as `routes.receiver.authMode` (`header` or `bearer` when internet-facing) |
+| otel OTLP ingest | `otel.{domain}` | ingest | no (`otel.ingress.enabled`) | the ingest group's lists, then a bearer token checked by the collector |
+| dfe-receiver ingest | `receiver.{domain}` | ingest | on-prem only (`exposure.groups.ingest.door: gateway`) | the ingest group's lists, then the receiver's own `server.auth`, restated as `routes.receiver.authMode` (`header` or `bearer` when internet-facing) |
 
 The gate on an infra route is a deny-by-default Envoy `SecurityPolicy`
 carrying three blocks that only work together: `oidc` logs the user in and

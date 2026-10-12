@@ -27,7 +27,7 @@ hostnames:
   cruiseControl: cruise-control  # Kafka rebalancer UI, kafka.mode cluster only
   links: links
   otel: otel          # platform OTLP ingest
-  receiver: receiver  # data ingest, used only by exposure.mode: internal
+  receiver: receiver  # data ingest, used only by exposure.groups.ingest.door: gateway
   vpn: vpn            # edge-fleet tunnel door; culvert's server certificate CN
 
 # THE admin groups: the OIDC groups that administer this deployment's ops
@@ -50,7 +50,11 @@ adminGroups:
 # documents each field; allow and deny are CIDR lists.
 exposure:
   groups:
-    # dfe-receiver and the otel route. local.yaml sets the on-prem door.
+    # dfe-receiver and the otel route. door loadbalancer is the receiver's own
+    # load balancer, which renders only while allow names someone; gateway is
+    # receiver.{domain} on the gateway, which local.yaml sets on-prem; tunnel
+    # is no public door. deny reaches the gateway routes only: the receiver's
+    # own load balancer refuses a deny list (docs/INGEST-EDGE.md).
     ingest:
       enabled: true
       allow: []

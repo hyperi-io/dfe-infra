@@ -117,10 +117,11 @@ def test_the_flavour_defaults_to_the_one_the_cloud_fact_selects(cloud: str, flav
 
 
 def test_the_receivers_door_still_falls_back_to_the_cloud_overlay() -> None:
-    """A dial naming no mode reports whatever argocd/values/<cloud>.yaml applies."""
-    for cloud, mode in (("aws", "vpn"), ("gcp", "vpn"), ("azure", "vpn"), ("local", "internal")):
+    """A dial naming no door reports whatever argocd/values applies for its cloud."""
+    for cloud, door in (("aws", "loadbalancer"), ("gcp", "loadbalancer"), ("azure", "loadbalancer"),
+                        ("local", "gateway")):
         enums = render_dial._edge_enums(dial(f"k8s:\n  cloud: {cloud}\n"))
-        assert enums["edge.ingest.receiver.mode"] == mode, cloud
+        assert enums["edge.groups.ingest.door"] == door, cloud
 
 
 # ---------------------------------------------------------------------------
@@ -304,23 +305,33 @@ def test_the_shipped_example_turns_on_no_tier_two_key() -> None:
     assert tier2 == []
 
 
+def _tier2(parsed: dict) -> list[str]:
+    """The tier-2 rows as main() computes them, the receiver's load balancer included."""
+    enums, flags = render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
+    opened = render_dial.ingest_opened(parsed, enums, flags)
+    return render_dial._edge_tier2_on({**enums, render_dial.INGEST_TIER2_KEY: opened}, flags)
+
+
 def test_a_tier_two_key_is_named_with_its_bucket_and_never_a_rate() -> None:
-    parsed = dial("edge:\n  ingest:\n    receiver:\n      mode: public\n")
-    lines = render_dial._edge_tier2_on(
-        render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
-    )
+    lines = _tier2(dial("k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      allow: [198.51.100.0/24]\n"))
     assert len(lines) == 1, lines
-    assert "edge.ingest.receiver.mode: public" in lines[0]
+    assert "edge.groups.ingest: loadbalancer" in lines[0]
     assert "bucket L" in lines[0]
     assert "per GB processed" in lines[0]
     assert not re.search(r"\$|USD|\d+\s*/\s*(month|hour)", lines[0]), lines[0]
 
 
+@pytest.mark.parametrize("ingest", ["allow: []", "door: gateway\n      allow: [198.51.100.0/24]",
+                                    "enabled: false\n      allow: [198.51.100.0/24]"])
+def test_expected_fail_no_receiver_load_balancer_is_no_tier_two_row(ingest: str) -> None:
+    assert _tier2(dial(f"k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      {ingest}\n")) == []
+
+
 def test_a_tier_two_key_that_costs_nothing_says_no_spend_instead_of_a_bucket() -> None:
     """Exposure and spend are different reasons to be tier 2, and a bucket on a
     key that creates nothing would read as a charge the deployer cannot find."""
-    # The cloud is named so the receiver's own door takes the overlay's vpn
-    # default and this reads the two engine rows alone.
+    # No ingest allow list, so the receiver renders no load balancer and this
+    # reads the two engine rows alone.
     parsed = dial(
         "k8s:\n  cloud: aws\n"
         "edge:\n  engine_api:\n    cli_families_public: true\n    scim_public: true\n"
@@ -337,14 +348,16 @@ def test_every_tier_two_row_names_a_key_the_dial_validates() -> None:
     """A row keyed on a path no enum and no boolean validates would never fire."""
     known = {".".join(p) for p in render_dial._EDGE_ENUMS}
     known |= {".".join(p) for p in render_dial._EDGE_BOOL_DEFAULTS}
+    # main() computes this row from the ingest door and allow list, both validated.
+    known |= {render_dial.INGEST_TIER2_KEY}
     assert {row[0] for row in render_dial._EDGE_TIER2} <= known
 
 
 def test_the_render_prints_the_edge_summary(tmp_path: Path) -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert text.count("      allow: []\n") == 1, "the example's ingest allow line moved"
     (tmp_path / "deployment.yaml").write_text(
-        EXAMPLE.read_text(encoding="utf-8").replace(
-            "      mode: vpn              #", "      mode: public           #"
-        ),
+        text.replace("      allow: []\n", "      allow: [198.51.100.0/24]\n"),
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -358,8 +371,11 @@ def test_the_render_prints_the_edge_summary(tmp_path: Path) -> None:
     assert "public hostnames (edge.product.public, edge.admin_uis.public.*): dfe-ui" in result.stderr
     assert "fleet tunnel (edge.ingest.tunnel.enabled): off" in result.stderr
     assert "OTLP ingest from outside the cluster (edge.ingest.otel.enabled): off" in result.stderr
-    assert "tier 2 opt-ins that are ON: edge.ingest.receiver.mode: public" in result.stderr
+    assert "tier 2 opt-ins that are ON: edge.groups.ingest: loadbalancer" in result.stderr
     assert "bucket L" in result.stderr
+    assert ("receiver ingest door (edge.groups.ingest, pasted as exposure.groups.ingest): loadbalancer"
+            in result.stderr)
+    assert "admitting 198.51.100.0/24" in result.stderr
 
 
 @pytest.mark.parametrize(("cidrs", "flavour", "said"), [
@@ -537,4 +553,6 @@ def test_the_shipped_example_parses_and_validates() -> None:
     assert flags["edge.ingest.otel.enabled"] is False
     assert enums["edge.flavour"] == "aws"
     assert enums["edge.ingest.tunnel.pki_mode"] == "external"
-    assert enums["edge.ingest.receiver.mode"] == "vpn"
+    assert enums["edge.groups.ingest.door"] == "loadbalancer"
+    assert flags["edge.groups.ingest.enabled"] is True
+    assert flags["edge.aws.receiver_eips"] is True

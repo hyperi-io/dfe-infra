@@ -206,16 +206,26 @@ def test_no_tier_3_mechanism_has_a_key_in_the_dial() -> None:
     assert not offered, f"deployment.example.yaml offers a tier-3 key: {offered}"
 
 
-def test_the_receivers_own_exposure_mode_stayed_in_the_cloud_overlay() -> None:
-    """dfe-receiver is not an edge component, so its door is not the module's key.
+def test_the_receivers_door_stayed_where_the_receiver_reads_it() -> None:
+    """dfe-receiver is not an edge component, so its door cannot sit in an edge
+    flavour file, which only the two edge charts read.
 
-    dfe-extras renders the receiver's ingest policy from it, so the receiver's own
-    render on each cloud follows the cloud overlay's mode.
+    The door is exposure.groups.ingest, which both the gateway and dfe-extras read,
+    so it lives in common.yaml with the on-prem door in local.yaml, and no edge
+    flavour file sets it.
     """
-    assert readers(("exposure", "mode")) & {"charts/dfe-extras"}
-    for cloud, mode in (("aws", "vpn"), ("gcp", "vpn"), ("azure", "vpn"), ("local", "internal")):
+    assert {"charts/dfe-extras", "edge/gateway"} <= readers(("exposure", "groups", "ingest"))
+    common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
+    assert common["exposure"]["groups"]["ingest"]["door"] == "loadbalancer"
+    for cloud in ("local", "local-dfe"):
         tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8"))
-        assert tree["exposure"]["mode"] == mode, cloud
+        assert tree["exposure"]["groups"]["ingest"]["door"] == "gateway", cloud
+    for flavour in ("aws", "gcp", "azure", "onprem"):
+        tree = yaml.safe_load((VALUES / f"edge-{flavour}.yaml").read_text(encoding="utf-8"))
+        assert "ingest" not in ((tree.get("exposure") or {}).get("groups") or {}), flavour
+    for cloud in ("aws", "gcp", "azure", "local"):
+        tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8")) or {}
+        assert "mode" not in (tree.get("exposure") or {}), cloud
     policy = {
         cloud: any(
             object_id(d) == "NetworkPolicy/dfe-receiver-ingest"
@@ -223,7 +233,7 @@ def test_the_receivers_own_exposure_mode_stayed_in_the_cloud_overlay() -> None:
         )
         for cloud in CLOUDS
     }
-    assert policy == {"local": False, "aws": True}, policy
+    assert policy == {"local": False, "aws": False}, policy
 
 
 def test_the_edge_oidc_switch_stayed_where_kafbat_and_the_engine_read_it() -> None:

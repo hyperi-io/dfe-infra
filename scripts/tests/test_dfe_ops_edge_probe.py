@@ -78,9 +78,12 @@ edge:
       argocd: false
       links: false
       forgejo: false
+  groups:
+    ingest:
+      enabled: true
+      door: tunnel
+      allow: []
   ingest:
-    receiver:
-      mode: vpn
     otel:
       enabled: false
       port: 4319
@@ -237,7 +240,9 @@ def test_parse_edge_reads_the_dials_own_key_names() -> None:
     assert settings.rate_limit_unit == "Minute"
     assert settings.admin_uis_external is False
     assert settings.admin_uis_public == dict.fromkeys(probe.ADMIN_UIS, False)
-    assert settings.receiver_mode == "vpn"
+    assert settings.ingest_enabled is True
+    assert settings.ingest_door == "tunnel"
+    assert settings.ingest_allow == ()
     assert settings.otel_enabled is False
     assert settings.cluster_domain == "cluster.example.test"
 
@@ -256,7 +261,17 @@ def test_parse_edge_takes_the_deployments_own_defaults_for_an_absent_block() -> 
     assert settings.tls_min_version == "1.2"
     assert settings.hsts is True
     assert settings.admin_uis_external is False
-    assert settings.receiver_mode == ""
+    # common.yaml's door, read the way render_dial.py reads it, closed with no senders.
+    assert settings.ingest_enabled is True
+    assert settings.ingest_door == "loadbalancer"
+    assert settings.ingest_allow == ()
+
+
+def test_expected_fail_a_retired_receiver_door_is_refused_rather_than_read() -> None:
+    """render_dial.py refuses it, so a probe that read it would measure a dial nothing deploys."""
+    text = DIAL_TEXT.replace("  ingest:\n    otel:", "  ingest:\n    receiver:\n      mode: vpn\n    otel:")
+    with pytest.raises(probe.EdgeProbeError, match=r"edge\.ingest\.receiver\.mode is retired"):
+        probe.parse_edge(probe.parse_yaml_subset(text))
 
 
 def test_parse_edge_refuses_a_boolean_that_is_neither_true_nor_false() -> None:
@@ -660,16 +675,29 @@ def test_receiver_skips_when_no_public_domain_is_named(
     assert "no receiver name is published" in check.evidence
 
 
-def test_receiver_skips_when_the_mode_is_not_vpn() -> None:
-    check = probe.check_receiver_private(_settings(receiver_mode="public"), "127.0.0.1")
+@pytest.mark.parametrize(("door", "allow", "said"), [
+    ("loadbalancer", ("198.51.100.0/24",), "edge.groups.ingest.door is loadbalancer admitting 198.51.100.0/24"),
+    ("gateway", (), "edge.groups.ingest.door is gateway -- a public door is intended"),
+])
+def test_receiver_skips_when_a_public_door_is_intended(door: str, allow: tuple[str, ...], said: str) -> None:
+    check = probe.check_receiver_private(_settings(ingest_door=door, ingest_allow=allow), "127.0.0.1")
     assert check.verdict == probe.SKIP
-    assert "edge.ingest.receiver.mode is public" in check.evidence
+    assert said in check.evidence
 
 
-def test_receiver_skips_and_says_so_when_the_dial_sets_no_mode() -> None:
-    check = probe.check_receiver_private(_settings(receiver_mode=""), "127.0.0.1")
-    assert check.verdict == probe.SKIP
-    assert "the cloud overlay decides" in check.evidence
+@pytest.mark.parametrize("overrides", [
+    {"ingest_door": "loadbalancer", "ingest_allow": ()},
+    {"ingest_door": "loadbalancer", "ingest_allow": ("198.51.100.0/24",), "ingest_enabled": False},
+], ids=["closed-load-balancer-door", "group-off"])
+def test_expected_fail_a_door_with_no_senders_is_probed_as_private(
+    overrides: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty is closed, so the probe checks the receiver answers nowhere rather than skipping."""
+    monkeypatch.setattr(probe, "_resolved", _resolving(dfe="203.0.113.10"))
+    monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
+    check = probe.check_receiver_private(_settings(**overrides), "203.0.113.10")
+    assert check.verdict == probe.PASS
+    assert "does not resolve" in check.evidence
 
 
 # ---------------------------------------------------------------------------
@@ -1100,8 +1128,6 @@ ui:
     kafbat: true
   public_domain: example.test
   allowed_cidrs: "203.0.113.0/24"
-ingest:
-  mode: public
 """
 
 
@@ -1113,7 +1139,6 @@ def test_a_dial_still_on_the_deprecated_spellings_is_read_rather_than_skipped() 
     assert settings.domain == "example.test"
     assert settings.product_public is True
     assert settings.admin_uis_public["kafbat"] is True
-    assert settings.receiver_mode == "public"
     assert tuple(settings.allowed_cidrs) == ("203.0.113.0/24",)
 
 

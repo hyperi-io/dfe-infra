@@ -734,15 +734,19 @@ def build_dial_text(a: Answers) -> str:
         "      enabled: true\n"
         "      providers: []\n"
         "      admin_groups: [dfe-admins, dfe-infra]\n"
+        "  groups:\n"
+        "    ingest:\n"
+        "      enabled: true\n"
+        f"      door: {'loadbalancer' if is_aws else 'gateway'}\n"
+        "      allow: []\n"
+        "      deny: []\n"
         "  ingest:\n"
         "    receiver:\n"
-        f"      mode: {'vpn' if is_aws else 'internal'}\n"
         "      public:\n"
         "        serviceType: LoadBalancer\n"
         '        loadBalancerIP: ""\n'
         '        loadBalancerClass: ""\n'
         "        annotations: {}\n"
-        "        loadBalancerSourceRanges: []\n"
         "      vpn:\n"
         "        podLabel: dfe-culvert\n"
         "      networkPolicy:\n"
@@ -767,6 +771,7 @@ def build_dial_text(a: Answers) -> str:
         "  aws:\n"
         "    load_balancer_controller: true\n"
         f'    public_zone: "{a.public_zone if is_aws else ""}"\n'
+        "    receiver_eips: true\n"
         "    cloudfront:\n"
         "      mode: none\n"
     )

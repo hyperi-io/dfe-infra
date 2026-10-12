@@ -246,6 +246,30 @@ def test_the_cluster_secret_facts_reach_both_sources(service: str, appset_name: 
 
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
+def test_the_receivers_elastic_ips_reach_both_its_sources_and_no_other_app(
+    service: str, appset_name: str
+) -> None:
+    facts = {
+        "dfe.hyperi.io/receiver_eip_allocations": "eipalloc-1,eipalloc-2",
+        "dfe.hyperi.io/receiver_subnets": "subnet-1,subnet-2",
+    }
+    for source in helm_sources(application(service, appset_name, facts=facts)):
+        values = yaml.safe_load(source["helm"].get("values") or "") or {}
+        public = (values.get("exposure") or {}).get("public")
+        if service == "dfe-receiver":
+            assert public == {"eipAllocations": ["eipalloc-1", "eipalloc-2"],
+                              "subnets": ["subnet-1", "subnet-2"]}, values
+        else:
+            assert public is None, values
+
+
+def test_expected_fail_no_elastic_ip_fact_writes_no_receiver_values() -> None:
+    for source in helm_sources(application("dfe-receiver", APPS)):
+        values = yaml.safe_load(source["helm"].get("values") or "") or {}
+        assert "exposure" not in values, values
+
+
+@pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
 def test_no_repo_is_read_at_two_revisions(service: str, appset_name: str) -> None:
     assert ref_conflicts(application(service, appset_name)) == []
 
