@@ -158,8 +158,6 @@ class FilebeatCase(Case):
         super().__init__(args)
         self.name = fetcher.new_name(self.prefix)
         self._posted = 0
-        self._before = 0
-        self._before_transformed = 0
         #: The filebeat and logstash pair, on a --via logstash run only.
         self._pair: beats.Pair | None = None
 
@@ -384,13 +382,9 @@ class FilebeatCase(Case):
         corpus = run.transform_repo / self.CORPUS
         detail = steps.wait_routed(
             run.receiver_url, run.verify, run.engine_repo, corpus, run.store, self.name,
-            steps.ROUTING_DEADLINE, self.MODULES,
+            run.run_id, steps.ROUTING_DEADLINE, self.MODULES,
         )
         run.driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
-        self._before = run.store.scalar(f"SELECT count() FROM {self.name}")
-        self._before_transformed = run.store.scalar(
-            f"SELECT count() FROM {self.name}{self._transformed_where}"
-        )
         if run.args.via == "logstash":
             self._feed_through_logstash(run, corpus)
             return
@@ -398,8 +392,10 @@ class FilebeatCase(Case):
             run.receiver_url, run.verify, run.engine_repo, corpus,
             run.run_id, run.args.per_module, self.MODULES,
         )
-        run.driver.record("feed", "done",
-                          f"posted {self._posted} corpus records tagged e2e_run:{run.run_id}")
+        run.driver.record(
+            "feed", "done",
+            f"posted {self._posted} corpus records marked {steps.MARKER}.run {run.run_id}",
+        )
 
     def _feed_through_logstash(self, run: Run, corpus: Path) -> None:
         """The same corpus lines, shipped by a real filebeat through a real logstash.
@@ -417,7 +413,10 @@ class FilebeatCase(Case):
             workdir=Path(run.args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
         )
         lines = steps.corpus_lines(run.engine_repo, corpus, run.args.per_module, self.MODULES)
-        beats.write_inputs(self._pair, lines, self.MATCH_VALUE)
+        beats.write_inputs(
+            self._pair, lines, self.MATCH_VALUE,
+            steps.MARKER, steps.run_marker(run.run_id, steps.CORPUS),
+        )
         ready, detail = beats.start_logstash(self._pair)
         driver.record("logstash", "done" if ready else "failed", detail)
         if not ready:
@@ -438,25 +437,23 @@ class FilebeatCase(Case):
     def prove(self, run: Run) -> None:
         if not run.receiver_url:
             return
-        # The program rewrites each record into ECS and the tag with it, so the
-        # proof is the gain in the source's own table; the catch-all still holds
-        # the record as posted, so a stray there is found by the tag.
-        landed = steps.wait_gain(run.store, self.name, self._before, self._posted, self.LAND_DEADLINE)
-        # Both feeds tag every record e2e_run:<run id>: the wrapper on a POST, the
-        # agent's add_tags on --via logstash.
+        # The routing probes land in this table too, so only rows marked as this run's corpus count.
+        corpus = steps.marked(run.run_id, steps.CORPUS)
+        landed = steps.wait_rows(run.store, self.name, self._posted, self.LAND_DEADLINE, corpus)
         strayed = steps.strayed_rows(run.store, run.run_id)
+        whole = self._posted > 0 and landed >= self._posted
         run.driver.record(
-            "landed", "done" if landed and not strayed else "failed",
-            f"dfe.{self.name} gained {landed} of {self._posted} posted rows, {strayed} strayed into dfe.main",
+            "landed", "done" if whole and not strayed else "failed",
+            f"dfe.{self.name} holds {landed} of {self._posted} corpus rows marked "
+            f"{steps.MARKER}.run {run.run_id}, {strayed} strayed into dfe.main",
         )
         run.driver.record("dataset", *steps.dataset_outcome(run.store, self.name, self.MATCH_VALUE))
-        transformed = steps.wait_gain(
-            run.store, self.name, self._before_transformed, 1, self.TRANSFORM_DEADLINE,
-            self._transformed_where,
+        transformed = steps.wait_rows(
+            run.store, self.name, 1, self.TRANSFORM_DEADLINE, f"{corpus} AND {self._transformed}",
         )
         run.driver.record(
             "transformed", "done" if transformed else "failed",
-            f"{transformed} new rows carry {self.TRANSFORMED_COLUMN}, which only the transform sets",
+            f"{transformed} corpus rows carry {self.TRANSFORMED_COLUMN}, which only the transform sets",
         )
         if run.args.via == "logstash":
             self._record_envelope(run)
@@ -478,8 +475,8 @@ class FilebeatCase(Case):
         )
 
     @property
-    def _transformed_where(self) -> str:
-        return f" WHERE {self.TRANSFORMED_COLUMN} IS NOT NULL"
+    def _transformed(self) -> str:
+        return f"{self.TRANSFORMED_COLUMN} IS NOT NULL"
 
     @property
     def _running_option(self) -> re.Pattern[str]:
@@ -648,7 +645,7 @@ class FetchedAwsCase(Case):
         # A poll interval to fetch, and the landing topic plus the loader's own
         # batch window before the row is queryable.
         deadline = run.args.poll_interval_secs * 2 + 300
-        gained = steps.wait_gain(run.store, self.name, 0, 1, deadline, interval=15.0)
+        gained = steps.wait_rows(run.store, self.name, 1, deadline, interval=15.0)
         run.driver.record(
             "fetched", "done" if gained else "failed",
             f"dfe.{self.name} holds {gained} row(s) from "

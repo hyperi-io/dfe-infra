@@ -684,12 +684,13 @@ class TestTheElasticCase:
         case = cases.build(parse("--case", "elastic"))
 
         assert case.TRANSFORMED_COLUMN == "source_ip"
-        assert case._transformed_where == " WHERE source_ip IS NOT NULL"
+        assert case._transformed == "source_ip IS NOT NULL"
 
     def _feed(self, monkeypatch, case):
         asked: dict[str, tuple[str, ...]] = {}
 
-        def routed(receiver_url, verify, engine_repo, corpus_file, store, name, deadline, modules=()):
+        def routed(receiver_url, verify, engine_repo, corpus_file, store, name, run, deadline,
+                   modules=()):
             asked["routed"] = modules
             return f"routed into dfe.{name} after 1 probe pass(es)"
 
@@ -746,7 +747,7 @@ class TestTheVectorCase:
         case = cases.build(parse("--case", "vector"))
 
         assert case.TRANSFORMED_COLUMN == cases.FilebeatCase.TRANSFORMED_COLUMN
-        assert case._transformed_where == " WHERE source_ip IS NOT NULL"
+        assert case._transformed == "source_ip IS NOT NULL"
 
     def test_it_feeds_and_matches_the_one_dataset_the_filebeat_case_does(self):
         case = cases.build(parse("--case", "vector"))
@@ -804,7 +805,8 @@ class TestTheCorpusFilter:
 
     def test_the_routing_probe_carries_the_same_filter(self, corpus_module):
         detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
-                                   Path("c.tar.gz"), FakeStore(), "el1", 0.0, ("cisco_ios",))
+                                   Path("c.tar.gz"), FakeStore(), "el1", "src-test", 0.0,
+                                   ("cisco_ios",))
 
         assert corpus_module.asked == [(("cisco_ios",), 1)]
         assert detail.startswith("NOT routed")
@@ -902,13 +904,36 @@ class TestTheShippersIdentifier:
 
         assert [body["message"] for body in bodies] == ShippingCorpus.LINES["cisco_ios"]
         for body in bodies:
-            assert set(body) == {"agent", "data_stream", "input", "message", "tags"}
+            assert set(body) == {"agent", "data_stream", "input", "message", "tags", "_e2e"}
             assert body["agent"] == {"type": "filebeat", "name": steps.AGENT_NAME,
                                      "version": steps.beats.ELASTIC_VERSION}
             assert body["data_stream"] == {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"}
             assert body["input"] == {"type": "tcp"}
-            # The stray search finds a record in the catch-all by this tag.
             assert "e2e_run:src-run" in body["tags"]
+
+    def test_every_record_carries_the_run_marker_at_the_root(self, tmp_path, shipping_corpus):
+        """dfe-transform-vrl proves a root `_e2e` object survives every branch of its filebeat program."""
+        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
+
+        corpus = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",))
+        probes = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 1, ("cisco_ios",), steps.PROBE)
+
+        assert corpus
+        assert all(body["_e2e"] == {"run": "src-run", "kind": "corpus"} for body in corpus)
+        assert [body["_e2e"] for body in probes] == [{"run": "src-run", "kind": "probe"}]
+
+    def test_the_routing_probe_is_marked_as_a_probe(self, corpus_module, monkeypatch):
+        sent: list[tuple[str, str]] = []
+
+        def post(receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=(), kind=""):
+            sent.append((run, kind))
+            return 1
+
+        monkeypatch.setattr(steps, "post_corpus", post)
+        steps.wait_routed("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
+                          FakeStore(), "fb1", "src-run", 0.0, ("cisco_ios",))
+
+        assert sent == [("src-run", "probe")]
 
     def test_the_records_the_filebeat_case_posts_all_carry_the_dataset_it_matches(self, tmp_path, shipping_corpus):
         case = cases.build(parse())
@@ -946,11 +971,25 @@ class TestTheShippersIdentifier:
     def test_the_logstash_agent_stamps_the_same_dataset(self, tmp_path):
         pair = steps.beats.Pair(network="n", receiver_url="http://rx/ingest", workdir=tmp_path, run_id="src-run")
 
-        steps.beats.write_inputs(pair, ["a"], cases.FilebeatCase.MATCH_VALUE)
+        steps.beats.write_inputs(pair, ["a"], cases.FilebeatCase.MATCH_VALUE,
+                                 steps.MARKER, steps.run_marker("src-run", steps.CORPUS))
 
         config = (tmp_path / "filebeat.yml").read_text(encoding="utf-8")
         assert "target: data_stream" in config
         assert "dataset: cisco_ios.log" in config
+
+    def test_the_logstash_feed_hands_the_agent_this_runs_corpus_marker(self, monkeypatch, transform_repo):
+        told: list[tuple] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
+        monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: told.append(a))
+        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "not started here"))
+        args = parse("--via", "logstash", "--beats-network", "dfe_default")
+        case = cases.build(args)
+
+        case.feed(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+
+        assert told[0][3:] == ("_e2e", {"run": "src-test", "kind": "corpus"})
 
 
 class ScriptedStore(FakeStore):
@@ -1031,11 +1070,14 @@ class LocalClickHouse:
     def __init__(self, table: str, records: list[dict]) -> None:
         self.table, self.records = table, records
 
+    def _line(self, record: dict) -> str:
+        return json.dumps({"_json": record})
+
     def query(self, sql: str) -> list[list]:
         done = subprocess.run(
             [CLICKHOUSE, "local", "--table", self.table, "--structure", self.STRUCTURE,
              "--input-format", "JSONEachRow", "--output-format", "JSONCompact", "--query", sql],
-            input="\n".join(json.dumps({"_json": record}) for record in self.records),
+            input="\n".join(self._line(record) for record in self.records),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             check=True, timeout=60,
         )
@@ -1074,17 +1116,37 @@ class TestTheQueriesAgainstClickHouse:
         assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
             "failed", "1 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
 
+    @staticmethod
+    def posted(run: str, kind: str) -> dict:
+        """A record as the suite sends it: the agent envelope and this run's marker."""
+        body = steps.agent_envelope("<189>a line", [f"e2e_run:{run}"], "cisco_ios.log")
+        return {**body, steps.MARKER: steps.run_marker(run, kind)}
+
     def test_a_record_of_this_run_in_the_catch_all_is_found(self):
-        posted = steps.agent_envelope("<189>a line", ["e2e_run:src-0123"], "cisco_ios.log")
-        store = LocalClickHouse("main", [posted])
+        store = LocalClickHouse("main", [self.posted("src-0123", steps.CORPUS)])
 
         assert steps.strayed_rows(store, "src-0123") == 1
 
     def test_expected_fail_another_runs_record_is_not_this_runs_stray(self):
-        posted = steps.agent_envelope("<189>a line", ["e2e_run:src-4567"], "cisco_ios.log")
-        store = LocalClickHouse("main", [posted])
+        store = LocalClickHouse("main", [self.posted("src-4567", steps.CORPUS)])
 
         assert steps.strayed_rows(store, "src-0123") == 0
+
+    def test_a_probe_that_reached_the_catch_all_before_routing_is_not_a_stray(self):
+        """The first probes land there by design, before the receiver rolls onto the rule."""
+        store = LocalClickHouse("main", [self.posted("src-0123", steps.PROBE)])
+
+        assert steps.strayed_rows(store, "src-0123") == 0
+
+    def test_a_corpus_row_is_counted_by_its_marker_and_a_probe_beside_it_is_not(self):
+        rows = [
+            {**self.TRANSFORMED, steps.MARKER: steps.run_marker("src-0123", kind)}
+            for kind in (steps.PROBE, steps.CORPUS, steps.CORPUS)
+        ]
+        store = LocalClickHouse("fb1", [*rows, self.TRANSFORMED])
+
+        assert steps.wait_rows(store, "fb1", 2, 0.0, steps.marked("src-0123", steps.CORPUS)) == 2
+        assert steps.wait_rows(store, "fb1", 1, 0.0, steps.marked("src-0123", steps.PROBE)) == 1
 
     def test_a_row_off_the_agent_is_found_by_its_file_path(self):
         shipped = {**self.TRANSFORMED, "log": {"file": {"path": steps.beats.AGENT_PATH}}}
@@ -1094,6 +1156,170 @@ class TestTheQueriesAgainstClickHouse:
 
         assert (carrying, refused) == (1, "")
         assert keys == sorted(shipped)
+
+
+class LandedRows(LocalClickHouse):
+    """A source table as the loader writes it: the record in ``_json``, one column set off it."""
+
+    STRUCTURE = f"{LocalClickHouse.STRUCTURE}, source_ip Nullable(String)"
+
+    def _line(self, record: dict) -> str:
+        return json.dumps(record)
+
+
+_COUNT = re.compile(r"SELECT count\(\) FROM (\w+)(?: WHERE (.+))?")
+_EXTRACT = re.compile(r"JSONExtractString\(toString\(_json\), (.+)\) = '([^']*)'")
+_NOT_NULL = re.compile(r"(\w+) IS NOT NULL")
+_LIKE = re.compile(r"toString\(_json\) LIKE '%([^%']*)%'")
+
+
+def _holds(row: dict, condition: str) -> bool:
+    """One WHERE condition over one stored row, for the shapes the suite writes."""
+    if found := _EXTRACT.fullmatch(condition):
+        node: object = row["_json"]
+        for key in re.findall(r"'([^']*)'", found.group(1)):
+            node = node.get(key) if isinstance(node, dict) else None
+        return isinstance(node, str) and node == found.group(2)
+    if found := _NOT_NULL.fullmatch(condition):
+        return row.get(found.group(1)) is not None
+    if found := _LIKE.fullmatch(condition):
+        return found.group(1) in json.dumps(row["_json"], separators=(",", ":"))
+    raise AssertionError(f"no reading of this condition here: {condition}")
+
+
+def _count(rows: list[dict], sql: str) -> tuple[str, int]:
+    """The table a count names, and how many of *rows* its WHERE keeps."""
+    found = _COUNT.fullmatch(sql)
+    if not found:
+        raise AssertionError(f"no reading of this query here: {sql}")
+    conditions = found.group(2).split(" AND ") if found.group(2) else []
+    return found.group(1), sum(all(_holds(row, c) for c in conditions) for row in rows)
+
+
+class Pipeline:
+    """Receiver, transform and loader in one, with its own clock.
+
+    A posted record is stored at the next sleep, so a probe posted on one pass
+    lands after the check that follows it, which is the timing a deployment
+    has. The transform keeps root fields and replaces the tags, as the bundled
+    filebeat program does. ``lose`` and ``bare`` name posts by arrival order:
+    the first never reaches a table, the second lands without the column only
+    the transform sets.
+    """
+
+    host = "clickhouse-local"
+    database = "default"
+    TRANSFORMED_IP = "192.0.2.10"
+
+    def __init__(self, table: str, backend: str, lose: tuple[int, ...] = (),
+                 bare: range = range(0)) -> None:
+        self.table, self.backend = table, backend
+        self.lose, self.bare = lose, bare
+        self.received = 0
+        self.in_flight: list[tuple[int, dict]] = []
+        self.landed: list[dict] = []
+        self.clock = 0.0
+        self._answers: dict[tuple[str, int], int] = {}
+
+    def urlopen(self, request, timeout=None, context=None):
+        arrival = self.received
+        self.received += 1
+        if arrival not in self.lose:
+            self.in_flight.append((arrival, json.loads(request.data)))
+        return Accepted()
+
+    def sleep(self, seconds: float) -> None:
+        self.clock += seconds
+        for arrival, body in self.in_flight:
+            transformed = arrival not in self.bare
+            record = {**body, "tags": ["preserve_original_event"]}
+            if transformed:
+                record["source"] = {"ip": self.TRANSFORMED_IP}
+            self.landed.append({"_json": record, "source_ip": self.TRANSFORMED_IP if transformed else None})
+        self.in_flight = []
+
+    def monotonic(self) -> float:
+        return self.clock
+
+    def scalar(self, sql: str) -> int:
+        # Nothing reaches the catch-all here, so every other table reads empty.
+        table = _count([], sql)[0]
+        rows = self.landed if table == self.table else []
+        if self.backend == "python":
+            return _count(rows, sql)[1]
+        key = (sql, len(rows))
+        if key not in self._answers:
+            self._answers[key] = LandedRows(table, rows).scalar(sql)
+        return self._answers[key]
+
+    def query(self, sql: str) -> list[list]:
+        return []
+
+    def table_exists(self, _name: str) -> bool:
+        return True
+
+
+class Accepted:
+    """The receiver's 200, as urlopen hands it back."""
+
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+@pytest.fixture(params=["python", pytest.param("clickhouse", marks=pytest.mark.skipif(
+    CLICKHOUSE is None, reason="needs the clickhouse binary for clickhouse local"))])
+def backend(request):
+    """Every count read in Python everywhere, and by ClickHouse itself where the binary is."""
+    return request.param
+
+
+class TestTheLandedCount:
+    """The probes that prove routing land in the same table, so a count of rows cannot be the proof."""
+
+    def _feed_and_prove(self, monkeypatch, transform_repo, backend, **pipeline):
+        corpus = transform_repo / cases.FilebeatCase.CORPUS
+        corpus.parent.mkdir(parents=True, exist_ok=True)
+        _archive(corpus, CORPUS_PATHS)
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+        store = Pipeline(case.name, backend, **pipeline)
+        monkeypatch.setattr(steps.urllib.request, "urlopen", store.urlopen)
+        monkeypatch.setattr(steps, "time", store)
+        run = a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example")
+        run.store = store
+        case.feed(run)
+        case.prove(run)
+        return driver, store
+
+    def test_every_corpus_row_landing_is_the_pass(self, monkeypatch, transform_repo, shipping_corpus, backend):
+        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend)
+
+        assert driver.status("routed") == "done"
+        assert driver.status("landed") == "done", driver.detail("landed")
+        assert driver.status("transformed") == "done", driver.detail("transformed")
+
+    def test_expected_fail_a_lost_corpus_row_is_not_made_up_by_a_late_probe(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
+        """Two probes then the corpus; the second probe lands after routing reads done."""
+        driver, store = self._feed_and_prove(monkeypatch, transform_repo, backend, lose=(2,))
+
+        assert store.received == 2 + len(ShippingCorpus.LINES["cisco_ios"])
+        assert driver.status("landed") == "failed", driver.detail("landed")
+        assert "1 of 2" in driver.detail("landed")
+
+    def test_expected_fail_a_transformed_probe_is_not_a_transformed_corpus_row(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
+        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(2, 100))
+
+        assert driver.status("landed") == "done", driver.detail("landed")
+        assert driver.status("transformed") == "failed", driver.detail("transformed")
 
 
 class TestTheRestartStep:
