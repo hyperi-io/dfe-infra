@@ -16,8 +16,6 @@ instance wait, one archive assertion. A case supplies its service name and its
 deadlines; the polling is not written twice.
 """
 
-from __future__ import annotations
-
 import json
 import re
 import subprocess
@@ -29,7 +27,14 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from acceptance.clients import Datastore, Engine, remove_source, setup_status, tls_context
+from acceptance.clients import (
+    RECORD_TEXT,
+    Datastore,
+    Engine,
+    remove_source,
+    setup_status,
+    tls_context,
+)
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
 from acceptance.source import beats
@@ -506,10 +511,18 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
         time.sleep(20)
 
 
+def strayed_rows(store: Datastore, run_id: str) -> int:
+    """Rows of this run that landed in the catch-all, found by the marker each record carries.
+
+    The catch-all runs no transform, so the run's tag is still in the stored record.
+    """
+    return store.scalar(f"SELECT count() FROM main WHERE {RECORD_TEXT} LIKE '%{run_id}%'")
+
+
 def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, str]:
     """The step result for every row in *table* carrying the dataset it is matched on.
 
-    ``_raw`` is the record as the loader took it, so a row without the field
+    ``_json`` is the record as the loader took it, so a row without the field
     either reached the table some other way or lost it in the transform.
 
     Args:
@@ -523,7 +536,7 @@ def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, st
     total = store.scalar(f"SELECT count() FROM {table}")
     carrying = store.scalar(
         f"SELECT count() FROM {table} "
-        f"WHERE JSONExtractString(_raw, 'data_stream', 'dataset') = '{dataset}'"
+        f"WHERE JSONExtractString({RECORD_TEXT}, 'data_stream', 'dataset') = '{dataset}'"
     )
     detail = f"{carrying} of {total} rows in dfe.{table} carry data_stream.dataset {dataset}"
     return ("done" if total and carrying == total else "failed"), detail

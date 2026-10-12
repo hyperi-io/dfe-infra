@@ -20,13 +20,13 @@ way. Compose only for now -- a Kubernetes run records the step as skipped,
 because a Job is a second wiring and dfe-infra #326 asked for docker first.
 """
 
-from __future__ import annotations
-
 import json
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from acceptance.clients import RECORD_TEXT
 
 # The Elastic line dfe-transform-elastic takes its compat ground truth from
 # (its scripts/compat.py runs 9.2.2), so the envelope pushed here is the one the
@@ -248,15 +248,16 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     a transform rewrites each record into its own
     shape, so it is counted rather than assumed of every row.
     """
-    where = f"WHERE position(_raw, '{AGENT_PATH}') > 0"
+    # By the field, not a substring: the JSON text escapes every / in the path.
+    where = f"WHERE JSONExtractString({RECORD_TEXT}, 'log', 'file', 'path') = '{AGENT_PATH}'"
     carrying = store.scalar(f"SELECT count() FROM {table} {where}")
     if not carrying:
         return 0, [], f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent"
-    rows = store.query(f"SELECT _raw FROM {table} {where} LIMIT 1")
+    rows = store.query(f"SELECT {RECORD_TEXT} FROM {table} {where} LIMIT 1")
     if not rows or not rows[0] or not rows[0][0]:
         return carrying, [], f"{table} would not hand back a row carrying {AGENT_PATH}"
     try:
         body = json.loads(rows[0][0])
     except (ValueError, json.JSONDecodeError) as exc:
-        return carrying, [], f"the stored _raw is not JSON: {exc}"
+        return carrying, [], f"the stored record is not JSON: {exc}"
     return carrying, sorted(body), ""
