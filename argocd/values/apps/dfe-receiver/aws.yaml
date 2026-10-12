@@ -10,6 +10,6 @@ exposure:
       service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
       # The receiver's rate limit and ip_filter judge the TCP peer, which must be the sender rather than the NLB.
       service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
-      # With sender addresses preserved, the pod security groups must admit the senders, which this keeps in step.
+      # The controller admits NLB traffic on the backend security group by referencing the NLB's own frontend security group.
       service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
       # No aws-load-balancer-security-groups: a named group replaces the frontend group the allow list fills, so dfe-extras refuses it.
