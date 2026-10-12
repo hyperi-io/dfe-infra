@@ -885,6 +885,29 @@ def _network_interface_gone(eni_id: str, region: str) -> bool:
     return not interfaces
 
 
+def _ec2_fleet_gone(fleet_id: str, region: str) -> bool:
+    """True once the fleet is deleted, or is an instant fleet whose every instance is gone.
+
+    AWS keeps an instant fleet's record `active` after its instances go, and Karpenter
+    launches every node through one, so the record outlives the run that made it.
+    """
+    try:
+        fleets = run_aws(["ec2", "describe-fleets", "--fleet-ids", fleet_id], region).get("Fleets", [])
+    except CloudSweepError as exc:
+        if "NotFound" in str(exc):
+            return True
+        raise
+    if not fleets:
+        return True
+    fleet = fleets[0]
+    if fleet.get("FleetState") == "deleted":
+        return True
+    if fleet.get("Type") != "instant":
+        return False
+    instance_ids = [i for group in fleet.get("Instances", []) for i in group.get("InstanceIds", [])]
+    return all(_ec2_instance_gone(instance_id, region) for instance_id in instance_ids)
+
+
 def _ebs_volume_gone(volume_id: str, region: str) -> bool:
     """True once the volume is deleted, or AWS no longer lists it."""
     try:
@@ -1032,8 +1055,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
     """True when a tagging-API hit names an EC2 object, KMS key or EKS association AWS reports gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
-    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, KMS keys and EKS pod identity
-    associations after they go. One still deleting or shutting down is not gone, a KMS key
+    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, instant EC2 fleets, KMS keys and
+    EKS pod identity associations after they go. One still deleting or shutting down is not gone, a KMS key
     scheduled for deletion is, and any other hit is not judged and reads as present.
 
     Raises:
@@ -1059,6 +1082,8 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
         return _ec2_instance_gone(bare_id, region)
     if resource_type == "network-interface":
         return _network_interface_gone(bare_id, region)
+    if resource_type == "fleet":
+        return _ec2_fleet_gone(bare_id, region)
     return False
 
 

@@ -802,6 +802,52 @@ def test_a_pod_identity_association_is_gone_with_its_cluster(
     assert call[call.index("--association-id") + 1] == "a-0example"
 
 
+FLEET_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:fleet/fleet-0example"
+FLEET_NOT_FOUND = "An error occurred (InvalidFleetId.NotFound) when calling the DescribeFleets operation"
+
+
+def _fleet(fleet_type: str, state: str = "active", instance_ids: tuple[str, ...] = ("i-1",)) -> subprocess.CompletedProcess:
+    return _ok({"Fleets": [{"Type": fleet_type, "FleetState": state, "Instances": [{"InstanceIds": list(instance_ids)}]}]})
+
+
+TERMINATED = _ok({"Reservations": [{"Instances": [{"State": {"Name": "terminated"}}]}]})
+RUNNING = _ok({"Reservations": [{"Instances": [{"State": {"Name": "running"}}]}]})
+
+
+@pytest.mark.parametrize(
+    ("replies", "gone"),
+    [
+        pytest.param([_fleet("instant"), TERMINATED], True, id="instant-every-instance-terminated"),
+        pytest.param([_fleet("instant", instance_ids=())], True, id="instant-with-no-instances"),
+        pytest.param([_fleet("instant", instance_ids=("i-1", "i-2")), TERMINATED, RUNNING], False, id="instant-one-instance-running"),
+        pytest.param([_fleet("maintain")], False, id="maintain-fleet-is-never-an-inert-record"),
+        pytest.param([_fleet("request", state="deleted")], True, id="deleted-fleet"),
+        pytest.param([_fail(FLEET_NOT_FOUND)], True, id="fleet-not-found"),
+        pytest.param([_ok({"Fleets": []})], True, id="fleet-no-longer-returned"),
+    ],
+)
+def test_an_instant_fleet_record_is_gone_once_its_instances_are(
+    monkeypatch: pytest.MonkeyPatch, replies: list[subprocess.CompletedProcess], gone: bool
+) -> None:
+    """Karpenter launches through instant fleets, and AWS keeps each record active after its instances go."""
+    calls: list[list[str]] = []
+    queue = list(replies)
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return queue.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(FLEET_ARN), REGION) is gone
+    assert calls[0][calls[0].index("--fleet-ids") + 1] == "fleet-0example"
+
+
+def test_a_fleet_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (UnauthorizedOperation) when calling the DescribeFleets operation"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="UnauthorizedOperation"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(FLEET_ARN), REGION)
+
+
 def test_another_eks_class_is_never_judged_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
         raise AssertionError("nothing is described for a class with no gone-check")
