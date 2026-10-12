@@ -771,7 +771,18 @@ true
 {{- end -}}
 {{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
 {{- if not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.groups.admin is enabled with allowPublic and no allow list, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) -- every admin UI with a login of its own (argocd, kafbat, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, name the ranges in exposure.groups.admin.allow, or leave exposure.groups.admin.enabled: false" -}}
+{{- $fronted := list -}}
+{{- $ownOnly := list -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if eq ($r.class | default "infra") "infra" -}}
+{{- if $r.edgePolicy -}}
+{{- $fronted = append $fronted $key -}}
+{{- else if $r.ownLogin -}}
+{{- $ownOnly = append $ownOnly $key -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- fail (printf "envoyGateway.service.internetFacing is true and exposure.groups.admin is enabled with allowPublic and no allow list, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) -- every admin UI with a login of its own would render on a public load balancer behind that login alone, with no CIDR fence. An edge provider puts its OIDC and group check in front of the admin routes with edgePolicy true (%s). Those with edgePolicy false (%s) stay behind their own login either way. Set oidc.enabled: true with an oidc.providers entry, name the ranges in exposure.groups.admin.allow, or leave exposure.groups.admin.enabled: false" (join ", " $fronted) (join ", " $ownOnly)) -}}
 {{- end -}}
 {{- end -}}
 
@@ -852,6 +863,12 @@ true
 {{- fail (printf "ui.rate_limit.%s is %v (a %s) -- it is a whole number of requests per unit, 1 to 4294967295, written unquoted: a quoted number is a string here" $field $v (kindOf $v)) -}}
 {{- end -}}
 {{- end -}}
+{{- /* Envoy v1.39.2 spends matched buckets lowest fill rate first
+       (local_ratelimit_impl.cc), so a wall at or below one caller's budget is
+       spent first and that one caller can empty it. */ -}}
+{{- if le (int64 $ui.rate_limit.requests) (int64 $ui.rate_limit.per_client_requests) -}}
+{{- fail (printf "ui.rate_limit.requests is %v and ui.rate_limit.per_client_requests is %v -- the shared bucket must be larger than one caller's, or a single caller empties it for every public user. Raise requests above per_client_requests" $ui.rate_limit.requests $ui.rate_limit.per_client_requests) -}}
+{{- end -}}
 {{- end -}}
 
 {{- /* The Cruise Control UI is a workload of the KAFKA chart, so a flag here
@@ -921,6 +938,11 @@ true
 {{- end -}}
 {{- range $key := list "dfeEngine" "dfeEngineCli" -}}
 {{- $paths := include "envoy-gateway-config.enginePaths" (dict "ctx" $.ctx "key" $key "public" false) | fromJsonArray -}}
+{{- /* An HTTPRoute rule with no matches defaults to PathPrefix /, so it would
+       take every path on the dfe hostname from dfe-ui into this route's group. */ -}}
+{{- if and (not $paths) (include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key)) -}}
+{{- fail (printf "routes.%s matches no path on its internal route -- its family and path lists are all empty, and an HTTPRoute rule with no matches answers every path on the dfe hostname. Give it a family or path, or set routes.%s.enabled: false" $key $key) -}}
+{{- end -}}
 {{- if gt (len $paths) 64 -}}
 {{- fail (printf "routes.%s matches %d paths on its internal route and the Gateway API HTTPRoute CRD caps rules[].matches at 64 -- split its path lists across several rules" $key (len $paths)) -}}
 {{- end -}}

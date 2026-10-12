@@ -301,7 +301,8 @@ api:
 #              them, checked ahead of allow.
 #   admin.allowPublic -- an internet-facing gateway refuses admin enabled with
 #              an empty allow list unless this is true, which then admits every
-#              address behind the admin UIs' own logins and the edge OIDC check.
+#              address behind the admin UIs' own logins, and behind the edge OIDC
+#              check on the routes with edgePolicy true.
 #   admin.tools.<route key> -- that admin UI also answers on a public hostname
 #              under ui.public_domain.
 #   api.scim -- the engine's /api/v1/scim/v2 rides the api route.
@@ -384,6 +385,7 @@ ui:
     enabled: true
     # Each public route's shared bucket: 50 analysts averaging a request a second
     # is half of it, and a distributed run still meets 100 a second per replica.
+    # It must exceed per_client_requests, or one caller can empty it.
     requests: 6000
     # Every web route, per client address: a 40-tile dashboard on a 10s refresh
     # is 240 a minute, so five such users fit behind one NAT address.

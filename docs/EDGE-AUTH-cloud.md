@@ -140,6 +140,11 @@ These fail the render rather than shipping a weaker edge:
 - **`rate_limit.requests` or `rate_limit.per_client_requests` that is not an
   unquoted whole number from 1 to 4294967295**, the range Envoy Gateway admits.
   0 would refuse every caller, and the old dial's quoted `"300"` is a string.
+- **`rate_limit.requests` at or below `rate_limit.per_client_requests`.**
+  Envoy spends the lower-rate bucket first, so one caller could empty the
+  shared one for every public user.
+- **An engine route whose internal path list is empty.** A rule with no
+  matches answers every path on the dfe hostname.
 - **`waf.mode` other than `none`.** A WAF terminates TLS above Envoy, which
   moves the public certificate to the cloud's certificate store.
 - **A `ui.public.<name>` with no route**, rather than the flag doing nothing.

@@ -883,6 +883,64 @@ def test_expected_fail_a_budget_outside_envoys_range_is_refused(field: str, valu
     assert f"ui.rate_limit.{field} is" in out.stderr, out.stderr
 
 
+def limits(shared: int, per_client: int) -> tuple[str, ...]:
+    return ("--set", f"ui.rate_limit.requests={shared}", "--set", f"ui.rate_limit.per_client_requests={per_client}")
+
+
+@pytest.mark.parametrize(("shared", "per_client"), [(600, 1200), (1200, 1200)])
+def test_expected_fail_a_wall_at_or_below_one_callers_budget_is_refused(shared: int, per_client: int) -> None:
+    """Envoy spends the lowest fill rate first, so that wall is spent first and one caller can empty it."""
+    out = helm("aws", *limits(shared, per_client))
+    assert out.returncode != 0, f"requests={shared} with per_client_requests={per_client} rendered"
+    assert "the shared bucket must be larger than one caller's" in out.stderr, out.stderr
+
+
+def test_a_wall_above_one_callers_budget_renders() -> None:
+    rules = rules_of(public_rate_limit(render("aws", *PUBLIC, *FENCE, *limits(1201, 1200)), "dfe-ui-public"))
+    assert [rule["limit"]["requests"] for rule in rules] == [1201, 1200, 1200], rules
+
+
+# --- an engine route always names its paths --------------------------------------
+ENGINE_EMPTY = {
+    "dfeEngine": ("--set-json", "routes.dfeEngine.browserFamilies=[]", "--set-json", "routes.dfeEngine.browserPaths=[]"),
+    "dfeEngineCli": (
+        "--set-json", "routes.dfeEngineCli.cliFamilies=[]", "--set-json", "routes.dfeEngineCli.cliPaths=[]",
+        "--set", "api.docsEnabled=false",
+    ),
+}
+ENGINE_ROUTE = {"dfeEngine": "dfe-engine", "dfeEngineCli": "dfe-engine-cli"}
+
+
+@pytest.mark.parametrize("flavour", ["aws", "onprem"])
+@pytest.mark.parametrize("key", sorted(ENGINE_EMPTY))
+def test_expected_fail_an_engine_route_with_no_internal_path_is_refused(flavour: str, key: str) -> None:
+    """A rule with no matches is PathPrefix /: every path on the dfe hostname, in this route's group."""
+    out = helm(flavour, *ENGINE_EMPTY[key])
+    assert out.returncode != 0, f"{key} rendered with no path on {flavour}"
+    assert f"routes.{key} matches no path on its internal route" in out.stderr, out.stderr
+
+
+@pytest.mark.parametrize("key", sorted(ENGINE_EMPTY))
+def test_an_engine_route_switched_off_may_carry_no_path(key: str) -> None:
+    docs = render("onprem", *ENGINE_EMPTY[key], "--set", f"routes.{key}.enabled=false")
+    assert ENGINE_ROUTE[key] not in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+
+
+# --- the admin allowPublic refusal says which routes the edge login fronts ---------
+def test_the_allow_public_refusal_names_the_routes_the_edge_login_fronts() -> None:
+    routes = yaml.safe_load((GATEWAY / "values.yaml").read_text(encoding="utf-8"))["routes"]
+    infra = {key: r for key, r in routes.items() if r.get("class", "infra") == "infra"}
+    fronted = sorted(key for key, r in infra.items() if r.get("edgePolicy"))
+    own_only = sorted(key for key, r in infra.items() if not r.get("edgePolicy") and r.get("ownLogin"))
+    assert "kafbat" in own_only, own_only
+    out = helm("aws", "--set", "exposure.groups.admin.enabled=true", "--set", "exposure.groups.admin.allowPublic=true",
+               "--set", "oidc.enabled=false")
+    assert out.returncode != 0, "admin allowPublic rendered with no edge OIDC provider"
+    plain = " ".join(out.stderr.split())
+    assert f"edgePolicy true ({', '.join(fronted)})" in plain, plain
+    assert f"edgePolicy false ({', '.join(own_only)}) stay behind their own login" in plain, plain
+
+
 # --- the receiver route on an internet-facing Service ------------------------------
 @pytest.mark.parametrize("mode", [None, "none", "mtls", "both"])
 def test_the_receiver_route_is_refused_on_an_internet_facing_service_without_caller_auth(mode: str | None) -> None:
