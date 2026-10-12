@@ -1017,34 +1017,25 @@ CLICKHOUSE = shutil.which("clickhouse")
 
 
 class LocalClickHouse:
-    """ClickHouse itself, through ``clickhouse local``, holding rows as dfe-loader writes them.
+    """ClickHouse itself, through ``clickhouse local``, holding one table of landed rows.
 
     The loader's default capture puts a JSON payload in ``_json`` and leaves ``_raw``
-    NULL, so that is the row every query here has to find its field in.
+    NULL, so that is the row every query here has to find its field in. The table
+    is the input clickhouse local reads from stdin, so no DDL is written to make it.
     """
 
     host = "clickhouse-local"
     database = "default"
+    STRUCTURE = "_raw Nullable(String), _json JSON(max_dynamic_paths = 2048)"
 
-    def __init__(self, tables: dict[str, list[dict]]) -> None:
-        self.tables = tables
-
-    def _rows(self) -> str:
-        statements = []
-        for table, records in self.tables.items():
-            statements.append(
-                f"CREATE TABLE {table} (_raw Nullable(String), "
-                "_json JSON(max_dynamic_paths = 2048)) ENGINE = Memory"
-            )
-            for record in records:
-                literal = json.dumps(record).replace("\\", "\\\\").replace("'", "\\'")
-                statements.append(f"INSERT INTO {table} SELECT NULL, '{literal}'")
-        return "; ".join(statements)
+    def __init__(self, table: str, records: list[dict]) -> None:
+        self.table, self.records = table, records
 
     def query(self, sql: str) -> list[list]:
         done = subprocess.run(
-            [CLICKHOUSE, "local", "--output-format", "JSONCompact",
-             "--query", f"{self._rows()}; {sql}"],
+            [CLICKHOUSE, "local", "--table", self.table, "--structure", self.STRUCTURE,
+             "--input-format", "JSONEachRow", "--output-format", "JSONCompact", "--query", sql],
+            input="\n".join(json.dumps({"_json": record}) for record in self.records),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             check=True, timeout=60,
         )
@@ -1071,33 +1062,33 @@ class TestTheQueriesAgainstClickHouse:
     }
 
     def test_every_transformed_row_carries_the_dataset_it_was_routed_on(self):
-        store = LocalClickHouse({"fb1": [self.TRANSFORMED, self.TRANSFORMED]})
+        store = LocalClickHouse("fb1", [self.TRANSFORMED, self.TRANSFORMED])
 
         assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
             "done", "2 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
 
     def test_expected_fail_a_row_that_lost_the_dataset_is_counted_out(self):
         lost = {key: value for key, value in self.TRANSFORMED.items() if key != "data_stream"}
-        store = LocalClickHouse({"fb1": [self.TRANSFORMED, lost]})
+        store = LocalClickHouse("fb1", [self.TRANSFORMED, lost])
 
         assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
             "failed", "1 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
 
     def test_a_record_of_this_run_in_the_catch_all_is_found(self):
         posted = steps.agent_envelope("<189>a line", ["e2e_run:src-0123"], "cisco_ios.log")
-        store = LocalClickHouse({"main": [posted]})
+        store = LocalClickHouse("main", [posted])
 
         assert steps.strayed_rows(store, "src-0123") == 1
 
     def test_expected_fail_another_runs_record_is_not_this_runs_stray(self):
         posted = steps.agent_envelope("<189>a line", ["e2e_run:src-4567"], "cisco_ios.log")
-        store = LocalClickHouse({"main": [posted]})
+        store = LocalClickHouse("main", [posted])
 
         assert steps.strayed_rows(store, "src-0123") == 0
 
     def test_a_row_off_the_agent_is_found_by_its_file_path(self):
         shipped = {**self.TRANSFORMED, "log": {"file": {"path": steps.beats.AGENT_PATH}}}
-        store = LocalClickHouse({"fb1": [shipped, self.TRANSFORMED]})
+        store = LocalClickHouse("fb1", [shipped, self.TRANSFORMED])
 
         carrying, keys, refused = steps.beats.envelope_evidence(store, "fb1")
 
