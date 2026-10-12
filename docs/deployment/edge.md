@@ -54,6 +54,7 @@ own compute, the pricing model named, never a rate.
 | The CLI's families, and `/openapi.json` | b | 2 | off | `edge.engine_api.cli_families_public` | no spend |
 | SCIM, `/api/v1/scim/v2` | b | 2 | off | `edge.engine_api.scim_public` | no spend |
 | TLS floor and HSTS | a b | 1 | on | `edge.product.tls` | none |
+| Internal-name certificates from the internal CA, because public ACME cannot validate a private zone | a b c | 1 | `dfe-internal-ca` | `tls.issuerName` (`tls.acme.*` or `tls.vault.*` for a browser-trusted leaf) | none |
 | Rate limit, per proxy replica | a b | 1 | on | `edge.product.rate_limit` | none |
 | CIDR filter per group, at Envoy (web) and the load balancer (the union, everything) | a b c d | 1 | empty, so every web route answers 403 | `exposure.groups.<group>.allow` and `.deny` in the deploy repo (`edge.product.allowed_cidrs` is the dial's note of it) | none |
 | A CDN's `X-Forwarded-For` believed on the public listeners | a b | 2 | none believed | `edge.product.trusted_proxy_cidrs` | no spend |
@@ -128,7 +129,6 @@ about the node's NIC and disk.
 |---|---|---|---|---|---|
 | Gateway and tunnel on MetalLB | a b c d | 1 | on | `envoyGateway.service`, `exposure.serviceType` | none |
 | Receiver routed through the gateway | d | 1 | `gateway` | `exposure.groups.ingest.door` | none |
-| Edge certificates from the internal CA | a b c | 1 | `dfe-internal-ca` | `tls.issuerName` | none |
 | Admin reach-back | d | 3 | absent | -- | -- |
 
 The reach-back is cloud-only: on-prem the operator is already on the LAN.
