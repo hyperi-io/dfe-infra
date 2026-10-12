@@ -333,12 +333,6 @@ spec:
       value: '70'
     metricType: Utilization
     type: cpu
-  - metadata:
-      targetValue: '70'
-      url: http://dfe-keda-shim.dfe.svc.cluster.local:8080/keda/pressure?service=dfe-transform-vector
-      valueLocation: value
-    metricType: Value
-    type: metrics-api
 ---
 apiVersion: v1
 kind: Service
