@@ -14,8 +14,6 @@ Both suites talk to the same engine and delete the same way, so the login, the
 delete-and-confirm and the setup contract live here rather than once per suite.
 """
 
-from __future__ import annotations
-
 import json
 import ssl
 import subprocess
@@ -120,6 +118,11 @@ class Engine:
         except ValueError:
             decoded = raw.decode(errors="replace")
         return Reply(status, decoded)
+
+
+#: A stored row's record as JSON text. dfe-loader writes a JSON payload to ``_json`` alone and
+#: leaves ``_raw`` NULL, and LIKE refuses the JSON type, hence ``toString``.
+RECORD_TEXT = "toString(_json)"
 
 
 @dataclass

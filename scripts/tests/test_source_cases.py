@@ -20,11 +20,12 @@ here opens a socket.
     python3 scripts/tests/test_source_cases.py
 """
 
-from __future__ import annotations
-
 import importlib.machinery
 import importlib.util
 import io
+import json
+import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -583,6 +584,58 @@ class TestTheFilebeatCaseProvision:
         assert driver.status("upload-program") == "api-fallback"
         assert "was not committed" in driver.detail("upload-program")
 
+    def test_the_console_drives_the_transform_card_it_actually_renders(self, transform_repo):
+        driver = FakeDriver(TransformCardPage(TransformCardPage.RUNNING))
+        case = cases.build(parse())
+
+        case.provision(a_run(driver, FakeEngine(), parse(), case.name, transform_repo))
+
+        assert driver.status("upload-program") == "done", driver.detail("upload-program")
+
+    def test_expected_fail_a_transform_with_no_instance_yet_offers_no_editor(self, transform_repo):
+        driver = FakeDriver(TransformCardPage(TransformCardPage.NOT_YET_RUNNING))
+        case = cases.build(parse())
+
+        case.provision(a_run(driver, FakeEngine(), parse(), case.name, transform_repo))
+
+        assert driver.status("upload-program") == "api-fallback"
+
+
+class TransformCardPage(FakePage):
+    """The Processing tab as dfe-ui renders it: one Transform card, a radio per transform.
+
+    No heading names an app and no line names the instance. The transform with an
+    instance for the source is the radio whose accessible name reads Running.
+    """
+
+    RUNNING = (
+        "dfe-transform-vrl Selected Running for this source.",
+        "dfe-transform-vector Available Ready to take this source.",
+    )
+    NOT_YET_RUNNING = (
+        "dfe-transform-vrl Selected Starts when this source is deployed.",
+        "dfe-transform-vector Available Ready to take this source.",
+    )
+
+    def __init__(self, options: tuple[str, ...]) -> None:
+        super().__init__()
+        self.options = options
+
+    def get_by_role(self, role, name="", exact=False):
+        if role == "heading" and name != "Transform":
+            raise TimeoutError(f"no heading {name} on the Processing tab")
+        if role == "radio":
+            # Playwright matches a pattern name against the accessible name by search.
+            named = [o for o in self.options if isinstance(name, re.Pattern) and name.search(o)]
+            if named != [self.options[0]] or "Running" not in named[0]:
+                raise TimeoutError(f"no radio named {name}")
+        return super().get_by_role(role, name, exact)
+
+    def get_by_text(self, text, exact=False):
+        if text.startswith("Instance "):
+            raise TimeoutError(f"no text {text} on the Processing tab")
+        return super().get_by_text(text, exact)
+
 
 class TestTheElasticCase:
     """One compiled-in transform per instance, so the create has a half no console control sets."""
@@ -911,6 +964,10 @@ class ScriptedStore(FakeStore):
         self.asked.append(sql)
         return self.carrying if "JSONExtractString" in sql else self.total
 
+    def query(self, sql):
+        self.asked.append(sql)
+        return []
+
 
 class TestTheDatasetRow:
     def test_every_row_carrying_the_dataset_is_done(self):
@@ -931,7 +988,18 @@ class TestTheDatasetRow:
 
         steps.dataset_outcome(store, "fb1", "cisco_ios.log")
 
-        assert any("JSONExtractString(_raw, 'data_stream', 'dataset') = 'cisco_ios.log'" in sql for sql in store.asked)
+        wanted = "JSONExtractString(toString(_json), 'data_stream', 'dataset') = 'cisco_ios.log'"
+        assert any(wanted in sql for sql in store.asked)
+
+    def test_no_query_reads_raw_which_a_json_payload_leaves_null(self):
+        store = ScriptedStore(1, 1)
+
+        steps.dataset_outcome(store, "fb1", "cisco_ios.log")
+        steps.strayed_rows(store, "src-test")
+        steps.beats.envelope_evidence(store, "fb1")
+
+        assert store.asked
+        assert not [sql for sql in store.asked if "_raw" in sql]
 
     def test_the_pushed_case_records_it_beside_landed(self):
         driver = FakeDriver(FakePage())
@@ -943,6 +1011,89 @@ class TestTheDatasetRow:
 
         assert driver.rows[:2] == ["landed", "dataset"]
         assert driver.status("dataset") == "done"
+
+
+CLICKHOUSE = shutil.which("clickhouse")
+
+
+class LocalClickHouse:
+    """ClickHouse itself, through ``clickhouse local``, holding one table of landed rows.
+
+    The loader's default capture puts a JSON payload in ``_json`` and leaves ``_raw``
+    NULL, so that is the row every query here has to find its field in. The table
+    is the input clickhouse local reads from stdin, so no DDL is written to make it.
+    """
+
+    host = "clickhouse-local"
+    database = "default"
+    STRUCTURE = "_raw Nullable(String), _json JSON(max_dynamic_paths = 2048)"
+
+    def __init__(self, table: str, records: list[dict]) -> None:
+        self.table, self.records = table, records
+
+    def query(self, sql: str) -> list[list]:
+        done = subprocess.run(
+            [CLICKHOUSE, "local", "--table", self.table, "--structure", self.STRUCTURE,
+             "--input-format", "JSONEachRow", "--output-format", "JSONCompact", "--query", sql],
+            input="\n".join(json.dumps({"_json": record}) for record in self.records),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True, timeout=60,
+        )
+        return json.loads(done.stdout)["data"]
+
+    def scalar(self, sql: str) -> int:
+        rows = self.query(sql)
+        return int(rows[0][0]) if rows else 0
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary for clickhouse local")
+class TestTheQueriesAgainstClickHouse:
+    """The suite's own SQL over rows stored the way the loader stores a JSON payload."""
+
+    # One cisco_ios line as the bundled filebeat program emits it, trimmed.
+    TRANSFORMED: ClassVar[dict] = {
+        "@timestamp": "2026-02-08T04:00:47.272Z",
+        "agent": {"name": "dfe-acceptance", "type": "filebeat", "version": "8.0.0"},
+        "data_stream": {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"},
+        "event": {"action": "deny", "code": "IPACCESSLOGRP"},
+        "message": "list 177 denied igmp 192.168.100.197 -> 224.0.0.22, 1 packet",
+        "source": {"address": "192.168.100.197", "ip": "192.168.100.197"},
+        "tags": ["preserve_original_event"],
+    }
+
+    def test_every_transformed_row_carries_the_dataset_it_was_routed_on(self):
+        store = LocalClickHouse("fb1", [self.TRANSFORMED, self.TRANSFORMED])
+
+        assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
+            "done", "2 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+
+    def test_expected_fail_a_row_that_lost_the_dataset_is_counted_out(self):
+        lost = {key: value for key, value in self.TRANSFORMED.items() if key != "data_stream"}
+        store = LocalClickHouse("fb1", [self.TRANSFORMED, lost])
+
+        assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
+            "failed", "1 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+
+    def test_a_record_of_this_run_in_the_catch_all_is_found(self):
+        posted = steps.agent_envelope("<189>a line", ["e2e_run:src-0123"], "cisco_ios.log")
+        store = LocalClickHouse("main", [posted])
+
+        assert steps.strayed_rows(store, "src-0123") == 1
+
+    def test_expected_fail_another_runs_record_is_not_this_runs_stray(self):
+        posted = steps.agent_envelope("<189>a line", ["e2e_run:src-4567"], "cisco_ios.log")
+        store = LocalClickHouse("main", [posted])
+
+        assert steps.strayed_rows(store, "src-0123") == 0
+
+    def test_a_row_off_the_agent_is_found_by_its_file_path(self):
+        shipped = {**self.TRANSFORMED, "log": {"file": {"path": steps.beats.AGENT_PATH}}}
+        store = LocalClickHouse("fb1", [shipped, self.TRANSFORMED])
+
+        carrying, keys, refused = steps.beats.envelope_evidence(store, "fb1")
+
+        assert (carrying, refused) == (1, "")
+        assert keys == sorted(shipped)
 
 
 class TestTheRestartStep:

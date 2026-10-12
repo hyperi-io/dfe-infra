@@ -20,9 +20,8 @@ the row reads ``api-fallback`` with the reason -- which is a finding about the
 console, and is what lets an older console still pass a run.
 """
 
-from __future__ import annotations
-
 import argparse
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -309,12 +308,12 @@ class FilebeatCase(Case):
             f"{driver.ui}/sources?source_name={self.name}&source_version={version}&tab=processing",
             wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2,
         )
-        page.get_by_role("heading", name=self.service, exact=True).first.wait_for(
+        page.get_by_role("heading", name="Transform", exact=True).first.wait_for(
             state="visible", timeout=STEP_TIMEOUT_MS
         )
-        # The card for a deployed instance is the only one carrying file sets; a
-        # catalogued app with no instance for this source offers no editor.
-        page.get_by_text(f"Instance {self.name}", exact=True).first.wait_for(
+        # Each catalogued transform is a radio on that card, and only the one with
+        # an instance for this source reads Running and opens its file sets below.
+        page.get_by_role("radio", name=self._running_option).first.wait_for(
             state="visible", timeout=STEP_TIMEOUT_MS
         )
         landed = []
@@ -445,7 +444,7 @@ class FilebeatCase(Case):
         landed = steps.wait_gain(run.store, self.name, self._before, self._posted, self.LAND_DEADLINE)
         # Both feeds tag every record e2e_run:<run id>: the wrapper on a POST, the
         # agent's add_tags on --via logstash.
-        strayed = run.store.scalar(f"SELECT count() FROM main WHERE _raw LIKE '%{run.run_id}%'")
+        strayed = steps.strayed_rows(run.store, run.run_id)
         run.driver.record(
             "landed", "done" if landed and not strayed else "failed",
             f"dfe.{self.name} gained {landed} of {self._posted} posted rows, {strayed} strayed into dfe.main",
@@ -481,6 +480,15 @@ class FilebeatCase(Case):
     @property
     def _transformed_where(self) -> str:
         return f" WHERE {self.TRANSFORMED_COLUMN} IS NOT NULL"
+
+    @property
+    def _running_option(self) -> re.Pattern[str]:
+        """This app's radio on the Transform card, once it has an instance for the source.
+
+        The console names an option by its service, its state tag and a note, as in
+        ``dfe-transform-vrl Selected Running for this source.``
+        """
+        return re.compile(rf"{re.escape(self.service)}[\s\S]*Running")
 
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
         """Take down anything this run stood up beside the stack."""
