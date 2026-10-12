@@ -112,8 +112,8 @@ def test_security_groups_skip_the_default_group(monkeypatch: pytest.MonkeyPatch)
         _ok(
             {
                 "SecurityGroups": [
-                    {"GroupId": "sg-default", "GroupName": "default", "Tags": []},
-                    {"GroupId": "sg-dfe", "GroupName": "dfe-nodes", "Tags": DFE_TAGS},
+                    {"GroupId": "sg-default", "GroupName": "default", "VpcId": "vpc-run", "Tags": []},
+                    {"GroupId": "sg-dfe", "GroupName": "dfe-nodes", "VpcId": "vpc-run", "Tags": DFE_TAGS},
                 ]
             }
         ),
@@ -121,6 +121,7 @@ def test_security_groups_skip_the_default_group(monkeypatch: pytest.MonkeyPatch)
     found = cloud_sweep.list_security_groups(REGION, TAG_FILTER)
     assert [r.id for r in found] == ["sg-dfe"]
     assert found[0].tagged is True
+    assert found[0].extra["vpc_id"] == "vpc-run"
 
 
 def test_enis_read_tags_from_tag_set_not_tags(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1101,6 +1102,101 @@ def test_expired_never_selects_the_excluded_bucket() -> None:
     bucket = _run_resource("example-tfstate", {"dfe-e2e": "run-1", "expires-at": "1"}, kind="s3-bucket")
     found = cloud_sweep.filter_expired([bucket], expiry=_expiry(), exclude_bucket="example-tfstate")
     assert found == []
+
+
+EXPIRED_RUN = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T11:00:00Z"}
+LIVE_RUN = {"dfe-e2e": "run-2", "expires-at": "2026-10-08T13:00:00Z"}
+EKS_CLUSTER_SG_TAGS = {"Name": "eks-cluster-sg-example", "aws:eks:cluster-name": "example"}
+
+
+def _vpc(rid: str, tags: dict[str, str]) -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(kind="vpc", id=rid, name=rid, created=None, tagged=False, tags=tags)
+
+
+def _sg(rid: str, vpc_id: str, *, name: str | None = None, tags: dict[str, str] | None = None) -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(
+        kind="security-group",
+        id=rid,
+        name=name or rid,
+        created=None,
+        tagged=False,
+        extra={"vpc_id": vpc_id},
+        tags=EKS_CLUSTER_SG_TAGS if tags is None else tags,
+    )
+
+
+def test_expired_selects_an_untagged_security_group_inside_an_expired_vpc() -> None:
+    """EKS leaves its cluster security group with no run tag, and DeleteVpc fails while it stands."""
+    resources = [_vpc("vpc-expired", EXPIRED_RUN), _sg("sg-eks-cluster", "vpc-expired")]
+    assert sorted(_expired_ids(resources)) == ["sg-eks-cluster", "vpc-expired"]
+
+
+def test_expected_fail_a_security_group_in_a_live_or_unowned_vpc_is_never_selected() -> None:
+    resources = [
+        _vpc("vpc-live", LIVE_RUN),
+        _vpc("vpc-unowned", {"Name": "someone-elses"}),
+        _vpc("vpc-no-expiry", {"dfe-e2e": "run-3"}),
+        _sg("sg-in-live", "vpc-live"),
+        _sg("sg-in-unowned", "vpc-unowned"),
+        _sg("sg-in-no-expiry", "vpc-no-expiry"),
+        _sg("sg-no-vpc", ""),
+    ]
+    assert _expired_ids(resources) == []
+
+
+def test_expected_fail_the_default_group_of_an_expired_vpc_is_never_selected() -> None:
+    """AWS refuses DeleteSecurityGroup on a VPC's default group and removes it with the VPC."""
+    resources = [_vpc("vpc-expired", EXPIRED_RUN), _sg("sg-default", "vpc-expired", name="default", tags={})]
+    assert _expired_ids(resources) == ["vpc-expired"]
+
+
+def test_expected_fail_a_run_tagged_group_in_an_expired_vpc_is_judged_by_its_own_tags() -> None:
+    resources = [
+        _vpc("vpc-expired", EXPIRED_RUN),
+        _sg("sg-live", "vpc-expired", tags=LIVE_RUN),
+        _sg("sg-malformed", "vpc-expired", tags={"dfe-e2e": "run-1", "expires-at": "yesterday"}),
+    ]
+    assert _expired_ids(resources) == ["vpc-expired"]
+
+
+def test_expected_fail_only_security_groups_inherit_the_vpcs_expiry() -> None:
+    eni = cloud_sweep.Resource(
+        kind="eni", id="eni-1", name="eni-1", created=None, tagged=False, extra={"vpc_id": "vpc-expired"}
+    )
+    assert _expired_ids([_vpc("vpc-expired", EXPIRED_RUN), eni]) == ["vpc-expired"]
+
+
+def test_the_report_names_the_expired_vpc_an_untagged_group_is_selected_through(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    resources = [_vpc("vpc-expired", EXPIRED_RUN), _sg("sg-eks-cluster", "vpc-expired")]
+    cloud_sweep.print_report(resources, _expiry())
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("security-group"))
+    assert "in-expired-vpc=vpc-expired" in line
+
+
+def test_main_expired_deletes_the_orphan_group_before_its_vpc(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({})
+
+    resources = [_vpc("vpc-expired", EXPIRED_RUN), _sg("sg-eks-cluster", "vpc-expired"), _sg("sg-other", "vpc-live")]
+    responses = iter([resources, [resources[2]]])
+    monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    code = cloud_sweep.main(
+        ["--region", REGION, "--expired", "--grace", "0", "--delete", "--account", "000000000000", "--yes"]
+    )
+    deletes = [args[1] for args in calls]
+    assert code == 0
+    assert deletes == ["delete-security-group", "delete-vpc"]
+    assert "sg-other" not in " ".join(" ".join(args) for args in calls)
+    assert "sweep clean: no expired run resources left" in capsys.readouterr().out
 
 
 def test_renamed_run_keys_from_the_environment_select_by_the_new_keys(monkeypatch: pytest.MonkeyPatch) -> None:

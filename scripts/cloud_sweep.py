@@ -39,11 +39,14 @@ touched. Exit 0 means the tagged set is empty; exit 1 means resources
 remain, printed for cleanup.
 
 --expired switches the selection to the run convention in cloud_run.py: a
-resource is eligible ONLY when it carries the run tag (default `dfe-e2e`) and
-its `expires-at` plus --grace is in the past. A resource without the run tag,
-with a future expiry, or with an expiry that does not parse is never selected,
-whatever else it carries; --tag-filter still decides the tagged/untagged
-column but not eligibility. --grace defaults to 1h, the margin a last-resort
+resource is eligible when it carries the run tag (default `dfe-e2e`) and its
+`expires-at` plus --grace is in the past. A resource without the run tag, with
+a future expiry, or with an expiry that does not parse is never selected,
+whatever else it carries, with one exception: a non-default security group
+with no run tag inside a VPC that is itself expired. That is how EKS leaves its
+cluster security group, outside tofu state, and DeleteVpc fails while it
+stands. --tag-filter still decides the tagged/untagged column but not
+eligibility. --grace defaults to 1h, the margin a last-resort
 hand run gives a run that is still tearing itself down; the scheduled reaper
 passes 0. --now previews a later moment and is refused with --delete.
 
@@ -99,6 +102,7 @@ ROUTE53_BATCH = 100  # changes per ChangeResourceRecordSets call, well inside th
 
 DEFAULT_TAG_FILTER = "service-name=dfe,environment=test"
 DEFAULT_EXPIRED_GRACE = "1h"
+DEFAULT_SECURITY_GROUP = "default"  # every VPC's own group, which AWS refuses to delete and removes with the VPC
 
 
 class CloudSweepError(RuntimeError):
@@ -282,8 +286,12 @@ def _list_ec2(
     created_field: str | None = None,
     tag_field: str = "Tags",
     skip: Callable[[dict], bool] | None = None,
+    extra_fields: dict[str, str] | None = None,
 ) -> list[Resource]:
-    """Share the describe-list-parse shape every plain EC2 class below follows."""
+    """Share the describe-list-parse shape every plain EC2 class below follows.
+
+    `extra_fields` maps a Resource.extra key to the describe field it is read from.
+    """
     data = run_aws(["ec2", *list_cmd], region)
     out: list[Resource] = []
     for item in data.get(list_key, []):
@@ -293,8 +301,17 @@ def _list_ec2(
         rid = item[id_field]
         name = item.get(name_field, rid) if name_field else rid
         created = item.get(created_field) if created_field else None
+        extra = {key: str(item.get(source, "")) for key, source in (extra_fields or {}).items()}
         out.append(
-            Resource(kind=kind, id=rid, name=name, created=created, tagged=_matches(tags, tag_filter), tags=tags)
+            Resource(
+                kind=kind,
+                id=rid,
+                name=name,
+                created=created,
+                tagged=_matches(tags, tag_filter),
+                extra=extra,
+                tags=tags,
+            )
         )
     return out
 
@@ -385,7 +402,8 @@ def list_security_groups(region: str, tag_filter: dict[str, str]) -> list[Resour
         tag_filter,
         name_field="GroupName",
         kind="security-group",
-        skip=lambda i: i.get("GroupName") == "default",
+        skip=lambda i: i.get("GroupName") == DEFAULT_SECURITY_GROUP,
+        extra_fields={"vpc_id": "VpcId"},
     )
 
 
@@ -756,15 +774,46 @@ def filter_for_delete(
     return eligible
 
 
+def _expired_vpc_ids(resources: list[Resource], expiry: ExpirySelection) -> set[str]:
+    """The VPCs whose own run tags say their run is over."""
+    return {r.id for r in resources if r.kind == "vpc" and expiry.state(r) is cloud_run.ExpiryState.EXPIRED}
+
+
+def _orphan_in_expired_vpc(resource: Resource, expired_vpcs: set[str], expiry: ExpirySelection) -> bool:
+    """A non-default security group with no run tag of its own, inside an expired run's VPC.
+
+    EKS creates the cluster security group without the run tag and outside tofu
+    state, and while it stands DeleteVpc fails on every sweep. A group carrying a
+    run tag is judged by its own tags instead, and the default group goes with
+    the VPC itself.
+    """
+    vpc_id = resource.extra.get("vpc_id", "")
+    return (
+        resource.kind == "security-group"
+        and resource.name != DEFAULT_SECURITY_GROUP
+        and bool(vpc_id)
+        and vpc_id in expired_vpcs
+        and expiry.state(resource) is cloud_run.ExpiryState.UNTAGGED
+    )
+
+
 def filter_expired(
     resources: list[Resource], *, expiry: ExpirySelection, exclude_bucket: str | None
 ) -> list[Resource]:
-    """The subset --expired --delete would remove: run-tagged and past expiry plus grace, only."""
+    """The subset --expired --delete would remove.
+
+    That is every run-tagged resource past expiry plus grace, and the untagged
+    non-default security groups inside a VPC that is itself expired.
+    """
+    expired_vpcs = _expired_vpc_ids(resources, expiry)
     return [
         r
         for r in resources
         if not (r.kind == "s3-bucket" and r.id == exclude_bucket)
-        and expiry.state(r) is cloud_run.ExpiryState.EXPIRED
+        and (
+            expiry.state(r) is cloud_run.ExpiryState.EXPIRED
+            or _orphan_in_expired_vpc(r, expired_vpcs, expiry)
+        )
     ]
 
 
@@ -772,12 +821,17 @@ def print_report(resources: list[Resource], expiry: ExpirySelection | None = Non
     if not resources:
         print("no resources found")
         return
+    expired_vpcs = _expired_vpc_ids(resources, expiry) if expiry is not None else set()
     for r in resources:
         tag_state = "dfe-tagged" if r.tagged else "untagged"
         line = f"{r.kind:16s} {r.name:44s} age={_age(r.created):8s} {tag_state}"
         if expiry is not None:
             run_id = r.tags.get(expiry.keys.run) or "-"
-            line += f" run={run_id} {expiry.state(r)}"
+            if _orphan_in_expired_vpc(r, expired_vpcs, expiry):
+                state = f"in-expired-vpc={r.extra['vpc_id']}"
+            else:
+                state = str(expiry.state(r))
+            line += f" run={run_id} {state}"
         print(line)
 
 
@@ -1335,8 +1389,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--expired",
         action="store_true",
-        help="select ONLY resources carrying the run tag (DFE_RUN_TAG_KEY, default dfe-e2e) whose "
-        "expires-at plus --grace is in the past; nothing without the run tag is ever selected",
+        help="select resources carrying the run tag (DFE_RUN_TAG_KEY, default dfe-e2e) whose "
+        "expires-at plus --grace is in the past, plus the untagged non-default security groups inside "
+        "a VPC so selected; nothing else without the run tag is ever selected",
     )
     parser.add_argument(
         "--grace",
