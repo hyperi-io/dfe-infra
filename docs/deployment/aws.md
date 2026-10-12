@@ -302,20 +302,28 @@ priced on this scale in [edge.md](edge.md).
 DFE pushes terabytes a day through the receiver, and every AWS front door
 bills by volume: a Network Load Balancer charges per LCU-hour (1 GB
 processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB,
-WAF per request. A volume-priced front door on that kind of traffic is not
-an option, so the receiver ships with none.
+WAF per request. The receiver's door is its own NLB, the cheapest of those per
+GB, and no protection with a volume or request charge sits on it.
 
-The default is `edge.ingest.receiver.mode: vpn`: the receiver stays on a
-ClusterIP with no public address, and there is no external path until the
-deployer brings one. [edge.md](edge.md) carries the AWS tier table -- every door,
-its group, its tier, the dial key that turns it and its cost bucket -- and the
-three ways to reach the receiver.
+The default is `exposure.groups.ingest.door: loadbalancer` with an empty
+`allow` list, so a fresh deploy renders no NLB at all and the receiver stays on
+a ClusterIP. Naming the senders in the deploy repo's
+`exposure.groups.ingest.allow` renders the NLB (AWS Load Balancer Controller,
+IP targets, client address preserved, its frontend security group holding the
+list) on the Elastic IPs the AWS root allocates, one per public subnet.
+[INGEST-EDGE.md](../INGEST-EDGE.md) describes the doors, and [edge.md](edge.md)
+carries the AWS tier table -- every door, its group, its tier, the dial key
+that turns it and its cost bucket.
 
 An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being
 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load
-Balancing pricing page). The hourly half is XS. The processing half is why there
-is no load balancer by default. AWS data transfer out still applies to the
-replies on every path, culvert included.
+Balancing pricing page). The hourly half is XS. The processing half is the
+transport cost of ingest on this door. AWS data transfer out still applies to
+the replies on every path, culvert included.
+
+The receiver NLB is created with one Elastic IP per public subnet. Those
+addresses exist, and AWS bills them, while the ingest door is closed and no NLB
+exists. `edge.aws.receiver_eips: false` turns them off.
 
 See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
 for node pools and images, admin UI exposure, teardown, lifecycle tags and

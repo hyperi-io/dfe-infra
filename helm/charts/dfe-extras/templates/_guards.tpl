@@ -63,49 +63,101 @@ template reads it.
 {{- end -}}
 
 {{/*
-dfe-extras.receiverExposureGuard -- the receiver's internal-mode refusal.
+dfe-extras.receiverExposureGuard -- the receiver's door, refused where it would
+not do what it says.
 
-Internal mode routes through the cluster Gateway, and the only gateway path the
-receiver has is an HTTPRoute (envoy-gateway-config, routes.receiver), which
-serves the listener named `http`. Any OTHER listener marked exposed has no path
-at all in this mode, so fail the render rather than deploy a listener that
-silently receives nothing.
+The door is exposure.groups.ingest (argocd/values/common.yaml), which the
+gateway chart reads too. exposure.mode is retired and refused by name, with no
+shim, so an overlay still carrying it fails rather than silently taking the
+new default door.
 
-vpn mode is not caught by this: the tunnel delivers a client onto the pod
-network and it dials the ClusterIP directly, so every exposed listener is
-reachable there without a gateway route.
+Door loadbalancer is the receiver's own load balancer, which
+argocd/values/apps/dfe-receiver renders from exposure.groups.ingest.allow and
+exposure.public as docs/INGEST-EDGE.md documents them. scalo-service's own
+publicService reads none of them, so switched on it renders a second load
+balancer of the same name with no allow list, and any other key set under it
+reaches nothing. loadBalancerIP is the appset's, carrying the cluster secret's
+receiver address.
 
-Public mode is the receiver's load balancer, which argocd/values/apps/dfe-receiver
-renders from exposure.mode and exposure.public as docs/INGEST-EDGE.md documents
-them. scalo-service's own publicService reads none of
-exposure.public, so switched on it renders a second load balancer of the same
-name with no allow-list, and any other key set under it reaches nothing.
-loadBalancerIP is the appset's, carrying the cluster secret's receiver address.
+Kubernetes filters on loadBalancerSourceRanges for a LoadBalancer only, a named
+AWS security group drops them, and a deny list on that door could land only in
+the receiver's server.ip_filter, which no values layer reaches, so each of
+those is refused rather than ignored.
 
-Kubernetes filters on loadBalancerSourceRanges for a LoadBalancer only, so an
-allow-list beside another serviceType is refused rather than ignored.
+Door gateway routes through the cluster Gateway, whose only path to the
+receiver is an HTTPRoute serving the listener named `http`. Any OTHER listener
+marked exposed has no path at all, so the render fails rather than deploy a
+listener that silently receives nothing. Door tunnel is not caught by this: the
+tunnel delivers a client onto the pod network and it dials the ClusterIP.
 */}}
 {{- define "dfe-extras.receiverExposureGuard" -}}
-{{- $mode := .Values.exposure.mode | default "public" }}
+{{- if not (kindIs "invalid" .Values.exposure.mode) }}
+{{- fail (printf "dfe-receiver: exposure.mode is %q and retired -- the receiver's door is exposure.groups.ingest.door: loadbalancer (its own load balancer, rendered while exposure.groups.ingest.allow names the senders; was public), gateway (receiver.{domain} on the gateway; was internal) or tunnel (no public door; was vpn). Move it there, in the deploy repo's infra/common.yaml (docs/INGEST-EDGE.md)" (toString .Values.exposure.mode)) }}
+{{- end }}
+{{- $ingest := .Values.exposure.groups.ingest }}
+{{- if not (kindIs "map" $ingest) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest is %v (a %s) -- it is a map of enabled, allow, deny and door, which argocd/values/common.yaml supplies and a deployment changes in its deploy repo's infra/common.yaml" $ingest (kindOf $ingest)) }}
+{{- end }}
+{{- if not (kindIs "bool" $ingest.enabled) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.enabled is %v (a %s), not a bool -- a quoted \"false\" is truthy and would open the door. Write true or false unquoted" $ingest.enabled (kindOf $ingest.enabled)) }}
+{{- end }}
+{{- $door := toString $ingest.door }}
+{{- if not (has $door (list "loadbalancer" "gateway" "tunnel")) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.door is %q -- it takes loadbalancer, gateway or tunnel" $door) }}
+{{- end }}
+{{- range $list := list "allow" "deny" }}
+{{- $value := index $ingest $list }}
+{{- if not (or (kindIs "slice" $value) (kindIs "invalid" $value)) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.%s is %v (a %s) -- it is a YAML list of CIDR ranges, such as [203.0.113.0/24], never a comma-separated string" $list $value (kindOf $value)) }}
+{{- end }}
+{{- range $entry := $value | default list }}
+{{- if not (regexMatch "^[0-9A-Fa-f.:]+/[0-9]{1,3}$" (toString $entry)) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32" $list (toString $entry)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $pub := .Values.exposure.public | default dict }}
+{{- if hasKey $pub "loadBalancerSourceRanges" }}
+{{- fail "dfe-receiver: exposure.public.loadBalancerSourceRanges is retired -- the receiver's allow list is exposure.groups.ingest.allow, and an empty one renders no load balancer at all rather than an open one. Move the ranges there, in the deploy repo's infra/common.yaml" }}
+{{- end }}
 {{- $renamed := dict "type" "serviceType" }}
 {{- range $key, $value := .Values.publicService | default dict }}
 {{- if eq $key "enabled" }}
 {{- if eq (toString $value) "true" }}
-{{- fail "dfe-receiver: publicService.enabled is true, which renders scalo-service's own load balancer beside the one exposure.mode public renders, under the same name and with none of the exposure.public keys -- leave it false, and set exposure.mode: public with exposure.public (docs/INGEST-EDGE.md)" }}
+{{- fail "dfe-receiver: publicService.enabled is true, which renders scalo-service's own load balancer beside the one exposure.groups.ingest.door: loadbalancer renders, under the same name and with no allow list -- leave it false, and set exposure.groups.ingest with exposure.public (docs/INGEST-EDGE.md)" }}
 {{- end }}
 {{- else if and (ne $key "loadBalancerIP") (not (empty $value)) }}
 {{- fail (printf "dfe-receiver: publicService.%s is set, and nothing renders the receiver's load balancer from it -- set exposure.public.%s instead (docs/INGEST-EDGE.md)" $key (get $renamed $key | default $key)) }}
 {{- end }}
 {{- end }}
-{{- $pub := .Values.exposure.public | default dict }}
+{{- $loadbalancer := and $ingest.enabled (eq $door "loadbalancer") }}
 {{- $type := toString ($pub.serviceType | default "LoadBalancer") }}
-{{- if and (eq $mode "public") (ne $type "LoadBalancer") $pub.loadBalancerSourceRanges }}
-{{- fail (printf "dfe-receiver: exposure.public.loadBalancerSourceRanges is set with exposure.public.serviceType %q, and Kubernetes only filters on that field for a LoadBalancer -- put the allow-list in front of the node ports, or set serviceType: LoadBalancer" $type) }}
+{{- if and $loadbalancer $ingest.allow (ne $type "LoadBalancer") }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.allow is set with exposure.public.serviceType %q, and Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer -- set serviceType: LoadBalancer, or exposure.groups.ingest.door: tunnel and put the allow list in front of the node ports yourself" $type) }}
 {{- end }}
-{{- if eq $mode "internal" }}
+{{- if and $loadbalancer $ingest.deny }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.deny is %v on door loadbalancer, and nothing enforces it there -- cloud load balancer rules are allow-only, and the receiver's server.ip_filter is read from its config file, which no values layer can derive from the ingest group. Narrow exposure.groups.ingest.allow instead, or use door gateway, where Envoy refuses the deny list ahead of the allow list (docs/INGEST-EDGE.md)" $ingest.deny) }}
+{{- end }}
+{{- $annotations := $pub.annotations | default dict }}
+{{- if hasKey $annotations "service.beta.kubernetes.io/aws-load-balancer-security-groups" }}
+{{- fail "dfe-receiver: exposure.public.annotations names service.beta.kubernetes.io/aws-load-balancer-security-groups -- a named group replaces the frontend security group the AWS Load Balancer Controller fills from loadBalancerSourceRanges, so exposure.groups.ingest.allow would stop filtering. Remove it" }}
+{{- end }}
+{{- with $pub.eipAllocations }}
+{{- $subnets := $pub.subnets | default list }}
+{{- if not (and (kindIs "slice" .) (kindIs "slice" $subnets)) }}
+{{- fail "dfe-receiver: exposure.public.eipAllocations and exposure.public.subnets are YAML lists -- the appset writes both from the cluster secret's dfe.hyperi.io/receiver_eip_allocations and dfe.hyperi.io/receiver_subnets" }}
+{{- end }}
+{{- if ne (len .) (len $subnets) }}
+{{- fail (printf "dfe-receiver: exposure.public.eipAllocations names %d Elastic IPs and exposure.public.subnets %d subnets -- the AWS Load Balancer Controller takes one allocation per subnet, in the same order" (len .) (len $subnets)) }}
+{{- end }}
+{{- if ne (toString (index $annotations "service.beta.kubernetes.io/aws-load-balancer-scheme")) "internet-facing" }}
+{{- fail "dfe-receiver: exposure.public.eipAllocations is set and exposure.public.annotations does not set service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing -- an Elastic IP attaches only to an internet-facing NLB" }}
+{{- end }}
+{{- end }}
+{{- if and $ingest.enabled (eq $door "gateway") }}
 {{- range .Values.listeners }}
 {{- if and .exposed (ne .name "http") }}
-{{- fail (printf "dfe-receiver: listener %q (%v/%s) is exposed but exposure.mode is %q, and the cluster Gateway routes only the http listener. Either set exposure.mode: public so it gets a LoadBalancer, or add a dedicated Gateway listener plus a TCPRoute/UDPRoute for it and mark this listener exposed: false." .name .port (.protocol | default "TCP") $.Values.exposure.mode) }}
+{{- fail (printf "dfe-receiver: listener %q (%v/%s) is exposed but exposure.groups.ingest.door is gateway, and the cluster Gateway routes only the http listener. Either set door: loadbalancer so it gets the receiver's own load balancer, or add a dedicated Gateway listener plus a TCPRoute/UDPRoute for it and mark this listener exposed: false." .name .port (.protocol | default "TCP")) }}
 {{- end }}
 {{- end }}
 {{- end }}

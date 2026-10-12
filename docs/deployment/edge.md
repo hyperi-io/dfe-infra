@@ -60,8 +60,9 @@ own compute, the pricing model named, never a rate.
 | Edge OIDC on the admin routes | c | 1 | on | `edge.admin_uis.oidc` | none |
 | Admin UI routes, one at a time | c | 1 | off | `edge.admin_uis.public.*` | none |
 | Class-wide admin kill switch | c | 1 | off | `edge.admin_uis.external` | none |
-| Receiver on ClusterIP, tunnel-reached | d | 1 | `vpn` | `edge.ingest.receiver.mode` | none |
-| Receiver on its own load balancer | d | 2 | off | `edge.ingest.receiver.public` | L, per GB processed |
+| Receiver on its own load balancer, once senders are named | d | 2 | `loadbalancer`, closed while `allow` is empty | `edge.groups.ingest` (`exposure.groups.ingest`) | L, per GB processed |
+| Elastic IPs for the receiver's NLB | d | 1 | on | `edge.aws.receiver_eips` | XS hourly, while closed too |
+| Receiver on ClusterIP, tunnel-reached | d | 1 | off | `edge.groups.ingest.door: tunnel` | none |
 | Tunnel on a NodePort | d | 1 once on | off | the engine's instance values file | none |
 | An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` is unproven, [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
 | Admin reach-back to one appliance | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
@@ -70,7 +71,7 @@ own compute, the pricing model named, never a rate.
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
 
-Public web access is default-deny on every cloud flavour ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so an allow-list narrow enough to lock an admin UI down blocks agent ingest too, until the sender's range goes in `envoyGateway.service.loadBalancerSourceRanges`. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
+Public web access is default-deny on every cloud flavour ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so it takes the ingest group's list into its union while an ingest route renders. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
 
 ### What the engine API's split gets wrong
 
@@ -126,7 +127,7 @@ about the node's NIC and disk.
 | Mechanism | Group | Tier | Default | Dial key | Cost |
 |---|---|---|---|---|---|
 | Gateway and tunnel on MetalLB | a b c d | 1 | on | `envoyGateway.service`, `exposure.serviceType` | none |
-| Receiver routed through the gateway | d | 1 | `internal` | `routes.receiver.enabled` | none |
+| Receiver routed through the gateway | d | 1 | `gateway` | `exposure.groups.ingest.door` | none |
 | Edge certificates from the internal CA | a b c | 1 | `dfe-internal-ca` | `tls.issuerName` | none |
 | Admin reach-back | d | 3 | absent | -- | -- |
 

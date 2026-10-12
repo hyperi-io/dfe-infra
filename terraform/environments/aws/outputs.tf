@@ -135,6 +135,16 @@ output "DFE_EDGE_TRUSTED_PROXY_CIDRS" {
   value       = join("", module.edge[*].gateway_trusted_proxy_cidrs)
 }
 
+output "DFE_RECEIVER_EIP_ALLOCATIONS" {
+  description = "The receiver NLB's Elastic IP allocation ids, comma-separated. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/receiver_eip_allocations annotation, which layer2-apps.yaml turns into the receiver chart's exposure.public.eipAllocations. Empty when the edge module or edge.receiver.eips is off."
+  value       = join("", module.edge[*].receiver_eip_allocations)
+}
+
+output "DFE_RECEIVER_SUBNETS" {
+  description = "The public subnet each receiver Elastic IP sits in, comma-separated in the same order as DFE_RECEIVER_EIP_ALLOCATIONS. Bootstrap reads it into the dfe.hyperi.io/receiver_subnets annotation, which layer2-apps.yaml turns into the receiver chart's exposure.public.subnets. Empty whenever DFE_RECEIVER_EIP_ALLOCATIONS is."
+  value       = join("", module.edge[*].receiver_subnets)
+}
+
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   description = "Empty on this cloud. EKS Pod Identity binds a role to a service account from OUTSIDE the cluster, so no service account carries an annotation -- unlike IRSA, Workload Identity Federation and Entra Workload ID, which all need one."
   value       = "{}"

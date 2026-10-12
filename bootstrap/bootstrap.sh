@@ -518,6 +518,26 @@ for dfe_trusted_cidr in "${dfe_trusted_cidrs[@]}"; do
 done
 export DFE_EDGE_SELF_RANGES_ANNOTATION="${DFE_EDGE_SELF_RANGES:+dfe.hyperi.io/edge_self_ranges: \"${DFE_EDGE_SELF_RANGES}\"}"
 export DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION="${DFE_EDGE_TRUSTED_PROXY_CIDRS:+dfe.hyperi.io/edge_trusted_proxy_cidrs: \"${DFE_EDGE_TRUSTED_PROXY_CIDRS}\"}"
+# The Elastic IPs the cloud root allocated for the receiver's NLB and the public
+# subnets they sit in, comma-separated and in the same order. Empty off AWS and
+# with the root's edge.receiver.eips off. Spaces stripped, because
+# layer2-apps.yaml splits each value on commas alone.
+DFE_RECEIVER_EIP_ALLOCATIONS="${DFE_RECEIVER_EIP_ALLOCATIONS:-}"
+export DFE_RECEIVER_EIP_ALLOCATIONS="${DFE_RECEIVER_EIP_ALLOCATIONS// /}"
+DFE_RECEIVER_SUBNETS="${DFE_RECEIVER_SUBNETS:-}"
+export DFE_RECEIVER_SUBNETS="${DFE_RECEIVER_SUBNETS// /}"
+# The controller pairs allocation and subnet by position, so two lists of
+# different lengths would fail the NLB at creation.
+dfe_receiver_eips=()
+dfe_receiver_subnets=()
+IFS=',' read -r -a dfe_receiver_eips <<< "${DFE_RECEIVER_EIP_ALLOCATIONS}"
+IFS=',' read -r -a dfe_receiver_subnets <<< "${DFE_RECEIVER_SUBNETS}"
+if [[ "${#dfe_receiver_eips[@]}" -ne "${#dfe_receiver_subnets[@]}" ]]; then
+  echo "ERROR: DFE_RECEIVER_EIP_ALLOCATIONS names ${#dfe_receiver_eips[@]} Elastic IP(s) and DFE_RECEIVER_SUBNETS ${#dfe_receiver_subnets[@]} subnet(s) -- the AWS Load Balancer Controller takes one allocation per subnet, in the same order. Re-read both from the same tofu output" >&2
+  exit 1
+fi
+export DFE_RECEIVER_EIP_ALLOCATIONS_ANNOTATION="${DFE_RECEIVER_EIP_ALLOCATIONS:+dfe.hyperi.io/receiver_eip_allocations: \"${DFE_RECEIVER_EIP_ALLOCATIONS}\"}"
+export DFE_RECEIVER_SUBNETS_ANNOTATION="${DFE_RECEIVER_SUBNETS:+dfe.hyperi.io/receiver_subnets: \"${DFE_RECEIVER_SUBNETS}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
 export DFE_CLICKHOUSE_DEFAULT_TTL_DAYS="${DFE_CLICKHOUSE_DEFAULT_TTL_DAYS:-90}"

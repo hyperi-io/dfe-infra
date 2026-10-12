@@ -114,7 +114,8 @@ dns:
 ## PASTE-INTO-A-VALUES-FILE, sub-block by sub-block. `product.rate_limit`,
 ## `product.waf` and `product.tls` are the gateway chart's `ui.*` values
 ## verbatim; the body of `ingest.receiver` is the dfe-receiver chart's
-## `exposure:` values verbatim; the body of `ingest.otel` is the `otel.ingress:`
+## `exposure:` values verbatim; `groups` is `exposure.groups` verbatim; the
+## body of `ingest.otel` is the `otel.ingress:`
 ## block of the deploy repo's `infra/common.yaml` verbatim. Everything else is
 ## the DIAL's own spelling and needs translating -- `product.public` is the
 ## chart's `ui.public.dfe_ui`, `admin_uis.public.hyperdx` is `ui.public.hyperdx`,
@@ -133,8 +134,9 @@ dns:
 ## refuses a quoted one at render rather than guessing what you meant.
 ##
 ## NOTHING HERE IS APPLIED FOR YOU except `enabled`, which render_dial.py
-## carries to DFE_EDGE_ENABLED, and `product.trusted_proxy_cidrs`, which its
-## --tofu render hands a cloud root. It validates and reports the rest.
+## carries to DFE_EDGE_ENABLED, and `product.trusted_proxy_cidrs` and
+## `aws.receiver_eips`, which its --tofu render hands a cloud root. It
+## validates and reports the rest.
 edge:
   ## `false` leaves argocd/appsets/layer2-edge.yaml generating nothing, so the
   ## deployment gets no public gateway and no tunnel and every app stays on a
@@ -255,35 +257,44 @@ edge:
       providers: []
       admin_groups: [dfe-admins, dfe-infra]
 
-  ## GROUP (d) -- the data-plane doors. DFE pushes terabytes a day through the
-  ## receiver, and every cloud front door bills by volume -- an NLB by the
-  ## LCU-hour, a Classic ELB, CloudFront and Global Accelerator by the GB.
-  ## docs/deployment/aws.md#receiver-ingress sizes that door in cost buckets,
-  ## against the scale defined there.
+  ## THE EXPOSURE GROUPS -- who may reach each surface, pasted as
+  ## `exposure.groups` in the deploy repo's `infra/common.yaml`, which the
+  ## gateway and the receiver both read. Only the ingest group is spelled here;
+  ## the web groups' lists are the translations named above.
+  groups:
+    ## GROUP (d)'s receiver and the otel route. DFE pushes terabytes a day
+    ## through the receiver, and every cloud front door bills by volume, so its
+    ## door renders only once `allow` names the senders.
+    ingest:
+      enabled: true
+      ## loadbalancer: the receiver's own load balancer, one per protocol
+      ## family, its source ranges `allow` -- tier 2, billed per GB processed,
+      ## bucket L against terabytes a day. gateway: receiver.<domain> on the
+      ## gateway, http only, the on-prem default. tunnel: no public door.
+      door: loadbalancer       # loadbalancer | gateway | tunnel
+      ## CIDRs. EMPTY IS CLOSED on door loadbalancer (no load balancer renders)
+      ## and on an internet-facing gateway; on-prem the gateway fences nothing.
+      ## A /0 admits the whole internet and render_dial.py warns.
+      allow: []
+      ## CIDRs refused ahead of `allow` on the gateway's ingest routes. Door
+      ## loadbalancer refuses a deny list: nothing there enforces one.
+      deny: []
+
+  ## GROUP (d) -- the data-plane doors. docs/deployment/aws.md#receiver-ingress
+  ## sizes the receiver's door in cost buckets, against the scale defined there.
   ingest:
-    ## The receiver carries NO public front door by default: it stays private in
-    ## the VPC, and there are three ways to reach it --
-    ##   1. the tunnel below, dialled through an address the deployer brings.
-    ##   2. the deployer's own peering, VPN or Direct Connect, straight to the
-    ##      receiver's node port or ClusterIP.
-    ##   3. a public or internal load balancer, the explicit costed opt-in
-    ##      -- `mode: public` plus `loadBalancerSourceRanges` set, never empty.
-    ## The body of this sub-block is the dfe-receiver chart's `exposure:` values
-    ## verbatim -- paste it under `exposure:`, never under `receiver:`, which no
-    ## chart reads. The value that decides the door is `exposure.mode` in the
-    ## deploy repo's own overlay.
+    ## The receiver's load balancer SHAPE, the dfe-receiver chart's
+    ## `exposure.public` and `exposure.vpn` values verbatim -- paste the body
+    ## under `exposure:`, never under `receiver:`, which no chart reads. Which
+    ## door it has is `groups.ingest` above. On AWS the controller annotations
+    ## and the Elastic IPs arrive without this block
+    ## (argocd/values/apps/dfe-receiver/aws.yaml, `aws.receiver_eips` below).
     receiver:
-      mode: vpn              # public | internal | vpn -- vpn is the safe cloud default
-      ## Tier 2: a load balancer billed per GB processed, bucket L against
-      ## terabytes a day.
       public:
         serviceType: LoadBalancer
         loadBalancerIP: ""
         loadBalancerClass: ""
         annotations: {}
-        ## Empty is not "unset" -- it is 0.0.0.0/0, the whole internet. A
-        ## deployer opting into `mode: public` sets this, always.
-        loadBalancerSourceRanges: []
       vpn:
         ## Selector label of the tunnel pods -- dfe-common.selectorLabels on the
         ## culvert chart. Matches that chart's default project/component name;
@@ -407,6 +418,13 @@ edge:
     ## creates the external-dns and cert-manager DNS-01 roles. Tier 1 once a
     ## public name is published.
     public_zone: ""
+    ## One Elastic IP per public subnet for the receiver's NLB, which takes them
+    ## at creation only: static addresses for senders' firewalls, and what
+    ## Shield Advanced protects an NLB through. On by default and billed hourly
+    ## per address, the rate the NLB's own public addresses carry -- and billed
+    ## while the ingest door is closed and no NLB exists, bucket XS. false lets
+    ## the NLB take AWS-assigned addresses, which change when it is recreated.
+    receiver_eips: true
     ## Tier 2: a distribution billed per GB served, bucket S. `none` is the only
     ## value today -- the shapes arrive with terraform/modules/edge.
     cloudfront:

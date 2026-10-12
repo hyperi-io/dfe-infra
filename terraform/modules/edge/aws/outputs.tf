@@ -43,6 +43,16 @@ output "gateway_trusted_proxy_cidrs" {
   value       = join(",", distinct(var.gateway_trusted_proxy_cidrs))
 }
 
+output "receiver_eip_allocations" {
+  description = "The receiver NLB's Elastic IP allocation ids, comma-separated in zone order, the order receiver_subnets carries. Empty with receiver.eips false."
+  value       = join(",", [for zone, eip in aws_eip.receiver : eip.id])
+}
+
+output "receiver_subnets" {
+  description = "The public subnet each receiver Elastic IP sits in, comma-separated in the same zone order as receiver_eip_allocations, because the load balancer controller pairs the two by position. Empty with receiver.eips false."
+  value       = join(",", [for zone, subnet in local.receiver_subnets : subnet])
+}
+
 output "load_balancer_controller_role_arn" {
   description = "The role the AWS Load Balancer Controller assumes. Already associated with its service account; named here so a caller can prove which identity reconciles the deployment's load balancers."
   value       = aws_iam_role.lbc.arn

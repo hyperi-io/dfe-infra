@@ -152,6 +152,11 @@ metadata:
     # list. Each blank unless the cloud root wrote one.
     ${DFE_EDGE_SELF_RANGES_ANNOTATION}
     ${DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION}
+    # The receiver NLB's Elastic IPs and their subnets, which layer2-apps.yaml
+    # turns into the receiver's exposure.public.eipAllocations and subnets.
+    # Blank unless the cloud root allocated them.
+    ${DFE_RECEIVER_EIP_ALLOCATIONS_ANNOTATION}
+    ${DFE_RECEIVER_SUBNETS_ANNOTATION}
 type: Opaque
 stringData:
   name: "dfe-${DFE_CLOUD}-${DFE_ENV}"

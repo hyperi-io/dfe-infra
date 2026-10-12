@@ -4,8 +4,9 @@
 #                its own exposure group's allow list, refuses that group's deny
 #                list first, and refuses every address while the list is empty;
 #                that the load balancer is the union of the enabled web groups;
-#                that only a named CDN's X-Forwarded-For is believed; and that
-#                ingest routes and on-prem renders keep their own behaviour.
+#                that only a named CDN's X-Forwarded-For is believed; that the
+#                ingest routes answer to the ingest group; and that on-prem
+#                renders keep their own behaviour.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -94,7 +95,11 @@ PRODUCT = (*PUBLIC, *OIDC, *OTEL_ON, *CLI_PUBLIC)
 EVERY_GROUP = (*PRODUCT, *ADMIN_ON, *FENCE, *allow("api", API))
 
 INGEST = {"otel", "receiver"}
-RECEIVER_ON = ("--set", "routes.receiver.enabled=true")
+# The receiver route renders from the ingest group's door alone.
+RECEIVER_ON = ("--set", "exposure.groups.ingest.door=gateway")
+RECEIVER_BEARER = (*RECEIVER_ON, "--set", "routes.receiver.authMode=bearer")
+SENDERS = ["192.0.2.32/28"]
+ON_SENDERS, DENIED_SENDER = "192.0.2.40", "192.0.2.41"
 # The :80 listener's redirect answers with a 301 and serves nothing.
 REDIRECT = "dfe-gateway-http-redirect"
 
@@ -109,9 +114,9 @@ def group_of(route_name: str) -> str:
     return GROUP_OF[route_name.removesuffix("-public")]
 
 
-def cascade(flavour: str) -> tuple[str, ...]:
+def cascade(flavour: str, cloud: str = "") -> tuple[str, ...]:
     """The values layer2-edge.yaml layers for one cloud flavour, then the profile."""
-    cloud = {"onprem": "local"}.get(flavour, flavour)
+    cloud = cloud or {"onprem": "local"}.get(flavour, flavour)
     return (
         "--namespace", "envoy-gateway-system",
         "-f", str(VALUES / "common.yaml"),
@@ -228,7 +233,7 @@ def test_every_rendered_web_route_carries_its_own_policy(flavour: str) -> None:
 
 
 def test_no_list_leaves_the_load_balancer_open_and_says_deny() -> None:
-    """Envoy is the wall then, so ingest on the same Service still reaches its own auth."""
+    """Envoy is the wall then, refusing every web route on its own policy."""
     docs = render("aws")
     service = envoy_service(docs)
     assert "loadBalancerSourceRanges" not in service, service
@@ -435,12 +440,63 @@ def test_allow_public_opens_the_admin_routes_behind_the_group_check() -> None:
     assert "WARNING: exposure.groups.admin.allowPublic admits every address" in notes("aws", *args)
 
 
-# --- ingest is not a web surface --------------------------------------------------
-def test_ingest_routes_answer_to_their_own_auth_not_the_fence() -> None:
-    docs = render("aws", *OTEL_ON, *RECEIVER_ON, "--set", "routes.receiver.authMode=bearer", *FENCE)
+# --- the ingest routes follow the ingest group ------------------------------------
+@pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
+def test_expected_fail_an_ingest_route_with_no_list_refuses_every_address(flavour: str) -> None:
+    """Empty is closed on an internet-facing gateway, the console's list included."""
+    docs = render(flavour, *OTEL_ON, *RECEIVER_BEARER, *FENCE)
     for name in INGEST:
         (policy,) = route_policies(docs, route(docs, name))
-        assert policy["spec"]["authorization"] == {"defaultAction": "Allow"}, policy
+        assert policy["metadata"]["annotations"]["dfe.hyperi.io/exposure-group"] == "ingest", policy
+        assert admitted(policy) == [], policy
+        assert not passes(docs, name, ON_CONSOLE), name
+        assert not passes(docs, name, OFF_ALL), name
+
+
+def test_an_ingest_route_admits_its_own_list_and_refuses_its_deny_list_first() -> None:
+    docs = render("aws", *OTEL_ON, *RECEIVER_BEARER, *FENCE, *allow("ingest", SENDERS),
+                  *deny("ingest", [f"{DENIED_SENDER}/32"]))
+    for name in INGEST:
+        assert passes(docs, name, ON_SENDERS), name
+        assert not passes(docs, name, DENIED_SENDER), name
+        assert not passes(docs, name, ON_CONSOLE), name
+    # The ingest list reaches no web route.
+    assert not passes(docs, "dfe-ui", ON_SENDERS)
+
+
+def test_the_ingest_list_joins_the_load_balancer_only_while_an_ingest_route_renders() -> None:
+    lists = (*FENCE, *allow("ingest", SENDERS))
+    off = envoy_service(render("aws", *lists))["loadBalancerSourceRanges"]
+    assert SENDERS[0] not in off, off
+    on = envoy_service(render("aws", *OTEL_ON, *lists))["loadBalancerSourceRanges"]
+    assert set(SENDERS + CONSOLE) <= set(on), on
+
+
+def test_expected_fail_the_ingest_group_off_takes_both_ingest_routes_away() -> None:
+    docs = render("aws", *OTEL_ON, *RECEIVER_BEARER, "--set", "exposure.groups.ingest.enabled=false")
+    names = {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+    assert not INGEST & names, sorted(names)
+
+
+@pytest.mark.parametrize("door", ["loadbalancer", "tunnel"])
+def test_expected_fail_the_receiver_route_renders_on_the_gateway_door_alone(door: str) -> None:
+    """Every other door is the receiver's own Service or none, so a route here would be a second door."""
+    docs = render("onprem", "--set", f"exposure.groups.ingest.door={door}", "--set", "routes.receiver.enabled=true")
+    assert "receiver" not in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+
+
+def test_an_on_prem_ingest_deny_list_refuses_only_its_own_addresses() -> None:
+    docs = render("onprem", *OTEL_ON, *deny("ingest", [f"{DENIED_SENDER}/32"]))
+    assert not passes(docs, "receiver", DENIED_SENDER)
+    assert passes(docs, "receiver", OFF_ALL)
+    assert passes(docs, "otel", OFF_ALL)
+
+
+def test_the_notes_say_the_ingest_routes_are_closed_and_warn_on_every_address() -> None:
+    assert "INGEST CLOSED" in notes("aws", *OTEL_ON)
+    assert "INGEST CLOSED" not in notes("aws")
+    warned = notes("aws", *OTEL_ON, *allow("ingest", ["0.0.0.0/0"]))
+    assert "WARNING: exposure.groups.ingest.allow admits every address (0.0.0.0/0)" in warned, warned
 
 
 # --- off the internet: empty is no fence, a list fences its own group --------------
@@ -946,7 +1002,7 @@ def test_the_allow_public_refusal_names_the_routes_the_edge_login_fronts() -> No
 def test_the_receiver_route_is_refused_on_an_internet_facing_service_without_caller_auth(mode: str | None) -> None:
     out = helm("aws", *RECEIVER_ON, *(("--set", f"routes.receiver.authMode={mode}") if mode else ()))
     assert out.returncode != 0, f"authMode {mode} rendered"
-    assert "routes.receiver.enabled is true on an internet-facing Service" in out.stderr, out.stderr
+    assert "exposure.groups.ingest.door is gateway on an internet-facing Service" in out.stderr, out.stderr
 
 
 @pytest.mark.parametrize("flavour", ["aws", "gcp", "azure"])
@@ -956,9 +1012,16 @@ def test_the_receiver_route_renders_once_its_caller_auth_is_declared(flavour: st
     assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
 
 
-def test_the_receiver_route_off_the_internet_is_unchanged() -> None:
-    docs = render("onprem", *RECEIVER_ON)
-    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+@pytest.mark.parametrize("cloud", ["local", "local-dfe", "rancher"])
+def test_every_on_prem_cloud_keeps_the_receiver_route(cloud: str) -> None:
+    """Each cloud file the onprem flavour serves sets door gateway, so none closes ingest by omission."""
+    out = subprocess.run(
+        ["helm", "template", "envoy-gateway-config", str(GATEWAY), *cascade("onprem", cloud)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    docs = [d for d in yaml.safe_load_all(out.stdout) if d]
+    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}, cloud
 
 
 def test_an_unknown_receiver_auth_mode_is_refused_by_name() -> None:

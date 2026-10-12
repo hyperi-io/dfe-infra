@@ -938,3 +938,77 @@ run "rejects_a_proxy_range_of_every_address" {
     var.gateway_trusted_proxy_cidrs,
   ]
 }
+
+// --- the receiver NLB's Elastic IPs: one per public subnet, on by default
+
+run "the_receiver_takes_one_elastic_ip_per_public_subnet_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(aws_eip.receiver) == length(var.network.public_subnet_ids)
+    error_message = "the receiver NLB takes one Elastic IP per public subnet it spans, and on by default"
+  }
+
+  assert {
+    condition     = alltrue([for eip in aws_eip.receiver : eip.domain == "vpc"])
+    error_message = "every receiver Elastic IP must be a VPC address, the only kind an NLB takes"
+  }
+
+  assert {
+    condition     = length(split(",", output.receiver_eip_allocations)) == 3
+    error_message = "receiver_eip_allocations must carry one allocation per public subnet, comma-separated"
+  }
+
+  assert {
+    condition     = output.receiver_subnets == "subnet-0000000000000pub1,subnet-0000000000000pub2,subnet-0000000000000pub3"
+    error_message = "receiver_subnets must carry every public subnet, comma-separated in zone order"
+  }
+
+  // The tunnel forwarder's address is a separate resource and stays off on byo.
+  assert {
+    condition     = length(aws_eip.forwarder) == 0
+    error_message = "the receiver's addresses must not bring the tunnel forwarder's with them"
+  }
+}
+
+// The controller pairs allocation and subnet by position, so both outputs follow one zone order whatever order the network lists.
+run "each_receiver_address_stays_paired_with_its_own_zones_subnet" {
+  command = plan
+
+  variables {
+    network = {
+      vpc_id            = "vpc-00000000000000000"
+      cidr              = "10.90.0.0/16"
+      azs               = ["mock-1c", "mock-1a", "mock-1b"]
+      public_subnet_ids = ["subnet-0000000000000pub3", "subnet-0000000000000pub1", "subnet-0000000000000pub2"]
+    }
+  }
+
+  assert {
+    condition     = output.receiver_subnets == "subnet-0000000000000pub1,subnet-0000000000000pub2,subnet-0000000000000pub3"
+    error_message = "receiver_subnets must follow zone order, so position i names the subnet of the zone whose allocation is position i"
+  }
+
+  assert {
+    condition     = [for zone, eip in aws_eip.receiver : eip.tags["Name"]] == ["dfe-edge-contract-receiver-mock-1a", "dfe-edge-contract-receiver-mock-1b", "dfe-edge-contract-receiver-mock-1c"]
+    error_message = "receiver_eip_allocations must follow the same zone order as receiver_subnets"
+  }
+}
+
+run "turning_the_receiver_eips_off_allocates_none_and_writes_no_fact" {
+  command = plan
+
+  variables {
+    receiver = { eips = false }
+  }
+
+  assert {
+    condition     = length(aws_eip.receiver) == 0
+    error_message = "receiver.eips false must allocate no Elastic IP"
+  }
+
+  assert {
+    condition     = output.receiver_eip_allocations == "" && output.receiver_subnets == ""
+    error_message = "with no Elastic IPs the cluster secret must carry neither annotation, so the NLB takes AWS-assigned addresses"
+  }
+}

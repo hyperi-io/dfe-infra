@@ -28,16 +28,17 @@ and the group's `deny` list is refused first.
 Every web route the chart renders carries its own SecurityPolicy with its group's
 rule; the OIDC ones AND it with their group check. The Gateway-wide policy,
 `dfe-edge-fence`, refuses every address, so it holds only a route another
-namespace attaches. Ingest routes (`otel`, `receiver`) carry an explicit allow,
-since they are not web surfaces, and so does the `:80` redirect, which serves
-nothing but a 301 to the fenced https side.
+namespace attaches. Ingest routes (`otel`, and `receiver` on
+`exposure.groups.ingest.door: gateway`) carry the ingest group's rule the same
+way. The `:80` redirect carries an explicit allow, since it serves nothing but a
+301 to the fenced https side.
 
 One Service carries every listener, so the load balancer cannot tell the groups
 apart: its source ranges are the union of the enabled web groups' allow lists,
-`exposure.selfRanges` and `envoyGateway.service.loadBalancerSourceRanges`. A group
-that admits every address leaves it open. A sender to an ingest route goes in
-`envoyGateway.service.loadBalancerSourceRanges`. The Envoy Service carries the
-state as `dfe.hyperi.io/edge-fence: console=<state>,api=<state>,admin=<state>`.
+the ingest group's while an ingest route renders, `exposure.selfRanges` and
+`envoyGateway.service.loadBalancerSourceRanges`. A group that admits every
+address leaves it open. The Envoy Service carries the web groups' state as
+`dfe.hyperi.io/edge-fence: console=<state>,api=<state>,admin=<state>`.
 
 `exposure.selfRanges` is the cluster's own NAT egress, which the aws root writes
 onto the cluster secret. It is a fact, never an allow list: the deployer's lists

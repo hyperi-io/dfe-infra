@@ -92,18 +92,22 @@ SCENARIOS: dict[str, dict] = {
         },
     },
     "clickhouse-plaintext": {"facts": {}, "infra": {"clickhouse": {"tls": {"enabled": False}}}},
-    # The receiver's public door as docs/INGEST-EDGE.md documents it, with RFC 5737
-    # ranges standing in for the deployment's own senders.
+    # The receiver's load balancer door as docs/INGEST-EDGE.md documents it, with
+    # RFC 5737 ranges standing in for the deployment's own senders.
     "public-ingest": {
         "facts": {},
         "infra": {
             "exposure": {
-                "mode": "public",
+                "groups": {
+                    "ingest": {
+                        "door": "loadbalancer",
+                        "allow": ["198.51.100.0/24", "203.0.113.0/24"],
+                    }
+                },
                 "public": {
                     "annotations": {
                         "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"
                     },
-                    "loadBalancerSourceRanges": ["198.51.100.0/24", "203.0.113.0/24"],
                 },
             }
         },

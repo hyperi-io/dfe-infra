@@ -1,0 +1,12 @@
+# dfe-receiver's own load balancer on GKE, layered after apps/dfe-receiver/values.yaml
+# by argocd/appsets/layer2-apps.yaml. It renders only on exposure.groups.ingest.door
+# loadbalancer with an allow list, which GKE turns into VPC firewall rules from
+# the Service's loadBalancerSourceRanges. There is no GCP tofu root, so this
+# flavour is values-only.
+exposure:
+  public:
+    # A passthrough load balancer targets nodes, and Cluster would SNAT each
+    # sender to a node address before the receiver's rate limit and ip_filter
+    # see it. Local keeps the sender's address and serves only from nodes
+    # running a receiver pod.
+    externalTrafficPolicy: Local

@@ -1,0 +1,15 @@
+# dfe-receiver's own NLB on AWS, rendered only on exposure.groups.ingest.door loadbalancer with an allow list, which fills the NLB's frontend security group.
+exposure:
+  public:
+    annotations:
+      # The controller reconciles only `external` and `nlb-ip`, and with its mutator webhook off an unannotated Service gets a Classic ELB.
+      service.beta.kubernetes.io/aws-load-balancer-type: "external"
+      # Pod IP targets, so no node port hop SNATs the sender's address away.
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+      # The senders are outside the VPC, and an Elastic IP attaches to an internet-facing NLB only.
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+      # The receiver's rate limit and ip_filter judge the TCP peer, which must be the sender rather than the NLB.
+      service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: "preserve_client_ip.enabled=true"
+      # With sender addresses preserved, the pod security groups must admit the senders, which this keeps in step.
+      service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+      # No aws-load-balancer-security-groups: a named group replaces the frontend group the allow list fills, so dfe-extras refuses it.

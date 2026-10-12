@@ -5,11 +5,11 @@ is an edge concern, and dfe-common is shared by every DFE chart.
 Each takes (dict "ctx" $ "key" "<routes values key>").
 
 routeEnabled -- does this route render? First match wins:
-  1. class product, api or infra and its exposure group off -> "" (absolute for
-     the group, so a route's own enabled:true does not beat it)
+  1. its exposure group off                          -> "" (absolute for the
+     group, so a route's own enabled:true does not beat it)
   2. class infra, ownLogin false, and no edgeLogin    -> ""
   3. the backend is another chart's opt-in workload that the deployment is not
-     running                                         -> ""
+     running, or the receiver's door is not this gateway -> ""
   4. enabled false                                   -> ""
   5. otherwise                                       -> "true"
 edgeLogin -- does the infra edge policy render in front of this route? Only then
@@ -22,6 +22,8 @@ otelIngress  -- is the otel-collector chart serving its bearer-token OTLP
 validateOtelIngress -- the switch's render guards, which templates/validate.yaml runs.
 validateReceiver -- refuses the receiver route on an internet-facing Service
   unless routes.receiver.authMode names a mode that checks every caller.
+ingestDoor   -- the receiver's door, exposure.groups.ingest.door, or "" while
+  the ingest group is off.
 routeHost    -- subdomain label, from the route's hostname or hostnames[hostnameKey].
 routeNs      -- namespace of the route and of any SecurityPolicy targeting it.
 infraPolicyRoutes -- JSON array of the keys that render AND take the infra edge
@@ -55,6 +57,8 @@ lbSourceRanges -- JSON array of the load balancer's source ranges.
 oidcFronted  -- JSON array of "<ns>/<route>" an OIDC SecurityPolicy targets, so
   no second policy lands on the same route.
 webRouteKeys -- JSON array of the rendered route keys in a web group.
+fencedRouteKeys -- webRouteKeys and then the rendered ingest routes: every route
+  that carries its own exposure group's CIDR policy.
 refuseRetired -- the retired exposure keys, refused by name.
 */}}
 
@@ -108,7 +112,14 @@ true
 {{- fail (printf "routes.receiver.authMode is %q -- it restates dfe-receiver's config.server.auth.mode, which is none, header, bearer, mtls or both" $mode) -}}
 {{- end -}}
 {{- if and .ctx.Values.envoyGateway.service.internetFacing (include "envoy-gateway-config.routeEnabled" (dict "ctx" .ctx "key" "receiver")) (not (has $mode (list "header" "bearer"))) -}}
-{{- fail (printf "routes.receiver.enabled is true on an internet-facing Service and routes.receiver.authMode is %q -- the route would take ingest from any address the load balancer admits, and the fence does not cover ingest. Set the receiver's own config.server.auth.mode to header or bearer and restate it here as routes.receiver.authMode (mtls and both need the client certificate, which Envoy terminates), or leave this route off and give the receiver its own load balancer" $mode) -}}
+{{- fail (printf "exposure.groups.ingest.door is gateway on an internet-facing Service and routes.receiver.authMode is %q -- the route would take ingest from every address exposure.groups.ingest.allow names, with no check on who sends it. Set the receiver's own config.server.auth.mode to header or bearer and restate it here as routes.receiver.authMode (mtls and both need the client certificate, which Envoy terminates), or set exposure.groups.ingest.door: loadbalancer to give the receiver its own load balancer" $mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.ingestDoor" -}}
+{{- $ingest := index (.ctx.Values.exposure.groups | default dict) "ingest" | default dict -}}
+{{- if $ingest.enabled -}}
+{{- toString $ingest.door -}}
 {{- end -}}
 {{- end -}}
 
@@ -238,7 +249,7 @@ true
 {{- $class := $r.class | default "infra" -}}
 {{- $group := include "envoy-gateway-config.routeGroup" . -}}
 {{- $spec := index (.ctx.Values.exposure.groups | default dict) $group | default dict -}}
-{{- if and (ne $class "ingest") (not $spec.enabled) -}}
+{{- if not $spec.enabled -}}
 {{- else if and (eq $class "infra") (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" .)) -}}
 {{- /* A backend with no login of its own is never published bare. */ -}}
 {{- else if and (eq .key "cruiseControl") (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
@@ -250,6 +261,9 @@ true
 {{- else if and (eq .key "otel") (not (include "envoy-gateway-config.otelIngress" (dict "ctx" .ctx))) -}}
 {{- /* Without the switch the collector has no authenticated receiver, and the
        only port left to route to takes OTLP from anyone. */ -}}
+{{- else if and (eq .key "receiver") (ne (include "envoy-gateway-config.ingestDoor" (dict "ctx" .ctx)) "gateway") -}}
+{{- /* Any other door is the receiver's own Service or none, and this route
+       would be a second door around it. */ -}}
 {{- else if $r.enabled -}}
 true
 {{- end -}}
@@ -337,14 +351,19 @@ true
 {{- end -}}
 
 {{- /* One Service carries every listener, so the load balancer admits the union
-       of the web groups. An open group needs every address at L4, so the web
-       groups add nothing then and only an explicit
-       envoyGateway.service.loadBalancerSourceRanges narrows the door. */ -}}
+       of the web groups, and of the ingest group while an ingest route renders.
+       An open group needs every address at L4, so the groups add nothing then
+       and only an explicit envoyGateway.service.loadBalancerSourceRanges
+       narrows the door. */ -}}
 {{- define "envoy-gateway-config.lbSourceRanges" -}}
 {{- $svc := .ctx.Values.envoyGateway.service.loadBalancerSourceRanges | default list -}}
 {{- $web := list -}}
 {{- $open := false -}}
-{{- range $g := list "console" "api" "admin" -}}
+{{- $groups := list "console" "api" "admin" -}}
+{{- if include "envoy-gateway-config.ingestRoutes" (dict "ctx" .ctx) | fromJsonArray -}}
+{{- $groups = append $groups "ingest" -}}
+{{- end -}}
+{{- range $g := $groups -}}
 {{- $f := include "envoy-gateway-config.groupFence" (dict "ctx" $.ctx "group" $g) | fromJson -}}
 {{- if ne $f.state "off" -}}
 {{- if $f.open -}}
@@ -384,6 +403,12 @@ true
 {{- end -}}
 {{- end -}}
 {{- $keys | sortAlpha | toJson -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.fencedRouteKeys" -}}
+{{- $web := include "envoy-gateway-config.webRouteKeys" (dict "ctx" .ctx) | fromJsonArray -}}
+{{- $ingest := include "envoy-gateway-config.ingestRoutes" (dict "ctx" .ctx) | fromJsonArray -}}
+{{- concat $web $ingest | toJson -}}
 {{- end -}}
 
 {{- /* Local rate-limit rules: a bucket per client address in each family, and with

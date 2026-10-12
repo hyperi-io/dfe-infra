@@ -286,8 +286,10 @@ api:
 # The groups are supplied by the deploy-config SSoT (argocd/values/common.yaml,
 # with each cloud's defaults in its edge-<flavour>.yaml), and a missing group
 # refuses to render. A route's class picks its group: product -> console, api ->
-# api, infra -> admin, ingest -> ingest. This chart enforces console, api and
-# admin; ingest and vpn are validated here and wired by the charts behind them.
+# api, infra -> admin, ingest -> ingest. This chart enforces console, api, admin
+# and the ingest routes it renders (otel, and the receiver while
+# ingest.door is gateway); the receiver's own load balancer and vpn are wired by
+# the charts behind them.
 #
 # Per group:
 #   enabled -- false takes every route of the group off the edge and BEATS a
@@ -306,12 +308,15 @@ api:
 #   admin.tools.<route key> -- that admin UI also answers on a public hostname
 #              under ui.public_domain.
 #   api.scim -- the engine's /api/v1/scim/v2 rides the api route.
-#   ingest.door, vpn.door -- which door the charts behind them render.
+#   ingest.door -- loadbalancer (the receiver's own Service), gateway (the
+#              receiver route below) or tunnel (no public door).
+#   vpn.door -- which door culvert renders.
 #
 # The load balancer cannot tell the groups apart, because one Service carries
 # every listener, so its loadBalancerSourceRanges is the union of the enabled
-# web groups' allow lists, selfRanges and envoyGateway.service.
-# loadBalancerSourceRanges; Envoy separates the groups per route.
+# web groups' allow lists, the ingest group's while an ingest route renders,
+# selfRanges and envoyGateway.service.loadBalancerSourceRanges; Envoy separates
+# the groups per route.
 exposure:
   groups: {}
   # The cluster's own egress addresses (and a guarded test run's runner), a FACT
@@ -418,28 +423,26 @@ ui:
 #              Group console.
 #   api     -- the engine's CLI families, /openapi.json and SCIM. Group api.
 #   infra   -- the ops surfaces. Group admin; edge RBAC applies (see edgePolicy).
-#   ingest  -- data plane (otel, receiver). Group ingest, which this chart does
-#              not fence.
+#   ingest  -- data plane (otel, receiver). Group ingest.
 #
 # Cascade, in order, first match wins:
-#   1. class product, api or infra and its group's enabled: false
-#                                                        -> not rendered
+#   1. its group's enabled: false                        -> not rendered
 #   2. class infra, ownLogin false, and the edge policy is not in front of it
 #      (oidc.enabled, an oidc.providers entry and edgePolicy true)
 #                                                        -> not rendered
 #   3. the backend is another chart's opt-in workload and that chart is not
 #      deploying it (cruiseControl from the kafka.* keys, forgejo from
-#      deployRepo.bundled, otel from otel.ingress.enabled, all above)
+#      deployRepo.bundled, otel from otel.ingress.enabled, all above), or the
+#      receiver's exposure.groups.ingest.door is not gateway
 #                                                        -> not rendered
 #   4. routes.<name>.enabled: false                      -> not rendered
 #   5. otherwise                                         -> rendered
 #
 # Per-route fields:
 #   class        -- product | api | infra | ingest (above)
-#   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
-#                   reachable by default). The receiver defaults false because
-#                   it pairs with dfe-receiver's exposure.mode. otel stays true
-#                   and waits on otel.ingress.enabled instead (rule 3).
+#   enabled      -- per-route opt-out. Every route defaults true (D5: externally
+#                   reachable by default); otel waits on otel.ingress.enabled
+#                   and the receiver on exposure.groups.ingest.door (rule 3).
 #   routeName    -- the HTTPRoute's metadata.name, and what a SecurityPolicy
 #                   targetRef names. Defined here once, not in the template.
 #   hostnameKey  -- which entry of the canonical `hostnames` map supplies the
@@ -686,14 +689,14 @@ routes:
       name: Deployment links
       purpose: Every web surface this deployment exposes, with a reachability check
 
-  # dfe-receiver data ingest -- the path dfe-receiver's exposure.mode:
-  # internal depends on, so flip the two together. Off by default because the
-  # receiver chart defaults to public, where it has its own LoadBalancer and
-  # this route would be a second door. An HTTPRoute carries HTTP, so only the
-  # receiver's http listener is routable here.
+  # dfe-receiver data ingest on receiver.{domain}, rendered only while
+  # exposure.groups.ingest.door is gateway: the other doors are the receiver's
+  # own load balancer or none, and this route would be a second door around
+  # them. An HTTPRoute carries HTTP, so only the receiver's http listener is
+  # routable here.
   receiver:
     class: ingest
-    enabled: false
+    enabled: true
     routeName: receiver
     hostnameKey: receiver
     hostname: ""

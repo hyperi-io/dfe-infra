@@ -125,6 +125,14 @@ variable "tunnel" {
   }
 }
 
+variable "receiver" {
+  description = "The receiver's own NLB (argocd/values/apps/dfe-receiver/aws.yaml), which the chart renders on exposure.groups.ingest.door loadbalancer once the ingest group names its senders. eips allocates one Elastic IP per public subnet for it, on by default, because an NLB takes Elastic IPs at creation only and Shield Advanced protects an NLB through them alone. Each address is billed hourly whether or not the NLB exists, the same rate the NLB's own public addresses carry. false allocates none, and the NLB takes AWS-assigned addresses that change when it is recreated."
+  type = object({
+    eips = optional(bool, true)
+  })
+  default = {}
+}
+
 variable "extra_self_ranges" {
   description = "Addresses beyond egress_addresses that this deployment's own tooling reaches the public gateway from, such as a guarded test run's runner. They join self_ranges, which every web exposure group admits. Never a deployer's allow list: those are the gateway chart's exposure.groups, in the deploy repo."
   type        = list(string)

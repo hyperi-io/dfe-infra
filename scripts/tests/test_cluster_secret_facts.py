@@ -83,6 +83,15 @@ CONDITIONAL_FACTS = (
         "layer2-edge.yaml",
         "trusted_proxy_cidrs",
     ),
+    # test_appset_oci_sources.py renders the appset to prove each lands on the
+    # receiver's exposure.public and no other app's.
+    (
+        "DFE_RECEIVER_EIP_ALLOCATIONS",
+        "dfe.hyperi.io/receiver_eip_allocations",
+        "layer2-apps.yaml",
+        "eipAllocations",
+    ),
+    ("DFE_RECEIVER_SUBNETS", "dfe.hyperi.io/receiver_subnets", "layer2-apps.yaml", "subnets"),
 )
 
 # A JSON map carries double quotes of its own, so its annotation is

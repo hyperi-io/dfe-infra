@@ -9,8 +9,8 @@
 # Cost is a T-shirt bucket against the cluster's compute plus a named pricing
 # model, never a rate (docs/deployment/aws.md#how-costs-are-described).
 #
-# A KEY STAYS IN azure.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT --
-# exposure.mode is the dfe-receiver chart's and stays there.
+# A KEY STAYS IN azure.yaml WHEN A CHART OUTSIDE THIS MODULE READS IT. The
+# receiver's own load balancer values are argocd/values/apps/dfe-receiver/azure.yaml.
 #
 # THERE IS NO AZURE TOFU ROOT (terraform/environments holds aws, aws-state and
 # local), so this flavour is values-only until one exists.

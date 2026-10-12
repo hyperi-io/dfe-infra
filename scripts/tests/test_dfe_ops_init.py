@@ -141,6 +141,24 @@ def test_the_wizards_otel_block_renders_off_with_no_deprecation(tmp_path: Path) 
         assert "(edge.ingest.otel.enabled): off" in result.stderr, (target, result.stderr)
 
 
+@pytest.mark.parametrize(("answers", "door"), [(ONPREM_ANSWERS, "gateway"), (AWS_MSK_ANSWERS, "loadbalancer")],
+                         ids=["onprem", "aws"])
+def test_the_wizard_writes_the_ingest_door_its_target_defaults_to(answers: dict, door: str, tmp_path: Path) -> None:
+    """The cloud overlays decide the same doors, so the dial must not report another."""
+    text = wiz.build_dial_text(wiz.run_wizard(wiz.WizardIO(answers=dict(answers))))
+    assert "      mode: vpn" not in text, text
+    assert "      mode: internal" not in text, text
+    dial_path = tmp_path / "deployment.yaml"
+    dial_path.write_text(text, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path),
+         "--out", str(tmp_path / "bootstrap.env")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"(edge.groups.ingest, pasted as exposure.groups.ingest): {door}" in result.stderr, result.stderr
+
+
 def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_path: Path) -> None:
     io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS))
     answers = wiz.run_wizard(io)

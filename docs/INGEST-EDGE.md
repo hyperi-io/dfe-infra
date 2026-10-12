@@ -5,34 +5,39 @@ allowed to send it. The web plane is a separate door with a separate model
 -- see [EDGE-AUTH.md](EDGE-AUTH.md) for the UIs and their edge RBAC.
 
 `dfe-receiver` is a single-homed airlock: it takes traffic from outside and
-produces to local Kafka, which never faces the network. Its chart owns the
-door in `exposure.mode`.
+produces to local Kafka, which never faces the network. Its door is the ingest
+exposure group, `exposure.groups.ingest` in `argocd/values/common.yaml`, which a
+deployment sets in its deploy repo's `infra/common.yaml`. The gateway chart reads
+the same block, so one value decides both charts.
 
-| mode | What renders | Client CIDR control |
+| `door` | What renders | Client CIDR control |
 |---|---|---|
-| `public` (default) | one LoadBalancer per protocol family carrying every public port of the receiver's contract that its config turns on, plus a NetworkPolicy admitting the same ports | `exposure.public.loadBalancerSourceRanges` |
-| `internal` | ClusterIP only; the door is the Gateway HTTPRoute `routes.receiver` in envoy-gateway-config, on `receiver.{domain}` | the Gateway's own edge |
-| `vpn` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the VPN pods, not the world, to the `listeners` marked `exposed` | the VPN's own LoadBalancer, plus per-client PKI or OIDC |
+| `loadbalancer` (cloud default) | while `allow` names someone: one LoadBalancer per protocol family carrying every public port of the receiver's contract that its config turns on, plus a NetworkPolicy admitting the same ports. With `allow` empty: nothing, ClusterIP only | `allow` as the load balancers' `loadBalancerSourceRanges` |
+| `gateway` (on-prem default) | ClusterIP only; the door is the gateway route `routes.receiver` on `receiver.{domain}` | `allow` and `deny` on the route's own SecurityPolicy, and `allow` joins the gateway load balancer's source ranges |
+| `tunnel` | ClusterIP only; the door is the edge-fleet tunnel, and the ingest NetworkPolicy admits the tunnel pods, not the world, to the `listeners` marked `exposed` | the tunnel's own load balancer, plus per-client PKI or OIDC |
 
-`exposure.public` also takes `annotations` and `loadBalancerClass` for the load balancer controller, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. The render refuses scalo-service's own `publicService.*` keys on the receiver, because nothing builds its load balancer from them (`loadBalancerIP` is the appset's, carrying that address), and refuses `loadBalancerSourceRanges` beside any `serviceType` but `LoadBalancer`, where Kubernetes ignores it.
+`enabled: false` renders no public door on any `door`, and takes the gateway's ingest routes (the receiver's and otel's) off too.
 
-## The default is open
+`exposure.public` carries the load balancer's shape: `annotations` and `loadBalancerClass` for the load balancer controller, `externalTrafficPolicy`, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. Each cloud's file under `argocd/values/apps/dfe-receiver/` sets it: AWS Load Balancer Controller annotations (`external`, IP targets, internet-facing, client address preserved, backend security group rules managed) on AWS, and `externalTrafficPolicy: Local` on GCP and Azure, whose load balancers target nodes.
 
-**A default deploy is internet-facing on the ingest ports, and
-`loadBalancerSourceRanges` starts EMPTY, which means `0.0.0.0/0` -- every
-source address on earth.** It is not "unset", it is "everyone". Set it to
-the CIDRs that may send, or put an edge in front (cloud LB, WAF, mTLS, API
-gateway) that does.
+On AWS the TCP load balancer also takes the Elastic IPs the cloud root allocates, one per public subnet (`terraform/modules/edge/aws/receiver.tf`, the dial's `edge.aws.receiver_eips`), which reach the chart as `exposure.public.eipAllocations` and `exposure.public.subnets` through the cluster secret. The UDP load balancer, which renders only when a UDP listener is on, takes AWS-assigned addresses.
 
-Nothing else is holding that door. The receiver's `server.auth.mode`
-defaults to `none` in the app and in the engine's config model, and the
-chart ships `config: {}`, so a deployment that has not configured auth
-accepts unauthenticated posts on `/ingest`. Body size, request timeout and
-the per-IP rate limiter are the only other limits. A public deployment
-needs `loadBalancerSourceRanges`, or `server.auth.mode: bearer` with tokens
-in the engine's overlay, or both.
+## Refused rather than ignored
 
-A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths. Every other public listener in the receiver's contract opens with its own `config.<name>.enabled`, and in public mode reaches the load balancer and the policy with it:
+- `exposure.mode` is retired: `public` is `door: loadbalancer`, `internal` is `door: gateway`, `vpn` is `door: tunnel`. A render that still sets it fails and names the replacement.
+- `exposure.public.loadBalancerSourceRanges` is retired: the allow list is `exposure.groups.ingest.allow`.
+- scalo-service's own `publicService.*` keys, because nothing builds the receiver's load balancer from them (`loadBalancerIP` is the appset's, carrying the receiver address).
+- `allow` beside any `serviceType` but `LoadBalancer`, where Kubernetes ignores source ranges.
+- An `aws-load-balancer-security-groups` annotation, which replaces the frontend security group the controller fills from `allow`, so the allow list would stop filtering.
+- `deny` on `door: loadbalancer` (see below).
+
+## Empty is closed, and a /0 is open
+
+**On `door: loadbalancer` an empty `allow` renders no load balancer at all.** A cloud deploy has no public ingest until the deploy repo names the senders. A `/0` of either family admits every address on earth: it renders, marks each Service `dfe.hyperi.io/ingest-fence: allow-all`, and the chart's NOTES and `render_dial.py` warn. On an internet-facing gateway an empty `allow` refuses every address on the ingest routes; on-prem the gateway fences nothing while it is empty.
+
+The allow list is not authentication. The receiver's `server.auth.mode` defaults to `none` in the app and in the engine's config model, so a deployment that has not configured auth accepts unauthenticated posts on `/ingest` from every address `allow` names. Set `server.auth.mode: bearer` with tokens in the engine's overlay as well.
+
+A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths. Every other public listener in the receiver's contract opens with its own `config.<name>.enabled`, and on `door: loadbalancer` reaches the load balancer and the policy with it:
 
 | `<name>` | Ports |
 |---|---|
@@ -46,22 +51,21 @@ A fresh deploy exposes one listener, `http` 8080, the documented core data path 
 | `gelf` | 12201 |
 | `flow` | 2055, 4739 and 6343, all UDP |
 
-Client-CIDR filtering is the LoadBalancer's job, not the NetworkPolicy's: under the default `externalTrafficPolicy` kube-proxy SNATs external traffic to a node address, so an `ipBlock` would match the node rather than the client and drop traffic the LB had already allowed. The public-mode ingest NetworkPolicy therefore admits each port the load balancers serve from any source and leaves the allow-list to the LB. It renders from the same port list as the load balancers, in `extraObjects` of `argocd/values/apps/dfe-receiver/values.yaml`, and `exposure.networkPolicy.enabled: false` drops it. vpn mode's policy of the same name is dfe-extras', on the `exposed` listeners.
+The load balancer door's NetworkPolicy admits each port the load balancers serve from any source and leaves the allow list to the load balancer, which sees the sender's own address: IP targets with the client address preserved on AWS, `externalTrafficPolicy: Local` on GCP and Azure. It renders from the same port list as the load balancers, in `extraObjects` of `argocd/values/apps/dfe-receiver/values.yaml`, and `exposure.networkPolicy.enabled: false` drops it. The tunnel door's policy of the same name is dfe-extras', on the `exposed` listeners.
 
-## Internal mode routes HTTP only
+## The deny list
 
-Internal mode routes only the `http` listener, because an HTTPRoute carries
-HTTP. A gRPC, lumberjack, netflow or syslog listener marked `exposed: true`
-in internal mode has no path at all, so the chart **fails the render** and
-names the listener rather than deploying something that silently receives
-nothing. The two ways out are public mode, or a dedicated Gateway listener
-with its own TCPRoute/UDPRoute.
+`deny` refuses addresses ahead of `allow`. Cloud load balancer rules (an NLB security group, a VPC firewall, an NSG) are allow-only, so a deny list has to land behind them:
 
-Pair the two values deliberately: `routes.receiver.enabled` ships `false`
-because the receiver ships `public`, where it has its own LoadBalancer and
-the route would be a second door. A deployment on `internal` flips both.
+- On `door: gateway`, Envoy refuses `deny` on the receiver and otel routes before it checks `allow`.
+- On `door: loadbalancer` the one place left is the receiver's own `server.ip_filter` in `denylist` mode. The receiver reads that from its config file, which no values layer can derive from the ingest group, so a `deny` on this door is refused at render rather than accepted and ignored. Narrow `allow` instead.
 
-`vpn` mode is not caught by that guard, and deliberately so: a tunnel
-delivers a client onto the pod network and it dials the ClusterIP directly,
-so every exposed listener is reachable there without a Gateway route at all.
-See [deployment/edge-vpn.md](deployment/edge-vpn.md).
+`server.ip_filter` does not reach the receiver's gRPC listeners in any case: tonic runs their accept loop, so gRPC and OTLP gRPC (4317) take no ip_filter and no per-IP rate limit (dfe-receiver `docs/HARDENING.md`). The load balancer's `allow` still applies to them, and so does their own `auth.mode`.
+
+## The gateway door routes HTTP only
+
+`door: gateway` routes only the `http` listener, because an HTTPRoute carries HTTP. A gRPC, lumberjack, netflow or syslog listener marked `exposed: true` on this door has no path at all, so the chart **fails the render** and names the listener rather than deploying something that silently receives nothing. The two ways out are `door: loadbalancer`, or a dedicated Gateway listener with its own TCPRoute/UDPRoute.
+
+The gateway renders the receiver route from the same `door`, so there is no second switch to pair with it. On an internet-facing gateway the route refuses to render unless `routes.receiver.authMode` restates a receiver `server.auth.mode` that checks every caller.
+
+`door: tunnel` is not caught by that guard, and deliberately so: a tunnel delivers a client onto the pod network and it dials the ClusterIP directly, so every exposed listener is reachable there without a Gateway route at all. See [deployment/edge-vpn.md](deployment/edge-vpn.md).
