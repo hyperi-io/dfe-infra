@@ -848,6 +848,53 @@ def test_a_fleet_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(m
         cloud_sweep.tagging_hit_gone(_tagging_hit(FLEET_ARN), REGION)
 
 
+SPOT_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:spot-instances-request/sir-0example"
+SPOT_NOT_FOUND = "An error occurred (InvalidSpotInstanceRequestID.NotFound) when calling the DescribeSpotInstanceRequests operation"
+
+
+def _spot(state: str, instance_id: str | None = None) -> subprocess.CompletedProcess:
+    request: dict[str, str] = {"State": state}
+    if instance_id:
+        request["InstanceId"] = instance_id
+    return _ok({"SpotInstanceRequests": [request]})
+
+
+@pytest.mark.parametrize(
+    ("replies", "gone"),
+    [
+        pytest.param([_fail(SPOT_NOT_FOUND)], True, id="purged-request"),
+        pytest.param([_ok({"SpotInstanceRequests": []})], True, id="no-longer-returned"),
+        pytest.param([_spot("cancelled")], True, id="cancelled-without-instance"),
+        pytest.param([_spot("closed", "i-1"), TERMINATED], True, id="closed-instance-terminated"),
+        pytest.param([_spot("closed", "i-1"), RUNNING], False, id="closed-instance-running"),
+        pytest.param([_spot("active", "i-1")], False, id="active-request"),
+        pytest.param([_spot("open")], False, id="open-request"),
+    ],
+)
+def test_a_spot_request_is_gone_once_aws_purges_or_closes_it(
+    monkeypatch: pytest.MonkeyPatch, replies: list[subprocess.CompletedProcess], gone: bool
+) -> None:
+    """The tagging API goes on listing a spot request EC2 has already purged."""
+    calls: list[list[str]] = []
+    queue = list(replies)
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return queue.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(SPOT_ARN), REGION) is gone
+    assert calls[0][calls[0].index("--spot-instance-request-ids") + 1] == "sir-0example"
+
+
+def test_a_spot_request_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (UnauthorizedOperation) when calling the DescribeSpotInstanceRequests operation"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="UnauthorizedOperation"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(SPOT_ARN), REGION)
+
+
 def test_another_eks_class_is_never_judged_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
         raise AssertionError("nothing is described for a class with no gone-check")
