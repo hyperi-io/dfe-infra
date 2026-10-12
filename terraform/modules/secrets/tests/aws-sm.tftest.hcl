@@ -155,6 +155,55 @@ run "an_out_of_range_window_is_refused" {
   expect_failures = [var.recovery_window_days]
 }
 
+// The gateway chart's PushSecret creates the internal CA root at
+// <project>/<env>/pki/internal-ca; every other secret stays read-only to ESO.
+run "eso_writes_the_internal_ca_path_and_nothing_else" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      length(setsubtract(["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:TagResource", "secretsmanager:DescribeSecret"], s.actions)) == 0
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/pki/*"])
+    ])
+    error_message = "the external-secrets role must be able to create, write, tag and describe secrets under <path>/pki/ -- the PushSecret that persists the internal CA root needs all four"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      length(setintersection(s.actions, ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:TagResource"])) == 0
+      || alltrue([for r in s.resources : endswith(r, ":secret:dfe/test/pki/*")])
+    ])
+    error_message = "no write grant may reach a secret outside <path>/pki/ -- the seeds and every other secret stay read-only to ESO"
+  }
+}
+
+run "the_internal_ca_write_grant_follows_the_store_prefix" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    prefix = "org-secrets"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      contains(s.actions, "secretsmanager:CreateSecret")
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/pki/*"])
+    ])
+    error_message = "ESO pushes to <store prefix>/<project>/<env>/pki/internal-ca, so the write grant must carry the prefix too"
+  }
+}
+
 // An account guardrail that refuses CreateRole without a boundary refuses the
 // external-secrets role without one.
 run "the_eso_role_carries_the_permissions_boundary" {

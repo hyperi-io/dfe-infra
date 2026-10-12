@@ -47,6 +47,10 @@ The store path is `<project>/<env>/pki/internal-ca`, properties `tls_crt` and
 `tls_key` -- underscored, because the Vault provider reads a property as a gjson
 path and a dot means nesting.
 
+On AWS Secrets Manager the external-secrets role can create, write, tag and describe secrets under `<project>/<env>/pki/` and nowhere else (`terraform/modules/secrets/aws-sm`). ESO creates the root under the account's `aws/secretsmanager` key, not the deployment's own, so it outlives the key a teardown schedules for deletion.
+
+On a first bootstrap the restore ExternalSecret stays `Ready=False`: there was nothing to restore, and once cert-manager mints the root a `CreatedOnce` ExternalSecret never writes again. `bootstrap/smoke-test.sh` does not count a `CreatedOnce` ExternalSecret whose Secret exists.
+
 ## Estate-PKI mode (`tls.vault`)
 
 In an estate that already runs a PKI, point the edge issuer at it and every

@@ -8,7 +8,6 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 set -euo pipefail
 
-readonly SCRIPT_NAME="$(basename "${0}")"
 PASS=0
 FAIL=0
 
@@ -22,6 +21,22 @@ check() {
         echo "  [FAIL] ${name}"
         (( FAIL++ )) || true
     fi
+}
+
+# Fails on any ExternalSecret whose Ready condition is False, or when there are none; a CreatedOnce one whose target Secret already exists never writes again, so its condition is skipped.
+externalsecrets_synced() {
+    local listing ns name ready policy target seen=0
+    listing="$(kubectl get externalsecrets -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.status.conditions[?(@.type=="Ready")].status}{"|"}{.spec.refreshPolicy}{"|"}{.spec.target.name}{"\n"}{end}' 2>/dev/null)" || return 1
+    while IFS='|' read -r ns name ready policy target; do
+        [[ -n "${name}" ]] || continue
+        seen=1
+        [[ "${ready}" == "False" ]] || continue
+        if [[ "${policy}" == "CreatedOnce" ]] && kubectl -n "${ns}" get secret "${target:-${name}}" >/dev/null 2>&1; then
+            continue
+        fi
+        return 1
+    done <<<"${listing}"
+    (( seen ))
 }
 
 echo "=== DFE Layer 1 Smoke Test ==="
@@ -52,8 +67,7 @@ echo ""
 echo "--- ESO ---"
 # Assert on the secrets the deploy consumes, not on one named store: an unused
 # optional store is not a broken deployment.
-check "every ExternalSecret is synced" \
-  "test -n \"\$(kubectl get externalsecrets -A -o name 2>/dev/null)\" && ! kubectl get externalsecrets -A -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\"\n\"}{end}' | grep -q False"
+check "every ExternalSecret is synced" "externalsecrets_synced"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
