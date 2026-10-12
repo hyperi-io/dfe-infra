@@ -177,7 +177,7 @@ def run(args: argparse.Namespace) -> int:
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
             walk(current, case, archive_exec, restart_exec)
         except Exception as exc:  # a Playwright timeout IS the finding
-            driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
+            driver.record("run", "failed", steps.failure_line(exc))
         finally:
             context.close()
             browser.close()

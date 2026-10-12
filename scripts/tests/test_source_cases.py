@@ -423,6 +423,29 @@ class TestTheConsoleOrApiDecision:
         assert "\n" not in reason
         assert reason == "the console could not: TimeoutError: locator resolved to nothing"
 
+    def test_a_playwright_timeout_still_names_the_control_it_waited_on(self):
+        error = TimeoutError(
+            "Locator.click: Timeout 30000ms exceeded.\n"
+            "Call log:\n"
+            "  - waiting for get_by_role(\"tab\", name=\"Table Settings\", exact=True)\n"
+            "  -   locator resolved to <div class=\"ant-tabs-tab\">...</div>\n"
+            "  - attempting click action\n"
+        )
+
+        for line in (steps.failure_line(error), steps.refusal(error)):
+            assert "\n" not in line
+            assert "Timeout 30000ms exceeded" in line
+            assert 'get_by_role("tab", name="Table Settings", exact=True)' in line
+
+    def test_the_locator_line_is_bounded(self):
+        error = TimeoutError("Locator.click: Timeout 1ms exceeded.\nCall log:\n  - waiting for locator(\"" + "x" * 2000 + "\")")
+
+        assert len(steps.failure_line(error)) <= steps.FAILURE_LINE_MAX
+
+    def test_an_error_with_no_call_log_keeps_its_headline(self):
+        assert steps.failure_line(RuntimeError("boom")) == "RuntimeError: boom"
+        assert steps.failure_line(RuntimeError("")) == "RuntimeError: "
+
     def test_a_fallback_never_fails_the_run_so_an_older_console_still_passes(self):
         from acceptance.onboarding import wizard
 

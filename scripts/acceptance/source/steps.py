@@ -90,9 +90,28 @@ def _pick_open_option(page, text: str) -> None:
     option.first.click(timeout=STEP_TIMEOUT_MS)
 
 
+FAILURE_LINE_MAX = 240
+
+
+def failure_line(exc: Exception) -> str:
+    """The error's headline plus the call-log line that names the control it waited on.
+
+    A Playwright timeout headline reads only "Locator.click: Timeout 30000ms
+    exceeded."; the locator is on the first "waiting for" line of the call log.
+    """
+    lines = str(exc).splitlines() or [""]
+    waiting = next((ln.strip(" -") for ln in lines[1:] if "waiting for" in ln), "")
+    line = f"{type(exc).__name__}: {lines[0]}"
+    if waiting:
+        line = f"{line} ({waiting})"
+    if len(line) > FAILURE_LINE_MAX:
+        line = line[: FAILURE_LINE_MAX - 3] + "..."
+    return line
+
+
 def refusal(exc: Exception) -> str:
     """One line naming what the console could not do, for an api-fallback row."""
-    return f"the console could not: {type(exc).__name__}: {str(exc).splitlines()[0]}"
+    return f"the console could not: {failure_line(exc)}"
 
 
 def console_outcome(console_detail: str, refused: str, api_detail: str) -> tuple[str, str]:
