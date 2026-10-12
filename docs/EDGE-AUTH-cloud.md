@@ -93,8 +93,8 @@ dial's own spelling. `ui.rate_limit.per_client_requests` is the chart's alone.
 | `exposure.groups.admin.tools.<route>` | every tool `false` | Which admin UIs get a public hostname, once the admin group is on. |
 | `exposure.groups.<group>.allow`, `.deny` | `[]` (nobody, internet-facing) | Who may reach the group's routes, at Envoy AND, as a union, at the load balancer. |
 | `ui.trusted_proxy_cidrs` | `""` (no forwarded header believed) | A CDN or other L7 proxy in front of the public hostnames, whose `X-Forwarded-For` names the client. |
-| `ui.rate_limit` | on, 300/Minute, `local` | The wall a credential-stuffing run hits before the login: one bucket per public route, per proxy replica, that every caller shares. |
-| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | The limit on every internal-name web route on an internet-facing Service, counted per client address, per route, per proxy replica, so one caller's dashboard cannot empty HyperDX for the rest. |
+| `ui.rate_limit` | on, 6000/Minute, `local` | Each public route's shared bucket, the wall a distributed credential-stuffing run meets before the login, per proxy replica. |
+| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | A bucket per client address, per route, per proxy replica, on every public route and on every internal-name web route of an internet-facing Service, so one caller's dashboard cannot empty HyperDX for the rest. |
 | `envoyGateway.connectionLimit` | on, 10000 | Concurrent connections each listener takes per proxy replica. |
 | `ui.waf.mode` | `none` | Only `none` renders. |
 | `ui.tls` | `"1.2"`, HSTS on | The public TLS floor and `Strict-Transport-Security`. |
@@ -137,8 +137,9 @@ These fail the render rather than shipping a weaker edge:
   root refuse it too.
 - **`rate_limit.scope: global`**, which needs a Redis backend named in the
   EnvoyGateway install config.
-- **`rate_limit.per_client_requests` that is not a whole number from 1 to
-  4294967295**, the range Envoy Gateway admits. 0 would refuse every caller.
+- **`rate_limit.requests` or `rate_limit.per_client_requests` that is not an
+  unquoted whole number from 1 to 4294967295**, the range Envoy Gateway admits.
+  0 would refuse every caller, and the old dial's quoted `"300"` is a string.
 - **`waf.mode` other than `none`.** A WAF terminates TLS above Envoy, which
   moves the public certificate to the cloud's certificate store.
 - **A `ui.public.<name>` with no route**, rather than the flag doing nothing.

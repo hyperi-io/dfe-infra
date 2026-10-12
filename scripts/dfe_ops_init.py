@@ -707,7 +707,7 @@ def build_dial_text(a: Answers) -> str:
         "      hsts: true\n"
         "    rate_limit:\n"
         "      enabled: true\n"
-        '      requests: "300"\n'
+        "      requests: 6000\n"
         "      unit: Minute\n"
         "      scope: local\n"
         f'    allowed_cidrs: "{a.ui_allowed_cidrs}"\n'

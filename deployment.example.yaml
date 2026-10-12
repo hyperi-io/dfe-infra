@@ -165,14 +165,14 @@ edge:
     tls:
       min_version: "1.2"     # 1.2 | 1.3
       hsts: true
-    ## Sized for a handful of analysts and admins, so a credential-stuffing run
-    ## hits a wall before it hits the login. local counts per route per proxy
-    ## replica, not per attacker; per-attacker counting needs Redis and an Envoy
+    ## Each public route's shared bucket, the wall a distributed
+    ## credential-stuffing run meets, sized so a busy console never does. local
+    ## counts per route per proxy replica, and global needs Redis and an Envoy
     ## Gateway install change, so it is refused. Tier 1, and the chart's
-    ## `ui.rate_limit` verbatim.
+    ## `ui.rate_limit` verbatim, so `requests` is an unquoted whole number.
     rate_limit:
       enabled: true
-      requests: "300"
+      requests: 6000
       unit: Minute           # Second | Minute | Hour | Day | Month | Year
       scope: local           # local only
     ## Who may reach dfe-ui, HyperDX and the engine's browser families, to paste

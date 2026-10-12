@@ -4,9 +4,8 @@
 {{- range $key := include "envoy-gateway-config.webRouteKeys" (dict "ctx" .) | fromJsonArray }}
 {{- $r := index $.Values.routes $key }}
 ---
-# One bucket per client address per route per proxy replica. A rule with no
-# client selector is one bucket every caller shares, so none is rendered, and a
-# source CIDR matches one address family, so each family has its own rule.
+# One bucket per client address per route per proxy replica, and no shared
+# bucket, so one caller's dashboard cannot empty the route for everyone else.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:
@@ -22,14 +21,6 @@ spec:
   rateLimit:
     local:
       rules:
-        {{- range $family := list "0.0.0.0/0" "::/0" }}
-        - clientSelectors:
-            - sourceCIDR:
-                type: Distinct
-                value: {{ $family | quote }}
-          limit:
-            requests: {{ int64 $.Values.ui.rate_limit.per_client_requests }}
-            unit: {{ $.Values.ui.rate_limit.unit }}
-        {{- end }}
+        {{- include "envoy-gateway-config.rateLimitRules" (dict "ctx" $ "shared" false) | nindent 8 }}
 {{- end }}
 {{- end }}

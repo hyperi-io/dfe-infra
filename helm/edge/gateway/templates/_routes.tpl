@@ -386,6 +386,23 @@ true
 {{- $keys | sortAlpha | toJson -}}
 {{- end -}}
 
+{{- /* Local rate-limit rules: a bucket per client address in each family, and with
+       shared, one bucket every caller spends from. Envoy Gateway v1.9.2 never
+       spends the selector-less default bucket once another rule matches
+       (internal/xds/translator/local_ratelimit.go), so the shared wall is a rule
+       whose path selector every request matches. */ -}}
+{{- define "envoy-gateway-config.rateLimitRules" -}}
+{{- $rl := .ctx.Values.ui.rate_limit -}}
+{{- $rules := list -}}
+{{- if .shared -}}
+{{- $rules = append $rules (dict "clientSelectors" (list (dict "path" (dict "type" "PathPrefix" "value" "/"))) "limit" (dict "requests" (int64 $rl.requests) "unit" $rl.unit)) -}}
+{{- end -}}
+{{- range $family := list "0.0.0.0/0" "::/0" -}}
+{{- $rules = append $rules (dict "clientSelectors" (list (dict "sourceCIDR" (dict "type" "Distinct" "value" $family))) "limit" (dict "requests" (int64 $rl.per_client_requests) "unit" $rl.unit)) -}}
+{{- end -}}
+{{- toYaml $rules -}}
+{{- end -}}
+
 {{- /* The group a targetRoutes name belongs to: its chart route's, or console
        for a route this chart does not render. */ -}}
 {{- define "envoy-gateway-config.groupOfRouteName" -}}
@@ -829,9 +846,11 @@ true
 {{- end -}}
 {{- /* Envoy Gateway's RateLimitValue.requests runs 0 to 4294967295
        (api/v1alpha1/ratelimit_types.go at v1.9.2), and 0 refuses every caller. */ -}}
-{{- $perClient := $ui.rate_limit.per_client_requests -}}
-{{- if not (and (or (kindIs "int" $perClient) (kindIs "int64" $perClient) (kindIs "float64" $perClient)) (ge (int64 $perClient) 1) (le (int64 $perClient) 4294967295) (eq (float64 (int64 $perClient)) (float64 $perClient))) -}}
-{{- fail (printf "ui.rate_limit.per_client_requests is %v -- it is a whole number of requests per unit, 1 to 4294967295, that each client address gets on an internal-name route" $perClient) -}}
+{{- range $field := list "requests" "per_client_requests" -}}
+{{- $v := index $ui.rate_limit $field -}}
+{{- if not (and (or (kindIs "int" $v) (kindIs "int64" $v) (kindIs "float64" $v)) (ge (int64 $v) 1) (le (int64 $v) 4294967295) (eq (float64 (int64 $v)) (float64 $v))) -}}
+{{- fail (printf "ui.rate_limit.%s is %v (a %s) -- it is a whole number of requests per unit, 1 to 4294967295, written unquoted: a quoted number is a string here" $field $v (kindOf $v)) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

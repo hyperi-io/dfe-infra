@@ -373,18 +373,20 @@ ui:
   # A /0 of either family is refused. Internal listeners never read the header.
   trusted_proxy_cidrs: ""
 
-  # Rate limiting sized for a handful of humans, so a credential-stuffing run
-  # hits a wall before it hits the login. LOCAL counts per proxy replica, and
-  # global, which needs Redis and an EnvoyGateway install change, is refused. Each public
-  # route has one bucket that every caller shares. On an internet-facing Service
-  # every internal-name web route is limited too, because those names ride the
-  # same load balancer, and there each client address gets its own bucket, so one
-  # caller's dashboard cannot empty the route for everyone else.
+  # Rate limiting, LOCAL to each proxy replica: global needs Redis and an
+  # EnvoyGateway install change, so it is refused. Every public route has one
+  # bucket every caller shares, the wall a distributed credential-stuffing run
+  # meets, and a bucket per client address. On an internet-facing Service every
+  # internal-name web route, which rides the same load balancer, takes the
+  # per-client bucket alone, so one caller's dashboard cannot empty HyperDX.
+  # Both counts are whole numbers written unquoted.
   rate_limit:
     enabled: true
-    requests: 300           # a UI page load is a burst of tens; 5rps sustained clears it
-    # Internal-name routes, per client address: a 40-tile dashboard on a 10s
-    # refresh is 240 a minute, so five such users fit behind one NAT address.
+    # Each public route's shared bucket: 50 analysts averaging a request a second
+    # is half of it, and a distributed run still meets 100 a second per replica.
+    requests: 6000
+    # Every web route, per client address: a 40-tile dashboard on a 10s refresh
+    # is 240 a minute, so five such users fit behind one NAT address.
     per_client_requests: 1200
     unit: Minute            # Second | Minute | Hour | Day | Month | Year
     scope: local            # local only -- global is refused at render
