@@ -597,6 +597,7 @@ def test_expected_fail_the_retired_exposure_mode_names_its_door(mode: str, door:
         pytest.param(ingest(enabled="true"), "exposure.groups.ingest.enabled is true (a string)", id="quoted-enabled"),
         pytest.param(ingest(door="public"), 'exposure.groups.ingest.door is "public"', id="unknown-door"),
         pytest.param(ingest(allow=["198.51.100.7"]), 'carries "198.51.100.7", which is not a CIDR', id="bare-address"),
+        pytest.param(ingest(allow=["0.0.0.0/00"]), 'carries "0.0.0.0/00", which is not a CIDR', id="leading-zero-prefix"),
         pytest.param(ingest(allow="198.51.100.0/24"), "never a comma-separated string", id="string-list"),
         pytest.param({"exposure": {"groups": {"ingest": {"allow": SENDERS}}, "public": {"serviceType": "NodePort"}}},
                      'exposure.public.serviceType "NodePort"', id="allow-on-nodeport"),

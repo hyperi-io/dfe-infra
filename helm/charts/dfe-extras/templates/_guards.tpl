@@ -111,7 +111,7 @@ tunnel delivers a client onto the pod network and it dials the ClusterIP.
 {{- fail (printf "dfe-receiver: exposure.groups.ingest.%s is %v (a %s) -- it is a YAML list of CIDR ranges, such as [203.0.113.0/24], never a comma-separated string" $list $value (kindOf $value)) }}
 {{- end }}
 {{- range $entry := $value | default list }}
-{{- if not (regexMatch "^[0-9A-Fa-f.:]+/[0-9]{1,3}$" (toString $entry)) }}
+{{- if not (regexMatch "^[0-9A-Fa-f.:]+/(0|[1-9][0-9]{0,2})$" (toString $entry)) }}
 {{- fail (printf "dfe-receiver: exposure.groups.ingest.%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32" $list (toString $entry)) }}
 {{- end }}
 {{- end }}
