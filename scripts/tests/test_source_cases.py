@@ -456,6 +456,13 @@ class TestTheFilebeatCaseCreate:
         for field in ("schema_meta_schema", "schema_meta_schema_version", "header_type", "header_version"):
             assert f"locator:{steps.field_select(field)}" in visited
 
+    def test_the_meta_schema_is_picked_with_no_define_schema_radio_in_front(self):
+        """The console has no Define Schema radio, so the tab opens on the meta schema select."""
+        driver, _, _ = self._create(missing=("text:Define Schema",))
+
+        assert driver.status("add-source-meta-schema") == "done"
+        assert "text:Define Schema" not in driver.page.visited
+
     def test_the_transform_goes_on_through_the_console_when_the_tab_is_there(self):
         driver, engine, case = self._create()
 

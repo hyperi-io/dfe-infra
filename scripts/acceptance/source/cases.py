@@ -182,8 +182,8 @@ class FilebeatCase(Case):
         driver.record("add-source-configuration", "done",
                       f"filled the Configuration tab for {self.name}, archive on")
 
+        # Own table (the form's default) shows this tab, which opens on the meta schema select.
         page.get_by_role("tab", name="Table Settings", exact=True).click(timeout=STEP_TIMEOUT_MS)
-        page.get_by_text("Define Schema", exact=True).click(timeout=STEP_TIMEOUT_MS)
         # The selects group by family and show the leaf: meta > beats > filebeat.
         steps.select_field(page, "schema_meta_schema", self.META_SCHEMA.rsplit("/", 1)[-1])
         steps.select_field(page, "schema_meta_schema_version", self.META_SCHEMA_VERSION)
