@@ -28,11 +28,11 @@ the Transform tab that then becomes available (Define Transform -> `dfe-transfor
 the deploy the source's Processing tab puts the bundled
 `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the
 dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.
-The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream` (the dataset read off the archive path, `cisco_ios/log` -> `cisco_ios.log`), `input`, the vendor line as `message`, and `tags` carrying the run marker.
+The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream` (the dataset read off the archive path, `cisco_ios/log` -> `cisco_ios.log`), `input`, the vendor line as `message`, and `tags`. Every record also carries a root `_e2e` object, `{run: <run id>, kind: corpus|probe}`, and the counts read that rather than `tags`, because the bundled program replaces the tags and keeps root fields.
 
 One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella lines are not fed and this suite does not cover them.
 
-Proof: the transform instance reports, the receiver routes, every row in `<name>` carries `data_stream.dataset` `cisco_ios.log` in its `_raw` (`dataset`), new rows carry `source_ip` (the program reads it out of the syslog body), a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
+Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e` rather than by rows gained, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` in its `_json` (`dataset`), the run's corpus rows carry `source_ip` (the program reads it out of the syslog body), a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
 
 `reporting` is not taken at face value. The engine answers it off the otel
 tables, and on Compose one container serves the app and every instance of it, so
@@ -83,7 +83,7 @@ same proof all still apply.
 It stands a filebeat and a logstash container beside a compose deployment --
 `--beats-network` names the docker network the stack runs on and
 `--beats-receiver-url` the ingest URL as seen from inside it -- writes this run's
-corpus slice to a file the agent tails, and lets the pair carry it. Filebeat stamps the `data_stream` the source is matched on, as an integration policy does, and an `e2e_run` tag; Logstash adds nothing. The run still waits for
+corpus slice to a file the agent tails, and lets the pair carry it. Filebeat stamps the `data_stream` the source is matched on, as an integration policy does, the same `_e2e` corpus marker the POSTed records carry, and an `e2e_run` tag. Logstash adds nothing. The run still waits for
 routing over HTTP first, so the receiver has rolled onto the new rule before the
 agent ships, and its teardown removes both containers.
 

@@ -24,7 +24,6 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
-import uuid
 from pathlib import Path
 
 from acceptance.clients import (
@@ -63,6 +62,11 @@ RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 AGENT_NAME = "dfe-acceptance"
 AGENT_INPUT = "tcp"
 DATA_STREAM_NAMESPACE = "default"
+# Every record the suite sends carries this root object, naming its run and its role, because
+# each branch of the bundled filebeat program replaces `.tags` but keeps root fields.
+MARKER = "_e2e"
+CORPUS = "corpus"
+PROBE = "probe"
 
 
 # --- console helpers ---------------------------------------------------------
@@ -409,12 +413,30 @@ def corpus_datasets(corpus_file: Path) -> dict[str, str]:
     return {module: streams.pop() for module, streams in found.items()}
 
 
+def run_marker(run: str, kind: str) -> dict[str, str]:
+    """The ``_e2e`` object one record carries: the run that sent it, and as what."""
+    return {"run": run, "kind": kind}
+
+
+def marked(run: str, kind: str) -> str:
+    """The WHERE condition keeping the rows *run* sent as *kind*, read off ``_json``.
+
+    By the field rather than by rows gained between two counts: a probe posted
+    before a count can land after it, so a gain says nothing about whose rows
+    arrived.
+    """
+    return (
+        f"JSONExtractString({RECORD_TEXT}, '{MARKER}', 'run') = '{run}' "
+        f"AND JSONExtractString({RECORD_TEXT}, '{MARKER}', 'kind') = '{kind}'"
+    )
+
+
 def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
     """One vendor line as an Elastic Agent ships it, routed on ``data_stream.dataset``.
 
     Args:
         line: The vendor's own log line.
-        tags: The record's tags, which carry this run's marker.
+        tags: The record's tags, as dfe-engine's corpus wrapper mints them.
         dataset: The data stream the line belongs to.
 
     Returns:
@@ -430,11 +452,12 @@ def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
 
 
 def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: int,
-                  modules: tuple[str, ...] = ()) -> list[dict]:
-    """The corpus lines a case feeds, each in the envelope an Elastic Agent sends.
+                  modules: tuple[str, ...] = (), kind: str = CORPUS) -> list[dict]:
+    """The corpus lines a case feeds, each in the Elastic Agent envelope plus this run's marker.
 
-    dfe-engine's wrapper still reads the archive and mints each record's tags,
-    so the run marker the stray search looks for is the engine's own.
+    dfe-engine's wrapper still reads the archive and mints each record's tags.
+    The counts read the ``_e2e`` marker instead, because the transform replaces
+    the tags and keeps root fields.
     """
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
@@ -445,19 +468,22 @@ def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: in
     datasets = corpus_datasets(corpus_file)
     wrapped = corpus.wrap_all(items, run=run)
     return [
-        agent_envelope(item.line, record["tags"], datasets[item.module])
+        {**agent_envelope(item.line, record["tags"], datasets[item.module]),
+         MARKER: run_marker(run, kind)}
         for item, record in zip(items, wrapped, strict=True)
     ]
 
 
 def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                run: str, per_module: int, modules: tuple[str, ...] = ()) -> int:
+                run: str, per_module: int, modules: tuple[str, ...] = (),
+                kind: str = CORPUS) -> int:
     """POST the corpus in the Elastic Agent envelope, one request per record.
 
     ``modules`` narrows the archive to the corpus modules a case's transform
-    handles; empty is every module the wrapper names.
+    handles; empty is every module the wrapper names. ``kind`` is the role the
+    marker gives every record, so a probe is never counted as corpus.
     """
-    bodies = corpus_bodies(engine_repo, corpus_file, run, per_module, modules)
+    bodies = corpus_bodies(engine_repo, corpus_file, run, per_module, modules, kind)
 
     for body in bodies:
         request = urllib.request.Request(
@@ -486,25 +512,23 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
 
 def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                store: Datastore, name: str, deadline: float,
+                store: Datastore, name: str, run: str, deadline: float,
                 modules: tuple[str, ...] = ()) -> str:
-    """Probe until a record actually reaches the source's table.
+    """Probe until one of this run's probes actually reaches the source's table.
 
     Before the receiver has rolled onto the new rule the probes land in the
     catch-all, so the run's own payload is sent only once this returns.
 
-    The proof is the table growing, not a marker: a transform rewrites each
-    record into the program's own shape and the probe tag does not survive it,
-    so a marker search passes only while the transform is not yet consuming.
+    The proof is a probe row found by its marker, which the transform keeps.
+    Each probe is marked as one, so the corpus count after this never takes a
+    late probe for a corpus row.
     """
-    probe = f"probe-{uuid.uuid4().hex[:8]}"
     until = time.monotonic() + deadline
-    before = store.scalar(f"SELECT count() FROM {name}")
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, probe, 1, modules)
+        post_corpus(receiver_url, verify, engine_repo, corpus_file, run, 1, modules, PROBE)
         passes += 1
-        if store.scalar(f"SELECT count() FROM {name}") > before:
+        if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
             return f"routed into dfe.{name} after {passes} probe pass(es)"
         if time.monotonic() >= until:
             return f"NOT routed into dfe.{name} within {deadline:.0f}s ({passes} probe passes)"
@@ -512,11 +536,12 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
 
 def strayed_rows(store: Datastore, run_id: str) -> int:
-    """Rows of this run that landed in the catch-all, found by the marker each record carries.
+    """Corpus rows of this run that landed in the catch-all, found by the marker each carries.
 
-    The catch-all runs no transform, so the run's tag is still in the stored record.
+    Probes are left out: the first ones land in the catch-all by design, before
+    the receiver rolls onto the new rule.
     """
-    return store.scalar(f"SELECT count() FROM main WHERE {RECORD_TEXT} LIKE '%{run_id}%'")
+    return store.scalar(f"SELECT count() FROM main WHERE {marked(run_id, CORPUS)}")
 
 
 def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, str]:
@@ -542,20 +567,15 @@ def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, st
     return ("done" if total and carrying == total else "failed"), detail
 
 
-def wait_gain(store: Datastore, table: str, baseline: int, wanted: int, deadline: float,
+def wait_rows(store: Datastore, table: str, wanted: int, deadline: float,
               where: str = "", interval: float = 5.0) -> int:
-    """Rows gained over *baseline*, polled until *wanted* arrive or the deadline passes.
-
-    A transformed source table carries the program's output, not the record as
-    posted, so a run marker cannot be searched for there; the gain is the proof.
-    """
+    """Rows in *table* meeting *where*, polled until *wanted* are there or the deadline passes."""
+    clause = f" WHERE {where}" if where else ""
     until = time.monotonic() + deadline
     while True:
-        gained = store.scalar(f"SELECT count() FROM {table}{where}") - baseline
-        if gained >= wanted:
-            return gained
-        if time.monotonic() >= until:
-            return gained
+        found = store.scalar(f"SELECT count() FROM {table}{clause}")
+        if found >= wanted or time.monotonic() >= until:
+            return found
         time.sleep(interval)
 
 

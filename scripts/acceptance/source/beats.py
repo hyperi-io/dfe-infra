@@ -84,21 +84,33 @@ def docker(*argv: str, timeout: float = 180.0) -> tuple[int, str]:
     return done.returncode, (done.stdout or done.stderr).strip()
 
 
-def write_inputs(pair: Pair, lines: list[str], dataset: str) -> Path:
+def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
+                 marker: dict[str, str]) -> Path:
     """The corpus on disk plus the two configs, under this run's own directory.
 
     Filebeat tails a file, so the corpus is written as a file rather than
     streamed: that is what a deployment's agent is pointed at.
+
+    Args:
+        pair: The containers this run stands up.
+        lines: The corpus lines the agent ships.
+        dataset: The data stream the source is matched on.
+        marker_field: The root field the run's counts read.
+        marker: What that field holds on every event the agent ships.
+
+    Returns:
+        The directory the corpus file is in.
     """
     corpus_dir = pair.workdir / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)
     (corpus_dir / CORPUS_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    marker_lines = "".join(f'            {key}: "{value}"\n' for key, value in marker.items())
 
     # filestream needs an id of its own, and it identifies a file by a fingerprint
     # of the first 1024 bytes by default -- a corpus slice shorter than that is
     # never ingested at all, so the fingerprint is cut to the smallest it allows.
     # The agent stamps the data stream the source matches, as an integration
-    # policy does, and the run tag the stray search looks for.
+    # policy does, the run marker the counts read, and the run tag.
     (pair.workdir / "filebeat.yml").write_text(
         "filebeat.inputs:\n"
         "  - type: filestream\n"
@@ -113,6 +125,10 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str) -> Path:
         f"            dataset: {dataset}\n"
         "            namespace: default\n"
         "            type: logs\n"
+        "      - add_fields:\n"
+        f"          target: {marker_field}\n"
+        "          fields:\n"
+        f"{marker_lines}"
         "      - add_tags:\n"
         f'          tags: ["e2e_run:{pair.run_id}"]\n'
         "output.logstash:\n"

@@ -19,8 +19,6 @@ against a landed row.
     python3 scripts/tests/test_source_beats.py
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from pathlib import Path
@@ -58,14 +56,19 @@ def pair(tmp_path):
     )
 
 
+def write_inputs(pair: beats.Pair, lines: list[str]):
+    """The pair's inputs, marked the way the filebeat case marks its corpus."""
+    return beats.write_inputs(pair, lines, DATASET, "_e2e", {"run": RUN, "kind": "corpus"})
+
+
 class TestWhatTheContainersAreTold:
     def test_the_corpus_is_a_file_on_disk_for_the_agent_to_tail(self, pair):
-        corpus = beats.write_inputs(pair, ["one line", "two line"], DATASET)
+        corpus = write_inputs(pair, ["one line", "two line"])
 
         assert (corpus / "cisco_ios.log").read_text(encoding="utf-8") == "one line\ntwo line\n"
 
     def test_filebeat_ships_to_this_runs_own_logstash(self, pair):
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "filebeat.yml").read_text(encoding="utf-8")
 
         assert f'hosts: ["{pair.logstash}:5044"]' in config
@@ -75,35 +78,47 @@ class TestWhatTheContainersAreTold:
 
     def test_the_fingerprint_is_cut_to_what_a_short_corpus_allows(self, pair):
         """filestream ingests nothing at all from a file under its fingerprint length."""
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "filebeat.yml").read_text(encoding="utf-8")
 
         assert "prospector.scanner.fingerprint.length: 64" in config
 
     def test_the_agent_stamps_the_data_stream_the_source_is_matched_on(self, pair):
         """An integration policy sets it on a real agent; a bare filestream input does not."""
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "filebeat.yml").read_text(encoding="utf-8")
 
         assert "      - add_fields:\n          target: data_stream\n" in config
         assert f"            dataset: {DATASET}\n" in config
 
     def test_the_agent_tags_every_event_with_this_run(self, pair):
-        """The stray search finds a record in the catch-all by this tag."""
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "filebeat.yml").read_text(encoding="utf-8")
 
         assert f'tags: ["e2e_run:{RUN}"]' in config
 
+    def test_the_agent_marks_every_event_as_this_runs_corpus_at_the_root(self, pair):
+        """The counts read this marker, and the transform keeps root fields where it replaces tags."""
+        write_inputs(pair, ["a"])
+        config = (pair.workdir / "filebeat.yml").read_text(encoding="utf-8")
+
+        assert (
+            "      - add_fields:\n"
+            "          target: _e2e\n"
+            "          fields:\n"
+            f'            run: "{RUN}"\n'
+            '            kind: "corpus"\n'
+        ) in config
+
     def test_logstash_adds_nothing_to_the_event_filebeat_built(self, pair):
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "logstash.conf").read_text(encoding="utf-8")
 
         assert "filter" not in config
         assert "_source" not in config
 
     def test_logstash_posts_its_whole_event_at_the_receiver(self, pair):
-        beats.write_inputs(pair, ["a"], DATASET)
+        write_inputs(pair, ["a"])
         config = (pair.workdir / "logstash.conf").read_text(encoding="utf-8")
 
         assert 'url => "http://dfe-receiver:8080/ingest"' in config
