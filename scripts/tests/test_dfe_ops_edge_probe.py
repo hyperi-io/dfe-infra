@@ -1425,9 +1425,13 @@ def _configmap(*links: probe.AdminLink) -> dict:
 
 
 def _cluster(
-    monkeypatch: pytest.MonkeyPatch, configmap: dict | None, gateways: list[dict] | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    configmap: dict | None,
+    gateways: list[dict] | None = None,
+    self_ranges: str | None = "",
 ) -> None:
-    """A cluster carrying `configmap` (None: absent) and Gateways holding `gateways`."""
+    """A cluster carrying `configmap` (None: absent), Gateways holding `gateways`,
+    and a cluster secret whose self-ranges annotation is `self_ranges` (None: unreadable)."""
 
     def kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
         if "configmap" in argv:
@@ -1436,6 +1440,11 @@ def _cluster(
             return configmap, ""
         if "gateway" in argv:
             return {"items": gateways or []}, ""
+        if "secret" in argv and probe.CLUSTER_SECRET_NAME in argv:
+            if self_ranges is None:
+                return {}, 'Error from server (Forbidden): secrets "dfe-cluster" is forbidden'
+            annotations = {probe.SELF_RANGES_ANNOTATION: self_ranges} if self_ranges else {}
+            return {"metadata": {"annotations": annotations}}, ""
         pytest.fail(f"unexpected kubectl {argv}")
 
     monkeypatch.setattr(probe, "_kubectl_json", kubectl_json)
@@ -1496,6 +1505,91 @@ def test_a_gateway_this_machine_cannot_reach_skips_every_ui(
     assert "does not answer from this machine" in checks[0].evidence
 
 
+# The runner's own address, written into exposure.selfRanges the way a guarded
+# run's endpoint CIDR is, beside the cluster's NAT addresses.
+RUNNER = "203.0.113.7"
+SELF_RANGES = f"198.51.100.4/32,{RUNNER}/32"
+
+
+def test_expected_fail_a_dead_door_from_inside_the_self_ranges_fails_every_ui(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    """The gateway admits its self ranges, so silence there is a door that is down."""
+    _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    checks = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
+    assert [c.verdict for c in checks] == [probe.FAIL, probe.FAIL]
+    assert f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    assert probe.exit_code(checks) == 1
+
+
+def test_a_dead_door_from_outside_the_self_ranges_skips_and_says_why(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    (check,) = probe.admin_ui_checks([], "dfe-local", source="192.0.2.50")
+    assert check.verdict == probe.SKIP, check
+    assert "this machine (192.0.2.50) is outside exposure.selfRanges" in check.evidence
+    assert RUNNER in check.evidence
+
+
+def test_this_machines_own_route_counts_when_it_sits_inside_the_self_ranges(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    """An on-prem operator on the cluster's own network needs no --source."""
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, "127.0.0.0/8")
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    (check,) = probe.admin_ui_checks([], "dfe-local")
+    assert check.verdict == probe.FAIL, check
+    assert "this machine (127.0.0.1) is inside exposure.selfRanges (127.0.0.0/8)" in check.evidence
+
+
+def test_behind_nat_with_no_source_skips_and_names_the_flag(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    (check,) = probe.admin_ui_checks([], "dfe-local")
+    assert check.verdict == probe.SKIP, check
+    assert "behind NAT" in check.evidence
+    assert f"--source or {probe.PROBE_SOURCE_ENV}" in check.evidence
+
+
+def test_an_unreadable_cluster_secret_skips_and_says_so(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, None)
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    (check,) = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
+    assert check.verdict == probe.SKIP, check
+    assert "cannot read argocd/dfe-cluster" in check.evidence
+
+
+def test_a_door_that_answers_is_never_weighed_against_the_self_ranges(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cluster secret is read only for a dead door, so a working one costs no extra read."""
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, None)
+    gateway.routes[(ARGO_HOST, "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
+    (check,) = probe.admin_ui_checks([], "dfe-local", source="192.0.2.50")
+    assert check.verdict == probe.PASS, check
+
+
+@pytest.mark.parametrize(("raw", "address"), [
+    ("", ""), (RUNNER, RUNNER), (f"{RUNNER}/32", RUNNER), ("2001:db8::7/128", "2001:db8::7"),
+])
+def test_the_source_takes_one_address_bare_or_as_a_host_cidr(raw: str, address: str) -> None:
+    assert probe.source_address(raw) == address
+
+
+@pytest.mark.parametrize("raw", ["203.0.113.0/24", "not-an-address", "300.1.1.1"])
+def test_expected_fail_a_source_that_is_not_one_address_is_refused(raw: str) -> None:
+    with pytest.raises(probe.EdgeProbeError, match="--source"):
+        probe.source_address(raw)
+
+
 def test_each_listed_ui_gets_its_own_verdict(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
     _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS)
     _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}/", status=307)
@@ -1519,8 +1613,82 @@ def test_the_deployments_own_gateway_is_dialled_before_any_other(monkeypatch: py
 # --- the verb ----------------------------------------------------------------
 def _admin_args(**overrides: object) -> argparse.Namespace:
     values = {"namespace": "dfe-local", "kubeconfig": "", "context": "", "gateway": "dfe-gateway",
-              "target": "", "wait": 0.0}
+              "target": "", "wait": 0.0, "source": ""}
     return argparse.Namespace(**{**values, **overrides})
+
+
+def _door_down_for(stub: StubGateway, dials: int) -> Callable:
+    """The stub, with the bare door dial unanswered the first `dials` times."""
+    plain, misses = _at_stub(stub), [dials]
+
+    def reach(request: probe.Request) -> probe.Answer:
+        if not request.path and misses[0] > 0:
+            misses[0] -= 1
+            return probe.Answer(reached=False, error="timed out")
+        return plain(request)
+
+    return reach
+
+
+def test_a_door_that_comes_up_mid_wait_passes_after_retries(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    gateway.routes[(ARGO_HOST, "/")] = 200
+    monkeypatch.setattr(probe, "_reach", _door_down_for(gateway, 2))
+    sleeps: list[float] = []
+    monkeypatch.setattr(probe.time, "sleep", sleeps.append)
+    assert probe.cmd_admin_probe(_admin_args(wait=60.0, source=RUNNER)) == 0
+    err = capsys.readouterr().err
+    assert len(sleeps) == 2, sleeps
+    assert "admin ui Argo CD not loading yet" in err
+    assert "[PASS] admin ui Argo CD" in err
+
+
+def test_expected_fail_a_door_dead_for_the_whole_wait_fails_the_verb(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The attempt that reported NOTHING WAS PROVEN, now a FAIL after every retry."""
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _door_down_for(gateway, 1_000_000))
+    sleeps: list[float] = []
+    monkeypatch.setattr(probe.time, "sleep", sleeps.append)
+    assert probe.cmd_admin_probe(_admin_args(wait=0.02, source=RUNNER)) == 1
+    err = capsys.readouterr().err
+    assert sleeps, "a dead door from inside the self ranges was never retried"
+    assert "[FAIL] admin ui Argo CD" in err
+    assert "NOTHING WAS PROVEN" not in err
+
+
+def test_a_door_dead_from_outside_the_self_ranges_still_exits_zero_and_says_why(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _door_down_for(gateway, 10_000))
+    monkeypatch.setattr(probe.time, "sleep", lambda seconds: pytest.fail("a SKIP was retried"))
+    assert probe.cmd_admin_probe(_admin_args(wait=30.0, source="192.0.2.50")) == 0
+    err = capsys.readouterr().err
+    assert "[SKIP] admin ui Argo CD" in err
+    assert "outside exposure.selfRanges" in err
+    assert "NOTHING WAS PROVEN" in err
+
+
+def test_the_source_comes_from_the_environment_when_the_flag_is_empty(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
+    monkeypatch.setattr(probe, "_reach", _door_down_for(gateway, 10_000))
+    monkeypatch.setenv(probe.PROBE_SOURCE_ENV, f"{RUNNER}/32")
+    assert probe.cmd_admin_probe(_admin_args()) == 1
+    assert f"this machine ({RUNNER}) is inside" in capsys.readouterr().err
+
+
+def test_a_source_that_is_not_one_address_fails_the_verb_before_any_probe(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(probe, "_kubectl_json", lambda kube, *argv: pytest.fail("the cluster was read"))
+    assert probe.cmd_admin_probe(_admin_args(source="203.0.113.0/24")) == 1
+    assert "dfe-ops admin-probe: --source" in capsys.readouterr().err
 
 
 def test_a_failing_ui_fails_the_verb(
@@ -1565,3 +1733,5 @@ def test_the_subparser_registers_the_verb_as_admin_probe() -> None:
     args = parser.parse_args(["admin-probe", "--namespace", "dfe-prod", "--wait", "120"])
     assert args.func is probe.cmd_admin_probe
     assert (args.namespace, args.wait, args.gateway) == ("dfe-prod", 120.0, "dfe-gateway")
+    assert args.source == ""
+    assert parser.parse_args(["admin-probe", "--source", RUNNER]).source == RUNNER

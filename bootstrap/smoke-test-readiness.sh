@@ -34,6 +34,9 @@
 #                                which is what this deploy creates).
 #         READINESS_ADMIN_UI_WAIT (default 120s) -- how long an admin UI that
 #                                loops or 5xxs through the gateway is re-probed.
+#         DFE_PROBE_SOURCE    -- the address the gateway sees this machine as;
+#                                from inside exposure.selfRanges a gateway that
+#                                does not answer fails the gate rather than skipping.
 set -uo pipefail
 [ -n "${1:-}" ] && export KUBECONFIG="$1"
 DFE_NS="${DFE_NS:-}"

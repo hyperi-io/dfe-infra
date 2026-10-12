@@ -983,6 +983,27 @@ def test_every_child_of_a_run_lands_in_the_dials_region_not_the_shells(
     assert runner.envs[3]["KUBECONFIG"].endswith("kubeconfig")
 
 
+def test_the_cycle_hands_its_admin_probe_the_runners_address(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner is one of the gateway's self ranges, so a door that ignores it is down, not fenced."""
+    monkeypatch.delenv(guard_mod.PROBE_SOURCE_ENV, raising=False)
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, endpoint_cidr=RUNNER_CIDR) == 0
+    cycle_env = runner.envs[runner.words().index("cycle")]
+    assert cycle_env is not None
+    assert cycle_env[guard_mod.PROBE_SOURCE_ENV] == RUNNER_CIDR.split("/")[0]
+
+
+def test_a_cycle_with_no_endpoint_cidr_names_no_probe_source(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(guard_mod.PROBE_SOURCE_ENV, raising=False)
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == 0
+    assert all(guard_mod.PROBE_SOURCE_ENV not in (env or {}) for env in runner.envs)
+
+
 def test_the_preflight_s3_listing_is_sent_to_the_dials_region(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The S3 client the sweep makes for check (c) names the run's region, whatever
     the shell's default -- the org fence denies ListBuckets sent anywhere else."""
