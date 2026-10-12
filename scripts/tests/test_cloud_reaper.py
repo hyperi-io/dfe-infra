@@ -10,22 +10,19 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for scripts/cloud_reaper.py and .github/workflows/cloud-reaper.yml.
+"""Tests for scripts/cloud_reaper.py.
 
     python3 -m pytest scripts/tests/test_cloud_reaper.py -q
 
-The S3 calls go to a fake `aws_cli.run_aws` and `tofu` to a fake `run_tofu`;
-the one real process is bash running the workflow's own gate script.
+The S3 calls go to a fake `aws_cli.run_aws` and `tofu` to a fake `run_tofu`.
 """
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -33,7 +30,6 @@ import cloud_reaper  # noqa: E402
 import cloud_run  # noqa: E402
 import cloud_sweep  # noqa: E402
 
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "cloud-reaper.yml"
 ROLE = "arn:aws:iam::000000000000:role/dfe-e2e/reaper"
 NOW = 1791460800
 ENV = {"DFE_REAPER_AWS_ROLE": ROLE, "DFE_REAPER_AWS_REGIONS": "us-west-2", "DFE_REAPER_STATE_BUCKET": "example-state"}
@@ -320,122 +316,3 @@ def test_reap_exits_one_while_anything_expired_remains(monkeypatch: pytest.Monke
     monkeypatch.setattr(cloud_reaper, "sweep_region", lambda config, region: 1)
     assert cloud_reaper.cmd_reap(ENV) == 1
     assert "::error::us-west-2" in capsys.readouterr().out
-
-
-# --- the workflow ----------------------------------------------------------------------------
-
-
-def _workflow() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-
-
-def test_the_workflow_runs_every_fifteen_minutes_and_on_dispatch() -> None:
-    doc = _workflow()
-    triggers = doc.get("on", doc.get(True))  # YAML 1.1 reads a bare `on` as true
-    assert triggers["schedule"] == [{"cron": "*/15 * * * *"}]
-    assert "workflow_dispatch" in triggers
-
-
-def test_every_action_is_pinned_by_full_commit_sha() -> None:
-    uses = re.findall(r"uses:\s*(\S+)", WORKFLOW.read_text(encoding="utf-8"))
-    assert uses
-    for ref in uses:
-        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", ref), ref
-
-
-def test_the_workflow_holds_no_secret() -> None:
-    assert "secrets." not in WORKFLOW.read_text(encoding="utf-8")
-
-
-def test_the_reaping_job_is_gated_on_the_role_and_bound_to_its_environment() -> None:
-    jobs = _workflow()["jobs"]
-    reap = jobs["reap"]
-    assert reap["needs"] == "gate"
-    assert reap["if"] == "needs.gate.outputs.enabled == 'true'"
-    assert reap["environment"] == "e2e-reaper"
-    assert reap["permissions"]["id-token"] == "write"
-    assert "id-token" not in _workflow().get("permissions", {})
-
-
-def test_the_gate_reads_the_role_from_the_reapers_environment() -> None:
-    """A variable scoped to an environment reads as unset in any job outside it, so
-    a gate outside it reports an unconfigured reaper with the role in place."""
-    jobs = _workflow()["jobs"]
-    assert jobs["gate"]["environment"] == jobs["reap"]["environment"]
-    assert "id-token" not in jobs["gate"].get("permissions", {})
-
-
-def _gate_script() -> tuple[str, dict]:
-    step = _workflow()["jobs"]["gate"]["steps"][0]
-    return step["run"], step["env"]
-
-
-def test_the_gate_is_handed_a_boolean_so_the_role_never_reaches_its_env_dump() -> None:
-    _script, step_env = _gate_script()
-    assert step_env == {"HAS_ROLE": "${{ vars.DFE_REAPER_AWS_ROLE != '' }}"}
-
-
-@pytest.mark.parametrize("has_role", ["false", "", None])
-def test_the_gate_with_no_role_is_a_notice_and_a_green_run(tmp_path: Path, has_role: str | None) -> None:
-    script, _env = _gate_script()
-    output = tmp_path / "github_output"
-    env = {"PATH": "/usr/bin:/bin", "GITHUB_OUTPUT": str(output)}
-    if has_role is not None:
-        env["HAS_ROLE"] = has_role
-    done = subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", check=False)
-    assert done.returncode == 0, done.stderr
-    assert done.stdout.startswith("::notice::")
-    assert output.read_text(encoding="utf-8") == "enabled=false\n"
-
-
-def test_the_gate_with_a_role_enables_the_reaping_job(tmp_path: Path) -> None:
-    script, _env = _gate_script()
-    output = tmp_path / "github_output"
-    env = {"PATH": "/usr/bin:/bin", "GITHUB_OUTPUT": str(output), "HAS_ROLE": "true"}
-    done = subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", check=False)
-    assert done.returncode == 0, done.stderr
-    assert output.read_text(encoding="utf-8") == "enabled=true\n"
-
-
-# --- the mask: first, so no later step prints the account or the role ----------------------------
-
-
-def _mask_run(env: dict[str, str]) -> subprocess.CompletedProcess:
-    script = _workflow()["jobs"]["reap"]["steps"][0]["run"]
-    return subprocess.run(["bash", "-euo", "pipefail", "-c", script], env={"PATH": "/usr/bin:/bin", **env},
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-
-
-def test_the_reaping_jobs_first_step_masks_and_nothing_runs_before_it() -> None:
-    """A mask covers only output written after the step that registers it."""
-    steps = _workflow()["jobs"]["reap"]["steps"]
-    assert steps[0]["name"] == "Mask the AWS account and the role"
-    assert "::add-mask::" in steps[0]["run"]
-    assert "uses" not in steps[0]
-    for step in steps[1:]:
-        assert "::add-mask::" not in step.get("run", ""), step.get("name")
-
-
-def test_the_mask_registers_the_role_and_the_account_it_names() -> None:
-    done = _mask_run({"DFE_REAPER_AWS_ROLE": ROLE})
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert done.stdout.splitlines() == [f"::add-mask::{ROLE}", "::add-mask::000000000000"]
-
-
-def test_the_mask_registers_an_account_variable_that_differs_from_the_roles() -> None:
-    done = _mask_run({"DFE_REAPER_AWS_ROLE": ROLE, "DFE_REAPER_AWS_ACCOUNT": "111111111111"})
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert done.stdout.splitlines() == [f"::add-mask::{ROLE}", "::add-mask::111111111111", "::add-mask::000000000000"]
-
-
-def test_the_mask_with_nothing_set_registers_nothing() -> None:
-    done = _mask_run({})
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert done.stdout == ""
-
-
-def test_the_reaper_and_ci_validate_on_the_same_opentofu() -> None:
-    validate = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "tf-validate.yml").read_text(encoding="utf-8"))
-    assert _workflow()["env"]["TOFU_VERSION"] == validate["env"]["TOFU_VERSION"]

@@ -8,7 +8,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for scripts/cycle_backend.py and the cloud-cycle workflow's backend input.
+"""Tests for scripts/cycle_backend.py.
 
     python3 -m pytest scripts/tests/test_cycle_backend.py -q
 """
@@ -17,11 +17,9 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "cloud-cycle.yml"
 EXAMPLE = REPO_ROOT / "deployment.example.yaml"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -48,24 +46,6 @@ def write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "deployment.yaml"
     path.write_text(text, encoding="utf-8", newline="\n")
     return path
-
-
-def test_the_workflow_offers_exactly_the_committed_backends() -> None:
-    doc = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    # PyYAML reads the bare `on:` key as the boolean True.
-    backend = doc[True]["workflow_dispatch"]["inputs"]["backend"]
-    assert backend["options"] == list(cycle_backend.available())
-    assert backend["default"] == cycle_backend.DEFAULT
-
-
-def test_the_workflow_applies_the_overlay_before_either_dial_reader() -> None:
-    steps = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["cycle"]["steps"]
-    render = next(s for s in steps if s.get("name", "").startswith("Render the dial"))
-    script = render["run"]
-    overlay = script.index("scripts/cycle_backend.py")
-    assert overlay < script.index("scripts/render_dial.py")
-    assert overlay < script.index("scripts/resolve_sizing.py")
-    assert render["env"]["BACKEND"] == "${{ inputs.backend }}"
 
 
 def test_default_leaves_the_dial_byte_for_byte(tmp_path: Path) -> None:

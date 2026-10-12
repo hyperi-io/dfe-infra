@@ -63,7 +63,7 @@ UPGRADE_INPUTS = (
 # The trees and files the other scripts/tests modules read from outside the filtered
 # directories, written as the globs those modules walk. No other workflow runs them.
 TEST_READ_GLOBS = (
-    ".github/workflows/*.yml",  # test_workflow_log_masks, test_cloud_reaper, test_toolbox_inputs
+    ".github/workflows/*.yml",  # test_workflow_log_masks, test_toolbox_inputs
     ".github/actions/**/action.yml",  # this file
     "docs/**/*.md",  # test_no_cost_figures
     "terraform/**/*.tf",  # test_no_cost_figures, the drift check's sweep

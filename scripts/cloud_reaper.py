@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         scripts/cloud_reaper.py
 #  Purpose:      The scheduled reaper's logic, driven by environment variables
-#                so .github/workflows/cloud-reaper.yml carries no value of its
+#                so the workflow that schedules it carries no value of its
 #                own: destroy every expired run's per-run state, then sweep
 #                every expired run-tagged resource left behind.
 #  Language:     Python
