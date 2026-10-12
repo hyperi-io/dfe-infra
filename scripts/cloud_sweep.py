@@ -36,7 +36,9 @@ either way, with its age and whether it is tagged; only the tagged set (or
 everything, with --include-untagged) is deleted or counted against the exit
 code, and the named --exclude-bucket (the tofu state bucket) is never
 touched. Exit 0 means the tagged set is empty; exit 1 means resources
-remain, printed for cleanup.
+remain, printed for cleanup. A guarded run's teardown passes
+`--tag-filter <run key>=<run id>`, so it deletes that run's resources and no
+other run's.
 
 --expired switches the selection to the run convention in cloud_run.py: a
 resource is eligible when it carries the run tag (default `dfe-e2e`) and its
@@ -66,7 +68,8 @@ subnets, Route 53 zones, log groups, Secrets Manager secrets (with
 --force-delete-without-recovery), KMS aliases and S3 buckets (with
 --exclude-bucket the only exemption). Reach for it only when the sweep is
 meant to clear a region entirely, never as a way to speed up an ordinary
-cleanup. It is refused beside --expired.
+cleanup. It is refused beside --expired. An empty --tag-filter matches every
+resource the same way, so --delete refuses one unless --include-untagged says so.
 
 --provider picks the cloud. aws is the one with listers; gcp and azure are
 the same interface with nothing behind it yet, and say so rather than
@@ -81,10 +84,13 @@ never in whatever region the shell defaults to.
         --account 000000000000 --exclude-bucket example-tfstate-bucket
     python3 scripts/cloud_sweep.py --region us-west-2 --expired --grace 0 --delete \\
         --account 000000000000 --yes
+    python3 scripts/cloud_sweep.py --region us-west-2 --tag-filter dfe-e2e=<run id> --delete \\
+        --account 000000000000 --exclude-bucket example-tfstate-bucket
 """
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -147,20 +153,27 @@ def _region_args(args: list[str], region: str) -> list[str]:
     return ["--region", region]
 
 
-def run_aws(args: list[str], region: str) -> dict:
-    """Run one `aws ... --output json` call in `region` and return its parsed body."""
-    result = aws_cli.run_aws([*args, *_region_args(args, region), "--output", "json"], timeout=AWS_TIMEOUT)
+def _call_aws(args: list[str], argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """One aws CLI call; a hang past AWS_TIMEOUT is a CloudSweepError like any other failure."""
+    try:
+        result = aws_cli.run_aws(argv, timeout=AWS_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise CloudSweepError(f"aws {' '.join(args)} did not answer within {AWS_TIMEOUT}s") from exc
     if result.returncode != 0:
         raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
+    return result
+
+
+def run_aws(args: list[str], region: str) -> dict:
+    """Run one `aws ... --output json` call in `region` and return its parsed body."""
+    result = _call_aws(args, [*args, *_region_args(args, region), "--output", "json"])
     text = result.stdout.strip()
     return json.loads(text) if text else {}
 
 
 def run_aws_text(args: list[str], region: str) -> None:
     """Run one `aws` call whose output is not JSON (e.g. `s3 rm`), for its side effect."""
-    result = aws_cli.run_aws([*args, *_region_args(args, region)], timeout=AWS_TIMEOUT)
-    if result.returncode != 0:
-        raise CloudSweepError(f"aws {' '.join(args)} failed: {result.stderr.strip()}")
+    _call_aws(args, [*args, *_region_args(args, region)])
 
 
 def list_run_record_keys(bucket: str, region: str, prefix: str) -> list[str]:
@@ -976,6 +989,16 @@ def _kms_key_gone(key_id: str, region: str) -> bool:
     return state in ("PendingDeletion", "PendingReplicaDeletion")
 
 
+def secret_held(arn: str, region: str) -> bool:
+    """True while Secrets Manager lists the secret, scheduled for deletion or not.
+
+    A secret scheduled for deletion keeps its name, so a later run creating that
+    name fails on it. ListSecrets is read rather than DescribeSecret because a
+    tag-conditioned grant cannot match a secret that no longer exists.
+    """
+    return any(r.id == arn for r in list_secrets(region, {}))
+
+
 def _delete_load_balancer(r: Resource, region: str) -> None:
     run_aws(["elbv2", "delete-load-balancer", "--load-balancer-arn", r.id], region)
 
@@ -1074,19 +1097,24 @@ def _pod_identity_association_gone(cluster_and_id: str, region: str) -> bool:
 
 
 def tagging_hit_gone(resource: Resource, region: str) -> bool:
-    """True when a tagging-API hit names an EC2 object, KMS key or EKS association AWS reports gone.
+    """True when a tagging-API hit names an EC2 object, KMS key, EKS association or secret now gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
     volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, instant EC2 fleets, spot requests,
-    KMS keys and EKS pod identity associations after they go. One still deleting or shutting down is not gone, a KMS key
-    scheduled for deletion is, and any other hit is not judged and reads as present.
+    KMS keys, EKS pod identity associations and secrets after they go. One still deleting or
+    shutting down is not gone, a KMS key scheduled for deletion is, a secret scheduled for
+    deletion is not, and any other hit is not judged and reads as present.
 
     Raises:
-        CloudSweepError: The describe call failed for any reason but NotFound.
+        CloudSweepError: The describe or list call failed for any reason but NotFound.
     """
     parts = resource.id.split(":", 5)
-    if resource.kind not in ("tagged:ec2", "tagged:kms", "tagged:eks") or len(parts) < 6:
+    judged = ("tagged:ec2", "tagged:kms", "tagged:eks", "tagged:secretsmanager")
+    if resource.kind not in judged or len(parts) < 6:
         return False
+    if resource.kind == "tagged:secretsmanager":
+        # A secret's ARN separates its type with ':', and its name may itself hold '/'.
+        return parts[5].startswith("secret:") and not secret_held(resource.id, region)
     resource_type, _, bare_id = parts[5].partition("/")
     if resource.kind == "tagged:kms":
         return resource_type == "key" and _kms_key_gone(bare_id, region)
@@ -1182,7 +1210,16 @@ def _delete_log_group(r: Resource, region: str) -> None:
 
 
 def _delete_secret(r: Resource, region: str) -> None:
+    """Delete without a recovery window, then wait until Secrets Manager stops listing the secret.
+
+    A background process purges a forced delete, and the call answers success
+    without saying whether it purged anything, so only the listing says the name is free.
+    """
     run_aws(["secretsmanager", "delete-secret", "--secret-id", r.id, "--force-delete-without-recovery"], region)
+    if not _wait_until(lambda: not secret_held(r.id, region)):
+        raise CloudSweepError(
+            f"secret {r.name} is still listed {POLL_TIMEOUT}s after its forced delete"
+        )
 
 
 def _delete_kms_alias(r: Resource, region: str) -> None:
@@ -1466,6 +1503,11 @@ def _refuse(message: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     tag_filter = parse_tag_filter(args.tag_filter)
+    if args.delete and not tag_filter and not (args.expired or args.include_untagged):
+        return _refuse(
+            "--delete with an empty --tag-filter matches every resource found, which is "
+            "--include-untagged: name the tags, or pass --include-untagged to mean it."
+        )
 
     expiry: ExpirySelection | None = None
     if args.expired:

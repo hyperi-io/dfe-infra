@@ -62,6 +62,9 @@ class FakeGuard:
         self.records: dict[str, str] = {}
         self.deleted: list[str] = []
         self.kubeconfig_error: Exception | None = None
+        self.sweeps: list[list[str]] = []
+        self.sweep_code = 0
+        self.sweep_error: Exception | None = None
 
     def _maybe_missing(self, what: str, value: str) -> str:
         if what in self.missing:
@@ -104,6 +107,12 @@ class FakeGuard:
     def delete_record(self, bucket: str, region: str, key: str) -> None:
         self.deleted.append(key)
         self.records.pop(key, None)
+
+    def sweep(self, args: list[str]) -> int:
+        self.sweeps.append(args)
+        if self.sweep_error:
+            raise self.sweep_error
+        return self.sweep_code
 
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
         if self.kubeconfig_error:
@@ -543,10 +552,14 @@ ENDPOINT_NOT_FOUND = _aws_fail(
 
 
 class AwsRegionGuard(FakeGuard):
-    """FakeGuard's account reads, with the region's run resources read through the real AwsGuard."""
+    """FakeGuard's account reads, with the region's run resources and the teardown's sweep
+    going through the real AwsGuard."""
 
     def run_resources(self, keys: object, exclude_bucket: str) -> list:
         return guard_mod.AwsGuard("us-west-2").run_resources(keys, exclude_bucket)
+
+    def sweep(self, args: list[str]) -> int:
+        return guard_mod.AwsGuard("us-west-2").sweep(args)
 
 
 def _stale_region(
@@ -1029,6 +1042,228 @@ def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(root: Path
     assert guard.deleted == []
     assert "dfe-e2e-runs/run-1/run.json" in guard.records
     assert (root / guard_mod.OVERLAY_NAME).exists()
+
+
+# --- what still carries the run's own tag once its destroy succeeds ------------------------------
+# _cycle runs as run-1, so its run tag is dfe-e2e=run-1 and its expiry the 2h run length plus 30m.
+
+RUN_EXPIRES_AT = int(NOW) + 2 * 3600 + 30 * 60
+SWEEP_ARGS = [
+    "--provider", "aws", "--region", "us-west-2", "--tag-filter", "dfe-e2e=run-1",
+    "--delete", "--account", ACCOUNT, "--exclude-bucket", "example-state",
+]
+
+
+def test_a_successful_destroy_then_sweeps_the_runs_own_tag_in_its_region_and_account(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ESO pushes the CA secrets outside tofu with the run's tags, so a destroy alone leaves them."""
+    guard, runner = FakeGuard(), FakeRunner()
+    order: list[str] = []
+    runner.on_run = {"destroy": lambda: order.append("destroy")}
+    real_sweep = guard.sweep
+    guard.sweep = lambda args: order.append("sweep") or real_sweep(args)  # type: ignore[method-assign]
+    assert _cycle(root, monkeypatch, guard, runner) == 0
+    assert order == ["destroy", "sweep"]
+    assert guard.sweeps == [[*SWEEP_ARGS, "--yes"]]
+    parsed = cloud_sweep.build_parser().parse_args(guard.sweeps[0])
+    assert cloud_sweep.parse_tag_filter(parsed.tag_filter) == {"dfe-e2e": "run-1"}
+    assert (parsed.expired, parsed.include_untagged) == (False, False)
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+
+
+def test_a_renamed_run_tag_key_reaches_the_teardown_sweep(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DFE_RUN_TAG_KEY", "ci-run")
+    guard = FakeGuard()
+    assert _cycle(root, monkeypatch, guard, FakeRunner()) == 0
+    (args,) = guard.sweeps
+    assert args[args.index("--tag-filter") + 1] == "ci-run=run-1"
+
+
+def test_expected_fail_a_failed_destroy_sweeps_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With state left, the sweep would delete what tofu still holds and fail the reaper's destroy."""
+    guard = FakeGuard()
+    assert _cycle(root, monkeypatch, guard, FakeRunner(codes={"destroy": 1})) == 1
+    assert guard.sweeps == []
+
+
+def test_a_run_that_created_nothing_sweeps_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    guard = FakeGuard()
+
+    def refuse(*_args: object) -> None:
+        raise cloud_sweep.CloudSweepError("aws s3api put-object failed: AccessDenied")
+
+    guard.put_record = refuse  # type: ignore[method-assign]
+    assert _cycle(root, monkeypatch, guard, FakeRunner()) == 1
+    assert guard.sweeps == []
+
+
+@pytest.mark.parametrize("code", [1, 2])
+def test_expected_fail_a_sweep_that_leaves_anything_fails_the_run_and_names_the_sweep(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, code: int
+) -> None:
+    """The destroy succeeded, so the record goes; what is left keeps the run's tags for the reaper.
+    Exit 2 stays the refusal that created nothing, so a refused sweep still fails the run with 1."""
+    guard = FakeGuard()
+    guard.sweep_code = code
+    assert _cycle(root, monkeypatch, guard, FakeRunner()) == 1
+    err = capsys.readouterr().err
+    assert "TEARDOWN INCOMPLETE for run run-1" in err
+    assert f"python3 scripts/cloud_sweep.py {' '.join(SWEEP_ARGS)}" in err
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+
+
+def test_expected_fail_a_sweep_that_cannot_list_fails_the_run(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    guard = FakeGuard()
+    guard.sweep_error = cloud_sweep.CloudSweepError(
+        "aws resourcegroupstaggingapi get-resources did not answer within 60s"
+    )
+    assert _cycle(root, monkeypatch, guard, FakeRunner()) == 1
+    err = capsys.readouterr().err
+    assert "TEARDOWN INCOMPLETE for run run-1" in err
+    assert "did not answer within 60s" in err
+
+
+class FakeRegion:
+    """The aws CLI for one region holding secrets and instances, each with its tags.
+
+    A forced secret delete leaves the secret listed as scheduled for one more listing,
+    as the background purge does, and the tagging API goes on listing everything the
+    region ever held, as it does after a delete. Every other call answers empty.
+    """
+
+    def __init__(self) -> None:
+        self.secrets: dict[str, dict] = {}
+        self.instances: dict[str, dict] = {}
+        self.ever_tagged: dict[str, list[dict[str, str]]] = {}
+        self.purging: dict[str, int] = {}
+        self.calls: list[list[str]] = []
+        self.deleted: list[str] = []
+
+    def add_secret(self, name: str, tags: dict[str, str]) -> str:
+        arn = f"arn:aws:secretsmanager:us-west-2:{ACCOUNT}:secret:{name}-AbCdEf"
+        tag_list = [{"Key": k, "Value": v} for k, v in tags.items()]
+        self.secrets[arn] = {"ARN": arn, "Name": name, "Tags": tag_list}
+        self.ever_tagged[arn] = tag_list
+        return arn
+
+    def add_instance(self, instance_id: str, tags: dict[str, str]) -> str:
+        tag_list = [{"Key": k, "Value": v} for k, v in tags.items()]
+        self.instances[instance_id] = {"InstanceId": instance_id, "State": {"Name": "running"}, "Tags": tag_list}
+        self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{instance_id}"] = tag_list
+        return instance_id
+
+    def _list_secrets(self) -> list[dict]:
+        for arn in [a for a, left in self.purging.items() if left == 0]:
+            del self.secrets[arn], self.purging[arn]
+        listed = [dict(s) for s in self.secrets.values()]
+        self.purging = {arn: left - 1 for arn, left in self.purging.items()}
+        return listed
+
+    def _tagged(self, args: list[str]) -> list[dict]:
+        wanted = []
+        for i, arg in enumerate(args):
+            if arg == "--tag-filters":
+                key, _, values = args[i + 1].partition(",Values=")
+                wanted.append((key.removeprefix("Key="), values or None))
+        mappings = []
+        for arn, tags in self.ever_tagged.items():
+            held = {t["Key"]: t["Value"] for t in tags}
+            if all(k in held and (v is None or held[k] == v) for k, v in wanted):
+                mappings.append({"ResourceARN": arn, "Tags": tags})
+        return mappings
+
+    def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return _aws_ok({"Account": ACCOUNT})
+        if args[:2] == ["secretsmanager", "list-secrets"]:
+            return _aws_ok({"SecretList": self._list_secrets()})
+        if args[:2] == ["secretsmanager", "delete-secret"]:
+            arn = args[args.index("--secret-id") + 1]
+            assert "--force-delete-without-recovery" in args, args
+            self.deleted.append(arn)
+            if arn in self.secrets:
+                self.secrets[arn]["DeletedDate"] = "2026-10-08T12:00:00+00:00"
+                self.purging[arn] = 1
+            return _aws_ok({"ARN": arn})
+        if args[:2] == ["ec2", "terminate-instances"]:
+            instance_id = args[args.index("--instance-ids") + 1]
+            self.deleted.append(instance_id)
+            self.instances[instance_id]["State"] = {"Name": "terminated"}
+            return _aws_ok({})
+        if args[:2] == ["ec2", "describe-instances"]:
+            named = args[args.index("--instance-ids") + 1] if "--instance-ids" in args else None
+            found = [i for i in self.instances.values() if named in (None, i["InstanceId"])]
+            return _aws_ok({"Reservations": [{"Instances": found}]})
+        if args[:2] == ["resourcegroupstaggingapi", "get-resources"]:
+            return _aws_ok({"ResourceTagMappingList": self._tagged(args)})
+        return _aws_ok({})
+
+
+@pytest.fixture
+def region(monkeypatch: pytest.MonkeyPatch) -> FakeRegion:
+    fake = FakeRegion()
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    return fake
+
+
+def test_the_teardown_sweep_deletes_this_runs_resources_and_never_touches_another_runs(
+    root: Path, region: FakeRegion
+) -> None:
+    mine = cloud_run.run_tags("run-1", RUN_EXPIRES_AT)
+    crt = region.add_secret("dfe/test/pki/internal-ca-crt", mine)
+    key = region.add_secret("dfe/test/pki/internal-ca-key", mine)
+    node = region.add_instance("i-0run1", mine)
+    others = [
+        region.add_secret("dfe/other/pki/internal-ca-crt", cloud_run.run_tags("run-2", RUN_EXPIRES_AT)),
+        # A longer id that starts with this one's, which a prefix match would take.
+        region.add_secret("dfe/longer/pki/internal-ca-crt", cloud_run.run_tags("run-10", RUN_EXPIRES_AT)),
+        region.add_secret("dfe/shared/db", {"service-name": "dfe", "environment": "test"}),
+        region.add_instance("i-0run2", cloud_run.run_tags("run-2", RUN_EXPIRES_AT)),
+    ]
+    config = _config(root)
+    assert guard_mod.AwsGuard(config.region).sweep([*guard_mod.run_sweep_args(config, "run-1"), "--yes"]) == 0
+    assert sorted(region.deleted) == sorted([crt, key, node])
+    named = [arg for call in region.calls for arg in call]
+    assert [other for other in others if other in named] == []
+    assert {crt, key}.isdisjoint(region.secrets)
+    assert set(others[:3]) <= set(region.secrets)
+    assert region.instances["i-0run2"]["State"] == {"Name": "running"}
+
+
+def test_after_the_teardown_the_next_preflight_finds_nothing_of_the_run(
+    root: Path, monkeypatch: pytest.MonkeyPatch, region: FakeRegion
+) -> None:
+    """ESO pushed the CA secrets with the run's tags, tofu destroy left them, and the next run's
+    (d) refused on them until the in-cloud sweeper's grace ran out."""
+    pushed: list[str] = []
+
+    def eso_pushes() -> None:
+        tags = cloud_run.run_tags("run-1", RUN_EXPIRES_AT)
+        pushed.append(region.add_secret("dfe/test/pki/internal-ca-crt", tags))
+        pushed.append(region.add_secret("dfe/test/pki/internal-ca-key", tags))
+
+    assert _cycle(root, monkeypatch, AwsRegionGuard(), FakeRunner(on_run={"cycle": eso_pushes})) == 0
+    report = guard_mod.run_preflight(_config(root), AwsRegionGuard(), now=NOW, env={})
+    assert report.ok, [c.detail for c in report.checks if not c.ok]
+    assert sorted(region.deleted) == sorted(pushed)
+
+
+def test_refusal_d_a_run_secret_only_scheduled_for_deletion_still_holds_its_name(
+    root: Path, region: FakeRegion
+) -> None:
+    """A secret pending deletion keeps its name, so the next run's push of that name would fail."""
+    arn = region.add_secret("dfe/test/pki/internal-ca-crt", cloud_run.run_tags("r-prev", int(NOW) + 3600))
+    region.secrets[arn]["DeletedDate"] = "2026-10-08T11:00:00+00:00"
+    report = _preflight(root, AwsRegionGuard())
+    assert _failed(report) == ["(d) unfinished runs"]
+    detail = _check(report, "(d) unfinished runs").detail
+    assert "secret dfe/test/pki/internal-ca-crt (until 2026-10-08T13:00:00Z)" in detail
 
 
 @pytest.mark.parametrize("reserved", ["--keep", "--kubeconfig=x", "--from-terraform", "--ke", "--kubec=x", "--from"])

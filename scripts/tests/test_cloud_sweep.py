@@ -802,6 +802,116 @@ def test_a_pod_identity_association_is_gone_with_its_cluster(
     assert call[call.index("--association-id") + 1] == "a-0example"
 
 
+# A secret's name may hold '/', and its ARN separates the type with ':'.
+SECRET_ARN = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:dfe/test/pki/internal-ca-crt-AbCdEf"
+OTHER_SECRET_ARN = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:secret:dfe/test/pki/internal-ca-key-GhIjKl"
+
+
+def _secret(arn: str = SECRET_ARN, *, scheduled: bool = False) -> dict:
+    entry: dict[str, object] = {"ARN": arn, "Name": arn.split(":secret:", 1)[1][:-7], "Tags": DFE_TAGS}
+    if scheduled:
+        entry["DeletedDate"] = "2026-10-08T12:00:00+00:00"
+    return entry
+
+
+def _secrets(*entries: dict) -> subprocess.CompletedProcess:
+    return _ok({"SecretList": list(entries)})
+
+
+@pytest.mark.parametrize(
+    ("listing", "gone"),
+    [
+        pytest.param(_secrets(), True, id="no-longer-listed"),
+        pytest.param(_secrets(_secret(OTHER_SECRET_ARN)), True, id="only-another-secret-listed"),
+        pytest.param(_secrets(_secret(scheduled=True)), False, id="scheduled-for-deletion-keeps-its-name"),
+        pytest.param(_secrets(_secret()), False, id="live"),
+    ],
+)
+def test_a_secret_tagging_hit_is_gone_once_secrets_manager_no_longer_lists_it(
+    monkeypatch: pytest.MonkeyPatch, listing: subprocess.CompletedProcess, gone: bool
+) -> None:
+    """The run's teardown purges the secrets ESO pushed, and the tagging API goes on listing them."""
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return listing
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    assert cloud_sweep.tagging_hit_gone(_tagging_hit(SECRET_ARN, "tagged:secretsmanager"), REGION) is gone
+    (call,) = calls
+    assert call[:3] == ["secretsmanager", "list-secrets", "--include-planned-deletion"]
+
+
+def test_a_secret_tagging_hit_whose_listing_fails_raises_rather_than_reading_as_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (AccessDeniedException) when calling the ListSecrets operation"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="AccessDeniedException"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(SECRET_ARN, "tagged:secretsmanager"), REGION)
+
+
+def test_another_secretsmanager_class_is_never_judged_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("nothing is listed for a class with no gone-check")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    hit = _tagging_hit(f"arn:aws:secretsmanager:{REGION}:{ACCOUNT_ID}:other:thing", "tagged:secretsmanager")
+    assert cloud_sweep.tagging_hit_gone(hit, REGION) is False
+
+
+def test_a_forced_secret_delete_waits_until_secrets_manager_no_longer_lists_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A background process purges a forced delete, and until it does the name is still taken."""
+    calls: list[list[str]] = []
+    responses = [_ok({"ARN": SECRET_ARN}), _secrets(_secret(scheduled=True)), _secrets()]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    cloud_sweep._delete_secret(_resource("secret", SECRET_ARN, tagged=True), REGION)
+    assert [c[1] for c in calls] == ["delete-secret", "list-secrets", "list-secrets"]
+    assert calls[0][calls[0].index("--secret-id") + 1] == SECRET_ARN
+    assert "--force-delete-without-recovery" in calls[0]
+
+
+def test_expected_fail_a_secret_still_listed_when_the_wait_runs_out_fails_its_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The call answers success without saying it purged anything, so only the listing can say."""
+    clock = [0.0]
+
+    def tick() -> float:
+        clock[0] += 100.0
+        return clock[0]
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        return _ok({"ARN": SECRET_ARN}) if args[1] == "delete-secret" else _secrets(_secret(scheduled=True))
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(cloud_sweep.time, "monotonic", tick)
+    with pytest.raises(cloud_sweep.CloudSweepError, match="still listed 300s after its forced delete"):
+        cloud_sweep._delete_secret(_resource("secret", SECRET_ARN, tagged=True), REGION)
+
+
+def test_a_hung_aws_call_is_a_sweep_error_not_a_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every caller handles CloudSweepError; a TimeoutExpired would end a teardown with a traceback."""
+
+    def hang(args: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+        raise subprocess.TimeoutExpired(["aws", *args], timeout)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", hang)
+    with pytest.raises(cloud_sweep.CloudSweepError, match="did not answer within 60s"):
+        cloud_sweep.run_aws(["secretsmanager", "list-secrets"], REGION)
+    with pytest.raises(cloud_sweep.CloudSweepError, match="did not answer within 60s"):
+        cloud_sweep.run_aws_text(["s3", "rm", "s3://example", "--recursive"], REGION)
+
+
 FLEET_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:fleet/fleet-0example"
 FLEET_NOT_FOUND = "An error occurred (InvalidFleetId.NotFound) when calling the DescribeFleets operation"
 
@@ -1079,6 +1189,26 @@ def test_delete_without_account_is_refused_before_any_aws_call(
     code = cloud_sweep.main(["--region", REGION, "--delete"])
     assert code == 2
     assert "--account" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("tag_filter", ["", ",", " , "])
+def test_expected_fail_delete_with_an_empty_tag_filter_is_refused_before_any_aws_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tag_filter: str
+) -> None:
+    """An empty filter matches every resource, which is --include-untagged without saying so."""
+
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("no aws call should happen before the filter is checked")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    code = cloud_sweep.main(["--region", REGION, "--tag-filter", tag_filter, "--delete", "--account", "000000000000"])
+    assert code == 2
+    assert "--include-untagged" in capsys.readouterr().err
+
+
+def test_an_empty_tag_filter_still_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: [])
+    assert cloud_sweep.main(["--region", REGION, "--tag-filter", ""]) == 0
 
 
 def test_delete_refuses_when_the_authenticated_account_does_not_match(

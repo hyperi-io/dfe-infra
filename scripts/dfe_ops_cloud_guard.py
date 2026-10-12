@@ -40,8 +40,9 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
 
 (c) and (d) leave out a hit AWS reports deleted, terminated or not found, which
 the tagging API goes on listing for a while: an EC2 object, a KMS key scheduled
-for deletion, or an EKS pod identity association whose cluster is gone. One
-whose state cannot be read counts as present.
+for deletion, an EKS pod identity association whose cluster is gone, or a secret
+Secrets Manager no longer lists. One whose state cannot be read counts as
+present, and so does a secret scheduled for deletion, which keeps its name.
 
 It also refuses a dial whose tags.lifecycle is not ephemeral, because a
 persistent deployment's deletion protection would stop the teardown short.
@@ -67,7 +68,11 @@ SIGHUP, the run length running out -- tears the run down: the in-flight child
 is stopped, the cluster's workloads go if the cycle did not reach its own
 destroy, then `tofu destroy`.
 Only a destroy that succeeds removes the overlay and the run record; a failed
-one leaves both, and the run's tags, for the reaper. SIGKILL skips all of
+one leaves both, and the run's tags, for the reaper. After a successful destroy
+cloud_sweep.py deletes what still carries the run tag with this run's id --
+what controllers created outside tofu, such as the CA secrets ESO pushes -- and
+lists it again. Anything left fails the run, since the next preflight's (d)
+would refuse on it. SIGKILL skips all of
 this, which is what the reaper is for. Every child runs with AWS_REGION and
 AWS_DEFAULT_REGION set to the dial's region, so a call that names no region
 lands in the run's region rather than the shell's.
@@ -423,6 +428,14 @@ class AwsGuard:
     def delete_record(self, bucket: str, region: str, key: str) -> None:
         self._read(["s3api", "delete-object", "--bucket", bucket, "--key", key], region)
 
+    def sweep(self, args: list[str]) -> int:
+        """cloud_sweep.py's exit code for `args`, run in this process; 0 when nothing is left.
+
+        Raises:
+            CloudSweepError: A listing failed, so what is left cannot be known.
+        """
+        return cloud_sweep.main(args)
+
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         cloud_sweep.run_aws_text(
@@ -659,6 +672,20 @@ def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
     return {**os.environ, "AWS_REGION": config.region, "AWS_DEFAULT_REGION": config.region, **extra}
 
 
+def run_sweep_args(config: GuardConfig, run_id: str) -> list[str]:
+    """cloud_sweep.py arguments that delete what carries this run's tag, in its region and account.
+
+    The filter is the run key AND this run's id, so another run's resources and
+    anything without the run tag are never selected, and the state bucket is
+    excluded by name. --account makes the sweep check the live session first.
+    """
+    selector = f"{config.keys.run}={cloud_run.validate_run_id(run_id)}"
+    return [
+        "--provider", config.provider, "--region", config.region, "--tag-filter", selector,
+        "--delete", "--account", config.account, "--exclude-bucket", config.state_bucket,
+    ]
+
+
 def _group_alive(pgid: int) -> bool:
     """Whether any process is left in the group; one that cannot be signalled still counts."""
     try:
@@ -803,21 +830,47 @@ class Teardown:
             env=run_env(self.config),
             new_session=True,
         )
-        if destroyed == 0:
-            overlay.unlink(missing_ok=True)
-            try:
-                self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
-            except cloud_sweep.CloudSweepError as exc:
-                print(f"run {self.run_id} destroyed; its run record stays: {exc}", file=sys.stderr)
-        else:
+        if destroyed != 0:
             print(
                 f"TEARDOWN FAILED for run {self.run_id}: its run record and expiry tags stay, so the "
                 "reaper destroys it once it expires. Re-run `tofu destroy` in "
                 f"{self.config.tf_dir} to finish it now.",
                 file=sys.stderr,
             )
-        self.result = destroyed
-        return destroyed
+            self.result = destroyed
+            return destroyed
+        overlay.unlink(missing_ok=True)
+        try:
+            self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
+        except cloud_sweep.CloudSweepError as exc:
+            print(f"run {self.run_id} destroyed; its run record stays: {exc}", file=sys.stderr)
+        self.result = self.sweep_leftovers()
+        return self.result
+
+    def sweep_leftovers(self) -> int:
+        """Delete what still carries this run's tag once its state is destroyed; 1 when any is left.
+
+        Controllers create resources tofu never recorded, and they carry the run's
+        tags, so the next run's preflight refuses on them until they go.
+        """
+        args = run_sweep_args(self.config, self.run_id)
+        selector = args[args.index("--tag-filter") + 1]
+        print(f"==> run {self.run_id}: deleting what still carries {selector}", file=sys.stderr)
+        try:
+            left = self.guard.sweep([*args, "--yes"])
+            why = "the sweep's output above names it"
+        except cloud_sweep.CloudSweepError as exc:
+            left, why = 1, f"the sweep could not finish: {exc}"
+        if left == 0:
+            return 0
+        print(
+            f"TEARDOWN INCOMPLETE for run {self.run_id}: tofu destroy succeeded, but not everything "
+            f"carrying {selector} is gone ({why}). The next run's preflight refuses while it stands, "
+            "and the reaper removes it once the run expires. Remove it now with: "
+            f"python3 scripts/cloud_sweep.py {' '.join(args)}",
+            file=sys.stderr,
+        )
+        return 1
 
 
 @contextlib.contextmanager
