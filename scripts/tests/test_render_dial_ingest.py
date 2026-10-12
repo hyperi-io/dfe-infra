@@ -42,7 +42,8 @@ def test_an_absent_block_reports_the_cloud_overlays_door() -> None:
     """The door is read from argocd/values, not restated: common.yaml's
     loadbalancer on a cloud, local.yaml's gateway on-prem."""
     for cloud, door in (("aws", "loadbalancer"), ("gcp", "loadbalancer"), ("azure", "loadbalancer"),
-                        ("local", "gateway"), ("local-dfe", "gateway"), ("", "loadbalancer")):
+                        ("local", "gateway"), ("local-dfe", "gateway"), ("rancher", "gateway"),
+                        ("", "loadbalancer")):
         assert render_dial._ingest_door(dial(f"k8s:\n  cloud: {cloud}\n" if cloud else "substrate: k8s\n")) == door
     assert render_dial._values_ingest_door("nosuchcloud") == "loadbalancer"
 

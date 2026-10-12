@@ -114,9 +114,9 @@ def group_of(route_name: str) -> str:
     return GROUP_OF[route_name.removesuffix("-public")]
 
 
-def cascade(flavour: str) -> tuple[str, ...]:
+def cascade(flavour: str, cloud: str = "") -> tuple[str, ...]:
     """The values layer2-edge.yaml layers for one cloud flavour, then the profile."""
-    cloud = {"onprem": "local"}.get(flavour, flavour)
+    cloud = cloud or {"onprem": "local"}.get(flavour, flavour)
     return (
         "--namespace", "envoy-gateway-system",
         "-f", str(VALUES / "common.yaml"),
@@ -1012,10 +1012,16 @@ def test_the_receiver_route_renders_once_its_caller_auth_is_declared(flavour: st
     assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
 
 
-def test_the_receiver_route_is_the_on_prem_default_door() -> None:
-    """local.yaml sets door gateway, so the route renders with no switch of its own."""
-    docs = render("onprem")
-    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}
+@pytest.mark.parametrize("cloud", ["local", "local-dfe", "rancher"])
+def test_every_on_prem_cloud_keeps_the_receiver_route(cloud: str) -> None:
+    """Each cloud file the onprem flavour serves sets door gateway, so none closes ingest by omission."""
+    out = subprocess.run(
+        ["helm", "template", "envoy-gateway-config", str(GATEWAY), *cascade("onprem", cloud)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    assert out.returncode == 0, out.stderr
+    docs = [d for d in yaml.safe_load_all(out.stdout) if d]
+    assert "receiver" in {r["metadata"]["name"] for r in of_kind(docs, "HTTPRoute")}, cloud
 
 
 def test_an_unknown_receiver_auth_mode_is_refused_by_name() -> None:

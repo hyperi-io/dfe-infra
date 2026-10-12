@@ -318,9 +318,12 @@ that turns it and its cost bucket.
 An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being
 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load
 Balancing pricing page). The hourly half is XS. The processing half is the
-transport cost of ingest on this door. Each Elastic IP bills hourly whether or
-not the NLB exists. AWS data transfer out still applies to the replies on every
-path, culvert included.
+transport cost of ingest on this door. AWS data transfer out still applies to
+the replies on every path, culvert included.
+
+The receiver NLB is created with one Elastic IP per public subnet. Those
+addresses exist, and AWS bills them, while the ingest door is closed and no NLB
+exists. `edge.aws.receiver_eips: false` turns them off.
 
 See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
 for node pools and images, admin UI exposure, teardown, lifecycle tags and

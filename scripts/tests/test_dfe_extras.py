@@ -556,7 +556,9 @@ def test_culvert_policy_switched_on_in_a_layer_fails() -> None:
         render("culvert", "scale", "aws", overlay={"networkPolicy": {"enabled": True}})
 
 
-def test_the_gateway_door_refuses_an_exposed_grpc_listener() -> None:
+@pytest.mark.parametrize("cloud", ["local", "local-dfe", "rancher"])
+def test_the_gateway_door_refuses_an_exposed_grpc_listener(cloud: str) -> None:
+    """Every on-prem cloud file hands the receiver door gateway, which only that door refuses."""
     listeners = {
         "listeners": [
             {"name": "http", "port": 8080, "protocol": "TCP", "exposed": True},
@@ -564,7 +566,7 @@ def test_the_gateway_door_refuses_an_exposed_grpc_listener() -> None:
         ]
     }
     with pytest.raises(RenderError, match='listener "grpc"') as refused:
-        render("dfe-receiver", "slim", "local", overlay=listeners)
+        render("dfe-receiver", "slim", cloud, overlay=listeners)
     assert "exposure.groups.ingest.door is gateway" in str(refused.value)
 
 

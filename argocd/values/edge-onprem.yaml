@@ -35,8 +35,8 @@ tls:
   issuerName: dfe-internal-ca
 
 # TIER 1, and NOT a key in this file -- the receiver's ingest door is
-# receiver.{domain} on this gateway, because local.yaml and local-dfe.yaml set
-# exposure.groups.ingest.door: gateway and this flavour has no cloud
+# receiver.{domain} on this gateway, because local.yaml, local-dfe.yaml and
+# rancher.yaml set exposure.groups.ingest.door: gateway and this flavour has no cloud
 # LoadBalancer provisioner of its own. The gateway renders the receiver route
 # from that one key, and the ingest group's lists fence it.
 

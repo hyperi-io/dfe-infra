@@ -217,7 +217,7 @@ def test_the_receivers_door_stayed_where_the_receiver_reads_it() -> None:
     assert {"charts/dfe-extras", "edge/gateway"} <= readers(("exposure", "groups", "ingest"))
     common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
     assert common["exposure"]["groups"]["ingest"]["door"] == "loadbalancer"
-    for cloud in ("local", "local-dfe"):
+    for cloud in ("local", "local-dfe", "rancher"):
         tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8"))
         assert tree["exposure"]["groups"]["ingest"]["door"] == "gateway", cloud
     for flavour in ("aws", "gcp", "azure", "onprem"):

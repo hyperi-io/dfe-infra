@@ -1,0 +1,12 @@
+# Sample "rancher" cloud overlay, selected by the cluster secret's
+# dfe.hyperi.io/cloud value (= "rancher"): an on-prem Rancher cluster, which the
+# edge module serves with its onprem flavour (argocd/values/edge-onprem.yaml).
+global:
+  cloud: rancher
+
+# The on-prem ingest door, as local.yaml and local-dfe.yaml set it: receiver.{domain}
+# on the gateway, fenced by the ingest group's lists, which fence nothing while empty.
+exposure:
+  groups:
+    ingest:
+      door: gateway

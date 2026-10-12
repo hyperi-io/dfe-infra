@@ -491,7 +491,7 @@ def test_a_public_service_switched_on_is_caught() -> None:
 # Every cloud values file under argocd/values. The on-prem files set the gateway
 # door and the clouds the load balancer door with no senders, so none renders a
 # load balancer by default.
-RECEIVER_CLOUDS = ("local", "local-dfe", "aws", "gcp", "azure")
+RECEIVER_CLOUDS = ("local", "local-dfe", "rancher", "aws", "gcp", "azure")
 LB_FIELDS = (
     "type",
     "loadBalancerIP",

@@ -52,7 +52,7 @@ exposure:
   groups:
     # dfe-receiver and the otel route. door loadbalancer is the receiver's own
     # load balancer, which renders only while allow names someone; gateway is
-    # receiver.{domain} on the gateway, which local.yaml sets on-prem; tunnel
+    # receiver.{domain} on the gateway, which the on-prem cloud files set; tunnel
     # is no public door. deny reaches the gateway routes only: the receiver's
     # own load balancer refuses a deny list (docs/INGEST-EDGE.md).
     ingest:
