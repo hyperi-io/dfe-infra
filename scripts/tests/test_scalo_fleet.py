@@ -1,4 +1,4 @@
-"""Tests for tools/scalo_fleet.py -- the PR-merge fleet release tool.
+"""Tests for scripts/dfe-fleet -- the PR-merge fleet release tool.
 
 Real git repositories in temp dirs with a local bare remote, and real stand-in
 binaries the tool really execs (no mocks, per the project policy). Nothing here
@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,8 +27,18 @@ from typing import ClassVar
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from dfe_suite.landing import dispatch_release
+from dfe_suite.rebuild import (
+    _check_unoptimized_caller,
+    _gate_exclusions,
+    _gate_features,
+    _release_timeout,
+    _suite_node,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 # The CLI is `scripts/dfe-fleet` -- a hyphen is not an importable module name,
 # so it loads by path, the same way test_propagate_stack_pin.py does.
@@ -37,13 +48,6 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 sf = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(sf)
-
-from dfe_suite.landing import dispatch_release
-from dfe_suite.rebuild import (
-    _check_unoptimized_caller,
-    _gate_exclusions,
-    _gate_features,
-)
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "Test",
@@ -546,6 +550,72 @@ class RebuildRsTests(OnPathTestCase):
         assert "chart/" not in output
 
 
+def _target_recording_cargo(directory: Path) -> Path:
+    """A cargo stand-in that records the CARGO_TARGET_DIR of every call, one line each.
+
+    Returns:
+        The record file; ``<unset>`` stands for a call made with the variable unset.
+    """
+    record = directory / "cargo.target"
+    script = directory / "cargo"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "${{CARGO_TARGET_DIR-<unset>}}" >> "{record}"\n'
+        "echo 'FROM scratch'\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    script.chmod(0o755)
+    return record
+
+
+class RebuildRsTargetTests(OnPathTestCase):
+    """Cargo keeps its own target dir unless SCALO_REBUILD_TARGET names another."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-target-")
+        self.addCleanup(root_tmp.cleanup)
+        self.root = Path(root_tmp.name)
+        origin = self.root / "origin.git"
+        _git(self.root, "init", "--bare", "-b", "main", str(origin))
+        seed = self.root / "seed"
+        _git(self.root, "clone", str(origin), str(seed))
+        _identify(seed)
+        (seed / "Cargo.toml").write_text('[package]\nname = "app"\n', encoding="utf-8")
+        _git(seed, "add", "Cargo.toml")
+        _git(seed, "commit", "-m", "chore: seed")
+        _git(seed, "push", "origin", "main")
+
+        self.repo = self.root / "dfe-receiver"
+        _git(self.root, "clone", str(origin), str(self.repo))
+        _identify(self.repo)
+        self.record = _target_recording_cargo(self.bindir)
+        # A cache home of the test's own, so a build written under it is caught.
+        self.cache = self.root / "cache"
+        os.environ["XDG_CACHE_HOME"] = str(self.cache)
+        os.environ.pop("SCALO_REBUILD_TARGET", None)
+        os.environ.pop("CARGO_TARGET_DIR", None)
+
+    def _rebuild(self) -> set[str]:
+        args = sf.build_parser().parse_args(
+            ["rebuild-rs", str(self.repo), "2.11.0", "--no-tests"]
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert sf.cmd_rebuild_rs(args) == 0
+        return set(self.record.read_text(encoding="utf-8").splitlines())
+
+    def test_unset_leaves_every_cargo_call_on_its_own_target_dir(self) -> None:
+        assert self._rebuild() == {"<unset>"}
+        assert not self.cache.exists()
+
+    def test_a_named_target_reaches_every_cargo_call(self) -> None:
+        named = self.root / "target"
+        os.environ["SCALO_REBUILD_TARGET"] = str(named)
+        assert self._rebuild() == {str(named)}
+        assert not self.cache.exists()
+
+
 # dfe-fetcher's workspace as `cargo metadata --no-deps` reports it, cut to the
 # features that matter: the db crate's `odbc` links unixODBC, and the app's
 # `db-odbc` and `full` both turn it on.
@@ -653,6 +723,29 @@ class GateFeaturesTests(OnPathTestCase):
         assert _gate_exclusions("dfe-fetcher") == ["dfe-fetcher-db/odbc"]
         assert _gate_exclusions("dfe-loader") == []
         assert _gate_exclusions("not-a-suite-member-xyzzy") == []
+
+
+class ReleaseTimeoutTests(unittest.TestCase):
+    """A rebuild follows the release run for its node's minutes, else the default."""
+
+    def test_the_suite_graph_outlasts_elastics_measured_release(self) -> None:
+        # The committed suite.yaml: an optimised elastic release ran 4h16m.
+        node = _suite_node("dfe-transform-elastic")
+        waited = _release_timeout(node, "dfe-transform-elastic", sf.RUN_TIMEOUT_RUST)
+        assert waited > (4 * 60 + 16) * 60
+        assert waited > sf.RUN_TIMEOUT_RUST
+
+    def test_a_node_that_sets_nothing_takes_the_default(self) -> None:
+        assert _release_timeout(_suite_node("dfe-loader"), "dfe-loader", 7200) == 7200
+        assert _release_timeout(_suite_node("not-a-suite-member-xyzzy"), "x", 3600) == 3600
+
+    def test_minutes_are_returned_as_seconds(self) -> None:
+        assert _release_timeout({"release_timeout_minutes": "90"}, "app", 7200) == 5400
+
+    def test_a_value_that_is_not_quoted_whole_minutes_is_refused(self) -> None:
+        for bad in ("0", "-5", "4h", "2.5", "", " 60", 300, True, ["60"]):
+            with pytest.raises(sf.FleetError, match=re.escape(f"minutes is {bad!r}, not")):
+                _release_timeout({"release_timeout_minutes": bad}, "app", 7200)
 
 
 class RebuildRsGateFeaturesTests(OnPathTestCase):

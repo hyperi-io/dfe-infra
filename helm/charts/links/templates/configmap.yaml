@@ -19,7 +19,7 @@
 {{- if $domain }}
 {{- /* Gateway-first: every surface is a name under the deployment's domain. */}}
 {{- $h := .Values.hostnames }}
-{{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; an infra surface also goes dark when exposure.infraUisExternal is off." }}
+{{- $desc = $desc | default "Every web surface this deployment exposes, each on its own hostname. A grey/red dot means that target is not answering; an infra surface also goes dark when exposure.groups.admin.enabled is off." }}
 {{- $apps := list
       (dict "name" "DFE UI (Search embedded)" "url" (printf "https://%s.%s" $h.dfe $domain)
             "note" "the landing page") }}

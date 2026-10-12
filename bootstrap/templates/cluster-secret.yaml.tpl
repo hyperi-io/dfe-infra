@@ -91,7 +91,6 @@ metadata:
     # Infrastructure outputs (from Terraform)
     dfe.hyperi.io/storage_class: "${DFE_STORAGE_CLASS}"
     dfe.hyperi.io/dfe_namespace: "${DFE_NAMESPACE}"
-    dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
     dfe.hyperi.io/kafka_bootstrap: "${DFE_KAFKA_BOOTSTRAP}"
     dfe.hyperi.io/kafka_provider: "${DFE_KAFKA_PROVIDER}"
     # "external" for a managed broker (msk, confluent-cloud, redpanda-cloud),
@@ -147,10 +146,11 @@ metadata:
     # one appliance from, on the pod's ethernet side. Blank while no instance
     # is running, and rewritten by `dfe-ops bastion up`.
     ${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}
-    # The public gateway's allow-list and any CDN ranges in front of it, which
-    # layer2-edge.yaml turns into the gateway chart's ui.allowed_cidrs and
-    # ui.trusted_proxy_cidrs. Blank unless asked for; the CDN ranges never alone.
-    ${DFE_EDGE_ALLOWED_CIDRS_ANNOTATION}
+    # The addresses the deployment reaches its own gateway from and any CDN
+    # ranges in front of it, which layer2-edge.yaml turns into the gateway
+    # chart's exposure.selfRanges and ui.trusted_proxy_cidrs; neither is an allow
+    # list. Each blank unless the cloud root wrote one.
+    ${DFE_EDGE_SELF_RANGES_ANNOTATION}
     ${DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION}
 type: Opaque
 stringData:

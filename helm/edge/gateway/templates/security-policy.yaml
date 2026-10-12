@@ -40,10 +40,8 @@ spec:
       {{- toYaml ($provider.scopes | default (list "openid" "email" "profile")) | nindent 6 }}
     redirectURL: "https://{{ $route.hostname }}.{{ $.Values.domain }}/oauth2/callback"
     logoutPath: "/oauth2/logout"
-  {{- /* Replaces dfe-edge-fence on this route, so it carries the same rule. */}}
-  {{- if $.Values.envoyGateway.service.internetFacing }}
-  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" (include "envoy-gateway-config.cidrList" (dict "value" $.Values.ui.allowed_cidrs) | fromJsonArray) "indent" 2) }}
-  {{- end }}
+  {{- /* The route's only policy, so it carries the route's exposure group rule. */}}
+  {{- include "envoy-gateway-config.groupAuthorization" (dict "ctx" $ "group" (include "envoy-gateway-config.groupOfRouteName" (dict "ctx" $ "name" $route.name)) "indent" 2) }}
 {{- end }}
 {{- end }}
 {{- end }}

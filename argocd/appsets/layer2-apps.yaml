@@ -68,8 +68,8 @@ spec:
                 - path: "values/culvert-*-values.yaml"
   template:
     metadata:
-      # Unchanged from the 2.2.0 charts: Argo's tracking id is built from the
-      # name, so it adopts every live object rather than deleting and rebuilding.
+      # Argo's tracking id is built from the name, so a renamed Application
+      # deletes and rebuilds every object it owns.
       name: '{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}'
       namespace: argocd
       annotations:
@@ -100,15 +100,15 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"
-                "dfe-archiver" "sha256:90f7d9ec8cddb4d18c41caca5e38ab21a96be7159ddceb1fa2899bb726da5aae"
-                "dfe-engine" "sha256:b3e5a6d99179e548ad4469b88a45aeee8554b9dc3d66e27ad5179c9ce701291e"
-                "dfe-fetcher" "sha256:17b44639cd741115bd8f287b3b959ac86133b7f8fc14e8e1ee389a4856b1235f"
-                "dfe-loader" "sha256:d08d0416925e7322b4580d54f5226cce340a77c150e39845efe3e2ac910875b3"
-                "dfe-receiver" "sha256:11a8972d1681aa46a07c1e516c7733a6f1d3688462da33f3c36866ba2ffc46d9"
-                "dfe-transform-elastic" "sha256:85af7d98187c9fc8a82adb05fbc827316f59e1a795e9b649e44f5aa41036a752"
-                "dfe-transform-vector" "sha256:124db1bada639381231806a882b525388ec61837c02c85dfb8329b60b3856104"
-                "dfe-transform-vrl" "sha256:f04ff3cee742d4c3c0f3a33127bc2addd309b89ca87ab151ff0fa517c2849881"
-                "dfe-ui" "sha256:81fe6773781ea6d2a271b382994e970abdb8c62fd68881ca69d8e1a33c6c59bc"
+                "dfe-archiver" "sha256:a44710c2bd1b4f339202995c18b70008c656ae964180601b0e4b00142b40b820"
+                "dfe-engine" "sha256:db145691ec7612aca61db2e4c987e222ed8eb974a3d9546588c9ead7024fce66"
+                "dfe-fetcher" "sha256:c3ea75c9f0f523dee3d4eab7e25b7a13f512b1c4495b78513173454e0f857e81"
+                "dfe-loader" "sha256:64546190b3249a0acd3c78a89e8f741151222abe5519f88d2af2e559f82fa99e"
+                "dfe-receiver" "sha256:2e98cbf67dbad36f1ddd8f3f07a50817d99347196a3b43080ff62e6da4c296e5"
+                "dfe-transform-elastic" "sha256:0fefba1ac45ba8d7ed08c3ec797446751913b286ae3676fb6bf19285e9d39722"
+                "dfe-transform-vector" "sha256:42d6156b987cf008761ef4e8a828da3ffd9c1cde3c5640828f51bdfa5d5d95ee"
+                "dfe-transform-vrl" "sha256:0b25950e4906ff33cb3c3e637359423e5a267c986e9b6d83fb641410ce808ef7"
+                "dfe-ui" "sha256:9087daf0fdec6d3ccedb972e71981a659730d66222506a4e0b820d11bc0d7520"
                 "hyperdx" "sha256:95a0ab3a12b56360d43cd22099d0ad7f19ec7a6065408459ce6f6a12a2f4cc00"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
@@ -141,8 +141,8 @@ spec:
             # branch) is injected from the SAME config_repo_url/revision annotation
             # Argo reads (the `values` ref + the git generator). No second place to
             # set the deploy repo, so the engine's write target cannot drift from
-            # what Argo reads. Only the dfe-engine chart has a gitops block; other
-            # charts ignore these params.
+            # what Argo reads. Only dfe-extras reads them, for the engine's env and
+            # its hunt runner, and every thin chart ignores them.
             parameters:
               # The registry every dfe-* image is pulled from. `index` returns an
               # empty string for a missing annotation, and an empty parameter

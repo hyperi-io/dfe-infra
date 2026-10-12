@@ -57,13 +57,13 @@ EVERYTHING = (
     "--set", "routes.receiver.enabled=true",
     "--set", "kafka.mode=cluster",
     "--set", "ui.public_domain=public.example.test",
-    "--set", "ui.public.argocd=true",
+    "--set", "exposure.groups.admin.tools.argocd=true",
     "--set", "ui.public.hyperdx=true",
 )
 
 # Every route on the wildcard listener, which tls.edge.hsts governs.
-INTERNAL_ROUTES = {"argocd", "cruise-control", "dfe-engine", "dfe-ui", "forgejo", "hyperdx",
-                   "kafbat", "links", "otel", "receiver"}
+INTERNAL_ROUTES = {"argocd", "cruise-control", "dfe-engine", "dfe-engine-cli", "dfe-ui", "forgejo",
+                   "hyperdx", "kafbat", "links", "otel", "receiver"}
 
 # The edge wildcard issued by the chart's own internal CA (tls.internalCA.issuerName).
 INTERNAL_CA = ("--set", "tls.issuerName=dfe-internal-ca")

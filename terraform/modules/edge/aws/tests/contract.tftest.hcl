@@ -831,53 +831,73 @@ run "every_role_carries_the_permissions_boundary" {
   }
 }
 
-// --- the gateway's fence: nothing unless asked for, and no forwarded header trusted unless a CDN is named
+// --- the gateway's self ranges: the cluster's own egress, always; no forwarded header trusted unless a CDN is named
 
-run "no_allow_list_fences_nothing" {
+run "self_ranges_are_the_clusters_own_egress_whatever_else_is_set" {
   command = plan
 
   variables {
-    egress_addresses = ["203.0.113.7"]
+    egress_addresses = ["203.0.113.7", "203.0.113.8"]
   }
 
   assert {
-    condition     = output.gateway_allowed_cidrs == "" && output.gateway_trusted_proxy_cidrs == ""
-    error_message = "a deployment that names no allow-list must get no fence and no trusted proxies, egress addresses or not"
-  }
-}
-
-run "an_allow_list_admits_the_clusters_own_egress_and_trusts_no_forwarded_header" {
-  command = plan
-
-  variables {
-    gateway_allowed_cidrs = ["198.51.100.10/32"]
-    egress_addresses      = ["203.0.113.7", "203.0.113.8"]
-  }
-
-  assert {
-    condition     = output.gateway_allowed_cidrs == "198.51.100.10/32,203.0.113.7/32,203.0.113.8/32"
-    error_message = "the fence must carry the named ranges and every NAT address as a /32, comma-separated as the chart reads it"
+    condition     = output.self_ranges == "203.0.113.7/32,203.0.113.8/32"
+    error_message = "self_ranges must carry every NAT address as a /32, comma-separated, with no allow list asked for"
   }
 
   // Any host in a trusted range can claim any client address, and the tunnel forwarder sits in a public subnet.
   assert {
     condition     = output.gateway_trusted_proxy_cidrs == ""
-    error_message = "an allow-list with no CDN named must trust no proxy -- the NLB writes no X-Forwarded-For, so Envoy's TCP peer is already the client"
+    error_message = "with no CDN named no proxy is trusted -- the NLB writes no X-Forwarded-For, so Envoy's TCP peer is already the client"
   }
 }
 
-run "an_egress_address_already_named_is_not_listed_twice" {
+run "an_extra_self_range_joins_the_egress_and_is_listed_once" {
   command = plan
 
   variables {
-    gateway_allowed_cidrs = ["203.0.113.7/32"]
-    egress_addresses      = ["203.0.113.7"]
+    extra_self_ranges = ["198.51.100.10/32", "203.0.113.7/32"]
+    egress_addresses  = ["203.0.113.7"]
   }
 
   assert {
-    condition     = output.gateway_allowed_cidrs == "203.0.113.7/32"
-    error_message = "a range the caller already named must appear once"
+    condition     = output.self_ranges == "198.51.100.10/32,203.0.113.7/32"
+    error_message = "an extra range comes first and a range already named must appear once"
   }
+}
+
+run "no_egress_and_no_extra_is_an_empty_fact" {
+  command = plan
+
+  assert {
+    condition     = output.self_ranges == ""
+    error_message = "a deployment with no NAT and no extra range has no self ranges to write"
+  }
+}
+
+run "rejects_an_extra_self_range_with_no_prefix" {
+  command = plan
+
+  variables {
+    extra_self_ranges = ["198.51.100.10"]
+  }
+
+  expect_failures = [
+    var.extra_self_ranges,
+  ]
+}
+
+// Every web exposure group admits self_ranges, so a /0 would open all of them.
+run "rejects_an_extra_self_range_of_every_address" {
+  command = plan
+
+  variables {
+    extra_self_ranges = ["198.51.100.10/32", "0.0.0.0/0"]
+  }
+
+  expect_failures = [
+    var.extra_self_ranges,
+  ]
 }
 
 // A CDN in front of the load balancer forwards the client in X-Forwarded-For,
@@ -886,7 +906,6 @@ run "a_named_proxy_range_is_the_whole_trusted_list" {
   command = plan
 
   variables {
-    gateway_allowed_cidrs       = ["198.51.100.10/32"]
     gateway_trusted_proxy_cidrs = ["192.0.2.0/24", "2001:db8::/48", "192.0.2.0/24"]
   }
 
@@ -896,24 +915,10 @@ run "a_named_proxy_range_is_the_whole_trusted_list" {
   }
 }
 
-run "a_proxy_range_with_no_allow_list_trusts_nothing" {
-  command = plan
-
-  variables {
-    gateway_trusted_proxy_cidrs = ["192.0.2.0/24"]
-  }
-
-  assert {
-    condition     = output.gateway_trusted_proxy_cidrs == ""
-    error_message = "trusted proxies without a fence decide nothing, and bootstrap refuses them"
-  }
-}
-
 run "rejects_a_proxy_range_with_no_prefix" {
   command = plan
 
   variables {
-    gateway_allowed_cidrs       = ["198.51.100.10/32"]
     gateway_trusted_proxy_cidrs = ["192.0.2.1"]
   }
 
@@ -926,23 +931,10 @@ run "rejects_a_proxy_range_of_every_address" {
   command = plan
 
   variables {
-    gateway_allowed_cidrs       = ["198.51.100.10/32"]
     gateway_trusted_proxy_cidrs = ["192.0.2.0/24", "::/0"]
   }
 
   expect_failures = [
     var.gateway_trusted_proxy_cidrs,
-  ]
-}
-
-run "rejects_an_allow_list_entry_with_no_prefix" {
-  command = plan
-
-  variables {
-    gateway_allowed_cidrs = ["198.51.100.10"]
-  }
-
-  expect_failures = [
-    var.gateway_allowed_cidrs,
   ]
 }

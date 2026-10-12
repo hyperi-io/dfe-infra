@@ -30,8 +30,14 @@ kafka:
 # the exposure.public keys, so it stays off and dfe-extras refuses it switched on.
 publicService:
   enabled: false
-# The TCP door takes the cluster secret's receiver address, which the appset hands
-# in as publicService.loadBalancerIP, and exposure.public.loadBalancerIP without one.
+# Public mode renders the load balancers and the ingest NetworkPolicy from one list,
+# the contract's public ports the config turns on, so the policy admits every port
+# a load balancer serves. The TCP door takes publicService.loadBalancerIP, the
+# cluster secret's receiver address the appset hands in, else
+# exposure.public.loadBalancerIP. The policy names no source, because kube-proxy
+# SNATs a client to a node address and the client allow-list is the load
+# balancer's loadBalancerSourceRanges. exposure.networkPolicy.enabled: false drops
+# the policy, and dfe-extras renders the vpn-mode policy of the same name.
 extraObjects:
   - |
     {{- $exposure := .Values.exposure | default dict -}}
@@ -40,10 +46,12 @@ extraObjects:
     {{- $type := toString ($pub.serviceType | default "LoadBalancer") -}}
     {{- $address := (.Values.publicService | default dict).loadBalancerIP | default $pub.loadBalancerIP -}}
     {{- $groups := dict "public" list "public-udp" list -}}
+    {{- $admitted := list -}}
     {{- range (include "scalo-service.ports" . | fromJson).items -}}
     {{- if .public -}}
     {{- $suffix := ternary "public-udp" "public" (eq .protocol "UDP") -}}
     {{- $_ := set $groups $suffix (append (get $groups $suffix) .) -}}
+    {{- $admitted = append $admitted (dict "protocol" .protocol "port" (int .port)) -}}
     {{- end -}}
     {{- end -}}
     {{- range $suffix := list "public" "public-udp" -}}
@@ -59,6 +67,13 @@ extraObjects:
     ---
     {{ dict "apiVersion" "v1" "kind" "Service" "metadata" $meta "spec" $spec | toYaml }}
     {{- end -}}
+    {{- end -}}
+    {{- if and $admitted (dig "networkPolicy" "enabled" true $exposure) -}}
+    {{- $spec := dict "podSelector" (dict "matchLabels" (include "scalo-service.selectorLabelSet" . | fromJson)) "policyTypes" (list "Ingress") "ingress" (list (dict "ports" $admitted)) -}}
+    {{- $meta := include "scalo-service.metadata" (dict "ctx" . "name" (printf "%s-ingest" (include "scalo-service.fullname" .))) | fromYaml -}}
+    {{- $_ := set $meta "labels" (merge (dict "dfe.hyperi.io/exposure" "public") $meta.labels) }}
+    ---
+    {{ dict "apiVersion" "networking.k8s.io/v1" "kind" "NetworkPolicy" "metadata" $meta "spec" $spec | toYaml }}
     {{- end -}}
     {{- end -}}
 

@@ -319,11 +319,18 @@ SCENARIOS = [
         },
         id="hyperdx-header-dev-and-tls",
     ),
+    # Public mode's ingest policy is the thin chart's, from the ports its load balancers serve.
     pytest.param(
         "dfe-receiver", "single", "local",
         {"exposure": {"mode": "public"}},
-        {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
+        {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-public",
+    ),
+    pytest.param(
+        "dfe-receiver", "single", "local",
+        {"exposure": {"mode": "vpn"}},
+        {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
+        id="receiver-vpn",
     ),
     pytest.param(
         "dfe-receiver", "scale", "aws",
@@ -693,13 +700,40 @@ def _extras_otlp(docs: list[dict], workload: str) -> list[str]:
 def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
     workload: str, infra: dict, want: str | None
 ) -> None:
-    """apps/_common.yaml's template, which derives the receiver mode dfe-common leaves empty."""
+    """apps/_common.yaml's template, with the receiver endpoint it derives when none is named."""
     got = _extras_otlp(render("dfe-engine", "scale", "local", infra=infra), workload)
     if want is None:
         assert got == []
     else:
         assert len(got) == 1, got
         assert re.fullmatch(want, got[0]), got
+
+
+@pytest.mark.parametrize("mode", ["hyperdex", "HyperDX", "otlp", "none"])
+@pytest.mark.parametrize("service", COMPONENTS)
+def test_a_telemetry_mode_no_endpoint_resolves_from_is_refused(service: str, mode: str) -> None:
+    """Every component, since each resolves its OTLP endpoint from the one template."""
+    with pytest.raises(RenderError, match=re.escape(f'dfe-extras: telemetry.mode is "{mode}"')) as refused:
+        render(service, "scale", "aws", overlay=base_overlay(service, "aws"), infra={"telemetry": {"mode": mode}})
+    assert "hyperdx, receiver, external, prometheus" in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "telemetry",
+    [
+        None,
+        {"mode": ""},
+        {"mode": "hyperdx"},
+        {"mode": "receiver"},
+        {"mode": "external", "externalEndpoint": "otlp.example.net:4317"},
+        {"mode": "prometheus"},
+    ],
+    ids=["unset", "empty", "hyperdx", "receiver", "external", "prometheus"],
+)
+def test_each_known_telemetry_mode_renders(telemetry: dict | None) -> None:
+    """The control: unset and empty read as hyperdx, as apps/_common.yaml's template reads them."""
+    infra = None if telemetry is None else {"telemetry": telemetry}
+    assert render("dfe-engine", "scale", "aws", infra=infra)
 
 
 def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:

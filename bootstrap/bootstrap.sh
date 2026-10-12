@@ -490,15 +490,22 @@ export DFE_TUNNEL_ZONE_ANNOTATION="${DFE_TUNNEL_ZONE:+dfe.hyperi.io/tunnel_zone:
 # the instance is rebuilt and its address moves.
 export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"
 export DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION="${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr: \"${DFE_TOOLBOX_ADMIN_CIDR}\"}"
-# The gateway's allow-list and the CDN ranges in front of it, comma-separated.
-# layer2-edge.yaml carries the CDN ranges only beside a list, so ranges with no
-# list stop here rather than vanish.
-export DFE_EDGE_ALLOWED_CIDRS="${DFE_EDGE_ALLOWED_CIDRS:-}"
+# The addresses this deployment reaches its own gateway from, and the CDN ranges
+# in front of it, comma-separated. Who else may reach each surface is the gateway
+# chart's exposure.groups, set in the deploy repo, never here.
+# Spaces stripped, because layer2-edge.yaml splits the value on commas alone.
+DFE_EDGE_SELF_RANGES="${DFE_EDGE_SELF_RANGES:-}"
+export DFE_EDGE_SELF_RANGES="${DFE_EDGE_SELF_RANGES// /}"
 export DFE_EDGE_TRUSTED_PROXY_CIDRS="${DFE_EDGE_TRUSTED_PROXY_CIDRS:-}"
-if [[ -z "${DFE_EDGE_ALLOWED_CIDRS}" && -n "${DFE_EDGE_TRUSTED_PROXY_CIDRS}" ]]; then
-  echo "ERROR: DFE_EDGE_TRUSTED_PROXY_CIDRS is set and DFE_EDGE_ALLOWED_CIDRS is empty -- the trusted ranges only say which address the allow-list judges, so with no list they do nothing. Set the list, or clear DFE_EDGE_TRUSTED_PROXY_CIDRS" >&2
-  exit 1
-fi
+# Every web exposure group admits the self ranges, so a /0 would open them all.
+dfe_self_ranges=()
+IFS=',' read -r -a dfe_self_ranges <<< "${DFE_EDGE_SELF_RANGES}"
+for dfe_self_range in "${dfe_self_ranges[@]}"; do
+  if [[ "${dfe_self_range// /}" == */0 ]]; then
+    echo "ERROR: DFE_EDGE_SELF_RANGES carries ${dfe_self_range// /}, which is every address -- it names the cluster's own egress, and every web exposure group on the gateway admits it, so a /0 opens dfe-ui, the engine API and the admin UIs to the internet. Name the egress addresses themselves" >&2
+    exit 1
+  fi
+done
 # Every peer inside a /0 is trusted, so Envoy takes the client from the leftmost
 # X-Forwarded-For entry, which the caller writes.
 dfe_trusted_cidrs=()
@@ -509,7 +516,7 @@ for dfe_trusted_cidr in "${dfe_trusted_cidrs[@]}"; do
     exit 1
   fi
 done
-export DFE_EDGE_ALLOWED_CIDRS_ANNOTATION="${DFE_EDGE_ALLOWED_CIDRS:+dfe.hyperi.io/edge_allowed_cidrs: \"${DFE_EDGE_ALLOWED_CIDRS}\"}"
+export DFE_EDGE_SELF_RANGES_ANNOTATION="${DFE_EDGE_SELF_RANGES:+dfe.hyperi.io/edge_self_ranges: \"${DFE_EDGE_SELF_RANGES}\"}"
 export DFE_EDGE_TRUSTED_PROXY_CIDRS_ANNOTATION="${DFE_EDGE_TRUSTED_PROXY_CIDRS:+dfe.hyperi.io/edge_trusted_proxy_cidrs: \"${DFE_EDGE_TRUSTED_PROXY_CIDRS}\"}"
 # Deployment-wide retention, defaulted so the annotation always renders and the
 # operator sees the value this deploy commits to. Whole days; 0 = no default TTL.
@@ -536,23 +543,6 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
   exit 1
 fi
-
-# What the gateway's web routes admit, said here because Argo renders the chart
-# where nobody reads its NOTES. A /0 of either family is every address.
-dfe_edge_fence_notice() {
-  local cidr cidrs=()
-  IFS=',' read -r -a cidrs <<< "${DFE_EDGE_ALLOWED_CIDRS}"
-  for cidr in "${cidrs[@]}"; do
-    cidr="${cidr// /}"
-    if [[ "${cidr}" == */0 ]]; then
-      echo "WARNING: DFE_EDGE_ALLOWED_CIDRS carries ${cidr}, which admits every address -- dfe-ui, HyperDX, the engine API and every admin UI on the gateway are open to the whole internet behind their own logins. Name the ranges that need them instead." >&2
-    fi
-  done
-  if [[ "${DFE_EDGE_ENABLED}" == "true" && -z "${DFE_EDGE_ALLOWED_CIDRS}" ]] && dfe_cloud_programs_loadbalancers; then
-    echo "Public web: CLOSED -- DFE_CLOUD=${DFE_CLOUD} puts the gateway on an internet-facing load balancer and DFE_EDGE_ALLOWED_CIDRS is empty, so every web route answers 403 until it names who may reach it"
-  fi
-}
-dfe_edge_fence_notice
 
 # The dfe-ui Playwright suite's e2e posture (dfe-ops stack-deploy --e2e): the
 # engine runs as DFE_ENV=test with its unauthenticated /api/e2e seed routes, which
@@ -1284,9 +1274,9 @@ fi
 # secret. They were applied directly here too until the appset covered them; a
 # second copy baked the revision in at apply time, so a bootstrap from a feature
 # branch stranded them once that branch was deleted.
-# NOTE: keda-scalers chart retired -- KEDA is now folded into each app chart
-# (dfe-common.scaledobject helper), driven by the per-instance overlay.
-# cluster-addons ApplicationSet uses goTemplate — no envsubst needed
+# No KEDA scalers Application is applied here: each app's thin chart renders its
+# own ScaledObject from the app's keda values.
+# cluster-addons ApplicationSet uses goTemplate -- no envsubst needed
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 
 # Prove Argo can actually READ the chart repo before declaring bootstrap done.

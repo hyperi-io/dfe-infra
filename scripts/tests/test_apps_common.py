@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         test_apps_common.py
 #  Purpose:      Prove argocd/values/apps/_common.yaml gives every app the OTLP
-#                endpoint dfe-common.otelEndpoint resolves, its DFE labels and
+#                endpoint its telemetry settings select, its DFE labels and
 #                reload annotations, and that each values file's nodeSelector and
 #                tolerations equal its nodeScheduling.
 #  Language:     Python
@@ -18,7 +18,7 @@
 Three tiers. The placement check reads the values files and needs nothing else. The
 endpoint checks need helm: a stand-in chart renders extraEnv through tpl as the
 library does, over the value files exactly as scripts/dfe-weave layers them, and the
-result is compared with what dfe-common.otelEndpoint renders from the same settings.
+result is compared with the endpoint each setting is known to select (KNOWN).
 The thin-chart checks render the real chart and need the scalo-service library
 (_weave.library). dfe-extras is left out of these renders: test_dfe_extras.py
 holds it.
@@ -27,10 +27,9 @@ dfe-ui and dfe-hyperdx export over OTLP/HTTP, so their own integration values mo
 the resolved endpoint from the collector's 4317 to its 4318, and dfe-ui names the
 protocol (OTLP_HTTP).
 
-Receiver mode with no receiverEndpoint is the one place the thin charts derive what the
-2.2.0 helper does not: the receiver's OTLP port from its contract, in the release
-namespace. The parity checks name an endpoint for that mode, and the derived default
-is held against fixtures/contracts/dfe-receiver.json.
+Receiver mode with no receiverEndpoint derives the receiver's OTLP port from its
+contract, in the release namespace. The mode checks name an endpoint for that mode, and
+the derived default is held against fixtures/contracts/dfe-receiver.json.
 
 Telemetry settings and `cloud` reach each render through a deploy repo's infra/common.yaml,
 the layer after the app files. The appset's `cloud` parameter beats that file, so the label
@@ -39,7 +38,6 @@ test passes the same cloud to the Target.
 
 import json
 import re
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -52,7 +50,6 @@ w = weave()
 
 VALUES = REPO_ROOT / "argocd" / "values"
 COMMON = VALUES / "common.yaml"
-TELEMETRY_HELPER = REPO_ROOT / "helm" / "library" / "dfe-common" / "templates" / "_telemetry.tpl"
 # The apps the manifest declares: deploy.service is the key the appset layers by.
 SERVICES = tuple(yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))["apps"])
 CLOUDS = ("aws", "azure", "gcp", "local", "local-dfe")
@@ -70,8 +67,8 @@ def _for(service: str, endpoint: str) -> str:
 
 
 # What each telemetry.mode needs beyond common.yaml, as a deployment's infra/common.yaml sets it.
-# The 2.2.0 helper derives no receiver endpoint, so the parity checks name one, as they name
-# the external one. The thin charts' derived default has its own tests below.
+# The receiver and external modes name their endpoint here; the receiver's derived default has
+# its own tests below.
 MODES = {
     "hyperdx": {},
     "receiver": {"receiverEndpoint": "dfe-receiver.dfe.svc.cluster.local:4317"},
@@ -90,6 +87,32 @@ SHAPES = {
     "receiver-with-scheme": ("receiver", {"receiverEndpoint": "https://rx.example.net:8443"}),
     "external-with-scheme": ("external", {"externalEndpoint": "https://otlp.example.net:4318"}),
     "external-unset": ("external", {"externalEndpoint": ""}),
+}
+
+_COLLECTOR = "dfe-otel-collector-gateway.otel.svc.cluster.local:4317"
+_ELSEWHERE = "dfe-otel-collector-gateway.monitoring.svc.cluster.local:4317"
+
+# The endpoint each mode and shape exports to, by otel.tls. A bare host takes its scheme from
+# otel.tls, a scheme the deployer wrote is kept, and an empty endpoint means export nothing.
+KNOWN = {
+    ("hyperdx", False): f"http://{_COLLECTOR}",
+    ("hyperdx", True): f"https://{_COLLECTOR}",
+    ("receiver", False): "http://dfe-receiver.dfe.svc.cluster.local:4317",
+    ("receiver", True): "https://dfe-receiver.dfe.svc.cluster.local:4317",
+    ("external", False): "http://otlp.example.net:4317",
+    ("external", True): "https://otlp.example.net:4317",
+    ("prometheus", False): "",
+    ("prometheus", True): "",
+    ("collector-namespace", False): f"http://{_ELSEWHERE}",
+    ("collector-namespace", True): f"https://{_ELSEWHERE}",
+    ("hyperdx-endpoint", False): "http://collector.example.net:4317",
+    ("hyperdx-endpoint", True): "https://collector.example.net:4317",
+    ("receiver-with-scheme", False): "https://rx.example.net:8443",
+    ("receiver-with-scheme", True): "https://rx.example.net:8443",
+    ("external-with-scheme", False): "https://otlp.example.net:4318",
+    ("external-with-scheme", True): "https://otlp.example.net:4318",
+    ("external-unset", False): "",
+    ("external-unset", True): "",
 }
 
 
@@ -132,46 +155,6 @@ def deploy_for(tmp_path_factory: pytest.TempPathFactory) -> Callable[[dict], Pat
         return made[key]
 
     return make
-
-
-@pytest.fixture(scope="module")
-def expected(tmp_path_factory: pytest.TempPathFactory) -> Callable[[dict], str]:
-    """What dfe-common.otelEndpoint renders for an overlay, from the helper's own source file."""
-    root = tmp_path_factory.mktemp("oracle")
-    chart = root / "oracle"
-    (chart / "templates").mkdir(parents=True)
-    (chart / "Chart.yaml").write_text(
-        "apiVersion: v2\nname: oracle\nversion: 0.0.0\ntype: application\n", encoding="utf-8"
-    )
-    shutil.copy(TELEMETRY_HELPER, chart / "templates" / "_telemetry.tpl")
-    (chart / "templates" / "endpoint.yaml").write_text(
-        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: endpoint\n"
-        'data:\n  endpoint: {{ include "dfe-common.otelEndpoint" . | quote }}\n',
-        encoding="utf-8",
-    )
-    common = yaml.safe_load(COMMON.read_text(encoding="utf-8"))
-    seen: dict[str, str] = {}
-
-    def resolve(overlay: dict) -> str:
-        key = _key(overlay)
-        if key not in seen:
-            values = {
-                "project": common["global"]["project"],
-                "telemetry": {**common["telemetry"], **overlay.get("telemetry", {})},
-                "otel": {**common["otel"], **overlay.get("otel", {})},
-            }
-            file = root / f"values{len(seen)}.yaml"
-            file.write_text(yaml.safe_dump(values), encoding="utf-8")
-            out = w.run(
-                [w.find_helm(helm()), "template", "oracle", str(chart), "--values", str(file)],
-                "dfe-common.otelEndpoint",
-            )
-            seen[key] = next(d for d in w.documents(out) if d["kind"] == "ConfigMap")["data"][
-                "endpoint"
-            ]
-        return seen[key]
-
-    return resolve
 
 
 def _chart_name(service: str) -> str:
@@ -266,38 +249,19 @@ def _env_values(docs: list[dict], name: str) -> list[str]:
 # ---------------------------------------------- the OTLP endpoint, through a stand-in
 
 
-def test_dfe_common_resolves_each_mode_to_its_known_endpoint(
-    expected: Callable[[dict], str],
-) -> None:
-    host = "dfe-otel-collector-gateway.otel.svc.cluster.local:4317"
-    assert {
-        (mode, tls): expected(_overlay(mode, tls)) for mode in MODES for tls in (False, True)
-    } == {
-        ("hyperdx", False): f"http://{host}",
-        ("hyperdx", True): f"https://{host}",
-        ("receiver", False): "http://dfe-receiver.dfe.svc.cluster.local:4317",
-        ("receiver", True): "https://dfe-receiver.dfe.svc.cluster.local:4317",
-        ("external", False): "http://otlp.example.net:4317",
-        ("external", True): "https://otlp.example.net:4317",
-        ("prometheus", False): "",
-        ("prometheus", True): "",
-    }
-
-
 @SERVICE
 @MODE
 @TLS
-def test_every_app_resolves_the_endpoint_dfe_common_does(
+def test_every_app_resolves_each_mode_to_its_known_endpoint(
     service: str,
     mode: str,
     tls: bool,
     stand_in: Path,
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
     overlay = _overlay(mode, tls)
     env = _stand_in_env(stand_in, deploy_for(overlay), service)
-    assert env[ENDPOINT] == _for(service, expected(overlay))
+    assert env[ENDPOINT] == _for(service, KNOWN[(mode, tls)])
 
 
 @pytest.mark.parametrize(("mode", "wrong"), [(m, o) for m in MODES for o in MODES if m != o])
@@ -306,34 +270,24 @@ def test_a_wrong_mode_yields_a_different_endpoint(
     wrong: str,
     stand_in: Path,
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
     env = _stand_in_env(stand_in, deploy_for(_overlay(mode, False)), "dfe-receiver")
-    assert env[ENDPOINT] == expected(_overlay(mode, False))
-    assert env[ENDPOINT] != expected(_overlay(wrong, False))
+    assert env[ENDPOINT] == KNOWN[(mode, False)]
+    assert env[ENDPOINT] != KNOWN[(wrong, False)]
 
 
 @pytest.mark.parametrize("shape", SHAPES)
 @TLS
-def test_an_endpoint_of_any_shape_resolves_as_dfe_common_does(
+def test_an_endpoint_of_any_shape_resolves_to_its_known_endpoint(
     shape: str,
     tls: bool,
     stand_in: Path,
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
     mode, telemetry = SHAPES[shape]
     overlay = _overlay(mode, tls, telemetry)
     env = _stand_in_env(stand_in, deploy_for(overlay), "dfe-receiver")
-    assert env[ENDPOINT] == expected(overlay)
-
-
-@TLS
-def test_an_endpoint_that_carries_a_scheme_is_left_as_written(
-    tls: bool, expected: Callable[[dict], str]
-) -> None:
-    mode, telemetry = SHAPES["external-with-scheme"]
-    assert expected(_overlay(mode, tls, telemetry)) == "https://otlp.example.net:4318"
+    assert env[ENDPOINT] == KNOWN[(shape, tls)]
 
 
 # ------------------------------- receiver mode, with no endpoint named, through a stand-in
@@ -386,17 +340,16 @@ def test_receiver_mode_follows_the_release_namespace(
 @SERVICE
 @MODE
 @TLS
-def test_the_thin_chart_exports_the_endpoint_dfe_common_resolves(
+def test_the_thin_chart_exports_each_modes_known_endpoint(
     service: str,
     mode: str,
     tls: bool,
     thin_charts: dict[str, Path],
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
     overlay = _overlay(mode, tls)
     docs = _render(thin_charts[service], deploy_for(overlay), service)
-    assert _env_values(docs, ENDPOINT) == [_for(service, expected(overlay))]
+    assert _env_values(docs, ENDPOINT) == [_for(service, KNOWN[(mode, tls)])]
     # The app's own default protocol applies unless its integration values name one;
     # otherwise only an otel.endpoint override sets one.
     assert _env_values(docs, PROTOCOL) == OTLP_HTTP.get(service, [])
@@ -407,12 +360,10 @@ def test_an_otel_endpoint_override_wins_over_every_mode(
     mode: str,
     thin_charts: dict[str, Path],
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
     override = "https://collector.example.net:4317"
     overlay = _overlay(mode, False, endpoint=override)
     docs = _render(thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver")
-    assert expected(overlay) == override
     assert _env_values(docs, ENDPOINT) == [override]
     assert _env_values(docs, PROTOCOL) == ["grpc"]
 
@@ -450,13 +401,11 @@ def test_the_derived_endpoint_names_a_service_port_the_receiver_serves_once_otlp
 def test_an_override_without_a_scheme_is_exported_as_written(
     thin_charts: dict[str, Path],
     deploy_for: Callable[[dict], Path],
-    expected: Callable[[dict], str],
 ) -> None:
-    # The 2.2.0 helper adds http:// here, the library does not: common.yaml says so.
+    # No scheme is added to an otel.endpoint override: common.yaml says so.
     overlay = _overlay("hyperdx", False, endpoint="collector.example.net:4317")
     docs = _render(thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver")
     assert _env_values(docs, ENDPOINT) == ["collector.example.net:4317"]
-    assert expected(overlay) == "http://collector.example.net:4317"
 
 
 # ------------------------------------------------------------- labels and reload

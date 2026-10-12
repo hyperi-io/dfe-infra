@@ -113,12 +113,17 @@ def engine_chart_is_dev(env: str) -> bool:
 
 
 def gateway_engine_paths(env: str, setting: str) -> list[str]:
+    """Every path the engine's two internal routes match, the browser's and the CLI's."""
     docs = render(GATEWAY, *dials(env, setting), "--set", f"domain={DOMAIN}",
                   "--set", "appNamespace=dfe-local")
-    route = next(
-        d for d in docs if d.get("kind") == "HTTPRoute" and d["metadata"]["name"] == "dfe-engine"
-    )
-    return [m["path"]["value"] for rule in route["spec"]["rules"] for m in rule.get("matches", [])]
+    routes = [
+        d for d in docs
+        if d.get("kind") == "HTTPRoute" and d["metadata"]["name"] in ("dfe-engine", "dfe-engine-cli")
+    ]
+    return [
+        m["path"]["value"] for route in routes for rule in route["spec"]["rules"]
+        for m in rule.get("matches", [])
+    ]
 
 
 def links_names(env: str, setting: str, *extra: str) -> list[str]:

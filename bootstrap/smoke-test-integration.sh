@@ -245,7 +245,7 @@ echo "=== CORE 0: schema control (dfe-engine reports its bootstrap converged) ==
 # script does not hold, so the failure message points there instead.
 ENGINE_WAIT="${DFE_ENGINE_WAIT:-300}"
 ENGINE_WAIT_INTERVAL="${DFE_ENGINE_WAIT_INTERVAL:-5}"
-# The thin chart names the container after the chart, not the 2.2.0 chart's `engine`.
+# The thin chart names the main container after the chart.
 engine_readyz() {
   kubectl -n "$NS_APP" exec deploy/dfe-engine -c dfe-engine -- \
     curl -fsS --max-time 5 http://localhost:8000/readyz 2>/dev/null
@@ -272,11 +272,12 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== CORE 1: self-telemetry pipeline (infra OTel -> HyperDX -> ClickHouse) ==="
-# The stack instruments itself: each app/daemonset emits OTLP -> otel gateway ->
-# HyperDX -> ClickHouse otel tables. A row NEWER than the freshness window proves
-# the pipeline is STREAMING right now (instrumentation live + ingest live), not
-# that some old row exists. This is the single strongest self-monitoring assert.
+echo "=== CORE 1: self-telemetry pipeline (infra OTel -> collector gateway -> ClickHouse) ==="
+# The stack instruments itself: each app/daemonset emits OTLP to the otel gateway,
+# whose clickhouse exporter writes the otel tables HyperDX reads. A row NEWER than
+# the freshness window proves the pipeline is STREAMING right now (instrumentation
+# live + ingest live), not that some old row exists. This is the single strongest
+# self-monitoring assert.
 #
 # POLL, do not sample once: a stack whose collectors became Ready seconds ago has
 # exported nothing yet, so one SELECT reports a streaming pipeline as a dead one

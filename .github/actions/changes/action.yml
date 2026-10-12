@@ -1,0 +1,82 @@
+# The `changes` filter every gated workflow runs in place of an `on.<event>.paths`
+# filter: a workflow a path filter never starts reports no check, and a required
+# check that never reports blocks the merge.
+name: changed paths
+description: Sets `relevant` to false only when every file the event changed lies outside `paths`.
+
+inputs:
+  paths:
+    description: One pattern a line, an exact path or `dir/**`; a `#` line is a note.
+    required: true
+
+outputs:
+  relevant:
+    description: "`false` only when nothing in `paths` changed; `true` otherwise, and for any event other than push or pull_request."
+    value: ${{ steps.match.outputs.relevant }}
+
+runs:
+  using: composite
+  steps:
+    # The caller checks out with fetch-depth 2, so a pull request merge commit carries both parents.
+    - name: Match the changed files against the paths
+      id: match
+      shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        EVENT: ${{ github.event_name }}
+        BEFORE: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        mapfile -t patterns < <(grep -Ev '^[[:space:]]*(#|$)' <<< "$PATHS")
+        if [[ ${#patterns[@]} -eq 0 ]]; then
+          echo "::error::paths names no pattern, so this filter would skip every check"
+          exit 1
+        fi
+        for p in "${patterns[@]}"; do
+          stem=${p%/\*\*}
+          if [[ $stem == *'*'* ]]; then
+            echo "::error::'$p' is neither an exact path nor dir/**, the two forms this filter reads"
+            exit 1
+          fi
+        done
+        changed="$RUNNER_TEMP/changed"
+        all=false
+        case "$EVENT" in
+          pull_request)
+            # The checkout is the merge commit, whose first parent is the base branch tip.
+            if git rev-parse -q --verify 'HEAD^2' > /dev/null; then
+              git diff --no-renames --name-only -z 'HEAD^1' HEAD > "$changed"
+            else
+              all=true
+            fi
+            ;;
+          push)
+            if [[ $BEFORE =~ ^0*$ ]] || ! git fetch -q --no-tags --depth=1 origin "$BEFORE"; then
+              all=true
+            else
+              git diff --no-renames --name-only -z "$BEFORE" HEAD > "$changed"
+            fi
+            ;;
+          *)
+            all=true
+            ;;
+        esac
+        relevant=$all
+        if [[ $all == false ]]; then
+          while [[ $relevant == false ]] && IFS= read -r -d '' f; do
+            for p in "${patterns[@]}"; do
+              if [[ $p == */'**' ]]; then
+                prefix=${p%\*\*}
+                if [[ $f == "$prefix"* ]]; then relevant=true; fi
+              elif [[ $f == "$p" ]]; then
+                relevant=true
+              fi
+              if [[ $relevant == true ]]; then
+                echo "in paths: $f"
+                break
+              fi
+            done
+          done < "$changed"
+        fi
+        echo "event $EVENT, run every check: $all, relevant: $relevant"
+        echo "relevant=$relevant" >> "$GITHUB_OUTPUT"

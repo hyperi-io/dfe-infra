@@ -17,18 +17,15 @@ commonLabels:
   dfe.hyperi.io/cloud: '{{ .Values.cloud | default .Values.global.cloud }}'
 
 telemetry:
-  # The endpoint dfe-common.otelEndpoint (helm/library/dfe-common/templates/
-  # _telemetry.tpl) resolves for the dfe-common charts, over global.project because
-  # a thin chart has no top-level project. scalo-service reads an empty otel.endpoint
-  # as "export nothing", so common.yaml's empty value is resolved here and carried
-  # by extraEnv. prometheus mode resolves to an empty string, which the stack rule
-  # reads as "export nothing" (_telemetry.tpl), where the dfe-common charts leave
-  # the variable out.
+  # The OTLP endpoint common.yaml's telemetry.mode selects, over global.project
+  # because a thin chart has no top-level project. scalo-service sets no OTLP
+  # variable for an empty otel.endpoint, which leaves an app on its own default, so
+  # the endpoint is resolved here and carried by extraEnv. prometheus mode renders
+  # the variable set and empty, which scalo's OTLP exporters read as off.
   # receiver mode with no receiverEndpoint derives the receiver's OTLP/gRPC port (the
   # otlp-grpc port of its contract, 4317) in the release namespace. The receiver
-  # binds it only while its config.otlp.enabled is true, and the dfe-common helper
-  # derives nothing there.
-  # scripts/tests/test_apps_common.py holds the two equal for every other mode and app.
+  # binds it only while its config.otlp.enabled is true.
+  # scripts/tests/test_apps_common.py holds every mode and app to its known endpoint.
   otlpEndpointTemplate: |-
     {{- $t := .Values.telemetry | default dict -}}
     {{- $mode := $t.mode | default "hyperdx" -}}

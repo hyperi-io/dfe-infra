@@ -6,7 +6,6 @@
 # etc.) or its private deploy-repo overlay, which is layered last and wins.
 global:
   cloud: local
-  region: local
   domain: dfe.example.com
 
 domain: dfe.example.com
@@ -46,6 +45,9 @@ tolerations:
 # the pair and an on-prem deployment has no ingest door at all.
 exposure:
   mode: internal
+  groups:
+    ingest:
+      door: gateway
 
 # The gateway routes HTTP, so grpc drops back to exposed: false here -- left
 # true it fails the receiver render, which is the point of that guard. OTLP/gRPC
@@ -75,5 +77,5 @@ vault:
   address: "https://bao.example.com:8200"
 
 # The engine's runtime store is a PVC against the cluster's default
-# StorageClass (dfe-engine chart config.persistence) -- no per-cloud
+# StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
 # storage seam needed.

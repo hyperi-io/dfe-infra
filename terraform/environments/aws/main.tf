@@ -188,7 +188,7 @@ module "edge" {
   dns    = { public_zone = var.dns.public_zone }
   tunnel = var.edge.tunnel
 
-  gateway_allowed_cidrs       = var.edge_allowed_cidrs
+  extra_self_ranges           = var.edge_self_ranges
   gateway_trusted_proxy_cidrs = var.edge_trusted_proxy_cidrs
   egress_addresses            = module.cluster.nat_public_ips
 

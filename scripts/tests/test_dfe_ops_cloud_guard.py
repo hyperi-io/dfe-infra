@@ -708,7 +708,7 @@ def test_the_overlay_gives_the_run_its_own_state_key_tags_and_no_cloudtrail(root
     assert overlay["run"] == cloud_run.run_tfvar("run-1", int(NOW))
     assert overlay["cloudtrail"] == {"enabled": False}
     assert not {"permissions_boundary", "iam_path", "s3_bucket_prefix", "inspector_ec2_exclusion",
-                "endpoint", "edge_allowed_cidrs"} & set(overlay)
+                "endpoint", "edge_self_ranges"} & set(overlay)
 
 
 def test_the_overlay_carries_every_configured_guardrail_input(root: Path) -> None:
@@ -736,16 +736,12 @@ def test_an_endpoint_cidr_opens_the_api_to_that_address_alone(root: Path) -> Non
     assert overlay["endpoint"] == {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
 
 
-def test_an_endpoint_cidr_fences_the_public_gateway_to_that_address_in_place_of_the_dials(
-    root: Path,
-) -> None:
+def test_an_endpoint_cidr_makes_the_runner_one_of_the_gateways_self_ranges(root: Path) -> None:
     """The gateway's load balancer is public too, and a run's console test reaches it
     from the runner; the root adds the cluster's own NAT addresses beside it."""
-    (root / "dial.auto.tfvars.json").write_text(
-        json.dumps({**TFVARS, "edge_allowed_cidrs": ["52.0.0.0/8"]}), encoding="utf-8"
-    )
     overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
-    assert overlay["edge_allowed_cidrs"] == [RUNNER_CIDR]
+    assert overlay["edge_self_ranges"] == [RUNNER_CIDR]
+    assert "edge_allowed_cidrs" not in overlay
 
 
 def test_the_endpoint_cidr_comes_from_the_environment_and_the_flag_wins(root: Path) -> None:
@@ -795,7 +791,7 @@ def test_the_run_applies_and_records_the_api_open_to_its_own_address(
         overlay = json.loads((root / guard_mod.OVERLAY_NAME).read_text(encoding="utf-8"))
         record = json.loads(next(iter(guard.records.values())))
         at_apply.append((overlay["endpoint"], record["tfvars"]["endpoint"]))
-        at_apply.append((overlay["edge_allowed_cidrs"], record["tfvars"]["edge_allowed_cidrs"]))
+        at_apply.append((overlay["edge_self_ranges"], record["tfvars"]["edge_self_ranges"]))
 
     runner.on_run = {"apply": capture}
     assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr=RUNNER_CIDR) == 0

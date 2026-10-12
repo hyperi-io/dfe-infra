@@ -125,19 +125,25 @@ variable "tunnel" {
   }
 }
 
-variable "gateway_allowed_cidrs" {
-  description = "Who may reach the public gateway: its load balancer's source ranges and every public route's CIDR filter (the gateway chart's ui.allowed_cidrs). Empty leaves the gateway open to any address, which is the chart's own default, and renders no fence at all."
+variable "extra_self_ranges" {
+  description = "Addresses beyond egress_addresses that this deployment's own tooling reaches the public gateway from, such as a guarded test run's runner. They join self_ranges, which every web exposure group admits. Never a deployer's allow list: those are the gateway chart's exposure.groups, in the deploy repo."
   type        = list(string)
   default     = []
 
   validation {
-    condition     = alltrue([for cidr in var.gateway_allowed_cidrs : can(cidrhost(cidr, 0))])
-    error_message = "every gateway_allowed_cidrs entry must be a CIDR range with its prefix length -- a load balancer security group refuses a bare address."
+    condition     = alltrue([for cidr in var.extra_self_ranges : can(cidrhost(cidr, 0))])
+    error_message = "every extra_self_ranges entry must be a CIDR range with its prefix length -- a load balancer security group refuses a bare address."
+  }
+
+  // Every web group admits these, so a /0 would open the console, api and admin groups alike.
+  validation {
+    condition     = alltrue([for cidr in var.extra_self_ranges : !endswith(trimspace(cidr), "/0")])
+    error_message = "an extra_self_ranges entry of /0 is every address, and every web exposure group admits self_ranges. Name the one address the tooling calls from."
   }
 }
 
 variable "gateway_trusted_proxy_cidrs" {
-  description = "L7 proxies in front of the load balancer whose X-Forwarded-For names the client, such as a CDN's: the dial's edge.product.trusted_proxy_cidrs. Empty trusts no forwarded header. Read only when gateway_allowed_cidrs is set."
+  description = "L7 proxies in front of the load balancer whose X-Forwarded-For names the client, such as a CDN's: the dial's edge.product.trusted_proxy_cidrs. Empty trusts no forwarded header."
   type        = list(string)
   default     = []
 
@@ -154,7 +160,7 @@ variable "gateway_trusted_proxy_cidrs" {
 }
 
 variable "egress_addresses" {
-  description = "The public addresses the cluster's own pods leave from (kubernetes-cluster/aws's nat_public_ips). A caller inside the cluster that uses the gateway's public hostname arrives from one of these, so a fence without them refuses the deployment's own traffic. Read only when gateway_allowed_cidrs is set."
+  description = "The public addresses the cluster's own pods leave from (kubernetes-cluster/aws's nat_public_ips). A caller inside the cluster that uses the gateway's public hostname arrives from one of these, so a fence without them refuses the deployment's own traffic."
   type        = list(string)
   default     = []
 }

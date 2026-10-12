@@ -27,9 +27,10 @@ dfe-extras.projectGuard -- fail the render when the project is not dfe.
 
 The suite's service names (dfe-receiver, dfe-loader, ...), the engine's dfe- name
 prefix and the push and wait-for-engine addresses all assume it, so a renamed
-project renders objects nothing points at. `project` is the 2.2.0 key and
-`global.project` the thin chart's (argocd/values/common.yaml sets it to dfe), and
-a deployer reaches both from $values/infra/common.yaml or the instance overlay.
+project renders objects nothing points at. `project` is dfe-extras' own key
+(extras.defaults) and `global.project` the thin chart's (argocd/values/common.yaml
+sets it to dfe), and a deployer reaches both from $values/infra/common.yaml or the
+instance overlay.
 */}}
 {{- define "dfe-extras.projectGuard" -}}
 {{- $global := .Values.global | default dict -}}
@@ -40,6 +41,24 @@ a deployer reaches both from $values/infra/common.yaml or the instance overlay.
 {{- fail (printf "dfe-extras: %s is %q, but the suite's service names, the engine's dfe- prefix and the push and wait-for-engine addresses all assume the project is \"dfe\" -- leave project and global.project unset in the deploy repo's values, which keeps argocd/values/common.yaml's global.project: dfe" $path (toString $value)) -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-extras.telemetryModeGuard -- the refusal of a telemetry.mode no OTLP endpoint
+resolves from.
+
+apps/_common.yaml's otlpEndpointTemplate names an endpoint for hyperdx, receiver and
+external, and none for prometheus by design. Any other value also resolves to an
+empty endpoint, which every app reads as "export nothing", so a typo would switch
+the stack's self-monitoring off with no error. Unset reads as hyperdx, as the
+template reads it.
+*/}}
+{{- define "dfe-extras.telemetryModeGuard" -}}
+{{- $mode := toString ((.Values.telemetry | default dict).mode | default "hyperdx") -}}
+{{- $known := list "hyperdx" "receiver" "external" "prometheus" -}}
+{{- if not (has $mode $known) -}}
+{{- fail (printf "dfe-extras: telemetry.mode is %q, which resolves no OTLP endpoint, so every app would export nothing -- set it to one of %s in the deploy repo's infra/common.yaml" $mode (join ", " $known)) -}}
 {{- end -}}
 {{- end -}}
 

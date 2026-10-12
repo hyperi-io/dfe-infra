@@ -155,13 +155,20 @@ spec:
               kafka:
                 mode: {{ $kafkaMode | quote }}
               {{- end }}
-              {{- if index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" }}
-              # The fence the dial or a guarded test run names, beating the
-              # deploy-repo overlay. The CDN ranges are written even when blank,
-              # so an overlay cannot keep trusting a range the dial dropped.
+              {{- $selfRanges := index .metadata.annotations "dfe.hyperi.io/edge_self_ranges" | default "" }}
+              {{- if $selfRanges }}
+              # The addresses this deployment reaches its own gateway from, a
+              # fact the cloud root writes and every web exposure group admits.
+              # Who else may reach each surface is exposure.groups, which the
+              # deploy repo's infra/common.yaml sets and this never overrides.
+              exposure:
+                selfRanges: {{ splitList "," $selfRanges | toJson }}
+              {{- end }}
+              {{- $trusted := index .metadata.annotations "dfe.hyperi.io/edge_trusted_proxy_cidrs" | default "" }}
+              {{- if $trusted }}
+              # The CDN ranges whose X-Forwarded-For names the client.
               ui:
-                allowed_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_allowed_cidrs" | quote }}
-                trusted_proxy_cidrs: {{ index .metadata.annotations "dfe.hyperi.io/edge_trusted_proxy_cidrs" | default "" | quote }}
+                trusted_proxy_cidrs: {{ $trusted | quote }}
               {{- end }}
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}'

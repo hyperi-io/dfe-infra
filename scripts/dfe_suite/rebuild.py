@@ -34,6 +34,13 @@ deployment contract when the release is cut.
 The local Rust gate builds every feature, less any the consumer's suite.yaml
 node lists under ``local_gate_exclude_features`` -- a feature that links a
 system library the host may lack -- and every feature that turns one on.
+
+The release run is followed for the node's ``release_timeout_minutes``, else
+the language default, because one consumer's optimised build outlasts the
+default by hours.
+
+Cargo builds into the checkout's own ``target/`` unless
+``SCALO_REBUILD_TARGET`` names another directory.
 """
 
 from __future__ import annotations
@@ -109,9 +116,26 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
 # The suite.yaml node key naming the features the local gate leaves out.
 _GATE_EXCLUDE_KEY = "local_gate_exclude_features"
 
+# The suite.yaml node key giving how many minutes a release run is followed.
+_RELEASE_TIMEOUT_KEY = "release_timeout_minutes"
+
 # The dfe-infra checkout this module ships in, so the gate reads the suite.yaml
 # that matches the tool reading it.
 _SUITE_CHECKOUT = Path(__file__).resolve().parents[2]
+
+
+def _suite_node(app: str) -> dict:
+    """The consumer's suite.yaml node, or an empty one when it is not a member.
+
+    Args:
+        app: The consumer's node name, which is its checkout directory name.
+
+    Raises:
+        FleetError: If the graph cannot be read.
+    """
+    nodes = load_graph(dfe_infra=_SUITE_CHECKOUT).get("nodes")
+    node = nodes.get(app) if isinstance(nodes, dict) else None
+    return node if isinstance(node, dict) else {}
 
 
 def _gate_exclusions(app: str) -> list[str]:
@@ -128,9 +152,7 @@ def _gate_exclusions(app: str) -> list[str]:
         FleetError: If the graph cannot be read, or the key holds anything but
             a list of ``package/feature`` entries.
     """
-    nodes = load_graph(dfe_infra=_SUITE_CHECKOUT).get("nodes")
-    node = nodes.get(app) if isinstance(nodes, dict) else None
-    excluded = node.get(_GATE_EXCLUDE_KEY, []) if isinstance(node, dict) else []
+    excluded = _suite_node(app).get(_GATE_EXCLUDE_KEY, [])
     well_formed = isinstance(excluded, list) and all(
         isinstance(entry, str) and "/" in entry for entry in excluded
     )
@@ -140,6 +162,34 @@ def _gate_exclusions(app: str) -> list[str]:
             f"list of package/feature entries"
         )
     return excluded
+
+
+def _release_timeout(node: dict, app: str, default: int) -> int:
+    """Seconds to follow the consumer's release run before giving up on it.
+
+    Args:
+        node: The consumer's suite.yaml node, from :func:`_suite_node`.
+        app: The consumer's node name, for the refusal message.
+        default: Seconds to wait when the node sets no ``release_timeout_minutes``,
+            which includes an app that is not a suite member.
+
+    Returns:
+        The node's ``release_timeout_minutes`` in seconds, else ``default``.
+
+    Raises:
+        FleetError: If the key holds anything but a positive whole number of
+            minutes, as a quoted string.
+    """
+    minutes = node.get(_RELEASE_TIMEOUT_KEY)
+    if minutes is None:
+        return default
+    text = minutes if isinstance(minutes, str) else ""
+    if not re.fullmatch(r"[1-9][0-9]*", text):
+        raise FleetError(
+            f"suite.yaml node {app}: {_RELEASE_TIMEOUT_KEY} is {minutes!r}, not a "
+            f"positive whole number of minutes in double quotes"
+        )
+    return int(text) * 60
 
 
 def _gate_features(repo: Path, excluded: Sequence[str]) -> list[str]:
@@ -430,21 +480,13 @@ def rebuild_rust(
     slug = repo_slug(repo, org)
     subject = subject or f"fix: rebuild on {package} {version}"
 
-    # Build scratch that survives a reboot and stays warm between apps.
-    # CARGO_TARGET_DIR as an ENV, not --target-dir: some tests locate the
-    # built binary via $CARGO_TARGET_DIR, and the flag does not set the env.
-    # The path keeps the old scalo-rebuild.sh name so existing warm caches are
-    # reused rather than orphaned.
-    cache_root = (
-        Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
-        / "hyperi-ai/scalo-rebuild"
-    )
-    target = Path(os.environ.get("SCALO_REBUILD_TARGET", str(cache_root / app)))
-    if not dry_run:
-        target.mkdir(parents=True, exist_ok=True)
-        os.environ["CARGO_TARGET_DIR"] = str(target)
+    # Unset leaves cargo on its own target dir; set, it goes in the env rather
+    # than --target-dir because some tests find the built binary through it.
+    target = os.environ.get("SCALO_REBUILD_TARGET", "")
+    if target and not dry_run:
+        os.environ["CARGO_TARGET_DIR"] = target
 
-    say(f"{app} -> {package} {version} (repo {slug}, target {target})")
+    say(f"{app} -> {package} {version} (repo {slug}, target {target or 'cargo default'})")
     if dry_run:
         say("DRY RUN -- nothing will be changed or pushed")
 
@@ -465,11 +507,13 @@ def rebuild_rust(
         )
         dispatch = _unoptimized_dispatch(slug)
 
-    # Resolved on a dry run too, so a stale exclusion fails before a real run.
+    # Resolved on a dry run too, so a stale suite.yaml entry fails before a real run.
     excluded = _gate_exclusions(app)
     features = _gate_features(repo, excluded)
     kept_out = f" (suite.yaml keeps {', '.join(excluded)} out)" if excluded else ""
     say(f"gate features: {' '.join(features)}{kept_out}")
+    timeout = _release_timeout(_suite_node(app), app, RUN_TIMEOUT_RUST)
+    say(f"release wait: up to {timeout // 60} minutes")
 
     if dry_run:
         gate = "fmt, clippy, nextest" if run_tests else "fmt, clippy"
@@ -576,7 +620,7 @@ def rebuild_rust(
             dispatch=dispatch,
             artefact=artefact,
             before=before,
-            timeout=RUN_TIMEOUT_RUST,
+            timeout=timeout,
             just_merged=True,
             watch=watch,
         )
@@ -594,7 +638,7 @@ def rebuild_rust(
         sha=merged,
         artefact=artefact,
         before=before,
-        timeout=RUN_TIMEOUT_RUST,
+        timeout=timeout,
     )
     return 0
 
@@ -695,6 +739,10 @@ def rebuild_python(
 
     sync_main(repo, dry_run=dry_run)
 
+    # Resolved on a dry run too, so a malformed suite.yaml entry fails before a real run.
+    timeout = _release_timeout(_suite_node(app), app, RUN_TIMEOUT_PYTHON)
+    say(f"release wait: up to {timeout // 60} minutes")
+
     if dry_run:
         say(f"[dry-run] would raise the {package} floor to >={version} and relock")
         say(f"[dry-run] would assert uv.lock resolved exactly {version}")
@@ -743,6 +791,6 @@ def rebuild_python(
         sha=merged,
         artefact=artefact,
         before=before,
-        timeout=RUN_TIMEOUT_PYTHON,
+        timeout=timeout,
     )
     return 0

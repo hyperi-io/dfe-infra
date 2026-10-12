@@ -6,10 +6,8 @@
 # version/image pins live in versions.yaml.
 global:
   project: dfe
-  env: ""
   cloud: ""
   domain: ""
-  region: ""
   # The registry every dfe-* image is pulled from. Bootstrap writes it from
   # DFE_REGISTRY onto the dfe.hyperi.io/registry cluster-secret annotation and
   # the layer 2 appsets pass it as this parameter, so no values file sets it.
@@ -43,6 +41,54 @@ adminGroups:
   - dfe-admins
   - dfe-infra
 
+# THE exposure dial: who may reach each surface from outside the cluster, by
+# group. These are the product defaults, and an empty allow list means "no
+# fence" here; each cloud's edge-<flavour>.yaml, whose gateway is
+# internet-facing, makes empty mean "refuse every address" and turns admin off.
+# A deployment sets its own lists in its deploy repo's infra/common.yaml, which
+# the engine's infravars class writes at runtime. helm/edge/gateway/values.yaml
+# documents each field; allow and deny are CIDR lists.
+exposure:
+  groups:
+    # dfe-receiver and the otel route. local.yaml sets the on-prem door.
+    ingest:
+      enabled: true
+      allow: []
+      deny: []
+      door: loadbalancer  # loadbalancer | gateway | tunnel
+    # dfe-ui, HyperDX and the engine's browser families.
+    console:
+      enabled: true
+      allow: []
+      deny: []
+    # The engine's CLI families, /openapi.json, and SCIM when scim is true.
+    api:
+      enabled: true
+      allow: []
+      deny: []
+      scim: false
+    # The admin UIs. tools is THE canonical admin list, one key per class-infra
+    # gateway route, and each true puts that UI on a public hostname too.
+    admin:
+      enabled: true
+      allow: []
+      deny: []
+      allowPublic: false
+      tools:
+        argocd: false
+        kafbat: false
+        cruiseControl: false
+        forgejo: false
+        links: false
+    # The fleet tunnel. culvert's chart wires it.
+    vpn:
+      enabled: false
+      allow: []
+      door: culvert       # culvert | awsClientVpn
+  # The cluster's own egress addresses, written from the cluster secret, never
+  # by hand.
+  selfRanges: []
+
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.
 # A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that
@@ -67,9 +113,11 @@ tolerations: []
 
 # Self-monitoring telemetry (OTel) for the WHOLE stack -- selectable destination
 # so monitoring need not depend on the data pipeline working. Every app resolves
-# its OTLP endpoint via the dfe-common.otelEndpoint helper from telemetry.mode:
-#   hyperdx   (DEFAULT) -- push OTLP straight to HyperDX's own collector, so
-#             monitoring does NOT rely on receiver/loader/ClickHouse being up.
+# its OTLP endpoint from telemetry.mode, through apps/_common.yaml's
+# telemetry.otlpEndpointTemplate:
+#   hyperdx   (DEFAULT) -- push OTLP to the stack's collector gateway, which
+#             writes ClickHouse's otel tables itself, so monitoring does not
+#             depend on the receiver or loader.
 #   receiver  -- push through the dfe-receiver ingest path (reuses the scalable
 #             pipeline; for truly large scale).
 #   external  -- push to a deployer-supplied OTLP endpoint (their own backend).
@@ -77,34 +125,32 @@ tolerations: []
 #             external Prometheus to scrape.
 telemetry:
   mode: hyperdx
-
-# Startup version check -- every DFE service boots with an opt-out release
-# check (one POST of {product, version, os, arch, install id} to the HyperI
-# releases endpoint; the id is one-way UUIDv5, deployment names never sent).
-# The knob renders through dfe-common.versionCheckEnv into every app; unset
-# means the apps' own defaults (ON). Uncomment here for a fleet-wide choice,
-# or set under one app's overlay for a per-app one:
-# versionCheck:
-#   enabled: false        # total opt-out -- no check, nothing sent (air-gap)
-#   sendInstanceId: false # keep the check, strip the install id
-#   apiUrl: ""            # point the check at a mirror
-  # Empty derives {project}-hyperdx.{appNamespace}:4317 (the fork's OTLP
-  # receiver beside the apps); set only to aim elsewhere.
+  # Empty derives the stack's collector gateway,
+  # {project}-otel-collector-gateway in telemetry.collectorNamespace (default
+  # otel) on 4317. Set only to aim elsewhere.
   hyperdxEndpoint: ""
   # Empty derives the receiver's OTLP/gRPC listener, dfe-receiver in the release
   # namespace on 4317, which it binds only while its config.otlp.enabled is true;
   # set only to aim elsewhere.
   receiverEndpoint: ""
   externalEndpoint: ""
-  prometheus:
-    port: 9090
-    path: /metrics
+
+# Startup version check -- every DFE service boots with an opt-out release
+# check (one POST of {product, version, os, arch, install id} to the HyperI
+# releases endpoint; the id is one-way UUIDv5, deployment names never sent).
+# scalo-service reads versionCheck in every thin chart, and unset means the
+# apps' own defaults (ON). Uncomment here for a fleet-wide choice, or set under
+# one app's overlay for a per-app one:
+# versionCheck:
+#   enabled: false        # total opt-out -- no check, nothing sent (air-gap)
+#   sendInstanceId: false # keep the check, strip the install id
+#   apiUrl: ""            # point the check at a mirror
 
 otel:
   # Explicit OVERRIDE of the resolved telemetry endpoint (empty -> use the
   # telemetry.mode resolution above). Kept for per-deploy escape hatches. It must
-  # carry a scheme (https://host:4317): the scalo-service thin charts export it as
-  # written, where the 2.2.0 charts add one from otel.tls to a bare host:port.
+  # carry a scheme (https://host:4317): it is exported as written, with no scheme
+  # added from otel.tls.
   endpoint: ""
   tls: false
   # OTLP ingest from OUTSIDE the cluster, on otel.{domain}. OFF: the stack's own
@@ -211,9 +257,9 @@ user:
       - otel
 
 # Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
-# cluster mode: override host with the operator's service (confirm name at deploy);
-# external mode: override host with the supplied endpoint. (Seam: per-deploy this
-# should come from the dfe.hyperi.io/clickhouse_host annotation.)
+# cluster mode: profile-scale.yaml and profile-mesh.yaml name the operator's headless Service;
+# external mode: override host with the supplied endpoint.
+# A deployment overrides host in its deploy repo's infra/common.yaml, layered after the profile file.
 clickhouse:
   host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
@@ -301,13 +347,6 @@ networkModel:
 # whole deployment's addressing, not just the app that consumes it.
 vpn:
   clientCIDR: "100.64.0.0/10"
-
-# The edge module -- the public gateway and the fleet tunnel -- as one switch.
-# No chart reads this key: the module's own ApplicationSet is gated on the
-# cluster secret's dfe.hyperi.io/edge annotation instead, so turning the module
-# off stops it generating Applications rather than rendering empty ones.
-edge:
-  enabled: true
 
 # The opt-in in-cluster toolbox pod (helm/charts/dfe-toolbox), always deployed
 # by argocd/appsets/layer2-platform.yaml but idle at replicas: 0 until a

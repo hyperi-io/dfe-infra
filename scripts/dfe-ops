@@ -2135,26 +2135,29 @@ def _gateway_address(kube: list[str]) -> str:
     return ""
 
 
-EDGE_FENCE_VAR = "DFE_EDGE_ALLOWED_CIDRS"
+EDGE_FENCE_VAR = "DFE_EDGE_SELF_RANGES"
 # Envoy Gateway's own label on every proxy Service it creates, whatever the Gateway is named.
 ENVOY_OWNER_LABEL = "gateway.envoyproxy.io/owning-gateway-name"
 
 
 def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> str:
-    """Why the gateway's load balancer does not carry the edge fence, or empty when it does.
+    """Why the gateway's load balancer does not carry the run's self ranges, or empty when it does.
 
-    An env file's `DFE_EDGE_ALLOWED_CIDRS=` line beats the terraform output, and
-    bootstrap then writes no fence at all, so the terraform value is the one
+    The self ranges are the cluster's NAT egress and a guarded run's runner. The
+    gateway chart puts them on the load balancer beside every closed web
+    exposure group, so a load balancer without them is open wider than the run
+    names. An env file's `DFE_EDGE_SELF_RANGES=` line beats the terraform output,
+    and bootstrap then writes none at all, so the terraform value is the one
     held to when the merged value is empty.
 
     Args:
         kube: kubectl argv prefix.
-        fence: DFE_EDGE_ALLOWED_CIDRS as this run resolved it, env files over terraform.
+        fence: DFE_EDGE_SELF_RANGES as this run resolved it, env files over terraform.
         terraform_fence: The same output as terraform alone gave it.
 
     Returns:
-        Empty when no fence is named, every Envoy LoadBalancer Service carries
-        each fenced range in loadBalancerSourceRanges, or the gateway is on
+        Empty when no self range is named, every Envoy LoadBalancer Service
+        carries each one in loadBalancerSourceRanges, or the gateway is on
         NodePort with no load balancer; otherwise what is missing.
     """
     want = {cidr.strip() for cidr in (fence or terraform_fence).split(",") if cidr.strip()}
@@ -2182,42 +2185,69 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
             problems.append(f"{meta.get('namespace')}/{meta.get('name')} lacks {', '.join(missing)}")
     if problems and terraform_fence and not fence:
         problems.append(
-            f"an env file sets {EDGE_FENCE_VAR} empty over the terraform output, so no fence was deployed"
+            f"an env file sets {EDGE_FENCE_VAR} empty over the terraform output, so no self range was deployed"
         )
     return "; ".join(problems)
 
 
-# The gateway chart's own record of what its web routes admit: deny, listed or allow-all.
+# The gateway chart's own record of what each web exposure group admits, as
+# `console=<state>,api=<state>,admin=<state>`: off, open, deny, listed or allow-all.
 EDGE_FENCE_ANNOTATION = "dfe.hyperi.io/edge-fence"
+EDGE_GROUP_SURFACES = {
+    "console": "dfe-ui, HyperDX and the engine's browser families",
+    "api": "the engine's CLI families and /openapi.json",
+    "admin": "the admin UIs",
+}
+
+
+def edge_group_states(annotation: str) -> dict[str, str]:
+    """The per-group states an edge-fence annotation carries; an unreadable entry is dropped.
+
+    Args:
+        annotation: The annotation's value.
+
+    Returns:
+        Group name to state, in the order the annotation lists them.
+    """
+    states: dict[str, str] = {}
+    for part in (annotation or "").split(","):
+        group, sep, state = part.strip().partition("=")
+        if sep and group and state:
+            states[group] = state
+    return states
 
 
 def edge_fence_notice(kube: list[str]) -> str:
-    """One line on what the gateway's web routes admit, read off the live Envoy Service.
+    """What each web exposure group admits, read off the live Envoy Service, one line per group.
 
     Args:
         kube: kubectl argv prefix.
 
     Returns:
-        The line to print, or empty where no Service carries the annotation --
-        a gateway that is not internet-facing and names no list.
+        The lines to print, or empty where no Service carries the annotation --
+        a gateway that is not internet-facing and fences no group.
     """
     rc, doc, _ = _kubectl_json([*kube, "get", "service", "-A", "-l", ENVOY_OWNER_LABEL])
     if rc != 0:
         return ""
-    states = {
-        ((item.get("metadata") or {}).get("annotations") or {}).get(EDGE_FENCE_ANNOTATION)
-        for item in doc.get("items") or []
-    }
-    if "allow-all" in states:
-        return ("WARNING: the gateway's allow-list admits every address -- dfe-ui, HyperDX, the "
-                "engine API and every admin UI are open to the whole internet behind their own "
-                "logins. Name the ranges that need them in edge.product.allowed_cidrs")
-    if "deny" in states:
-        return ("==> public web: CLOSED -- the gateway is internet-facing and its allow-list is "
-                "empty, so every web route answers 403. Set edge.product.allowed_cidrs to open it")
-    if "listed" in states:
-        return "==> public web: fenced to edge.product.allowed_cidrs"
-    return ""
+    states: dict[str, str] = {}
+    for item in doc.get("items") or []:
+        annotation = ((item.get("metadata") or {}).get("annotations") or {}).get(EDGE_FENCE_ANNOTATION)
+        states |= edge_group_states(annotation or "")
+    lines = []
+    for group, state in states.items():
+        surfaces = EDGE_GROUP_SURFACES.get(group, group)
+        key = f"exposure.groups.{group}"
+        if state == "allow-all":
+            lines.append(f"WARNING: {key} admits every address -- {surfaces} are open to the whole "
+                         f"internet behind their own logins. Name the ranges that need them in {key}.allow")
+        elif state == "deny":
+            lines.append(f"==> {group}: CLOSED -- the gateway is internet-facing and {key}.allow is "
+                         f"empty, so {surfaces} answer 403. Set {key}.allow in the deploy repo's "
+                         f"infra/common.yaml to open it")
+        elif state == "listed":
+            lines.append(f"==> {group}: fenced to {key}.allow")
+    return "\n".join(lines)
 
 
 def _route_hosts(kube: list[str], console: str) -> list[str]:

@@ -38,6 +38,12 @@ spec:
       trustedCIDRs:
         {{- toYaml . | nindent 8 }}
   {{- end }}
+  {{- /* Restated for the same reason as the TLS posture below. */}}
+  {{- if .Values.envoyGateway.connectionLimit.enabled }}
+  connection:
+    connectionLimit:
+      value: {{ int64 .Values.envoyGateway.connectionLimit.value }}
+  {{- end }}
   tls:
     minVersion: {{ .Values.ui.tls.min_version | quote }}
     maxVersion: {{ .Values.tls.edge.maxVersion | quote }}

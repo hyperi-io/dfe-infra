@@ -4,7 +4,7 @@
 #
 # ARG defaults mirror versions.yaml's toolbox.* pins (drift-checked); the
 # workflow overrides them at build time from the same source.
-ARG BASE_TAG="v1.0.3"
+ARG BASE_TAG="v1.0.4"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
@@ -16,7 +16,7 @@ ARG AWS_CLI_VERSION="2.37.9"
 # and the RUN step below asserts the download still reports it. A mismatch
 # means AWS moved `latest` again and this pin (plus the drift check that
 # reads it) needs bumping to match.
-ARG AWS_SSM_PLUGIN_VERSION="1.2.889.0"
+ARG AWS_SSM_PLUGIN_VERSION="1.2.896.0"
 
 USER 0
 

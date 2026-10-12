@@ -25,7 +25,7 @@
 # .github/workflows/toolbox-build.yml passes the SAME values as
 # --build-arg so a stale default here never reaches a pushed image.
 # The Debian base is tag@sha256 (toolbox.debian), declared before FROM so FROM can read it.
-ARG DEBIAN_TAG="trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a"
+ARG DEBIAN_TAG="trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
 FROM debian:${DEBIAN_TAG}
 
 ARG TARGETARCH

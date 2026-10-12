@@ -46,6 +46,13 @@ envoyGateway:
   # default; the drift check holds both halves to versions.yaml.
   proxy:
     image: "docker.io/envoyproxy/envoy:distroless-v1.39.2@sha256:dced08cf7c472e1a1d067f906878266078eeeb63c110b4961882c039a622853a"
+  # Concurrent connections each edge listener takes per proxy replica before it
+  # closes new ones (ClientTrafficPolicy connection.connectionLimit).
+  connectionLimit:
+    enabled: true
+    # A fifth of the 50000 downstream connections Envoy Gateway v1.9.2's bootstrap
+    # allows the whole proxy, so a flood on one listener leaves the rest room.
+    value: 10000
 
 # Pool balancer for the direct transport. `enabled`, `gateway` and `port` are
 # the deploy-config SSoT's (argocd/values/common.yaml `mesh:`) because every
@@ -272,18 +279,44 @@ otel:
 api:
   docsEnabled: ""
 
-# Exposure posture for the whole HTTP plane. The `exposure:` key is shared with
-# the dfe-receiver chart (exposure.mode, its ingest door) because a deployment's
-# cloud overlay feeds both -- one block describes what a deployment exposes, and
-# each chart reads the keys it owns.
+# Who may reach each surface, by group. The `exposure:` key is shared with the
+# dfe-receiver and culvert charts, so one block describes what a deployment
+# exposes and each chart reads the keys it owns.
+#
+# The groups are supplied by the deploy-config SSoT (argocd/values/common.yaml,
+# with each cloud's defaults in its edge-<flavour>.yaml), and a missing group
+# refuses to render. A route's class picks its group: product -> console, api ->
+# api, infra -> admin, ingest -> ingest. This chart enforces console, api and
+# admin; ingest and vpn are validated here and wired by the charts behind them.
+#
+# Per group:
+#   enabled -- false takes every route of the group off the edge and BEATS a
+#              route's own `enabled: true`, so a lock-down cannot be undone one
+#              route at a time. admin.enabled is the infra kill switch.
+#   allow   -- CIDR list. Each of the group's routes, internal and public names
+#              alike, admits only these (plus selfRanges below). EMPTY means
+#              "refuse every address" on an internet-facing Service
+#              (envoyGateway.service.internetFacing) and "no fence" elsewhere.
+#   deny    -- CIDR list refused on the group's routes even when allow names
+#              them, checked ahead of allow.
+#   admin.allowPublic -- an internet-facing gateway refuses admin enabled with
+#              an empty allow list unless this is true, which then admits every
+#              address behind the admin UIs' own logins, and behind the edge OIDC
+#              check on the routes with edgePolicy true.
+#   admin.tools.<route key> -- that admin UI also answers on a public hostname
+#              under ui.public_domain.
+#   api.scim -- the engine's /api/v1/scim/v2 rides the api route.
+#   ingest.door, vpn.door -- which door the charts behind them render.
+#
+# The load balancer cannot tell the groups apart, because one Service carries
+# every listener, so its loadBalancerSourceRanges is the union of the enabled
+# web groups' allow lists, selfRanges and envoyGateway.service.
+# loadBalancerSourceRanges; Envoy separates the groups per route.
 exposure:
-  # THE INFRA KILL SWITCH. false takes EVERY infra-class route off the edge in
-  # one flip and BEATS that route's own `enabled: true` -- it is absolute for
-  # the class, so a lock-down cannot be undone one route at a time.
-  # Product-class routes (dfe-ui, the engine API, HyperDX) are never touched by it:
-  # turning the product off is always its own explicit act. Ingest-class routes
-  # are data plane and unaffected.
-  infraUisExternal: true
+  groups: {}
+  # The cluster's own egress addresses (and a guarded test run's runner), a FACT
+  # written from the cluster secret, never by hand. Every web group admits them.
+  selfRanges: []
 
 # PUBLIC UI EXPOSURE -- the cloud half of the edge, off until a deployment names
 # a public zone. Everything DFE uses internally stays private; the UIs are the
@@ -296,8 +329,8 @@ exposure:
 #
 # What renders, per UI marked public: its own Gateway listener on the public
 # hostname, its own publicly trusted Certificate, its own HTTPRoute, a
-# SecurityPolicy carrying the CIDR filter (and the OIDC group check where the
-# route takes one), and a local rate limit. Nothing public renders while
+# SecurityPolicy carrying its group's CIDR filter (and the OIDC group check where
+# the route takes one), and a local rate limit. Nothing public renders while
 # public_domain is empty -- the flags then record intent only.
 ui:
   # The delegated public zone the exposed UIs answer on (the dial's
@@ -305,19 +338,12 @@ ui:
   # the whole public half of the chart renders nothing.
   public_domain: ""
 
-  # Which UIs answer on a public hostname. dfe-ui is the product surface and is
-  # public by default on a cloud deploy; every admin UI is opt-in, one at a
-  # time. A name here must match a routes.<key> entry, and cruise_control needs
-  # the kafka chart to be deploying that UI as well -- either one missing fails
-  # the render rather than publishing a hostname with nothing behind it.
+  # Which PRODUCT UIs answer on a public hostname; the admin UIs' public flags
+  # are exposure.groups.admin.tools. dfe-ui is the product surface and is public
+  # by default on a cloud deploy.
   public:
     dfe_ui: true
-    kafbat: false
-    cruise_control: false
     hyperdx: false
-    argocd: false
-    links: false
-    forgejo: false
 
   # The engine API on the product's own public hostname. dfe-ui leaves
   # NEXT_PUBLIC_API_URL empty, so the browser calls the engine at
@@ -330,31 +356,17 @@ ui:
     # false renders no public engine route at all, and so does
     # ui.public.dfe_ui: false, because the hostname belongs to dfe-ui.
     with_product: true
-    # Adds the path families the `dfe` CLI uses, and /openapi.json with them --
-    # the CLI is generated from the live spec, so a CLI used from outside the
-    # cluster needs the document. Off, because a browser uses neither.
+    # Puts the api group's route (the `dfe` CLI's families and /openapi.json) on
+    # the product's public hostname too. Off, because a browser uses neither.
     cli_families_public: false
-    # Adds /api/v1/scim/v2. An external SaaS IdP provisions over the internet and
-    # needs it; an in-cluster IdP reaches the engine on its Service and does not.
+    # Puts /api/v1/scim/v2 on the product's public hostname, which needs
+    # exposure.groups.api.scim. An external SaaS IdP provisions over the
+    # internet and needs it; an in-cluster IdP reaches the engine's Service.
     scim_public: false
 
-  # Who may reach the web routes, comma-separated. On an internet-facing Service
-  # (envoyGateway.service.internetFacing) EVERY web route -- dfe-ui, HyperDX, the
-  # engine API, each admin UI, internal and public names alike -- is refused at
-  # Envoy unless the client is on this list, and EMPTY REFUSES EVERY ADDRESS.
-  # Elsewhere it fences the public routes alone, and empty admits any address.
-  # A /0 admits the whole internet and the chart's NOTES say so. Enforced twice
-  # -- at Envoy (SecurityPolicy authorization) and at the cloud load balancer
-  # (loadBalancerSourceRanges). The load-balancer half fences the WHOLE front
-  # door, ingest routes included, because one Service carries every listener;
-  # a sender ingest needs beyond this list goes in
-  # envoyGateway.service.loadBalancerSourceRanges, and Envoy still holds the
-  # web routes to this list.
-  allowed_cidrs: ""
-
   # THE CDN OPT-IN for the public listeners, comma-separated. Empty (the
-  # default) believes no X-Forwarded-For from anyone: the client allowed_cidrs
-  # judges is the TCP peer, which the AWS NLB (IP targets, preserve_client_ip),
+  # default) believes no X-Forwarded-For from anyone: the client a group's allow
+  # list judges is the TCP peer, which the AWS NLB (IP targets, preserve_client_ip),
   # GKE, AKS and MetalLB load balancers (externalTrafficPolicy Local) all hand
   # Envoy unchanged. Name only an L7 proxy that writes X-Forwarded-For, such as a
   # CDN in front of the public hostnames -- never an L4 load balancer or a subnet
@@ -362,13 +374,22 @@ ui:
   # A /0 of either family is refused. Internal listeners never read the header.
   trusted_proxy_cidrs: ""
 
-  # Rate limiting sized for a handful of humans, so a credential-stuffing run
-  # hits a wall before it hits the login. LOCAL is per route per proxy replica,
-  # not per attacker -- per-attacker counting needs scope global, which needs
-  # Redis and an EnvoyGateway install change, so global is refused here.
+  # Rate limiting, LOCAL to each proxy replica: global needs Redis and an
+  # EnvoyGateway install change, so it is refused. Every public route has one
+  # bucket every caller shares, the wall a distributed credential-stuffing run
+  # meets, and a bucket per client address. On an internet-facing Service every
+  # internal-name web route, which rides the same load balancer, takes the
+  # per-client bucket alone, so one caller's dashboard cannot empty HyperDX.
+  # Both counts are whole numbers written unquoted.
   rate_limit:
     enabled: true
-    requests: 300           # a UI page load is a burst of tens; 5rps sustained clears it
+    # Each public route's shared bucket: 50 analysts averaging a request a second
+    # is half of it, and a distributed run still meets 100 a second per replica.
+    # It must exceed per_client_requests, or one caller can empty it.
+    requests: 6000
+    # Every web route, per client address: a 40-tile dashboard on a 10s refresh
+    # is 240 a minute, so five such users fit behind one NAT address.
+    per_client_requests: 1200
     unit: Minute            # Second | Minute | Hour | Day | Month | Year
     scope: local            # local only -- global is refused at render
 
@@ -392,15 +413,17 @@ ui:
 # HTTPRoutes -- map hostnames to backend services.
 #
 # Every route carries its CLASSIFICATION as data, and the class decides which
-# switches reach it:
-#   product -- dfe-ui, the engine API it consumes and the HyperDX it frames.
-#              Only `enabled` disables it.
-#   infra   -- the ops surfaces. exposure.infraUisExternal gates the whole class
-#              first, then `enabled`. Edge RBAC applies (see edgePolicy).
-#   ingest  -- data plane (otel, receiver). No UI switch reaches it.
+# exposure group it belongs to and which switches reach it:
+#   product -- dfe-ui, the engine's browser families and the HyperDX it frames.
+#              Group console.
+#   api     -- the engine's CLI families, /openapi.json and SCIM. Group api.
+#   infra   -- the ops surfaces. Group admin; edge RBAC applies (see edgePolicy).
+#   ingest  -- data plane (otel, receiver). Group ingest, which this chart does
+#              not fence.
 #
 # Cascade, in order, first match wins:
-#   1. class infra and exposure.infraUisExternal: false  -> not rendered
+#   1. class product, api or infra and its group's enabled: false
+#                                                        -> not rendered
 #   2. class infra, ownLogin false, and the edge policy is not in front of it
 #      (oidc.enabled, an oidc.providers entry and edgePolicy true)
 #                                                        -> not rendered
@@ -412,7 +435,7 @@ ui:
 #   5. otherwise                                         -> rendered
 #
 # Per-route fields:
-#   class        -- product | infra | ingest (above)
+#   class        -- product | api | infra | ingest (above)
 #   enabled      -- per-route opt-out. Every UI defaults true (D5: externally
 #                   reachable by default). The receiver defaults false because
 #                   it pairs with dfe-receiver's exposure.mode. otel stays true
@@ -473,13 +496,16 @@ routes:
     # A Gateway API PathPrefix matches whole path elements, so /api/v1/auth does
     # not match /api/v1/authoring and /api/v1/sample does not match
     # /api/v1/samples -- naming a family here opens that family and nothing else.
+    # Between them this list and routes.dfeEngineCli.cliFamilies name every
+    # family the engine serves, so a family in neither answers nowhere.
     #
-    # What the browser calls, and therefore what the public route carries by
-    # default. `config/client` is TWO segments: the prefix is
-    # /api/v1/config/client, never /api/v1/config.
+    # What the browser calls, on the internal name and the public one alike.
+    # `config/client` is TWO segments: the prefix is /api/v1/config/client,
+    # never /api/v1/config.
     browserFamilies:
       - auth
       - config/client
+      - deployment
       - system
       - orgs
       - sources
@@ -502,9 +528,26 @@ routes:
     # by design so peers and the edge jwt_authn can verify DFE tokens.
     browserPaths:
       - /.well-known
-    # The families the `dfe` CLI uses, private until cli_families_public above
-    # opens them together.
-    privateFamilies:
+    # NEVER public, under any flag, so no key here names them: /api/e2e is the
+    # test harness's, /docs and /redoc are the Swagger surface, and /livez and
+    # /readyz are the kubelet's.
+
+  # The engine's CLI surface, a second route to the same Service on the same
+  # hostname, in the api exposure group rather than the console's.
+  dfeEngineCli:
+    class: api
+    enabled: true
+    routeName: dfe-engine-cli
+    hostnameKey: dfe
+    hostname: ""
+    backendService: dfe-engine
+    backendNamespace: ""
+    backendPort: 8000
+    pathPrefix: /api/v1
+    requestTimeout: 120s
+    publicListenerOf: dfeUi
+    # The families the `dfe` CLI uses and no browser does.
+    cliFamilies:
       - queries
       - discovery
       - sigma
@@ -517,16 +560,14 @@ routes:
       - sample
       - samples
       - hyperdx
-    # Opened by the same flag: the CLI is generated from the live spec, so a CLI
-    # run from outside needs the document the families belong to.
-    privatePaths:
+      - kafka/topics
+    # The CLI is generated from the live spec, so a CLI run from outside needs
+    # the document the families belong to.
+    cliPaths:
       - /openapi.json
-    # SCIM has its own opt-in (ui.engine_api.scim_public): an external SaaS IdP
-    # provisions over the internet, an in-cluster one does not.
+    # Carried when exposure.groups.api.scim is true: an external SaaS IdP
+    # provisions over the network, an in-cluster one reaches the Service.
     scimPrefix: /api/v1/scim/v2
-    # NEVER public, under any flag, so no key here names them: /api/e2e is the
-    # test harness's, /docs and /redoc are the Swagger surface, and /livez and
-    # /readyz are the kubelet's.
 
   # Argo CD. Envoy forwards plain HTTP, so this is argocd-server's plain HTTP
   # port and bootstrap.sh installs Argo with server.insecure. An ADOPTED Argo

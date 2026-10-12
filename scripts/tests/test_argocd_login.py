@@ -161,7 +161,7 @@ def test_no_provider_renders_no_policy_and_argo_keeps_its_local_admin() -> None:
 
 
 def test_the_infra_kill_switch_leaves_argo_on_its_local_admin() -> None:
-    docs = with_provider(provider(), "--set", "exposure.infraUisExternal=false")
+    docs = with_provider(provider(), "--set", "exposure.groups.admin.enabled=false")
     assert argo_policy(docs) is None
 
 
