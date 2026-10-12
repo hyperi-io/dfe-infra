@@ -177,13 +177,16 @@ clusterTelemetry:
 
   # Scrape the DFE services' own /metrics. Every DFE thin chart already annotates
   # its pods with prometheus.io/scrape, port and path, so this is discovery by annotation
-  # rather than a target list. The services also push these metrics over OTLP with
-  # no replica identity, so turning this off leaves every replica in one series.
-  # With both on, a metric both paths carry lands in otel_metrics_* twice, so a sum
-  # over the two copies counts it twice.
+  # rather than a target list. A service that also pushes the same metrics over OTLP
+  # with the pod as service.instance.id would land in otel_metrics_* twice, and a sum
+  # over both copies counts it twice, so pushedCharts drops its pods from the scrape.
   dfeServices:
     enabled: true
     collectionInterval: 30s
+    # Anchored regex over the pods' helm.sh/chart label (<chart>-<version>). A chart
+    # belongs here only once the image it deploys pushes with replica identity: before
+    # that, the push merges every replica into one series. Empty drops nothing.
+    pushedCharts: ""
 
   # The data operators' own controller metrics: reconcile errors, work-queue depth,
   # API latency. Scraped rather than pushed because none of them speak OTLP.
