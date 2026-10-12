@@ -34,7 +34,9 @@ left alone, an unexpired one is left alone, and an expired one gets `tofu
 destroy` against its own per-run state, from a copy of this checkout's
 terraform/ tree so no run sees another's overlay. A secret Secrets Manager no
 longer holds is dropped from that state first, since the reaper's tag-scoped
-read cannot refresh it. A successful destroy removes the record. Then `cloud_sweep.py --expired --grace 0 --delete` in every region,
+read cannot refresh it. A successful destroy removes the record, and so does a
+failed one after which a refresh finds nothing of the run left, since the sweep
+can win the race for the last resource. Then `cloud_sweep.py --expired --grace 0 --delete` in every region,
 with the state bucket excluded. Exit 0 means nothing expired remains; exit 1
 names what does, so the scheduled run goes red; exit 2 is a configuration error.
 """
@@ -245,7 +247,28 @@ def destroy_run(record: Mapping[str, object]) -> int:
                 if returncode != 0:
                     return returncode
             returncode = run_tofu(["destroy", "-auto-approve", "-input=false"], root, env)
+            if returncode != 0 and nothing_left(root, env):
+                print(f"run {record['run_id']}: destroy failed, but a refresh finds nothing of the run left", file=sys.stderr)
+                returncode = 0
         return returncode
+
+
+def nothing_left(root: Path, env: Mapping[str, str]) -> bool:
+    """True when a refresh-only apply leaves no managed resource in the run's state.
+
+    The sweep can delete a resource between the destroy's refresh and its delete call. EC2 then
+    answers the delete of the vanished object with UnauthorizedOperation, because a tag-fenced
+    allow cannot match a resource that no longer exists, and the state still lists it. A refresh
+    drops whatever the account no longer holds. A refresh or a state read that fails counts as
+    something left, so a real failure is never reported as reaped.
+    """
+    if run_tofu(["apply", "-refresh-only", "-auto-approve", "-input=false"], root, env) != 0:
+        return False
+    state = state_json(root, env)
+    if not state:
+        return False
+    root_module = (state.get("values") or {}).get("root_module") or {}  # type: ignore[union-attr]
+    return not [r for r in _state_resources(root_module) if r.get("mode", "managed") == "managed"]
 
 
 def reap_runs(config: ReaperConfig, now: float) -> list[str]:
