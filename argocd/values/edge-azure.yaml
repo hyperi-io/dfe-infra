@@ -25,6 +25,12 @@ envoyGateway:
     type: LoadBalancer
     internetFacing: true
 
+# TIER 1 -- the edge wildcard-cert issuer, the internal CA for the reason
+# edge-aws.yaml gives: the chart default renders no ClusterIssuer without
+# tls.acme.* or tls.vault.*, and the https listener never comes up.
+tls:
+  issuerName: dfe-internal-ca
+
 # TIER 1 -- the admin group, off for the reason edge-aws.yaml gives: the Service
 # above is internet-facing.
 exposure:

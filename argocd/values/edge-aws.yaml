@@ -52,6 +52,15 @@ envoyGateway:
       # this is what keeps those rules in step.
       service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 
+# TIER 1 -- the edge wildcard-cert issuer. The chart default (dfe-letsencrypt)
+# renders a ClusterIssuer only when tls.acme.email or tls.vault.server is set;
+# with neither, dfe-wildcard-tls is never issued, Envoy Gateway drops the https
+# listener, and the load balancer has no 443 at all. The deployment's names sit
+# in a private hosted zone public ACME cannot validate, so the internal CA issues
+# them; set tls.acme.* or tls.vault.* in the deploy repo for a browser-trusted leaf.
+tls:
+  issuerName: dfe-internal-ca
+
 # The exposure key is shared by three charts and split by which one reads it:
 # the gateway and dfe-receiver read groups, culvert serviceType and
 # externalTrafficPolicy, and dfe-receiver exposure.public.
