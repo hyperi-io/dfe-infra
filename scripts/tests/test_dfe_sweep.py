@@ -114,13 +114,13 @@ def test_derive_suite_off_keeps_only_infra_topics_and_include(tmp_path: Path) ->
     topics = {"ops-tools": (f"{ORG}/ops-tools", ["infra-member"])}
     _, members, _ = _resolve(
         _root(tmp_path),
-        infra="hyperi-infra",
+        infra="ops-infra",
         topics=topics,
         include=("extra-repo",),
         derive_suite=False,
     )
-    assert list(members) == ["hyperi-infra", "ops-tools", "extra-repo"]
-    assert members["hyperi-infra"].why == ("infra",)
+    assert list(members) == ["ops-infra", "ops-tools", "extra-repo"]
+    assert members["ops-infra"].why == ("infra",)
     assert members["ops-tools"].why == ("topic infra-member",)
     for name in ("dfe-engine", "dfe-loader", "dfe-schemas", "dfe-infra"):
         assert name not in members
