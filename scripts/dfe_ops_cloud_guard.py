@@ -57,7 +57,9 @@ dial sets, so a runner outside the VPC can reach the cluster it created. The
 private endpoint stays on either way. The same address becomes the run's
 edge_self_ranges, which the gateway's web exposure groups admit beside the
 cluster's own NAT addresses, so the runner reaches the console and nothing off
-those addresses does until the deploy repo names its own lists. A run record
+those addresses does until the deploy repo names its own lists. Every child gets
+it as DFE_PROBE_SOURCE, so the readiness gate's admin probe fails a gateway that
+does not answer the runner rather than skipping it. A run record
 goes beside the state BEFORE the apply, so the scheduled reaper can destroy the
 run if this process dies.
 From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
@@ -111,6 +113,7 @@ import aws_cli
 import cloud_run
 import cloud_sweep
 import private_file
+from dfe_ops_edge_probe import PROBE_SOURCE_ENV
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DFE_OPS = REPO_ROOT / "scripts" / "dfe-ops"
@@ -978,7 +981,12 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
 
-    child_env = run_env(config)
+    # The runner is one of the gateway's self ranges, so its admin probe can tell a
+    # dead door from a fenced one.
+    probe_source = (
+        {PROBE_SOURCE_ENV: config.endpoint_cidr.split("/")[0]} if config.endpoint_cidr else {}
+    )
+    child_env = run_env(config, **probe_source)
     returncode = 1
     try:
         with teardown_on_exit(teardown):

@@ -36,13 +36,16 @@ non-zero when any check FAILs. A SKIP is not a failure: it is a check whose
 precondition this deployment does not meet, and it names which one.
 
     dfe-ops admin-probe [--namespace dfe-local] [--target <gateway address>] [--wait 0]
+                        [--source <address the gateway sees>]
 
 The same boundary, pointed at the admin UIs instead: it reads the list the
 gateway renders (the engine's dfe-admin-links ConfigMap) and GETs each one
 through the gateway address, following redirects. A redirect loop, a 5xx, a 4xx
 other than 401/403/404, or no answer FAILs; a redirect off the deployment's domain
-is a login handed to an IdP and passes. The readiness gate runs it once every pod
-is Ready.
+is a login handed to an IdP and passes. A gateway that does not answer at all
+FAILs from inside exposure.selfRanges, which the gateway admits, and SKIPs with
+the reason from anywhere else. `--wait` re-probes every FAIL until its deadline.
+The readiness gate runs it once every pod is Ready.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ import argparse
 import http.client
 import ipaddress
 import json
+import os
 import socket
 import ssl
 import subprocess
@@ -997,6 +1001,14 @@ REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 ADMIN_UI_4XX_PASS = frozenset({401, 403, 404})
 ADMIN_PROBE_INTERVAL = 10.0
 KUBECTL_TIMEOUT = 60.0
+# exposure.selfRanges as layer2-edge.yaml hands it to the gateway: the cluster
+# secret's comma-separated annotation, which bootstrap.sh writes from the cloud root.
+CLUSTER_SECRET_NAMESPACE = "argocd"
+CLUSTER_SECRET_NAME = "dfe-cluster"
+SELF_RANGES_ANNOTATION = "dfe.hyperi.io/edge_self_ranges"
+# The address the gateway sees this machine as, for a host behind NAT whose own
+# socket reports one the gateway never sees.
+PROBE_SOURCE_ENV = "DFE_PROBE_SOURCE"
 
 
 @dataclass(frozen=True)
@@ -1130,8 +1142,82 @@ def gateway_address(kube: list[str], name: str = DEFAULT_GATEWAY) -> str:
     return (named or [value for _, value in addressed] or [""])[0]
 
 
+def source_address(raw: str) -> str:
+    """The one address `--source` names, as a bare address; empty stays empty.
+
+    Raises:
+        EdgeProbeError: The value is not one address, bare or as its /32 or /128.
+    """
+    if not raw.strip():
+        return ""
+    try:
+        interface = ipaddress.ip_interface(raw.strip())
+    except ValueError as error:
+        raise EdgeProbeError(f"--source {raw!r} is not an address: {error}") from error
+    if interface.network.num_addresses != 1:
+        raise EdgeProbeError(
+            f"--source {raw!r} is a range -- name the one address the gateway sees"
+        )
+    return str(interface.ip)
+
+
+def local_address(address: str, port: int) -> str:
+    """The address this machine would send from to reach `address`, with no packet sent.
+
+    A UDP connect only asks the kernel for a route, so it answers even when the
+    door is down, which is exactly when the question is asked.
+    """
+    try:
+        family = socket.getaddrinfo(address, port, proto=socket.IPPROTO_UDP)[0][0]
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            sock.connect((address, port))
+            return str(sock.getsockname()[0])
+    except OSError:
+        return ""
+
+
+def read_self_ranges(kube: list[str]) -> tuple[tuple[str, ...], str]:
+    """(exposure.selfRanges, why it could not be read) off the cluster secret."""
+    doc, error = _kubectl_json(
+        kube, "-n", CLUSTER_SECRET_NAMESPACE, "get", "secret", CLUSTER_SECRET_NAME
+    )
+    if error:
+        return (), f"cannot read {CLUSTER_SECRET_NAMESPACE}/{CLUSTER_SECRET_NAME}: {error}"
+    raw = ((doc.get("metadata") or {}).get("annotations") or {}).get(SELF_RANGES_ANNOTATION, "")
+    return tuple(cidr.strip() for cidr in raw.split(",") if cidr.strip()), ""
+
+
+def dead_door(kube: list[str], address: str, port: int, source: str) -> tuple[str, str]:
+    """(verdict, why) for a gateway that does not answer.
+
+    The gateway admits exposure.selfRanges on every web group, so from inside
+    them a door that does not answer is a door that is down. From anywhere else
+    the silence may be the fence doing its job, which proves nothing either way.
+    """
+    ranges, error = read_self_ranges(kube)
+    if error:
+        return SKIP, f"{error}, so whether the gateway admits this machine is unknown"
+    mine = source or local_address(address, port)
+    ranges_shown = f"exposure.selfRanges ({', '.join(ranges) or 'none'})"
+    if mine and address_in_cidrs(mine, ranges):
+        return FAIL, f"this machine ({mine}) is inside {ranges_shown}, which the gateway admits"
+    if not mine:
+        return SKIP, f"this machine's address is unknown, so it cannot be weighed against {ranges_shown}"
+    if not source and dialled_from_behind_nat(mine):
+        return SKIP, (
+            f"this machine reads {mine}, so it sits behind NAT and the address the gateway "
+            f"sees is unknown -- pass --source or {PROBE_SOURCE_ENV} to weigh it against "
+            f"{ranges_shown}"
+        )
+    return SKIP, f"this machine ({mine}) is outside {ranges_shown} -- probe from a host inside them"
+
+
 def admin_ui_checks(
-    kube: list[str], namespace: str, target: str = "", gateway: str = DEFAULT_GATEWAY
+    kube: list[str],
+    namespace: str,
+    target: str = "",
+    gateway: str = DEFAULT_GATEWAY,
+    source: str = "",
 ) -> list[Check]:
     """One check per admin UI the gateway lists, or one SKIP naming why none can run."""
     links = read_admin_links(kube, namespace)
@@ -1149,11 +1235,12 @@ def admin_ui_checks(
     port = first.port or (HTTPS_PORT if first.scheme == "https" else HTTP_PORT)
     door = _reach(Request(host="", address=address, port=port, path="", tls=False))
     if not door.reached:
+        verdict, why = dead_door(kube, address, port, source)
         return [
             Check(
-                f"admin ui {link.name}", SKIP,
+                f"admin ui {link.name}", verdict,
                 f"the gateway at {address}:{port} does not answer from this machine "
-                f"({door.error}) -- probe from a host that reaches it",
+                f"({door.error}) -- {why}",
             )
             for link in links
         ]
@@ -1197,10 +1284,15 @@ def cmd_admin_probe(args: argparse.Namespace) -> int:
     kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
     if args.context:
         kube += ["--context", args.context]
+    try:
+        source = source_address(args.source or os.environ.get(PROBE_SOURCE_ENV, ""))
+    except EdgeProbeError as error:
+        print(f"dfe-ops admin-probe: {error}", file=sys.stderr)
+        return 1
     deadline = time.monotonic() + max(args.wait, 0)
     while True:
         try:
-            checks = admin_ui_checks(kube, args.namespace, args.target, args.gateway)
+            checks = admin_ui_checks(kube, args.namespace, args.target, args.gateway, source)
         except EdgeProbeError as error:
             print(f"dfe-ops admin-probe: {error}", file=sys.stderr)
             return 1
@@ -1270,6 +1362,12 @@ def add_admin_probe_subparser(sub: argparse._SubParsersAction) -> None:
     probe.add_argument(
         "--wait", type=float, default=0.0, metavar="SECONDS",
         help="re-probe a failing UI until this many seconds have passed",
+    )
+    probe.add_argument(
+        "--source", default="", metavar="ADDRESS",
+        help=f"the address the gateway sees this machine as, for a host behind NAT; empty "
+             f"reads {PROBE_SOURCE_ENV}, then this machine's own route to the gateway. From "
+             f"inside exposure.selfRanges a gateway that does not answer fails rather than skips",
     )
     probe.set_defaults(func=cmd_admin_probe)
 
