@@ -33,6 +33,10 @@ locals {
   ])
 
   generated = setsubtract(local.empty_fields, local.caller_supplied)
+
+  // Secrets Manager appends six random characters to every secret's ARN, so a
+  // path is matched with a trailing wildcard rather than listed.
+  secret_arn_prefix = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${local.path}"
 }
 
 // A generated value NEVER leaves this module -- it goes into the store and into
@@ -99,14 +103,21 @@ resource "aws_iam_role" "eso" {
 
 data "aws_iam_policy_document" "eso" {
   statement {
-    effect  = "Allow"
-    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = ["${local.secret_arn_prefix}/*"]
+  }
 
-    // Secrets Manager appends six random characters to every secret's ARN, so
-    // the path is matched with a trailing wildcard rather than listed.
-    resources = [
-      "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${local.path}/*",
+  // The gateway chart's PushSecret creates the internal CA root under pki/, tagged managed-by, and nothing else in the store is writable.
+  statement {
+    effect = "Allow"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:PutSecretValue",
+      "secretsmanager:TagResource",
+      "secretsmanager:DescribeSecret",
     ]
+    resources = ["${local.secret_arn_prefix}/pki/*"]
   }
 
   // Decrypt on the deployment's own key only. Without it every read fails,
