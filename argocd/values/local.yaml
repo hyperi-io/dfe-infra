@@ -45,6 +45,9 @@ tolerations:
 # the pair and an on-prem deployment has no ingest door at all.
 exposure:
   mode: internal
+  groups:
+    ingest:
+      door: gateway
 
 # The gateway routes HTTP, so grpc drops back to exposed: false here -- left
 # true it fails the receiver render, which is the point of that guard. OTLP/gRPC

@@ -12,44 +12,52 @@ On a cloud deploy the Gateway Service is internet-facing:
 and `edge-azure.yaml`, because each cloud makes a LoadBalancer public unless told
 otherwise.
 
-**Public web access is default-deny.** Every web route on that Service --
-dfe-ui, HyperDX, the engine API and every admin UI, on the internal names and the
-public ones -- is refused at Envoy unless the client address is on
-`ui.allowed_cidrs`. With the list empty, every address gets a 403.
+**Public web access is default-deny, per exposure group.** A route's class puts
+it in a group: dfe-ui, HyperDX and the engine's browser families are `console`;
+the engine's CLI families, `/openapi.json` and SCIM are `api`; the admin UIs are
+`admin`. Every route of a group, on its internal name and its public one, is
+refused at Envoy unless the client address is on `exposure.groups.<group>.allow`,
+and the group's `deny` list is refused first.
 
-| `ui.allowed_cidrs` | Web routes | Load balancer | Said by |
-|---|---|---|---|
-| empty | 403 to every address | open, so ingest still reaches its own auth | NOTES, `bootstrap.sh`, `dfe-ops access-summary`, `render_dial.py` |
-| ranges | the ranges only | the ranges, plus `envoyGateway.service.loadBalancerSourceRanges` | NOTES |
-| a `/0` of either family | every address | every address | a WARNING in all four |
+| `exposure.groups.<group>.allow` | The group's routes | Said by |
+|---|---|---|
+| empty | 403 to every address | NOTES, `dfe-ops access-summary` |
+| ranges | the ranges, and `exposure.selfRanges` | NOTES |
+| a `/0` of either family | every address | a WARNING in both |
 
-One Gateway-wide SecurityPolicy, `dfe-edge-fence`, carries the rule. Envoy Gateway
-applies only the most specific SecurityPolicy to a route, so every route-level
-policy the chart renders restates it. The OIDC ones AND it with their group
-check. Ingest routes (`otel`, `receiver`) carry an explicit allow, since they are
-not web surfaces, and so does the `:80` redirect, which serves nothing but a 301
-to the fenced https side. A route another namespace attaches inherits the deny.
+Every web route the chart renders carries its own SecurityPolicy with its group's
+rule; the OIDC ones AND it with their group check. The Gateway-wide policy,
+`dfe-edge-fence`, refuses every address, so it holds only a route another
+namespace attaches. Ingest routes (`otel`, `receiver`) carry an explicit allow,
+since they are not web surfaces, and so does the `:80` redirect, which serves
+nothing but a 301 to the fenced https side.
 
-The load balancer's half fences ingest too. A sender outside the web list goes in
-`envoyGateway.service.loadBalancerSourceRanges`, and Envoy still holds the web
-routes to the list. The Envoy Service carries the state as
-`dfe.hyperi.io/edge-fence: deny | listed | allow-all`.
+One Service carries every listener, so the load balancer cannot tell the groups
+apart: its source ranges are the union of the enabled web groups' allow lists,
+`exposure.selfRanges` and `envoyGateway.service.loadBalancerSourceRanges`. A group
+that admits every address leaves it open. A sender to an ingest route goes in
+`envoyGateway.service.loadBalancerSourceRanges`. The Envoy Service carries the
+state as `dfe.hyperi.io/edge-fence: console=<state>,api=<state>,admin=<state>`.
 
-`exposure.infraUisExternal` defaults off on the same three flavours, and
-`argocd/values/aws.yaml` sets `oidc.enabled: true` -- Argo CD, Kafbat,
-Forgejo, the links page and Cruise Control all stay off the public load balancer
-until an operator's overlay opts one back on. HyperDX is class product, beside
-the console that frames it, so the switch never reaches it. The chart's own render guard (`envoy-gateway-config.validateUi`)
-fails the render if a deploy flips the switch back on for an internet-facing
-Service with no edge OIDC provider (`oidc.enabled` and an `oidc.providers`
-entry) and `ui.allowed_cidrs` empty -- so
-re-exposing an admin UI on a public load balancer is always a deliberate
-choice with either OIDC or a CIDR fence behind it, never a one-line flip
-that quietly ships with no edge auth.
+`exposure.selfRanges` is the cluster's own NAT egress, which the aws root writes
+onto the cluster secret. It is a fact, never an allow list: the deployer's lists
+live in the deploy repo's `infra/common.yaml`, where the engine can change them at
+runtime.
+
+`exposure.groups.admin.enabled` defaults off on the same three flavours, and
+`argocd/values/aws.yaml` sets `oidc.enabled: true` -- Argo CD, Kafbat, Forgejo,
+the links page and Cruise Control all stay off the public load balancer until an
+operator's overlay turns the group on. HyperDX is class product, beside the
+console that frames it, so the switch never reaches it. The chart's render guard
+(`envoy-gateway-config.validateUi`) refuses the admin group on an internet-facing
+Service with an empty `exposure.groups.admin.allow`, unless `allowPublic: true`,
+and refuses `allowPublic` without an edge OIDC provider (`oidc.enabled` and an
+`oidc.providers` entry).
 
 ## Upgrading a cloud deployment
 
-- Set `ui.allowed_cidrs` (the dial's `edge.product.allowed_cidrs`) before upgrading. An internet-facing Gateway with an empty list answers 403 on every web route from the first sync.
+- Set `exposure.groups.console.allow` (and `api.allow`, `admin.allow` as needed) in the deploy repo's `infra/common.yaml` before upgrading. An internet-facing Gateway with an empty list answers 403 on that group's routes from the first sync.
+- `ui.allowed_cidrs`, `exposure.infraUisExternal` and `ui.public.<admin UI>` are retired and refuse to render, each naming its replacement.
 - The trusted ranges a deployment already runs with live on its Argo CD cluster secret, in `dfe.hyperi.io/edge_trusted_proxy_cidrs`, and stay trusted until `bootstrap.sh` runs again. Only bootstrap writes that annotation, and `dfe-ops refresh` and `dfe-ops upgrade` leave it alone. Re-run bootstrap after upgrading, or remove the annotation, so a load balancer's subnets stop being believed.
 
 ## The client address the fence judges
@@ -81,10 +89,12 @@ dial's own spelling.
 | Key | Default | What it decides |
 |---|---|---|
 | `ui.public_domain` | `""` | The public zone the UIs answer on. Empty renders no public half. |
-| `ui.public.<name>` | `dfe_ui: true`, admin UIs `false` | Which UIs get a public hostname. |
-| `ui.allowed_cidrs` | `""` (nobody, internet-facing) | Who may reach a web route, at Envoy AND at the load balancer. |
+| `ui.public.<name>` | `dfe_ui: true`, `hyperdx: false` | Which product UIs get a public hostname. |
+| `exposure.groups.admin.tools.<route>` | every tool `false` | Which admin UIs get a public hostname, once the admin group is on. |
+| `exposure.groups.<group>.allow`, `.deny` | `[]` (nobody, internet-facing) | Who may reach the group's routes, at Envoy AND, as a union, at the load balancer. |
 | `ui.trusted_proxy_cidrs` | `""` (no forwarded header believed) | A CDN or other L7 proxy in front of the public hostnames, whose `X-Forwarded-For` names the client. |
-| `ui.rate_limit` | on, 300/Minute, `local` | The wall a credential-stuffing run hits before the login. |
+| `ui.rate_limit` | on, 300/Minute, `local` | The wall a credential-stuffing run hits before the login: every public route, and every internal-name web route on an internet-facing Service. |
+| `envoyGateway.connectionLimit` | on, 10000 | Concurrent connections each listener takes per proxy replica. |
 | `ui.waf.mode` | `none` | Only `none` renders. |
 | `ui.tls` | `"1.2"`, HSTS on | The public TLS floor and `Strict-Transport-Security`. |
 
@@ -97,7 +107,7 @@ cert-manager's Pod Identity role (`tls.public`).
 
 ## What fails the render
 
-Eight things fail the render rather than shipping a weaker edge:
+These fail the render rather than shipping a weaker edge:
 
 - **A public UI with no authentication.** Edge OIDC (`edgePolicy`, or
   `oidc.targetRoutes` naming the route, with a provider configured) counts,
@@ -113,9 +123,13 @@ Eight things fail the render rather than shipping a weaker edge:
   GCP or Azure (`cloud` or `global.cloud`) on a LoadBalancer Service with no
   `networking.gke.io/load-balancer-type: Internal` or
   `service.beta.kubernetes.io/azure-load-balancer-internal: "true"`.
-- **An entry in either list that is not a CIDR range**, such as a bare address.
-  Envoy Gateway and the load balancer would refuse it at admission, failing the
-  whole gateway sync.
+- **An entry in any group list, `selfRanges` or `trusted_proxy_cidrs` that is
+  not a CIDR range**, such as a bare address. Envoy Gateway and the load
+  balancer would refuse it at admission, failing the whole gateway sync.
+- **The admin group on an internet-facing Service with no allow list**, unless
+  `allowPublic` is true with an edge OIDC provider.
+- **A retired key**: `ui.allowed_cidrs`, `exposure.infraUisExternal` or
+  `ui.public.<admin UI>`, each refused with its replacement named.
 - **A `/0` of either family in `trusted_proxy_cidrs`.** Every peer is then
   trusted, so Envoy takes the client from the leftmost `X-Forwarded-For`
   entry, which the caller writes. `render_dial.py`, `bootstrap.sh` and the aws
@@ -132,3 +146,10 @@ security group. That group can only be attached at creation, so the
 controller must own the Service from the start -- see the annotations and
 their reasons in `argocd/values/edge-aws.yaml`. The ranges fence the WHOLE front
 door, ingest included: one Service carries every listener.
+
+The engine answers on two routes on its one hostname: `dfe-engine` carries the
+browser families (`routes.dfeEngine.browserFamilies`) for the console group, and
+`dfe-engine-cli` carries the CLI families, `/openapi.json`, the Swagger pages
+where the engine serves them and, with `exposure.groups.api.scim`, SCIM, for the
+api group. The edge OIDC login fronts `dfe-engine` alone, because the CLI cannot
+follow an interactive redirect; the engine authenticates every call itself.

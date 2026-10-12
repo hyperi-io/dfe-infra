@@ -1,6 +1,4 @@
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
-{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
-{{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
 {{- $edgeRoutes := list }}
 {{- range $route := .Values.oidc.targetRoutes }}
 {{- $edgeRoutes = append $edgeRoutes $route.name }}
@@ -9,6 +7,8 @@
 {{- $r := index $.Values.routes $key }}
 {{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $ "key" $key) }}
 {{- $host := include "envoy-gateway-config.publicHost" (dict "ctx" $ "key" $key) }}
+{{- $group := include "envoy-gateway-config.routeGroup" (dict "ctx" $ "key" $key) }}
+{{- $fence := include "envoy-gateway-config.groupFence" (dict "ctx" $ "group" $group) | fromJson }}
 {{- $hasProviders := and $.Values.oidc.enabled $.Values.oidc.providers }}
 {{- $edge := and $hasProviders (or $r.edgePolicy (has $r.routeName $edgeRoutes)) }}
 {{- if $edge }}
@@ -23,8 +23,8 @@
 # same HTTPRoute conflict and only the oldest applies. oidc.loginProvider owns
 # the redirect; every provider stays a JWT issuer with an Allow rule of its own.
 # defaultAction Deny means a request that matches no rule is refused, so a token
-# carrying no groups claim -- or an address outside ui.allowed_cidrs -- is
-# turned away rather than admitted.
+# carrying no groups claim -- or an address outside the route's exposure group --
+# is turned away rather than admitted.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -61,16 +61,19 @@ spec:
           cookies:
             - dfe-{{ $r.routeName }}-public-access-token
       {{- end }}
-  {{- /* The jwt block already refuses a request with no valid token, and the
-         CRD rejects a jwt principal naming no claim, so a route with no group
-         check and no address list takes no authorization block at all. */}}
-  {{- if eq $fence "deny" }}
+  {{- if $r.edgePolicy }}
   authorization:
     defaultAction: Deny
-  {{- else if $r.edgePolicy }}
-  authorization:
-    defaultAction: Deny
+    {{- if or $fence.deny $fence.open $fence.allow }}
     rules:
+      {{- with $fence.deny }}
+      - name: deny-listed-cidrs
+        action: Deny
+        principal:
+          clientCIDRs:
+            {{- toYaml . | nindent 12 }}
+      {{- end }}
+      {{- if or $fence.open $fence.allow }}
       {{- range $provider := $.Values.oidc.providers }}
       - name: allow-admin-groups-{{ $provider.name }}
         action: Allow
@@ -78,9 +81,9 @@ spec:
                the address ANDs them: the right group from the wrong address is
                refused. */}}
         principal:
-          {{- with $allowed }}
+          {{- if not $fence.open }}
           clientCIDRs:
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml $fence.allow | nindent 12 }}
           {{- end }}
           jwt:
             provider: {{ $provider.name }}
@@ -90,16 +93,22 @@ spec:
                 values:
                   {{- toYaml $.Values.adminGroups | nindent 18 }}
       {{- end }}
-  {{- else if $allowed }}
-  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+      {{- end }}
+    {{- end }}
+  {{- else }}
+  {{- /* The jwt block already refuses a request with no valid token, and the
+         CRD rejects a jwt principal naming no claim, so the address rule is the
+         whole block, and an open group with no deny list takes none at all. */}}
+  {{- include "envoy-gateway-config.groupAuthorization" (dict "ctx" $ "group" $group "indent" 2) }}
   {{- end }}
 {{- end }}
 {{- end }}
-{{- else if or $allowed (eq $fence "deny") }}
+{{- else }}
+{{- $authorization := include "envoy-gateway-config.groupAuthorization" (dict "ctx" $ "group" $group "indent" 2) }}
+{{- if $authorization }}
 ---
 # The login on this route is the app's own, so the only thing the edge can add
-# is where a request may come from. Deny by default; the allow rule is the
-# address list, and with no list on an internet-facing gateway there is none.
+# is where a request may come from: the route's exposure group.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -107,11 +116,14 @@ metadata:
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
+  annotations:
+    dfe.hyperi.io/exposure-group: {{ $group | quote }}
 spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: {{ $r.routeName }}-public
-  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+  {{- $authorization }}
+{{- end }}
 {{- end }}
 {{- end }}

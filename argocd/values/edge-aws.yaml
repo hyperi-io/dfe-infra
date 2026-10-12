@@ -20,9 +20,9 @@ envoyGateway:
     type: LoadBalancer
     # The chart's own cloud-agnostic exposure signal (values.yaml), set
     # alongside the internet-facing scheme annotation below, not derived from
-    # it. It fences every web route to ui.allowed_cidrs -- refused to every
-    # address until a deployment names who may reach it -- and arms
-    # validateUi's guard.
+    # it. It fences every web route to its exposure group's allow list --
+    # refused to every address until a deployment names who may reach it -- and
+    # arms validateUi's guard.
     internetFacing: true
     annotations:
       # `external`, not `nlb`: the controller reconciles only `nlb-ip` and
@@ -52,18 +52,18 @@ envoyGateway:
       service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
 
 # The exposure key is shared by three charts and split by which one reads it:
-# the two below are the gateway's and culvert's, and dfe-receiver's own
-# exposure.mode stays in aws.yaml.
+# the gateway reads groups, culvert serviceType and externalTrafficPolicy, and
+# dfe-receiver's own exposure.mode stays in aws.yaml.
 exposure:
-  # TIER 1 -- the infra-class kill switch, off here because the gateway Service
-  # above is internet-facing. Argo CD, Kafbat, Forgejo, links and Cruise Control
-  # all stay off the public load balancer until an operator's own overlay opts
-  # one back on. dfe-ui, the engine API and HyperDX are unaffected -- they are
-  # class product, and the kill switch never reaches them. Turning a route back on also needs
-  # oidc.enabled (aws.yaml) with an oidc.providers entry, or ui.allowed_cidrs,
-  # which the chart's render guard requires whenever the Service is
-  # internet-facing and this switch is on.
-  infraUisExternal: false
+  groups:
+    # TIER 1 -- the admin group, off here because the gateway Service above is
+    # internet-facing. Argo CD, Kafbat, Forgejo, links and Cruise Control all
+    # stay off the public load balancer until an operator's own overlay turns
+    # the group on, which the chart refuses without an admin allow list or
+    # allowPublic. console and api keep common.yaml's empty lists, which this
+    # internet-facing Service reads as "refuse every address".
+    admin:
+      enabled: false
   # TIER 1 -- culvert must render NO LoadBalancer either, or the tunnel's own
   # bytes hit the per-GB-processed NLB the receiver's `vpn` default exists to
   # avoid. NodePort carries no per-byte charge; the deployer reaches it through

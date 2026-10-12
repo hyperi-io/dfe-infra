@@ -125,13 +125,13 @@ output "DFE_TOOLBOX_ADMIN_CIDR" {
   value       = var.edge.enabled && var.edge.tunnel.admin_peer.enabled ? module.toolbox.admin_cidr : ""
 }
 
-output "DFE_EDGE_ALLOWED_CIDRS" {
-  description = "Who may reach the public gateway, comma-separated: edge_allowed_cidrs plus the NAT gateways' addresses, because a pod calling the gateway's public hostname leaves by NAT. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/edge_allowed_cidrs annotation, which layer2-edge.yaml turns into the gateway chart's ui.allowed_cidrs. Empty when edge_allowed_cidrs is, or the edge module is off: no annotation, no fence."
-  value       = join("", module.edge[*].gateway_allowed_cidrs)
+output "DFE_EDGE_SELF_RANGES" {
+  description = "The addresses this deployment reaches its own public gateway from, comma-separated: the NAT gateways' addresses, because a pod calling the gateway's public hostname leaves by NAT, plus edge_self_ranges. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/edge_self_ranges annotation, which layer2-edge.yaml turns into the gateway chart's exposure.selfRanges. A fact, not an allow list. Empty when the edge module is off."
+  value       = join("", module.edge[*].self_ranges)
 }
 
 output "DFE_EDGE_TRUSTED_PROXY_CIDRS" {
-  description = "The CDN ranges in front of Envoy whose X-Forwarded-For names the client, comma-separated: edge_trusted_proxy_cidrs and nothing else. Travels with DFE_EDGE_ALLOWED_CIDRS into the gateway chart's ui.trusted_proxy_cidrs, and is empty whenever that is, because bootstrap refuses the ranges with no list."
+  description = "The CDN ranges in front of Envoy whose X-Forwarded-For names the client, comma-separated: edge_trusted_proxy_cidrs and nothing else. Bootstrap writes it onto the cluster secret and layer2-edge.yaml turns it into the gateway chart's ui.trusted_proxy_cidrs."
   value       = join("", module.edge[*].gateway_trusted_proxy_cidrs)
 }
 

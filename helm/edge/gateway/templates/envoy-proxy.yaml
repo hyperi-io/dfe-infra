@@ -10,14 +10,13 @@
 # with no LB controller reaches the outside through it on a ClusterIP.
 {{- $svc := .Values.envoyGateway.service }}
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
-{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
-{{- /* The second wall. ui.allowed_cidrs is enforced at Envoy as well, so a
+{{- /* The second wall. Each group's list is enforced at Envoy as well, so a
        misconfigured policy is not the only thing between the internet and a UI
        -- but this one is the WHOLE front door, ingest routes included, because
-       one Service carries every listener. A range ingest needs beyond the list
-       goes in envoyGateway.service.loadBalancerSourceRanges: Envoy still holds
-       the web routes to the list. */}}
-{{- $sourceRanges := concat ($svc.loadBalancerSourceRanges | default list) $allowed | uniq }}
+       one Service carries every listener. A range ingest needs beyond the web
+       groups goes in envoyGateway.service.loadBalancerSourceRanges: Envoy still
+       holds each web route to its own group. */}}
+{{- $sourceRanges := include "envoy-gateway-config.lbSourceRanges" (dict "ctx" .) | fromJsonArray }}
 {{- /* Every name this edge answers on, public and internal. external-dns picks
        the zone by matching the suffix, so the public names land in the
        delegated public zone and every internal name stays in the private one
@@ -50,14 +49,18 @@ spec:
           image: {{ .Values.envoyGateway.proxy.image | quote }}
       envoyService:
         type: {{ $svc.type | default "LoadBalancer" }}
-        {{- $fence := include "envoy-gateway-config.webFence" (dict "ctx" .) }}
+        {{- /* What each web group admits, for dfe-ops and anyone reading the
+               Service, written wherever a group is fenced at all. */}}
+        {{- $fence := "" }}
+        {{- $summary := include "envoy-gateway-config.groupSummary" (dict "ctx" .) }}
+        {{- if or $svc.internetFacing (regexMatch "=(listed|allow-all|deny)" $summary) }}
+        {{- $fence = $summary }}
+        {{- end }}
         {{- if or $svc.annotations $hostnames $fence }}
         annotations:
           {{- with $svc.annotations }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
-          {{- /* What the web routes admit, for dfe-ops and anyone reading the
-                 Service: deny, listed or allow-all. */}}
           {{- with $fence }}
           dfe.hyperi.io/edge-fence: {{ . | quote }}
           {{- end }}

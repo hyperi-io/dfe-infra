@@ -304,7 +304,7 @@ def test_expected_fail_an_env_file_emptying_the_terraform_fence_is_named(monkeyp
     _envoy_services(monkeypatch, None)
     problem = dfeops._edge_fence_problem(["kubectl"], "", FENCE)
     assert "envoy-dfe-gateway-0 lacks 10.90.0.0/16, 198.51.100.4/32, 203.0.113.7/32" in problem
-    assert "an env file sets DFE_EDGE_ALLOWED_CIDRS empty over the terraform output" in problem
+    assert "an env file sets DFE_EDGE_SELF_RANGES empty over the terraform output" in problem
 
 
 @pytest.mark.parametrize(("ranges", "rc", "said"), [
@@ -334,9 +334,10 @@ def test_a_nodeport_gateway_passes_with_a_note(
 
 
 @pytest.mark.parametrize(("state", "said"), [
-    ("deny", "public web: CLOSED"),
-    ("allow-all", "WARNING: the gateway's allow-list admits every address"),
-    ("listed", "public web: fenced to edge.product.allowed_cidrs"),
+    ("console=deny,api=deny,admin=off", "console: CLOSED"),
+    ("console=deny,api=deny,admin=off", "api: CLOSED"),
+    ("console=listed,api=deny,admin=allow-all", "WARNING: exposure.groups.admin admits every address"),
+    ("console=listed,api=open,admin=open", "console: fenced to exposure.groups.console.allow"),
     (None, ""),
 ])
 def test_the_fence_notice_reads_the_gateway_service(
@@ -348,6 +349,15 @@ def test_the_fence_notice_reads_the_gateway_service(
     monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
     notice = dfeops.edge_fence_notice(["kubectl"])
     assert (said in notice) if said else notice == "", notice
+
+
+def test_expected_fail_an_off_or_open_group_earns_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
+                           "annotations": {dfeops.EDGE_FENCE_ANNOTATION: "console=listed,api=open,admin=off"}},
+              "spec": {"type": "LoadBalancer"}}]
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    notice = dfeops.edge_fence_notice(["kubectl"])
+    assert notice.splitlines() == ["==> console: fenced to exposure.groups.console.allow"], notice
 
 
 def test_an_unreadable_service_gives_no_fence_notice(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,11 +1,9 @@
 {{- if .Values.envoyGateway.service.internetFacing }}
-{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.allowed_cidrs) | fromJsonArray }}
-# The web fence for an internet-facing gateway. Every route on it is refused
-# unless the client address is on ui.allowed_cidrs, and every route is refused
-# while that list is empty. A SecurityPolicy on a route REPLACES this one for
-# that route rather than merging with it, so each policy this chart attaches to
-# a web route restates the same rule, and a route nothing here knows about --
-# one another namespace attaches -- is held by this default.
+# The web fence for an internet-facing gateway: refuse every address. A
+# SecurityPolicy on a route REPLACES this one for that route rather than merging
+# with it, and every route this chart renders carries its own exposure group's
+# policy, so only a route nothing here knows about -- one another namespace
+# attaches -- is held by this default.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
@@ -14,13 +12,13 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
   annotations:
-    dfe.hyperi.io/edge-fence: {{ include "envoy-gateway-config.webFence" (dict "ctx" .) | quote }}
+    dfe.hyperi.io/edge-fence: {{ include "envoy-gateway-config.groupSummary" (dict "ctx" .) | quote }}
 spec:
   targetRefs:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: {{ .Values.gateway.name }}
-  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" $allowed "indent" 2) }}
+  {{- include "envoy-gateway-config.fenceAuthorization" (dict "cidrs" (list) "indent" 2) }}
 ---
 # The :80 redirect sends every caller to https and serves nothing itself, so a
 # 403 here would hide the move to TLS and protect nothing: the fence above holds

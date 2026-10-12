@@ -57,21 +57,29 @@ spec:
           cookies:
             - dfe-{{ $r.routeName }}-access-token
       {{- end }}
-  {{- /* Replaces dfe-edge-fence on an internet-facing gateway, so the address
-         check is ANDed into every rule, and an empty list keeps no rule at all. */}}
-  {{- $facing := $.Values.envoyGateway.service.internetFacing }}
-  {{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" $.Values.ui.allowed_cidrs) | fromJsonArray }}
+  {{- /* The route's only policy, so the admin group's deny list goes first and
+         its allow list is ANDed into every group-claim rule; a closed group
+         with no list keeps no allow rule. */}}
+  {{- $fence := include "envoy-gateway-config.groupFence" (dict "ctx" $ "group" "admin") | fromJson }}
   authorization:
     defaultAction: Deny
-    {{- if or (not $facing) $allowed }}
+    {{- if or $fence.deny $fence.open $fence.allow }}
     rules:
+      {{- with $fence.deny }}
+      - name: deny-listed-cidrs
+        action: Deny
+        principal:
+          clientCIDRs:
+            {{- toYaml . | nindent 12 }}
+      {{- end }}
+      {{- if or $fence.open $fence.allow }}
       {{- range $provider := $.Values.oidc.providers }}
       - name: allow-admin-groups-{{ $provider.name }}
         action: Allow
         principal:
-          {{- if $facing }}
+          {{- if not $fence.open }}
           clientCIDRs:
-            {{- toYaml $allowed | nindent 12 }}
+            {{- toYaml $fence.allow | nindent 12 }}
           {{- end }}
           jwt:
             provider: {{ $provider.name }}
@@ -80,6 +88,7 @@ spec:
                 valueType: StringArray
                 values:
                   {{- toYaml $.Values.adminGroups | nindent 18 }}
+      {{- end }}
       {{- end }}
     {{- end }}
 {{- end }}

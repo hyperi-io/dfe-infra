@@ -5,8 +5,8 @@ is an edge concern, and dfe-common is shared by every DFE chart.
 Each takes (dict "ctx" $ "key" "<routes values key>").
 
 routeEnabled -- does this route render? First match wins:
-  1. class infra and exposure.infraUisExternal false -> "" (the kill switch is
-     absolute for the class, so a route's own enabled:true does not beat it)
+  1. class product, api or infra and its exposure group off -> "" (absolute for
+     the group, so a route's own enabled:true does not beat it)
   2. class infra, ownLogin false, and no edgeLogin    -> ""
   3. the backend is another chart's opt-in workload that the deployment is not
      running                                         -> ""
@@ -41,6 +41,21 @@ edgeHsts     -- does the wildcard listener send HSTS? tls.edge.hsts when it is a
 hiddenRule   -- the rule answering 404 on routes.<key>.hiddenPaths, or nothing.
   Takes (dict "ctx" $ "key" <route key> "indent" <n>).
 hiddenNamespaces -- JSON array of the namespaces that need the 404 filter.
+
+Exposure-group helpers:
+routeGroup   -- the exposure group a route's class puts it in.
+groupFence   -- JSON {state, open, allow, deny} for one group: state is off,
+  open (no fence), deny (internet-facing, no list), listed or allow-all; allow
+  carries selfRanges and is empty while open. Takes (dict "ctx" $ "group" <g>).
+groupAuthorization -- the CIDR-only `authorization:` block a group's routes
+  carry, deny rules ahead of the allow rule, or nothing for an open group with
+  no deny list. Takes (dict "ctx" $ "group" <g> "indent" <n>).
+groupSummary -- one line naming every web group's state, for annotations.
+lbSourceRanges -- JSON array of the load balancer's source ranges.
+oidcFronted  -- JSON array of "<ns>/<route>" an OIDC SecurityPolicy targets, so
+  no second policy lands on the same route.
+webRouteKeys -- JSON array of the rendered route keys in a web group.
+refuseRetired -- the retired exposure keys, refused by name.
 */}}
 
 {{/*
@@ -221,7 +236,9 @@ true
 {{- define "envoy-gateway-config.routeEnabled" -}}
 {{- $r := index .ctx.Values.routes .key -}}
 {{- $class := $r.class | default "infra" -}}
-{{- if and (eq $class "infra") (not .ctx.Values.exposure.infraUisExternal) -}}
+{{- $group := include "envoy-gateway-config.routeGroup" . -}}
+{{- $spec := index (.ctx.Values.exposure.groups | default dict) $group | default dict -}}
+{{- if and (ne $class "ingest") (not $spec.enabled) -}}
 {{- else if and (eq $class "infra") (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" .)) -}}
 {{- /* A backend with no login of its own is never published bare. */ -}}
 {{- else if and (eq .key "cruiseControl") (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
@@ -235,6 +252,167 @@ true
        only port left to route to takes OTLP from anyone. */ -}}
 {{- else if $r.enabled -}}
 true
+{{- end -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.routeGroup" -}}
+{{- $r := index .ctx.Values.routes .key -}}
+{{- $class := $r.class | default "infra" -}}
+{{- $groups := dict "product" "console" "api" "api" "infra" "admin" "ingest" "ingest" -}}
+{{- if not (hasKey $groups $class) -}}
+{{- fail (printf "routes.%s.class is %q -- it takes product, api, infra or ingest, which put the route in the console, api, admin or ingest exposure group" .key $class) -}}
+{{- end -}}
+{{- index $groups $class -}}
+{{- end -}}
+
+{{- /* Open admits every address and so carries no allow list; the deployer's
+       list decides openness, never selfRanges. */ -}}
+{{- define "envoy-gateway-config.groupFence" -}}
+{{- $spec := index (.ctx.Values.exposure.groups | default dict) .group | default dict -}}
+{{- $facing := .ctx.Values.envoyGateway.service.internetFacing -}}
+{{- $listed := $spec.allow | default list -}}
+{{- $state := "open" -}}
+{{- $open := true -}}
+{{- if not $spec.enabled -}}
+{{- $state = "off" -}}
+{{- $open = false -}}
+{{- else if $listed -}}
+{{- $state = "listed" -}}
+{{- $open = false -}}
+{{- range $listed -}}
+{{- if hasSuffix "/0" (toString .) -}}
+{{- $state = "allow-all" -}}
+{{- end -}}
+{{- end -}}
+{{- else if and $facing $spec.allowPublic -}}
+{{- $state = "allow-all" -}}
+{{- else if $facing -}}
+{{- $state = "deny" -}}
+{{- $open = false -}}
+{{- end -}}
+{{- $allow := list -}}
+{{- if not $open -}}
+{{- $allow = concat $listed (.ctx.Values.exposure.selfRanges | default list) | uniq -}}
+{{- end -}}
+{{- dict "state" $state "open" $open "allow" $allow "deny" ($spec.deny | default list) | toJson -}}
+{{- end -}}
+
+{{- /* Envoy Gateway evaluates rules in order and the first match decides, so
+       the deny rule goes first (api/v1alpha1/authorization_types.go at v1.9.2). */ -}}
+{{- define "envoy-gateway-config.groupAuthorization" -}}
+{{- $f := include "envoy-gateway-config.groupFence" . | fromJson -}}
+{{- $rules := list -}}
+{{- if $f.deny -}}
+{{- $rules = append $rules (dict "name" "deny-listed-cidrs" "action" "Deny" "principal" (dict "clientCIDRs" $f.deny)) -}}
+{{- end -}}
+{{- if $f.open -}}
+{{- /* On an internet-facing gateway the Gateway-level fence refuses every
+       address, so an open route has to say Allow rather than say nothing. */ -}}
+{{- if or $rules .ctx.Values.envoyGateway.service.internetFacing -}}
+{{- $block := dict "defaultAction" "Allow" -}}
+{{- if $rules -}}
+{{- $_ := set $block "rules" $rules -}}
+{{- end -}}
+{{- dict "authorization" $block | toYaml | nindent (int .indent) -}}
+{{- end -}}
+{{- else -}}
+{{- if $f.allow -}}
+{{- $rules = append $rules (dict "name" "allow-listed-cidrs" "action" "Allow" "principal" (dict "clientCIDRs" $f.allow)) -}}
+{{- end -}}
+{{- $block := dict "defaultAction" "Deny" -}}
+{{- if $rules -}}
+{{- $_ := set $block "rules" $rules -}}
+{{- end -}}
+{{- dict "authorization" $block | toYaml | nindent (int .indent) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.groupSummary" -}}
+{{- $parts := list -}}
+{{- range $g := list "console" "api" "admin" -}}
+{{- $f := include "envoy-gateway-config.groupFence" (dict "ctx" $.ctx "group" $g) | fromJson -}}
+{{- $parts = append $parts (printf "%s=%s" $g $f.state) -}}
+{{- end -}}
+{{- join "," $parts -}}
+{{- end -}}
+
+{{- /* One Service carries every listener, so the load balancer admits the union
+       of the web groups. An open group needs every address at L4, so the web
+       groups add nothing then and only an explicit
+       envoyGateway.service.loadBalancerSourceRanges narrows the door. */ -}}
+{{- define "envoy-gateway-config.lbSourceRanges" -}}
+{{- $svc := .ctx.Values.envoyGateway.service.loadBalancerSourceRanges | default list -}}
+{{- $web := list -}}
+{{- $open := false -}}
+{{- range $g := list "console" "api" "admin" -}}
+{{- $f := include "envoy-gateway-config.groupFence" (dict "ctx" $.ctx "group" $g) | fromJson -}}
+{{- if ne $f.state "off" -}}
+{{- if $f.open -}}
+{{- $open = true -}}
+{{- else -}}
+{{- $web = concat $web $f.allow -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $ranges := list -}}
+{{- if or $svc (not $open) -}}
+{{- $ranges = concat $svc $web | uniq -}}
+{{- end -}}
+{{- $ranges | toJson -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.oidcFronted" -}}
+{{- $out := list -}}
+{{- if and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers -}}
+{{- range $route := .ctx.Values.oidc.targetRoutes -}}
+{{- $ns := $route.namespace | default $.ctx.Values.appNamespace | default $.ctx.Release.Namespace -}}
+{{- $out = append $out (printf "%s/%s" $ns $route.name) -}}
+{{- end -}}
+{{- range $key := include "envoy-gateway-config.infraPolicyRoutes" (dict "ctx" .ctx) | fromJsonArray -}}
+{{- $ns := include "envoy-gateway-config.routeNs" (dict "ctx" $.ctx "key" $key) -}}
+{{- $out = append $out (printf "%s/%s" $ns (index $.ctx.Values.routes $key).routeName) -}}
+{{- end -}}
+{{- end -}}
+{{- $out | uniq | toJson -}}
+{{- end -}}
+
+{{- define "envoy-gateway-config.webRouteKeys" -}}
+{{- $keys := list -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if and (ne ($r.class | default "infra") "ingest") (include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key)) -}}
+{{- $keys = append $keys $key -}}
+{{- end -}}
+{{- end -}}
+{{- $keys | sortAlpha | toJson -}}
+{{- end -}}
+
+{{- /* The group a targetRoutes name belongs to: its chart route's, or console
+       for a route this chart does not render. */ -}}
+{{- define "envoy-gateway-config.groupOfRouteName" -}}
+{{- $group := "console" -}}
+{{- range $key, $r := .ctx.Values.routes -}}
+{{- if eq $r.routeName $.name -}}
+{{- $group = include "envoy-gateway-config.routeGroup" (dict "ctx" $.ctx "key" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- $group -}}
+{{- end -}}
+
+{{- /* An overlay still naming a retired key would otherwise be ignored without
+       a word and the deployment would get the new key's default instead. */ -}}
+{{- define "envoy-gateway-config.refuseRetired" -}}
+{{- $ui := .ctx.Values.ui | default dict -}}
+{{- if hasKey $ui "allowed_cidrs" -}}
+{{- fail "ui.allowed_cidrs is retired -- each exposure group carries its own list: exposure.groups.console.allow (dfe-ui, HyperDX, the engine's browser families), exposure.groups.api.allow (the CLI families and /openapi.json) and exposure.groups.admin.allow (the admin UIs), each a YAML list of CIDRs. Move the ranges there, in the deploy repo's infra/common.yaml" -}}
+{{- end -}}
+{{- if hasKey (.ctx.Values.exposure | default dict) "infraUisExternal" -}}
+{{- fail "exposure.infraUisExternal is retired -- the admin UIs' switch is exposure.groups.admin.enabled, which an internet-facing gateway takes only beside exposure.groups.admin.allow or allowPublic. Move it there, in the deploy repo's infra/common.yaml" -}}
+{{- end -}}
+{{- $retiredAdmin := dict "kafbat" "kafbat" "cruise_control" "cruiseControl" "argocd" "argocd" "links" "links" "forgejo" "forgejo" -}}
+{{- range $name, $key := $retiredAdmin -}}
+{{- if hasKey ($ui.public | default dict) $name -}}
+{{- fail (printf "ui.public.%s is retired -- an admin UI's public hostname is exposure.groups.admin.tools.%s, beside exposure.groups.admin.enabled. Move it there, in the deploy repo's infra/common.yaml" $name $key) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -256,10 +434,12 @@ true
 Public-exposure helpers. Same dict argument as above.
 
 uiRouteKey    -- the routes.<key> a ui.public.<name> flag names; "" when the
-  chart has no route for that name.
+  chart has no product route for that name.
 publicRoutes  -- JSON array of the route keys that answer on a public hostname,
   so the listener, the certificate, the route, the policies and the rate limit
   cannot disagree about which UIs are exposed. Empty while ui.public_domain is.
+  Product UIs come from ui.public, admin UIs from exposure.groups.admin.tools,
+  and the engine's two routes follow dfe-ui's hostname.
 publicListenerRoutes -- the subset of those that own a listener and a
   certificate. A route carrying publicListenerOf answers on another route's, so
   it appears in publicRoutes and not here.
@@ -268,9 +448,9 @@ publicListenerOwner -- which route key supplies a public route's listener,
 publicHost    -- the fully qualified public hostname of a route, taken from its
   listener owner so the listener, the certificate and the route share one name.
 publicPaths   -- JSON array of the PathPrefix values a public route matches.
+enginePaths   -- JSON array of the PathPrefix values one of the engine's two
+  routes matches; takes (dict "ctx" $ "key" <route key> "public" <bool>).
 cidrList      -- a comma-separated dial scalar as a YAML list of trimmed entries.
-webFence      -- who the web routes admit: "deny" (internet-facing, no list),
-  "listed", "allow-all" (an entry is a /0), or "" (not internet-facing, no list).
 fenceAuthorization -- a SecurityPolicy authorization block that denies by
   default and allows .cidrs; takes (dict "cidrs" <list> "indent" <n>).
 ingestRoutes  -- JSON array of the ingest-class route keys that render.
@@ -284,12 +464,7 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- define "envoy-gateway-config.uiRouteKey" -}}
 {{- $map := dict
       "dfe_ui" "dfeUi"
-      "kafbat" "kafbat"
-      "cruise_control" "cruiseControl"
-      "hyperdx" "hyperdx"
-      "argocd" "argocd"
-      "links" "links"
-      "forgejo" "forgejo" -}}
+      "hyperdx" "hyperdx" -}}
 {{- if hasKey $map .name -}}
 {{- index $map .name -}}
 {{- end -}}
@@ -303,22 +478,6 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- end -}}
 {{- end -}}
 {{- $out | toJson -}}
-{{- end -}}
-
-{{- /* A /0 of either family is every address, whatever the address part says. */ -}}
-{{- define "envoy-gateway-config.webFence" -}}
-{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" .ctx.Values.ui.allowed_cidrs) | fromJsonArray -}}
-{{- if $allowed -}}
-{{- $state := "listed" -}}
-{{- range $allowed -}}
-{{- if hasSuffix "/0" . -}}
-{{- $state = "allow-all" -}}
-{{- end -}}
-{{- end -}}
-{{- $state -}}
-{{- else if .ctx.Values.envoyGateway.service.internetFacing -}}
-deny
-{{- end -}}
 {{- end -}}
 
 {{- /* Envoy Gateway's own CIDR alternatives (shared_types.go at v1.9.2),
@@ -351,17 +510,31 @@ true
 {{- $keys | sortAlpha | toJson -}}
 {{- end -}}
 
+{{- /* The first helper a render reaches (wildcard-certificate.yaml renders
+       before validate.yaml), so the retired keys are refused here too. */ -}}
 {{- define "envoy-gateway-config.publicRoutes" -}}
+{{- include "envoy-gateway-config.refuseRetired" (dict "ctx" .ctx) -}}
 {{- $keys := list -}}
 {{- if .ctx.Values.ui.public_domain -}}
 {{- range $name, $public := .ctx.Values.ui.public -}}
 {{- if $public -}}
 {{- $key := include "envoy-gateway-config.uiRouteKey" (dict "name" $name) -}}
 {{- if not $key -}}
-{{- fail (printf "ui.public.%s is true and this chart carries no route for it -- every name must map to a routes.<key> entry" $name) -}}
+{{- fail (printf "ui.public.%s is true and this chart carries no product route for it -- ui.public names dfe_ui and hyperdx, and an admin UI's public hostname is exposure.groups.admin.tools.<route key>" $name) -}}
 {{- end -}}
-{{- /* The infra kill switch is absolute for its class, so a route it has
-       already taken off the edge is skipped here rather than forced back on. */}}
+{{- /* A group switched off is absolute, so a route it has already taken off
+       the edge is skipped here rather than forced back on. */}}
+{{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key) -}}
+{{- $keys = append $keys $key -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $admin := index (.ctx.Values.exposure.groups | default dict) "admin" | default dict -}}
+{{- range $key, $public := $admin.tools | default dict -}}
+{{- if $public -}}
+{{- if not (and (hasKey $.ctx.Values.routes $key) (eq ((index $.ctx.Values.routes $key).class | default "infra") "infra")) -}}
+{{- fail (printf "exposure.groups.admin.tools.%s is true and this chart carries no admin route of that key -- the tools are the class-infra routes.<key> entries: argocd, kafbat, cruiseControl, forgejo and links" $key) -}}
+{{- end -}}
 {{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" $.ctx "key" $key) -}}
 {{- $keys = append $keys $key -}}
 {{- end -}}
@@ -370,9 +543,15 @@ true
 {{- /* The engine API rides dfe-ui's hostname rather than a flag of its own,
        because the browser calls it at window.location.origin -- so it is public
        exactly when dfe-ui is, and ui.engine_api.with_product is the opt-out. */}}
-{{- if and (has "dfeUi" $keys) .ctx.Values.ui.engine_api.with_product -}}
+{{- $engine := .ctx.Values.ui.engine_api -}}
+{{- if and (has "dfeUi" $keys) $engine.with_product -}}
 {{- if include "envoy-gateway-config.routeEnabled" (dict "ctx" .ctx "key" "dfeEngine") -}}
 {{- $keys = append $keys "dfeEngine" -}}
+{{- end -}}
+{{- /* A route with no path matches would answer every path on dfe-ui's
+       hostname, so the CLI face renders only while it carries one. */}}
+{{- if and (include "envoy-gateway-config.publicPaths" (dict "ctx" .ctx "key" "dfeEngineCli") | fromJsonArray) (include "envoy-gateway-config.routeEnabled" (dict "ctx" .ctx "key" "dfeEngineCli")) -}}
+{{- $keys = append $keys "dfeEngineCli" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -399,36 +578,53 @@ true
 {{- include "envoy-gateway-config.routeHost" (dict "ctx" .ctx "key" $owner) -}}.{{ .ctx.Values.ui.public_domain -}}
 {{- end -}}
 
-{{- /* A route carrying browserFamilies is matched family by family; every other
-       one answers on the single pathPrefix it already declares. One rule carries
-       the lot, within the 64 the HTTPRoute CRD caps rules[].matches at (Gateway
-       API v1.6.1, as bundled by envoy-gateway v1.9.1); validateUi checks it. */}}
+{{- /* An engine route is matched family by family; every other one answers on
+       the single pathPrefix it already declares. One rule carries the lot,
+       within the 64 the HTTPRoute CRD caps rules[].matches at (Gateway API
+       v1.6.1, as bundled by envoy-gateway v1.9.1); validateUi checks it. */}}
 {{- define "envoy-gateway-config.publicPaths" -}}
 {{- $r := index .ctx.Values.routes .key -}}
-{{- $paths := list -}}
-{{- if $r.browserFamilies -}}
+{{- if or $r.browserFamilies $r.cliFamilies -}}
+{{- include "envoy-gateway-config.enginePaths" (dict "ctx" .ctx "key" .key "public" true) -}}
+{{- else if $r.pathPrefix -}}
+{{- list $r.pathPrefix | toJson -}}
+{{- else -}}
+{{- list | toJson -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The internal face carries every family of its group, the Swagger pages
+       where the engine serves them, and SCIM with exposure.groups.api.scim; the
+       public face carries the CLI families and SCIM only on their own flags. */ -}}
+{{- define "envoy-gateway-config.enginePaths" -}}
+{{- $r := index .ctx.Values.routes .key -}}
 {{- $engine := .ctx.Values.ui.engine_api -}}
-{{- range $family := $r.browserFamilies -}}
+{{- $api := index (.ctx.Values.exposure.groups | default dict) "api" | default dict -}}
+{{- $paths := list -}}
+{{- range $family := $r.browserFamilies | default list -}}
 {{- $paths = append $paths (printf "%s/%s" $r.pathPrefix $family) -}}
 {{- end -}}
 {{- $paths = concat $paths ($r.browserPaths | default list) -}}
-{{- if $engine.cli_families_public -}}
-{{- range $family := $r.privateFamilies -}}
+{{- if $r.cliFamilies -}}
+{{- if or (not .public) $engine.cli_families_public -}}
+{{- range $family := $r.cliFamilies -}}
 {{- $paths = append $paths (printf "%s/%s" $r.pathPrefix $family) -}}
 {{- end -}}
-{{- $paths = concat $paths ($r.privatePaths | default list) -}}
+{{- $paths = concat $paths ($r.cliPaths | default list) -}}
 {{- end -}}
-{{- if $engine.scim_public -}}
+{{- if and (not .public) (include "envoy-gateway-config.engineDocs" (dict "ctx" .ctx)) -}}
+{{- $paths = concat $paths (list "/docs" "/redoc") -}}
+{{- end -}}
+{{- if and $api.scim (or (not .public) $engine.scim_public) -}}
 {{- $paths = append $paths $r.scimPrefix -}}
 {{- end -}}
-{{- else if $r.pathPrefix -}}
-{{- $paths = append $paths $r.pathPrefix -}}
 {{- end -}}
 {{- $paths | toJson -}}
 {{- end -}}
 
 {{- define "envoy-gateway-config.validateUi" -}}
 {{- $ui := .ctx.Values.ui -}}
+{{- include "envoy-gateway-config.refuseRetired" (dict "ctx" .ctx) -}}
 
 {{- /* Every edge policy admits exactly these groups, so none is refused rather
        than rendered into a policy whose groups claim names no group. */ -}}
@@ -442,17 +638,13 @@ true
 {{- fail "oidc.adminGroups is retired -- the admin groups are the top-level adminGroups, which the gateway and Kafbat both read (argocd/values/common.yaml). Move the list there, in the deploy repo's infra/common.yaml" -}}
 {{- end -}}
 
-{{- /* Every admin UI on a public load balancer with no edge auth and no CIDR
-       fence is the exact misconfiguration a cloud overlay can reintroduce by
-       flipping exposure.infraUisExternal back on -- checked here, not only in
-       argocd/values/aws.yaml's default, because a values overlay can undo that
-       default without ever touching this file. envoyGateway.service.
-       internetFacing is the chart's own cloud-agnostic signal (see
-       values.yaml); it says nothing about ui.public_domain, so this fires
-       whether or not any UI is ALSO published on its own public hostname. */ -}}
+{{- /* envoyGateway.service.internetFacing is the chart's own cloud-agnostic
+       signal (see values.yaml); it says nothing about ui.public_domain, so the
+       guards below fire whether or not any UI is ALSO published on its own
+       public hostname. */ -}}
 {{- $facing := .ctx.Values.envoyGateway.service.internetFacing -}}
 {{- if not (kindIs "bool" $facing) -}}
-{{- fail (printf "envoyGateway.service.internetFacing is %v (a %s), not a bool -- it decides whether every web route is fenced to ui.allowed_cidrs, and a quoted \"false\" is truthy. Write true or false unquoted" $facing (kindOf $facing)) -}}
+{{- fail (printf "envoyGateway.service.internetFacing is %v (a %s), not a bool -- it decides whether an empty exposure group allow list refuses every address, and a quoted \"false\" is truthy. Write true or false unquoted" $facing (kindOf $facing)) -}}
 {{- end -}}
 {{- /* internetFacing is declared rather than derived, so false is held against
        the markers the cloud itself reads: an explicit AWS internet-facing scheme,
@@ -473,11 +665,118 @@ true
 {{- fail (printf "envoyGateway.service.internetFacing is false on an AKS LoadBalancer Service with no service.beta.kubernetes.io/azure-load-balancer-internal: \"true\" in envoyGateway.service.annotations -- AKS makes that load balancer public, and %s. Set internetFacing: true, or annotate the Service internal" $consequence) -}}
 {{- end -}}
 {{- end -}}
-{{- if and $facing .ctx.Values.exposure.infraUisExternal -}}
-{{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
-{{- if and (not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers)) (not $ui.allowed_cidrs) -}}
-{{- fail "envoyGateway.service.internetFacing is true and exposure.infraUisExternal is true, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) and ui.allowed_cidrs empty -- every admin UI with a login of its own (argocd, kafbat, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, set ui.allowed_cidrs, or leave exposure.infraUisExternal: false" -}}
+{{- /* Each group is supplied by argocd/values/common.yaml, so a missing one is
+       a broken cascade rather than a choice. A quoted "false" is truthy, so
+       every switch is refused unless it is a real bool. */ -}}
+{{- $exposure := .ctx.Values.exposure | default dict -}}
+{{- $groupsSpec := $exposure.groups | default dict -}}
+{{- $fields := dict
+      "ingest" (list "enabled" "allow" "deny" "door")
+      "console" (list "enabled" "allow" "deny")
+      "api" (list "enabled" "allow" "deny" "scim")
+      "admin" (list "enabled" "allow" "deny" "allowPublic" "tools")
+      "vpn" (list "enabled" "allow" "door") -}}
+{{- $doors := dict "ingest" (list "loadbalancer" "gateway" "tunnel") "vpn" (list "culvert" "awsClientVpn") -}}
+{{- range $g, $want := $fields -}}
+{{- $spec := index $groupsSpec $g -}}
+{{- if not (kindIs "map" $spec) -}}
+{{- fail (printf "exposure.groups.%s is missing -- argocd/values/common.yaml supplies every exposure group (ingest, console, api, admin, vpn) and a deployment changes one in its deploy repo's infra/common.yaml" $g) -}}
 {{- end -}}
+{{- range $field := keys $spec | sortAlpha -}}
+{{- if not (has $field $want) -}}
+{{- fail (printf "exposure.groups.%s.%s is not a field of that group -- it takes %s" $g $field (join ", " $want)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $flag := list "enabled" "scim" "allowPublic" -}}
+{{- if and (hasKey $spec $flag) (not (kindIs "bool" (index $spec $flag))) -}}
+{{- fail (printf "exposure.groups.%s.%s is %v (a %s), not a bool -- a quoted \"false\" is truthy. Write true or false unquoted" $g $flag (index $spec $flag) (kindOf (index $spec $flag))) -}}
+{{- end -}}
+{{- end -}}
+{{- range $list := list "allow" "deny" -}}
+{{- if hasKey $spec $list -}}
+{{- $value := index $spec $list -}}
+{{- if not (or (kindIs "slice" $value) (kindIs "invalid" $value)) -}}
+{{- fail (printf "exposure.groups.%s.%s is %v (a %s) -- it is a YAML list of CIDR ranges, such as [203.0.113.0/24], never a comma-separated string" $g $list $value (kindOf $value)) -}}
+{{- end -}}
+{{- range $entry := $value | default list -}}
+{{- if not (include "envoy-gateway-config.cidrValid" (toString $entry)) -}}
+{{- fail (printf "exposure.groups.%s.%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $g $list (toString $entry)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey $doors $g -}}
+{{- if not (has (toString $spec.door) (index $doors $g)) -}}
+{{- fail (printf "exposure.groups.%s.door is %q -- it takes %s" $g (toString $spec.door) (join ", " (index $doors $g))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $g := keys $groupsSpec | sortAlpha -}}
+{{- if not (hasKey $fields $g) -}}
+{{- fail (printf "exposure.groups.%s is not an exposure group -- the groups are ingest, console, api, admin and vpn" $g) -}}
+{{- end -}}
+{{- end -}}
+{{- /* helm lint carries on past a fail, so each group read stays nil-safe. */ -}}
+{{- $admin := index $groupsSpec "admin" | default dict -}}
+{{- $api := index $groupsSpec "api" | default dict -}}
+{{- $tools := $admin.tools | default dict -}}
+{{- if not (kindIs "map" $tools) -}}
+{{- fail (printf "exposure.groups.admin.tools is %v (a %s) -- it maps each admin route key to true or false" $tools (kindOf $tools)) -}}
+{{- end -}}
+{{- range $key, $on := $tools -}}
+{{- if not (kindIs "bool" $on) -}}
+{{- fail (printf "exposure.groups.admin.tools.%s is %v (a %s), not a bool -- a quoted \"false\" is truthy, so it would publish the UI anyway. Write true or false unquoted" $key $on (kindOf $on)) -}}
+{{- end -}}
+{{- if not (and (hasKey $.ctx.Values.routes $key) (eq ((index $.ctx.Values.routes $key).class | default "infra") "infra")) -}}
+{{- fail (printf "exposure.groups.admin.tools.%s names no admin route -- the tools are the class-infra routes.<key> entries: argocd, kafbat, cruiseControl, forgejo and links" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- $self := $exposure.selfRanges | default list -}}
+{{- if not (kindIs "slice" $self) -}}
+{{- fail (printf "exposure.selfRanges is %v (a %s) -- it is a YAML list of CIDR ranges" $self (kindOf $self)) -}}
+{{- end -}}
+{{- range $entry := $self -}}
+{{- if not (include "envoy-gateway-config.cidrValid" (toString $entry)) -}}
+{{- fail (printf "exposure.selfRanges carries %q, which is not a CIDR range -- the cluster's own egress addresses are written as /32s" (toString $entry)) -}}
+{{- end -}}
+{{- /* selfRanges joins every web group's allow list, so a /0 would open all three. */ -}}
+{{- if hasSuffix "/0" (toString $entry) -}}
+{{- fail (printf "exposure.selfRanges carries %q, which is every address -- it names the cluster's own egress, and every web group admits it, so a /0 opens console, api and admin to the internet" (toString $entry)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* An admin UI on a public load balancer needs someone named to reach it:
+       checked here, not only in edge-<cloud>.yaml's default, because a values
+       overlay can turn the group on without ever touching that file. */ -}}
+{{- if and $facing $admin.enabled (not $admin.allow) -}}
+{{- if not $admin.allowPublic -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.groups.admin.enabled is true with an empty exposure.groups.admin.allow -- every admin UI would render on a public load balancer that refuses every address. Name the ranges that may reach them in exposure.groups.admin.allow, set exposure.groups.admin.allowPublic: true to open them to every address behind their logins, or leave exposure.groups.admin.enabled: false" -}}
+{{- end -}}
+{{- /* oidc.enabled with no provider renders no edge policy at all. */ -}}
+{{- if not (and .ctx.Values.oidc.enabled .ctx.Values.oidc.providers) -}}
+{{- fail "envoyGateway.service.internetFacing is true and exposure.groups.admin is enabled with allowPublic and no allow list, with no edge OIDC provider (oidc.enabled and an oidc.providers entry) -- every admin UI with a login of its own (argocd, kafbat, forgejo) would render on a public load balancer with no edge authentication and no CIDR fence. Set oidc.enabled: true with an oidc.providers entry, name the ranges in exposure.groups.admin.allow, or leave exposure.groups.admin.enabled: false" -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* The CLI face's SCIM path comes from the api group's route, so the public
+       flag alone would publish nothing; with the api group off neither public
+       flag has a route to publish. */ -}}
+{{- $engine := $ui.engine_api -}}
+{{- if and $engine.scim_public (not $api.scim) -}}
+{{- fail "ui.engine_api.scim_public is true and exposure.groups.api.scim is false -- the SCIM prefix rides the api group's route, so there is none to publish. Set exposure.groups.api.scim: true as well, or leave ui.engine_api.scim_public false" -}}
+{{- end -}}
+{{- if and (or $engine.cli_families_public $engine.scim_public) (not $api.enabled) -}}
+{{- fail "ui.engine_api.cli_families_public or scim_public is true and exposure.groups.api.enabled is false -- both publish the api group's route, which the group being off withdraws. Turn the group on with an allow list, or leave both flags false" -}}
+{{- end -}}
+
+{{- /* Envoy Gateway's ConnectionLimit.value has a minimum of 1
+       (api/v1alpha1/connection_types.go at v1.9.2), refused only at admission. */ -}}
+{{- $limit := .ctx.Values.envoyGateway.connectionLimit | default dict -}}
+{{- if not (kindIs "bool" $limit.enabled) -}}
+{{- fail (printf "envoyGateway.connectionLimit.enabled is %v (a %s), not a bool -- write true or false unquoted" $limit.enabled (kindOf $limit.enabled)) -}}
+{{- end -}}
+{{- if and $limit.enabled (not (and (or (kindIs "int" $limit.value) (kindIs "int64" $limit.value) (kindIs "float64" $limit.value)) (ge (int64 $limit.value) 1) (eq (float64 (int64 $limit.value)) (float64 $limit.value)))) -}}
+{{- fail (printf "envoyGateway.connectionLimit.value is %v -- it is a whole number of connections, 1 or more, per listener per proxy replica" $limit.value) -}}
 {{- end -}}
 
 {{- /* ui.public.* is documented (deployment.example.yaml) to copy verbatim
@@ -490,7 +789,7 @@ true
        about to publish anyway. */ -}}
 {{- range $name, $val := $ui.public -}}
 {{- if not (kindIs "bool" $val) -}}
-{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- this chart's ui.public is the dial's edge.admin_uis.public (and ui.public.dfe_ui is edge.product.public); copy those booleans across unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
+{{- fail (printf "ui.public.%s is %v (a %s), not a bool -- ui.public.dfe_ui is the dial's edge.product.public and ui.public.hyperdx its edge.admin_uis.public.hyperdx; copy those booleans across unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
 {{- end -}}
 {{- end -}}
 {{- if not (kindIs "bool" $ui.rate_limit.enabled) -}}
@@ -533,37 +832,31 @@ true
 {{- /* The Cruise Control UI is a workload of the KAFKA chart, so a flag here
        cannot conjure it. Silently dropping the route would publish the intent
        and nothing else, which is the failure a deployer finds months later. */ -}}
-{{- $wantsCruiseControl := false -}}
-{{- with $ui.public -}}{{- $wantsCruiseControl = .cruise_control -}}{{- end -}}
-{{- if and $wantsCruiseControl (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
-{{- fail "ui.public.cruise_control is true and the kafka chart is not deploying that UI -- it needs kafka.provider strimzi, kafka.mode cluster, kafka.rebalancing.enabled and kafka.rebalancing.ui.enabled, all of which come from the same deploy-config values both charts read. Set them, or leave this flag false" -}}
+{{- if and $tools.cruiseControl (not (include "envoy-gateway-config.cruiseControlUi" (dict "ctx" .ctx))) -}}
+{{- fail "exposure.groups.admin.tools.cruiseControl is true and the kafka chart is not deploying that UI -- it needs kafka.provider strimzi, kafka.mode cluster, kafka.rebalancing.enabled and kafka.rebalancing.ui.enabled, all of which come from the same deploy-config values both charts read. Set them, or leave this tool false" -}}
 {{- end -}}
 
 {{- /* routeEnabled withholds a login-less route with no edge login, and a public
        flag on it would otherwise be dropped without a word. */ -}}
-{{- if and $ui.public_domain .ctx.Values.exposure.infraUisExternal -}}
-{{- range $name, $public := $ui.public -}}
-{{- $key := include "envoy-gateway-config.uiRouteKey" (dict "name" $name) -}}
-{{- if and $public $key -}}
+{{- if and $ui.public_domain $admin.enabled -}}
+{{- range $key, $public := $tools -}}
+{{- if $public -}}
 {{- $r := index $.ctx.Values.routes $key -}}
-{{- if and (eq ($r.class | default "infra") "infra") $r.enabled (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" (dict "ctx" $.ctx "key" $key))) -}}
-{{- fail (printf "ui.public.%s is true and routes.%s has no login of its own, so it renders only behind the edge login -- set oidc.enabled with an oidc.providers entry and keep routes.%s.edgePolicy true, or leave this flag false" $name $key $key) -}}
+{{- if and $r.enabled (not $r.ownLogin) (not (include "envoy-gateway-config.edgeLogin" (dict "ctx" $.ctx "key" $key))) -}}
+{{- fail (printf "exposure.groups.admin.tools.%s is true and routes.%s has no login of its own, so it renders only behind the edge login -- set oidc.enabled with an oidc.providers entry and keep routes.%s.edgePolicy true, or leave this tool false" $key $key $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 
-{{- $allowed := include "envoy-gateway-config.cidrList" (dict "value" $ui.allowed_cidrs) | fromJsonArray -}}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" $ui.trusted_proxy_cidrs) | fromJsonArray -}}
 {{- /* Envoy Gateway's CIDR type (api/v1alpha1/shared_types.go at v1.9.2) and
        the Service's loadBalancerSourceRanges both refuse an entry with no
        prefix length, but only at admission, where it surfaces as an Argo
        SyncFailed on the whole edge. Same shape, anchored, checked here. */ -}}
-{{- range $field, $list := dict "ui.allowed_cidrs" $allowed "ui.trusted_proxy_cidrs" $trusted -}}
-{{- range $entry := $list -}}
+{{- range $entry := $trusted -}}
 {{- if not (include "envoy-gateway-config.cidrValid" $entry) -}}
-{{- fail (printf "%s carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $field $entry) -}}
-{{- end -}}
+{{- fail (printf "ui.trusted_proxy_cidrs carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $entry) -}}
 {{- end -}}
 {{- end -}}
 {{- /* Every peer inside a /0 is trusted, so Envoy takes the client from the
@@ -580,6 +873,7 @@ true
 {{- $appSide := dict
       "dfeUi" "dfe-ui authenticates app-side through NextAuth"
       "dfeEngine" "the engine authenticates every call itself, from a DFE token or an API key"
+      "dfeEngineCli" "the engine authenticates every call itself, from a DFE token or an API key"
       "kafbat" "kafbat runs its own OIDC against the same provider"
       "hyperdx" "hyperdx authenticates from the dfe_token cookie, because an OIDC redirect cannot complete inside the dfe-ui iframe" -}}
 {{- $edgeRoutes := list -}}
@@ -598,6 +892,12 @@ true
 {{- $paths := include "envoy-gateway-config.publicPaths" (dict "ctx" $.ctx "key" $key) | fromJsonArray -}}
 {{- if gt (len $paths) 64 -}}
 {{- fail (printf "route %s matches %d paths on its public route and the Gateway API HTTPRoute CRD caps rules[].matches at 64 -- split routes.%s's path lists across several rules carrying the same backendRef and the same filters" $r.routeName (len $paths) $key) -}}
+{{- end -}}
+{{- end -}}
+{{- range $key := list "dfeEngine" "dfeEngineCli" -}}
+{{- $paths := include "envoy-gateway-config.enginePaths" (dict "ctx" $.ctx "key" $key "public" false) | fromJsonArray -}}
+{{- if gt (len $paths) 64 -}}
+{{- fail (printf "routes.%s matches %d paths on its internal route and the Gateway API HTTPRoute CRD caps rules[].matches at 64 -- split its path lists across several rules" $key (len $paths)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -1,11 +1,15 @@
-{{- if .Values.tls.edge.enabled }}
-# Edge TLS posture (Track 3). Sets the downstream (client -> Envoy)
-# handshake to the selected profile floor (prod: TLS 1.2 min + AES-256-GCM
-# cipher list; highsec: TLS 1.3 only), P-384 ECDHE, and offers the hybrid
-# post-quantum group. Replaces Envoy Gateway's default (which admits
-# AES-128 / CBC and P-256). Classical suite is CNSA 1.0; symmetric is
-# CNSA 2.0; hybrid ML-KEM is the on-the-wire post-quantum step. See
+{{- $limit := .Values.envoyGateway.connectionLimit }}
+{{- if or .Values.tls.edge.enabled $limit.enabled }}
+# Edge TLS posture (Track 3) and the per-listener connection limit. Sets the
+# downstream (client -> Envoy) handshake to the selected profile floor (prod:
+# TLS 1.2 min + AES-256-GCM cipher list; highsec: TLS 1.3 only), P-384 ECDHE,
+# and offers the hybrid post-quantum group. Replaces Envoy Gateway's default
+# (which admits AES-128 / CBC and P-256). Classical suite is CNSA 1.0; symmetric
+# is CNSA 2.0; hybrid ML-KEM is the on-the-wire post-quantum step. See
 # docs/CNSA-STANDARD.md.
+#
+# ONE policy, because two ClientTrafficPolicies naming the same Gateway with no
+# sectionName conflict and only the oldest applies.
 #
 # Track boundary: this policy owns TLS termination parameters only. The
 # jwt_authn HTTP filter is Track 1's and lives in
@@ -22,6 +26,12 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: {{ .Values.gateway.name }}
+  {{- if $limit.enabled }}
+  connection:
+    connectionLimit:
+      value: {{ int64 $limit.value }}
+  {{- end }}
+  {{- if .Values.tls.edge.enabled }}
   tls:
     minVersion: {{ .Values.tls.edge.minVersion | quote }}
     maxVersion: {{ .Values.tls.edge.maxVersion | quote }}
@@ -32,4 +42,5 @@ spec:
     ciphers:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+  {{- end }}
 {{- end }}

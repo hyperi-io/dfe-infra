@@ -385,7 +385,8 @@ def test_a_slash_zero_is_every_address_and_warns(everything: str) -> None:
 
 
 @pytest.mark.parametrize(("value", "said"), [
-    ('""', "web allow-list (edge.product.allowed_cidrs): empty -- the gateway is internet-facing"),
+    ('""', "web allow-list (edge.product.allowed_cidrs, pasted as exposure.groups.<group>.allow): "
+           "empty -- the gateway is internet-facing"),
     ('"0.0.0.0/0"', "render_dial: WARNING -- edge.product.allowed_cidrs carries 0.0.0.0/0"),
 ])
 def test_the_render_prints_the_web_fence(value: str, said: str, tmp_path: Path) -> None:

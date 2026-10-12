@@ -74,9 +74,9 @@ CONDITIONAL_FACTS = (
     # controller's resources both carry a test run's tags.
     ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer2-platform.yaml", "tags"),
     ("DFE_RUN_TAGS", "dfe.hyperi.io/run_tags", "layer1-addons.yaml", "defaultTags"),
-    # The annotation names contain their chart keys, so test_edge_gateway_fence.py
-    # renders the appset to prove the pairing this file's line check cannot.
-    ("DFE_EDGE_ALLOWED_CIDRS", "dfe.hyperi.io/edge_allowed_cidrs", "layer2-edge.yaml", "allowed_cidrs"),
+    # test_edge_gateway_fence.py renders the appset to prove the pairing this
+    # file's line check cannot.
+    ("DFE_EDGE_SELF_RANGES", "dfe.hyperi.io/edge_self_ranges", "layer2-edge.yaml", "selfRanges"),
     (
         "DFE_EDGE_TRUSTED_PROXY_CIDRS",
         "dfe.hyperi.io/edge_trusted_proxy_cidrs",

@@ -41,6 +41,54 @@ adminGroups:
   - dfe-admins
   - dfe-infra
 
+# THE exposure dial: who may reach each surface from outside the cluster, by
+# group. These are the product defaults, and an empty allow list means "no
+# fence" here; each cloud's edge-<flavour>.yaml, whose gateway is
+# internet-facing, makes empty mean "refuse every address" and turns admin off.
+# A deployment sets its own lists in its deploy repo's infra/common.yaml, which
+# the engine's infravars class writes at runtime. helm/edge/gateway/values.yaml
+# documents each field; allow and deny are CIDR lists.
+exposure:
+  groups:
+    # dfe-receiver and the otel route. local.yaml sets the on-prem door.
+    ingest:
+      enabled: true
+      allow: []
+      deny: []
+      door: loadbalancer  # loadbalancer | gateway | tunnel
+    # dfe-ui, HyperDX and the engine's browser families.
+    console:
+      enabled: true
+      allow: []
+      deny: []
+    # The engine's CLI families, /openapi.json, and SCIM when scim is true.
+    api:
+      enabled: true
+      allow: []
+      deny: []
+      scim: false
+    # The admin UIs. tools is THE canonical admin list, one key per class-infra
+    # gateway route, and each true puts that UI on a public hostname too.
+    admin:
+      enabled: true
+      allow: []
+      deny: []
+      allowPublic: false
+      tools:
+        argocd: false
+        kafbat: false
+        cruiseControl: false
+        forgejo: false
+        links: false
+    # The fleet tunnel. culvert's chart wires it.
+    vpn:
+      enabled: false
+      allow: []
+      door: culvert       # culvert | awsClientVpn
+  # The cluster's own egress addresses, written from the cluster secret, never
+  # by hand.
+  selfRanges: []
+
 # THE canonical operator-namespace map: network-policies allows data-namespace
 # ingress from these, and otel-collector scrapes their controllers' metrics.
 # A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that

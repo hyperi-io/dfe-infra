@@ -141,27 +141,30 @@ bindings instead.
 Every route carries its class as data (`routes.<name>.class`), which
 decides what switch can turn it off.
 
-| Class | Routes | What can disable it |
-|---|---|---|
-| `product` | dfe-ui, dfe-engine, HyperDX | its own `enabled` -- nothing else |
-| `infra` | Argo CD, Forgejo, Kafbat, links, Cruise Control | `exposure.infraUisExternal: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
-| `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
+| Class | Exposure group | Routes | What can disable it |
+|---|---|---|---|
+| `product` | `console` | dfe-ui, dfe-engine (browser families), HyperDX | `exposure.groups.console.enabled: false`, then its own `enabled` |
+| `api` | `api` | dfe-engine-cli (CLI families, `/openapi.json`, SCIM) | `exposure.groups.api.enabled: false`, then its own `enabled` |
+| `infra` | `admin` | Argo CD, Forgejo, Kafbat, links, Cruise Control | `exposure.groups.admin.enabled: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
+| `ingest` | `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
 
-Every web UI with a login renders by default, through a five-step cascade, first match wins:
+Each group also carries the `allow` and `deny` lists its routes admit by address
+([EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md)). Every web UI with a login renders by default, through a five-step cascade, first match wins:
 
-1. Class `infra` plus `exposure.infraUisExternal: false` means not rendered.
+1. Class `product`, `api` or `infra` with its group's `enabled: false` means not rendered.
 2. Class `infra` with `ownLogin: false` (links, Cruise Control) means not rendered unless the edge policy is in front of it: `oidc.enabled`, an `oidc.providers` entry and `edgePolicy: true`.
 3. A backend another chart has not deployed means not rendered: Cruise Control off the Kafka cluster tier, Forgejo unless `deployRepo.bundled` (the `dfe.hyperi.io/bundled-deploy-repo` cluster label).
 4. `routes.<name>.enabled: false` means not rendered.
 5. Otherwise rendered.
 
-A public flag on a route with no login of its own (`ui.public.links: true`) and no edge OIDC fails the render by name rather than serving the route behind a CIDR-only policy. Under Argo CD that leaves the gateway Application in ComparisonError until the flag is removed or a provider is configured.
+A public flag on a route with no login of its own (`exposure.groups.admin.tools.links: true`) and no edge OIDC fails the render by name rather than serving the route behind a CIDR-only policy. Under Argo CD that leaves the gateway Application in ComparisonError until the flag is removed or a provider is configured.
 
-**`exposure.infraUisExternal` is the one flip that takes every ops surface
+**`exposure.groups.admin.enabled` is the one flip that takes every ops surface
 off the edge**, and it is ABSOLUTE for the class: a route's own
 `enabled: true` does not beat it, so a lock-down cannot be picked apart one
 route at a time, withdrawing their edge policies too. It never touches
-dfe-ui, the engine API or HyperDX.
+dfe-ui, the engine API or HyperDX. `exposure.groups.admin.tools` is the one
+list of admin UIs, one key per class-infra route.
 
 On a cloud deploy with an internet-facing Gateway Service, this defaults
 off instead -- see [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).

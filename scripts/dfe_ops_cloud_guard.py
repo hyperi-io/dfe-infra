@@ -54,10 +54,12 @@ everything it creates, the guardrail inputs (boundary, IAM path, bucket
 prefix) and CloudTrail off. Given an endpoint CIDR, it also opens the
 Kubernetes API's public endpoint to that one address, in place of whatever the
 dial sets, so a runner outside the VPC can reach the cluster it created. The
-private endpoint stays on either way. The same address replaces the dial's
-edge_allowed_cidrs, fencing the public gateway to the runner and the cluster's
-own NAT addresses for the run. A run record goes beside the state BEFORE the
-apply, so the scheduled reaper can destroy the run if this process dies.
+private endpoint stays on either way. The same address becomes the run's
+edge_self_ranges, which the gateway's web exposure groups admit beside the
+cluster's own NAT addresses, so the runner reaches the console and nothing off
+those addresses does until the deploy repo names its own lists. A run record
+goes beside the state BEFORE the apply, so the scheduled reaper can destroy the
+run if this process dies.
 From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
 SIGHUP, the run length running out -- tears the run down: the in-flight child
 is stopped, the cluster's workloads go if the cycle did not reach its own
@@ -608,8 +610,8 @@ def _resource_names(resources: list[cloud_sweep.Resource], notes: list[str] | No
 def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str, object]:
     """The run's tfvars overlay: its own state key, its tags, the guardrail inputs, CloudTrail off.
 
-    Given an endpoint CIDR it also replaces the dial's endpoint and the public
-    gateway's allow-list, for this run alone.
+    Given an endpoint CIDR it also replaces the dial's endpoint and makes the
+    runner one of the gateway's self ranges, for this run alone.
     """
     overlay: dict[str, object] = {
         "run": cloud_run.run_tfvar(run_id, expires_at, config.keys),
@@ -630,7 +632,7 @@ def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str
         overlay["inspector_ec2_exclusion"] = True
     if config.endpoint_cidr:
         overlay["endpoint"] = {"public": True, "allowed_cidrs": [config.endpoint_cidr]}
-        overlay["edge_allowed_cidrs"] = [config.endpoint_cidr]
+        overlay["edge_self_ranges"] = [config.endpoint_cidr]
     return overlay
 
 
