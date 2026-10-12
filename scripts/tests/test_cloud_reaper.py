@@ -210,6 +210,68 @@ def test_a_failed_destroy_keeps_the_record_for_the_next_schedule(monkeypatch: py
     assert any("tofu destroy failed" in p for p in problems)
 
 
+EMPTY_STATE = {"format_version": "1.0"}
+VPC_LEFT = {"values": {"root_module": {"child_modules": [{"resources": [
+    {"address": "module.cluster.aws_vpc.this", "mode": "managed", "type": "aws_vpc", "values": {"id": "vpc-0abc"}},
+]}]}}}
+DATA_ONLY = {"values": {"root_module": {"resources": [
+    {"address": "data.aws_caller_identity.current", "mode": "data", "type": "aws_caller_identity", "values": {}},
+]}}}
+
+
+def _reap_after_failed_destroy(
+    monkeypatch: pytest.MonkeyPatch, after_refresh: dict, refresh_code: int = 0
+) -> tuple[list[str], list[tuple], FakeBucket]:
+    """A destroy that exits 1, then a refresh-only apply exiting `refresh_code` that leaves `after_refresh`."""
+    state = cloud_run.state_key("dfe-e2e-runs", "run-old")
+    bucket = FakeBucket({"run-old": _record("run-old", NOW - 60)}, {state})
+    answers = iter([EMPTY_STATE, after_refresh])
+    monkeypatch.setattr(cloud_reaper, "state_json", lambda cwd, env: next(answers))
+    destroyed: list[tuple] = []
+
+    def fake_tofu(args: list[str], cwd: Path, env: dict) -> int:
+        destroyed.append(tuple(args))
+        return {"destroy": 1, "apply": refresh_code}.get(args[0], 0)
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", bucket.run_aws)
+    monkeypatch.setattr(cloud_reaper, "run_tofu", fake_tofu)
+    config = cloud_reaper.load_config(ENV)
+    assert config is not None
+    return cloud_reaper.reap_runs(config, NOW), destroyed, bucket
+
+
+def test_a_destroy_that_loses_the_last_resource_to_the_sweep_still_reaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, calls, bucket = _reap_after_failed_destroy(monkeypatch, EMPTY_STATE)
+    assert problems == []
+    assert [c[0] for c in calls] == ["init", "destroy", "apply"]
+    assert calls[-1] == ("apply", "-refresh-only", "-auto-approve", "-input=false")
+    assert bucket.deleted == ["dfe-e2e-runs/run-old/run.json"]
+
+
+def test_data_sources_left_in_the_state_count_as_nothing_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, _calls, bucket = _reap_after_failed_destroy(monkeypatch, DATA_ONLY)
+    assert problems == []
+    assert bucket.deleted == ["dfe-e2e-runs/run-old/run.json"]
+
+
+def test_expected_fail_a_failed_destroy_with_a_resource_left_keeps_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, _calls, bucket = _reap_after_failed_destroy(monkeypatch, VPC_LEFT)
+    assert bucket.deleted == []
+    assert any("tofu destroy failed" in p for p in problems)
+
+
+def test_expected_fail_a_refresh_that_fails_keeps_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, _calls, bucket = _reap_after_failed_destroy(monkeypatch, EMPTY_STATE, refresh_code=1)
+    assert bucket.deleted == []
+    assert any("tofu destroy failed" in p for p in problems)
+
+
+def test_expected_fail_an_unreadable_state_after_the_refresh_keeps_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, _calls, bucket = _reap_after_failed_destroy(monkeypatch, {})
+    assert bucket.deleted == []
+    assert any("tofu destroy failed" in p for p in problems)
+
+
 SECRET_GONE = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/ui/nextauth-AbCdEf"
 SECRET_LIVE = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/kafka/msk-AbCdEf"
 
