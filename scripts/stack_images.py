@@ -12,7 +12,7 @@ A `services:` (or `bootstrap:`) pin names its image in the comment above it,
 either as Renovate reads it or as a plain `# image:` line::
 
     # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
-    otel-collector: "0.158.0"
+    otel-collector: "0.162.0"
     # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda
     redpanda-version: "v26.2.2"
 
