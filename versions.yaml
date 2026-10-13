@@ -51,7 +51,7 @@
 
 schema: 2
 current: "2.2.1"
-latest: "2.2.1"
+latest: "2.2.0"
 lts:
   # <stack version>: "<LTS expiry, ISO 8601>". Empty until the first LTS is
   # designated (needs a release first). Examples of the two supported
@@ -3974,7 +3974,7 @@ stacks:
       hashicorp-google: "~> 8.5"     # terraform/modules/tf-oidc-google. 8.5.0, 2026-09-29.
       hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
   2.2.1:
-    maturity: release
+    maturity: rc                     # Withdrawn as GA: tagged before the cloud end-to-end matrix and clean-state checks passed.
     support: standard
     constraints: "constraints/2.2.1.yaml"   # interdependency locks, checked by dfe-stack compat-check
 
