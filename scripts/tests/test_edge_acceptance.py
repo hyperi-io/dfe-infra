@@ -1080,6 +1080,32 @@ def test_expected_fail_a_rejected_send_fails_the_landing_without_waiting(monkeyp
     assert [(r.slug, r.status) for r in results][1:] == [("accepted", "failed"), ("landed", "failed")]
 
 
+def test_the_runner_reads_the_datastore_acceptance_names_and_fails_every_row_behind_a_dead_door(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """An external ClickHouse is reached over TLS, which only DFE_E2E_CH_SECURE says."""
+    seen: dict[str, object] = {}
+
+    def no_door(results, kube, namespace, allow, store, run_id):
+        seen["store"] = store
+        edge.row(results, "public-endpoint", "failed", "no door")
+        return None, False, False
+
+    monkeypatch.setattr(edge_run, "ingest_rows", no_door)
+    for name, value in {"DFE_E2E_ADMIN_PASSWORD": "minted", "DFE_E2E_CH_HOST": "clickhouse.example",
+                        "DFE_E2E_CH_PORT": "8443", "DFE_E2E_CH_SECURE": "true"}.items():
+        monkeypatch.setenv(name, value)
+    args = edge_run.build_parser().parse_args([
+        "--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example", "--namespace", "dfe-run",
+        "--kubectl", "kubectl", "--allow", SENDER, "--egress-cidrs", EGRESS, "--shots-dir", str(tmp_path),
+    ])
+    assert edge_run.run(args) == 1
+    assert (seen["store"].host, seen["store"].port, seen["store"].secure) == ("clickhouse.example", 8443, True)
+    table = (tmp_path / "steps.txt").read_text(encoding="utf-8")
+    for slug in ("observe", "hyperdx", "refused"):
+        assert slug in table.split("FAILED:", 1)[1]
+
+
 def test_the_runner_needs_the_list_the_egress_and_the_cluster() -> None:
     with pytest.raises(SystemExit):
         edge_run.build_parser().parse_args(["--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example"])

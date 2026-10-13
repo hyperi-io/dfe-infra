@@ -108,13 +108,7 @@ def run(args: argparse.Namespace) -> int:
     if not password:
         print("edge: no login; run through dfe-ops acceptance --suite edge, which exports it", file=sys.stderr)
         return 2
-    store = Datastore(
-        host=os.environ.get("DFE_E2E_CH_HOST", ""),
-        port=int(os.environ.get("DFE_E2E_CH_PORT", "8123")),
-        user=os.environ.get("DFE_E2E_CH_USER", "default"),
-        password=os.environ.get("DFE_E2E_CH_PASSWORD", ""),
-        database=os.environ.get("DFE_E2E_CH_DB", "dfe"),
-    )
+    store = Datastore.from_env(os.environ)
     verify = not args.insecure
     # Straight to the engine when a forward is up; the console still goes through the gateway.
     api_url = os.environ.get("DFE_E2E_ENGINE_URL") or args.engine_url
