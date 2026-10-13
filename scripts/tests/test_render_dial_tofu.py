@@ -353,6 +353,116 @@ def test_a_saas_broker_with_no_landing_topics_is_refused_by_name() -> None:
         )
 
 
+# Placeholder ids in each vendor's own shape: Confluent's env- prefix, Redpanda's UUID.
+CONFLUENT_ENVIRONMENT = "env-000000"
+REDPANDA_RESOURCE_GROUP = "00000000-0000-0000-0000-000000000000"
+
+
+def saas_kafka(provider: str, *lines: str, size: int = 16777216) -> dict[str, object]:
+    """The kafka variable for one SaaS provider, with extra kafka: keys and the dial's message size."""
+    extra = "".join(f"\n  {line}" for line in lines)
+    text = DIAL.replace("provider: msk", f"provider: {provider}{extra}")
+    text = text.replace("message_max_bytes: 16777216", f"message_max_bytes: {size}")
+    _, variables = render_dial._tofu_vars(parse_dial(text, source="test-dial"))
+    return variables["kafka"]  # type: ignore[return-value]
+
+
+def test_a_saas_broker_carries_its_connectivity_to_the_root() -> None:
+    """A cloud cycle cannot write topics and ACLs from outside the VPC, so it asks for public."""
+    for provider in ("confluent-cloud", "redpanda-cloud"):
+        kafka = saas_kafka(provider, "connectivity: public", "confluent_tier: basic", size=8388608)
+        assert kafka["connectivity"] == "public", provider
+
+
+def test_an_unstated_connectivity_is_left_to_the_roots_private_default() -> None:
+    for provider in ("confluent-cloud", "redpanda-cloud"):
+        assert "connectivity" not in saas_kafka(provider), provider
+
+
+def test_an_unknown_connectivity_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.connectivity"):
+        saas_kafka("redpanda-cloud", "connectivity: peered")
+
+
+def test_the_confluent_tier_and_environment_reach_the_root() -> None:
+    kafka = saas_kafka(
+        "confluent-cloud",
+        "connectivity: public",
+        "confluent_tier: basic",
+        f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}",
+        size=8388608,
+    )
+    assert kafka["confluent_tier"] == "basic"
+    assert kafka["confluent_environment_id"] == CONFLUENT_ENVIRONMENT
+    assert kafka["message_max_bytes"] == 8388608
+
+
+def test_an_unknown_confluent_tier_is_refused_by_name() -> None:
+    """Standard is a real Confluent tier, but the module offers freight, enterprise and basic only."""
+    with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_tier"):
+        saas_kafka("confluent-cloud", "confluent_tier: standard", size=8388608)
+
+
+def test_a_malformed_confluent_environment_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_environment_id"):
+        saas_kafka("confluent-cloud", f"confluent_environment_id: {REDPANDA_RESOURCE_GROUP}")
+
+
+def test_basic_refuses_a_message_size_above_its_ceiling() -> None:
+    """Confluent caps a Basic topic at 8 MiB; the render refuses rather than let apply fail on it."""
+    with pytest.raises(render_dial.DialError) as refused:
+        saas_kafka("confluent-cloud", "connectivity: public", "confluent_tier: basic")
+    message = str(refused.value)
+    assert "kafka.msk.message_max_bytes" in message
+    assert "8388608" in message
+    assert "16777216" in message
+    assert "kafka.confluent_tier" in message
+
+
+def test_basic_accepts_a_message_size_at_its_ceiling() -> None:
+    kafka = saas_kafka("confluent-cloud", "connectivity: public", "confluent_tier: basic", size=8388608)
+    assert kafka["message_max_bytes"] == 8388608
+
+
+def test_the_larger_confluent_tiers_keep_the_16_mib_chain() -> None:
+    assert saas_kafka("confluent-cloud")["message_max_bytes"] == 16777216
+    for tier in ("freight", "enterprise"):
+        assert saas_kafka("confluent-cloud", f"confluent_tier: {tier}")["message_max_bytes"] == 16777216
+
+
+def test_the_redpanda_resource_group_reaches_the_root() -> None:
+    kafka = saas_kafka(
+        "redpanda-cloud", "connectivity: public", f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}"
+    )
+    assert kafka["redpanda_resource_group_id"] == REDPANDA_RESOURCE_GROUP
+
+
+def test_a_malformed_redpanda_resource_group_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.redpanda_resource_group_id"):
+        saas_kafka("redpanda-cloud", f"redpanda_resource_group_id: {CONFLUENT_ENVIRONMENT}")
+
+
+def test_each_vendors_keys_are_read_for_that_vendor_only() -> None:
+    """A Confluent tier left on a Redpanda dial neither caps its size nor reaches the root."""
+    redpanda = saas_kafka("redpanda-cloud", "confluent_tier: basic", f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}")
+    assert "confluent_tier" not in redpanda
+    assert "confluent_environment_id" not in redpanda
+    assert redpanda["message_max_bytes"] == 16777216
+    confluent = saas_kafka("confluent-cloud", f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}")
+    assert "redpanda_resource_group_id" not in confluent
+
+
+def test_the_basic_ceiling_is_the_one_the_root_and_the_module_refuse_above() -> None:
+    """Three copies of one vendor limit: the render, the root's validation and the module's check."""
+    ceiling = render_dial.CONFLUENT_BASIC_MAX_MESSAGE_BYTES
+    root = AWS_VARIABLES.read_text(encoding="utf-8")
+    module = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "confluent-cloud" / "main.tf").read_text(
+        encoding="utf-8"
+    )
+    assert re.findall(r"coalesce\(var\.kafka\.message_max_bytes, 0\) > (\d+)", root) == [str(ceiling)]
+    assert re.findall(r"^\s*basic\s*=\s*(\d+)\s*$", module, re.MULTILINE) == [str(ceiling)]
+
+
 def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
     """Its last segment is the key the kafka chart reads the credential back by."""
     assert "kafka/msk" in render()["seeds"]
@@ -363,6 +473,15 @@ def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
     assert "kafka/redpanda-cloud" in render(
         replace=("provider: msk", "provider: redpanda-cloud")
     )["seeds"]
+
+
+def test_only_the_confluent_seed_carries_a_username_field() -> None:
+    """Confluent's API key IS the username, so the store has to hold it beside the secret."""
+    confluent = render(replace=("provider: msk", "provider: confluent-cloud"))["seeds"]
+    assert confluent["kafka/confluent-cloud"] == {"username": "", "password": ""}
+    for provider in ("msk", "redpanda-cloud", "strimzi"):
+        seeds = render(replace=("provider: msk", f"provider: {provider}"))["seeds"]
+        assert seeds[f"kafka/{provider}"] == {"password": ""}, provider
 
 
 def test_no_seed_carries_a_value() -> None:

@@ -79,7 +79,7 @@ resource "confluent_api_key" "manager" {
     kind        = confluent_kafka_cluster.this.kind
 
     environment {
-      id = confluent_environment.this.id
+      id = local.environment_id
     }
   }
 
@@ -116,7 +116,7 @@ resource "confluent_api_key" "dfe" {
     kind        = confluent_kafka_cluster.this.kind
 
     environment {
-      id = confluent_environment.this.id
+      id = local.environment_id
     }
   }
 }

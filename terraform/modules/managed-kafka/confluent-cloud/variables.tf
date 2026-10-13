@@ -58,6 +58,17 @@ variable "region" {
   default     = ""
 }
 
+variable "environment_id" {
+  description = "A Confluent environment to create the cluster in, by its env- id. Empty creates one for the deployment, named <name>-<env>. A cloud cycle names a standing environment instead, so each run adds and removes a cluster and leaves the environment and its schema registry alone."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.environment_id == "" || can(regex("^env-[a-zA-Z0-9]+$", var.environment_id))
+    error_message = "environment_id must be empty or a Confluent environment id: env- followed by letters and digits."
+  }
+}
+
 variable "name" {
   description = "Name prefix for every resource this module creates, and the cluster's own display name."
   type        = string

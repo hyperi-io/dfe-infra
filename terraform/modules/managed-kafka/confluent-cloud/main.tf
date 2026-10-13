@@ -91,11 +91,25 @@ check "region_named_on_public_path" {
 // ---------------------------------------------------------------------------
 
 resource "confluent_environment" "this" {
+  count = var.environment_id == "" ? 1 : 0
+
   display_name = "${var.name}-${var.env}"
 
   stream_governance {
     package = var.stream_governance_package
   }
+}
+
+// The environment gained count; this keeps an existing deployment's environment,
+// the parent of its cluster, from planning as a replacement.
+moved {
+  from = confluent_environment.this
+  to   = confluent_environment.this[0]
+}
+
+locals {
+  // The standing environment when the caller names one, otherwise the one above.
+  environment_id = var.environment_id != "" ? var.environment_id : confluent_environment.this[0].id
 }
 
 resource "confluent_kafka_cluster" "this" {
@@ -125,7 +139,7 @@ resource "confluent_kafka_cluster" "this" {
   }
 
   environment {
-    id = confluent_environment.this.id
+    id = local.environment_id
   }
 
   // Freight reaches the deployment through the Private Network Interface, and

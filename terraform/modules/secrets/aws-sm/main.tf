@@ -23,14 +23,16 @@ locals {
     ]
   ]))
 
-  // The Kafka user's password is the CALLER's, always: a managed broker is
-  // created with that value, so one generated in here could never match it.
-  // Read off the seed NAMES rather than off kafka_password, because what a
-  // for_each covers has to be known at plan and the password is not.
-  caller_supplied = toset([
-    for name, fields in var.seeds : "${name}|password"
-    if startswith(name, "kafka/") && contains(keys(fields), "password")
-  ])
+  // The Kafka credential is the CALLER's, always: a managed broker is created
+  // with that password, or its vendor mints the key and secret, so a value
+  // generated in here could never match it. Read off the seed NAMES and FIELDS
+  // rather than off kafka_password and kafka_username, because what a for_each
+  // covers has to be known at plan and the values are not.
+  caller_supplied = toset(flatten([
+    for name, fields in var.seeds : [
+      for field in keys(fields) : "${name}|${field}" if contains(["password", "username"], field)
+    ] if startswith(name, "kafka/")
+  ]))
 
   generated = setsubtract(local.empty_fields, local.caller_supplied)
 
@@ -75,7 +77,7 @@ resource "aws_secretsmanager_secret_version" "seed" {
     for field, value in each.value :
     field => value != "" ? value : (
       contains(local.caller_supplied, "${each.key}|${field}")
-      ? var.kafka_password
+      ? (field == "username" ? var.kafka_username : var.kafka_password)
       : random_password.seed["${each.key}|${field}"].result
     )
   })

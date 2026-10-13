@@ -201,9 +201,14 @@ def _seeds(kafka_provider: str) -> dict[str, dict[str, str]]:
     password a managed broker is created with -- and never surfaces, so neither
     the dial nor the rendered tfvars ever carries one. The kafka key's last
     segment is the provider, which is what the kafka chart reads back.
+    Confluent Cloud's seed carries a username too: its API key is the username,
+    the chart reads both, and the root fills both from the key Confluent minted.
     """
+    kafka_fields = {"password": ""}
+    if kafka_provider == "confluent-cloud":
+        kafka_fields = {"username": "", "password": ""}
     return {
-        f"kafka/{kafka_provider}": {"password": ""},
+        f"kafka/{kafka_provider}": kafka_fields,
         "ui/nextauth": {"secret": ""},
     }
 
@@ -1021,6 +1026,23 @@ def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
 
 MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
+# A SaaS body's reach (terraform/modules/managed-kafka/*/variables.tf connectivity).
+KAFKA_CONNECTIVITY = ("private", "public")
+
+# The Confluent cluster types the confluent-cloud body offers; Standard and Dedicated are not among them.
+CONFLUENT_TIERS = ("freight", "enterprise", "basic")
+
+# Confluent Cloud's ceiling on a topic's max.message.bytes on a Basic cluster
+# (docs.confluent.io/cloud/current/topics/manage.html). The aws root's kafka
+# validation and the body's own check carry the same number.
+CONFLUENT_BASIC_MAX_MESSAGE_BYTES = 8388608
+
+# Confluent's environment ids and Redpanda's resource group ids, so one cannot stand in for the other.
+_CONFLUENT_ENVIRONMENT_ID = re.compile(r"^env-[a-zA-Z0-9]+$")
+_REDPANDA_RESOURCE_GROUP_ID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
 # Where the KRaft metadata quorum runs (helm/charts/kafka's controllerPool).
 CONTROLLER_POOLS = ("combined", "separate")
 
@@ -1205,6 +1227,75 @@ def _toolbox(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _saas_kafka_settings(
+    dial: dict[str, object], provider: str, message_max_bytes: int
+) -> dict[str, str]:
+    """A SaaS body's own keys: its reach, and where and on what tier the cluster lands.
+
+    A key the dial leaves blank is omitted, so the root's own default applies --
+    private connectivity, the freight tier, and an environment or resource group
+    the body creates for itself. Confluent's tier and environment are read for
+    confluent-cloud only, Redpanda's resource group for redpanda-cloud only.
+
+    Args:
+        dial: The parsed dial.
+        provider: confluent-cloud or redpanda-cloud.
+        message_max_bytes: The size every landing topic is created with.
+
+    Returns:
+        The keys to merge into the root's kafka variable.
+
+    Raises:
+        DialError: A value outside the body's vocabulary, an id in the wrong
+            vendor's shape, or a message size above a Basic cluster's ceiling.
+    """
+    settings: dict[str, str] = {}
+    connectivity = _scalar(dial, ("kafka", "connectivity"))
+    if connectivity is not None:
+        if connectivity not in KAFKA_CONNECTIVITY:
+            raise DialError(
+                f"kafka.connectivity must be one of {', '.join(KAFKA_CONNECTIVITY)}, got {connectivity!r}"
+            )
+        settings["connectivity"] = connectivity
+
+    if provider == "confluent-cloud":
+        tier = _scalar(dial, ("kafka", "confluent_tier"))
+        if tier is not None:
+            if tier not in CONFLUENT_TIERS:
+                raise DialError(
+                    f"kafka.confluent_tier must be one of {', '.join(CONFLUENT_TIERS)}, got {tier!r}"
+                )
+            settings["confluent_tier"] = tier
+        if tier == "basic" and message_max_bytes > CONFLUENT_BASIC_MAX_MESSAGE_BYTES:
+            raise DialError(
+                f"kafka.msk.message_max_bytes is {message_max_bytes}, above the "
+                f"{CONFLUENT_BASIC_MAX_MESSAGE_BYTES} a Confluent basic cluster accepts for a "
+                f"topic, and Confluent refuses the topics only at apply, after the cluster "
+                f"exists. Lower kafka.msk.message_max_bytes to "
+                f"{CONFLUENT_BASIC_MAX_MESSAGE_BYTES} or less, or set kafka.confluent_tier to "
+                f"freight or enterprise"
+            )
+        environment = _scalar(dial, ("kafka", "confluent_environment_id"))
+        if environment is not None:
+            if not _CONFLUENT_ENVIRONMENT_ID.match(environment):
+                raise DialError(
+                    "kafka.confluent_environment_id must be a Confluent environment id: "
+                    "env- followed by letters and digits"
+                )
+            settings["confluent_environment_id"] = environment
+
+    if provider == "redpanda-cloud":
+        group = _scalar(dial, ("kafka", "redpanda_resource_group_id"))
+        if group is not None:
+            if not _REDPANDA_RESOURCE_GROUP_ID.match(group):
+                raise DialError(
+                    "kafka.redpanda_resource_group_id must be a Redpanda resource group id, "
+                    "which is a UUID"
+                )
+            settings["redpanda_resource_group_id"] = group
+    return settings
+
+
 def _kafka(dial: dict[str, object]) -> dict[str, object]:
     """Who runs the brokers, and what tofu creates when the root builds the body.
 
@@ -1218,6 +1309,7 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
     count, version, SCRAM user and bootstrap Job are msk-only -- the two SaaS
     bodies size, version and tune themselves. landing_topics is read for the
     two SaaS bodies only; msk's bootstrap_job above covers the same ground.
+    The two SaaS bodies also take the keys _saas_kafka_settings reads.
     """
     provider = _required(dial, ("kafka", "provider"))
     if provider not in MANAGED_KAFKA_PROVIDERS:
@@ -1242,6 +1334,7 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
             "provider": provider,
             **tuning,
             "landing_topics": landing_topics,
+            **_saas_kafka_settings(dial, provider, tuning["message_max_bytes"]),
         }
 
     return {

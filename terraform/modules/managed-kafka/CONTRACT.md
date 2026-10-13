@@ -59,7 +59,9 @@ using the second.
 | `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom })` | `msk`-only: broker-count scaling, since AWS gives Express no native equivalent. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
 | `telemetry` | `object({ sink, retention_days })` | `msk`-only: where the broker logs land. `otel` (the default) ships them to an S3 bucket this body creates, for DFE's own OTel feed; `cloudwatch` is the opt-in AWS-native path. Neither SaaS body emits a CloudWatch-shaped broker log, so neither takes this input. |
 | `secret_recovery_window_days` | `number` | `msk`-only. Secrets Manager's deletion delay for the SCRAM credential. Defaults to the vendor's own 30 days; the root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the 30-day window would fail the second create on a name that still exists. |
-| `region` | `string` | `confluent-cloud`-only, and read only on `connectivity = public`: on `private` the region is discovered from the VPC's own provider configuration, because a private attachment has to sit in the same region as the network it attaches to. `basic` tier has no VPC to discover it from, so this is that path's only source. |
+| `region` | `string` | `confluent-cloud`-only, and read only on `connectivity = public`: on `private` the region is discovered from the VPC's own provider configuration, because a private attachment has to sit in the same region as the network it attaches to. `basic` tier has no VPC to discover it from, so this is that path's only source. The aws root passes the deployment's own region. |
+| `environment_id` | `string` | `confluent-cloud`-only. A standing Confluent environment (`env-` id) to create the cluster in; empty creates one named `<name>-<env>`. |
+| `resource_group_id` | `string` | `redpanda-cloud`-only. A standing Redpanda resource group (a UUID) to create the cluster and its private link in; empty creates one named after the deployment. |
 
 ## Outputs
 
@@ -74,6 +76,7 @@ using the second.
 | `cluster_arn` | `string` | The vendor's handle on the cluster, for the alarms and policies a caller adds outside this module. |
 | `bootstrap_role_arn` | `string` | The identity the in-cluster bootstrap Job assumes. The chart renders the Job; the module mints what it runs as. |
 | `broker_log_bucket` | `string` | `msk`-only. The S3 bucket broker logs land in under `telemetry.sink = otel`. Empty under `cloudwatch`, and empty on both SaaS bodies. |
+| `dfe_api_key`, `dfe_api_secret` | `string` | `confluent-cloud`-only. The DFE principal's API key id and secret, which SASL PLAIN takes as username and password. The secret is `sensitive`; the root hands both to the secrets module and re-exports neither. |
 
 No `zookeeper` output. Every supported line is KRaft, and a body that returned
 one would be describing a cluster we do not build.
@@ -84,7 +87,10 @@ one would be describing a cluster we do not build.
   refuses to create a publicly reachable broker without `public` being asked
   for explicitly.
 - **No credential in an output value.** `credential_ref` names a secret; the
-  secret itself lives in the store.
+  secret itself lives in the store. The one exception is a credential the
+  vendor mints inside the body, which has no other way to reach the store:
+  `confluent-cloud`'s `dfe_api_secret`, marked `sensitive` and consumed by the
+  root's secrets module alone.
 - **The bootstrap string is bare.** No scheme, no trailing comma, no list --
   `host:port[,host:port]`.
 - **The tuning block is data.** A setting the implementation manages or refuses
@@ -178,7 +184,13 @@ in-cluster bootstrap Job on either path -- the vendor's provider writes the
 ACLs and the topics itself. That is also why the data-plane resources reach the
 vendor's own API, and on private connectivity that API is private: **tofu itself
 has to run inside the VPC**, or behind a resolver rule that forwards the
-cluster's domain into it.
+cluster's domain into it. A cloud test cycle runs outside the VPC, so it sets
+the dial's `kafka.connectivity` to `public`.
+
+Both take a standing parent for the cluster -- `environment_id` on Confluent,
+`resource_group_id` on Redpanda -- so a run that creates and destroys a cluster
+leaves the environment or group it sat in alone. Empty creates one per
+deployment, as before.
 
 ## What `redpanda-cloud/` builds
 
@@ -247,4 +259,4 @@ credential DFE runs as. The manager account holds `CloudClusterAdmin` and is
 tofu's alone; the DFE account holds the on-prem grant set and nothing more.
 Confluent's principal is the service account's `sa-` ID, not its display name.
 
-**Confluent caps a topic's `max.message.bytes` by cluster type**: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight in the cluster-type limits table (docs.confluent.io/cloud/current/clusters/cluster-types.html). So `freight` and `enterprise` carry the chain's 16 MiB and `basic` does not, and a topic that sets nothing takes Confluent's default of 2,097,164. The body applies what it is given rather than clamping it -- a setting quietly halved here is worse than one the vendor rejects out loud -- and a `check` block keyed on `tier` warns at plan.
+**Confluent caps a topic's `max.message.bytes` by cluster type**: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight in the cluster-type limits table (docs.confluent.io/cloud/current/clusters/cluster-types.html). So `freight` and `enterprise` carry the chain's 16 MiB and `basic` does not, and a topic that sets nothing takes Confluent's default of 2,097,164. The body applies what it is given rather than clamping it -- a setting quietly halved here is worse than one the vendor rejects out loud -- and a `check` block keyed on `tier` warns at plan. The refusal happens before the body: the aws root's `kafka` validation and `render_dial.py` both refuse a `message_max_bytes` above 8,388,608 on `basic` or `standard`, because Confluent rejects the topics only at apply, after the cluster exists.

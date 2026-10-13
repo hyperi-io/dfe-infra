@@ -66,6 +66,17 @@ variable "env" {
   type        = string
 }
 
+variable "resource_group_id" {
+  description = "A Redpanda resource group to create the cluster and its private link in, by its id. Empty creates one named after the deployment. A cloud cycle names a standing group instead, so each run adds and removes a cluster and leaves the group alone."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.resource_group_id == "" || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.resource_group_id))
+    error_message = "resource_group_id must be empty or a Redpanda resource group id, which is a UUID."
+  }
+}
+
 variable "network" {
   description = "The cluster module's network output. On private connectivity the PrivateLink endpoint lands in the PRIVATE subnets of this VPC; nothing else here touches the network."
   type = object({

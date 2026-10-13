@@ -26,6 +26,7 @@ ClusterSecretStore provider block needs.
 | `prefix` | `string` | The deployment dial's `secrets.ref`. The first path segment, and the boundary ESO's read grant is fenced to. OPTIONAL -- empty is a store that holds this deployment alone, and leaves the path at `<project>/<env>`. |
 | `seeds` | `map(map(string))` | Secret name -> field -> value. An EMPTY value means "generate one here and never show it to the caller", which is how a password lands in the store without passing through a tfvars file or a plan output. |
 | `kafka_password` | `string` | Sensitive. Fills the `password` field of the `kafka/<provider>` seed, which no body generates -- see below. Null only where the seeds carry no kafka entry at all. |
+| `kafka_username` | `string`, default null | Fills the `username` field of a `kafka/<provider>` seed that carries one, which no body generates either. Only `kafka/confluent-cloud` does: Confluent mints the API key that is the username. Null wherever the kafka seed carries no username. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Bodies whose backend has no separate key ignore it. |
 | `recovery_window_days` | `number`, default 30 | AWS-only today (`aws-sm/`). The store's deletion delay. The root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the vendor's 30-day window would fail the second create on a name still pending deletion. |
 | `cluster_name` | `string` | Which cluster's ESO gets the identity. |
@@ -48,6 +49,12 @@ a body generates is a `for_each` and has to be known at plan, while the password
 is not known until apply. The seed NAMES carry the decision instead -- a
 `kafka/<provider>` seed's `password` field comes from `kafka_password`, and a
 body refuses seeds that name one with no password supplied.
+
+Confluent Cloud is the same shape one field wider. The vendor mints the API key
+and secret inside the managed-kafka body, so the caller hands the key in as
+`kafka_username` and the secret as `kafka_password`, and the
+`kafka/confluent-cloud` seed's `username` field takes the first. A body refuses a
+kafka seed that names a `username` with none supplied.
 
 ## Outputs
 

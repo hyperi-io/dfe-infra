@@ -454,6 +454,103 @@ run "confluent_cloud_freight_carries_16_mib" {
   }
 }
 
+// The DFE principal's key and secret leave the module for the secrets store and
+// nowhere else; the manager's pair never does.
+run "confluent_cloud_hands_the_dfe_credential_to_the_store" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  override_resource {
+    target = confluent_api_key.manager
+
+    values = {
+      id     = "MMMMMMMMMMMMMMMM"
+      secret = "contract-only-manager-secret"
+    }
+  }
+
+  assert {
+    condition     = output.dfe_api_key == confluent_api_key.dfe.id && output.dfe_api_key == output.credential_ref
+    error_message = "dfe_api_key must be the DFE principal's key id, the username the store holds"
+  }
+
+  assert {
+    condition     = output.dfe_api_secret == confluent_api_key.dfe.secret
+    error_message = "dfe_api_secret must be the DFE principal's secret, the password the store holds"
+  }
+
+  assert {
+    condition     = output.dfe_api_key != confluent_api_key.manager.id && output.dfe_api_secret != confluent_api_key.manager.secret
+    error_message = "the manager's credential administers the cluster and must never reach the store DFE reads"
+  }
+}
+
+// A cloud cycle creates the cluster in a standing environment rather than one of
+// its own, so every resource that names an environment names that one.
+run "confluent_cloud_builds_in_a_standing_environment" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    tier           = "basic"
+    connectivity   = "public"
+    region         = "us-west-2"
+    environment_id = "env-abc123"
+  }
+
+  assert {
+    condition     = length(confluent_environment.this) == 0
+    error_message = "a standing environment is used as it is, with no second one created beside it"
+  }
+
+  assert {
+    condition     = confluent_kafka_cluster.this.environment[0].id == "env-abc123"
+    error_message = "the cluster must be placed in the standing environment"
+  }
+
+  assert {
+    condition     = confluent_api_key.dfe.managed_resource[0].environment[0].id == "env-abc123" && confluent_api_key.manager.managed_resource[0].environment[0].id == "env-abc123"
+    error_message = "both API keys must be scoped to the cluster in the standing environment"
+  }
+}
+
+run "confluent_cloud_creates_its_own_environment_by_default" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  assert {
+    condition     = length(confluent_environment.this) == 1
+    error_message = "with no environment_id the module creates the environment the cluster lives in"
+  }
+}
+
+// A Redpanda resource group id in the Confluent slot is the likely mix-up, and
+// Confluent would refuse it only at apply.
+run "confluent_cloud_rejects_a_malformed_environment" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    environment_id = "00000000-0000-0000-0000-000000000000"
+  }
+
+  expect_failures = [
+    var.environment_id,
+  ]
+}
+
 // Basic caps a topic at 8 MiB, so the same size is flagged by name at plan.
 run "confluent_cloud_basic_warns_above_8_mib" {
   command = plan

@@ -271,8 +271,8 @@ module "kafka" {
 }
 
 // Confluent Cloud sizes, tunes and versions the cluster itself (CONTRACT.md),
-// so this root passes only what no vendor default can stand in for: the name,
-// the network the private attachment lands in, and nothing else. The vendor API
+// so this root passes the name, the network the private attachment lands in,
+// the tier and its connectivity, and where to put the cluster. The vendor API
 // credential is NOT a tfvar -- `provider "confluent"` below reads
 // CONFLUENT_CLOUD_API_KEY / CONFLUENT_CLOUD_API_SECRET from the deployer's own
 // environment, the way the aws provider already reads AWS_* rather than a var.
@@ -285,6 +285,13 @@ module "confluent" {
   env     = var.env
   network = module.cluster.network
 
+  // The body reads region on public connectivity only, where there is no VPC
+  // attachment to discover it from; it is the deployment's own region either way.
+  tier           = var.kafka.confluent_tier
+  connectivity   = var.kafka.connectivity
+  region         = var.provision.region
+  environment_id = var.kafka.confluent_environment_id
+
   // The same canonical tuning msk applies, and the same landing topics its
   // own bootstrap Job would create -- this body has none, so tofu creates
   // them itself (CONTRACT.md).
@@ -295,11 +302,11 @@ module "confluent" {
 }
 
 // Same reasoning as confluent-cloud: Redpanda Cloud Serverless sizes and scales
-// itself, so only the name and network travel. The SCRAM password reuses the
-// SAME seed msk is created with -- one Kafka password per deployment, whichever
-// provider ends up authenticating against it -- and the vendor client
-// credential is a provider environment variable (REDPANDA_CLIENT_ID /
-// REDPANDA_CLIENT_SECRET), never a tfvar.
+// itself, so the name, the network, the connectivity and the resource group
+// travel. The SCRAM password reuses the SAME seed msk is created with -- one
+// Kafka password per deployment, whichever provider ends up authenticating
+// against it -- and the vendor client credential is a provider environment
+// variable (REDPANDA_CLIENT_ID / REDPANDA_CLIENT_SECRET), never a tfvar.
 module "redpanda" {
   count = var.kafka.provider == "redpanda-cloud" ? 1 : 0
 
@@ -308,6 +315,9 @@ module "redpanda" {
   name    = var.name
   env     = var.env
   network = module.cluster.network
+
+  connectivity      = var.kafka.connectivity
+  resource_group_id = var.kafka.redpanda_resource_group_id
 
   scram_password = random_password.kafka_scram.result
 
@@ -373,10 +383,12 @@ module "secrets" {
   prefix  = var.secrets.ref
   seeds   = var.seeds
 
-  // The same value a managed broker was created with, so the store and Kafka
-  // cannot disagree. An in-cluster broker reads it from the store too, through
-  // the ExternalSecret the kafka chart renders.
-  kafka_password = random_password.kafka_scram.result
+  // The same credential the broker authenticates, so the store and Kafka cannot
+  // disagree: the key and secret Confluent minted, otherwise the password a
+  // managed broker was created with. An in-cluster broker reads it from the
+  // store too, through the ExternalSecret the kafka chart renders.
+  kafka_username = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_key) : null
+  kafka_password = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_secret) : random_password.kafka_scram.result
 
   kms_key_arn                    = module.cluster.kms_key_arn
   cluster_name                   = module.cluster.cluster_name

@@ -44,12 +44,26 @@ locals {
 // ---------------------------------------------------------------------------
 
 resource "redpanda_resource_group" "this" {
+  count = var.resource_group_id == "" ? 1 : 0
+
   name = var.name
+}
+
+// The group gained count; this keeps an existing deployment's group, the parent
+// of its cluster, from planning as a replacement.
+moved {
+  from = redpanda_resource_group.this
+  to   = redpanda_resource_group.this[0]
+}
+
+locals {
+  // The standing group when the caller names one, otherwise the one above.
+  resource_group_id = var.resource_group_id != "" ? var.resource_group_id : redpanda_resource_group.this[0].id
 }
 
 resource "redpanda_serverless_cluster" "this" {
   name              = var.name
-  resource_group_id = redpanda_resource_group.this.id
+  resource_group_id = local.resource_group_id
   serverless_region = local.region
 
   // Set private_link_id and the cluster answers on the endpoint; leave it null
@@ -81,7 +95,7 @@ resource "redpanda_serverless_private_link" "this" {
   count = local.private ? 1 : 0
 
   name              = "${var.name}-private-link"
-  resource_group_id = redpanda_resource_group.this.id
+  resource_group_id = local.resource_group_id
   serverless_region = local.region
 
   // The vendor's own token for the cloud this body's second provider talks to.
