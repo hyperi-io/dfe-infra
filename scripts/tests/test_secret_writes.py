@@ -37,6 +37,8 @@ PYTHON_ROOTS = (REPO_ROOT / "scripts", REPO_ROOT / "bootstrap")
 
 HELPER = "dfe_apply_secret"
 HELPER_COMMAND = "kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
+# What bootstrap.sh renders a template through, so a command naming it writes what the template holds.
+RENDERER = "render_env.py"
 
 # Every Secret bootstrap.sh writes, by the name its command gives it, so a check
 # that silently matched nothing fails here rather than passing.
@@ -101,7 +103,7 @@ def written_secret(command: str, templates: dict[str, str]) -> str | None:
     created = _CREATED.search(stripped)
     if created:
         return created.group(1)
-    if "envsubst" in stripped:
+    if RENDERER in stripped:
         for ref in _TEMPLATE_REF.findall(stripped):
             if ref in templates:
                 return templates[ref]
@@ -191,7 +193,7 @@ def test_the_bootstrap_check_catches_a_client_side_write() -> None:
         "kubectl -n ns create secret generic leak \\\n"
         "  --from-literal=k=v \\\n"
         "  --dry-run=client -o yaml | kubectl apply -f -\n"
-        'envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" | kubectl apply -f -\n'
+        'python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" | kubectl apply -f -\n'
         'echo "kubectl create secret generic shown -o yaml | kubectl apply -f -"\n'
     )
     writes = secret_writes(script, {"cluster-secret.yaml.tpl": "dfe-cluster"})

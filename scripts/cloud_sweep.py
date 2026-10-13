@@ -75,6 +75,12 @@ resource the same way, so --delete refuses one unless --include-untagged says so
 the same interface with nothing behind it yet, and say so rather than
 reporting an empty sweep.
 
+--kind (repeatable) limits the sweep to the named kinds: only their listers
+run and the tagging API's catch-all does not, so nothing of another kind is
+listed or deleted. A guarded run's teardown passes `--kind eni` after a failed
+`tofu destroy`, to clear the network interfaces the VPC CNI leaves holding a
+subnet before it destroys again.
+
 Stdlib only: every AWS call shells out to the `aws` CLI with --output json and
 --region, so a global call such as ListBuckets lands in the swept region and
 never in whatever region the shell defaults to.
@@ -86,6 +92,8 @@ never in whatever region the shell defaults to.
         --account 000000000000 --yes
     python3 scripts/cloud_sweep.py --region us-west-2 --tag-filter dfe-e2e=<run id> --delete \\
         --account 000000000000 --exclude-bucket example-tfstate-bucket
+    python3 scripts/cloud_sweep.py --region us-west-2 --tag-filter dfe-e2e=<run id> --kind eni \\
+        --delete --account 000000000000 --yes
 """
 
 import argparse
@@ -93,7 +101,7 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import NoReturn, Protocol
@@ -721,29 +729,33 @@ def list_s3_buckets(region: str, tag_filter: dict[str, str], exclude_bucket: str
     return out
 
 
-PER_SERVICE_COLLECTORS: list[Callable[[str, dict], list[Resource]]] = [
-    list_ec2_instances,
-    list_ebs_volumes,
-    list_ebs_snapshots,
-    list_launch_templates,
-    list_nat_gateways,
-    list_eips,
-    list_load_balancers,
-    list_target_groups,
-    list_security_groups,
-    list_enis,
-    list_vpcs,
-    list_subnets,
-    list_route_tables,
-    list_internet_gateways,
-    list_vpc_endpoints,
-    list_route53_zones,
-    list_log_groups,
-    list_secrets,
-    list_kms_aliases,
-    list_eks_clusters,
-    list_msk_clusters,
-]
+# Each dedicated lister by the one kind it reports, which is how --kind picks them.
+# list_s3_buckets, the s3-bucket kind, takes the excluded bucket and is called on its own.
+LISTERS: dict[str, Callable[[str, dict], list[Resource]]] = {
+    "ec2-instance": list_ec2_instances,
+    "ebs-volume": list_ebs_volumes,
+    "ebs-snapshot": list_ebs_snapshots,
+    "launch-template": list_launch_templates,
+    "nat-gateway": list_nat_gateways,
+    "eip": list_eips,
+    "load-balancer": list_load_balancers,
+    "target-group": list_target_groups,
+    "security-group": list_security_groups,
+    "eni": list_enis,
+    "vpc": list_vpcs,
+    "subnet": list_subnets,
+    "route-table": list_route_tables,
+    "internet-gateway": list_internet_gateways,
+    "vpc-endpoint": list_vpc_endpoints,
+    "route53-zone": list_route53_zones,
+    "log-group": list_log_groups,
+    "secret": list_secrets,
+    "kms-alias": list_kms_aliases,
+    "eks-cluster": list_eks_clusters,
+    "msk-cluster": list_msk_clusters,
+}
+
+PER_SERVICE_COLLECTORS: list[Callable[[str, dict], list[Resource]]] = list(LISTERS.values())
 
 
 def collect(
@@ -752,6 +764,7 @@ def collect(
     exclude_bucket: str | None,
     *,
     route1_filter: dict[str, str | None] | None = None,
+    kinds: Collection[str] | None = None,
 ) -> list[Resource]:
     """Run every dedicated lister, then fold in anything the tagging API alone caught.
 
@@ -765,11 +778,21 @@ def collect(
 
     `route1_filter` is what the tagging API is asked for; it defaults to
     `tag_filter`, and --expired passes the run key with any value.
+
+    `kinds` runs only the listers for those kinds and skips the tagging API, whose
+    hits are labelled by service rather than kind and so could never be selected.
     """
     resources: list[Resource] = []
-    for collector in PER_SERVICE_COLLECTORS:
+    if kinds is None:
+        listers = PER_SERVICE_COLLECTORS
+    else:
+        listers = [lister for kind, lister in LISTERS.items() if kind in kinds]
+    for collector in listers:
         resources.extend(collector(region, tag_filter))
-    resources.extend(list_s3_buckets(region, tag_filter, exclude_bucket))
+    if kinds is None or "s3-bucket" in kinds:
+        resources.extend(list_s3_buckets(region, tag_filter, exclude_bucket))
+    if kinds is not None:
+        return sorted(resources, key=lambda r: (r.kind, r.name))
     known_ids = {r.id for r in resources}
     server_filter: dict[str, str | None] = dict(tag_filter) if route1_filter is None else route1_filter
     for tagged in list_tagged(region, server_filter, tag_filter):
@@ -1355,8 +1378,18 @@ class SweepProvider(Protocol):
         """Raise CloudSweepError unless the live session is in `expected`."""
         ...
 
-    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
-        """Every resource found; `run_key` widens the catch-all to every run-tagged one."""
+    def collect(
+        self,
+        tag_filter: dict[str, str],
+        exclude_bucket: str | None,
+        *,
+        run_key: str | None,
+        kinds: Collection[str] | None = None,
+    ) -> list[Resource]:
+        """Every resource found; `run_key` widens the catch-all to every run-tagged one.
+
+        `kinds` limits the listing to those kinds, and drops the catch-all.
+        """
         ...
 
     def delete(self, resources: list[Resource]) -> list[str]:
@@ -1374,9 +1407,16 @@ class AwsProvider:
     def verify_account(self, expected: str) -> None:
         verify_account(self.region, expected)
 
-    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
+    def collect(
+        self,
+        tag_filter: dict[str, str],
+        exclude_bucket: str | None,
+        *,
+        run_key: str | None,
+        kinds: Collection[str] | None = None,
+    ) -> list[Resource]:
         route1: dict[str, str | None] | None = {run_key: None} if run_key else None
-        return collect(self.region, tag_filter, exclude_bucket, route1_filter=route1)
+        return collect(self.region, tag_filter, exclude_bucket, route1_filter=route1, kinds=kinds)
 
     def delete(self, resources: list[Resource]) -> list[str]:
         return delete_resources(resources, self.region)
@@ -1399,7 +1439,14 @@ class _UnbuiltProvider:
     def verify_account(self, expected: str) -> None:
         self._refuse()
 
-    def collect(self, tag_filter: dict[str, str], exclude_bucket: str | None, *, run_key: str | None) -> list[Resource]:
+    def collect(
+        self,
+        tag_filter: dict[str, str],
+        exclude_bucket: str | None,
+        *,
+        run_key: str | None,
+        kinds: Collection[str] | None = None,
+    ) -> list[Resource]:
         self._refuse()
 
     def delete(self, resources: list[Resource]) -> list[str]:
@@ -1513,6 +1560,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="with --expired: judge expiry at this epoch second instead of the current time, to preview "
         "what a later sweep would select. Refused with --delete",
     )
+    parser.add_argument(
+        "--kind",
+        action="append",
+        choices=DELETE_ORDER,
+        default=None,
+        metavar="KIND",
+        help="list, and with --delete remove, only this kind; repeat for more. Only those listers run, "
+        "the tagging API's catch-all does not, and deletes still go in dependency order. One of: "
+        f"{', '.join(DELETE_ORDER)} (default: every kind)",
+    )
     return parser
 
 
@@ -1579,7 +1636,7 @@ def _sweep(
             return _refuse(str(exc))
 
     run_key = expiry.keys.run if expiry else None
-    resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key)
+    resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key, kinds=args.kind)
     print_report(resources, expiry)
     eligible = _eligible(resources, args, expiry)
 
@@ -1589,7 +1646,7 @@ def _sweep(
             return 1
 
         failures = provider.delete(eligible)
-        resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key)
+        resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key, kinds=args.kind)
         eligible = _eligible(resources, args, expiry)
         if failures:
             print("failed to delete:", file=sys.stderr)

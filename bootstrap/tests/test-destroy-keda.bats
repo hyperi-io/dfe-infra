@@ -157,7 +157,7 @@ STUB
     chmod +x "${STUB_DIR}/bin/"*
     export STUB_DIR
     export PATH="${STUB_DIR}/bin:${PATH}"
-    unset DFE_DRY_RUN
+    unset DFE_DRY_RUN DFE_CLOUD DFE_REGION DFE_KUBE_CLUSTER_NAME DFE_VPC_ID DFE_RUN_TAGS
 }
 
 stick() {
@@ -483,10 +483,58 @@ applications_wait_seconds() {
 }
 
 @test "a cluster that is not on AWS makes no aws call" {
+    printf '%s\n' local local dfe-local "" "" > "${STUB_DIR}/cluster-facts"
     run bash "${DESTROY}" --force
     [ "$status" -eq 0 ]
     [ ! -s "${STUB_DIR}/aws.log" ]
-    [[ "${output}" == *"not an AWS cluster"* ]]
+    [[ "${output}" == *"the cluster secret names local, not aws, so there is nothing to sweep"* ]]
+}
+
+@test "with no cluster secret and no DFE_CLOUD nothing is swept, and it says neither names a cloud" {
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [ ! -s "${STUB_DIR}/aws.log" ]
+    [[ "${output}" == *"neither the cluster secret nor DFE_CLOUD names a cloud"* ]]
+    [[ "${output}" != *"not aws"* ]]
+}
+
+# The cloud root's facts for the same run a_test_run describes, as dfe-ops teardown --from-terraform passes them.
+run_facts_in_the_environment() {
+    export DFE_CLOUD=aws DFE_REGION=us-west-2 DFE_KUBE_CLUSTER_NAME=dfe-cycle DFE_VPC_ID=vpc-0run DFE_RUN_TAGS="${RUN_TAGS}"
+}
+
+@test "with no cluster secret the caller's DFE_* facts mark the test run, and step 9 sweeps it" {
+    run_facts_in_the_environment
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"the cluster secret names no cloud, so the run's facts come from DFE_CLOUD, DFE_REGION, DFE_KUBE_CLUSTER_NAME, DFE_VPC_ID and DFE_RUN_TAGS"* ]]
+    [[ "$(aws_log)" == *"ec2 describe-security-groups --region us-west-2 --output json --filters Name=vpc-id,Values=vpc-0run Name=tag:elbv2.k8s.aws/cluster,Values=dfe-cycle"* ]]
+    [[ "${output}" == *"deleted security group sg-run"* ]]
+    [[ "${output}" == *"left security group sg-other-run: it does not carry dfe-e2e"* ]]
+}
+
+@test "the caller's facts without run tags sweep nothing, and say where they came from" {
+    run_facts_in_the_environment
+    unset DFE_RUN_TAGS
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [ ! -s "${STUB_DIR}/aws.log" ]
+    [[ "${output}" == *"the DFE_* environment names no run tags, VPC, cluster or region"* ]]
+}
+
+@test "a cluster secret that names a cloud wins over the caller's facts" {
+    a_test_run
+    run_facts_in_the_environment
+    export DFE_VPC_ID=vpc-other DFE_REGION=eu-west-1
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(aws_log)" == *"--region us-west-2 --output json --filters Name=vpc-id,Values=vpc-0run"* ]]
+    [[ "$(aws_log)" != *"vpc-other"* ]]
+    [[ "$(aws_log)" != *"eu-west-1"* ]]
+    [[ "${output}" != *"the run's facts come from DFE_CLOUD"* ]]
 }
 
 @test "a delete AWS refuses is reported by its error code, never its message" {

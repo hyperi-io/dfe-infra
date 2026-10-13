@@ -1,6 +1,6 @@
 # MetalLB front-door pool -- the two addresses this deployment publishes, so a
 # rebuild lands on the same IPs the DNS records already point at.
-# Rendered by bootstrap.sh with envsubst, on-prem only (DFE_CLOUD=local).
+# Rendered by bootstrap.sh with bootstrap/render_env.py, on-prem only (DFE_CLOUD=local).
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
