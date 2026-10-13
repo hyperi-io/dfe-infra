@@ -42,7 +42,7 @@ import re
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 from itertools import chain, groupby
 from pathlib import Path
 from types import ModuleType
@@ -131,7 +131,8 @@ PRIORITY_FIELD = "Priority"
 EFFORT_FIELD = "Effort"
 # A backlog row as the report carries it; its labels and issue_repo stay internal.
 BACKLOG_FIELDS = (
-    "repo", "project", "status", "priority", "effort", "type", "number", "title", "url"
+    "repo", "project", "status", "priority", "effort", "type", "number", "title", "url",
+    "created_at",
 )
 BACKLOG_QUERY = """\
 query($org: String!, $number: Int!, $endCursor: String) {
@@ -993,6 +994,7 @@ def backlog_rows(repo: str, project: int, nodes: list[dict]) -> list[dict]:
                 "number": content["number"],
                 "title": _text(content.get("title")),
                 "url": _text(content.get("url")),
+                "created_at": _text(content.get("createdAt")),
                 "issue_repo": _text((content.get("repository") or {}).get("nameWithOwner"))
                 or repo,
                 "labels": [_text(label.get("name")) for label in labels if isinstance(label, dict)],
@@ -1038,7 +1040,8 @@ def backlog_drift(
 
     Returns:
         An item at the backlog Status without the label, and a labelled issue anywhere else,
-        including one that is not on the repo's project or whose repo has none.
+        including one that is not on the repo's project or whose repo has none. Each carries
+        the created_at of the project item or issue it came from.
     """
     own = [row for row in backlog if row["issue_repo"].lower() == repo.lower()]
     status_of = {row["number"]: row["status"] for row in own}
@@ -1049,6 +1052,7 @@ def backlog_drift(
             "number": row["number"],
             "title": row["title"],
             "url": row["url"],
+            "created_at": row["created_at"],
             "status": row["status"],
             "problem": f"at {at} without the {label} label",
         }
@@ -1071,6 +1075,7 @@ def backlog_drift(
                 "number": issue["number"],
                 "title": issue["title"],
                 "url": issue["url"],
+                "created_at": issue["created_at"],
                 "status": status or "",
                 "problem": f"labelled {label} but {where}",
             }
@@ -1819,6 +1824,10 @@ SLACK_REPLY_CHARS = 3500
 SLACK_REPLIES = 20
 # The per-group budget when the caller sets none; the cascade's slack.group_replies sets it.
 SLACK_GROUP_REPLIES = 2
+# The headline's name and the zone its time is shown in when the caller sets none; the
+# cascade's slack.title and slack.timezone set them.
+SLACK_TITLE = "DFE suite sweep"
+SLACK_ZONE: tzinfo = UTC
 # A link URL longer than this is shown as text, which bounds the "N more" line a reply keeps
 # room for.
 SLACK_URL_CHARS = 500
@@ -1844,6 +1853,8 @@ SLACK_FINDING_GROUPS = (
     ("Bot PRs and Renovate", ("bot_prs", "renovate_dashboard")),
 )
 _SAFE_URL = re.compile(r"^https://[^\s<>|]+$")
+# The age every dated line ends with, as _age_suffix writes it; _clip_line keeps it whole.
+_AGE_TAIL = re.compile(r" \((?:<1h|\d+[hd])\)$")
 
 # What differs between two runs of one CI message, tried in this order. An advisory id matches
 # first and is kept whole, because its digits are what tell two advisories apart.
@@ -1974,22 +1985,56 @@ def _repo_counts(rows: Iterable[dict], limit: int = 4) -> str:
     return f"{shown}, +{rest} more" if rest > 0 else shown
 
 
-def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
+def _instant(text: str) -> datetime:
+    """An RFC 3339 time as an aware datetime; a bare date or a time with no offset is UTC.
+
+    Raises:
+        FleetError: If the text is not a time.
+    """
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise FleetError(f"{text!r} is not an RFC 3339 timestamp") from exc
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _clock(generated_at: str, zone: tzinfo) -> str:
+    """The report's time in ``zone`` to the minute, as ``2026-10-13 05:00 AEST``.
+
+    The abbreviation is the zone's own for that instant, so a zone with daylight saving
+    reads AEDT in summer and AEST in winter.
+    """
+    moment = _instant(generated_at).astimezone(zone)
+    return f"{moment:%Y-%m-%d %H:%M} {moment.tzname()}"
+
+
+def slack_summary(
+    report: dict,
+    model: BacklogModel,
+    buckets: Buckets,
+    title: str = SLACK_TITLE,
+    zone: tzinfo = SLACK_ZONE,
+) -> str:
     """At most SLACK_SUMMARY_LINES lines of mrkdwn: the headline, then what matters most first.
 
     Args:
         report: The report build_report made.
         model: The backlog model, for the priority order.
         buckets: slack_buckets over the report's findings, the same lists the stats count.
+        title: The name the headline opens with.
+        zone: The zone the headline's time is shown in.
 
     Returns:
         The parent message.
+
+    Raises:
+        FleetError: If the report's generated_at is not an RFC 3339 timestamp.
     """
     findings = report["findings"]
     stats = slack_stats(report, buckets)
     lines = [
-        f"*DFE suite sweep*: stack {slack_escape(report['stack'])}, {stats['members']} members, "
-        f"{slack_escape(report['generated_at'])}"
+        f"*{slack_escape(title)}*: stack {slack_escape(report['stack'])}, "
+        f"{stats['members']} members, {_clock(report['generated_at'], zone)}"
     ]
     bridge = report.get("bridge")
     gap = bool(bridge and bridge["missing"])
@@ -2075,6 +2120,35 @@ def _title(value: object) -> str:
     return slack_escape(clipped)
 
 
+def _age_suffix(created_at: object, now: datetime) -> str:
+    """How long before ``now`` a row was raised, as `` (<1h)``, `` (5h)`` or `` (6d)``.
+
+    Hours below a day, whole days from one day on. A row with no created_at has no age and
+    gets no suffix. A row dated after ``now`` reads as under an hour.
+
+    Raises:
+        FleetError: If created_at is set and is not an RFC 3339 timestamp.
+    """
+    text = _text(created_at)
+    if not text:
+        return ""
+    age = now - _instant(text)
+    if age < timedelta(hours=1):
+        return " (<1h)"
+    if age < timedelta(days=1):
+        return f" ({age // timedelta(hours=1)}h)"
+    return f" ({age // timedelta(days=1)}d)"
+
+
+def _dated(build: Callable[[dict], str], now: datetime) -> Callable[[dict], str]:
+    """A line builder whose lines end with the row's age as of ``now``."""
+
+    def line(row: dict) -> str:
+        return build(row) + _age_suffix(row.get("created_at"), now)
+
+    return line
+
+
 def _finding_line(row: dict) -> str:
     label = f"{row['tool']} #{row['id']}"
     return f"- {slack_link(row['url'], label)} {row['severity']}: {_title(row['title'])}"
@@ -2145,7 +2219,7 @@ class SlackGroup:
         name: The name each of its replies and keys carries.
         note: The count its first header gives after the name.
         rows: Its report rows, each repo's together, in posting order.
-        line: One row's item line, escaped but not yet clipped.
+        line: One row's item line, escaped and ending in its age, but not yet clipped.
         key: One row's stable key.
     """
 
@@ -2157,20 +2231,29 @@ class SlackGroup:
 
 
 def slack_groups(report: dict, model: BacklogModel) -> list[SlackGroup]:
-    """Every non-empty group, in posting order."""
+    """Every non-empty group, in posting order.
+
+    Each line but a not-readable one ends with its row's age as of the report's generated_at.
+
+    Raises:
+        FleetError: If generated_at or a row's created_at is not an RFC 3339 timestamp.
+    """
+    now = _instant(report["generated_at"])
     groups = []
     for name, tools in SLACK_FINDING_GROUPS:
         rows = [f for f in report["findings"] if f["tool"] in tools]
         if rows:
             note = f"{len(rows)} ({_severity_note(rows)})"
-            groups.append(SlackGroup(name, note, _by_repo(rows), _finding_line, finding_key))
+            line = _dated(_finding_line, now)
+            groups.append(SlackGroup(name, note, _by_repo(rows), line, finding_key))
     issues, backlog = report["issues"], report["backlog"]
     priorities = _tally((r["priority"] for r in backlog), model.priorities, "unprioritised")
     on_repos = f" on {len({r['repo'] for r in issues})} repo(s)"
     work = (
-        ("Backlog drift", report["backlog_drift"], "", _drift_line, _relisted_key("drift")),
-        ("Open issues", issues, on_repos, _issue_line, _issue_key),
-        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _backlog_line,
+        ("Backlog drift", report["backlog_drift"], "", _dated(_drift_line, now),
+         _relisted_key("drift")),
+        ("Open issues", issues, on_repos, _dated(_issue_line, now), _issue_key),
+        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _dated(_backlog_line, now),
          _relisted_key("backlog")),
         ("Not readable", report["unreadable"], "", _unreadable_line, _unreadable_key),
     )
@@ -2293,15 +2376,20 @@ def _line_cap(header: str) -> int:
 
 
 def _clip_line(text: str, cap: int) -> str:
-    """A line cut to ``cap`` characters, never inside a link or an escaped character."""
+    """A line cut to ``cap`` characters, never inside a link or an escaped character.
+
+    A trailing age is kept whole: the text before it is what gets cut.
+    """
     if len(text) <= cap:
         return text
-    cut = text[: cap - 3]
+    age = _AGE_TAIL.search(text)
+    tail = age.group() if age else ""
+    cut = text[: len(text) - len(tail)][: max(cap - len(tail) - 3, 0)]
     if cut.rfind("<") > cut.rfind(">"):
         cut = cut[: cut.rfind("<")]
     if cut.rfind("&") > cut.rfind(";"):
         cut = cut[: cut.rfind("&")]
-    return cut + "..."
+    return cut + "..." + tail
 
 
 def _with_more(reply: Reply, cut: int, report_url: str) -> str:
@@ -2340,6 +2428,8 @@ def render_slack(
     model: BacklogModel | None = None,
     report_url: str = "",
     group_replies: int = SLACK_GROUP_REPLIES,
+    title: str = SLACK_TITLE,
+    zone: tzinfo = SLACK_ZONE,
 ) -> dict:
     """The report for a Slack poster: summary (parent message), detail (thread), stats, keys.
 
@@ -2348,16 +2438,22 @@ def render_slack(
         model: The backlog model, for the priority order.
         report_url: Where the full report can be read, for the cut-off line.
         group_replies: The most thread replies one group may take.
+        title: The name the summary's headline opens with.
+        zone: The zone the headline's time is shown in.
 
     Returns:
         ``{"summary": str, "detail": [{"group", "text"}], "stats": {name: int},
         "keys": [{"key", "group", "line"}]}``.
+
+    Raises:
+        FleetError: If the report's generated_at, or a row's created_at, is not an RFC 3339
+            timestamp.
     """
     model = model or BacklogModel()
     buckets = slack_buckets(report["findings"])
     groups = slack_groups(report, model)
     return {
-        "summary": slack_summary(report, model, buckets),
+        "summary": slack_summary(report, model, buckets, title, zone),
         "detail": slack_detail(groups, report_url, group_replies),
         "stats": slack_stats(report, buckets),
         "keys": slack_keys(groups),

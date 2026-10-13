@@ -19,6 +19,7 @@
     scripts/dfe-sweep --check-bridge                        # and prove the bridge is a subset
     scripts/dfe-sweep --format slack --report-url https://example.com/r
     scripts/dfe-sweep --format slack --report-file sweep-report.txt > sweep-slack.json
+    scripts/dfe-sweep --format slack --slack-title "Daily summary" --slack-timezone Europe/Berlin
     scripts/dfe-sweep --exclude dfe-hyperdx --tools dependabot,code_scanning
 
 The shebang runs it through ``uv run --script``, which installs scalo from the block above; on
@@ -86,6 +87,19 @@ a later one out, and its last reply says how many of its lines were left out, po
 ``--report-url`` when one is given; the thread is capped at 20 replies the same way. Every
 string that came from GitHub is escaped, so no title can mention a channel or inject a link.
 
+HEADLINE. ``summary`` opens ``*<title>*: stack <stack>, <n> members, <time>``. The title is the
+``slack.title`` setting (``--slack-title``), "DFE suite sweep" by default. The time is when the
+report was generated, in the ``slack.timezone`` setting's IANA zone (``--slack-timezone``, UTC by
+default), to the minute and followed by the zone's own abbreviation for that instant:
+``DFE suite sweep: stack 2.2.0, 22 members, 2026-10-13 05:00 UTC``. A zone with daylight saving
+changes its abbreviation with the date, so Europe/Berlin reads CET in winter and CEST in summer.
+A zone the host's tz database does not know is a run error naming the setting, for every format.
+
+AGES. Each item line in ``detail`` ends with how long ago its row was raised, counted from the
+row's ``created_at`` to the report's generation time: ``(<1h)`` under an hour, ``(5h)`` under a
+day, then whole days, floored, as ``(6d)``. A line that is clipped is cut before its age, never
+through it. A not-readable line has no age. A backlog drift line takes the age of its issue.
+
 ``stats`` always carries every key above as an integer, counted from the same findings as the
 summary's lines. critical and high count code scanning, Dependabot and repository advisories
 only, the numbers on the Security line. A secret alert counts under ``secrets`` and a failed
@@ -95,8 +109,9 @@ KEYS. ``keys`` is for a poster that posts only what is new: it diffs each run's 
 the set it last posted, and it stores hashes of the keys, never the lines. There is one entry
 per finding and work item in every group, in posting order, including a row the reply budget
 cut from ``detail``. ``group`` is the group's name in ``detail``, and ``line`` is the row's line
-exactly as ``detail`` renders it, escaped and clipped. A key appears once per output, for the
-first row that has it, and stays the same from run to run while the finding does:
+exactly as ``detail`` renders it, escaped, clipped and ending in its age, so it changes as the
+row ages while its key does not. A key appears once per output, for the first row that has it,
+and stays the same from run to run while the finding does:
 
 - an alert, a repository advisory, an open issue or a bot PR: its html_url.
 - a backlog item ``<repo>:backlog:<issue url>`` and label drift ``<repo>:drift:<issue url>``,
@@ -131,7 +146,8 @@ settings load with the repository root as the working directory, wherever the sc
 from. settings.yaml and settings.<env>.yaml (in the repository root, its config/, or
 ~/.config/dfe-sweep/), a .env, then ``DFE_SWEEP__<KEY>`` environment variables override it, and
 the flags below override those. Examples: ``DFE_SWEEP__EXCLUDE='["dfe-hyperdx"]'``,
-``DFE_SWEEP__TOOLS__ISSUES=false``, ``DFE_SWEEP__SLACK__GROUP_REPLIES=3``.
+``DFE_SWEEP__TOOLS__ISSUES=false``, ``DFE_SWEEP__SLACK__GROUP_REPLIES=3``,
+``DFE_SWEEP__SLACK__TIMEZONE=Europe/Berlin``.
 
 gh is the only credential: the caller's own gh login or GH_TOKEN. scalo's .env layer exports
 every key of the .env it finds into the process environment, so the caller's environment is put
@@ -157,6 +173,8 @@ import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dfe_suite import sweep
 from dfe_suite.graph import load_graph
@@ -194,6 +212,8 @@ class Options:
         report_url: Where the full report is published, for the Slack cut-off line, or empty.
         report_file: Where the text report is also written, or None for nowhere.
         group_replies: The most Slack thread replies one group may take.
+        slack_title: The name the Slack headline opens with.
+        slack_zone: The zone the Slack headline's time is shown in.
         gh_timeout: Seconds one gh call may take before its read is reported unreadable.
         config: The collection settings.
     """
@@ -210,6 +230,8 @@ class Options:
     output: str
     project_limit: int
     group_replies: int
+    slack_title: str
+    slack_zone: tzinfo
     gh_timeout: int
     report_url: str
     report_file: Path | None
@@ -321,6 +343,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
     if not bots:
         raise _fail("bot_logins", settings.get("bot_logins"), "a non-empty list of logins")
     backlog = _section(settings, "backlog")
+    slack = _section(settings, "slack")
     statuses = _names(backlog.get("statuses"), "backlog.statuses")
     if not statuses:
         raise _fail("backlog.statuses", backlog.get("statuses"), "a non-empty list")
@@ -356,8 +379,13 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
         report_url=_report_url(pick(args.report_url, "report_url")),
         report_file=_report_file(pick(args.report_file, "report_file")),
-        group_replies=_count(_section(settings, "slack").get("group_replies"),
-                             "slack.group_replies"),
+        group_replies=_count(slack.get("group_replies"), "slack.group_replies"),
+        slack_title=_slack_title(
+            args.slack_title if args.slack_title is not None else slack.get("title")
+        ),
+        slack_zone=_slack_zone(
+            args.slack_timezone if args.slack_timezone is not None else slack.get("timezone")
+        ),
         gh_timeout=_count(settings.get("gh_timeout_seconds"), "gh_timeout_seconds"),
         config=config,
     )
@@ -377,6 +405,29 @@ def _report_url(value: object) -> str:
     if url and not sweep.safe_url(url):
         raise _fail("report_url", value, "an https URL with no spaces, <, > or |")
     return url
+
+
+def _slack_title(value: object) -> str:
+    """The name the Slack headline opens with, which must be a non-empty string."""
+    if not isinstance(value, str) or not value.strip():
+        raise _fail("slack.title", value, "a non-empty string")
+    return value.strip()
+
+
+def _slack_zone(value: object) -> tzinfo:
+    """The IANA zone the Slack headline's time is shown in, or a run error naming the setting.
+
+    UTC is answered without the host's tz database, so the default needs none.
+    """
+    name = value.strip() if isinstance(value, str) else ""
+    if name == "UTC":
+        return UTC
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise _fail(
+            "slack.timezone", value, "an IANA zone name such as UTC or Europe/Berlin"
+        ) from exc
 
 
 def _report_file(value: object) -> Path | None:
@@ -538,7 +589,12 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         print(json.dumps(report, indent=2), flush=True)
     elif options.output == "slack":
         slack = sweep.render_slack(
-            report, options.config.backlog, options.report_url, options.group_replies
+            report,
+            options.config.backlog,
+            options.report_url,
+            options.group_replies,
+            options.slack_title,
+            options.slack_zone,
         )
         print(json.dumps(slack, indent=2), flush=True)
     else:
@@ -596,6 +652,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--report-file",
         metavar="PATH",
         help="also write the text report here, whatever --format prints (setting: report_file)",
+    )
+    parser.add_argument(
+        "--slack-title",
+        metavar="TEXT",
+        help="the name the Slack headline opens with (setting: slack.title)",
+    )
+    parser.add_argument(
+        "--slack-timezone",
+        metavar="ZONE",
+        help="IANA zone the Slack headline's time is shown in (setting: slack.timezone)",
     )
     parser.add_argument(
         "--members",
