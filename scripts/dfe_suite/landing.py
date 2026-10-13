@@ -185,7 +185,7 @@ def await_run(
         workflow: The workflow FILE, filtered server-side by gh.
         after_run_id: Reject any run at or below this id.
         release_command: The command that releases this sha by hand, named in
-            the timeout. None names ``hyperi-ci publish``, which carries no
+            the timeout. None names ``hyperi-ci release``, which carries no
             per-run consent, so a consented release has to pass its own.
         timeout: How long the run has to register, in seconds.
 
@@ -208,7 +208,7 @@ def await_run(
     if release_command:
         by_hand = f"`{' '.join(release_command)}`"
     else:
-        by_hand = "`hyperi-ci publish` from a checkout sitting on that commit"
+        by_hand = "`hyperi-ci release` from a checkout sitting on that commit"
     raise FleetError(
         f"no {workflow} run appeared for {sha} on {slug}@{branch} after "
         f"{timeout // 60}min{skipping}. Is .github/workflows/{workflow} "

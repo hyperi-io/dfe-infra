@@ -303,7 +303,7 @@ class RunSelectionTests(unittest.TestCase):
 
     # What `gh run list --workflow ci.yml` answers with: newest first, ids
     # ascending with age. TWO runs on one sha is the ship escape hatch -- the
-    # push run that landed it, then the run `hyperi-ci publish` dispatched.
+    # push run that landed it, then the run `hyperi-ci release` dispatched.
     ROWS: ClassVar[list[dict]] = [
         {"databaseId": 33054900002, "headSha": "abc123", "workflowName": "CI"},
         {"databaseId": 33054359645, "headSha": "abc123", "workflowName": "CI"},
@@ -1677,18 +1677,18 @@ class RunAppearHintTests(OnPathTestCase):
             )
         return str(caught.value)
 
-    def test_a_trailer_release_still_names_hyperi_ci_publish(self) -> None:
+    def test_a_trailer_release_still_names_hyperi_ci_release(self) -> None:
         with pytest.raises(sf.FleetError) as caught, contextlib.redirect_stdout(io.StringIO()):
             sf.await_run(self.SLUG, "abc123", timeout=0)
-        assert "`hyperi-ci publish` from a checkout sitting on that commit" in str(caught.value)
+        assert "`hyperi-ci release` from a checkout sitting on that commit" in str(caught.value)
 
     def test_a_missing_push_run_names_the_consented_dispatch(self) -> None:
-        # hyperi-ci publish carries no consent, so naming it here sends the
+        # hyperi-ci release carries no consent, so naming it here sends the
         # operator to a release hyperi-ci's Build refuses.
         message = self._dispatch(just_merged=True)
         assert f"`{' '.join(self.CONSENT)}`" in message
         assert "-f release-unoptimized=true" in message
-        assert "hyperi-ci publish" not in message
+        assert "hyperi-ci release" not in message
         assert _contains(_fake_argv(self.bindir, "gh"), ["workflow", "run"]) == -1
 
     def test_a_dispatched_run_that_never_registers_names_the_dispatch(self) -> None:
@@ -1696,7 +1696,7 @@ class RunAppearHintTests(OnPathTestCase):
         message = self._dispatch(just_merged=False)
         assert "ignoring runs up to 100" in message
         assert f"`{' '.join(self.CONSENT)}`" in message
-        assert "hyperi-ci publish" not in message
+        assert "hyperi-ci release" not in message
 
 
 if __name__ == "__main__":
