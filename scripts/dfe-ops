@@ -1501,21 +1501,12 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
 
     steps = suite_steps(args.suite)
     stop = threading.Event()
-    # An external ClickHouse has no Service to forward to, so the suite dials it directly.
-    external_ch = _external_datastore(kube)
-    ch_scheme = "https" if external_ch is not None and external_ch["secure"] else "http"
-    if external_ch is not None:
-        missing = [k for k in ("host", "port") if not external_ch[k]]
-        if missing:
-            print(f"acceptance: the dfe-cluster secret names an external ClickHouse with no "
-                  f"{' and no '.join('clickhouse_' + k for k in missing)}", file=sys.stderr)
-            return 1
-        print(f"  datastore: external ClickHouse over {ch_scheme}, no port-forward", file=sys.stderr)
-    forwards = [("receiver", namespace, args.receiver_target, args.receiver_port, 8080)]
-    if external_ch is None:
-        ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
-        forwards.append(("datastore", ch_namespace, ch_target, args.ch_port, 8123))
-    forwards.append(("engine", namespace, args.engine_target, args.engine_port, 8000))
+    ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
+    forwards = [
+        ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
+        ("datastore", ch_namespace, ch_target, args.ch_port, 8123),
+        ("engine", namespace, args.engine_target, args.engine_port, 8000),
+    ]
     # The onboarding suite goes through the gateway, never a forward to the
     # console pod: the pod bounces a browser's /api call to /login, because
     # routing /api to the engine is the gateway's job.
@@ -1549,6 +1540,17 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             )
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
+    # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
+    external_ch = _external_datastore(kube)
+    ch_scheme = "https" if external_ch is not None and external_ch["secure"] else "http"
+    if external_ch is not None:
+        missing = [k for k in ("host", "port") if not external_ch[k]]
+        if missing:
+            print(f"acceptance: the dfe-cluster secret names an external ClickHouse with no "
+                  f"{' and no '.join('clickhouse_' + k for k in missing)}", file=sys.stderr)
+            return 1
+        print(f"  datastore: external ClickHouse over {ch_scheme}, no port-forward", file=sys.stderr)
+        forwards = [f for f in forwards if f[0] != "datastore"]
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
