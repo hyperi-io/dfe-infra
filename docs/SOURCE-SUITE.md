@@ -119,8 +119,12 @@ config directory -- and only where the write changed something the process
 cannot pick up; a Kubernetes deploy reports none, because the chart's checksum
 rolls the pod.
 
-`--restart-exec` is the command prefix that applies one (dfe-docker passes
-`docker restart`); the app is the last word of the hint. A run that is handed a
-hint and no prefix fails the step rather than passing quietly, because without
-the restart the app takes the new file and goes on consuming the topics it
-started with, and the source never moves a record.
+`--restart-exec` is the command prefix that applies one; the runner appends the
+service the hint's `make apply SERVICES=<service>` names. On Compose the prefix
+must run that same `make apply` in the deployment's checkout, as dfe-docker's
+does: a source's own transform is a container the engine declares on the
+deploy, and only `make apply` creates it, where `docker compose restart` answers
+"no such service". A run that is handed a hint and no prefix fails the step
+rather than passing quietly, because without the restart the app takes the new
+file and goes on consuming the topics it started with, and the source never
+moves a record.

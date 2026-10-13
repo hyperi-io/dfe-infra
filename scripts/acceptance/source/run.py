@@ -242,9 +242,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
                              "exec <pod> --; docker: docker exec dfe-archiver)")
     parser.add_argument("--restart-exec", default="", metavar="PREFIX",
-                        help="command prefix that restarts one app by service name, for the apps the "
-                             "engine reports it cannot apply where they stand (docker: docker "
-                             "restart); unused on Kubernetes, where the controller rolls the pod")
+                        help="command prefix the runner appends one service name to, for the apps "
+                             "the engine reports it cannot apply where they stand; on Compose it "
+                             "runs the engine hint's own `make apply SERVICES=<service>` in the "
+                             "deployment's checkout, because that also creates a source's own "
+                             "container and a plain restart cannot; unused on Kubernetes, where "
+                             "the controller rolls the pod")
     parser.add_argument("--case", default="filebeat", choices=tuple(cases.CASES),
                         help="filebeat pushes real lines at the receiver through the bundled VRL; "
                              "vector pushes the same lines through the same program run by a "
