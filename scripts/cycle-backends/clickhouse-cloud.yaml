@@ -1,0 +1,25 @@
+## Project:   dfe-infra
+## File:      scripts/cycle-backends/clickhouse-cloud.yaml
+## Purpose:   The cloud-cycle overlay that points the datastore at ClickHouse Cloud
+## Language:  YAML
+##
+## License:   BUSL-1.1
+## Copyright: (c) 2026 HYPERI PTY LIMITED
+
+## Applied over the e2e-runner dial by scripts/cycle_backend.py when a run names
+## backend clickhouse-cloud. The run connects to the standing service and keeps
+## the dial's own in-cluster broker. The host and user are e2e-runner secrets.
+## endpoints.clickhouse_host carries the same host, because render_dial.py refuses
+## an external mode whose two host keys name different servers. The password, the
+## service id and the API key never appear in a dial: dfe-ops cloud-cycle reads
+## them from TF_VAR_clickhouse_external_password and DFE_CYCLE_CH_*.
+clickhouse:
+  mode: external
+  host: env:DFE_CYCLE_CH_HOST
+  port: 8443
+  native_port: 9440
+  secure: "true"
+  user: env:DFE_CYCLE_CH_USER
+
+endpoints:
+  clickhouse_host: env:DFE_CYCLE_CH_HOST

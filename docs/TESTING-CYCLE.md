@@ -58,6 +58,13 @@ The run length is a deadline that apply and the cycle share: a cycle still runni
 
 `scripts/cycle_backend.py --dial <file> --backend <name>` picks what a run deploys against without editing the one dial. `default` runs the dial as written. Any other name applies `scripts/cycle-backends/<name>.yaml` over it, so it has to run before the tofu render and the sizing read the dial. An overlay commits only the shape -- `msk` sets `kafka.provider: msk` and the `kafka.msk` block -- and a value written `env:<NAME>` is read from the environment, so no host or cluster id reaches the repository or its logs.
 
+| Backend | What the run deploys against | Read by the overlay |
+|---|---|---|
+| `msk` | AWS MSK brokers the run creates | nothing |
+| `confluent-cloud` | a Confluent Cloud Basic cluster per run, public endpoint, in a standing environment, topics capped at 8388608 bytes | `DFE_CYCLE_CONFLUENT_ENVIRONMENT_ID` |
+| `redpanda-cloud` | a Redpanda Cloud Serverless cluster per run, public endpoint, in a standing resource group | `DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID` |
+| `clickhouse-cloud` | the standing ClickHouse Cloud service, beside the dial's own broker | `DFE_CYCLE_CH_HOST`, `DFE_CYCLE_CH_USER` |
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

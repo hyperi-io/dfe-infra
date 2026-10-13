@@ -42,11 +42,27 @@ def _in_cluster_broker(dial: str) -> str:
 # addresses and the reserved example domain only.
 STRIMZI_DIAL = _in_cluster_broker(DIAL)
 
+# The secrets the overlays read, shaped as each vendor's ids, on the reserved example domain.
+CYCLE_ENV = {
+    "DFE_CYCLE_CONFLUENT_ENVIRONMENT_ID": "env-example1",
+    "DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID": "00000000-0000-4000-8000-000000000000",
+    "DFE_CYCLE_CH_HOST": "ch.example.com",
+    "DFE_CYCLE_CH_USER": "example_user",
+}
+
 
 def write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "deployment.yaml"
     path.write_text(text, encoding="utf-8", newline="\n")
     return path
+
+
+def render_with(tmp_path: Path, backend: str) -> dict[str, object]:
+    """The aws root's variables for the e2e-runner dial with `backend` applied over it."""
+    path = write(tmp_path, STRIMZI_DIAL)
+    cycle_backend.apply(path, backend, CYCLE_ENV)
+    _, variables = render_dial._tofu_vars(parse_dial(path.read_text(encoding="utf-8")))
+    return variables
 
 
 def test_default_leaves_the_dial_byte_for_byte(tmp_path: Path) -> None:
@@ -91,8 +107,125 @@ def test_the_msk_overlay_is_the_shape_the_example_dial_documents() -> None:
     assert overlay["bootstrap_job"] == at(example, ("kafka", "msk", "bootstrap_job"))
 
 
+def test_the_backends_a_run_may_name_are_default_and_every_committed_overlay() -> None:
+    assert cycle_backend.available() == (
+        "default",
+        "clickhouse-cloud",
+        "confluent-cloud",
+        "msk",
+        "redpanda-cloud",
+    )
+
+
+@pytest.mark.parametrize("backend", cycle_backend.available()[1:])
+def test_every_committed_overlay_renders_for_the_root(tmp_path: Path, backend: str) -> None:
+    variables = render_with(tmp_path, backend)
+    assert variables["provision"]["cloud"] == "aws"
+
+
+def test_confluent_cloud_is_public_basic_in_the_standing_environment(tmp_path: Path) -> None:
+    variables = render_with(tmp_path, "confluent-cloud")
+
+    assert variables["kafka"] == {
+        "provider": "confluent-cloud",
+        "num_partitions": 12,
+        "log_retention_ms": 259200000,
+        "message_max_bytes": 8388608,
+        "landing_topics": {"main_land": {}},
+        "connectivity": "public",
+        "confluent_tier": "basic",
+        "confluent_environment_id": "env-example1",
+    }
+    assert variables["seeds"]["kafka/confluent-cloud"] == {"username": "", "password": ""}
+    assert variables["clickhouse"] == {"mode": "in_cluster"}
+
+
+def test_redpanda_cloud_is_public_serverless_in_the_standing_group(tmp_path: Path) -> None:
+    variables = render_with(tmp_path, "redpanda-cloud")
+
+    assert variables["kafka"] == {
+        "provider": "redpanda-cloud",
+        "num_partitions": 12,
+        "log_retention_ms": 259200000,
+        "message_max_bytes": 16777216,
+        "landing_topics": {"main_land": {}},
+        "connectivity": "public",
+        "redpanda_resource_group_id": "00000000-0000-4000-8000-000000000000",
+    }
+    assert variables["seeds"]["kafka/redpanda-cloud"] == {"password": ""}
+    assert variables["clickhouse"] == {"mode": "in_cluster"}
+
+
+def test_clickhouse_cloud_is_the_standing_service_beside_the_dials_broker(tmp_path: Path) -> None:
+    variables = render_with(tmp_path, "clickhouse-cloud")
+
+    assert variables["clickhouse"] == {
+        "mode": "external",
+        "port": 8443,
+        "native_port": 9440,
+        "secure": True,
+        "user": "example_user",
+    }
+    assert variables["endpoints"]["clickhouse_host"] == "ch.example.com"
+    assert variables["seeds"]["clickhouse/external"] == {"password": ""}
+    assert variables["kafka"] == {"provider": "strimzi"}
+
+
+@pytest.mark.parametrize("backend", ["confluent-cloud", "redpanda-cloud"])
+def test_a_saas_overlay_tunes_and_lands_as_the_example_dial_documents(backend: str) -> None:
+    kafka = cycle_backend.load_overlay(backend)["kafka"]
+    example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
+    for key in ("num_partitions", "log_retention_ms"):
+        assert kafka["msk"][key] == at(example, ("kafka", "msk", key)), key
+    assert kafka["landing_topics"] == at(example, ("kafka", "landing_topics"))
+
+
+def test_redpanda_cloud_carries_the_message_size_the_example_dial_documents() -> None:
+    kafka = cycle_backend.load_overlay("redpanda-cloud")["kafka"]
+    example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
+    assert kafka["msk"]["message_max_bytes"] == at(example, ("kafka", "msk", "message_max_bytes"))
+
+
+def test_confluent_cloud_stays_inside_the_basic_message_size_cap() -> None:
+    kafka = cycle_backend.load_overlay("confluent-cloud")["kafka"]
+    assert kafka["confluent_tier"] == "basic"
+    assert int(kafka["msk"]["message_max_bytes"]) <= render_dial.CONFLUENT_BASIC_MAX_MESSAGE_BYTES
+
+
+@pytest.mark.parametrize(
+    ("backend", "refusals"),
+    [
+        (
+            "confluent-cloud",
+            ["DFE_CYCLE_CONFLUENT_ENVIRONMENT_ID (for kafka.confluent_environment_id)"],
+        ),
+        (
+            "redpanda-cloud",
+            ["DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID (for kafka.redpanda_resource_group_id)"],
+        ),
+        (
+            "clickhouse-cloud",
+            [
+                "DFE_CYCLE_CH_HOST (for clickhouse.host)",
+                "DFE_CYCLE_CH_USER (for clickhouse.user)",
+                "DFE_CYCLE_CH_HOST (for endpoints.clickhouse_host)",
+            ],
+        ),
+    ],
+)
+def test_an_overlay_whose_secret_is_unset_refuses_by_name_and_leaves_the_dial(
+    tmp_path: Path, backend: str, refusals: list[str]
+) -> None:
+    path = write(tmp_path, STRIMZI_DIAL)
+    with pytest.raises(cycle_backend.BackendError) as error:
+        cycle_backend.apply(path, backend, {})
+    for refusal in refusals:
+        assert refusal in str(error.value)
+    assert path.read_text(encoding="utf-8") == STRIMZI_DIAL
+
+
 def test_an_unknown_backend_is_refused_by_name(tmp_path: Path) -> None:
-    with pytest.raises(cycle_backend.BackendError, match="confluent"):
+    with pytest.raises(cycle_backend.BackendError, match="no backend 'confluent' --"):
         cycle_backend.apply(write(tmp_path, STRIMZI_DIAL), "confluent", {})
 
 
