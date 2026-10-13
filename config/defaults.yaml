@@ -64,6 +64,11 @@ sweep:
   slack:
     # Most thread replies one group may take, so no group crowds a later one out.
     group_replies: 2
+    # The name the Slack headline opens with.
+    title: DFE suite sweep
+    # IANA zone the headline's time is shown in, followed by the zone's own abbreviation
+    # for that instant.
+    timezone: UTC
   # Repos read at once.
   workers: 8
   # Seconds one gh call may take; a call that runs over is reported unreadable.
