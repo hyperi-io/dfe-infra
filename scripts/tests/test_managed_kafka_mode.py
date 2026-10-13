@@ -304,7 +304,7 @@ def test_the_size_travels_bootstrap_to_the_engine_chart() -> None:
            in values_block, values_block)
     expect("and lands it on kafka.messageMaxBytes under the managed block",
            "messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}" in values_block
-           and values_block.count("kafka:") == 1, values_block)
+           and len(re.findall(r"^kafka:", values_block, re.M)) == 1, values_block)
 
 
 def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
