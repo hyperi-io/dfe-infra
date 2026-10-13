@@ -28,6 +28,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -4405,7 +4406,9 @@ def test_plan_reports_a_closed_web_plane_as_blocked_on_a_cloud_only(
     if cloud in INTERNET_FACING:
         assert rc == u.EXIT_BLOCKED, captured.out
         assert "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6" in captured.out
-        assert "dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / sizing sections above" in captured.err
+        assert (
+            "dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / values migration / sizing sections above"
+        ) in captured.err
     else:
         assert rc == u.EXIT_OK, captured.out
         assert (
@@ -4436,7 +4439,7 @@ def test_plan_reports_an_unstated_ingest_door_as_blocked(
     captured = capsys.readouterr()
     assert rc == u.EXIT_BLOCKED, captured.out
     assert "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in captured.out
-    assert "BLOCKED -- see compat-check / exposure / sizing sections above" in captured.err
+    assert "BLOCKED -- see compat-check / exposure / values migration / sizing sections above" in captured.err
 
 
 def test_plan_without_cloud_reads_it_from_the_cluster_secret(
@@ -4493,3 +4496,215 @@ def test_the_verbs_that_run_the_web_check_take_cloud(verb: str) -> None:
     u.add_upgrade_subparser(parser.add_subparsers())
     assert parser.parse_args(["upgrade", verb, "--deploy", "d", "--cloud", "gcp"]).cloud == "gcp"
     assert parser.parse_args(["upgrade", verb, "--deploy", "d"]).cloud is None
+
+
+# ---------------------------------------------------------------------------
+# The 2.2.0 values migration through apply, against a real deploy repo pushed
+# to a real (local) remote: carried in the stage commit, carried again from the
+# remote just before the retarget, dropped at --finalise.
+# ---------------------------------------------------------------------------
+
+VALUES_FIXTURES = SCRIPTS / "tests" / "fixtures" / "values-2.2.0"
+VRL_OVERLAY = "values/dfe-transform-vrl-merakivrl-values.yaml"
+
+VALUES_ORDER_YAML = """
+stages:
+  "40-apps":
+    "30-dfe-transform-vrl":
+      key: apps.dfe-transform-vrl
+"""
+
+VALUES_VERSIONS_YAML = """
+current: "2.2.1-rc.9"
+stacks:
+  2.2.0:
+    apps:
+      dfe-transform-vrl: "v1.1.30"
+  2.2.1-rc.9:
+    apps:
+      dfe-transform-vrl: "v1.1.33"
+"""
+
+
+@pytest.fixture
+def pushed_220(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
+    """The 2.2.0 deploy repo the engine wrote, pinned at 2.2.0, tracking a bare local remote."""
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "Test")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "test@example.invalid")
+    order = tmp_path / "values-order.yaml"
+    order.write_text(VALUES_ORDER_YAML, encoding="utf-8")
+    versions = tmp_path / "values-versions.yaml"
+    versions.write_text(VALUES_VERSIONS_YAML, encoding="utf-8")
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions)
+    remote = tmp_path / "remote.git"
+    assert u._run(["git", "init", "-q", "--bare", "-b", "main", str(remote)]).returncode == 0
+    d = tmp_path / "deploy-220"
+    shutil.copytree(VALUES_FIXTURES, d)
+    (d / "pins.yaml").write_text('base:\n  dfe-infra: "2.2.0"\n', encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "initial"],
+                 ["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "main"]):
+        assert u._git(d, *args).returncode == 0, args
+    return d, remote
+
+
+def _engine_edit(tmp_path: Path, remote: Path) -> None:
+    """What the 2.2.0 engine does on a console edit: rewrite transformFiles alone, commit and push."""
+    clone = tmp_path / "engine-clone"
+    assert u._run(["git", "clone", "-q", str(remote), str(clone)]).returncode == 0
+    path = clone / VRL_OVERLAY
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(". = parse_json!(.message)", ". = parse_json!(.edited)", 1),
+        encoding="utf-8",
+    )
+    for args in (["add", VRL_OVERLAY], ["commit", "-q", "-m", "engine edit"], ["push", "-q", "origin", "HEAD:main"]):
+        assert u._git(clone, *args).returncode == 0, args
+
+
+def _values_cluster(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: Path, live: dict[str, str]) -> list:
+    """The cluster, recorded: the 2.2.0 engine edits the vrl overlay while the stage push settles."""
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
+    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: live["target_revision"])
+    monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
+
+    def argo(*_a: object, stale_revision: str = "", **_k: object) -> tuple[bool, str]:
+        events.append(("argo", stale_revision))
+        if live.get("edit_on_first_wait") and len(events) == 1:
+            _engine_edit(tmp_path, remote)
+        return True, "converged"
+
+    def retarget(_kc: object, _ns: str, ref: str, _stack: str) -> tuple[bool, str]:
+        events.append(("retarget", yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))))
+        live["target_revision"] = ref
+        return True, ref
+
+    monkeypatch.setattr(u, "wait_for_argo", argo)
+    monkeypatch.setattr(u, "write_target_revision", retarget)
+    return events
+
+
+def test_apply_carries_the_220_values_before_the_retarget_and_again_from_the_remote(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    deploy, remote = pushed_220
+    live = {"target_revision": "2.2.0", "edit_on_first_wait": "yes"}
+    events = _values_cluster(monkeypatch, tmp_path, remote, live)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+
+    stage = _commit_with(remote, "stage 1 -- apps.dfe-transform-vrl")
+    staged = yaml.safe_load(_remote_file(remote, stage, VRL_OVERLAY))
+    assert staged["fullnameOverride"] == "dfe-transform-vrl-merakivrl"
+    assert staged["fileSets"]["transforms"]["files"] == staged["transformFiles"]
+    assert yaml.safe_load(_remote_file(remote, stage, "values/dfe-fetcher-pypiwatch-values.yaml"))["writablePaths"] == {
+        "cursor": {"persistence": {"enabled": True}}
+    }
+
+    # The engine's edit landed after the stage push, and the retarget saw it carried.
+    assert [kind for kind, _ in events] == ["argo", "retarget", "argo"]
+    at_retarget = events[1][1]
+    assert ". = parse_json!(.edited)" in at_retarget["transformFiles"][0]["content"]
+    assert at_retarget["fileSets"]["transforms"]["files"] == at_retarget["transformFiles"]
+    assert _commit_with(remote, "carry the 2.2.0 value keys again")
+    assert "finalise pending (manual, after a soak): the 2.2.0 value keys" in err
+    assert "transformFiles" in yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))
+
+
+def test_finalise_drops_the_220_keys_and_rollback_below_the_thin_charts_then_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    deploy, remote = pushed_220
+    live = {"target_revision": "2.2.0"}
+    _values_cluster(monkeypatch, tmp_path, remote, live)
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    capsys.readouterr()
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(deploy), to="2.2.1-rc.9", from_stack="2.2.0", yes=True, dry_run=False, push=True, finalise=True,
+    ))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    finalised = yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))
+    assert "transformFiles" not in finalised
+    assert finalised["fileSets"]["transforms"]["files"][0]["name"] == "filebeat.vrl"
+    assert _commit_with(remote, u.VALUES_CONTRACT_SUBJECT)
+    assert u.VALUES_CONTRACT_KEY in u.read_finalised_keys(deploy)
+
+    rc = u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="2.2.0"))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED
+    assert "apply --finalise dropped the 2.2.0 value keys" in err
+    assert f"'{u.VALUES_CONTRACT_SUBJECT}' commit" in err
+
+
+def test_rollback_before_finalise_is_only_a_retarget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    deploy, remote = pushed_220
+    _values_cluster(monkeypatch, tmp_path, remote, {"target_revision": "2.2.0"})
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    capsys.readouterr()
+    assert u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="2.2.0")) == u.EXIT_OK
+
+
+def test_a_resumed_apply_never_rewrites_a_key_the_thin_charts_own(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    """Past the retarget the engine writes the new keys, so the old ones no longer win."""
+    deploy, remote = pushed_220
+    live = {"target_revision": "2.2.0"}
+    _values_cluster(monkeypatch, tmp_path, remote, live)
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    path = deploy / VRL_OVERLAY
+    text = path.read_text(encoding="utf-8")
+    cut = text.index("fileSets:")
+    path.write_text(text[:cut] + text[cut:].replace("parse_json!(.message)", "parse_json!(.thin)", 1), encoding="utf-8")
+    assert u._git(deploy, "commit", "-qam", "thin engine edit").returncode == 0
+    capsys.readouterr()
+
+    rc = u.cmd_upgrade_apply(_apply_args(
+        deploy=str(deploy), to="2.2.1-rc.9", from_stack="2.2.0", yes=True, dry_run=False, push=True,
+    ))
+    assert rc == u.EXIT_OK, capsys.readouterr().err
+    assert "parse_json!(.thin)" in path.read_text(encoding="utf-8")
+
+
+def test_a_dry_run_names_the_carry_the_recarry_and_the_finalise(
+    monkeypatch: pytest.MonkeyPatch, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    deploy, _remote = pushed_220
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    before = {p: p.read_text(encoding="utf-8") for p in (deploy / "values").iterdir()}
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", push=True, finalise=True))
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    carry = err.index("[dry-run] carry the 2.2.0 value keys onto the thin-chart keys")
+    commit = err.index("[dry-run] git -C")
+    recarry = err.index("pull --ff-only, carry the 2.2.0 value keys again")
+    retarget = err.index("annotate --overwrite secret/dfe-cluster")
+    finalise = err.index("[dry-run] finalise the values migration")
+    assert carry < commit < recarry < retarget < finalise
+    assert {p: p.read_text(encoding="utf-8") for p in before} == before
+
+
+def test_the_40_apps_steps_declare_their_reverse_path() -> None:
+    for step in u.load_steps():
+        if step.stage == "40-apps":
+            assert step.rollback, step.key
+            assert not step.one_way, step.key
+
+
+def test_an_undeclared_rollback_points_at_the_rollback_verb_not_the_backup_marker(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    step = u.Step(stage="20-operators", order="10", key="operators.keda")
+    u._print_rollback([u.Move(step=step, old="1", new="2")])
+    err = capsys.readouterr().err
+    assert "dfe-ops upgrade rollback --to" in err
+    assert "backup marker" not in err

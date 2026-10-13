@@ -1,0 +1,4 @@
+{{- /* Gated on the workload being able to carry two pods -- see dfe-common.pdb.
+       The engine runs one replica while its config PVC is ReadWriteOnce, so
+       this renders nothing until a deployment gives it shared storage. */ -}}
+{{- include "dfe-common.pdb" . }}

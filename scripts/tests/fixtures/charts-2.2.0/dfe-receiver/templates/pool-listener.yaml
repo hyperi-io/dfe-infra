@@ -1,0 +1,2 @@
+{{- /* Gated on the direct transport plus mesh.enabled -- see dfe-common.poolListener. */ -}}
+{{- include "dfe-common.poolListener" . }}

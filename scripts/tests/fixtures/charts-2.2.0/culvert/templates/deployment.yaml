@@ -1,0 +1,221 @@
+{{- /*
+  WireGuard server keys are minted in the pod and come from no secrets backend,
+  so two replicas allocate the same tunnel addresses and each rejects the
+  other's client configs. OpenVPN alone can scale out on shared external PKI;
+  this chart runs the pair, so it holds at one.
+*/}}
+{{- if gt (int .Values.replicas) 1 }}
+{{- fail (printf "culvert: replicas is %d. WireGuard mints its server key in the pod, so a second replica issues client configs the first rejects and allocates the same tunnel addresses. Hold at one replica." (int .Values.replicas)) }}
+{{- end }}
+{{- if and .Values.vpn.oidc.enabled (not (fromYaml (include "culvert.listener" (dict "ctx" . "name" "oauth2-udp")))) }}
+{{- fail "culvert: vpn.oidc.enabled with no listener named oauth2-udp. The client completes the login against the server's callback port, so add { name: oauth2-udp, port: 9000, protocol: TCP, exposed: true } to listeners." }}
+{{- end }}
+{{- /*
+  The tunnel's own OIDC fields live under vpn.oidc.*. A top-level oidc.enabled
+  is the cascade's EDGE OIDC switch for the UIs (envoy-gateway-config), and
+  aws.yaml sets it true, so oidc.enabled and oidc.providers must stay harmless
+  to this chart. A values file still carrying the old scalar fields is refused
+  by name rather than silently ignored. This chart declares no top-level oidc:
+  key, so .Values.oidc is nil on a standalone render and is defaulted to an
+  empty map before a field is read, or a bare render panics on a nil pointer.
+*/}}
+{{- $oldOidc := .Values.oidc | default dict }}
+{{- /*
+  All four moved fields, not just the two obvious ones: a half-migrated values
+  file that leaves validateGroups behind renders clean while vpn.oidc.
+  validateGroups falls back to "", which accepts any authenticated user.
+*/}}
+{{- if or $oldOidc.issuer $oldOidc.clientId $oldOidc.existingSecret $oldOidc.validateGroups }}
+{{- fail "culvert: oidc.issuer/oidc.clientId/oidc.existingSecret/oidc.validateGroups is set, and this chart no longer reads it -- move the tunnel's own OIDC client-auth fields to vpn.oidc.issuer/vpn.oidc.clientId (and vpn.oidc.enabled/vpn.oidc.existingSecret/vpn.oidc.validateGroups). oidc.enabled and oidc.providers belong to envoy-gateway-config's edge OIDC, not this chart." }}
+{{- end }}
+{{- /*
+  The client secret and the callback HTTP secret ride the named Secret, so OIDC
+  with no Secret named starts the tunnel's login flow with neither.
+*/}}
+{{- if and .Values.vpn.oidc.enabled (not .Values.vpn.oidc.existingSecret) }}
+{{- fail "culvert: vpn.oidc.enabled with no vpn.oidc.existingSecret. Name the Secret carrying CULVERT_OAUTH2_CLIENT_SECRET and CULVERT_OAUTH2_HTTP_SECRET, or set vpn.oidc.enabled: false." }}
+{{- end }}
+{{- if and (eq .Values.pki.mode "external") (not .Values.pki.existingSecret) }}
+{{- fail "culvert: pki.mode is external with no pki.existingSecret. Name the Secret carrying ca.crt, server.crt and server.key, or set pki.mode: local." }}
+{{- end }}
+{{- $admin := .Values.peers.classes.admin }}
+{{- /*
+  The admin peer exists to reach an appliance WHILE the appliances stay isolated
+  from each other. Switching isolation off is the shortcut that reaches the same
+  appliance and opens every other one at the same time, and it reports nothing
+  when it does, so the pair is refused by name.
+*/}}
+{{- if and $admin.enabled (not .Values.peers.classes.appliance.isolation) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with peers.classes.appliance.isolation false. That reaches an appliance by opening every appliance to every other one -- keep isolation true, or turn the admin class off." }}
+{{- end }}
+{{- /* A class with no port to reach is a dial that does nothing. */}}
+{{- if and $admin.enabled (not $admin.reach) }}
+{{- fail "culvert: peers.classes.admin.enabled is true with an empty peers.classes.admin.reach. Name the appliance ports the admin peer may initiate to (22 and 443 by default), or turn the admin class off." }}
+{{- end }}
+{{- /*
+  A peerCIDR outside the reserved client range names addresses no peer is ever
+  issued, so the reach-back would match nothing and say nothing.
+*/}}
+{{- if $admin.peerCIDR }}
+{{- $adminParts := splitList "/" $admin.peerCIDR }}
+{{- $adminOctets := splitList "." (index $adminParts 0) }}
+{{- if or (ne (len $adminParts) 2) (ne (len $adminOctets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q is not an IPv4 CIDR." $admin.peerCIDR) }}
+{{- end }}
+{{- if ne (printf "%s.%s" (index $adminOctets 0) (index $adminOctets 1)) (include "culvert.clientPrefix" .) }}
+{{- fail (printf "culvert: peers.classes.admin.peerCIDR %q sits outside vpn.clientCIDR %q, so no peer is ever issued an address in it." $admin.peerCIDR .Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
+{{- /*
+  An adminCIDR is matched on the pod's ETHERNET side, so a range inside the
+  client range names a peer source, which the client-to-client verdict drops
+  before the admin ACCEPT is ever reached. 0.0.0.0/0 hands every appliance to
+  anything that can route the client range at this pod.
+*/}}
+{{- range $cidr := $admin.adminCIDRs }}
+{{- $parts := splitList "/" $cidr }}
+{{- $octets := splitList "." (index $parts 0) }}
+{{- if or (ne (len $parts) 2) (ne (len $octets) 4) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q is not an IPv4 CIDR." $cidr) }}
+{{- end }}
+{{- if eq $cidr "0.0.0.0/0" }}
+{{- fail "culvert: peers.classes.admin.adminCIDRs carries 0.0.0.0/0, which reaches every appliance from anywhere that can route the client range at this pod. Name the subnet the admin machine sits in." }}
+{{- end }}
+{{- if eq (printf "%s.%s" (index $octets 0) (index $octets 1)) (include "culvert.clientPrefix" $) }}
+{{- fail (printf "culvert: peers.classes.admin.adminCIDRs entry %q sits inside vpn.clientCIDR %q, so it names a peer source -- culvert drops peer-to-peer traffic before the admin exception, and hyperi-io/culvert#40 is what would carry it." $cidr $.Values.vpn.clientCIDR) }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  {{- if .Values.persistence.enabled }}
+  # The PKI volume is ReadWriteOnce, so the replacement cannot surge past the
+  # pod holding it.
+  strategy:
+    type: Recreate
+  {{- else }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+        # Opts these pods OUT of the namespace-wide egress baseline, so the
+        # policy beside this template is their whole egress surface. Without
+        # the label the baseline grants them the entire namespace and the
+        # receiver-only rule adds nothing.
+        dfe.hyperi.io/egress-scoped: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # The VPN never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      # uid 0 through the shared helper: OpenVPN and wg-quick create the tun
+      # device and program iptables NAT before OpenVPN drops to nobody. The
+      # values carry the root ids; the seccomp profile is the shared default.
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if .Values.ipForward.enabled }}
+      initContainers:
+        # /proc/sys is read-only inside a container whatever capabilities it
+        # holds, so the sysctl cannot be set by the server container. Only this
+        # pod's network namespace is touched, never the node's.
+        - name: enable-ip-forward
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sysctl", "-w", "net.ipv4.ip_forward=1"]
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      {{- end }}
+      containers:
+        - name: culvert
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          ports:
+            {{- range .Values.listeners }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: {{ .protocol | default "TCP" }}
+            {{- end }}
+          env:
+            {{- range $k, $v := fromYaml (include "culvert.env" .) }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if and .Values.vpn.oidc.enabled .Values.vpn.oidc.existingSecret }}
+          # The OIDC client secret and the callback HTTP secret, never values.
+          envFrom:
+            - secretRef:
+                name: {{ .Values.vpn.oidc.existingSecret }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vpn/profiles
+              readOnly: true
+            {{- if .Values.tunDevice.enabled }}
+            - name: tun
+              mountPath: /dev/net/tun
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: pki
+              mountPath: /etc/vpn/pki
+            {{- end }}
+            {{- if .Values.pki.existingSecret }}
+            - name: pki-external
+              mountPath: {{ .Values.pki.mountPath }}
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+        {{- if .Values.tunDevice.enabled }}
+        - name: tun
+          hostPath:
+            path: {{ .Values.tunDevice.hostPath }}
+            type: CharDevice
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: pki
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-pki
+        {{- end }}
+        {{- if .Values.pki.existingSecret }}
+        - name: pki-external
+          secret:
+            secretName: {{ .Values.pki.existingSecret }}
+            defaultMode: 0400
+        {{- end }}

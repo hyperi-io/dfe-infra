@@ -1,0 +1,19 @@
+deploy:
+  service: dfe-fetcher
+  instance: pypiwatch
+otelServiceName: dfe-fetcher-pypiwatch
+component: fetcher-pypiwatch
+config:
+  instance_id: pypiwatch
+  sources:
+    pypi:
+      enabled: true
+      topic: pypiwatch
+      packages:
+        - pip
+        - requests
+      interval_secs: 60
+  output:
+    type: kafka
+persistence:
+  enabled: true

@@ -19,6 +19,7 @@
                            [--target-revision <ref>] [--namespace <ns>]
     dfe-ops upgrade rollback --deploy <dir> --to <stack> [--dry-run] [--push]
                            [--skip-cluster-check] [--target-revision <ref>]
+    dfe-ops upgrade migrate-values --deploy <dir> [--check]
 
 Every verb takes `--deploy`, a dfe-deploy checkout (its `pins.yaml` names the
 FROM stack in `base.dfe-infra`), and `--to`, a versions.yaml stack version
@@ -37,13 +38,15 @@ does, so a component whose tag stays put while its digest moves still moves.
                exposure checks (the ingest door and the web plane), and --
                only when `--dial` is given -- resolve_sizing.py's
                locked-change classifier against the deploy's committed
-               sizing/resolved.yaml.
+               sizing/resolved.yaml. A move across the first thin-chart stack
+               lists every 2.2.0 value key values_migration.py finds.
                Writes the plan to --out, by default
                .tmp/upgrades/<from>-to-<to>.md in this checkout -- never the
                deploy repo, whose untracked files preflight refuses.
                Exit 0 nothing moves (or the plan is clean), 1 the plan is
-               BLOCKED (a compat-check failure, a failed exposure check, or a
-               locked sizing change with no --migrate evidence), 2 a
+               BLOCKED (a compat-check failure, a failed exposure check, a
+               2.2.0 value key needing a hand edit, or a locked sizing change
+               with no --migrate evidence), 2 a
                pre-flight failure (the deploy repo or the stack name do not
                resolve).
 
@@ -53,7 +56,8 @@ does, so a component whose tag stays put while its digest moves still moves.
                stopped being exposure.mode), it states the console and api
                groups' allow lists when the plan crosses WEB_FENCE_STACK on an
                internet-facing gateway (where an empty list started refusing
-               every address), the cluster answers, every Argo
+               every address), no 2.2.0 value key needs a hand edit when the
+               plan crosses the first thin-chart stack, the cluster answers, every Argo
                Application is Synced and Healthy, no KafkaRebalance is
                mid-flight, ClickHouse carries
                no long merge, every Strimzi CRD the 1.x operator needs stores
@@ -95,6 +99,13 @@ does, so a component whose tag stays put while its digest moves still moves.
                operator Application renders from. A secret tracking a branch is
                left alone, and one pinned to a commit refuses unless
                --target-revision names the ref. A retarget needs --push.
+
+               A move across the first thin-chart stack writes each thin-chart
+               key beside its 2.2.0 key in that stage's commit, and again from
+               the pulled remote just before the retarget, since until then the
+               2.2.0 engine writes only the old keys. --finalise drops the old
+               keys once the cluster is on the TO charts, and writes the
+               marker rollback refuses on.
 
                bootstrap.sh installs the bootstrap section (external-secrets,
                cert-manager, Argo CD) and Argo never renders it, so moving its
@@ -148,7 +159,15 @@ does, so a component whose tag stays put while its digest moves still moves.
                rollback target's Kafka version runs, marker or not;
                --skip-cluster-check rolls the pin back without that read and
                without the retarget. Like apply, it moves the cluster secret's
-               target_revision back to the rollback target's tag.
+               target_revision back to the rollback target's tag. It also
+               refuses a rollback below the first thin-chart stack once apply
+               --finalise has dropped the 2.2.0 value keys.
+
+    migrate-values  Write each thin-chart key beside its 2.2.0 key in the
+               deploy checkout's values/*-values.yaml and infra/common.yaml,
+               by helm/charts/dfe-extras/files/values-migrations.yaml, and
+               commit nothing. --check writes nothing and exits 1 while a key
+               is left to carry or needs a hand edit.
 
 Nothing here executes a `before` or `finalise` note as a shell command -- they
 are runbook prose, not argv. `apply` checks the one `before` note this repo
@@ -190,6 +209,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import argocd_release  # noqa: E402
 import helm_releases  # noqa: E402
+import values_migration  # noqa: E402
 import yaml_subset  # noqa: E402
 
 UPGRADE_ORDER = REPO_ROOT / "upgrade-order.yaml"
@@ -284,6 +304,10 @@ ARGO_VALUES = REPO_ROOT / "argocd" / "values"
 ONPREM_CLOUDS = ("local", "local-dfe", "rancher")
 _CLOUD_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# The finalise marker key recording that apply --finalise dropped the 2.2.0 value keys.
+VALUES_CONTRACT_KEY = "values.2.2.0-keys"
+VALUES_CONTRACT_SUBJECT = "drop the 2.2.0 value keys"
+
 
 class UpgradeError(RuntimeError):
     """An upgrade verb cannot proceed -- the message is what dfe-ops prints."""
@@ -356,7 +380,10 @@ def _push_moment(deploy: Path) -> datetime | None:
 
 # The deploy paths an upgrade commit carries. `git add` with one missing
 # pathspec stages nothing at all, so only the ones that exist are named.
-STAGED_PATHS = ("pins.yaml", "sizing", "upgrades", str(KAFKA_OVERLAY))
+STAGED_PATHS = (
+    "pins.yaml", "sizing", "upgrades", str(KAFKA_OVERLAY),
+    values_migration.OVERLAY_DIR.as_posix(), COMMON_OVERLAY.as_posix(),
+)
 
 
 def _stage(deploy: Path) -> tuple[bool, str]:
@@ -1220,6 +1247,10 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
         f"exposure.groups.ingest, and {COMMON_OVERLAY.as_posix()} does not set exposure.groups.ingest. "
         f"Under {from_stack} the door was exposure.mode: by default a LoadBalancer open to every address on the "
         "receiver's public ports, the tunnel under vpn, the gateway route under internal. "
+        f"On local-dfe and rancher {from_stack} served two doors at once, that LoadBalancer and HTTP /ingest on "
+        f"the gateway at receiver.{{domain}}. {to_stack} serves one: door loadbalancer drops the "
+        "receiver.{domain} route, so senders posting there repoint to the load balancer's address, and door "
+        "gateway drops the load balancer, so its senders repoint to receiver.{domain}. "
         f"Under {to_stack} the cloud's own door applies, and door loadbalancer with an empty allow renders no "
         "load balancer at all. Set exposure.groups.ingest.door (loadbalancer, gateway or tunnel) and "
         f"exposure.groups.ingest.allow (the senders' CIDRs) in {COMMON_OVERLAY.as_posix()}. "
@@ -1451,6 +1482,171 @@ def exposure_checks(
     ]
 
 
+# --- the 2.2.0 values migration (scripts/values_migration.py) ------------------
+
+
+def values_cutover(from_stack: str, to_stack: str, since: str) -> tuple[bool, str]:
+    """(whether the move crosses `since`, the line saying so).
+
+    From `since` the thin charts read keys the 2.2.0 charts did not, so a move
+    across it needs the deploy repo's values carried. A stack dfe-stack cannot
+    order counts as crossing, as the exposure checks count it.
+    """
+    semver_key = _dfe_stack().semver_key
+    cutover = semver_key(since)
+    before, after = semver_key(from_stack), semver_key(to_stack)
+    if before is not None and cutover is not None and before >= cutover:
+        return False, f"{from_stack} is at or after {since}: the thin charts already read this deploy repo"
+    if after is not None and cutover is not None and after < cutover:
+        return False, f"{to_stack} predates {since}, so the 2.2.0 charts keep reading the 2.2.0 keys"
+    return True, f"the move crosses {since}, from which the thin charts read their own keys"
+
+
+def check_values_migration(deploy: Path, from_stack: str, to_stack: str) -> tuple[bool, str]:
+    """Every 2.2.0 value key in the deploy repo can be carried onto its thin-chart key.
+
+    Fails on a refuse rule, an image pin the thin chart would keep running, and
+    on a key the line surgery cannot reach. Both need a person before anything
+    moves. apply carries every other key itself, before the retarget.
+    """
+    migration = values_migration.load_map()
+    crosses, why = values_cutover(from_stack, to_stack, migration.since)
+    if not crosses:
+        return True, why
+    hits = values_migration.scan(deploy, migration)
+    refused = values_migration.refused(hits)
+    if refused:
+        listed = "; ".join(f"{hit.file}: {hit.detail}" for hit in refused[:4])
+        extra = f" (+{len(refused) - 4} more)" if len(refused) > 4 else ""
+        return False, (
+            f"{len(refused)} 2.2.0 value key(s) need a hand edit before the move across {migration.since}: "
+            f"{listed}{extra}. `dfe-ops upgrade migrate-values --deploy <dir> --check` lists every key. "
+            f"See {FROM_220_DOC}."
+        )
+    carried = [hit for hit in hits if hit.state == values_migration.MIGRATE]
+    files = len({hit.file for hit in carried})
+    if not carried:
+        return True, "no 2.2.0 value key left to carry onto the thin-chart keys"
+    return True, (
+        f"{len(carried)} 2.2.0 value key(s) in {files} file(s) for apply to carry onto the thin-chart keys "
+        "before the retarget"
+    )
+
+
+def _expand_values(deploy: Path, migration: values_migration.MigrationMap, *, resync: bool) -> tuple[bool, str]:
+    """Run expand, printing each key it wrote; (False, why) when one needs a person."""
+    hits = values_migration.expand(deploy, migration, resync=resync)
+    written = [hit for hit in hits if hit.state in (values_migration.MIGRATE, values_migration.RESYNC)]
+    for hit in written:
+        print(f"  values: {hit.line()}", file=sys.stderr)
+    refused = values_migration.refused(hits)
+    if refused:
+        return False, "; ".join(f"{hit.file}: {hit.detail}" for hit in refused)
+    return True, f"{len(written)} key(s) written" if written else "every 2.2.0 key already carried"
+
+
+def _commit_and_push(deploy: Path, message: str, *, push: bool) -> tuple[str, str]:
+    """Stage the upgrade paths, commit them and push. ("", what happened), or (why it failed, "")."""
+    added, detail = _stage(deploy)
+    if not added:
+        return f"git add failed: {detail}", ""
+    if _git(deploy, "diff", "--cached", "--quiet").returncode == 0:
+        return "", "nothing to commit"
+    commit = _git(deploy, "commit", "-m", message)
+    if commit.returncode != 0:
+        return f"git commit failed: {_last_line(commit.stderr) or _last_line(commit.stdout)}", ""
+    if push and _git(deploy, "push").returncode != 0:
+        return "git push failed", ""
+    return "", "committed and pushed" if push else "committed"
+
+
+def _recarry_values(deploy: Path, migration: values_migration.MigrationMap, to_name: str) -> tuple[bool, str]:
+    """Carry the 2.2.0 value keys again from the deploy repo's remote head, just before the retarget.
+
+    Until the retarget the 2.2.0 engine writes the old keys alone, so a console
+    edit since the stage push would reach the thin charts stale. The old key
+    wins here, since it is the one the running charts read.
+    """
+    pull = _git(deploy, "pull", "--ff-only", "-q")
+    if pull.returncode != 0:
+        return False, f"git pull --ff-only failed before the retarget: {_last_line(pull.stderr) or 'no detail'}"
+    ok, detail = _expand_values(deploy, migration, resync=True)
+    if not ok:
+        return False, f"a 2.2.0 value key needs a hand edit: {detail}"
+    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} carry the 2.2.0 value keys again", push=True)
+    if failure:
+        return False, failure
+    return True, f"carried again before the retarget: {detail}, {done}"
+
+
+def _finalise_values(
+    args: argparse.Namespace,
+    deploy: Path,
+    migration: values_migration.MigrationMap,
+    emit: Callable[[str], None],
+    *,
+    names: tuple[str, str],
+    on_target: bool,
+    rollout_namespace: str,
+) -> str:
+    """Drop the 2.2.0 value keys at --finalise; why that failed, or empty.
+
+    The thin charts read none of them, so the render does not move. A stack
+    before `since` cannot render the overlays without them, so this is the
+    values migration's one-way step and writes the marker rollback refuses on.
+    It runs only once the cluster is shown on the TO stack's charts.
+    """
+    from_name, to_name = names
+    dropped_at = read_finalised_keys(deploy).get(VALUES_CONTRACT_KEY)
+    if dropped_at:
+        print(f"  [DONE] values: apply --finalise dropped the 2.2.0 value keys ({dropped_at})", file=sys.stderr)
+        return ""
+    if not args.finalise:
+        print(
+            f"  finalise pending (manual, after a soak): the 2.2.0 value keys -- apply --finalise drops them, "
+            f"after which nothing rolls back below {migration.since}",
+            file=sys.stderr,
+        )
+        return ""
+    emit(
+        "finalise the values migration: drop each 2.2.0 value key whose thin-chart key is set, "
+        f"commit{', push' if args.push else ''} and wait for Argo"
+    )
+    if args.dry_run:
+        return ""
+    if not on_target:
+        print(
+            f"  [PENDING] values: {TARGET_REVISION_ANNOTATION} does not name {to_name}, so nothing shows the thin "
+            "charts reading the new keys -- the 2.2.0 keys stay",
+            file=sys.stderr,
+        )
+        return ""
+    if not _confirm(
+        f"soak complete -- drop the 2.2.0 value keys now? No rollback below {migration.since} renders without them",
+        assume_yes=args.yes,
+    ):
+        print("  [PENDING] values: declined by operator", file=sys.stderr)
+        return ""
+    hits = values_migration.contract(deploy, migration)
+    for hit in hits:
+        print(f"  values: {hit.line()}", file=sys.stderr)
+    if not any(hit.state == values_migration.CONTRACT for hit in hits):
+        print("  [DONE] values: no 2.2.0 value key left to drop", file=sys.stderr)
+        return ""
+    write_finalise_marker(deploy, from_name, to_name, VALUES_CONTRACT_KEY)
+    moment = change_moment()
+    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} {VALUES_CONTRACT_SUBJECT}", push=args.push)
+    if failure:
+        return failure
+    pushed_at = moment if args.push else None
+    ok, detail = wait_for_argo(
+        args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
+        rollout_namespace=rollout_namespace, reconciled_after=pushed_at,
+    )
+    print(f"  [DONE] values: the 2.2.0 keys dropped, {done}; argo: {detail}", file=sys.stderr)
+    return "" if ok else "Argo and the rollouts did not settle after the 2.2.0 value keys were dropped"
+
+
 def run_preflight(
     deploy: Path,
     moves: list[Move],
@@ -1474,6 +1670,7 @@ def run_preflight(
     checks += exposure_checks(
         deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
     )
+    checks.append(("2.2.0 value keys (values-migrations.yaml)", *check_values_migration(deploy, from_stack, to_stack)))
     checks.append(("cluster reachable", *check_cluster_reachable(kubeconfig)))
     checks.append(("argo apps synced and healthy", *check_argo_apps(kubeconfig, argocd_namespace)))
     checks.append(("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig)))
@@ -2268,6 +2465,10 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     if not all(ok for _name, ok, _detail in exposure):
         blocked = True
 
+    values_section, values_blocked = render_values_section(deploy, from_name, to_name)
+    sections.append(values_section)
+    blocked = blocked or values_blocked
+
     if args.dial:
         previous = deploy / "sizing" / "resolved.yaml"
         sizing_ok, sizing_detail, sizing_blocked = check_locked_sizing(
@@ -2287,9 +2488,35 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     print(text)
     print(f"plan written to {out_path}", file=sys.stderr)
     if blocked:
-        print("dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / sizing sections above", file=sys.stderr)
+        print(
+            "dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / values migration / sizing sections above",
+            file=sys.stderr,
+        )
         return EXIT_BLOCKED
     return EXIT_OK
+
+
+def render_values_section(deploy: Path, from_stack: str, to_stack: str) -> tuple[str, bool]:
+    """(the plan's values-migration section, whether it blocks the plan).
+
+    Lists every hit but the keys already carried: MIGRATE is a key apply writes
+    beside its old one before the retarget, REFUSED needs a person and blocks
+    the plan, and DROPPED is a key the thin charts read nothing in place of.
+    """
+    migration = values_migration.load_map()
+    crosses, why = values_cutover(from_stack, to_stack, migration.since)
+    heading = "## values migration (2.2.0 keys)"
+    if not crosses:
+        return f"{heading}\n\n{why}\n", False
+    hits = [hit for hit in values_migration.scan(deploy, migration) if hit.state != values_migration.DONE]
+    if not hits:
+        return f"{heading}\n\nno 2.2.0 key in values/ or {COMMON_OVERLAY.as_posix()}\n", False
+    lines = "\n".join(hit.line() for hit in hits)
+    note = (
+        f"apply writes each MIGRATE key beside its old one before it moves {TARGET_REVISION_ANNOTATION}, and "
+        "apply --finalise drops the old keys once the soak is over."
+    )
+    return f"{heading}\n\n{note}\n\n{lines}\n", bool(values_migration.refused(hits))
 
 
 # --- preflight -------------------------------------------------------------
@@ -2502,6 +2729,8 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     pins_present = (deploy / "pins.yaml").is_file()
     kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
     kafka_stage = kafka_move.step.stage if kafka_move else None
+    migration = values_migration.load_map()
+    values_move = values_cutover(from_name, to_name, migration.since)[0]
 
     # Read before any stage moves, so a cluster in a state apply cannot move
     # refuses with nothing half done.
@@ -2659,6 +2888,19 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             print(f"  [{'DONE' if ok else 'PENDING'}] finalise {move.step.key}: {detail}", file=sys.stderr)
             metadata_released = metadata_released or (ok and was_held and move.step.key == KAFKA_VERSION_KEY)
 
+        # The 2.2.0 charts read none of the keys this adds, so they ride the stage
+        # commit, ahead of the retarget that hands the overlays to the thin charts.
+        if stage == chart_stage and values_move:
+            emit(
+                "carry the 2.2.0 value keys onto the thin-chart keys beside them in values/ and "
+                f"{COMMON_OVERLAY.as_posix()}, as {values_migration.MAP_FILE.relative_to(REPO_ROOT).as_posix()} maps them"
+            )
+            if not args.dry_run:
+                ok, detail = _expand_values(deploy, migration, resync=retarget is not None)
+                print(f"  values: {detail}", file=sys.stderr)
+                if not ok:
+                    return _stage_failed(stage_index, f"a 2.2.0 value key needs a hand edit: {detail}", stage_moves)
+
         keys = ", ".join(move.step.key for move in stage_moves)
         message = f"chore(upgrade): {to_name} stage {stage_index} -- {keys}"
         emit(f"git -C {deploy} add {' '.join(STAGED_PATHS)} (those present)")
@@ -2703,9 +2945,19 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
 
         if stage == chart_stage:
             ref = args.target_revision or to_name
+            if values_move:
+                emit(
+                    f"git -C {deploy} pull --ff-only, carry the 2.2.0 value keys again from what the 2.2.0 engine "
+                    "wrote since the push, then commit and push what changed"
+                )
             emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
             emit(_wait_line(args, leaving=from_name, reconciled="the retarget"))
             if not args.dry_run and retarget:
+                if values_move:
+                    ok, detail = _recarry_values(deploy, migration, to_name)
+                    print(f"  values: {detail}", file=sys.stderr)
+                    if not ok:
+                        return _stage_failed(stage_index, detail, stage_moves)
                 retargeted_at = change_moment()
                 ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
                 print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
@@ -2719,6 +2971,14 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 print(f"  argo: {detail}", file=sys.stderr)
                 if not ok:
                     return _stage_failed(stage_index, f"Argo and the rollouts did not settle on {retarget}", stage_moves)
+            if values_move:
+                on_target = bool(retarget) or _norm_ref(current_ref) in (_norm_ref(to_name), _norm_ref(ref))
+                failure = _finalise_values(
+                    args, deploy, migration, emit,
+                    names=(from_name, to_name), on_target=on_target, rollout_namespace=rollout_namespace,
+                )
+                if failure:
+                    return _stage_failed(stage_index, failure, stage_moves)
 
         # Argo calls the operator Application Healthy as soon as its Deployment
         # is up, which is well before the new operator has reconciled anything.
@@ -2809,10 +3069,14 @@ def _report_bootstrap_pending(pending: list[str], from_name: str, to_name: str) 
     return EXIT_BLOCKED
 
 
+# The reverse path of a step that declares none: the backup marker guards only one-way steps.
+_ROLLBACK_DEFAULT = "not declared -- dfe-ops upgrade rollback --to <the FROM stack> moves the pin and target_revision back"
+
+
 def _print_rollback(stage_moves: list[Move]) -> None:
     for move in stage_moves:
         note = move.step.rollback or ("none (finalise: " + move.step.finalise + ")" if move.step.finalise else "")
-        print(f"  rollback ({move.step.key}): {note or 'not declared -- restore from the backup marker'}", file=sys.stderr)
+        print(f"  rollback ({move.step.key}): {note or _ROLLBACK_DEFAULT}", file=sys.stderr)
 
 
 # --- rollback ----------------------------------------------------------------
@@ -2860,6 +3124,18 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         reasons = "; ".join(f"{move.step.key}: {reason}" for move, reason in blocked)
         print(
             f"dfe-ops upgrade rollback: REFUSED -- {names} carries no rollback path ({reasons})",
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
+
+    # The charts before `since` cannot render the overlays once the 2.2.0 keys are gone.
+    since = values_migration.load_map().since
+    if VALUES_CONTRACT_KEY in finalised and values_cutover(to_name, from_name, since)[0]:
+        print(
+            f"dfe-ops upgrade rollback: REFUSED -- apply --finalise dropped the 2.2.0 value keys "
+            f"({finalised[VALUES_CONTRACT_KEY]}), and a stack before {since} renders the overlays without them: "
+            "every per-config workload renamed, the fetcher's cursor claim pruned. Revert the deploy repo's "
+            f"'{VALUES_CONTRACT_SUBJECT}' commit first, which also removes its marker line",
             file=sys.stderr,
         )
         return EXIT_BLOCKED
@@ -2941,6 +3217,44 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
             return EXIT_BLOCKED
     print(f"dfe-ops upgrade rollback OK: {from_name} -> {to_name}", file=sys.stderr)
     return EXIT_OK
+
+
+# --- migrate-values ------------------------------------------------------------
+
+
+def cmd_upgrade_migrate_values(args: argparse.Namespace) -> int:
+    """Carry a deploy checkout's 2.2.0 value keys onto the thin-chart keys, or with --check list them.
+
+    Writes each new key beside its old one and never overwrites a key already
+    set, so a second run changes nothing. It commits nothing. --check writes
+    nothing and exits 1 while a key is left to carry or needs a hand edit.
+    """
+    deploy = Path(args.deploy)
+    if not deploy.is_dir():
+        print(f"dfe-ops upgrade migrate-values: {deploy} is not a directory", file=sys.stderr)
+        return EXIT_PREFLIGHT_FAILED
+    migration = values_migration.load_map()
+    hits = (values_migration.scan if args.check else values_migration.expand)(deploy, migration)
+    shown = [hit for hit in hits if hit.state != values_migration.DONE]
+    for hit in shown:
+        print(hit.line())
+    left = values_migration.pending(hits) if args.check else values_migration.refused(hits)
+    carried = [hit for hit in hits if hit.state == values_migration.MIGRATE]
+    if args.check:
+        verdict = f"{len(left)} 2.2.0 value key(s) to carry or edit by hand" if left else "nothing to carry"
+        print(f"dfe-ops upgrade migrate-values --check: {verdict} (map: since {migration.since})", file=sys.stderr)
+    elif left:
+        print(
+            f"dfe-ops upgrade migrate-values: {len(carried)} key(s) written, {len(left)} need a hand edit (REFUSED above)",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"dfe-ops upgrade migrate-values: {len(carried)} key(s) written beside their 2.2.0 keys"
+            + (" -- commit and push them" if carried else ""),
+            file=sys.stderr,
+        )
+    return EXIT_BLOCKED if left else EXIT_OK
 
 
 # --- parser --------------------------------------------------------------------
@@ -3091,6 +3405,18 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     )
     _add_target_revision_arg(rollback)
     rollback.set_defaults(func=cmd_upgrade_rollback)
+
+    migrate = verbs.add_parser(
+        "migrate-values",
+        help="write the thin-chart keys beside a deploy checkout's 2.2.0 value keys (--check: list them)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    migrate.add_argument("--deploy", required=True, help="the dfe-deploy checkout holding values/ and infra/")
+    migrate.add_argument(
+        "--check", action="store_true",
+        help="write nothing; exit 1 while a 2.2.0 key is left to carry or needs a hand edit",
+    )
+    migrate.set_defaults(func=cmd_upgrade_migrate_values)
 
 
 def _add_target_revision_arg(parser: argparse.ArgumentParser) -> None:

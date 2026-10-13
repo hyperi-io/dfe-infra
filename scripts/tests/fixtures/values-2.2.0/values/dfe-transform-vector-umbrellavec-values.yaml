@@ -1,0 +1,16 @@
+deploy:
+  service: dfe-transform-vector
+  instance: umbrellavec
+otelServiceName: dfe-transform-vector-umbrellavec
+component: transform-vector-umbrellavec
+config:
+  dfe_source: umbrellavec
+transformFiles:
+  - name: filebeat.yaml
+    content: "# Project:   dfe-transform-vector\n# File:      pipelines/filebeat/filebeat.yaml\n\nenrichment_tables:\n  timezones:\n    type: file\n    file:\n      path: /etc/dfe-transform-vector/data/timezones.csv\n      encoding:\n        type: csv\n\ntransforms:\n  filebeat:\n    type: remap\n    inputs:\n      - dfe_source\n    source: |\n      . = parse_json!(.message)\n"
+enrichmentTables:
+  - name: timezones.csv
+    content: |
+      abbreviation,name,offset
+      ACDT, Australian Central Daylight Time, +10:30
+      YEKT, Yekaterinburg Time, +05:00

@@ -1,0 +1,5 @@
+{{- /* Gated on the workload being able to carry two pods -- see dfe-common.pdb.
+       A fetcher is pinned at one replica unless a source whose fetch mechanism
+       supports competing consumers opts KEDA in, so this usually renders
+       nothing. */ -}}
+{{- include "dfe-common.pdb" . }}
