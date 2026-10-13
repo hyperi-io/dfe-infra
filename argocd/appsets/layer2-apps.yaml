@@ -99,16 +99,16 @@ spec:
           # Application on its current spec.
           targetRevision: |-
             {{- $pins := dict
-                "culvert" "sha256:32b71c5730a29721ad34907148c39949bc766cf3ce46e775acc8bd57587ac92c"
-                "dfe-archiver" "sha256:1e21071232b8c13b4d32c5a1fed35a15120f13b866267bccef825af9b5e9eaf2"
-                "dfe-engine" "sha256:cfb440e2a3296ed0a7d5248d3c1561efbc0f94b25aaa3b76b4d3908131216667"
-                "dfe-fetcher" "sha256:c9de58b12d52a4c589a45fd44e2acfabbb406521127531646da12f20a52563e2"
+                "culvert" "sha256:6a901c5830e78f78b61685d647f2f6335eded183e141b9bcdc4869689a85e43d"
+                "dfe-archiver" "sha256:c7fb41b2254ede00caefd03c26d5d870f647cbeb6cab7201f13b2129f10c028a"
+                "dfe-engine" "sha256:254fba4e1bb74b32cf2ab8bd9da034798c9f4afc1a02d57dd11945452c761f57"
+                "dfe-fetcher" "sha256:28fda0f5f05887e41e8a3187e129a02910a8398f7d36e031f54eaa1526fb0997"
                 "dfe-loader" "sha256:b5b7c062e2dd49d8fe618a174775d9063b6fb7c8f212985a3348274987e1ea45"
                 "dfe-receiver" "sha256:d8cc2160d489202f7f79bf78b2bb56c0b032d612f8e771a4dc3d3200eee32e33"
                 "dfe-transform-elastic" "sha256:fe239a266e628c5befb388b86caf35e65e66ff0aad49c7aabf99a86e608603cc"
-                "dfe-transform-vector" "sha256:9a8908549957292781e347af8313f5c1784fad14420d82d698a48b4664b6b857"
+                "dfe-transform-vector" "sha256:6b08d7409bf31ed44cf8c99dc20195bb67a531b51cd0b223ec41233334f5473b"
                 "dfe-transform-vrl" "sha256:3677109b2690c4918ddfe26b7b6606f7f3ebd996f8a0560160f117b101a3b32e"
-                "dfe-ui" "sha256:9087daf0fdec6d3ccedb972e71981a659730d66222506a4e0b820d11bc0d7520"
+                "dfe-ui" "sha256:2ab1d759689b4c06f8308988ebc7bff721fd8a8319286dfe399d1305a68715e5"
                 "hyperdx" "sha256:95a0ab3a12b56360d43cd22099d0ad7f19ec7a6065408459ce6f6a12a2f4cc00"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
