@@ -214,11 +214,7 @@ and DNS specifics: [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
 
 ## The ingest edge
 
-Data ingest is a second door with its own model and by default skips the
-Gateway entirely -- `dfe-receiver` renders its own LoadBalancers. A default
-deploy is internet-facing on the ingest ports with an EMPTY source-range
-allow-list and the receiver's own auth off. See
-[INGEST-EDGE.md](INGEST-EDGE.md).
+Data ingest is a second door with its own model, the ingest exposure group `exposure.groups.ingest`. On a cloud the door is the receiver's own load balancers, which render only while `allow` names the senders, so a default deploy has no public ingest. On-prem the door is the gateway route on `receiver.{domain}`, HTTP `/ingest` only. The receiver's own `server.auth.mode` defaults to `none` on either door. See [INGEST-EDGE.md](INGEST-EDGE.md).
 
 ## The links page
 

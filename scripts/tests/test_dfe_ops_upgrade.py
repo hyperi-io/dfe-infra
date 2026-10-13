@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 from test_clickhouse_replica_spread import keeper_pod_labels as ch_keeper_labels
 from test_clickhouse_replica_spread import render as ch_render
 from test_clickhouse_replica_spread import server_pod_labels as ch_server_labels
@@ -51,6 +52,8 @@ import dfe_ops_upgrade as u  # noqa: E402
 
 # The real wait, for the tests that drive apply through it rather than past it.
 REAL_WAIT_FOR_ARGO = u.wait_for_argo
+# The real web check, for the preflight tests that drive it rather than stub it.
+REAL_CHECK_WEB_PLANE = u.check_web_plane
 
 # ---------------------------------------------------------------------------
 # Fixture data -- small, self-contained versions.yaml / upgrade-order.yaml /
@@ -1075,7 +1078,7 @@ class _Args:
 
 def _plan_args(**overrides: object) -> _Args:
     """The plan _Args shape every test shares, with per-test overrides."""
-    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd", out=None)
+    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd", out=None, cloud=None)
     base.update(overrides)
     return _Args(**base)
 
@@ -1317,7 +1320,7 @@ def _apply_args(**overrides: object) -> _Args:
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None,
+        from_stack=None, target_revision=None, namespace=None, cloud=None,
     )
     base.update(overrides)
     return _Args(**base)
@@ -4012,7 +4015,7 @@ def test_an_upgrade_from_220_without_an_ingest_block_is_refused_naming_the_keys(
 @pytest.mark.parametrize(("overlay", "keys"), INGEST_BLOCKS)
 def test_an_explicit_ingest_block_passes_an_upgrade_from_220(deploy: Path, overlay: str, keys: list[str]) -> None:
     _write_common(deploy, overlay)
-    assert u.ingest_group_keys(overlay) == keys
+    assert u.yaml_subset.keys_under(overlay, u.INGEST_GROUP_PATH) == keys
     ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.8")
     assert ok is True
     assert detail == f"infra/common.yaml sets exposure.groups.ingest: {', '.join(keys)}"
@@ -4039,14 +4042,14 @@ def test_the_ingest_group_stack_is_a_certified_stack_above_220(deploy: Path) -> 
 
 
 def _ingest_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, pin: str) -> None:
-    """FROM `pin` in a versions.yaml carrying the stacks either side of the ingest group, every cluster check passing."""
+    """FROM `pin` in a versions.yaml carrying the stacks either side of the ingest group, every other check passing."""
     versions = tmp_path / "ingest-versions.yaml"
     versions.write_text(INGEST_VERSIONS_YAML, encoding="utf-8")
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions)
     (deploy / "pins.yaml").write_text(PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8")
-    for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
-                 "check_clickhouse_merges", "check_node_capacity", "check_backup_marker"):
+    for name in ("check_deploy_clean", "check_web_plane", "check_cluster_reachable", "check_argo_apps",
+                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_node_capacity", "check_backup_marker"):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
 
 
@@ -4091,3 +4094,402 @@ def test_apply_refuses_an_upgrade_from_220_without_an_ingest_block_and_moves_not
     assert "[FAIL] ingest door (exposure.groups.ingest)" in captured.out
     assert "REFUSED -- 1 preflight check(s) failed" in captured.err
     assert (deploy / "pins.yaml").read_text(encoding="utf-8") == pins
+
+
+# ---------------------------------------------------------------------------
+# The values-file walk both ingest readers share
+# ---------------------------------------------------------------------------
+
+
+def test_the_walk_reads_a_values_file_the_subset_parser_refuses() -> None:
+    text = (
+        "listeners:\n  - name: http\n    port: 8080\n"
+        'exposure:\n  groups:\n    ingest:\n      door: "gateway"  # quoted\n      allow:\n        - 10.0.0.0/8\n'
+        "  door: tunnel # a comment\n"
+    )
+    assert u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "door")) == "gateway"
+    assert u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "allow")) is None
+    assert u.yaml_subset.value_at(text, ("exposure", "door")) == "tunnel"
+    assert u.yaml_subset.keys_under(text, ("exposure", "groups", "ingest")) == ["door", "allow"]
+    assert u.yaml_subset.keys_under(text, ("listeners",)) == ["port"]
+    with pytest.raises(u.yaml_subset.YamlSubsetError):
+        u.yaml_subset.parse(text)
+
+
+# ---------------------------------------------------------------------------
+# The web plane -- an upgrade across the web fence states who reaches the UIs
+# ---------------------------------------------------------------------------
+
+INTERNET_FACING = ("aws", "gcp", "azure")
+ON_PREM = ("local", "local-dfe", "rancher")
+CLOUD_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/cloud}"
+
+# What a deploy repo carries when it states neither web group: other facts, other groups, a deny list alone.
+NO_WEB_BLOCK = (
+    "",
+    "clickhouse:\n  mode: single\n",
+    "exposure:\n  groups:\n    ingest:\n      allow: []\n    admin:\n      enabled: false\n",
+    "exposure:\n  groups:\n    console:\n      deny:\n        - 192.0.2.0/24\n",
+    "exposure:\n  groups:\n    console:\n      # allow: []\n    api: {}\n",
+    "ui:\n  allowed_cidrs: 10.0.0.0/8\n",
+)
+
+# Both web groups stated, in each shape and file a deploy repo writes them, and what the check reports.
+WEB_BLOCKS = (
+    (
+        "common.yaml",
+        "exposure:\n  groups:\n    console:\n      allow: []\n    api:\n      allow: []\n",
+        "exposure.groups.console: allow; exposure.groups.api: allow",
+    ),
+    (
+        "common.yaml",
+        "exposure:\n  groups:\n    console:\n      allow:\n        - 203.0.113.0/24\n      deny: []\n"
+        "    api:\n      enabled: false  # no CLI from outside\n",
+        "exposure.groups.console: allow; exposure.groups.api: enabled",
+    ),
+    (
+        "common.yaml",
+        "exposure:\n  groups:\n    console: {allow: [198.51.100.0/24]}\n    api: {allowPublic: true}\n",
+        "exposure.groups.console: allow; exposure.groups.api: allowPublic",
+    ),
+    (
+        "envoy-gateway-config.yaml",
+        "exposure:\n  groups:\n    console:\n      allow: [0.0.0.0/0]\n    api:\n      allow: []\n",
+        "exposure.groups.console: allow; exposure.groups.api: allow",
+    ),
+)
+
+# An ingest door alone, then with both web groups, for the verbs that run both checks.
+INGEST_ONLY = "exposure:\n  groups:\n    ingest:\n      door: tunnel\n"
+INGEST_AND_WEB = INGEST_ONLY + "    console:\n      allow: [203.0.113.0/24]\n    api:\n      allow: []\n"
+
+
+def _write_infra(deploy: Path, name: str, text: str) -> None:
+    (deploy / "infra").mkdir(exist_ok=True)
+    (deploy / "infra" / name).write_text(text, encoding="utf-8")
+
+
+def _web(
+    deploy: Path, cloud: str | None = "aws", from_stack: str = "2.2.0", to_stack: str = "2.2.1-rc.8"
+) -> tuple[bool, str]:
+    return u.check_web_plane(deploy, from_stack, to_stack, cloud=cloud, kubeconfig="kc", argocd_namespace="cd")
+
+
+def _no_cluster(*_a: object, **_k: object) -> str:
+    raise AssertionError("the web check read the cluster secret with nothing left to decide")
+
+
+@pytest.mark.parametrize("cloud", INTERNET_FACING)
+def test_an_upgrade_from_220_on_a_cloud_without_web_groups_is_refused_naming_them(deploy: Path, cloud: str) -> None:
+    ok, detail = _web(deploy, cloud)
+    assert ok is False
+    assert detail.startswith(
+        "2.2.0 predates 2.2.1-rc.6, from which an internet-facing gateway answers 403 on every web route whose "
+        "allow list is empty. "
+    )
+    assert (
+        f"internet-facing on {cloud} (argocd/values/edge-{cloud}.yaml sets envoyGateway.service.internetFacing: true)"
+    ) in detail
+    assert (
+        "neither infra/common.yaml nor infra/envoy-gateway-config.yaml sets exposure.groups.console or "
+        "exposure.groups.api."
+    ) in detail
+    assert "Under 2.2.0 the gateway fenced no web route by address." in detail
+    assert (
+        "Under 2.2.1-rc.8 these answer 403 to every address from the first sync: dfe-ui, HyperDX and the engine's "
+        "browser routes (exposure.groups.console); the engine's CLI routes and /openapi.json (exposure.groups.api)."
+    ) in detail
+    assert (
+        "Set exposure.groups.<group>.allow to the CIDRs that may reach them, for console and api, in infra/common.yaml."
+    ) in detail
+    assert detail.endswith("See docs/deployment/upgrades.md#from-220.")
+
+
+@pytest.mark.parametrize("overlay", NO_WEB_BLOCK)
+def test_a_deploy_repo_that_states_neither_web_group_is_refused(deploy: Path, overlay: str) -> None:
+    _write_common(deploy, overlay)
+    ok, detail = _web(deploy)
+    assert ok is False, detail
+    assert "sets exposure.groups.console or exposure.groups.api." in detail
+
+
+@pytest.mark.parametrize("cloud", ON_PREM)
+def test_an_on_prem_gateway_is_not_internet_facing_so_the_upgrade_passes(deploy: Path, cloud: str) -> None:
+    assert _web(deploy, cloud) == (
+        True, f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing"
+    )
+
+
+@pytest.mark.parametrize("cloud", [*INTERNET_FACING, None])
+@pytest.mark.parametrize(("name", "overlay", "stated"), WEB_BLOCKS)
+def test_web_groups_the_deploy_repo_states_pass_without_reading_the_cloud(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, name: str, overlay: str, stated: str, cloud: str | None
+) -> None:
+    monkeypatch.setattr(u, "read_cloud", _no_cluster)
+    _write_infra(deploy, name, overlay)
+    assert _web(deploy, cloud) == (True, f"the deploy repo sets {stated}")
+
+
+def test_one_web_group_left_unstated_is_refused_by_name(deploy: Path) -> None:
+    _write_common(deploy, "exposure:\n  groups:\n    console:\n      allow: [10.0.0.0/8]\n")
+    ok, detail = _web(deploy)
+    assert ok is False
+    assert "nor infra/envoy-gateway-config.yaml sets exposure.groups.api." in detail
+    assert "(exposure.groups.console)" not in detail
+    assert "for api, in infra/common.yaml" in detail
+
+
+def test_a_deploy_repo_that_makes_the_gateway_internal_passes(deploy: Path) -> None:
+    _write_infra(deploy, "envoy-gateway-config.yaml", "envoyGateway:\n  service:\n    internetFacing: false\n")
+    assert _web(deploy, "aws") == (
+        True, "the gateway is not internet-facing on aws, so an empty web allow list fences nothing"
+    )
+
+
+@pytest.mark.parametrize("from_stack", ["2.2.1-rc.6", "2.2.1-rc.7", "2.2.1-rc.8", "2.2.1"])
+def test_an_upgrade_from_a_fenced_stack_passes_without_web_groups(deploy: Path, from_stack: str) -> None:
+    assert _web(deploy, from_stack=from_stack) == (
+        True, f"{from_stack} is at or after 2.2.1-rc.6: the web routes are already fenced"
+    )
+
+
+@pytest.mark.parametrize("to_stack", ["2.2.0", "2.2.1-rc.5"])
+def test_an_upgrade_that_stops_short_of_the_web_fence_passes(deploy: Path, to_stack: str) -> None:
+    assert _web(deploy, to_stack=to_stack) == (True, f"{to_stack} predates 2.2.1-rc.6, so the web routes stay unfenced")
+
+
+def test_an_upgrade_to_the_fence_stack_needs_ui_allowed_cidrs(deploy: Path) -> None:
+    _write_common(deploy, WEB_BLOCKS[0][1])
+    ok, detail = _web(deploy, to_stack="2.2.1-rc.6")
+    assert ok is False
+    assert "neither infra/common.yaml nor infra/envoy-gateway-config.yaml sets ui.allowed_cidrs." in detail
+    assert "dfe-ui, HyperDX and the engine API (ui.allowed_cidrs)" in detail
+    assert (
+        "Set ui.allowed_cidrs to the CIDRs that may reach them in infra/common.yaml; from 2.2.1-rc.7 the list is "
+        "exposure.groups.<group>.allow."
+    ) in detail
+
+    _write_common(deploy, 'ui:\n  allowed_cidrs: ""\n')
+    assert _web(deploy, to_stack="2.2.1-rc.6") == (True, "the deploy repo sets ui.allowed_cidrs")
+
+
+def test_the_cloud_comes_from_the_cluster_secret_when_not_given(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+    seen: list[tuple[str | None, str]] = []
+
+    def read(kubeconfig: str | None, namespace: str) -> str:
+        seen.append((kubeconfig, namespace))
+        return "gcp"
+
+    monkeypatch.setattr(u, "read_cloud", read)
+    ok, detail = _web(deploy, None)
+    assert ok is False
+    assert "internet-facing on gcp (argocd/values/edge-gcp.yaml" in detail
+    assert seen == [("kc", "cd")]
+
+
+def test_read_cloud_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(monkeypatch, _proc(0, stdout="azure\n"))
+    assert u.read_cloud("kc", "argocd") == "azure"
+    assert calls[0][-2:] == ["-o", CLOUD_JSONPATH]
+    assert calls[0][calls[0].index("-n") + 1] == "argocd"
+
+
+@pytest.mark.parametrize(
+    ("secret", "why"),
+    [
+        (u.UpgradeError("cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused"),
+         "cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused"),
+        ("", "secret/dfe-cluster's dfe.hyperi.io/cloud is empty"),
+    ],
+)
+def test_a_cloud_nothing_names_is_refused_saying_how_to_name_it(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, secret: object, why: str
+) -> None:
+    def read(*_a: object) -> str:
+        if isinstance(secret, Exception):
+            raise secret
+        return str(secret)
+
+    monkeypatch.setattr(u, "read_cloud", read)
+    ok, detail = _web(deploy, None)
+    assert ok is False
+    assert (
+        "Whether this gateway is internet-facing depends on the deployment's cloud, and "
+        f"{why}. Pass --cloud, or set exposure.groups.console and exposure.groups.api in infra/common.yaml."
+    ) in detail
+
+
+def test_a_cloud_name_that_is_not_one_is_refused(deploy: Path) -> None:
+    ok, detail = _web(deploy, "../../etc")
+    assert ok is False
+    assert detail == "the cloud '../../etc' is not a cloud name, so no argocd/values file can be read for it"
+
+
+@pytest.mark.parametrize(
+    ("cloud", "facing"),
+    [("aws", "true"), ("gcp", "true"), ("azure", "true"), ("local", "false"), ("local-dfe", "false"),
+     ("rancher", "false")],
+)
+def test_the_gateway_values_say_which_clouds_are_internet_facing(cloud: str, facing: str) -> None:
+    assert u._layered(u.gateway_values(cloud), u.INTERNET_FACING_PATH)[0] == facing
+
+
+def test_the_web_fence_stacks_are_certified_stacks_above_220() -> None:
+    stacks = u.load_versions_root()["stacks"]
+    assert {"2.2.0", u.WEB_FENCE_STACK, u.WEB_GROUP_STACK} <= set(stacks)
+    semver_key = u._dfe_stack().semver_key
+    assert semver_key("2.2.0") < semver_key(u.WEB_FENCE_STACK) < semver_key(u.WEB_GROUP_STACK)
+
+
+def test_the_gateway_layers_are_the_ones_layer2_edge_renders_it_with() -> None:
+    gateway = (REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml").read_text(encoding="utf-8").split("\n---\n")[0]
+    app = re.search(r"- app: (\S+)", gateway)
+    assert app is not None
+    assert u.GATEWAY_OVERLAY.name == f"{app[1]}.yaml"
+    value_files = gateway[gateway.index("valueFiles:"):]
+    layers = (
+        "argocd/values/common.yaml",
+        'argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml',
+        "argocd/values/edge-",
+        "argocd/values/profile-",
+        f"$values/{u.COMMON_OVERLAY.as_posix()}",
+        f"$values/{u.GATEWAY_OVERLAY.parent.as_posix()}/{{{{ .app }}}}.yaml",
+    )
+    positions = [value_files.index(layer) for layer in layers]
+    assert positions == sorted(positions)
+    edge_line = next(line for line in value_files.splitlines() if 'eq $c "' in line)
+    assert set(re.findall(r'eq \$c "([\w-]+)"', edge_line)) == set(u.ONPREM_CLOUDS)
+
+
+def test_no_profile_file_sets_a_key_the_web_check_reads() -> None:
+    profiles = sorted(u.ARGO_VALUES.glob("profile-*.yaml"))
+    assert profiles
+    for path in profiles:
+        text = path.read_text(encoding="utf-8")
+        assert u.yaml_subset.value_at(text, u.INTERNET_FACING_PATH) is None, path.name
+        for group in u.WEB_GROUPS:
+            assert u.yaml_subset.keys_under(text, ("exposure", "groups", group)) == [], path.name
+
+
+def test_no_layer_below_the_deploy_repo_lists_a_web_group() -> None:
+    """A group the check reads as enabled is closed only while nothing below the deploy repo names a sender."""
+    for path in [u.GATEWAY_CHART_VALUES, *sorted(u.ARGO_VALUES.glob("*.yaml"))]:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        groups = (doc.get("exposure") or {}).get("groups") or {}
+        for group in u.WEB_GROUPS:
+            assert (groups.get(group) or {}).get("allow") in (None, []), path.name
+
+
+def _web_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, overlay: str) -> None:
+    """FROM 2.2.0 with `overlay` as infra/common.yaml, the real web check and every other check passing."""
+    _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
+    monkeypatch.setattr(u, "check_web_plane", REAL_CHECK_WEB_PLANE)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    _write_common(deploy, overlay)
+
+
+@pytest.mark.parametrize("cloud", [*INTERNET_FACING, *ON_PREM])
+def test_plan_reports_a_closed_web_plane_as_blocked_on_a_cloud_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture,
+    cloud: str,
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud))
+
+    captured = capsys.readouterr()
+    assert (
+        "## exposure checks\n\n[PASS] ingest door (exposure.groups.ingest): infra/common.yaml sets "
+        "exposure.groups.ingest: door\n"
+    ) in captured.out
+    if cloud in INTERNET_FACING:
+        assert rc == u.EXIT_BLOCKED, captured.out
+        assert "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6" in captured.out
+        assert "dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / sizing sections above" in captured.err
+    else:
+        assert rc == u.EXIT_OK, captured.out
+        assert (
+            f"[PASS] web plane (exposure.groups console and api): the gateway is not internet-facing on {cloud}"
+        ) in captured.out
+
+
+@pytest.mark.parametrize("cloud", INTERNET_FACING)
+def test_plan_passes_once_the_deploy_repo_states_the_web_groups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture,
+    cloud: str,
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_AND_WEB)
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK, out
+    assert (
+        "[PASS] web plane (exposure.groups console and api): the deploy repo sets exposure.groups.console: allow; "
+        "exposure.groups.api: allow"
+    ) in out
+
+
+def test_plan_reports_an_unstated_ingest_door_as_blocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, "")
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="local"))
+    captured = capsys.readouterr()
+    assert rc == u.EXIT_BLOCKED, captured.out
+    assert "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in captured.out
+    assert "BLOCKED -- see compat-check / exposure / sizing sections above" in captured.err
+
+
+def test_plan_without_cloud_reads_it_from_the_cluster_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="aws\n"))
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", kubeconfig="kc", argocd_namespace="cd"))
+
+    assert rc == u.EXIT_BLOCKED
+    assert "internet-facing on aws" in capsys.readouterr().out
+    assert len(calls) == 1
+    assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
+    assert calls[0][calls[0].index("-n") + 1] == "cd"
+    assert calls[0][-1] == CLOUD_JSONPATH
+
+
+def test_preflight_refuses_a_closed_web_plane_until_the_deploy_repo_states_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_BLOCKED, out
+    assert "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6" in out
+
+    _write_common(deploy, INGEST_AND_WEB)
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK, out
+    assert "[PASS] web plane (exposure.groups console and api): the deploy repo sets" in out
+
+
+def test_apply_refuses_a_closed_web_plane_and_moves_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+    pins = (deploy / "pins.yaml").read_text(encoding="utf-8")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False, cloud="gcp"))
+
+    captured = capsys.readouterr()
+    assert rc == u.EXIT_BLOCKED
+    assert "[FAIL] web plane (exposure.groups console and api)" in captured.out
+    assert "REFUSED -- 1 preflight check(s) failed" in captured.err
+    assert (deploy / "pins.yaml").read_text(encoding="utf-8") == pins
+
+
+@pytest.mark.parametrize("verb", ["plan", "preflight", "apply"])
+def test_the_verbs_that_run_the_web_check_take_cloud(verb: str) -> None:
+    parser = argparse.ArgumentParser()
+    u.add_upgrade_subparser(parser.add_subparsers())
+    assert parser.parse_args(["upgrade", verb, "--deploy", "d", "--cloud", "gcp"]).cloud == "gcp"
+    assert parser.parse_args(["upgrade", verb, "--deploy", "d"]).cloud is None
