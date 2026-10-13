@@ -50,6 +50,35 @@ operator is re-asserting a default, not diverging from the chart); diff the
 object first, and never force through a field the operator computes on its
 own, such as a broker-assigned identifier.
 
+## From 2.2.0
+
+Below 2.2.1-rc.7 the receiver's door is `exposure.mode`. From 2.2.1-rc.7 it is the ingest exposure group, `exposure.groups.ingest` ([INGEST-EDGE.md](../INGEST-EDGE.md)). A deploy repo that sets `exposure.mode` or `exposure.public.loadBalancerSourceRanges` fails the render, which names the replacement. One that sets neither renders cleanly and takes the new cloud default, which closes or moves the door:
+
+| Cloud | Door below 2.2.1-rc.7 | Default door from 2.2.1-rc.7 |
+|---|---|---|
+| `local-dfe`, or any whose values set no `exposure.mode` | `public`: a LoadBalancer open to every address on the receiver's public ports | `gateway`: HTTP `/ingest` on `receiver.{domain}`, nothing else |
+| `aws`, `gcp`, `azure` | `vpn`: ClusterIP, reached through the tunnel | `loadbalancer` with an empty `allow`: no load balancer, and no NetworkPolicy admitting the tunnel |
+| `local` | `internal`: the gateway route | `gateway`: the same route |
+
+`dfe-ops upgrade preflight`, and so `apply`, refuses an upgrade from below 2.2.1-rc.7 to 2.2.1-rc.7 or later until the deploy repo's `infra/common.yaml` sets `exposure.groups.ingest`. Any explicit block passes, `allow: []` included, so a closed door is a decision rather than a default.
+
+To keep an L4 door, set `door: loadbalancer` and name the senders:
+
+```yaml
+exposure:
+  groups:
+    ingest:
+      door: loadbalancer
+      allow:
+        - 203.0.113.0/24
+```
+
+`allow` is each load balancer's `loadBalancerSourceRanges`. A `/0` admits every address of its family, as the 2.2.0 default did, and renders with the Service marked `dfe.hyperi.io/ingest-fence: allow-all`. The allow list is not authentication: set the receiver's `server.auth.mode` as well. To keep the address senders already post to, pin it as `exposure.public.loadBalancerIP`, or as the cluster secret's `dfe.hyperi.io/receiver_address`, before the upgrade.
+
+To keep the tunnel, set `door: tunnel`.
+
+On-prem, `door: gateway` carries HTTP `/ingest` on `receiver.{domain}` and nothing else. A syslog, lumberjack, OTLP gRPC or other non-HTTP listener marked `exposed` fails the render on this door. Senders on those protocols need `door: loadbalancer`, or a dedicated Gateway listener with its own TCPRoute or UDPRoute.
+
 ## dfe-ops upgrade
 
 `dfe-ops upgrade <verb> --deploy <dfe-deploy checkout> [--to <stack>]` drives a
@@ -72,7 +101,7 @@ The bundled in-cluster deploy repo is seeded without a `pins.yaml`. Against a de
   LOCKED field moving without `--migrate` blocks the plan. Exit 0 clean, 1
   blocked (compat-check failed, or an unmigrated locked change), 2 the
   deploy repo or stack name do not resolve.
-- `preflight` is the gate `apply` will not run without: the deploy repo is clean, the cluster answers, every Argo Application is Synced and Healthy, no KafkaRebalance is running, ClickHouse carries no merge past `--clickhouse-merge-threshold`, all ten Strimzi CRDs store `v1` only (checked only when the plan crosses the conversion; a CRD kubectl cannot read fails), the on-prem node capacity holds the new sizing (`check_node_capacity.py`), and a backup marker exists at `--backup-marker` when the plan carries a one-way step. Each check prints `PASS`/`FAIL` with the evidence line that decided it.
+- `preflight` is the gate `apply` will not run without: the deploy repo is clean, its `infra/common.yaml` sets `exposure.groups.ingest` when the upgrade crosses 2.2.1-rc.7 ([From 2.2.0](#from-220)), the cluster answers, every Argo Application is Synced and Healthy, no KafkaRebalance is running, ClickHouse carries no merge past `--clickhouse-merge-threshold`, all ten Strimzi CRDs store `v1` only (checked only when the plan crosses the conversion; a CRD kubectl cannot read fails), the on-prem node capacity holds the new sizing (`check_node_capacity.py`), and a backup marker exists at `--backup-marker` when the plan carries a one-way step. Each check prints `PASS`/`FAIL` with the evidence line that decided it.
 - `apply` runs preflight, then reads the cluster secret and the Kafka CRs and refuses before anything moves if either is in a state it cannot move. It then walks the plan stage by stage: bumps `pins.yaml`'s `base.dfe-infra` via a surgical field edit, re-runs the resolver with `--migrate` when `--dial` is given and copies its `sizing/` output over `<deploy>/sizing/`, commits the stage (`chore(upgrade): <stack> stage <n> -- <keys>`), pushes only with `--push`, and waits for Argo and then for every Deployment and StatefulSet in the DFE namespace to finish rolling out, bounded by `--timeout`. A rollout is finished on the conditions `kubectl rollout status` waits on, because an Application can read Healthy while its Deployment still rolls; a timeout names each rollout still running. After a push that carried a commit, and after a retarget, every Application must also have a `status.reconciledAt` later than the moment just before that change, because until Argo compares an Application against it again the Synced and Healthy it reports are from before. Argo does that on its own `timeout.reconciliation` cycle (bootstrap sets 300s) unless a change to the Application's spec triggers it sooner, so a pushed stage can wait that long; a timeout names each Application not yet reconciled. An Application made only of pinned Helm chart sources, which Argo last compared against its current spec (`status.sync.comparedTo`), is exempt, because neither change can move it without changing that spec. The namespace is `--namespace`, else the cluster secret's `dfe.hyperi.io/dfe_namespace`, and a secret naming none refuses the run before anything moves. The first stage moving an Argo-managed component writes the Kafka holds and moves `target_revision`, as [In place from Strimzi 0.51](#in-place-from-strimzi-051) describes; a secret tracking a branch is left alone, one pinned to a commit needs `--target-revision <ref>`, and a retarget refuses without `--push`. After a Strimzi operator bump apply waits on every Kafka CR's `status.operatorLastSuccessfulVersion`, because the CR's own `Ready` condition stays True and stale across the lift. A `before` note with no program needs a confirmed "I ran this by hand". Confirms before each stage unless `--yes`; `--stop-before <stage-key>` halts before a named stage. A reached `finalise` note stays pending unless `--finalise` is given, which asks whether the soak is over, runs the step's finalise program and writes `upgrades/<from>-to-<to>.finalised`, the marker `rollback` reads. `--from <stack>` names the FROM stack once `pins.yaml` already names the target, for a finalise after the soak or a resumed run. `--dry-run` prints every command and touches nothing.
 - `rollback --to <stack>` is the reverse plan. It refuses by name a step carrying `rollback: none` with no `finalise`, or a `finalise`-bearing step whose marker exists; with no marker yet the step reverses like any other. A rollback that moves `services.kafka-version` also reads every live Kafka CR and refuses when `status.kafkaMetadataVersion` is above the target's Kafka line, marker or not, which is what an unpinned metadata version leaves behind. It moves `target_revision` back the same way `apply` moves it forward, and needs `--push` to. `--skip-cluster-check` moves the pin alone, reading nothing.
 
