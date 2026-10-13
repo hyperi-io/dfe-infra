@@ -474,6 +474,45 @@ def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: in
     ]
 
 
+def expected_carrying(engine_repo: Path, corpus_file: Path, per_module: int,
+                      modules: tuple[str, ...], dotted: str) -> int:
+    """How many of the lines a case feeds carry *dotted* in the corpus's own expected output.
+
+    Each corpus log ships its expected events beside it, one per non-blank line,
+    and dfe-engine's wrapper reads every file from its first line, so the n-th
+    line a file contributes is graded against that file's n-th event. A line
+    whose event has no such field is one the transform is not asked to set it on.
+
+    Args:
+        engine_repo: The dfe-engine checkout holding the corpus wrapper.
+        corpus_file: The corpus archive.
+        per_module: Lines read per module, as the feed read them.
+        modules: The modules the feed was narrowed to; empty is every one.
+        dotted: The field, as a dotted path into the expected event.
+
+    Returns:
+        The count of fed lines whose expected event carries the field.
+    """
+    sys.path.insert(0, str(engine_repo))
+    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
+
+    wanted = modules or corpus.MODULES
+    items = corpus.samples(corpus_file, modules=wanted, limit=per_module)
+    expected = corpus.goldens(corpus_file, modules=wanted)
+    seen: dict[str, int] = {}
+    carrying = 0
+    for item in items:
+        ordinal = seen.get(item.name, 0)
+        seen[item.name] = ordinal + 1
+        events = expected.get(f"{item.name}-expected.json", {}).get("expected") or []
+        node: object = events[ordinal] if ordinal < len(events) else None
+        for key in dotted.split("."):
+            node = node.get(key) if isinstance(node, dict) else None
+        if node is not None:
+            carrying += 1
+    return carrying
+
+
 def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
                 run: str, per_module: int, modules: tuple[str, ...] = (),
                 kind: str = CORPUS) -> int:

@@ -302,10 +302,8 @@ class FakeCorpus:
         return []
 
 
-@pytest.fixture
-def corpus_module(monkeypatch):
-    """``tests.e2e.filebeat_corpus`` as post_corpus imports it off the engine repo."""
-    fake = FakeCorpus()
+def _as_engine_wrapper(monkeypatch, fake):
+    """Install *fake* as ``tests.e2e.filebeat_corpus``, which steps imports off the engine repo."""
     package = types.ModuleType("tests")
     package.__path__ = []
     e2e = types.ModuleType("tests.e2e")
@@ -313,9 +311,15 @@ def corpus_module(monkeypatch):
     e2e.filebeat_corpus = fake
     monkeypatch.setitem(sys.modules, "tests", package)
     monkeypatch.setitem(sys.modules, "tests.e2e", e2e)
-    # post_corpus prepends the engine repo, and the copy is what gets mutated.
+    # steps prepends the engine repo, and the copy is what gets mutated.
     monkeypatch.setattr(sys, "path", list(sys.path))
     return fake
+
+
+@pytest.fixture
+def corpus_module(monkeypatch):
+    """``tests.e2e.filebeat_corpus`` as post_corpus imports it off the engine repo."""
+    return _as_engine_wrapper(monkeypatch, FakeCorpus())
 
 
 @pytest.fixture
@@ -814,10 +818,11 @@ class TestTheCorpusFilter:
 
 @dataclass(frozen=True)
 class FakeSample:
-    """The two fields of the engine wrapper's Sample the envelope reads."""
+    """The fields of the engine wrapper's Sample the envelope and the expected count read."""
 
     module: str
     line: str
+    name: str = ""
 
 
 class ShippingCorpus:
@@ -830,8 +835,25 @@ class ShippingCorpus:
         "cisco_umbrella": ['"2026-01-01 00:00:00","a","b","c","d","e","f"'],
     }
 
+    def __init__(self) -> None:
+        #: The source.ip each line's expected event carries, None where the event has none.
+        self.expected_ip: dict[str, list[str | None]] = {}
+        for module, lines in self.LINES.items():
+            self.expected_ip[module] = [f"192.0.2.{n}" for n in range(1, len(lines) + 1)]
+
     def samples(self, _path, *, modules, limit):
-        return [FakeSample(module, line) for module in modules for line in self.LINES[module][:limit]]
+        return [FakeSample(module, line, f"test-{module}.log")
+                for module in modules for line in self.LINES[module][:limit]]
+
+    def goldens(self, _path, *, modules):
+        """Each module's expected events, keyed by the log's name the way the wrapper keys them."""
+        return {
+            f"test-{module}.log-expected.json": {
+                "expected": [{"source": {"ip": ip}} if ip else {"message": "no address"}
+                             for ip in self.expected_ip[module]],
+            }
+            for module in modules
+        }
 
     def wrap_all(self, items, source="filebeat", run=""):
         return [
@@ -859,16 +881,53 @@ CORPUS_PATHS = (
 
 @pytest.fixture
 def shipping_corpus(monkeypatch):
-    fake = ShippingCorpus()
-    package = types.ModuleType("tests")
-    package.__path__ = []
-    e2e = types.ModuleType("tests.e2e")
-    e2e.__path__ = []
-    e2e.filebeat_corpus = fake
-    monkeypatch.setitem(sys.modules, "tests", package)
-    monkeypatch.setitem(sys.modules, "tests.e2e", e2e)
-    monkeypatch.setattr(sys, "path", list(sys.path))
-    return fake
+    return _as_engine_wrapper(monkeypatch, ShippingCorpus())
+
+
+class TwoLogCorpus:
+    """One module read across two logs, the way the wrapper hands them over: file by file."""
+
+    LINES = (("test-a.log", "a0"), ("test-a.log", "a1"), ("test-b.log", "b0"))
+
+    def __init__(self) -> None:
+        self.expected: dict[str, dict] = {
+            "test-a.log-expected.json": {
+                "expected": [{"message": "none"}, {"source": {"ip": "192.0.2.1"}}],
+            },
+            "test-b.log-expected.json": {"expected": [{"source": {"ip": "192.0.2.2"}}]},
+        }
+
+    def samples(self, _path, *, modules, limit):
+        return [FakeSample("cisco_ios", line, name) for name, line in self.LINES[:limit]]
+
+    def goldens(self, _path, *, modules):
+        return self.expected
+
+
+class TestTheExpectedCount:
+    """A fed line is graded against its own log's expected event, counted from that log's start."""
+
+    @staticmethod
+    def _count(per_module: int) -> int:
+        return steps.expected_carrying(
+            Path("/nowhere"), Path("c.tar.gz"), per_module, ("cisco_ios",), "source.ip",
+        )
+
+    def test_each_log_is_read_from_its_own_first_event(self, monkeypatch):
+        _as_engine_wrapper(monkeypatch, TwoLogCorpus())
+
+        assert self._count(20) == 2
+
+    def test_only_the_lines_fed_are_counted(self, monkeypatch):
+        _as_engine_wrapper(monkeypatch, TwoLogCorpus())
+
+        assert self._count(1) == 0
+
+    def test_a_log_with_no_expected_events_asks_nothing_of_its_lines(self, monkeypatch):
+        corpus = _as_engine_wrapper(monkeypatch, TwoLogCorpus())
+        del corpus.expected["test-b.log-expected.json"]
+
+        assert self._count(20) == 1
 
 
 def _walk(body: dict, dotted: str):
@@ -912,7 +971,7 @@ class TestTheShippersIdentifier:
             assert "e2e_run:src-run" in body["tags"]
 
     def test_every_record_carries_the_run_marker_at_the_root(self, tmp_path, shipping_corpus):
-        """dfe-transform-vrl proves a root `_e2e` object survives every branch of its filebeat program."""
+        """Every posted body, corpus or probe, carries its run and role in a root `_e2e` object."""
         archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
         corpus = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",))
@@ -1040,7 +1099,7 @@ class TestTheDatasetRow:
         assert store.asked
         assert not [sql for sql in store.asked if "_raw" in sql]
 
-    def test_the_pushed_case_records_it_beside_landed(self):
+    def test_the_pushed_case_records_it_beside_landed(self, shipping_corpus):
         driver = FakeDriver(FakePage())
         case = cases.build(parse())
         run = a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example")
@@ -1319,6 +1378,34 @@ class TestTheLandedCount:
         driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(2, 100))
 
         assert driver.status("landed") == "done", driver.detail("landed")
+        assert driver.status("transformed") == "failed", driver.detail("transformed")
+
+    def test_expected_fail_one_transformed_corpus_row_of_two_is_not_the_pass(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
+        """The bundled program passes a line it does not classify through, untransformed."""
+        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(3, 4))
+
+        assert driver.status("landed") == "done", driver.detail("landed")
+        detail = driver.detail("transformed")
+        assert driver.status("transformed") == "failed", detail
+        assert detail.startswith("1 of 2 corpus rows"), detail
+
+    def test_a_line_whose_expected_event_has_no_address_is_not_held_to_one(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
+        shipping_corpus.expected_ip["cisco_ios"][1] = None
+        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(3, 4))
+
+        assert driver.status("transformed") == "done", driver.detail("transformed")
+        assert "the corpus expects 1" in driver.detail("transformed")
+
+    def test_expected_fail_a_corpus_expecting_no_address_proves_nothing(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
+        shipping_corpus.expected_ip["cisco_ios"] = [None, None]
+        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend)
+
         assert driver.status("transformed") == "failed", driver.detail("transformed")
 
 
