@@ -24,6 +24,11 @@
       "allowedVersions": "/^v1\\.35\\./"
     },
     {
+      "description": "scripts/stack_images.py carries an annotated pin only as a docstring example of the annotation format. Without this rule the org preset's .py manager proposes a bump to that example on every release of the image it names.",
+      "matchFileNames": ["scripts/stack_images.py"],
+      "enabled": false
+    },
+    {
       "description": "Stop Renovate editing the MIRRORS of an SSoT pin. These images are pinned in both versions.yaml and a chart; letting the helm-values manager edit the chart copy would fight the propagator and produce a PR that moves one mirror of a key that has up to three. versions.yaml is the only place these are proposed now. Deliberately package-scoped rather than a blanket helm-values disable: curlimages/curl in the forgejo chart has NO SSoT key, and losing Renovate on it would leave it genuinely unwatched.",
       "matchManagers": ["helm-values", "helmv3"],
       "matchPackageNames": [
