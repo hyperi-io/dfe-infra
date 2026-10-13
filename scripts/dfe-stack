@@ -37,8 +37,9 @@ Subcommands:
                  its platforms; exit 1 unless every one carries linux/amd64 and
                  linux/arm64.
   graph          Derive the stack upgrade graph from the in-file stacks (JSON).
-  check-upgrade  Verdict on FROM -> TO: honour each stack's declared
-                 stack.previous, else sequential minors + free z-hops.
+                 A `support: withdrawn` stack is a source, never a target.
+  check-upgrade  Verdict on FROM -> TO: refuse a withdrawn TO, then honour its
+                 declared stack.previous, else sequential minors + free z-hops.
   resolve        Merge a customer pins.yaml overrides block over a stack;
                  print the effective set + SUPPORT-DRIFT notices.
   verify         Re-fetch GHCR image and thin-chart digests and compare them to
@@ -205,6 +206,22 @@ def stack_names(root: dict) -> list[str]:
     """The stack version keys, ascending by SemVer precedence."""
     names = list(root.get("stacks", {}).keys())
     return sorted(names, key=lambda s: (semver_key(s) or (0, 0, 0, 0, ())))
+
+
+# `support: withdrawn` marks a stack pulled after its tag was cut: environments may
+# still run it, so it stays an upgrade source, but nothing upgrades onto it.
+WITHDRAWN = "withdrawn"
+
+
+def is_withdrawn(v: dict) -> bool:
+    """Whether a stack block is marked `support: withdrawn`."""
+    return v.get("support", "") == WITHDRAWN
+
+
+def upgrade_targets(root: dict) -> list[str]:
+    """The stacks an environment may upgrade onto, ascending by SemVer precedence."""
+    stacks = root.get("stacks", {})
+    return [n for n in stack_names(root) if not is_withdrawn(stacks[n])]
 
 
 def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
@@ -593,11 +610,14 @@ def cmd_graph(args: argparse.Namespace) -> int:
     by_norm = {_norm_version(n): n for n in names}
     nodes: list[str] = list(names)
     edges: list[dict[str, str]] = []
-    for name in names:
+    for name in upgrade_targets(root):
         prev = root["stacks"][name].get("stack", {}).get("previous", "")
         for p in [x.strip() for x in prev.split(",") if x.strip()]:
             edges.append({"from": by_norm.get(_norm_version(p), p), "to": name})
     graph = {"nodes": nodes, "edges": edges}
+    withdrawn = [n for n in names if is_withdrawn(root["stacks"][n])]
+    if withdrawn:
+        graph["withdrawn"] = withdrawn
     if not nodes:
         graph["note"] = (
             "no stacks defined yet -- add versions under `stacks:` with "
@@ -692,6 +712,9 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
     root = load_root()
     stacks = root.get("stacks", {})
     to_name = next((n for n in stacks if _norm_version(n) == _norm_version(args.to)), None)
+    if to_name and is_withdrawn(stacks[to_name]):
+        print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is withdrawn)")
+        return 1
     declared: list[str] = []
     if to_name:
         declared = [

@@ -1514,13 +1514,14 @@ def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
     """The repo-level invariant: no gap in the shipped upgrade chain.
 
     check-upgrade answers from stack.previous alone, so a stale value makes a
-    real consecutive upgrade report NOT A VERIFIED PATH.
+    real consecutive upgrade report NOT A VERIFIED PATH. A withdrawn stack is
+    no upgrade target, so the chain walks past it.
     """
     import itertools
 
     root = stack.load_root()
     broken = []
-    for frm, to in itertools.pairwise(stack.stack_names(root)):
+    for frm, to in itertools.pairwise(stack.upgrade_targets(root)):
         declared = [
             p.strip()
             for p in root["stacks"][to].get("stack", {}).get("previous", "").split(",")
@@ -1533,6 +1534,71 @@ def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
         not broken,
         f"broken: {broken}",
     )
+
+
+_WITHDRAWN_FIXTURE = """\
+current: "9.9.1-rc.2"
+stacks:
+  9.9.1-rc.1:
+    maturity: rc
+    support: standard
+    stack:
+      previous: "9.9.0"
+  9.9.1-rc.2:
+    maturity: rc
+    support: standard
+    stack:
+      previous: "9.9.1, 9.9.1-rc.1"
+  9.9.1:
+    maturity: rc
+    support: withdrawn
+    stack:
+      previous: "9.9.1-rc.1"
+"""
+
+
+def test_a_withdrawn_stack_is_a_source_and_never_a_target() -> None:
+    """A withdrawn stack sorts above the candidates that replace it.
+
+    Environments still run it, so a later candidate may name it in previous, but
+    nothing may upgrade onto it, and the chain walks past it.
+    """
+    import argparse
+    import contextlib
+    import io
+    import json
+
+    root = stack.parse_simple_yaml(_WITHDRAWN_FIXTURE)
+    expect(
+        "the chain leaves the withdrawn stack out",
+        stack.upgrade_targets(root) == ["9.9.1-rc.1", "9.9.1-rc.2"],
+        f"{stack.upgrade_targets(root)}",
+    )
+
+    original = stack.load_root
+    stack.load_root = lambda tag=None: root
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            stack.cmd_graph(argparse.Namespace())
+        graph = json.loads(out.getvalue())
+        edges = {(e["from"], e["to"]) for e in graph["edges"]}
+        expect("the graph keeps the withdrawn node", "9.9.1" in graph["nodes"], f"{graph}")
+        expect("no edge lands on it", all(to != "9.9.1" for _, to in edges), f"{edges}")
+        expect("an edge still leaves it", ("9.9.1", "9.9.1-rc.2") in edges, f"{edges}")
+        expect("the graph names it withdrawn", graph.get("withdrawn") == ["9.9.1"], f"{graph}")
+
+        for frm, to, want in (
+            ("9.9.1-rc.1", "9.9.1", 1),
+            ("9.9.1", "9.9.1-rc.2", 0),
+            ("9.9.1-rc.1", "9.9.1-rc.2", 0),
+        ):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = stack.cmd_check_upgrade(argparse.Namespace(frm=frm, to=to))
+            expect(f"check-upgrade {frm} -> {to} exits {want}", rc == want, out.getvalue())
+    finally:
+        stack.load_root = original
 
 
 _REFRESH_FIXTURE = """\

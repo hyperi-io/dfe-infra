@@ -22,16 +22,16 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.32"
-    dfe-ui: "v1.7.13"
+    dfe-engine: "v1.22.34"
+    dfe-ui: "v1.7.14"
     dfe-receiver: "v1.15.45"
     dfe-loader: "v1.18.50"
-    dfe-archiver: "v1.7.32"
-    dfe-fetcher: "v1.4.36"
+    dfe-archiver: "v1.7.33"
+    dfe-fetcher: "v1.4.37"
     dfe-transform-vrl: "v1.1.33"
-    dfe-transform-vector: "v1.0.48"
+    dfe-transform-vector: "v1.0.49"
     dfe-transform-elastic: "v1.1.12"
-    culvert: "v2.1.18"
+    culvert: "v2.1.19"
     dfe-hyperdx: "v0.3.3"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
@@ -267,11 +267,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:6dbf7aeb737366d23b6934c6d8c81a54ec135746d91855584ac6e623ab6b12aa"
+        digest: "sha256:7eb94f6b5b17b6a75abd058142a887819c57b063ec58d608c1a81015920bf60b"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.13"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.14"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
