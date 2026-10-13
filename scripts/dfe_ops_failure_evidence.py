@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         scripts/dfe_ops_failure_evidence.py
-#  Purpose:      `dfe-ops failure-evidence` -- the node and pod-network state a
-#                failed cycle stage leaves, written to files before the destroy
-#                removes the cluster. Registered into dfe-ops the way
+#  Purpose:      `dfe-ops failure-evidence` -- the node, pod and pod-network
+#                state a failed cycle stage leaves, written to files before the
+#                destroy removes the cluster. Registered into dfe-ops the way
 #                dfe_ops_readiness_report.py is.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""dfe-ops failure-evidence -- the nodes and the pod network as they stood when a stage failed.
+"""dfe-ops failure-evidence -- the nodes, pods and pod network as they stood when a stage failed.
 
     dfe-ops failure-evidence --out DIR [--kubeconfig F] [--context C] [--budget SECONDS]
 
@@ -18,8 +18,14 @@ evidence outlives the cluster. Each capture is one file under DIR:
 
   nodes-wide.txt             kubectl get nodes -o wide
   node-conditions.txt        each node's runtime, conditions, capacity and allocatable
+  pods-wide.txt              kubectl get pods -A -o wide
+  warning-events.txt         every namespace's Warning events, oldest first, the newest
+                             kept when they pass the byte cap
   kube-system-events.txt     kube-system events, oldest first
   kube-system-not-ready.txt  kubectl describe of each kube-system pod not Running and Ready
+  stuck-pods/<namespace>.txt kubectl describe of each pod in that namespace with a container
+                             waiting on ImagePullBackOff, ErrImagePull, CrashLoopBackOff or
+                             CreateContainerConfigError, the kubelet's own error included
   node-events/<node>.txt     the events of each node whose kubelet reported InvalidDiskCapacity
   aws-node/<pod>.<container>.log
                              each aws-node container's newest lines, the init container
@@ -57,6 +63,7 @@ LOG_TAIL = 2000  # lines read from each aws-node container
 MAX_AWS_NODE_PODS = 20
 MAX_DISK_NODES = 20
 MAX_DESCRIBED = 40
+MAX_STUCK = 40  # stuck pods described across every namespace together
 CHUNK = 65536
 POLL = 0.1
 JOIN_TIMEOUT = 5.0
@@ -67,6 +74,11 @@ CNI_CONTAINER = "aws-node"
 CNI_LOG_MOUNT = "/host/var/log/aws-routed-eni"
 CNI_LOGS = ("ipamd.log", "plugin.log")
 DISK_REASON = "InvalidDiskCapacity"
+# A container waiting on one of these never starts by itself, and its describe carries the reason.
+STUCK_REASONS = frozenset(
+    {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"}
+)
+WARNINGS = "type=Warning"
 # creationTimestamp is set on every event, where lastTimestamp can be empty.
 OLDEST_FIRST = "--sort-by=.metadata.creationTimestamp"
 INDEX = "index.txt"
@@ -265,6 +277,21 @@ def disk_capacity_nodes(events: list[dict]) -> list[str]:
     return sorted(names)
 
 
+def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
+    """(namespace, name) of every pod with an init or main container waiting on a stuck reason."""
+    found = []
+    for pod in pods:
+        meta, status = pod.get("metadata") or {}, pod.get("status") or {}
+        containers = [
+            *(status.get("initContainerStatuses") or []),
+            *(status.get("containerStatuses") or []),
+        ]
+        reasons = {((c.get("state") or {}).get("waiting") or {}).get("reason") for c in containers}
+        if reasons & STUCK_REASONS and meta.get("namespace") and meta.get("name"):
+            found.append((meta["namespace"], meta["name"]))
+    return sorted(found)
+
+
 # --- the run ------------------------------------------------------------------------
 
 
@@ -358,6 +385,32 @@ def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
             evidence.capture(target, ["-n", "kube-system", *inside], tail=True)
 
 
+def _capture_stuck(evidence: Evidence) -> None:
+    """A describe of every stuck pod in any namespace, one file per namespace."""
+    pods = evidence.read(
+        "(the pods in every namespace the stuck-pod describes are chosen from)",
+        ["get", "pods", "-A"],
+    )
+    if pods is None:
+        evidence.note("stuck-pods/", "not run: the pods in every namespace were not read")
+        return
+    stuck = stuck_pods(pods)
+    if not stuck:
+        waits = ", ".join(sorted(STUCK_REASONS))
+        evidence.note("stuck-pods/", f"not run: no container is waiting on {waits}")
+        return
+    if len(stuck) > MAX_STUCK:
+        described = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are described"
+        evidence.note("stuck-pods/", described)
+    by_namespace: dict[str, list[str]] = {}
+    for namespace, name in stuck[:MAX_STUCK]:
+        by_namespace.setdefault(namespace, []).append(name)
+    for namespace, names in by_namespace.items():
+        evidence.capture(
+            f"stuck-pods/{safe_name(namespace)}.txt", ["-n", namespace, "describe", "pods", *names]
+        )
+
+
 def collect(evidence: Evidence) -> None:
     """Every capture, cluster-wide ones first, so a spent budget costs only the bulkiest."""
     wide = evidence.capture("nodes-wide.txt", ["get", "nodes", "-o", "wide"])
@@ -373,6 +426,13 @@ def collect(evidence: Evidence) -> None:
         evidence.note("(the rest)", "not run: the API server answered none of the reads above")
         return
 
+    evidence.capture("pods-wide.txt", ["get", "pods", "-A", "-o", "wide"])
+    # The newest warnings are the failed stage's own, so a list past the byte cap keeps its end.
+    evidence.capture(
+        "warning-events.txt",
+        ["get", "events", "-A", "--field-selector", WARNINGS, OLDEST_FIRST, "-o", "wide"],
+        tail=True,
+    )
     evidence.capture(
         "kube-system-events.txt",
         ["-n", "kube-system", "get", "events", OLDEST_FIRST, "-o", "wide"],
@@ -387,6 +447,8 @@ def collect(evidence: Evidence) -> None:
         )
     else:
         evidence.note(unready_file, "not run: every kube-system pod is Running and Ready")
+
+    _capture_stuck(evidence)
 
     disk_events = f"reason={DISK_REASON},involvedObject.kind=Node"
     events = evidence.read(
@@ -434,13 +496,17 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
     """Register `dfe-ops failure-evidence`."""
     fe = sub.add_parser(
         "failure-evidence",
-        help="READ-ONLY: write node conditions, kube-system events and unready pods, and the "
-        "aws-node and CNI logs to files, for after a cycle stage fails and before the destroy",
+        help="READ-ONLY: write node conditions, every pod, Warning events, stuck pods, kube-system "
+        "events and unready pods, and the aws-node and CNI logs to files, for after a cycle "
+        "stage fails and before the destroy",
         description="Reads the cluster and writes one file per capture under --out: nodes -o "
-        "wide, each node's conditions and allocatable, kube-system events oldest first, describe "
-        "of each kube-system pod not Running and Ready, the events of each node reporting "
-        "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "
-        "and plugin logs. Every capture is bounded in time and bytes, one that fails is recorded "
+        "wide, each node's conditions and allocatable, pods -A -o wide, every namespace's "
+        "Warning events oldest first, kube-system events oldest first, describe of each "
+        "kube-system pod not Running and Ready, describe of each pod in any namespace with a "
+        "container waiting on ImagePullBackOff, ErrImagePull, CrashLoopBackOff or "
+        "CreateContainerConfigError, the events of each node reporting InvalidDiskCapacity, "
+        "every aws-node container's newest log lines, and the CNI's ipamd and plugin logs. "
+        "Every capture is bounded in time and bytes, one that fails is recorded "
         "in index.txt and the rest still run, and nothing reads a Secret. Writes nothing to the "
         "cluster; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

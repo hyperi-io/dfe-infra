@@ -113,6 +113,39 @@ DISK_EVENTS = [
 ]
 
 
+def _waiting_pod(namespace: str, name: str, *, reason: str = "", init_reason: str = "") -> dict:
+    """A pod whose init container and main container wait on the reasons given, or run."""
+
+    def status(container: str, waiting: str) -> dict:
+        state = (
+            {"waiting": {"reason": waiting, "message": f"{waiting} detail"}}
+            if waiting
+            else {"running": {}}
+        )
+        return {"name": container, "ready": False, "restartCount": 0, "state": state}
+
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {"initContainers": [{"name": "copyutil"}], "containers": [{"name": "main"}]},
+        "status": {
+            "phase": "Pending" if reason or init_reason else "Running",
+            "initContainerStatuses": [status("copyutil", init_reason)],
+            "containerStatuses": [status("main", reason)],
+        },
+    }
+
+
+ALL_PODS = [
+    _waiting_pod("argocd", "argocd-server-1", reason="ImagePullBackOff"),
+    _waiting_pod("argocd", "argocd-dex-server-1", init_reason="ImagePullBackOff"),
+    _waiting_pod("dfe", "dfe-loader-1", reason="CrashLoopBackOff"),
+    _waiting_pod("dfe", "dfe-engine-1", reason="CreateContainerConfigError"),
+    _waiting_pod("monitoring", "collector-1", reason="ErrImagePull"),
+    _waiting_pod("dfe", "dfe-ui-1", reason="ContainerCreating"),
+    _waiting_pod("dfe", "dfe-receiver-1"),
+]
+
+
 def _items(items: list[dict]) -> fe.Outcome:
     return fe.Outcome(output=json.dumps({"items": items}).encode(), returncode=0)
 
@@ -124,6 +157,8 @@ def _answer(args: list[str]) -> fe.Outcome:
         return _items([_node("node-a"), _node("node-b")])
     if joined == "-n kube-system get pods -o json":
         return _items(PODS)
+    if joined == "get pods -A -o json":
+        return _items(ALL_PODS)
     if joined.startswith("get events -A --field-selector reason=InvalidDiskCapacity"):
         return _items(DISK_EVENTS)
     return fe.Outcome(output=f"output of {joined}\n".encode(), returncode=0)
@@ -194,6 +229,16 @@ def test_disk_capacity_nodes_are_named_once() -> None:
     assert fe.disk_capacity_nodes(DISK_EVENTS) == ["node-a"]
 
 
+def test_stuck_pods_are_found_by_an_init_or_main_container_waiting_reason() -> None:
+    assert fe.stuck_pods(ALL_PODS) == [
+        ("argocd", "argocd-dex-server-1"),
+        ("argocd", "argocd-server-1"),
+        ("dfe", "dfe-engine-1"),
+        ("dfe", "dfe-loader-1"),
+        ("monitoring", "collector-1"),
+    ]
+
+
 def test_a_name_becomes_one_safe_path_segment() -> None:
     assert fe.safe_name("deploy+e2e") == "deploy_e2e"
     assert fe.safe_name("../../etc") == ".._.._etc"
@@ -207,6 +252,15 @@ def test_every_capture_the_brief_names_is_issued(monkeypatch: pytest.MonkeyPatch
     calls, _out = _run(monkeypatch, tmp_path)
     issued = [" ".join(c) for c in calls]
     assert issued[:3] == ["get nodes -o wide", "get nodes -o json", "-n kube-system get pods -o json"]
+    assert "get pods -A -o wide" in issued
+    assert (
+        "get events -A --field-selector type=Warning --sort-by=.metadata.creationTimestamp -o wide"
+        in issued
+    )
+    assert "get pods -A -o json" in issued
+    assert "-n argocd describe pods argocd-dex-server-1 argocd-server-1" in issued
+    assert "-n dfe describe pods dfe-engine-1 dfe-loader-1" in issued
+    assert "-n monitoring describe pods collector-1" in issued
     assert "-n kube-system get events --sort-by=.metadata.creationTimestamp -o wide" in issued
     assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
     assert (
@@ -248,6 +302,11 @@ def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tm
     for name in (
         "nodes-wide.txt",
         "node-conditions.txt",
+        "pods-wide.txt",
+        "warning-events.txt",
+        "stuck-pods/argocd.txt",
+        "stuck-pods/dfe.txt",
+        "stuck-pods/monitoring.txt",
         "kube-system-events.txt",
         "kube-system-not-ready.txt",
         "node-events/node-a.txt",
@@ -261,17 +320,79 @@ def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tm
     assert "condition Ready=False" in (out / "node-conditions.txt").read_text(encoding="utf-8")
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "nodes-wide.txt: ok\n    kubectl get nodes -o wide\n" in index
+    assert "stuck-pods/argocd.txt: ok\n    kubectl -n argocd describe pods " in index
+
+
+def test_the_warnings_keep_their_newest_end_and_the_rest_their_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tails: dict[str, bool] = {}
+
+    def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+        tails[" ".join(argv[1:])] = tail
+        return _answer(argv[1:])
+
+    monkeypatch.setattr(fe, "run_bounded", fake)
+    out = tmp_path / "evidence"
+    out.mkdir()
+    fe.collect(fe.Evidence(out, [], 60.0, time.monotonic() + 60.0))
+    warnings = [call for call, tail in tails.items() if "type=Warning" in call]
+    assert warnings
+    assert all(tails[call] for call in warnings)
+    assert tails["get pods -A -o wide"] is False
+    assert tails["-n argocd describe pods argocd-dex-server-1 argocd-server-1"] is False
+
+
+def test_stuck_pods_past_the_cap_are_described_up_to_it_and_the_index_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    many = [
+        _waiting_pod(f"ns-{i % 3}", f"pod-{i:03d}", reason="ImagePullBackOff")
+        for i in range(fe.MAX_STUCK + 5)
+    ]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items(many) if " ".join(args) == "get pods -A -o json" else _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    described = [c for c in calls if "describe" in c and c[1] != "kube-system"]
+    named = [name for c in described for name in c[c.index("pods") + 1 :]]
+    assert len(named) == fe.MAX_STUCK
+    assert [c[1] for c in described] == ["ns-0", "ns-1", "ns-2"]
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    assert f"{fe.MAX_STUCK + 5} pods are stuck, and the first {fe.MAX_STUCK} are described" in index
+
+
+def test_no_stuck_pod_is_a_named_skip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    healthy = [
+        _waiting_pod("dfe", "dfe-receiver-1"),
+        _waiting_pod("dfe", "dfe-ui-1", reason="ContainerCreating"),
+    ]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items(healthy) if " ".join(args) == "get pods -A -o json" else _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not any("describe" in c and c[1] != "kube-system" for c in calls)
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    assert "stuck-pods/: not run: no container is waiting on CrashLoopBackOff, " in index
 
 
 def test_one_failing_capture_does_not_stop_the_rest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, out = _run(
-        monkeypatch, tmp_path, fail=("get events --sort-by", "logs aws-node-a1 -c aws-vpc-cni-init")
+        monkeypatch,
+        tmp_path,
+        fail=("get events --sort-by", "type=Warning", "logs aws-node-a1 -c aws-vpc-cni-init"),
     )
     issued = [" ".join(c) for c in calls]
     bounds = f"--tail={fe.LOG_TAIL} --limit-bytes={fe.TEXT_BYTES} --timestamps"
     assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
+    assert "-n argocd describe pods argocd-dex-server-1 argocd-server-1" in issued
+    assert "warning-events.txt: exit 1: Error from server (InternalError): boom" in (
+        out / fe.INDEX
+    ).read_text(encoding="utf-8")
     assert f"-n kube-system logs aws-node-a1 -c aws-node {bounds}" in issued
     assert f"-n kube-system logs aws-node-b2 -c aws-node {bounds}" in issued
     assert "get --raw /api/v1/nodes/node-b/proxy/logs/aws-routed-eni/plugin.log" in issued
@@ -299,10 +420,26 @@ def test_an_unreadable_pod_list_still_captures_the_cluster_wide_evidence(
     calls, out = _run(monkeypatch, tmp_path, fail=("get pods",))
     issued = [" ".join(c) for c in calls]
     assert any("get events --sort-by" in c for c in issued)
+    assert any("--field-selector type=Warning" in c for c in issued)
     assert not any(" logs " in f" {c} " for c in issued)
+    assert not any(" describe " in f" {c} " for c in issued)
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "kube-system-not-ready.txt: not run: the kube-system pods were not read" in index
+    assert "stuck-pods/: not run: the pods in every namespace were not read" in index
     assert "aws-node/: not run: the kube-system pods were not read" in index
+
+
+def test_an_unreadable_cluster_wide_pod_list_still_captures_kube_system(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path, fail=("get pods -A",))
+    issued = [" ".join(c) for c in calls]
+    assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
+    assert not any(c.startswith("-n argocd ") for c in issued)
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    assert "pods-wide.txt: exit 1: Error from server (InternalError): boom" in index
+    assert "stuck-pods/: not run: the pods in every namespace were not read" in index
+    assert (out / "aws-node" / "node-a.ipamd.log").is_file()
 
 
 def test_a_spent_budget_runs_nothing_more_and_says_so(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

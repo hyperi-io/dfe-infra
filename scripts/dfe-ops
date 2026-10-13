@@ -121,10 +121,12 @@ Subcommands:
                unbound volume claims, and Argo Applications not Synced and
                Healthy. The readiness gate runs it once when it fails.
   failure-evidence
-               READ-ONLY. Writes the nodes' conditions and allocatable,
-               kube-system events and unready pods, the events of nodes
-               reporting InvalidDiskCapacity, and the aws-node and CNI logs to
-               one file each, every capture bounded in time and bytes. The
+               READ-ONLY. Writes the nodes' conditions and allocatable, every
+               pod, every namespace's Warning events, a describe of each pod
+               stuck on an image pull, a crash loop or its config, kube-system
+               events and unready pods, the events of nodes reporting
+               InvalidDiskCapacity, and the aws-node and CNI logs to one file
+               each, every capture bounded in time and bytes. The
                cycle runs it once when a stage fails, before the destroy.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
@@ -4224,7 +4226,7 @@ def _evidence_root(args: argparse.Namespace) -> Path:
 def _failure_evidence(
     self_cmd: list[str], kube: list[str], root: Path, stage: str, env: dict
 ) -> None:
-    """Capture the cluster's node and network state before the destroy removes it.
+    """Capture the cluster's node, pod and network state before the destroy removes it.
 
     Its exit code never changes the cycle's verdict: the stage has already failed.
     """
@@ -4241,7 +4243,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
 
     --acceptance-suite adds an `acceptance` stage after smoke, and --ui-repo a
     `ui` stage after that; a failed stage skips every later one but destroy,
-    and `failure-evidence` writes the cluster's node and CNI state first.
+    and `failure-evidence` writes the cluster's node, pod and CNI state first.
     Each stage self-executes as its own dfe-ops subcommand, so a stage run by
     the cycle is EXACTLY the stage a human runs by hand -- no drift between
     "the cycle" and "the commands". The one thing the cycle adds on top is
@@ -4933,7 +4935,7 @@ def build_parser() -> argparse.ArgumentParser:
     # dfe_ops_readiness_report.
     add_readiness_report_subparser(sub)
 
-    # failure-evidence -- the node and CNI state a failed stage leaves, written to
+    # failure-evidence -- the node, pod and CNI state a failed stage leaves, written to
     # files before the destroy. The cycle runs it; registered from
     # dfe_ops_failure_evidence.
     add_failure_evidence_subparser(sub)
