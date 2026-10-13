@@ -52,14 +52,14 @@ STEP_TABLE = "steps.txt"
 
 def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restart_exec: list[str]) -> None:
     """Every source's journey, in one order, with the case filling in its own halves."""
-    case.create(run)
+    created = case.create(run)
     deployed = steps.record_deploy(run.driver, run.engine, case.name)
     steps.record_hyperdx_source(run.driver, run.engine, case.name, deployed)
     hints = case.provision(run)
     # After the case's files, not before: a restart that beats them to disk
     # leaves the app idling on a transform it has no program for.
     steps.apply_restarts(
-        run.driver, restart_exec, [*(deployed.get("restart_required") or []), *hints]
+        run.driver, restart_exec, [*created, *steps.reply_hints(deployed), *hints]
     )
     steps.record_table(run.driver, run.store, case.name)
     steps.record_instance_up(

@@ -25,6 +25,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from acceptance.clients import Datastore, Engine
 from acceptance.onboarding import wizard
@@ -37,6 +38,14 @@ EDITOR_TIMEOUT_MS = STEP_TIMEOUT_MS * 4
 # How long a committed file is waited for on the engine, since the console's own
 # notice is per panel and a panel the run has left keeps its copy.
 COMMIT_DEADLINE = 180.0
+# The engine route the console's Add Source posts to, whatever origin serves it.
+SOURCES_ROUTE = "/api/v1/sources"
+
+
+def source_created(response) -> bool:
+    """Whether a reply the browser saw is the engine answering the console's Add Source."""
+    path = urlsplit(response.url).path.rstrip("/")
+    return response.request.method == "POST" and path.endswith(SOURCES_ROUTE)
 
 
 @dataclass
@@ -86,8 +95,13 @@ class Case:
         self.args = args
         self.name = ""
 
-    def create(self, run: Run) -> None:
-        """Bring the source into being, through the console where it can."""
+    def create(self, run: Run) -> list[str]:
+        """Bring the source into being, through the console where it can.
+
+        Returns the restart hints the create's writes reported: on a direct tier
+        the create alone rewrites the receiver's destinations, so its reply is the
+        only one that names the receiver.
+        """
         raise NotImplementedError
 
     def provision(self, run: Run) -> list[str]:
@@ -162,11 +176,15 @@ class FilebeatCase(Case):
         self._posted = 0
         #: The filebeat and logstash pair, on a --via logstash run only.
         self._pair: beats.Pair | None = None
+        #: Whether the source asks to be archived, which only a deployment running
+        #: an archiver can honour.
+        self._archive = True
 
     # -- create ---------------------------------------------------------------
 
-    def create(self, run: Run) -> None:
+    def create(self, run: Run) -> list[str]:
         driver, page = run.driver, run.driver.page
+        self._archive = steps.archiver_runs(run.engine)
         # The page header repeats the nav entry as a link, so the nav one is first.
         page.get_by_role("link", name="Sources", exact=True).first.click(timeout=STEP_TIMEOUT_MS)
         page.wait_for_url("**/sources**", timeout=STEP_TIMEOUT_MS)
@@ -174,12 +192,17 @@ class FilebeatCase(Case):
         page.get_by_placeholder("Enter source").fill(self.name)
         page.get_by_placeholder("Enter display name").fill(f"{self.DISPLAY} {self.name}")
         page.get_by_placeholder("Enter description").fill(self.DESCRIPTION)
-        # The switches are Enabled (on) then Archive (off); the archive one is second.
-        page.get_by_role("switch").nth(1).click(timeout=STEP_TIMEOUT_MS)
+        if self._archive:
+            # The switches are Enabled (on) then Archive (off); the archive one is second.
+            page.get_by_role("switch").nth(1).click(timeout=STEP_TIMEOUT_MS)
         page.get_by_placeholder("Enter field").fill(self.MATCH_FIELD)
         page.get_by_placeholder("Enter value").fill(self.MATCH_VALUE)
+        archived = (
+            "archive on" if self._archive
+            else f"archive off, because this deployment runs no {steps.ARCHIVER_SERVICE}"
+        )
         driver.record("add-source-configuration", "done",
-                      f"filled the Configuration tab for {self.name}, archive on")
+                      f"filled the Configuration tab for {self.name}, {archived}")
 
         # Own table (the form's default) shows this tab, which opens on the meta schema select.
         page.get_by_role("tab", name="Table Settings", exact=True).click(timeout=STEP_TIMEOUT_MS)
@@ -202,10 +225,12 @@ class FilebeatCase(Case):
         except Exception as exc:  # the console refusing the control IS the finding
             refused = steps.refusal(exc)
 
-        driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
+        # The console shows no restart hint, so the reply it was handed is read here.
+        with page.expect_response(source_created, timeout=STEP_TIMEOUT_MS) as created:
+            driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
         page.get_by_text("Source created successfully").wait_for(timeout=STEP_TIMEOUT_MS)
         driver.record("add-source", "done", f"the console created {self.name}")
-        self._record_transform(run, refused)
+        return steps.reply_hints(created.value.json()) + self._record_transform(run, refused)
 
     def _pick_transform(self, page) -> None:
         """Transform tab: Define Transform, then the engine the catalogue offers.
@@ -217,9 +242,14 @@ class FilebeatCase(Case):
         page.get_by_text("Define Transform", exact=True).click(timeout=STEP_TIMEOUT_MS)
         steps.select_field(page, "transform_engine", self.service)
 
-    def _record_transform(self, run: Run, refused: str) -> None:
-        """The attach-transform row, read back off the engine rather than off the form."""
+    def _record_transform(self, run: Run, refused: str) -> list[str]:
+        """The attach-transform row, read back off the engine rather than off the form.
+
+        Returns the restart hints an API attach reported, empty when the console's
+        create carried the transform.
+        """
         console_detail, api_detail = "", ""
+        hints: list[str] = []
         if not refused:
             attached = self._attached_transform(run)
             if attached == self._transform_body():
@@ -230,9 +260,10 @@ class FilebeatCase(Case):
             else:
                 refused = f"the create carried transform {attached or 'none'}"
         if refused:
-            api_detail = self._attach_by_api(run)
+            api_detail, hints = self._attach_by_api(run)
         status, detail = steps.console_outcome(console_detail, refused, api_detail)
         run.driver.record("attach-transform", status, detail)
+        return hints
 
     def _transform_body(self) -> dict[str, str]:
         """The transform block this source is meant to carry.
@@ -253,8 +284,8 @@ class FilebeatCase(Case):
         attached = (current.body or {}).get("transform") or {}
         return {key: str(attached[key]) for key in self._transform_body() if attached.get(key)}
 
-    def _attach_by_api(self, run: Run) -> str:
-        """The same transform through the engine, for a console without the control."""
+    def _attach_by_api(self, run: Run) -> tuple[str, list[str]]:
+        """The same transform through the engine, and the restarts the write reported."""
         engine = run.engine
         current = engine.call("GET", f"/sources/{self.name}")
         if current.status != 200:
@@ -268,12 +299,12 @@ class FilebeatCase(Case):
             "header": {"type": self.HEADER, "version": self.HEADER_VERSION},
             "schema": {"meta_schema": self.META_SCHEMA, "meta_schema_version": self.META_SCHEMA_VERSION},
             "transform": transform,
-            "archive": True,
+            "archive": self._archive,
         }
         updated = engine.call("PUT", f"/sources/{self.name}", body)
         if updated.status != 200:
             raise RuntimeError(f"attaching the transform was refused: {updated.status} {updated.body}")
-        return f"transform {transform} set on {self.name}"
+        return f"transform {transform} set on {self.name}", steps.reply_hints(updated.body)
 
     # -- provision ------------------------------------------------------------
 
@@ -372,7 +403,7 @@ class FilebeatCase(Case):
             if reply.status not in (200, 201):
                 raise RuntimeError(f"the {set_name} upload was refused: {reply.status} {reply.body}")
             told.append(f"{filename} {len(content)} bytes accepted")
-            hints += [str(h) for h in ((reply.body or {}).get("restart_required") or [])]
+            hints += steps.reply_hints(reply.body)
         return ", ".join(told), hints
 
     # -- feed and prove -------------------------------------------------------
@@ -613,7 +644,7 @@ class FetchedAwsCase(Case):
         self.name = fetcher.new_name("cw")
         self.schema = fetcher.schema_path(self.upstream, self.name)
 
-    def create(self, run: Run) -> None:
+    def create(self, run: Run) -> list[str]:
         driver = run.driver
         csv_file = Path(run.args.shots_dir) / f"{Path(self.schema).name}.csv"
         csv_file.parent.mkdir(parents=True, exist_ok=True)
@@ -635,7 +666,9 @@ class FetchedAwsCase(Case):
             self.upstream, self.name, self.schema, run.args.aws_region,
             run.args.aws_log_group, run.args.poll_interval_secs,
         )
-        driver.record("add-source", "api-fallback", fetcher.create_source(run.engine, body))
+        detail, hints = fetcher.create_source(run.engine, body)
+        driver.record("add-source", "api-fallback", detail)
+        return hints
 
     def feed(self, run: Run) -> None:
         """A fetched source feeds itself; what this records is that it had work."""

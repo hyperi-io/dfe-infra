@@ -20,6 +20,7 @@ here opens a socket.
     python3 scripts/tests/test_source_cases.py
 """
 
+import contextlib
 import importlib.machinery
 import importlib.util
 import io
@@ -39,7 +40,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
-from acceptance.source import cases, steps  # noqa: E402
+from acceptance.source import cases, fetcher, steps  # noqa: E402
 from acceptance.source.run import build_parser, walk  # noqa: E402
 
 PROGRAM = "# a filebeat program\n" * 8
@@ -65,13 +66,40 @@ def parse_ops(*argv: str):
     return dfeops.build_parser().parse_args(["acceptance", "--repo", "/nowhere", *argv])
 
 
+class FakeResponse:
+    """One reply the browser saw, as Playwright hands it to a response predicate."""
+
+    def __init__(self, method: str, url: str, body: object) -> None:
+        self.request = types.SimpleNamespace(method=method)
+        self.url = url
+        self.ok = True
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
 class FakePage:
     """A console that answers every locator, so a case's create can be walked."""
 
-    def __init__(self, missing: tuple[str, ...] = ()) -> None:
+    #: Where the console's create goes, so a predicate keyed on it is exercised.
+    CREATE_URL = "https://dfe.example/api/v1/sources"
+
+    def __init__(self, missing: tuple[str, ...] = (), created_reply: object = None) -> None:
         self.missing = missing
         self.visited: list[str] = []
         self.typed: list[str] = []
+        #: The engine's reply to the console's create, as the browser received it.
+        self.created_reply = created_reply if created_reply is not None else {}
+
+    @contextlib.contextmanager
+    def expect_response(self, predicate, timeout=None):
+        """The console's own create reply, refused when the predicate would not match it."""
+        response = FakeResponse("POST", self.CREATE_URL, self.created_reply)
+        self.visited.append("expect_response")
+        yield types.SimpleNamespace(value=response)
+        if not predicate(response):
+            raise TimeoutError("no response matched the predicate")
 
     def _guard(self, what: str):
         self.visited.append(what)
@@ -202,14 +230,23 @@ class FakeEngine:
     #: The same hint from an engine that predates `make apply`.
     LEGACY_RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
 
+    #: The receiver's hint when a source changes where it sends records.
+    RECEIVER_HINT: ClassVar[str] = "restart required: make apply SERVICES=dfe-receiver"
+
     def __init__(self, transform: str = "vrl", variant: str = "", committed: bool = True,
                  restart_required: tuple[str, ...] = (RESTART_HINT,),
-                 deploy_restarts: tuple[str, ...] = ()) -> None:
+                 deploy_restarts: tuple[str, ...] = (),
+                 source_restarts: tuple[str, ...] = (),
+                 archiver: bool = True) -> None:
         self.base = "https://dfe.example"
         self.verify = False
         self.token = "t"
         self.restart_required = restart_required
         self.deploy_restarts = deploy_restarts
+        #: What a create or an edit of the source reports, as the receiver's routing moves.
+        self.source_restarts = source_restarts
+        #: Whether this deployment runs a dfe-archiver, as /apps reports it.
+        self.archiver = archiver
         attached = {}
         if transform:
             attached["engine"] = transform
@@ -234,9 +271,14 @@ class FakeEngine:
         if method == "GET" and path.endswith("/status"):
             return reply(200, {"reporting": True, "uptime_seconds": 3, "telemetry_name": "dfe-fetcher-x"})
         if path == "/apps":
-            return reply(200, [{"service": service, "instances": [self.instance]}
-                               for service in ("dfe-transform-vrl", "dfe-transform-elastic",
-                                               "dfe-fetcher")])
+            listed = [{"service": service, "instances": [self.instance]}
+                      for service in ("dfe-transform-vrl", "dfe-transform-elastic", "dfe-fetcher")]
+            listed.append({"service": "dfe-archiver",
+                           "instances": ["default"] if self.archiver else []})
+            return reply(200, listed)
+        if method == "POST" and path == "/sources":
+            self.sent[path] = dict(body or {})
+            return reply(201, {"restart_required": list(self.source_restarts)})
         if path == "/hyperdx/sources":
             return reply(200, {"teams": []})
         if method == "POST" and path.endswith("/deploy"):
@@ -246,7 +288,7 @@ class FakeEngine:
         if method == "PUT" and path.startswith("/sources/"):
             self.sent[path] = dict(body or {})
             self.source = {**self.source, "transform": dict((body or {}).get("transform") or {})}
-            return reply(200, self.source)
+            return reply(200, {**self.source, "restart_required": list(self.source_restarts)})
         if method == "GET" and path.startswith("/sources/"):
             return reply(200, self.source)
         return reply(200, {})
@@ -529,6 +571,96 @@ class TestTheFilebeatCaseCreate:
             driver, _, _ = self._create(missing=missing)
             for slug in ("add-source-configuration", "add-source-meta-schema", "add-source"):
                 assert driver.status(slug) == "done"
+
+
+class TestWhatTheCreateHandsTheRestartStep:
+    """The console's own create rewrites the receiver's routing, and its reply says so."""
+
+    def _created(self, page, engine):
+        driver = FakeDriver(page)
+        case = cases.build(parse())
+        hints = case.create(a_run(driver, engine, parse(), case.name, Path("/")))
+        return driver, case, hints
+
+    def test_the_restart_the_consoles_create_was_told_about_comes_back(self):
+        page = FakePage(created_reply={"restart_required": [FakeEngine.RECEIVER_HINT]})
+
+        _, _, hints = self._created(page, FakeEngine())
+
+        assert hints == [FakeEngine.RECEIVER_HINT]
+        assert "expect_response" in page.visited
+
+    def test_a_create_that_asked_for_nothing_hands_back_nothing(self):
+        _, _, hints = self._created(FakePage(created_reply={"restart_required": []}), FakeEngine())
+
+        assert hints == []
+
+    def test_the_api_fallback_hands_back_what_its_own_write_was_told(self):
+        page = FakePage(missing=("tab:Transform",))
+        engine = FakeEngine(source_restarts=(FakeEngine.RECEIVER_HINT,))
+
+        driver, _, hints = self._created(page, engine)
+
+        assert driver.status("attach-transform") == "api-fallback"
+        assert hints == [FakeEngine.RECEIVER_HINT]
+
+    def test_only_the_consoles_create_is_read_never_a_listing_of_sources(self):
+        create = FakeResponse("POST", "https://dfe.example/api/v1/sources", {})
+        listing = FakeResponse("GET", "https://dfe.example/api/v1/sources", {})
+        one = FakeResponse("POST", "https://dfe.example/api/v1/sources/fb1/deploy", {})
+
+        assert cases.source_created(create)
+        assert not cases.source_created(listing)
+        assert not cases.source_created(one)
+
+    def test_a_create_reply_with_a_query_string_is_still_the_create(self):
+        assert cases.source_created(
+            FakeResponse("POST", "https://dfe.example/api/v1/sources/?draft=1", {})
+        )
+
+    def test_the_fetched_case_hands_back_its_own_creates_restarts(self):
+        engine = FakeEngine(source_restarts=(FakeEngine.RECEIVER_HINT,))
+        body = {"source": "cw1", "fetcher": {"config": {"services": [{"name": "cloudtrail"}]}}}
+
+        detail, hints = fetcher.create_source(engine, body)
+
+        assert detail.startswith("created cw1")
+        assert hints == [FakeEngine.RECEIVER_HINT]
+
+
+class TestTheArchiveIsAskedForWhereAnArchiverRuns:
+    """A source asking to be archived where nothing archives is one the receiver refuses."""
+
+    def _created(self, engine, missing=()):
+        driver = FakeDriver(FakePage(missing=missing))
+        case = cases.build(parse())
+        case.create(a_run(driver, engine, parse(), case.name, Path("/")))
+        return driver, case
+
+    def test_a_deployment_running_an_archiver_gets_the_archive_switch_on(self):
+        driver, _ = self._created(FakeEngine(archiver=True))
+
+        assert "switch:" in driver.page.visited
+        assert driver.detail("add-source-configuration").endswith("archive on")
+
+    def test_a_deployment_running_none_leaves_the_switch_off_and_says_why(self):
+        driver, _ = self._created(FakeEngine(archiver=False))
+
+        assert "switch:" not in driver.page.visited
+        detail = driver.detail("add-source-configuration")
+        assert "archive off" in detail
+        assert "dfe-archiver" in detail
+
+    def test_the_api_fallback_asks_for_the_same_archive_the_console_did(self):
+        for archiver in (True, False):
+            engine = FakeEngine(archiver=archiver)
+            _, case = self._created(engine, missing=("tab:Transform",))
+
+            assert engine.sent[f"/sources/{case.name}"]["archive"] is archiver
+
+    def test_an_archiver_listed_with_no_instance_is_not_one_that_runs(self):
+        assert steps.archiver_runs(FakeEngine(archiver=True)) is True
+        assert steps.archiver_runs(FakeEngine(archiver=False)) is False
 
 
 class TestTheFilebeatCaseProvision:
@@ -1472,6 +1604,62 @@ class TestTheRestartStep:
         assert driver.status("restart") == "failed"
         assert "no such service" in driver.detail("restart")
 
+    BANNER = "resolve_profile: Using profile 'slim'...\n" * 2
+
+    def _refused(self, monkeypatch, said: str) -> str:
+        def fake_run(argv, **_kwargs):
+            return subprocess.CompletedProcess(argv, 2, "", said)
+
+        monkeypatch.setattr(steps.subprocess, "run", fake_run)
+        driver = FakeDriver(FakePage())
+        steps.apply_restarts(driver, ["make", "apply"], [FakeEngine.RESTART_HINT])
+        assert driver.status("restart") == "failed"
+        return driver.detail("restart")
+
+    def test_a_refusal_names_the_line_that_says_why_not_the_banner_above_it(self, monkeypatch):
+        """make prints the resolved profile before anything can fail, on the same stream."""
+        detail = self._refused(monkeypatch, self.BANNER + (
+            "Error response from daemon: No such image: dfe-transform-vrl\n"
+            "make[1]: *** [Makefile:535: apply-services] Error 1\n"
+            "make: *** [Makefile:525: apply] Error 2\n"
+        ))
+
+        assert detail.endswith("REFUSED: Error response from daemon: No such image: dfe-transform-vrl")
+        assert "Using profile" not in detail
+
+    def test_a_refusal_make_itself_raised_is_named(self, monkeypatch):
+        detail = self._refused(monkeypatch, self.BANNER + (
+            "Makefile:73: *** 'SERVICES' contains names not in the resolved stack: x.  Stop.\n"
+            "make: *** [Makefile:525: apply] Error 2\n"
+        ))
+
+        assert "'SERVICES' contains names not in the resolved stack" in detail
+
+    def test_a_refusal_that_is_only_make_s_summary_still_names_it(self, monkeypatch):
+        detail = self._refused(monkeypatch, "make: *** [Makefile:525: apply] Error 2\n")
+
+        assert detail.endswith("REFUSED: make: *** [Makefile:525: apply] Error 2")
+
+    def test_a_refusal_with_nothing_on_stderr_reads_stdout(self, monkeypatch):
+        def fake_run(argv, **_kwargs):
+            return subprocess.CompletedProcess(argv, 1, "no such service: x\n", "")
+
+        monkeypatch.setattr(steps.subprocess, "run", fake_run)
+        driver = FakeDriver(FakePage())
+        steps.apply_restarts(driver, ["docker", "restart"], [FakeEngine.RESTART_HINT])
+
+        assert driver.detail("restart").endswith("REFUSED: no such service: x")
+
+    def test_the_refusal_line_is_bounded(self, monkeypatch):
+        def fake_run(argv, **_kwargs):
+            return subprocess.CompletedProcess(argv, 1, "", "x" * 2000)
+
+        monkeypatch.setattr(steps.subprocess, "run", fake_run)
+        driver = FakeDriver(FakePage())
+        steps.apply_restarts(driver, ["docker", "restart"], [FakeEngine.RESTART_HINT])
+
+        assert len(driver.detail("restart")) <= steps.FAILURE_LINE_MAX + len(self.SERVICE) + 20
+
 
 class TestTheOrderTheRunnerWalks:
     def _walk(self, case, driver, engine, transform_repo):
@@ -1519,7 +1707,7 @@ class TestTheOrderTheRunnerWalks:
     def test_a_case_with_no_files_skips_that_row_entirely(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
         case = cases.build(parse("--case", "cloudwatch", "--aws-service", "cloudtrail"))
-        case.create = lambda run: None
+        case.create = lambda run: []
         case.feed = lambda run: None
         case.prove = lambda run: None
         order = self._walk(case, driver, engine, transform_repo)
@@ -1548,6 +1736,18 @@ class TestTheOrderTheRunnerWalks:
 
         assert driver.status("restart") == "failed"
         assert FakeEngine.RESTART_HINT in driver.detail("restart")
+
+    def test_a_restart_the_consoles_create_asked_for_is_heard_too(self, transform_repo):
+        """On a direct tier the create rewrites the receiver's destinations, and only it says so."""
+        driver = FakeDriver(FakePage(created_reply={"restart_required": [FakeEngine.RECEIVER_HINT]}))
+        engine = FakeEngine(restart_required=())
+        case = cases.build(parse())
+        case.feed = lambda run: None
+        case.prove = lambda run: None
+        self._walk(case, driver, engine, transform_repo)
+
+        assert driver.status("restart") == "failed"
+        assert FakeEngine.RECEIVER_HINT in driver.detail("restart")
 
 
 class TestTheObserveStep:
