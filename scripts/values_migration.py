@@ -72,6 +72,10 @@ _NOTHING = ("", "~", "null", "Null", "NULL", "{}", "[]")
 # A scalar safe to write unquoted: no YAML indicator, never read as another type.
 _PLAIN = re.compile(r"^[A-Za-z/_][A-Za-z0-9/._-]*$")
 _RESERVED = {"true", "false", "yes", "no", "on", "off", "null", "y", "n"}
+# A literal block scalar's header: `|`, then chomping and indentation indicators in either order.
+_LITERAL = re.compile(
+    r"^\|(?:(?P<chomp_first>[+-])(?P<indent_last>[1-9])?|(?P<indent_first>[1-9])(?P<chomp_last>[+-])?)?$"
+)
 
 
 class MigrationError(RuntimeError):
@@ -803,6 +807,79 @@ def list_items(text: str, dotted: str) -> list[dict[str, str]] | None:
     if items is None:
         return None
     return [{key: scalar(rest) for key, (_line, rest) in item.fields.items()} for item in items]
+
+
+def _literal_block(lines: list[str], start: int, key_column: int, header: str) -> str | None:
+    """A literal block scalar's text, from the lines after its key; None for a header this does not read.
+
+    Reads `|` with its chomping (`-` strip, `+` keep) and indentation indicators.
+    The block is every line after `start` up to the first non-blank one no deeper
+    than its key, and its indent is the indicator's, else its first non-blank
+    line's.
+    """
+    match = _LITERAL.match(header)
+    if match is None:
+        return None
+    chomp = match["chomp_first"] or match["chomp_last"] or ""
+    digit = match["indent_first"] or match["indent_last"]
+    block: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip(" ")) <= key_column:
+            break
+        block.append(line)
+    indent = key_column + int(digit) if digit else next(
+        (len(line) - len(line.lstrip(" ")) for line in block if line.strip()), 0
+    )
+    body = [line[indent:] if line.strip() else "" for line in block]
+    kept = len(body)
+    while kept and not body[kept - 1]:
+        kept -= 1
+    if not kept:
+        return ""
+    text = "\n".join(body[:kept])
+    if chomp == "-":
+        return text
+    if chomp == "+":
+        return text + "\n" * (len(body) - kept + 1)
+    return text + "\n"
+
+
+def list_contents(
+    text: str, dotted: str, field_name: str = "content"
+) -> dict[str, str | None] | None:
+    """Each named item's `field_name` in the block list at `dotted`, as the text a YAML loader reads.
+
+    Args:
+        text: The file's body.
+        dotted: The list's path, such as fileSets.transforms.files.
+        field_name: The field of each item to read.
+
+    Returns:
+        Item name to its text: a one-line value read as `list_items` reads it, a
+        literal block scalar decoded, and None for any other block, such as a
+        folded one, which this does not read. None where no list is.
+    """
+    doc = _Doc(text)
+    node = doc.find(_path(dotted))
+    if node is None:
+        return None
+    items = [] if _strip_comment(node.rest) == "[]" else doc.items(node)
+    if items is None:
+        return None
+    contents: dict[str, str | None] = {}
+    for item in items:
+        name = item.fields.get("name")
+        held = item.fields.get(field_name)
+        if name is None or held is None:
+            continue
+        line, rest = held
+        header = _strip_comment(rest)
+        if header.startswith(("|", ">")):
+            key_column = doc.lines[line].index(field_name)
+            contents[scalar(name[1])] = _literal_block(doc.lines, line, key_column, header)
+        else:
+            contents[scalar(name[1])] = scalar(rest)
+    return contents
 
 
 def child_keys(text: str, dotted: str) -> list[str]:
