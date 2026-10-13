@@ -231,6 +231,7 @@ import base64
 import contextlib
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import platform
@@ -525,6 +526,10 @@ def _deploy_repo_cred(args: argparse.Namespace) -> tuple[str, str]:
     cmd = ["kubectl"]
     if args.kubeconfig:
         cmd += ["--kubeconfig", args.kubeconfig]
+    if args.context:
+        cmd += ["--context", args.context]
+    if args.server:
+        cmd += ["--server", args.server]
     cmd += ["-n", args.secret_namespace, "get", "secret", args.secret, "-o", "json"]
     out = subprocess.run(
         cmd, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace"
@@ -1433,13 +1438,26 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 # runs after POST on the deployments that showcase the data path.
 SOURCE_SUITE = "source"
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
-BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE)
+# A send from an allow-listed address outside the cloud to the receiver's public
+# door, found in main, the console and HyperDX, and refused from the cluster's own
+# egress. Not part of `all`: only a cloud lane has a load balancer to send to.
+EDGE_SUITE = "edge"
+EDGE_RUNNER = SCRIPTS / "acceptance" / "edge" / "run.py"
+BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE, EDGE_SUITE)
 
 # `all` runs onboarding FIRST: a deployment nobody could have onboarded has
 # failed whatever the data path then does. The flow suite creates every source
 # shape and removes it again, so it proves a fresh deploy. A suite that reads a
 # source the deployment must already carry is run through the pytest passthrough.
-SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, "all")
+SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, EDGE_SUITE, "all")
+# The address the edge suite sends from, and the one network it admits to the ingest door.
+INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDR"
+# The cluster's NAT egress as /32s (the cloud root's output), which a send from inside it arrives from.
+EGRESS_CIDRS_VAR = "DFE_EGRESS_CIDRS"
+# The deploy-repo overlay whose exposure.groups.ingest.allow renders the receiver's load balancer.
+INGEST_ALLOW_FILE = "infra/common.yaml"
+# The Service every HyperDX route sends to, which is how its hostname is found.
+HYPERDX_SERVICE = "dfe-hyperdx"
 # Where the cycle's acceptance stage writes, anchored to this repo's gitignored
 # .tmp rather than the caller's cwd.
 ACCEPTANCE_SHOTS = REPO_ROOT / ".tmp" / "acceptance"
@@ -1457,6 +1475,280 @@ def suite_steps(suite: str) -> tuple[str, ...]:
     if suite == "all":
         return (ONBOARDING_SUITE, "flows")
     return (suite,)
+
+
+class EdgeSuiteError(RuntimeError):
+    """The edge suite cannot run as asked; the message says why."""
+
+
+def ingest_allow_cidr(settings: Mapping[str, str]) -> str:
+    """The one network the edge suite sends from and admits to the ingest door.
+
+    Args:
+        settings: The run's environment, env files and terraform outputs merged.
+
+    Returns:
+        The network, normalised; a bare address is its own /32 or /128.
+
+    Raises:
+        EdgeSuiteError: It is unset, is not one network, or admits every address.
+    """
+    raw = (settings.get(INGEST_ALLOW_VAR) or "").strip()
+    if not raw:
+        raise EdgeSuiteError(
+            f"{INGEST_ALLOW_VAR} is unset: the edge suite sends from that address and admits it "
+            "alone, so it never runs without it"
+        )
+    try:
+        network = ipaddress.ip_network(raw, strict=False)
+    except ValueError as exc:
+        raise EdgeSuiteError(f"{INGEST_ALLOW_VAR}={raw!r} is not a network: {exc}") from exc
+    if network.prefixlen == 0:
+        raise EdgeSuiteError(
+            f"{INGEST_ALLOW_VAR}={raw} admits every address, so a refused send could never prove the list"
+        )
+    return str(network)
+
+
+def egress_cidrs(settings: Mapping[str, str]) -> list[str]:
+    """The cluster's NAT egress, every network a send from inside the cluster can arrive from.
+
+    Raises:
+        EdgeSuiteError: It is unset, or an entry is not a network.
+    """
+    raw = (settings.get(EGRESS_CIDRS_VAR) or "").strip()
+    if not raw:
+        raise EdgeSuiteError(
+            f"{EGRESS_CIDRS_VAR} is unset: pass --from-terraform so the run knows the cluster's NAT "
+            "egress, the address its refused send comes from"
+        )
+    cidrs = []
+    for part in raw.split(","):
+        entry = part.strip()
+        if not entry:
+            continue
+        try:
+            cidrs.append(str(ipaddress.ip_network(entry, strict=False)))
+        except ValueError as exc:
+            raise EdgeSuiteError(f"{EGRESS_CIDRS_VAR} carries {entry!r}, which is not a network: {exc}") from exc
+    return cidrs
+
+
+def edge_inputs_problem(env_files: Iterable[str], env: Mapping[str, str]) -> str:
+    """Why a cycle asking for the edge suite could not run it, or empty when it could."""
+    settings = dict(env)
+    try:
+        for env_file in env_files:
+            settings.update(envfile.parse_env_file(Path(env_file)))
+        ingest_allow_cidr(settings)
+    except (OSError, EdgeSuiteError) as exc:
+        return str(exc)
+    return ""
+
+
+def ingest_allow_document(original: str | None, cidr: str) -> tuple[str, list[str]]:
+    """The deploy repo's overlay with *cidr* added to exposure.groups.ingest.allow.
+
+    Round-trip, so the deployer's comments, key order and earlier senders survive.
+
+    Args:
+        original: The overlay as the deploy repo holds it; None when it holds none.
+        cidr: The network to admit.
+
+    Returns:
+        The overlay to write, and the allow list it now carries.
+
+    Raises:
+        EdgeSuiteError: The overlay, or a key on the path to the list, is some
+            other shape, which this leaves as it is rather than overwrite.
+    """
+    from ruamel.yaml import YAML
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+    yaml = YAML()
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    doc = yaml.load(original) if original else None
+    if doc is None:
+        doc = CommentedMap()
+    if not isinstance(doc, dict):
+        raise EdgeSuiteError(f"the deploy repo's {INGEST_ALLOW_FILE} is not a mapping, so it is left as it is")
+    node = doc
+    for key in ("exposure", "groups", "ingest"):
+        if node.get(key) is None:
+            node[key] = CommentedMap()
+        if not isinstance(node[key], dict):
+            raise EdgeSuiteError(
+                f"{INGEST_ALLOW_FILE} sets {key} to a {type(node[key]).__name__}, not a mapping, "
+                "so it is left as it is"
+            )
+        node = node[key]
+    if node.get("allow") is None:
+        node["allow"] = CommentedSeq()
+    listed = node["allow"]
+    if not isinstance(listed, list):
+        raise EdgeSuiteError(
+            f"{INGEST_ALLOW_FILE} sets exposure.groups.ingest.allow to a {type(listed).__name__}, "
+            "not a list, so it is left as it is"
+        )
+    allow = [str(entry) for entry in listed]
+    if cidr not in allow:
+        listed.append(cidr)
+        allow.append(cidr)
+    buffer = io.StringIO()
+    yaml.dump(doc, buffer)
+    return buffer.getvalue(), allow
+
+
+def deploy_values_argv(git_port: int, kubeconfig: str | None, context: str | None,
+                       server: str | None) -> list[str]:
+    """`dfe-ops deploy-values` against the forwarded deploy repo, reading its credential where acceptance reads."""
+    argv = [sys.executable, str(Path(__file__).resolve()), "deploy-values", "--url", f"http://localhost:{git_port}"]
+    for flag, value in (("--kubeconfig", kubeconfig), ("--context", context), ("--server", server)):
+        if value:
+            argv += [flag, value]
+    return argv
+
+
+def _put_ingest_file(deploy_values: list[str], text: str, message: str, env: dict | None) -> str:
+    """Write *text* as the deploy repo's INGEST_ALLOW_FILE; empty on success, else why it failed."""
+    with tempfile.TemporaryDirectory(prefix="dfe-edge-") as scratch:
+        path = Path(scratch) / "common.yaml"
+        path.write_text(text, encoding="utf-8", newline="\n")
+        rc, out, err = _run_text(
+            [*deploy_values, "put", INGEST_ALLOW_FILE, "--file", str(path), "-m", message], env=env
+        )
+    return "" if rc == 0 else (_last_line(err or out) or f"exit {rc}")
+
+
+def open_ingest(deploy_values: list[str], cidr: str, env: dict | None) -> tuple[list[str], str | None]:
+    """Admit *cidr* on the receiver's ingest door through the deploy repo.
+
+    Args:
+        deploy_values: The `dfe-ops deploy-values` argv, up to the action.
+        cidr: The network to admit.
+        env: The environment deploy-values runs in.
+
+    Returns:
+        The allow list now written, and the overlay as it was, None when the
+        repo held none, for restore_ingest.
+
+    Raises:
+        EdgeSuiteError: The repo could not be read or written, or holds an
+            overlay of another shape.
+    """
+    rc, out, err = _run_text([*deploy_values, "get", INGEST_ALLOW_FILE], env=env)
+    if rc == 0:
+        # deploy-values prints the file, which adds one newline of its own.
+        original: str | None = out.removesuffix("\n")
+    elif out.startswith("absent: "):
+        original = None
+    else:
+        raise EdgeSuiteError(
+            f"could not read the deploy repo's {INGEST_ALLOW_FILE}: {_last_line(err or out) or f'exit {rc}'}"
+        )
+    text, allow = ingest_allow_document(original, cidr)
+    refused = _put_ingest_file(deploy_values, text, f"acceptance: admit {cidr} on the ingest door", env)
+    if refused:
+        raise EdgeSuiteError(f"could not write the deploy repo's {INGEST_ALLOW_FILE}: {refused}")
+    return allow, original
+
+
+def restore_ingest(deploy_values: list[str], original: str | None, env: dict | None) -> tuple[bool, str]:
+    """Put the deploy repo's overlay back as open_ingest found it.
+
+    Returns:
+        Whether it went back, and one line saying so.
+    """
+    if original is None:
+        rc, out, err = _run_text(
+            [*deploy_values, "delete", INGEST_ALLOW_FILE, "-m", "acceptance: remove the edge run's ingest overlay"],
+            env=env,
+        )
+        refused = "" if rc == 0 else (_last_line(err or out) or f"exit {rc}")
+    else:
+        refused = _put_ingest_file(deploy_values, original, "acceptance: restore the ingest allow list", env)
+    if refused:
+        return False, (
+            f"could NOT restore the deploy repo's {INGEST_ALLOW_FILE}: {refused}; the receiver's door "
+            "stays open to the edge run's sender until it is"
+        )
+    return True, f"restored the deploy repo's {INGEST_ALLOW_FILE} as the run found it"
+
+
+def _hyperdx_url(kube: list[str], console: str) -> str:
+    """HyperDX's URL: the HTTPRoute host under the console's domain whose backend is the fork.
+
+    Read off the route rather than the hostnames map, which a deploy repo can override.
+
+    Args:
+        kube: kubectl argv prefix.
+        console: The console's hostname; its parent domain bounds the search.
+
+    Returns:
+        The https URL, or empty when no route sends there.
+    """
+    domain = console.partition(".")[2]
+    rc, doc, _ = _kubectl_json([*kube, "get", "httproute", "-A"])
+    if rc != 0 or not domain:
+        return ""
+    for item in doc.get("items") or []:
+        spec = item.get("spec") or {}
+        backends: set[str] = set()
+        for rule in spec.get("rules") or []:
+            backends.update(str(ref.get("name") or "") for ref in rule.get("backendRefs") or [])
+        if HYPERDX_SERVICE not in backends:
+            continue
+        for name in spec.get("hostnames") or []:
+            if name.endswith(f".{domain}") and not name.startswith("*"):
+                return f"https://{name}"
+    return ""
+
+
+def _run_edge_suite(args: argparse.Namespace, kube: list[str], namespace: str, ui_url: str,
+                    resolve: list[str], allow_cidr: str, egress: list[str],
+                    deploy_values: list[str], env: dict) -> int:
+    """Open the ingest door to *allow_cidr*, run the edge runner, and close the door after it.
+
+    The door is restored whatever the runner does, and a restore that fails
+    fails the stage: the receiver would stay open to the run's sender.
+    """
+    try:
+        allow, original = open_ingest(deploy_values, allow_cidr, env)
+    except EdgeSuiteError as exc:
+        print(f"acceptance: edge: {exc}", file=sys.stderr)
+        return 1
+    print(f"  ingest allow list in the deploy repo's {INGEST_ALLOW_FILE}: {', '.join(allow)}",
+          file=sys.stderr)
+    console_host = urllib.parse.urlsplit(ui_url).hostname or ""
+    runner = [
+        sys.executable, str(EDGE_RUNNER),
+        "--ui-url", ui_url,
+        "--engine-url", ui_url,
+        "--shots-dir", args.shots_dir,
+        "--namespace", namespace,
+        "--kubectl", shlex.join(kube),
+        "--egress-cidrs", ",".join(egress),
+        "--gateway-address", _gateway_address(kube),
+        "--hyperdx-url", _hyperdx_url(kube, console_host),
+    ]
+    for cidr in allow:
+        runner += ["--allow", cidr]
+    if args.insecure:
+        runner.append("--insecure")
+    for pair in resolve:
+        runner += ["--resolve", pair]
+    rc = 1
+    restored = True
+    try:
+        rc = subprocess.run(runner, env=env).returncode
+    finally:
+        if args.keep:
+            print(f"  --keep: the deploy repo's {INGEST_ALLOW_FILE} still admits {allow_cidr}",
+                  file=sys.stderr)
+        else:
+            restored, line = restore_ingest(deploy_values, original, env)
+            print(f"  {line}", file=sys.stderr)
+    return rc if restored else (rc or 1)
 
 
 def cmd_acceptance(args: argparse.Namespace) -> int:
@@ -1500,6 +1792,15 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         kube += ["--server", server]
 
     steps = suite_steps(args.suite)
+    # Before anything touches the cluster, and never a skip: a run without these proves nothing.
+    edge_allow, edge_egress = "", []
+    if EDGE_SUITE in steps:
+        try:
+            edge_allow = ingest_allow_cidr(settings)
+            edge_egress = egress_cidrs(settings)
+        except EdgeSuiteError as exc:
+            print(f"acceptance: the edge suite cannot run: {exc}", file=sys.stderr)
+            return 1
     stop = threading.Event()
     ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
     forwards = [
@@ -1538,6 +1839,9 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 f"  {host} does not resolve here: mapping {', '.join(mapped)} to the gateway at {address}",
                 file=sys.stderr,
             )
+    # The edge suite writes the ingest allow list through the deploy repo's own API.
+    if EDGE_SUITE in steps:
+        forwards.append(("git", args.git_namespace, args.git_target, args.git_port, 3000))
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
     # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
@@ -1572,6 +1876,16 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     if not ready:
         stop.set()
         print("the suite needs ingest and the datastore; neither is optional", file=sys.stderr)
+        return 1
+    if EDGE_SUITE in steps and not _forward_ready(
+        f"http://localhost:{args.git_port}/api/healthz", "git", 45.0
+    ):
+        stop.set()
+        print(
+            f"the edge suite writes the ingest allow list to the deploy repo's {INGEST_ALLOW_FILE}, and "
+            f"{args.git_target} in {args.git_namespace} never answered",
+            file=sys.stderr,
+        )
         return 1
 
     # Before the data path: every app the profile deploys by default is up, and
@@ -1710,6 +2024,11 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
             if args.fetcher_credentials_vault_path and not args.keep:
                 _run_text([*kube, "-n", namespace, "delete", "secret",
                            FETCHER_CREDENTIALS_SECRET, "--ignore-not-found"], env=env)
+        elif step == EDGE_SUITE:
+            rc = _run_edge_suite(
+                args, kube, namespace, ui_url, resolve, edge_allow, edge_egress,
+                deploy_values_argv(args.git_port, args.kubeconfig, context, server), env,
+            )
         else:
             # Serial (-n 0, since the repo's addopts pin -n): every source the
             # flow suite writes rolls the receiver, so parallel workers would
@@ -3919,6 +4238,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    # Refused before anything deploys, for the same reason, and never left to skip at the end.
+    if args.acceptance_suite == EDGE_SUITE:
+        problem = edge_inputs_problem(args.env_file, os.environ)
+        if problem:
+            print(f"ERROR: the edge acceptance stage cannot run: {problem}", file=sys.stderr)
+            return 2
     if _resolve_stack(args) != 0:
         return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
@@ -4097,6 +4422,9 @@ def build_parser() -> argparse.ArgumentParser:
     dv.add_argument("--repo", default="deploy", help="repository name")
     dv.add_argument("--owner", default=None, help="repository owner (default: the admin user)")
     dv.add_argument("--kubeconfig", default=None, help="kubeconfig for the credential read (default: ambient)")
+    dv.add_argument("--context", default=None, help="kubeconfig context for the credential read (default: its current one)")
+    dv.add_argument("--server", default=None,
+                    help="API address for the credential read, for a kubeconfig whose server name does not resolve here")
     dv.add_argument("--secret-namespace", default="forgejo", help="namespace of the admin Secret")
     dv.add_argument("--secret", default="dfe-forgejo-admin", help="admin Secret name (keys: username, password)")
     dv.add_argument("-m", "--message", default=None, help="commit message")
@@ -4224,7 +4552,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the gateway URL the console is served on (default: the cluster's domain annotation)")
     cy.add_argument("--acceptance-suite", default=None, choices=SUITES,
                     help="run `acceptance --suite <name>` as a stage after smoke (needs the engine "
-                         "checkout acceptance --repo finds, and a browser for onboarding and source)")
+                         "checkout acceptance --repo finds, and a browser for onboarding, source and "
+                         f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
                     help="where the acceptance stage writes its screenshots and step table")
     cy.set_defaults(func=cmd_cycle)
@@ -4361,6 +4690,12 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--ch-target", default=None,
                     help="port-forward target for the datastore (default: the service the --mode profile's clickhouse.host names, else svc/dfe-clickhouse)")
     ac.add_argument("--engine-target", default="svc/dfe-engine", help="port-forward target for the engine API")
+    ac.add_argument("--git-target", default="svc/dfe-forgejo",
+                    help="port-forward target for the bundled deploy repo, which the edge suite writes "
+                         f"the ingest allow list to ({INGEST_ALLOW_FILE})")
+    ac.add_argument("--git-namespace", default="forgejo", help="namespace the bundled deploy repo runs in")
+    ac.add_argument("--git-port", type=int, default=13000,
+                    help="local port for the deploy repo, the one deploy-values defaults to")
     ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
                     help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
@@ -4379,7 +4714,9 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--transport", default=None, choices=("grpc", "kafka", "both"),
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("--suite", default="all", choices=SUITES,
-                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; all runs onboarding then flows")
+                    help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; "
+                         f"edge admits {INGEST_ALLOW_VAR} on the receiver's public door, sends from it, finds the row in main, the console "
+                         f"and HyperDX, and proves a send from the cluster's own egress ({EGRESS_CIDRS_VAR}) refused; all runs onboarding then flows")
     ac.add_argument("--engine-user", default="",
                     help="engine login the suites authenticate as (default: the deploy's own minted admin)")
     ac.add_argument("--access-summary", default="", metavar="FILE",
@@ -4395,7 +4732,8 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--console-only", action="store_true",
                     help="skip the wizard half of the onboarding suite on a deploy already set up, and prove the console half alone")
     ac.add_argument("--keep", action="store_true",
-                    help="the source suite leaves the source it made deployed, for a look")
+                    help="the source suite leaves the source it made deployed, and the edge suite the "
+                         "ingest allow list it wrote, for a look")
     ac.add_argument("--source-case", default="filebeat",
                     choices=("filebeat", "cloudwatch", "elastic", "vector"),
                     help="which source the source suite creates: filebeat pushed at the receiver "
