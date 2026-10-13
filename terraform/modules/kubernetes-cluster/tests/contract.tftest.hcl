@@ -1392,6 +1392,127 @@ run "aws_controller_tags_reach_the_addons" {
   }
 }
 
+// An add-on version resolved at plan time is whatever EKS published that day,
+// so each one is pinned, and the pins are built for the cluster's own minor.
+run "aws_addons_install_the_pinned_versions" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = alltrue([for name, addon in aws_eks_addon.this : addon.addon_version == var.addon_versions[name]])
+    error_message = "every add-on must install exactly the version addon_versions pins for it"
+  }
+
+  assert {
+    condition     = length(aws_eks_addon.this) == 5 && alltrue([for name in keys(aws_eks_addon.this) : can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.this[name].addon_version))])
+    error_message = "all five add-ons must carry a pinned EKS build, never an unset version EKS fills in"
+  }
+
+  assert {
+    condition     = startswith(aws_eks_addon.this["kube-proxy"].addon_version, "v${var.kubernetes_version}.")
+    error_message = "the default kube-proxy pin must be built for the minor this test's cluster runs"
+  }
+}
+
+// A null from the root takes the module's pins rather than leaving every add-on unpinned.
+run "aws_addons_take_the_pins_when_the_caller_passes_null" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    addon_versions = null
+  }
+
+  assert {
+    condition     = aws_eks_addon.this["vpc-cni"].addon_version != null && can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.this["vpc-cni"].addon_version))
+    error_message = "a null addon_versions must fall back to the pinned default"
+  }
+}
+
+// A Kubernetes bump with the add-on pins left behind would install a kube-proxy
+// built for another minor, so the plan stops on it before anything is created.
+run "aws_addons_refuse_a_kube_proxy_for_another_minor" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    kubernetes_version = "1.35"
+  }
+
+  expect_failures = [aws_eks_addon.this]
+}
+
+// The override a deployer on another minor sets, all five at once.
+run "aws_addons_take_a_full_override_for_another_minor" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    kubernetes_version = "1.35"
+    addon_versions = {
+      "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+      "coredns"                = "v1.13.2-eksbuild.1"
+      "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+      "kube-proxy"             = "v1.35.0-eksbuild.1"
+      "vpc-cni"                = "v1.23.2-eksbuild.1"
+    }
+  }
+
+  assert {
+    condition     = aws_eks_addon.this["kube-proxy"].addon_version == "v1.35.0-eksbuild.1"
+    error_message = "an override must reach the add-on it names"
+  }
+}
+
+// An override that leaves an add-on out would install it at whatever EKS picks.
+run "aws_addons_refuse_an_override_missing_an_addon" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    addon_versions = {
+      "kube-proxy" = "v1.36.0-eksbuild.45"
+    }
+  }
+
+  expect_failures = [aws_eks_addon.this]
+}
+
+run "aws_addons_refuse_a_version_that_is_not_an_eks_build" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    addon_versions = {
+      "aws-ebs-csi-driver"     = "latest"
+      "coredns"                = "v1.14.7-eksbuild.11"
+      "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+      "kube-proxy"             = "v1.36.0-eksbuild.45"
+      "vpc-cni"                = "v1.23.2-eksbuild.1"
+    }
+  }
+
+  expect_failures = [var.addon_versions]
+}
+
 // Adding a launch template to a node group that has none replaces the group, so
 // every deployment that is not a test run must plan exactly the shape it had.
 run "aws_node_groups_carry_no_launch_template_outside_a_run" {

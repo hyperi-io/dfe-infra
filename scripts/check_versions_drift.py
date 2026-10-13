@@ -604,6 +604,19 @@ CHECKS += [
     for f in files
 ]
 
+# The EKS add-on pins, mirrored into the cluster module's addon_versions default:
+# what a deploy installs when the root passes no override.
+_EKS_ADDONS = ("aws-ebs-csi-driver", "coredns", "eks-pod-identity-agent", "kube-proxy", "vpc-cni")
+CHECKS += [
+    Check(
+        f"EKS add-on {addon} (kubernetes-cluster/aws addon_versions)",
+        f"eks-addons.{addon}",
+        Path("terraform/modules/kubernetes-cluster/aws/variables.tf"),
+        r'"' + re.escape(addon) + r'"\s*=\s*"([^"]+)"',
+    )
+    for addon in _EKS_ADDONS
+]
+
 # The DFE apps under versions.yaml apps:. Each deploys from its published thin
 # chart, which pins its own image, so the copies left to watch are the ones this
 # repo writes: the dfe-extras app versions below, and the content refs.
@@ -916,7 +929,7 @@ UNCONSUMED: dict[str, str] = {
     "platform.kubernetes": "bootstrap/check_platform.py and dfe-ops preflight both read it at runtime by name; no hardcoded copy",
     "platform.rke2": "bootstrap/check_platform.py reads it at runtime; no hardcoded copy",
     "platform.rancher": "DECLARED, not checked: nothing in a cluster reports the Rancher managing it, so there is no second copy to drift against",
-    "platform.eks": "a REQUIREMENT on a cluster this repo does not build -- deployment.example.yaml takes an existing cluster and argocd/values/aws.yaml is a Plan 07 stub. Give it a Check once that stub becomes real provisioning",
+    "platform.eks": "render_dial.py reads it at runtime as the floor for an aws dial's kubernetes_version; no hardcoded copy",
     "bootstrap.cert-manager": "bootstrap.sh reads it at runtime (read_versions.py); no hardcoded copy",
     "bootstrap.external-secrets": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
@@ -1003,6 +1016,7 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.clickhouse-keeper": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "services-digests.forgejo": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
+    "eks-addons.*": "pinned starting the 2.2.1 block; a stack that predates it resolved each add-on at plan time and has no value to compare",
 }
 
 

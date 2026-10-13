@@ -120,6 +120,10 @@ When the gate times out it runs `dfe-ops readiness-report` once, because a ready
 `dfe-ops creds` prints where each minted credential is fetched from, reading both
 Secret names off the live engine Deployment.
 
+## When a stage fails
+
+The cycle runs `dfe-ops failure-evidence` once before the destroy, so the evidence outlives the cluster. It writes one file per capture into a timestamped directory under `--evidence-dir`, by default `failure-evidence/` under `--acceptance-shots-dir`: `nodes -o wide`, each node's conditions and allocatable, kube-system events oldest first, `describe` of each kube-system pod not Running and Ready, the events of each node reporting `InvalidDiskCapacity`, every aws-node container's newest log lines, and the CNI's `ipamd.log` and `plugin.log`. `index.txt` names the command behind each file and how it ended. Each call is capped at 30 seconds and 1 MiB and the whole capture at 300 seconds, a failing call never stops the rest, nothing reads a Secret, and the cycle's verdict does not change.
+
 ## The env-file contract (how a teammate gets running)
 
 Everything estate-specific -- addresses, domains, storage class, secrets

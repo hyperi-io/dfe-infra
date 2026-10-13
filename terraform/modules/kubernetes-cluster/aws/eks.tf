@@ -337,22 +337,18 @@ locals {
   }
 }
 
-// Resolve each add-on's version for this cluster version rather than pinning
-// one, so an add-on pin cannot rot against a cluster upgrade.
-data "aws_eks_addon_version" "this" {
-  for_each = toset(local.addons)
-
-  addon_name         = each.key
-  kubernetes_version = aws_eks_cluster.this.version
-  most_recent        = true
+locals {
+  // kube-proxy is built per Kubernetes minor, so its version names the minor the pins are for.
+  kube_proxy_minor = try(regex("^v([0-9]+\\.[0-9]+)\\.", lookup(var.addon_versions, "kube-proxy", ""))[0], "")
 }
 
+// Pinned, never resolved: a version EKS publishes after the plan cannot reach a deploy unreviewed.
 resource "aws_eks_addon" "this" {
   for_each = toset(local.addons)
 
   cluster_name  = aws_eks_cluster.this.name
   addon_name    = each.key
-  addon_version = data.aws_eks_addon_version.this[each.key].version
+  addon_version = lookup(var.addon_versions, each.key, null)
 
   configuration_values = lookup(local.addon_configuration, each.key, null)
 
@@ -360,6 +356,18 @@ resource "aws_eks_addon" "this" {
   resolve_conflicts_on_update = "OVERWRITE"
 
   depends_on = [aws_eks_node_group.this]
+
+  lifecycle {
+    precondition {
+      condition     = contains(keys(var.addon_versions), each.key)
+      error_message = "addon_versions names no version for ${each.key}. Give every add-on one, from `aws eks describe-addon-versions --kubernetes-version ${var.kubernetes_version} --addon-name ${each.key}`."
+    }
+
+    precondition {
+      condition     = each.key != "kube-proxy" || local.kube_proxy_minor == var.kubernetes_version
+      error_message = "addon_versions pins add-ons built for Kubernetes ${local.kube_proxy_minor == "" ? "an unreadable minor" : local.kube_proxy_minor} (kube-proxy ${lookup(var.addon_versions, "kube-proxy", "unset")}), but the cluster runs ${var.kubernetes_version}. Set every addon_versions entry to what `aws eks describe-addon-versions --kubernetes-version ${var.kubernetes_version}` lists."
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

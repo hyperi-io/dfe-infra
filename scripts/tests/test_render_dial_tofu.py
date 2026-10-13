@@ -157,7 +157,16 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     }
     # A credential the root reads from TF_VAR_*, which the dial never carries.
     environment_only = {"clickhouse_external_password"}
-    assert set(render()) == declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only
+    # Defaults to the cluster module's pins; an operator on another Kubernetes minor sets it.
+    operator_override = {"eks_addon_versions"}
+    expected = (
+        declared
+        - {"node_pools", "resolved_shapes"}
+        - guarded_run_only
+        - environment_only
+        - operator_override
+    )
+    assert set(render()) == expected
 
 
 def test_provision_carries_the_account_the_root_asserts() -> None:

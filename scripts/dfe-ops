@@ -120,6 +120,12 @@ Subcommands:
                NodePools, NodeClaims, EC2NodeClasses and controller errors,
                unbound volume claims, and Argo Applications not Synced and
                Healthy. The readiness gate runs it once when it fails.
+  failure-evidence
+               READ-ONLY. Writes the nodes' conditions and allocatable,
+               kube-system events and unready pods, the events of nodes
+               reporting InvalidDiskCapacity, and the aws-node and CNI logs to
+               one file each, every capture bounded in time and bytes. The
+               cycle runs it once when a stage fails, before the destroy.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
@@ -291,6 +297,7 @@ import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
+from dfe_ops_failure_evidence import add_failure_evidence_subparser, safe_name  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_readiness_report import add_readiness_report_subparser  # noqa: E402
@@ -4205,11 +4212,36 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
 
 
 # --- cycle subcommand (the repeat create -> test e2e -> destroy loop) ---------
+# Under the acceptance shots directory by default, which a CI job keeping that directory uploads.
+EVIDENCE_SUBDIR = "failure-evidence"
+
+
+def _evidence_root(args: argparse.Namespace) -> Path:
+    """Where a failed stage's cluster evidence goes: --evidence-dir, else under the shots dir."""
+    return Path(args.evidence_dir or Path(args.acceptance_shots_dir) / EVIDENCE_SUBDIR)
+
+
+def _failure_evidence(
+    self_cmd: list[str], kube: list[str], root: Path, stage: str, env: dict
+) -> None:
+    """Capture the cluster's node and network state before the destroy removes it.
+
+    Its exit code never changes the cycle's verdict: the stage has already failed.
+    """
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    out = root / f"{stamp}-{safe_name(stage)}"
+    print(f"\n=== failure evidence for stage {stage}: {out} ===", file=sys.stderr)
+    rc = _run_streaming([*self_cmd, "failure-evidence", "--out", str(out), *kube], env=env)
+    if rc != 0:
+        print(f"  [warn] dfe-ops failure-evidence exited {rc}", file=sys.stderr)
+
+
 def cmd_cycle(args: argparse.Namespace) -> int:
     """THE validation cycle this repo owns: preflight -> deploy+E2E -> smoke -> destroy.
 
     --acceptance-suite adds an `acceptance` stage after smoke, and --ui-repo a
-    `ui` stage after that; a failed stage skips every later one but destroy.
+    `ui` stage after that; a failed stage skips every later one but destroy,
+    and `failure-evidence` writes the cluster's node and CNI state first.
     Each stage self-executes as its own dfe-ops subcommand, so a stage run by
     the cycle is EXACTLY the stage a human runs by hand -- no drift between
     "the cycle" and "the commands". The one thing the cycle adds on top is
@@ -4335,6 +4367,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         if rc != 0:
             aborted = True
             print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
+            _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
             break
 
     # Destroy is NOT skipped on failure -- an aborted cycle must not strand a
@@ -4556,6 +4589,10 @@ def build_parser() -> argparse.ArgumentParser:
                          f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
                     help="where the acceptance stage writes its screenshots and step table")
+    cy.add_argument("--evidence-dir", default=None, metavar="DIR",
+                    help="where a failed stage's node, event and CNI evidence goes, one "
+                         f"timestamped directory per failure (default: {EVIDENCE_SUBDIR}/ under "
+                         "--acceptance-shots-dir)")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -4895,6 +4932,11 @@ def build_parser() -> argparse.ArgumentParser:
     # cannot say. The readiness gate runs it on failure; registered from
     # dfe_ops_readiness_report.
     add_readiness_report_subparser(sub)
+
+    # failure-evidence -- the node and CNI state a failed stage leaves, written to
+    # files before the destroy. The cycle runs it; registered from
+    # dfe_ops_failure_evidence.
+    add_failure_evidence_subparser(sub)
 
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.

@@ -26,6 +26,7 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `name` | `string` | Name prefix for every resource the body creates. |
 | `env` | `string` | Deployment environment, for names a body has to disambiguate. |
 | `kubernetes_version` | `string` | Control-plane minor version, e.g. `1.36`. |
+| `addon_versions` | `map(string)`, defaults to versions.yaml's `eks-addons` | AWS-only today. The managed add-on versions, keyed by add-on name, one for every add-on the body installs. Each is built for one Kubernetes minor, and the default is the set for the minor `eks-addons` names. A cluster on another minor sets every entry, and the plan refuses a kube-proxy built for any minor but `kubernetes_version`. Null takes the default. |
 | `node_pools` | `map(object(...))` | Keyed by pool name. Each pool: `shape_ref`, `min_size`, `max_size`, `desired_size`, `capacity_type`, `disk_gb`, `labels`, `taints`. |
 | `resolved_shapes` | `map(object({ instance_types, arch }))` | Keyed by `shape_ref`. The resolver's answer, never an instance type written by hand. `instance_types` is ordered best-first so the cloud can fall back when the first is unavailable. |
 | `network` | `object({ nat, az_count })` | `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans -- 3 by default, 2-6, from the dial's `network.az_count`. |
@@ -82,4 +83,5 @@ map(object({
 - **Nothing hardcoded.** The only literals allowed are ones the cloud's own API
   defines: managed policy names, add-on names, the machine-image family,
   Kubernetes label keys and service principals. Each carries a one-line comment
-  saying why it is structural.
+  saying why it is structural. A version pin is the one exception, and only as
+  a variable default `scripts/check_versions_drift.py` holds to `versions.yaml`.
