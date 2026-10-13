@@ -3182,7 +3182,7 @@ def test_preflight_runs_the_conversion_check_with_the_operator_move(monkeypatch:
     monkeypatch.setattr(u, "check_strimzi_conversion_before", fake_before)
     step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="x stored-version conversion y")
     move = u.Move(step=step, old="0.51.0", new="1.2.0")
-    checks = u.run_preflight(deploy, [move], kubeconfig="kc")
+    checks = u.run_preflight(deploy, [move], from_stack="1.0.0", to_stack="1.1.0", kubeconfig="kc")
     assert ("strimzi stored-version conversion", False, "1 CRD(s) still store a pre-v1 version") in checks
     assert seen == [move]
 
@@ -3944,3 +3944,150 @@ def test_the_in_pod_script_hands_the_stdin_password_to_clickhouse_client_by_envi
 
     none = subprocess.run(argv, input="", capture_output=True, text=True, env=env, check=True)
     assert none.stdout.splitlines()[0] == "env=unset"
+
+
+# ---------------------------------------------------------------------------
+# The ingest door -- an upgrade across the ingest group states its door
+# ---------------------------------------------------------------------------
+
+INGEST_VERSIONS_YAML = """
+current: "2.2.1-rc.8"
+stacks:
+  2.2.0:
+    services:
+      clickhouse-version: "26.3.17.56"
+  2.2.1-rc.6:
+    services:
+      clickhouse-version: "26.3.17.56"
+  2.2.1-rc.7:
+    services:
+      clickhouse-version: "26.3.32.14"
+  2.2.1-rc.8:
+    services:
+      clickhouse-version: "26.3.32.14"
+"""
+
+# What a deploy repo carries when it set no ingest door: other facts, other groups.
+NO_INGEST_BLOCK = (
+    "",
+    "clickhouse:\n  mode: single\n",
+    "exposure:\n  groups:\n    console:\n      allow:\n        - 10.0.0.0/8\n",
+    "exposure:\n  groups:\n    ingest:\n      # door: loadbalancer\n      # allow: []\n",
+    "exposure:\n  groups:\n    ingest: {}\n",
+    "listeners:\n  - name: http\n    port: 8080\nexposure:\n  networkPolicy:\n    enabled: true\n",
+)
+
+# An explicit ingest block in each shape a values file writes one, and the keys it sets.
+INGEST_BLOCKS = (
+    ("exposure:\n  groups:\n    ingest:\n      allow: []\n", ["allow"]),
+    (
+        "clickhouse:\n  mode: single\nexposure:\n  groups:\n    ingest:\n      door: loadbalancer  # senders below\n"
+        "      allow:\n        - 203.0.113.0/24\n        - 198.51.100.7/32\n  public:\n    loadBalancerIP: 10.0.0.9\n",
+        ["door", "allow"],
+    ),
+    ("exposure:\n  groups:\n    ingest: {door: gateway, allow: [192.0.2.0/24]}\n", ["door", "allow"]),
+    ("exposure:\n  groups:\n    ingest:\n      enabled: false\n", ["enabled"]),
+)
+
+
+def _write_common(deploy: Path, text: str) -> None:
+    if text:
+        (deploy / "infra").mkdir(exist_ok=True)
+        (deploy / "infra" / "common.yaml").write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize("overlay", NO_INGEST_BLOCK)
+def test_an_upgrade_from_220_without_an_ingest_block_is_refused_naming_the_keys(deploy: Path, overlay: str) -> None:
+    _write_common(deploy, overlay)
+    ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.8")
+    assert ok is False
+    assert "2.2.0 predates 2.2.1-rc.7" in detail
+    assert "infra/common.yaml does not set exposure.groups.ingest" in detail
+    assert "a LoadBalancer open to every address on the receiver's public ports" in detail
+    assert "exposure.groups.ingest.door" in detail
+    assert "exposure.groups.ingest.allow" in detail
+    assert "docs/deployment/upgrades.md#from-220" in detail
+
+
+@pytest.mark.parametrize(("overlay", "keys"), INGEST_BLOCKS)
+def test_an_explicit_ingest_block_passes_an_upgrade_from_220(deploy: Path, overlay: str, keys: list[str]) -> None:
+    _write_common(deploy, overlay)
+    assert u.ingest_group_keys(overlay) == keys
+    ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.8")
+    assert ok is True
+    assert detail == f"infra/common.yaml sets exposure.groups.ingest: {', '.join(keys)}"
+
+
+@pytest.mark.parametrize("from_stack", ["2.2.1-rc.7", "2.2.1-rc.8", "2.2.1"])
+def test_an_upgrade_from_a_stack_with_the_ingest_group_passes_without_a_block(deploy: Path, from_stack: str) -> None:
+    ok, detail = u.check_ingest_door(deploy, from_stack, "2.2.1-rc.8")
+    assert ok is True
+    assert detail.startswith(f"{from_stack} is at or after 2.2.1-rc.7")
+
+
+def test_an_upgrade_that_stops_short_of_the_ingest_group_passes_without_a_block(deploy: Path) -> None:
+    ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.6")
+    assert ok is True
+    assert detail == "2.2.1-rc.6 predates 2.2.1-rc.7, so the receiver's door does not move"
+
+
+def test_the_ingest_group_stack_is_a_certified_stack_above_220(deploy: Path) -> None:
+    stacks = u.load_versions_root()["stacks"]
+    assert u.INGEST_GROUP_STACK in stacks
+    assert "2.2.0" in stacks
+    assert u.check_ingest_door(deploy, "2.2.0", u.INGEST_GROUP_STACK)[0] is False
+
+
+def _ingest_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, pin: str) -> None:
+    """FROM `pin` in a versions.yaml carrying the stacks either side of the ingest group, every cluster check passing."""
+    versions = tmp_path / "ingest-versions.yaml"
+    versions.write_text(INGEST_VERSIONS_YAML, encoding="utf-8")
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", versions)
+    (deploy / "pins.yaml").write_text(PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8")
+    for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
+                 "check_clickhouse_merges", "check_node_capacity", "check_backup_marker"):
+        monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
+
+
+def test_preflight_refuses_an_upgrade_from_220_until_the_deploy_repo_states_its_door(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
+
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_BLOCKED, out
+    assert "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in out
+
+    _write_common(deploy, INGEST_BLOCKS[0][0])
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK, out
+    assert "[PASS] ingest door (exposure.groups.ingest): infra/common.yaml sets exposure.groups.ingest: allow" in out
+
+
+def test_preflight_passes_an_upgrade_from_the_ingest_group_stack_without_a_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.1-rc.7")
+    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_OK, out
+    assert "[PASS] ingest door (exposure.groups.ingest): 2.2.1-rc.7 is at or after 2.2.1-rc.7" in out
+
+
+def test_apply_refuses_an_upgrade_from_220_without_an_ingest_block_and_moves_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
+    pins = (deploy / "pins.yaml").read_text(encoding="utf-8")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False))
+
+    captured = capsys.readouterr()
+    assert rc == u.EXIT_BLOCKED
+    assert "[FAIL] ingest door (exposure.groups.ingest)" in captured.out
+    assert "REFUSED -- 1 preflight check(s) failed" in captured.err
+    assert (deploy / "pins.yaml").read_text(encoding="utf-8") == pins

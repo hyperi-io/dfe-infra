@@ -45,8 +45,11 @@ does, so a component whose tag stays put while its digest moves still moves.
                deploy repo or the stack name do not resolve).
 
     preflight  The checks `apply` refuses to run without: the deploy repo is
-               clean, the cluster answers, every Argo Application is Synced
-               and Healthy, no KafkaRebalance is mid-flight, ClickHouse carries
+               clean, its infra/common.yaml sets exposure.groups.ingest when
+               the plan crosses INGEST_GROUP_STACK (where the receiver's door
+               stopped being exposure.mode), the cluster answers, every Argo
+               Application is Synced and Healthy, no KafkaRebalance is
+               mid-flight, ClickHouse carries
                no long merge, every Strimzi CRD the 1.x operator needs stores
                v1 only (only checked when the plan crosses the conversion), the
                on-prem node capacity holds the new sizing, and a backup marker
@@ -156,6 +159,9 @@ both succeed.
 
 import argparse
 import base64
+import functools
+import importlib.machinery
+import importlib.util
 import json
 import os
 import re
@@ -169,6 +175,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPTS.parent
@@ -240,6 +247,13 @@ DOMAIN_ANNOTATION = "dfe.hyperi.io/domain"
 KAFKA_OVERLAY = Path("infra") / "kafka.yaml"
 # Marks a line apply wrote, so only those are ever rewritten or dropped.
 HOLD_MARK = "# dfe-ops upgrade hold"
+
+# The deploy repo's shared values overlay, layered by every layer 2 appset.
+COMMON_OVERLAY = Path("infra") / "common.yaml"
+# The first stack whose receiver door is exposure.groups.ingest; below it the door is exposure.mode.
+INGEST_GROUP_STACK = "2.2.1-rc.7"
+INGEST_GROUP_PATH = ("exposure", "groups", "ingest")
+INGEST_UPGRADE_DOC = "docs/deployment/upgrades.md#from-220"
 
 
 class UpgradeError(RuntimeError):
@@ -1125,10 +1139,105 @@ def check_backup_marker(deploy: Path, moves: list[Move], marker: str = DEFAULT_B
     return False, f"one-way step(s) in this plan ({names}) need a backup marker at {marker_path} before apply"
 
 
+@functools.cache
+def _dfe_stack() -> ModuleType:
+    """scripts/dfe-stack, imported for its semver_key so stack order has one definition."""
+    loader = importlib.machinery.SourceFileLoader("dfe_stack", str(DFE_STACK))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise UpgradeError(f"cannot load {DFE_STACK}")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+_VALUES_KEY = re.compile(r"^(\s*)([A-Za-z_][\w.-]*)\s*:(?:\s+(.*?))?\s*$")
+_FLOW_KEY = re.compile(r"[{,]\s*([A-Za-z_][\w-]*)\s*:")
+
+
+def ingest_group_keys(text: str) -> list[str]:
+    """The keys a values overlay sets under exposure.groups.ingest, in file order.
+
+    An indentation walk rather than a YAML parse, as render_dial.py reads the
+    cloud overlays: this module is stdlib only, and a values file carries lists
+    the restricted reader refuses. It reads block style, and a flow mapping on
+    the `ingest:` line. Any other spelling reads as unset, which refuses.
+
+    Args:
+        text: The overlay's body.
+
+    Returns:
+        Each key set under the group; empty when the group is absent, null or `{}`.
+    """
+    keys: list[str] = []
+    stack: list[tuple[int, str]] = []
+    for line in text.splitlines():
+        match = _VALUES_KEY.match(line)
+        if not match:
+            continue
+        indent = len(match[1])
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack.append((indent, match[2]))
+        path = tuple(key for _, key in stack)
+        if path[:-1] == INGEST_GROUP_PATH:
+            keys.append(path[-1])
+        elif path == INGEST_GROUP_PATH:
+            keys += _FLOW_KEY.findall((match[3] or "").split(" #", 1)[0])
+    return keys
+
+
+def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[bool, str]:
+    """The deploy repo states its ingest door when the upgrade crosses INGEST_GROUP_STACK.
+
+    Below that stack the receiver's door was exposure.mode, whose chart default
+    was a LoadBalancer open to every address. From it the door is
+    exposure.groups.ingest, whose cloud default renders no load balancer or
+    carries HTTP alone, so a deploy repo that set neither key moves its door on
+    upgrade without an error. An explicit block in infra/common.yaml, even
+    `allow: []`, is the operator's decision and passes. A stack name dfe-stack
+    cannot order counts as crossing the cutover, so it refuses rather than passes.
+
+    Args:
+        deploy: The deploy repo checkout.
+        from_stack: The stack the deployment runs.
+        to_stack: The stack it moves to.
+
+    Returns:
+        (ok, the evidence line).
+    """
+    semver_key = _dfe_stack().semver_key
+    cutover = semver_key(INGEST_GROUP_STACK)
+    before, after = semver_key(from_stack), semver_key(to_stack)
+    if before is not None and before >= cutover:
+        return True, (
+            f"{from_stack} is at or after {INGEST_GROUP_STACK}: "
+            "the receiver's door is already exposure.groups.ingest"
+        )
+    if after is not None and after < cutover:
+        return True, f"{to_stack} predates {INGEST_GROUP_STACK}, so the receiver's door does not move"
+    overlay = deploy / COMMON_OVERLAY
+    keys = ingest_group_keys(overlay.read_text(encoding="utf-8")) if overlay.is_file() else []
+    if keys:
+        return True, f"{COMMON_OVERLAY.as_posix()} sets exposure.groups.ingest: {', '.join(keys)}"
+    return False, (
+        f"{from_stack} predates {INGEST_GROUP_STACK}, which moved the receiver's door from exposure.mode to "
+        f"exposure.groups.ingest, and {COMMON_OVERLAY.as_posix()} does not set exposure.groups.ingest. "
+        f"Under {from_stack} the door was exposure.mode: by default a LoadBalancer open to every address on the "
+        "receiver's public ports, the tunnel under vpn, the gateway route under internal. "
+        f"Under {to_stack} the cloud's own door applies, and door loadbalancer with an empty allow renders no "
+        "load balancer at all. Set exposure.groups.ingest.door (loadbalancer, gateway or tunnel) and "
+        f"exposure.groups.ingest.allow (the senders' CIDRs) in {COMMON_OVERLAY.as_posix()}. "
+        f"An explicit block, even allow: [], passes. See {INGEST_UPGRADE_DOC}."
+    )
+
+
 def run_preflight(
     deploy: Path,
     moves: list[Move],
     *,
+    from_stack: str,
+    to_stack: str,
     kubeconfig: str | None,
     argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
     clickhouse_namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
@@ -1142,6 +1251,7 @@ def run_preflight(
     (cmd_upgrade_preflight, or apply before it acts) owns presentation."""
     checks: list[tuple[str, bool, str]] = []
     checks.append(("deploy repo clean", *check_deploy_clean(deploy)))
+    checks.append(("ingest door (exposure.groups.ingest)", *check_ingest_door(deploy, from_stack, to_stack)))
     checks.append(("cluster reachable", *check_cluster_reachable(kubeconfig)))
     checks.append(("argo apps synced and healthy", *check_argo_apps(kubeconfig, argocd_namespace)))
     checks.append(("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig)))
@@ -1954,7 +2064,7 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
 def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
-        _root, _from_name, from_pins, _to_name, to_pins, from_note = _load_from_to(
+        _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
             deploy, args.to, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
         )
     except UpgradeError as err:
@@ -1968,6 +2078,8 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
     checks = run_preflight(
         deploy,
         moves,
+        from_stack=from_name,
+        to_stack=to_name,
         kubeconfig=args.kubeconfig,
         argocd_namespace=args.argocd_namespace,
         clickhouse_namespace=args.clickhouse_namespace,
@@ -2116,12 +2228,14 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         checks = run_preflight(
             deploy,
             moves,
+            from_stack=from_name,
+            to_stack=to_name,
             kubeconfig=args.kubeconfig,
             argocd_namespace=args.argocd_namespace,
             clickhouse_namespace=args.clickhouse_namespace,
             clickhouse_selector=args.clickhouse_selector,
             clickhouse_merge_threshold=args.clickhouse_merge_threshold,
-        clickhouse_credentials=args.clickhouse_credentials,
+            clickhouse_credentials=args.clickhouse_credentials,
             nodes_file=Path(args.nodes_file) if args.nodes_file else None,
             backup_marker=args.backup_marker,
         )
