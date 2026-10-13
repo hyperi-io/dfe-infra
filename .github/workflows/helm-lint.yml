@@ -22,7 +22,7 @@ jobs:
   # in its paths, so a failure here runs the checks rather than skipping them.
   changes:
     name: changed paths (helm lint)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -82,7 +82,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -374,7 +374,7 @@ jobs:
     name: bootstrap bats
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -409,7 +409,7 @@ jobs:
     name: third-party images carry amd64 and arm64
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -452,7 +452,7 @@ jobs:
     name: governance actions vs chart values
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
