@@ -16,6 +16,14 @@ dfe-receiver-env carries these entries, each only while its condition holds.
             - name: DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL
               value: {{ .Values.kafka.securityProtocol | quote }}
             {{- end }}
+            {{- with .Values.kafka.messageMaxBytes }}
+            {{- if le (int64 .) 0 }}
+            {{- fail (printf "kafka.messageMaxBytes must be a positive whole number of bytes, got %v" .) }}
+            {{- end }}
+            # Five eighths of the broker's record ceiling, the 10 MiB door the stack keeps under its 16 MiB, so a transform can grow a record before it re-enters Kafka.
+            - name: DFE_RECEIVER_MAX_BODY_SIZE
+              value: {{ div (mul (int64 .) 5) 8 | quote }}
+            {{- end }}
 {{- end }}
 {{- if eq (include "dfe-common.transport" .) "direct" }}
             # The DLQ's kafka backend goes with the broker; the receiver's DLQ modes have no "disabled".

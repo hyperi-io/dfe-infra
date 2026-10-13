@@ -58,8 +58,9 @@
 #                            current consumer reads it back.
 #   DFE_KAFKA_MESSAGE_MAX_BYTES  the message size a managed broker was built
 #                            with, from the aws root's output. The engine
-#                            creates its own topics at the same size. Empty on
-#                            an in-cluster broker, where the engine keeps its
+#                            creates its own topics at the same size, and the
+#                            producing apps' record limits follow it. Empty on
+#                            an in-cluster broker, where every app keeps its
 #                            own default.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
