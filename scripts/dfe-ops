@@ -1021,6 +1021,52 @@ def _forward_ready(url: str, label: str, timeout: float) -> bool:
     return False
 
 
+def _datastore_ready(url: str, timeout: float) -> bool:
+    """Whether an external datastore answers its /ping, saying so without the address.
+
+    A cloud cycle's log can be public, so the host stays out of it.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                response.read()
+                print("  external datastore answering", file=sys.stderr)
+                return True
+        except urllib.error.HTTPError:
+            print("  external datastore answering (with an error status)", file=sys.stderr)
+            return True
+        except OSError:
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+    print(f"  external datastore never answered /ping within {timeout:.0f}s", file=sys.stderr)
+    return False
+
+
+def _external_datastore(kube: list[str]) -> dict | None:
+    """The external ClickHouse the dfe-cluster secret names, or None for an in-cluster one.
+
+    bootstrap.sh writes the server's facts onto the secret from the cloud root's
+    outputs. A secret that cannot be read is treated as in-cluster, whose forward
+    then fails on its own.
+
+    Args:
+        kube: kubectl argv prefix.
+
+    Returns:
+        host, port, secure and user, or None when the mode is not external.
+    """
+    rc, doc, _ = _kubectl_json([*kube, "-n", "argocd", "get", "secret", "dfe-cluster"])
+    annotations = ((doc.get("metadata") or {}).get("annotations") or {}) if rc == 0 else {}
+    if annotations.get("dfe.hyperi.io/clickhouse_mode") != "external":
+        return None
+    return {
+        "host": annotations.get("dfe.hyperi.io/clickhouse_host", ""),
+        "port": annotations.get("dfe.hyperi.io/clickhouse_port", ""),
+        "secure": annotations.get("dfe.hyperi.io/clickhouse_secure", "") == "true",
+        "user": annotations.get("dfe.hyperi.io/clickhouse_user", ""),
+    }
+
+
 def _taken_ports(ports: Iterable[int]) -> list[int]:
     """The local ports another process already holds, in the order given.
 
@@ -1798,6 +1844,17 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         forwards.append(("git", args.git_namespace, args.git_target, args.git_port, 3000))
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
+    # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
+    external_ch = _external_datastore(kube)
+    ch_scheme = "https" if external_ch is not None and external_ch["secure"] else "http"
+    if external_ch is not None:
+        missing = [k for k in ("host", "port") if not external_ch[k]]
+        if missing:
+            print(f"acceptance: the dfe-cluster secret names an external ClickHouse with no "
+                  f"{' and no '.join('clickhouse_' + k for k in missing)}", file=sys.stderr)
+            return 1
+        print(f"  datastore: external ClickHouse over {ch_scheme}, no port-forward", file=sys.stderr)
+        forwards = [f for f in forwards if f[0] != "datastore"]
     for label, ns, target, local, remote in forwards:
         threading.Thread(
             target=_forward,
@@ -1806,7 +1863,13 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
         ).start()
 
     ready = _forward_ready(f"http://localhost:{args.receiver_port}/livez", "receiver", 90.0)
-    ready = _forward_ready(f"http://localhost:{args.ch_port}/ping", "datastore", 90.0) and ready
+    if external_ch is None:
+        ch_host, ch_port, ch_user = "localhost", str(args.ch_port), args.ch_user or "default"
+        ready = _forward_ready(f"http://localhost:{args.ch_port}/ping", "datastore", 90.0) and ready
+    else:
+        ch_host, ch_port = external_ch["host"], external_ch["port"]
+        ch_user = args.ch_user or external_ch["user"] or "default"
+        ready = _datastore_ready(f"{ch_scheme}://{ch_host}:{ch_port}/ping", 90.0) and ready
     # The engine forward only gates the transform class, so a pod mid-roll must
     # degrade that class to a skip rather than fail the whole run.
     engine_up = _forward_ready(f"http://localhost:{args.engine_port}/livez", "engine", 45.0)
@@ -1839,9 +1902,11 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     env = dict(os.environ)
     env.update({
         "DFE_E2E_RECEIVER_URL": f"http://localhost:{args.receiver_port}/ingest",
-        "DFE_E2E_CH_HOST": "localhost",
-        "DFE_E2E_CH_PORT": str(args.ch_port),
-        "DFE_E2E_CH_USER": args.ch_user,
+        "DFE_E2E_CH_HOST": ch_host,
+        "DFE_E2E_CH_PORT": ch_port,
+        "DFE_E2E_CH_SECURE": "true" if ch_scheme == "https" else "false",
+        "DFE_E2E_CH_USER": ch_user,
+        # The app namespace's copy, which clickhouse-cluster projects for an external server too.
         "DFE_E2E_CH_PASSWORD": _secret_value(kube, namespace, ch_secret, "password"),
         "DFE_E2E_CH_DB": args.ch_database,
         "DFE_E2E_TRANSPORT": transport,
@@ -4636,7 +4701,8 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
     ac.add_argument("--ch-port", type=int, default=18123, help="local port for the datastore")
     ac.add_argument("--engine-port", type=int, default=18000, help="local port for the engine API")
-    ac.add_argument("--ch-user", default="default", help="datastore user the suite connects as")
+    ac.add_argument("--ch-user", default=None,
+                    help="datastore user the suite connects as (default: an external server's user from the dfe-cluster secret, else default)")
     ac.add_argument("--ch-database", default="dfe", help="datastore database the assertions read")
     engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
     ac.add_argument("--repo", default=engine_repo, required=engine_repo is None,
