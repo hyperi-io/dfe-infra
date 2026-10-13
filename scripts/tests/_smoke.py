@@ -170,7 +170,7 @@ if "exec" in args:
         checks = {"clickhouse": True, "schema": fixture.get("engine_schema", False)}
         print(json.dumps({"status": "ready", "checks": checks}))
         sys.exit(0)
-    if "-i" in args:
+    if exec_target() == "deploy/dfe-receiver":
         posted = sys.stdin.read()
         bump("posted")
         if '"_raw"' in posted:

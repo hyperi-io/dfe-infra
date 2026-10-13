@@ -5,16 +5,26 @@
 # and the server counts as one node. A managed broker has no broker pod, so CORE 3
 # runs from a short-lived Kafka client pod in the app namespace that mounts
 # dfe-kafka-user and speaks SASL_SSL.
+# No ClickHouse password may reach a command line on either side of kubectl: the
+# in-cluster one rides stdin into clickhouse-client's environment, the engine's
+# rides stdin into curl's config.
 # kubectl is a stub that answers from files in STUB_DIR:
 #   annotation-<key>     the dfe-cluster annotation dfe.hyperi.io/<key>
 #   engine-env           the engine container's environment, one KEY=VALUE a line;
 #                        an engine exec of `sh -c` runs its script under exactly
 #                        that environment, with pod-bin/curl standing in for curl
 #   ch-unreachable       pod-bin/curl exits 7, as on a server it cannot reach
+#   ch-secret            the clickhouse-admin-password Secret's password; absent,
+#                        the Secret reads empty
+#   ch-login             the only user the in-cluster server accepts
 #   receiver-down        every POST to the receiver fails, so CORE 2 posts nothing
 #   strimzi             ns/strimzi exists with one Running broker pod
 #   client-never-ready   the client pod never reports Ready
 #   cred/                the mounted dfe-kafka-user Secret's files
+# An exec into dfe-clickhouse-0 runs its command on this host as the pod would,
+# with ch-bin/clickhouse-client logging its argv to clickhouse-client.log and its
+# CLICKHOUSE_PASSWORD to clickhouse-env.log. pod-bin/curl appends the config it
+# reads on stdin to curl-config.log.
 # A `sh -s` exec into a Kafka pod runs its script on this host, with the credential
 # mount and /opt/kafka/bin pointed at cred/ and kafka-bin/; each fake tool appends
 # its --command-config file to props.log. kubectl.log records every call and
@@ -24,13 +34,17 @@ setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
     SMOKE="${REPO_ROOT}/bootstrap/smoke-test-integration.sh"
     STUB_DIR="${BATS_TEST_TMPDIR}/stub"
-    mkdir -p "${STUB_DIR}/bin" "${STUB_DIR}/pod-bin" "${STUB_DIR}/kafka-bin" "${STUB_DIR}/cred"
+    mkdir -p "${STUB_DIR}/bin" "${STUB_DIR}/pod-bin" "${STUB_DIR}/ch-bin" "${STUB_DIR}/kafka-bin" "${STUB_DIR}/cred"
     : > "${STUB_DIR}/kubectl.log"
     : > "${STUB_DIR}/curl.log"
+    : > "${STUB_DIR}/curl-config.log"
+    : > "${STUB_DIR}/clickhouse-client.log"
+    : > "${STUB_DIR}/clickhouse-env.log"
     : > "${STUB_DIR}/props.log"
     : > "${STUB_DIR}/kafka.log"
     echo 0 > "${STUB_DIR}/posted"
     echo 0 > "${STUB_DIR}/posted_raw"
+    printf '%s' fake-ch-admin-pw > "${STUB_DIR}/ch-secret"
 
     # One answer per query shape, shared by clickhouse-client and the engine's curl.
     cat > "${STUB_DIR}/bin/ch-answer" <<'STUB'
@@ -52,8 +66,37 @@ STUB
     cat > "${STUB_DIR}/pod-bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_DIR}/curl.log"
+body=-
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        -K | --config) [[ "${args[i + 1]}" == - ]] && cat >> "${STUB_DIR}/curl-config.log" ;;
+        --data-binary) body="${args[i + 1]#@}" ;;
+    esac
+done
+[[ "${body}" == - ]] && body=/dev/stdin
 [[ -f "${STUB_DIR}/ch-unreachable" ]] && exit 7
-exec "${STUB_DIR}/bin/ch-answer"
+exec "${STUB_DIR}/bin/ch-answer" < "${body}"
+STUB
+
+    cat > "${STUB_DIR}/ch-bin/clickhouse-client" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_DIR}/clickhouse-client.log"
+printf '%s\n' "${CLICKHOUSE_PASSWORD-(unset)}" >> "${STUB_DIR}/clickhouse-env.log"
+user=default
+query=
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --user) user="$2"; shift ;;
+        --query) query="$2"; shift ;;
+    esac
+    shift
+done
+if [[ -f "${STUB_DIR}/ch-login" && "${user}" != "$(cat "${STUB_DIR}/ch-login")" ]]; then
+    echo "Code: 516. ${user}: Authentication failed" >&2
+    exit 4
+fi
+printf '%s' "${query}" | exec "${STUB_DIR}/bin/ch-answer"
 STUB
 
     # Every Kafka CLI the smoke runs, by the name it was called under.
@@ -76,7 +119,7 @@ case "${tool} $*" in
         echo "dfe-loader main_land 0 5 5 0" ;;
 esac
 STUB
-    chmod +x "${STUB_DIR}/bin/ch-answer" "${STUB_DIR}/pod-bin/curl" "${STUB_DIR}/kafka-bin/tool"
+    chmod +x "${STUB_DIR}/bin/ch-answer" "${STUB_DIR}/pod-bin/curl" "${STUB_DIR}/ch-bin/clickhouse-client" "${STUB_DIR}/kafka-bin/tool"
     for tool in kafka-topics.sh kafka-get-offsets.sh kafka-consumer-groups.sh; do
         ln -s tool "${STUB_DIR}/kafka-bin/${tool}"
     done
@@ -94,6 +137,15 @@ run_kafka_script() {
     script="${script//\/etc\/dfe-kafka/${STUB_DIR}/cred}"
     script="${script//\/opt\/kafka\/bin/${STUB_DIR}/kafka-bin}"
     printf '%s\n' "${script}" | env TMPDIR="${STUB_DIR}" sh -s
+}
+
+# The command after `--`, run here as the pod would run it, with only ${1} and the system on PATH.
+run_in_pod() {
+    local i
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        [[ "${args[i]}" == -- ]] && break
+    done
+    exec env -i PATH="$1:/usr/bin:/bin" STUB_DIR="${STUB_DIR}" "${args[@]:i+1}"
 }
 
 case "$*" in
@@ -120,10 +172,10 @@ case "$*" in
         fi
         exit 0 ;;
     "-n clickhouse get pods "*) echo dfe-clickhouse-0; exit 0 ;;
-    "-n clickhouse get secret "*) printf 'Y2gtcHc='; exit 0 ;;
-    "-n clickhouse exec dfe-clickhouse-0 -- clickhouse-client "*)
-        printf '%s' "${last}" | "${STUB_DIR}/bin/ch-answer"
+    "-n clickhouse get secret "*)
+        [[ -f "${STUB_DIR}/ch-secret" ]] && base64 < "${STUB_DIR}/ch-secret"
         exit 0 ;;
+    "-n clickhouse exec "*"dfe-clickhouse-0 -- "*) run_in_pod "${STUB_DIR}/ch-bin" ;;
     "get ns strimzi") [[ -f "${STUB_DIR}/strimzi" ]]; exit $? ;;
     "-n strimzi get pods -l strimzi.io/broker-role=true "*)
         echo "dfe-kafka-broker-0 Running"; exit 0 ;;
@@ -146,7 +198,7 @@ STUB
     export DFE_NS=dfe-test
     export DFE_ENGINE_WAIT=0
     export DFE_OTEL_WAIT=0
-    unset DFE_CLICKHOUSE_MODE DFE_KAFKA_MODE DFE_KAFKA_BOOTSTRAP DFE_KAFKA_CLI_IMAGE DFE_PROFILE
+    unset DFE_CLICKHOUSE_MODE DFE_KAFKA_MODE DFE_KAFKA_BOOTSTRAP DFE_KAFKA_CLI_IMAGE DFE_PROFILE DFE_CH_USER DFE_CH_PASSWORD
 }
 
 # The cluster secret bootstrap.sh writes for ClickHouse Cloud, and the engine env layer2-apps renders for it.
@@ -158,7 +210,12 @@ external_clickhouse() {
         DFE_CLICKHOUSE_SECURE="${2:-true}" \
         DFE_CLICKHOUSE_VERIFY=true \
         DFE_CLICKHOUSE_USERNAME=default \
-        DFE_CLICKHOUSE_PASSWORD=pw-held-by-the-engine > "${STUB_DIR}/engine-env"
+        DFE_CLICKHOUSE_PASSWORD="${3:-pw-held-by-the-engine}" > "${STUB_DIR}/engine-env"
+}
+
+# How many lines of log ${1} match the fixed string ${2}.
+count_of() {
+    grep -cF -- "${2}" "${STUB_DIR}/${1}" || true
 }
 
 # A managed broker with ${1} as dfe-kafka-user's mechanism.
@@ -183,13 +240,24 @@ managed_kafka() {
     [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"-n clickhouse"* ]]
 }
 
-@test "the engine's own credential carries the query and never reaches a host-side command line" {
+@test "the engine's own credential reaches curl as config on stdin, never a command line on either side" {
     external_clickhouse
     run bash "${SMOKE}"
-    [[ "$(cat "${STUB_DIR}/curl.log")" == *"--user default:pw-held-by-the-engine"* ]]
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [[ "$(cat "${STUB_DIR}/curl-config.log")" == *'user = "default:pw-held-by-the-engine"'* ]]
+    [ -s "${STUB_DIR}/curl.log" ]
+    [[ "$(cat "${STUB_DIR}/curl.log")" != *"pw-held-by-the-engine"* ]]
     [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"pw-held-by-the-engine"* ]]
     [[ "${output}" != *"pw-held-by-the-engine"* ]]
     [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"clickhouse-admin-password"* ]]
+}
+
+@test "an engine credential carrying quotes and backslashes is escaped for curl's config" {
+    external_clickhouse 8443 true 'fake"pw\x'
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [[ "$(cat "${STUB_DIR}/curl-config.log")" == *'user = "default:fake\"pw\\x"'* ]]
+    [[ "$(cat "${STUB_DIR}/curl.log")" != *'fake"pw'* ]]
 }
 
 @test "a plaintext external server is dialled over http on its own port" {
@@ -226,9 +294,59 @@ managed_kafka() {
     run bash "${SMOKE}"
     [[ "${output}" =~ "    dfe-clickhouse-0: "[1-9] ]]
     [[ "${output}" == *"Vertical integration verified."* ]]
-    [[ "$(cat "${STUB_DIR}/kubectl.log")" == *"-n clickhouse exec dfe-clickhouse-0 -- clickhouse-client"* ]]
-    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"-- sh -c"*"DFE_CLICKHOUSE"* ]]
+    [[ "$(cat "${STUB_DIR}/clickhouse-client.log")" == *"--query SELECT count() FROM dfe.main WHERE "* ]]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"deploy/dfe-engine -c dfe-engine -- sh -c"* ]]
     [ ! -s "${STUB_DIR}/curl.log" ]
+}
+
+@test "an in-cluster ClickHouse password reaches clickhouse-client in its environment, never a command line" {
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [ -s "${STUB_DIR}/clickhouse-client.log" ]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"fake-ch-admin-pw"* ]]
+    [[ "$(cat "${STUB_DIR}/clickhouse-client.log")" != *"fake-ch-admin-pw"* ]]
+    [[ "${output}" != *"fake-ch-admin-pw"* ]]
+    [ "$(sort -u "${STUB_DIR}/clickhouse-env.log")" = fake-ch-admin-pw ]
+}
+
+@test "ClickHouse auth is resolved once per run, not once per query" {
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [ "$(count_of kubectl.log 'get secret clickhouse-admin-password')" -eq 1 ]
+    [ "$(count_of clickhouse-client.log '--query SELECT 1')" -eq 1 ]
+    [ "$(count_of clickhouse-client.log '--user default --query SELECT count()')" -gt 3 ]
+}
+
+@test "the admin login is found when default is refused, resolved once and off every command line" {
+    echo admin > "${STUB_DIR}/ch-login"
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [ "$(count_of kubectl.log 'get secret clickhouse-admin-password')" -eq 1 ]
+    [ "$(count_of clickhouse-client.log '--user default --query SELECT 1')" -eq 1 ]
+    [ "$(count_of clickhouse-client.log '--user admin --query SELECT 1')" -eq 1 ]
+    # Every call but the refused default probe logs in as admin.
+    [ "$(count_of clickhouse-client.log '--user admin --query ')" -eq "$(( $(wc -l < "${STUB_DIR}/clickhouse-client.log") - 1 ))" ]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"fake-ch-admin-pw"* ]]
+    [ "$(sort -u "${STUB_DIR}/clickhouse-env.log")" = fake-ch-admin-pw ]
+}
+
+@test "DFE_CH_USER and DFE_CH_PASSWORD ride the same stdin path and skip the Secret" {
+    export DFE_CH_USER=reader DFE_CH_PASSWORD=fake-explicit-pw
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"get secret clickhouse-admin-password"* ]]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"fake-explicit-pw"* ]]
+    [[ "$(cat "${STUB_DIR}/clickhouse-client.log")" != *"fake-explicit-pw"* ]]
+    [ "$(sort -u "${STUB_DIR}/clickhouse-env.log")" = fake-explicit-pw ]
+    [ "$(count_of clickhouse-client.log '--user reader --query ')" -eq "$(wc -l < "${STUB_DIR}/clickhouse-client.log")" ]
+}
+
+@test "with no admin Secret the default login runs with no password set" {
+    rm "${STUB_DIR}/ch-secret"
+    run bash "${SMOKE}"
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [ "$(sort -u "${STUB_DIR}/clickhouse-env.log")" = "(unset)" ]
+    [[ "$(cat "${STUB_DIR}/clickhouse-client.log")" != *"--user"* ]]
 }
 
 @test "a managed broker's seam is proven from a client pod in the app namespace that mounts dfe-kafka-user" {
