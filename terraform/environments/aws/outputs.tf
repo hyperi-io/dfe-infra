@@ -47,6 +47,36 @@ output "DFE_CLICKHOUSE_HOST" {
   value = var.endpoints.clickhouse_host
 }
 
+output "DFE_CLICKHOUSE_MODE" {
+  description = "in_cluster or external, from the dial's clickhouse.mode. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/clickhouse_mode annotation, and on external layer2-data, layer2-platform and layer2-apps point clickhouse-cluster, network-policies, the otel collector and every app at DFE_CLICKHOUSE_HOST. A cluster fact rather than a deploy-repo value because wave 4 renders before the engine writes the deploy repo."
+  value       = var.clickhouse.mode
+}
+
+output "DFE_CLICKHOUSE_PORT" {
+  description = "The external server's HTTP(S) port, as a string, which the engine, the loader and hyperdx dial. Empty on an in-cluster server, whose ports the charts already know."
+  value       = var.clickhouse.mode == "external" ? tostring(var.clickhouse.port) : ""
+}
+
+output "DFE_CLICKHOUSE_NATIVE_PORT" {
+  description = "The external server's native protocol port, as a string, which the otel collector's exporter and sqlquery receiver dial. Empty on an in-cluster server."
+  value       = var.clickhouse.mode == "external" ? tostring(var.clickhouse.native_port) : ""
+}
+
+output "DFE_CLICKHOUSE_SECURE" {
+  description = "true or false, whether the external server speaks TLS on both ports. A string, so a shell compares the literal tofu writes. Empty on an in-cluster server, whose TLS follows common.yaml's clickhouse.tls."
+  value       = var.clickhouse.mode == "external" ? tostring(var.clickhouse.secure) : ""
+}
+
+output "DFE_CLICKHOUSE_USER" {
+  description = "The account the apps and the collector connect to the external server as. Empty on an in-cluster server, whose account is common.yaml's clickhouse.user."
+  value       = var.clickhouse.mode == "external" ? var.clickhouse.user : ""
+}
+
+output "DFE_EGRESS_CIDRS" {
+  description = "Every NAT gateway's public address as a /32, comma separated: what this cluster's pods reach the internet from, whether or not the edge module is on. A guarded cloud run opens an external service's access list to these."
+  value       = join(",", [for address in module.cluster.nat_public_ips : "${address}/32"])
+}
+
 output "DFE_KAFKA_PROVIDER" {
   description = "Who runs the brokers -- strimzi or redpanda in the cluster, msk/confluent-cloud/redpanda-cloud managed. The chart's kafka.provider takes it unchanged, and it is the last path segment of the credential's store key."
   value       = var.kafka.provider

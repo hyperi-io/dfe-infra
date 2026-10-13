@@ -37,6 +37,14 @@ Configuration is environment only:
                               redpanda-cloud. Any other run gets a placeholder,
                               because the root configures that provider on
                               every destroy.
+    TF_VAR_clickhouse_external_password   read by a run whose clickhouse.mode is
+                              external; a placeholder stands in when unset,
+                              since the store keeps the value it was created with.
+    DFE_CYCLE_CH_SERVICE_ID / DFE_CYCLE_CH_API_KEY_ID / DFE_CYCLE_CH_API_KEY_SECRET
+                              the ClickHouse Cloud service runs open their
+                              addresses on; set, `reap` also removes every
+                              expired run entry from its IP access list
+                              (scripts/clickhouse_cloud_access.py sweep).
 
 `reap` works in two passes, both with a grace of 0. First every run record
 under the prefix: one that fails `cloud_run.record_problems` is reported and
@@ -63,6 +71,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import clickhouse_cloud_access
 import cloud_run
 import cloud_sweep
 
@@ -80,6 +89,10 @@ VENDOR_PROVIDER_ENV: dict[str, tuple[str, ...]] = {
 # Providers a root configures whether or not the dial selects them; a placeholder satisfies their check.
 PLACEHOLDER_PROVIDER_ENV = VENDOR_PROVIDER_ENV["redpanda-cloud"]
 PLACEHOLDER_VALUE = "unused-placeholder"
+CLICKHOUSE_PASSWORD_ENV = "TF_VAR_clickhouse_external_password"
+NOTICE_NO_CLICKHOUSE = (
+    "::notice::no ClickHouse Cloud service configured (DFE_CYCLE_CH_* unset); no access list to sweep."
+)
 
 
 class ReaperConfigError(ValueError):
@@ -250,6 +263,14 @@ def missing_vendor_credentials(record: Mapping[str, object], env: Mapping[str, s
     return [name for name in VENDOR_PROVIDER_ENV.get(kafka_provider(record), ()) if not env.get(name, "").strip()]
 
 
+def clickhouse_mode(record: Mapping[str, object]) -> str:
+    """The clickhouse.mode a run applied with, or "" for a record whose tfvars name none."""
+    tfvars = record.get("tfvars")
+    clickhouse = tfvars.get("clickhouse") if isinstance(tfvars, Mapping) else None
+    mode = clickhouse.get("mode") if isinstance(clickhouse, Mapping) else None
+    return mode if isinstance(mode, str) else ""
+
+
 def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
     """The environment one run's tofu commands get: this process's, plus a placeholder where nothing reads it."""
     env = dict(os.environ)
@@ -257,6 +278,9 @@ def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
         for name in PLACEHOLDER_PROVIDER_ENV:
             if not env.get(name, "").strip():
                 env[name] = PLACEHOLDER_VALUE
+    # The root refuses an external run with no password, and the store already holds the one it was created with.
+    if clickhouse_mode(record) == "external" and not env.get(CLICKHOUSE_PASSWORD_ENV, "").strip():
+        env[CLICKHOUSE_PASSWORD_ENV] = PLACEHOLDER_VALUE
     return env
 
 
@@ -359,6 +383,25 @@ def sweep_region(config: ReaperConfig, region: str) -> int:
     return cloud_sweep.main(argv)
 
 
+def sweep_clickhouse_access(env: Mapping[str, str], now: float) -> list[str]:
+    """Remove every expired run entry from the ClickHouse Cloud service's access list.
+
+    Every DFE_CYCLE_CH_* setting unset is a notice: the account runs no external
+    ClickHouse. Some set and some not is a problem, and so is an API failure.
+    """
+    named = [name for name in clickhouse_cloud_access.REQUIRED_ENV if env.get(name, "").strip()]
+    if not named:
+        print(NOTICE_NO_CLICKHOUSE)
+        return []
+    try:
+        api = clickhouse_cloud_access.api_from_env(env)
+        removed = clickhouse_cloud_access.sweep(api, now)
+    except clickhouse_cloud_access.AccessError as exc:
+        return [f"ClickHouse Cloud access list not swept: {exc}"]
+    print(f"cloud reaper: removed {removed} expired run address(es) from the ClickHouse Cloud access list")
+    return []
+
+
 # --- CLI -----------------------------------------------------------------------
 
 
@@ -406,6 +449,7 @@ def cmd_reap(env: Mapping[str, str]) -> int:
     for region in config.regions:
         if sweep_region(config, region) != 0:
             problems.append(f"{region}: expired run resources remain (see the sweep above)")
+    problems += sweep_clickhouse_access(env, time.time())
     for problem in problems:
         print(f"::error::{problem}")
     return 1 if problems else 0

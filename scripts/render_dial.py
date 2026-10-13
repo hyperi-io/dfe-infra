@@ -194,8 +194,8 @@ class DialError(ValueError):
     """A dial the tofu render cannot turn into a tfvars file."""
 
 
-def _seeds(kafka_provider: str) -> dict[str, dict[str, str]]:
-    """The credentials the deploy layer puts in the store, for this broker.
+def _seeds(kafka_provider: str, clickhouse_mode: str = "in_cluster") -> dict[str, dict[str, str]]:
+    """The credentials the deploy layer puts in the store, for this broker and datastore.
 
     An empty value is generated -- in the secrets module, or in the root for a
     password a managed broker is created with -- and never surfaces, so neither
@@ -203,14 +203,19 @@ def _seeds(kafka_provider: str) -> dict[str, dict[str, str]]:
     segment is the provider, which is what the kafka chart reads back.
     Confluent Cloud's seed carries a username too: its API key is the username,
     the chart reads both, and the root fills both from the key Confluent minted.
+    An external ClickHouse's password is never generated either: the root fills
+    it from TF_VAR_clickhouse_external_password.
     """
     kafka_fields = {"password": ""}
     if kafka_provider == "confluent-cloud":
         kafka_fields = {"username": "", "password": ""}
-    return {
+    seeds = {
         f"kafka/{kafka_provider}": kafka_fields,
         "ui/nextauth": {"secret": ""},
     }
+    if clickhouse_mode == "external":
+        seeds["clickhouse/external"] = {"password": ""}
+    return seeds
 
 
 def _text(dial: dict[str, object], path: tuple[str, ...], default: str = "") -> str:
@@ -1381,6 +1386,102 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     return {"sink": sink, "retention_days": retention_days}
 
 
+CLICKHOUSE_MODES = ("in_cluster", "external")
+CLICKHOUSE_EXTERNAL_FIELDS = ("host", "port", "native_port", "secure", "user")
+# ClickHouse Cloud's HTTPS and native TLS ports, and the account every service is created with.
+CLICKHOUSE_CLOUD_PORT = 8443
+CLICKHOUSE_CLOUD_NATIVE_PORT = 9440
+CLICKHOUSE_CLOUD_USER = "default"
+# One DNS name, so no scheme, port, path or space rides into a tcp:// or https:// URL built from it.
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+
+
+def _clickhouse_mode(dial: dict[str, object]) -> str:
+    """clickhouse.mode, in_cluster when the dial names none, refused outside the two modes."""
+    mode = _text(dial, ("clickhouse", "mode"), "in_cluster")
+    if mode not in CLICKHOUSE_MODES:
+        raise DialError(f"clickhouse.mode must be one of {', '.join(CLICKHOUSE_MODES)}, got {mode!r}")
+    return mode
+
+
+def _clickhouse_port(dial: dict[str, object], field: str, default: int) -> int:
+    """One of the external server's ports, or `default` when the dial names none."""
+    raw = _scalar(dial, ("clickhouse", field))
+    if raw is None:
+        return default
+    if not raw.isdigit() or not 0 < int(raw) < 65536:
+        raise DialError(f"clickhouse.{field} must be a port number 1-65535, got {raw!r}")
+    return int(raw)
+
+
+def _clickhouse_host(dial: dict[str, object]) -> str:
+    """endpoints.clickhouse_host as the aws root receives it.
+
+    In external mode clickhouse.host is that value, so the root reads the external
+    server on the key it already reads for ClickHouse. A host is never echoed in a
+    refusal, because a cycle's dial carries an account's own server.
+
+    Raises:
+        DialError: external mode with no host, a host that is not a bare name, or
+            a different host on endpoints.clickhouse_host.
+    """
+    endpoint = _text(dial, ("endpoints", "clickhouse_host"))
+    if _clickhouse_mode(dial) != "external":
+        return endpoint
+    host = _text(dial, ("clickhouse", "host"))
+    if not host:
+        raise DialError(
+            "clickhouse.mode is external and clickhouse.host is empty -- name the server the "
+            "deployment connects to"
+        )
+    if not _HOSTNAME.match(host):
+        raise DialError("clickhouse.host must be a bare host name, with no scheme, port, path or space")
+    if endpoint and endpoint != host:
+        raise DialError(
+            "endpoints.clickhouse_host and clickhouse.host name different servers -- in external "
+            "mode they are one fact, so drop endpoints.clickhouse_host or make the two match"
+        )
+    return host
+
+
+def _clickhouse(dial: dict[str, object]) -> dict[str, object]:
+    """clickhouse.* -- where ClickHouse runs, as the aws root's clickhouse variable.
+
+    in_cluster renders the mode alone, since nothing else is read for it. external
+    takes ClickHouse Cloud's ports, TLS and account where the dial names none; its
+    host travels on endpoints.clickhouse_host (_clickhouse_host).
+
+    Raises:
+        DialError: An unknown mode, a password in the dial, an external field set
+            beside in_cluster, or an external field outside its vocabulary.
+    """
+    if _scalar(dial, ("clickhouse", "password")) is not None:
+        raise DialError(
+            "clickhouse.password is never a dial field, because the dial is rendered into files -- "
+            "set TF_VAR_clickhouse_external_password where the plan runs"
+        )
+    mode = _clickhouse_mode(dial)
+    if mode == "in_cluster":
+        stray = [field for field in CLICKHOUSE_EXTERNAL_FIELDS if _scalar(dial, ("clickhouse", field)) is not None]
+        if stray:
+            raise DialError(
+                f"clickhouse.{stray[0]} is read only with clickhouse.mode external, and the dial says "
+                "in_cluster -- delete it, or set the mode to external"
+            )
+        return {"mode": mode}
+    _clickhouse_host(dial)
+    return {
+        "mode": mode,
+        "port": _clickhouse_port(dial, "port", CLICKHOUSE_CLOUD_PORT),
+        "native_port": _clickhouse_port(dial, "native_port", CLICKHOUSE_CLOUD_NATIVE_PORT),
+        "secure": _flag(dial, ("clickhouse", "secure"), default=True),
+        "user": _text(dial, ("clickhouse", "user"), CLICKHOUSE_CLOUD_USER),
+    }
+
+
 LIFECYCLE_VALUES = ("ephemeral", "persistent")
 
 
@@ -1441,6 +1542,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         )
 
     kafka = _kafka(dial)
+    clickhouse = _clickhouse(dial)
     return cloud, {
         "provision": {
             "cloud": cloud,
@@ -1465,9 +1567,10 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
             "backend": _required(dial, ("secrets", "backend")),
             "ref": _text(dial, ("secrets", "ref")),
         },
-        "seeds": _seeds(str(kafka["provider"])),
+        "clickhouse": clickhouse,
+        "seeds": _seeds(str(kafka["provider"]), str(clickhouse["mode"])),
         "endpoints": {
-            "clickhouse_host": _text(dial, ("endpoints", "clickhouse_host")),
+            "clickhouse_host": _clickhouse_host(dial),
             "kafka_bootstrap": _text(dial, ("endpoints", "kafka_bootstrap")),
             "otel_endpoint": _text(dial, ("endpoints", "otel_endpoint")),
         },

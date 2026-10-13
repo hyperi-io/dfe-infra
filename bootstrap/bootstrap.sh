@@ -36,7 +36,8 @@
 #                            free-tier baseline) when the cluster does not
 #                            already have one by this name -- step [1b/7].
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
-#   DFE_CLICKHOUSE_HOST      ClickHouse service hostname
+#   DFE_CLICKHOUSE_HOST      ClickHouse service hostname, or the external
+#                            server's host when DFE_CLICKHOUSE_MODE is external
 #   DFE_KAFKA_BOOTSTRAP      Kafka bootstrap servers
 #   DFE_KAFKA_PROVIDER       strimzi | redpanda | msk | confluent-cloud |
 #                            redpanda-cloud; gates the otel-collector chart's
@@ -62,6 +63,15 @@
 #                            producing apps' record limits follow it. Empty on
 #                            an in-cluster broker, where every app keeps its
 #                            own default.
+#   DFE_CLICKHOUSE_MODE      in_cluster | external, from the aws root's output.
+#                            external points every chart at DFE_CLICKHOUSE_HOST
+#                            and deploys no ClickHouse; empty or in_cluster
+#                            moves nothing.
+#   DFE_CLICKHOUSE_PORT, DFE_CLICKHOUSE_NATIVE_PORT, DFE_CLICKHOUSE_SECURE,
+#   DFE_CLICKHOUSE_USER      the external server's HTTP(S) port, native port,
+#                            true|false for TLS on both, and the account the
+#                            apps connect as. Required with external, empty
+#                            otherwise.
 #   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
@@ -424,6 +434,39 @@ if [[ "${DFE_KAFKA_MODE}" == "external" ]]; then
   DFE_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
 fi
 export DFE_KAFKA_SECURITY_PROTOCOL
+# Wave 4 renders before the engine writes the deploy repo, so where ClickHouse runs
+# reaches the appsets on the cluster secret, empty from a root that emits none.
+export DFE_CLICKHOUSE_MODE="${DFE_CLICKHOUSE_MODE:-}"
+export DFE_CLICKHOUSE_PORT="${DFE_CLICKHOUSE_PORT:-}"
+export DFE_CLICKHOUSE_NATIVE_PORT="${DFE_CLICKHOUSE_NATIVE_PORT:-}"
+export DFE_CLICKHOUSE_SECURE="${DFE_CLICKHOUSE_SECURE:-}"
+DFE_CLICKHOUSE_USER="${DFE_CLICKHOUSE_USER:-}"
+case "${DFE_CLICKHOUSE_MODE}" in
+  ""|in_cluster) ;;
+  external)
+    for dfe_ch_port_var in DFE_CLICKHOUSE_PORT DFE_CLICKHOUSE_NATIVE_PORT; do
+      dfe_ch_port="${!dfe_ch_port_var}"
+      if [[ ! "${dfe_ch_port}" =~ ^[1-9][0-9]{0,4}$ ]] || (( dfe_ch_port > 65535 )); then
+        echo "ERROR: DFE_CLICKHOUSE_MODE is external, so ${dfe_ch_port_var} must be a port number 1-65535 (got '${dfe_ch_port}')" >&2
+        exit 1
+      fi
+    done
+    unset dfe_ch_port_var dfe_ch_port
+    if [[ "${DFE_CLICKHOUSE_SECURE}" != "true" && "${DFE_CLICKHOUSE_SECURE}" != "false" ]]; then
+      echo "ERROR: DFE_CLICKHOUSE_MODE is external, so DFE_CLICKHOUSE_SECURE must be true or false (got '${DFE_CLICKHOUSE_SECURE}')" >&2
+      exit 1
+    fi
+    if [[ -z "${DFE_CLICKHOUSE_USER}" ]]; then
+      echo "ERROR: DFE_CLICKHOUSE_MODE is external, so DFE_CLICKHOUSE_USER must name the account the apps connect as" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: DFE_CLICKHOUSE_MODE must be in_cluster or external (got '${DFE_CLICKHOUSE_MODE}')" >&2
+    exit 1
+    ;;
+esac
+export DFE_CLICKHOUSE_USER
 # external-dns provider name (aws, google, azure, cloudflare, rfc2136, ...);
 # "none" deploys no external-dns, because its own default provider is aws and an
 # uncredentialled install crash-loops against Route 53 forever (#223).

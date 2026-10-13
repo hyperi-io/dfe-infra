@@ -539,7 +539,10 @@ def test_edge_off_with_a_named_issuer_serves_tls() -> None:
 def test_an_external_server_brings_its_own_certificate() -> None:
     docs = server("scale", *EXTERNAL)
     expect("external mode issues nothing", one(docs, "Certificate") is None, "")
-    expect("and copies no CA", not every(docs, "ClusterExternalSecret"), "")
+    # The one ClusterExternalSecret external mode renders copies the password, never a CA.
+    expect("and copies no CA",
+           not any(c["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
+                   for c in every(docs, "ClusterExternalSecret")), "")
     for shape in ("external", "external-edge-off"):
         engine = workload_env(client("dfe-engine", "scale", shape), "dfe-engine")
         expect(f"the engine dials it over TLS ({shape})",

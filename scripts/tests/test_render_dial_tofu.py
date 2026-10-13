@@ -155,7 +155,9 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
         "cloudtrail",
         "edge_self_ranges",
     }
-    assert set(render()) == declared - {"node_pools", "resolved_shapes"} - guarded_run_only
+    # A credential the root reads from TF_VAR_*, which the dial never carries.
+    environment_only = {"clickhouse_external_password"}
+    assert set(render()) == declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only
 
 
 def test_provision_carries_the_account_the_root_asserts() -> None:
