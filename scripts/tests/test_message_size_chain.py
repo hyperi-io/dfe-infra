@@ -28,9 +28,20 @@ its own key, at the release versions.yaml pins:
 - dfe-transform-elastic v1.1.12: DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES
   (src/config/loader.rs:200 and :281)
 
-dfe-fetcher v1.4.36 reads a producer size only under output.kafka, which replaces
-the broker settings the deployment hands it (crates/fetcher/src/output.rs:505),
-and dfe-archiver v1.7.32 reads none, so neither is checked here.
+dfe-fetcher and dfe-archiver read the key from their first release after the
+v1.4.36 and v1.7.32 versions.yaml pins, and lay the map over their own settings
+key by key rather than replacing a default map:
+
+- dfe-fetcher: kafka.librdkafka_overrides (crates/fetcher/src/config/mod.rs:4549),
+  over the producer section its output and DLQ producers are built from
+  (crates/fetcher/src/output.rs:579)
+- dfe-archiver: kafka.librdkafka_overrides (crates/core/src/config.rs:308), for
+  its consumer and DLQ producer, with statistics.interval.ms kept at 5000 unless
+  the map names it (crates/io/src/kafka.rs:256)
+
+An image before those releases ignores the key: the thin chart writes
+configOverrides into the config file unvalidated, and neither app refuses an
+unknown key there.
 
 The renders need helm and the scalo-service library (_weave.library).
 """
@@ -73,6 +84,8 @@ ENV_LIMITS: dict[str, tuple[str, ...]] = {
 CONFIG_LIMITS: dict[str, tuple[tuple[str, ...], ...]] = {
     "dfe-receiver": (("kafka", "librdkafka_overrides", "message.max.bytes"),),
     "dfe-loader": (("kafka", "librdkafka_overrides", "message.max.bytes"),),
+    "dfe-fetcher": (("kafka", "librdkafka_overrides", "message.max.bytes"),),
+    "dfe-archiver": (("kafka", "librdkafka_overrides", "message.max.bytes"),),
     "dfe-transform-vrl": (("sink", "librdkafka_options", "message.max.bytes"),),
     "dfe-transform-vector": (("sink", "librdkafka_options", "message.max.bytes"),),
 }
@@ -177,6 +190,15 @@ def test_a_replaced_overrides_map_keeps_the_apps_statistics_interval(
     config = config_file(_render(app, str(BASIC)), app)
     got = _dig(config, ("kafka", "librdkafka_overrides", "statistics.interval.ms"))
     assert got == interval, f"{app} statistics.interval.ms is {got!r}"
+
+
+@pytest.mark.parametrize("app", ["dfe-archiver", "dfe-fetcher"])
+def test_a_merged_overrides_map_carries_the_size_alone(app: str) -> None:
+    """These apps lay the map over their own settings key by key, so any key named
+    here replaces the app's own, and a "0" interval would stop the archiver's lag signal."""
+    config = config_file(_render(app, str(BASIC)), app)
+    got = _dig(config, ("kafka", "librdkafka_overrides"))
+    assert got == {"message.max.bytes": str(BASIC)}, f"{app} librdkafka_overrides is {got!r}"
 
 
 @pytest.mark.parametrize("app", PRODUCERS)

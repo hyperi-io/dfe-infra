@@ -247,6 +247,13 @@ spec:
                   librdkafka_overrides:
                     message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
                     statistics.interval.ms: {{ ternary "0" "5000" (eq .deploy.service "dfe-receiver") | quote }}
+              {{- else if eq .deploy.service "dfe-fetcher" "dfe-archiver" }}
+              # Each lays this map over its own settings key by key, so it names the
+              # size alone and the archiver keeps the statistics its lag signal reads.
+              configOverrides:
+                kafka:
+                  librdkafka_overrides:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
               {{- else if eq .deploy.service "dfe-transform-vrl" "dfe-transform-vector" }}
               # The sink producer's record ceiling, and the size dfe-transform-vector
               # filters records off Vector's Kafka sink at.
@@ -366,6 +373,11 @@ spec:
                   librdkafka_overrides:
                     message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
                     statistics.interval.ms: {{ ternary "0" "5000" (eq .deploy.service "dfe-receiver") | quote }}
+              {{- else if eq .deploy.service "dfe-fetcher" "dfe-archiver" }}
+              configOverrides:
+                kafka:
+                  librdkafka_overrides:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
               {{- else if eq .deploy.service "dfe-transform-vrl" "dfe-transform-vector" }}
               configOverrides:
                 sink:
