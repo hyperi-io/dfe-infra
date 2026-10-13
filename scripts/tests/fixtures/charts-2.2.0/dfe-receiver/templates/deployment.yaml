@@ -1,0 +1,213 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
+spec:
+  {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the app's own reloader would have
+        # caught it; dfe-common.rollout makes that roll a surge-first rolling
+        # update, so the ingest door never goes away while it happens.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
+      # Same class as dfe-engine and dfe-loader: k8s injects DFE_RECEIVER_PORT=
+      # "tcp://IP:8080" from svc/dfe-receiver, into a pod that reads DFE_RECEIVER_*
+      # as its own config (config/mod.rs ENV_PREFIX). DFE resolves by DNS and reads
+      # none of these -- switch them off before the collision finds us.
+      enableServiceLinks: false
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
+      containers:
+        - name: receiver
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          # Mirrors the image CMD (dfe-receiver Dockerfile:43). Explicit so the
+          # config path is visible here rather than buried in the image.
+          args:
+            - "--config"
+            - "/etc/dfe-receiver/config.yaml"
+          # Container ports come from the SAME .Values.listeners list that drives
+          # the Services. When the engine's deployment-contracted overlay sets
+          # listeners (the receiver's actually-enabled protocols), these follow
+          # automatically; otherwise the chart default (http+grpc) applies.
+          ports:
+            {{- range .Values.listeners }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: {{ .protocol | default "TCP" }}
+            {{- end }}
+            # scalo's metrics server (0.0.0.0:9090 unless metrics.address moves it).
+            # Outside listeners, which an engine overlay replaces whole and which
+            # decides what is exposed.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            # extraEnv first: k8s keeps the last duplicate name, so the chart's value wins.
+            {{- include "dfe-common.extraEnv" . | nindent 12 }}
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_RECEIVER_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            # Same flat-env contract as the SASL block below (mod.rs:261, prefix
+            # DFE_RECEIVER at :35). A bare KAFKA_BOOTSTRAP_SERVERS is read by
+            # nothing, leaving the receiver to fail on "kafka.brokers is required
+            # when using Kafka destination" until the engine authors a config file.
+            # On the direct transport this whole block is absent: the loader gRPC
+            # destination comes from the config blob (see the configmap).
+            - name: DFE_RECEIVER_KAFKA_BROKERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- if contains "SSL" (upper .Values.kafka.securityProtocol) }}
+            # A TLS listener only: the app sets kafka.tls.enabled from this in both
+            # directions (mod.rs:623), so a plaintext value would switch off TLS
+            # the overlay turned on.
+            - name: DFE_RECEIVER_KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            {{- end }}
+            {{- if .Values.kafka.saslSecretName }}
+            # SASL credential by env, not in the config blob -- see the same block in
+            # dfe-loader. Env beats the config file, and the engine-authored YAML
+            # carries a MASKED password, so these are load-bearing, not belt-and-braces.
+            #
+            # Names are the receiver's own flat-env contract
+            # (dfe-receiver/src/config/mod.rs:274-281, prefix DFE_RECEIVER at :35).
+            # It spells it USER where dfe-loader spells it USERNAME -- an upstream
+            # inconsistency, not a typo here.
+            #
+            # The mechanism MUST be supplied too (dfe-engine#105): normalize()
+            # (mod.rs:369-376) sets only sasl.enabled, and the receiver's SaslConfig
+            # derives Default -> mechanism "" (mod.rs:1251), which librdkafka rejects.
+            # dfe-loader does NOT share this: it has an explicit impl Default with
+            # mechanism scram_sha_512 (kafka.rs:220-228).
+            #
+            # It rides the SAME secret as the credential (the store projects
+            # sasl.mechanism alongside username/password), so the mechanism can never
+            # drift from the password it belongs to.
+            #
+            # SPELLING TRAP, live-proven 2026-07-17: this value is a RAW PASSTHROUGH
+            # to librdkafka -- mod.rs:1146 only uppercases it (`SCRAM-SHA-512`), where
+            # dfe-loader parses an enum from `scram_sha_512`. The SAME logical value is
+            # spelled DIFFERENTLY per service. Feeding the loader's spelling here dies
+            # with "Unsupported SASL mechanism: SCRAM_SHA_512". The secret carries the
+            # librdkafka spelling; do not "normalise" the two to look alike.
+            - name: DFE_RECEIVER_KAFKA_SASL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: DFE_RECEIVER_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            - name: DFE_RECEIVER_KAFKA_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: sasl.mechanism
+            {{- end }}
+            {{- end }}
+            # BIND_ADDRESS is the setting's name (mod.rs:247) and it takes host:PORT
+            # -- a bare host fails with "invalid socket address syntax". The port
+            # comes from the http listener rather than a literal, because listeners
+            # is this chart's source of truth for ports; no http listener means no
+            # override, and the app's own 0.0.0.0:8080 default stands.
+            {{- $bindHost := .Values.receiver.listenAddress }}
+            {{- range .Values.listeners }}
+            {{- if eq .name "http" }}
+            - name: DFE_RECEIVER_BIND_ADDRESS
+              value: {{ printf "%s:%v" $bindHost .port | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if eq (include "dfe-common.transport" .) "direct" }}
+            # Direct transport: the DLQ's kafka backend is gone with the broker.
+            # The receiver's mode vocabulary has no "disabled" word (unlike the
+            # loader); DLQ_ENABLED=false is its off-switch (config/mod.rs).
+            - name: DFE_RECEIVER_DLQ_ENABLED
+              value: "false"
+            {{- else }}
+            # DLQ standard: fixed per-app topic on the kafka backend -- a file
+            # DLQ write is an EROFS no-op on the read-only rootfs. The topic is
+            # created by dfe-engine from the dfe-schemas topic set; names are
+            # the receiver's flat-env contract (mod.rs DLQ_TOPIC/DLQ_MODE).
+            - name: DFE_RECEIVER_DLQ_TOPIC
+              value: {{ .Values.dlq.topic | quote }}
+            - name: DFE_RECEIVER_DLQ_MODE
+              value: {{ .Values.dlq.mode | quote }}
+            {{- end }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: dfe-receiver
+          volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
+            - name: config
+              mountPath: /etc/dfe-receiver
+              readOnly: true
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
+            {{- /* Disk spillover writes outside /tmp, so it needs its own
+                   volume, at the same path the ConfigMap gives the app. */}}
+            {{- $spill := .Values.receiver.buffer.spillover }}
+            {{- if $spill.enabled }}
+            - name: spool
+              mountPath: {{ $spill.path }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+        {{- $spill := .Values.receiver.buffer.spillover }}
+        {{- if $spill.enabled }}
+        # Node-local scratch, not a PVC. With acknowledgements on (the default)
+        # the receiver builds no spool and answers a sender only once the record
+        # is delivered, so nothing on this volume is on the ack path. With them
+        # off a spooled record has already had its 2xx, and it dies with the pod.
+        # sizeLimit stops one receiver filling the node's disk for everything else.
+        - name: spool
+          emptyDir:
+            sizeLimit: {{ $spill.sizeLimit }}
+        {{- end }}

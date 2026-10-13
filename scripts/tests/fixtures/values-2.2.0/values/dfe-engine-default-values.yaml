@@ -1,0 +1,6 @@
+# Enables dfe-engine for this deployment (seeded at bootstrap).
+# Delete this file to remove the app; add chart values here to
+# override the base + cloud + profile layers.
+deploy:
+  service: dfe-engine
+  instance: default

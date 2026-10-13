@@ -1,0 +1,261 @@
+# values-migrations.yaml -- the keys a deploy repo written for the 2.2.0 charts
+# carries, and the keys the thin charts read in their place.
+#
+# The 2.2.0 charts named each object {project}-{component} and read their own
+# keys. From `since` the thin charts name it fullnameOverride, else the chart's
+# own name, and read the keys below. A deploy repo nothing rewrites renames every
+# per-config workload, prunes the fetcher's cursor claim, moves the transforms'
+# consumer groups and empties their file sets.
+#
+# Every reader takes the rules from this one file:
+#   - dfe-ops upgrade plan lists each hit, and reports BLOCKED on a refuse rule.
+#   - dfe-ops upgrade apply writes each new key BESIDE its old one before the
+#     retarget, and drops a `move` rule's old key at --finalise.
+#   - dfe-ops upgrade migrate-values [--check] does the same write on its own.
+#   - dfe-extras' valuesMigrationGuard fails the render of an overlay carrying an
+#     old key with no new key beside it, for each rule with a `guard`.
+#
+# Maps and scalars only, so the stdlib reader dfe-ops uses (scripts/yaml_subset.py)
+# reads it as Helm does. A list is a comma-separated scalar.
+#
+# Each rule:
+#   kind    move: the new key takes the old one's value, and --finalise drops the old.
+#           copy: the same, and the old key stays, because something still reads it.
+#           derive-identity: the new key is `prefix` + the old value, and the old stays.
+#           derive-entries: an enrichment_tables entry for each table file, at `dir`.
+#           refuse: the plan is BLOCKED until a person takes the key out.
+#           report-dropped: the thin charts read nothing in its place.
+#   apps    the deploy.service names it applies to, or * for every one.
+#   files   overlays (values/*-values.yaml), and common (infra/common.yaml) where
+#           named. Default overlays.
+#   guard   empty: the render fails while the old key holds a value and the new
+#           key none. equal: while the old key holds a value the new key differs
+#           from, for a new key an integration layer always sets.
+
+since: "2.2.1-rc.1"
+
+rules:
+  "10-identity":
+    kind: derive-identity
+    apps: "dfe-fetcher, dfe-transform-vrl, dfe-transform-vector, dfe-transform-elastic"
+    from: component
+    to: fullnameOverride
+    prefix: "dfe-"
+    guard: empty
+    why: "keeps each instance's object names, its claims, its service account and its consumer group"
+  "15-otel-service-name":
+    kind: copy
+    apps: "*"
+    from: otelServiceName
+    to: otel.serviceName
+    why: "the engine still writes otelServiceName beside otel.serviceName"
+  "20-transform-files":
+    kind: move
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: transformFiles
+    to: fileSets.transforms.files
+    guard: empty
+  "21-transform-dir":
+    kind: move
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: transformFilesDir
+    to: fileSets.transforms.mountPath
+    guard: equal
+  "25-enrichment-files":
+    kind: move
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: enrichmentTables
+    to: fileSets.enrichment.files
+    guard: empty
+  "26-enrichment-entries":
+    kind: derive-entries
+    apps: "dfe-transform-vrl"
+    from: enrichmentTables
+    to: config.enrichment_tables
+    dir: /etc/dfe-transform-vrl-enrichment
+    dirKey: enrichmentTablesDir
+    legacyDir: "/etc/dfe-<component>-enrichment"
+    why: "the 2.2.0 chart derived these entries at its own mount, and the thin chart derives none"
+  "27-enrichment-dir":
+    kind: move
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: enrichmentTablesDir
+    to: fileSets.enrichment.mountPath
+    guard: equal
+  "30-auto-offset-reset":
+    kind: move
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: kafka.autoOffsetReset
+    to: config.source.auto_offset_reset
+    guard: equal
+  "40-cursor-enabled":
+    kind: move
+    apps: dfe-fetcher
+    from: persistence.enabled
+    to: writablePaths.cursor.persistence.enabled
+    guard: empty
+  "41-cursor-size":
+    kind: move
+    apps: dfe-fetcher
+    from: persistence.size
+    to: writablePaths.cursor.persistence.size
+    guard: empty
+  "42-cursor-storage-class":
+    kind: move
+    apps: dfe-fetcher
+    from: persistence.storageClass
+    to: writablePaths.cursor.persistence.storageClass
+    guard: empty
+  "45-pki-enabled":
+    kind: move
+    apps: culvert
+    from: persistence.enabled
+    to: writablePaths.pki.persistence.enabled
+    guard: empty
+  "46-pki-size":
+    kind: move
+    apps: culvert
+    from: persistence.size
+    to: writablePaths.pki.persistence.size
+    guard: empty
+  "47-pki-storage-class":
+    kind: move
+    apps: culvert
+    from: persistence.storageClass
+    to: writablePaths.pki.persistence.storageClass
+    guard: empty
+  "48-pki-access-mode":
+    kind: move
+    apps: culvert
+    from: persistence.accessMode
+    to: writablePaths.pki.persistence.accessModes
+    shape: list
+    guard: empty
+  "50-engine-config-persistence":
+    kind: move
+    apps: dfe-engine
+    from: config.persistence
+    to: writablePaths.config.persistence
+    guard: empty
+  "55-node-selector":
+    kind: copy
+    apps: "*"
+    files: "overlays, common"
+    from: nodeScheduling.nodeSelector
+    to: nodeSelector
+    guard: empty
+    why: "dfe-extras still places its own workloads by nodeScheduling"
+  "56-tolerations":
+    kind: copy
+    apps: "*"
+    files: "overlays, common"
+    from: nodeScheduling.tolerations
+    to: tolerations
+    guard: empty
+    why: "dfe-extras still places its own workloads by nodeScheduling"
+  "60-receiver-memory-limit":
+    kind: move
+    apps: dfe-receiver
+    from: receiver.buffer.memoryLimit
+    to: configOverrides.buffer.memory_limit
+    guard: empty
+  "61-receiver-spillover":
+    kind: move
+    apps: dfe-receiver
+    from: receiver.buffer.spillover.enabled
+    to: configOverrides.buffer.spillover.enabled
+    guard: empty
+  "62-receiver-spillover-path":
+    kind: move
+    apps: dfe-receiver
+    from: receiver.buffer.spillover.path
+    to: configOverrides.buffer.spillover.path
+    guard: empty
+  "63-receiver-spool-size":
+    kind: move
+    apps: dfe-receiver
+    from: receiver.buffer.spillover.sizeLimit
+    to: writablePaths.spool.sizeLimit
+    guard: empty
+  "64-archiver-spool-size":
+    kind: move
+    apps: dfe-archiver
+    from: spool.sizeLimit
+    to: writablePaths.spool.sizeLimit
+    guard: empty
+  "70-image-pin":
+    kind: refuse
+    apps: "*"
+    files: "overlays, common"
+    from: "image.repository, image.tag, image.digest"
+    why: "the thin chart would run the pinned 2.2.0 image -- take the pin out and let the stack choose"
+  "80-dropped-push-port":
+    kind: report-dropped
+    apps: "dfe-archiver, dfe-transform-vrl, dfe-transform-vector, dfe-transform-elastic"
+    from: service.pushPort
+    why: "the push port is the contract's, and dfe-extras' mesh listener still reads this key, so any other value points that listener at a port nothing serves"
+  "81-dropped-loader-port":
+    kind: report-dropped
+    apps: "dfe-transform-vrl, dfe-transform-vector"
+    from: loaderPort
+    why: "the loader address is the engine's routing"
+  "82-dropped-receiver-listener":
+    kind: report-dropped
+    apps: dfe-receiver
+    from: "receiver.listenAddress, receiver.loaderPort"
+    why: "the listeners are the contract's"
+  "83-dropped-config-mount":
+    kind: report-dropped
+    apps: dfe-transform-elastic
+    from: configMountPath
+    why: "the config mount is the contract's"
+  "84-dropped-service-port":
+    kind: report-dropped
+    apps: "dfe-engine, dfe-ui"
+    from: service.port
+    why: "the service port is the contract's"
+  "85-dropped-metrics-port":
+    kind: report-dropped
+    apps: dfe-ui
+    from: metricsPort
+    why: "the metrics port is the contract's"
+  "86-dropped-image-component":
+    kind: report-dropped
+    apps: "dfe-fetcher, dfe-transform-vrl, dfe-transform-vector, dfe-transform-elastic"
+    from: imageComponent
+    why: "the image is the contract's"
+  "87-dropped-wait-for-engine":
+    kind: report-dropped
+    apps: "dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-vrl, dfe-transform-vector, dfe-transform-elastic"
+    from: "waitForEngine.enabled, waitForEngine.resources"
+    why: "the wait-for-engine init container is always on, at fixed resources"
+  "88-dropped-pressure-switch":
+    kind: report-dropped
+    apps: "dfe-archiver, dfe-loader, dfe-receiver, dfe-transform-vrl, dfe-transform-vector, dfe-transform-elastic"
+    from: keda.pressure.enabled
+    why: "the pressure trigger is on wherever the profile carries it"
+  "89-dropped-archiver-spool-path":
+    kind: report-dropped
+    apps: dfe-archiver
+    from: spool.path
+    why: "the spool path is the contract's writable path"
+  "90-dropped-culvert-host":
+    kind: report-dropped
+    apps: culvert
+    from: "ipForward.enabled, tunDevice.enabled, tuning"
+    why: "the tunnel's host settings are the contract's"
+  "91-dropped-hyperdx-dashboards":
+    kind: report-dropped
+    apps: hyperdx
+    from: dashboards.resources
+    why: "the dashboard loader runs at fixed resources"
+  "92-dropped-hyperdx-connections":
+    kind: report-dropped
+    apps: hyperdx
+    from: defaultConnections
+    why: "CONFIG LOSS -- the thin chart no longer hands HyperDX DEFAULT_CONNECTIONS from defaultConnections.secretName, so recreate those connections in HyperDX"
+  "93-dropped-hyperdx-otlp":
+    kind: report-dropped
+    apps: hyperdx
+    from: otlp
+    why: "HyperDX takes no OTLP of its own, and telemetry goes to the collector"

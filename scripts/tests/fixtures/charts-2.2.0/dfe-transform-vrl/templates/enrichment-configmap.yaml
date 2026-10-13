@@ -1,0 +1,12 @@
+# The enrichment tables the VRL programs look up at runtime, delivered from the
+# per-instance $values overlay dfe-engine writes. Absent when there are none.
+{{- if .Values.enrichmentTables }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.enrichmentTablesName" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  {{- include "dfe-common.enrichmentTablesData" . | trim | nindent 2 }}
+{{- end }}

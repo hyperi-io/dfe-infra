@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  {{- with (include "dfe-common.reloadAnnotations" .) }}
+  annotations:
+    {{- . | trim | nindent 4 }}
+  {{- end }}
+spec:
+  {{- include "dfe-common.replicas" . }}
+  {{- include "dfe-common.rollout" . | nindent 2 }}
+  selector:
+    matchLabels:
+      {{- include "dfe-common.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dfe-common.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pods on ANY config change. One delivery mechanism for every
+        # key, so nothing depends on whether the app's own reloader would have
+        # caught it; dfe-common.rollout makes that roll a rolling update.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- include "dfe-common.prometheusAnnotations" . | nindent 8 }}
+    spec:
+      # k8s injects a Docker-link env var per Service in the namespace, and a
+      # DFE_* name that collides with an app setting shadows it. Same class the
+      # engine, loader and receiver charts already guard.
+      enableServiceLinks: false
+      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      # Here as well as on the ServiceAccount, so a supplied account follows the same dial.
+      {{- include "dfe-common.automountServiceAccountToken" . | nindent 6 }}
+      {{- include "dfe-common.terminationGrace" . | nindent 6 }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      containers:
+        - name: transform
+          image: {{ include "dfe-common.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          # Mirrors the image CMD (dfe-transform-elastic Dockerfile:48). Explicit so
+          # the config path is visible here rather than buried in the image.
+          args:
+            - "--config"
+            - "{{ .Values.configMountPath }}/config.yaml"
+          ports:
+            # scalo's metrics server (defaults on 0.0.0.0:9090) hosts /metrics and
+            # the /livez + /readyz health endpoints -- one port for the scrape
+            # annotation and the probes to agree on. Same scalo contract as dfe-fetcher.
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            {{- include "dfe-common.pushContainerPort" . | nindent 12 }}
+          env:
+            {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_TRANSFORM_ELASTIC_") | nindent 12 }}
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
+            {{- if (include "dfe-common.transportIsBus" .) }}
+            # BARE names on purpose, and the one app chart where that is right:
+            # this app builds its transport through scalo's KafkaConfig::from_env
+            # (dfe-transform-elastic src/service.rs:894), which falls back to
+            # `KAFKA_<CANONICAL>` (scalo-rs transport/kafka/config.rs:1880). The
+            # receiver and loader charts prefix theirs because those two hand-build
+            # their config and never call from_env. Only CANONICAL names land, so
+            # the topic and group dials were deleted as inert (dfe-infra#181) --
+            # routing is the engine's, in the overlay this chart mounts.
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            {{- with .Values.kafka.consumerProtocol }}
+            - name: KAFKA_CONSUMER_PROTOCOL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.kafka.securityProtocol .Values.kafka.saslSecretName }}
+            # No KAFKA_PROVIDER beside these: KafkaTransport::new derives the
+            # protocol from a provider and overwrites this one, so a provider
+            # key that disagrees with the listener would win.
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.securityProtocol | quote }}
+            - name: KAFKA_SASL_MECHANISM
+              value: {{ .Values.kafka.saslMechanism | quote }}
+            - name: KAFKA_SASL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: username
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.saslSecretName }}
+                  key: password
+            {{- end }}
+            {{- end }}
+            {{- with (include "dfe-common.otelEndpoint" .) }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
+              value: {{ . | quote }}
+            {{- end }}
+            # Per-INSTANCE, not per-app: scalo otherwise defaults service.name to the
+            # binary name, so two instances are indistinguishable in the otel tables.
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otelServiceName | default (printf "dfe-%s" .Values.component) | quote }}
+          volumeMounts:
+            {{- include "dfe-common.serviceAccountFilesMount" . | nindent 12 }}
+            - name: config
+              mountPath: {{ .Values.configMountPath }}
+              readOnly: true
+            # Writable scratch: the container rootfs is read-only
+            # (dfe-common.containerSecurityContext), so anything writing /tmp
+            # needs this emptyDir.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # WAS `exec: pgrep -x transform` -- a process-existence check keyed to the
+          # exact binary name that stays green on a wedged-but-alive process, exactly
+          # the state liveness must catch. Moved to the scalo HTTP health endpoints,
+          # matching dfe-fetcher. A startupProbe, if added, targets /livez -- there is
+          # no startup route, and k8s suspends liveness until it passes.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        {{- include "dfe-common.serviceAccountFilesVolume" . | nindent 8 }}
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}

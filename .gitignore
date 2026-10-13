@@ -23,6 +23,8 @@ override.tf.json
 **/charts/*.tgz
 # helm/charts/<chart> and helm/edge/<chart> both vendor it.
 !helm/*/*/charts/dfe-common-*.tgz
+# So do the 2.2.0 charts the values-migration tests render.
+!scripts/tests/fixtures/charts-2.2.0/*/charts/dfe-common-*.tgz
 
 # Secrets / certs
 *.pem

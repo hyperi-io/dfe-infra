@@ -1,0 +1,28 @@
+deploy:
+  service: dfe-receiver
+  instance: default
+config:
+  routing:
+    source_rules:
+      - field: data_stream.dataset
+        mode: key_value_set
+        match_value: cisco_ios.log
+        source: ioselastic
+      - field: data_stream.dataset
+        mode: key_value_set
+        match_value: cisco_meraki.log
+        source: merakivrl
+      - field: _source
+        mode: key_value_set
+        match_value: pypiwatch
+        source: pypiwatch
+      - field: data_stream.dataset
+        mode: key_value_set
+        match_value: cisco_umbrella.log
+        source: umbrellavec
+    default_source: main
+    topic_suffix: _land
+    source_to_topic: {}
+  destinations:
+    default: kafka
+    rules: []

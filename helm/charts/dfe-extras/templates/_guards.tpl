@@ -224,6 +224,58 @@ entries to, as when this chart renders on its own defaults.
 {{- end -}}
 
 {{/*
+dfe-extras.valuesMigrationGuard -- the refusal of a deploy repo still written for
+the 2.2.0 charts.
+
+files/values-migrations.yaml maps each key the 2.2.0 charts read to the key the
+thin charts read, and `dfe-ops upgrade migrate-values` writes the new key beside
+the old. A rule with a `guard` fails the render while its old key holds a value
+and its new key holds none (guard empty), or a different one (guard equal, for a
+new key an integration layer always sets). Rendered on, such an overlay renames
+each per-config workload, prunes the fetcher's cursor claim and empties the
+transforms' file sets. A failed render leaves the Application's live objects as
+they are, which Argo CD 3.5.x does for any source that fails to render.
+*/}}
+{{- define "dfe-extras.valuesMigrationGuard" -}}
+{{- $map := .Files.Get "files/values-migrations.yaml" | fromYaml -}}
+{{- $service := toString .Values.chartName -}}
+{{- if eq $service "dfe-hyperdx" }}{{ $service = "hyperdx" }}{{ end -}}
+{{- range $id, $rule := $map.rules -}}
+{{- $guard := toString ($rule.guard | default "") -}}
+{{- $apps := list -}}
+{{- range splitList "," (toString $rule.apps) }}{{ $apps = append $apps (trim .) }}{{ end -}}
+{{- if and $guard (or (has "*" $apps) (has $service $apps)) -}}
+{{- $old := get (include "dfe-extras.valueAt" (dict "values" $.Values "path" (toString $rule.from)) | fromJson) "v" -}}
+{{- $new := get (include "dfe-extras.valueAt" (dict "values" $.Values "path" (toString $rule.to)) | fromJson) "v" -}}
+{{- $stale := and (not (empty $old)) (empty $new) -}}
+{{- if eq $guard "equal" -}}
+{{- $stale = and (not (empty $old)) (ne (toJson $old) (toJson $new)) -}}
+{{- end -}}
+{{- if $stale -}}
+{{- fail (printf "%s: %s is set and %s is not -- the overlay was written for the charts before %s, and the charts from %s read %s in its place. Run dfe-ops upgrade migrate-values --deploy <deploy repo checkout>, then commit and push (docs/deployment/upgrades.md#from-220)" $service $rule.from $rule.to (toString $map.since) (toString $map.since) $rule.to) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-extras.valueAt -- the value at a dotted path through maps, as JSON {"v": value},
+or {} where any step is missing. Takes (dict "values" <map> "path" "a.b.c").
+*/}}
+{{- define "dfe-extras.valueAt" -}}
+{{- $node := .values -}}
+{{- $found := true -}}
+{{- range splitList "." .path -}}
+{{- if and $found (kindIs "map" $node) (hasKey $node .) -}}
+{{- $node = index $node . -}}
+{{- else -}}
+{{- $found = false -}}
+{{- end -}}
+{{- end -}}
+{{- if $found }}{{ dict "v" $node | toJson }}{{ else }}{{ dict | toJson }}{{ end -}}
+{{- end -}}
+
+{{/*
 dfe-extras.culvertListenerGuard -- culvert's refusal of a listener list with no
 tunnel in it. local.yaml sets the receiver's list on the same key, so a culvert
 that does not restate its own would otherwise open the receiver's ports.

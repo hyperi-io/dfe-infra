@@ -1,0 +1,22 @@
+deploy:
+  service: dfe-transform-vrl
+  instance: merakivrl
+otelServiceName: dfe-transform-vrl-merakivrl
+component: transform-vrl-merakivrl
+config:
+  source:
+    topics:
+      - merakivrl_land
+    group_id: dfe-transform-vrl-merakivrl
+  sink:
+    topic: merakivrl_load
+transformFiles:
+  - name: filebeat.vrl
+    content: "##############################################################################\n# dfe-transform-vrl bundled pipeline: filebeat-compat -- INTERIM\n#\n# Requirements: enrichment table \"timezones\" (bundled timezones.csv).\n##############################################################################\n. = parse_json!(.message)\n"
+enrichmentTables:
+  - name: timezones.csv
+    content: |
+      abbreviation,name,offset
+      ACDT, Australian Central Daylight Time, +10:30
+      ACST, Australian Central Standard Time, +09:30
+      YEKT, Yekaterinburg Time, +05:00

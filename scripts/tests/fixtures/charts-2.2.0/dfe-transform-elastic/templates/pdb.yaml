@@ -1,0 +1,2 @@
+{{- /* Gated on the workload being able to carry two pods -- see dfe-common.pdb. */ -}}
+{{- include "dfe-common.pdb" . }}

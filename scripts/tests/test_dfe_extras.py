@@ -390,7 +390,7 @@ SCENARIOS = [
     ),
     pytest.param(
         "dfe-transform-vrl", "mesh", "local",
-        {"component": "transform-vrl-acme", "imageComponent": "transform-vrl"},
+        {"component": "transform-vrl-acme", "fullnameOverride": "dfe-transform-vrl-acme", "imageComponent": "transform-vrl"},
         {"present": [("Service", "dfe-transform-vrl-acme-mesh"), ("GRPCRoute", "dfe-transform-vrl-acme-mesh")]},
         id="transform-instance",
     ),

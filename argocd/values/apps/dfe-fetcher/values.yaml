@@ -15,11 +15,15 @@ keda:
 # The cursor store is the contract's writable path `cursor`. Its claim is off by
 # default: a lost cursor re-fetches the default window rather than losing data,
 # and the slim tier is not guaranteed a StorageClass. The claim is
-# <fullname>-cursor.
+# <fullname>-cursor. Argo never prunes it: a render that renames or drops the
+# claim leaves it and its volume in place, and the Application OutOfSync until
+# it is deleted by hand.
 writablePaths:
   cursor:
     persistence:
       enabled: false
+      annotations:
+        argocd.argoproj.io/sync-options: Prune=false
 
 # The cursor store's directory, on that writable path. An overlay that names its
 # own still wins.

@@ -1,0 +1,12 @@
+# The .vrl programs the app compiles at startup, delivered from the per-instance
+# $values overlay dfe-engine writes. Absent when the overlay carries no files.
+{{- if .Values.transformFiles }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.transformFilesName" . }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  {{- include "dfe-common.transformFilesData" . | trim | nindent 2 }}
+{{- end }}

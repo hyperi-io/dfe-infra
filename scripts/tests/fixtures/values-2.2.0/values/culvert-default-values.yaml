@@ -1,0 +1,8 @@
+deploy:
+  service: culvert
+  instance: default
+otelServiceName: culvert
+persistence:
+  enabled: true
+exposure:
+  serviceType: NodePort

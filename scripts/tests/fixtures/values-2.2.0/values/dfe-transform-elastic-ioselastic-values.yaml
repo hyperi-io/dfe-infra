@@ -1,0 +1,13 @@
+deploy:
+  service: dfe-transform-elastic
+  instance: ioselastic
+otelServiceName: dfe-transform-elastic-ioselastic
+component: transform-elastic-ioselastic
+config:
+  source:
+    topics:
+      - ioselastic_land
+    group_id: dfe-transform-elastic-ioselastic
+    name: filebeat.cisco_ios.default
+  sink:
+    topic: ioselastic_load
