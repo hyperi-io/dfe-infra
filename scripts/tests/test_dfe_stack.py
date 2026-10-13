@@ -1084,6 +1084,7 @@ def _cut_into(
             argparse.Namespace(
                 version="9.9.0-rc.3", from_stack=None, maturity=None,
                 apps=None, org="test-org", dry_run=False, registry="ghcr.io/test-org",
+                replace_withdrawn=False,
             )
         )
     finally:
@@ -1386,6 +1387,7 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
                     org="test-org",
                     dry_run=False,
                     registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
                 )
             )
         except SystemExit as exc:
@@ -1450,6 +1452,7 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
                 argparse.Namespace(
                     version="9.9.0-rc.3", from_stack=None, maturity=None, apps=None,
                     org="test-org", dry_run=False, registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
                 )
             )
         except SystemExit as exc:
@@ -1599,6 +1602,373 @@ def test_a_withdrawn_stack_is_a_source_and_never_a_target() -> None:
             expect(f"check-upgrade {frm} -> {to} exits {want}", rc == want, out.getvalue())
     finally:
         stack.load_root = original
+
+
+# A release withdrawn after its tag was cut, between the candidates that replace it.
+# The candidate cut from the withdrawn block names it first in previous, as the
+# first candidate after a withdrawal does.
+_REPLACE_FIXTURE = """\
+current: "9.9.1-rc.2"
+latest: "9.9.0"
+stacks:
+  9.9.1-rc.1:
+    maturity: rc                     # kept by every cut from this stack
+    support: standard
+    constraints: "constraints/9.9.1-rc.1.yaml"
+    apps:
+      an-app: "v1.0.0"
+    digests:
+      an-app: "sha256:aaa"
+    stack:
+      previous: "9.9.0"
+      upgrade-order: "an-app"
+  # Tagged as the release before its gates passed.
+  9.9.1:
+    maturity: rc                     # Withdrawn as GA: tagged before the gates passed.
+    support: withdrawn               # The candidates that replace it sort below it.
+    constraints: "constraints/9.9.1.yaml"
+    apps:
+      an-app: "v1.0.0"
+    digests:
+      an-app: "sha256:aaa"
+    stack:
+      previous: "9.9.1-rc.1"
+      upgrade-order: "an-app"
+  9.9.1-rc.2:
+    maturity: rc
+    support: standard
+    constraints: "constraints/9.9.1-rc.2.yaml"
+    apps:
+      an-app: "v1.0.0"
+    digests:
+      an-app: "sha256:aaa"
+    stack:
+      previous: "9.9.1, 9.9.1-rc.1"
+      upgrade-order: "an-app"
+"""
+
+# One rule per constraints file, named for the stack whose file it is.
+_REPLACE_RULES = {
+    "9.9.1-rc.1": "first-candidate-rule",
+    "9.9.1": "withdrawn-release-rule",
+    "9.9.1-rc.2": "second-candidate-rule",
+}
+
+
+def _rules_text(name: str) -> str:
+    """The constraints file the replace fixture carries for one stack."""
+    return f'stack: "{name}"\nrules:\n  {_REPLACE_RULES[name]}:\n    severity: "error"\n'
+
+
+def _withdrawn_cut(
+    tmp: Path,
+    version: str,
+    from_stack: str,
+    maturity: str | None = None,
+    replace: bool = False,
+    dry_run: bool = False,
+) -> tuple[str | None, str, list[str]]:
+    """Run a cut over the replace fixture with the registry stubbed out.
+
+    Returns (the refusal, or None when the cut ran; what it printed; the apps the
+    registry was asked about).
+    """
+    import argparse
+    import contextlib
+    import io
+
+    (tmp / "versions.yaml").write_text(_REPLACE_FIXTURE, encoding="utf-8", newline="\n")
+    (tmp / "constraints").mkdir(exist_ok=True)
+    for name in _REPLACE_RULES:
+        (tmp / "constraints" / f"{name}.yaml").write_text(
+            _rules_text(name), encoding="utf-8", newline="\n"
+        )
+    asked: list[str] = []
+
+    def latest(org: str, app: str) -> tuple[str, str] | None:
+        asked.append(app)
+        return None
+
+    original = (stack.REPO_ROOT, stack._latest_published)
+    stack.REPO_ROOT = tmp
+    stack._latest_published = latest
+    out = io.StringIO()
+    refusal = None
+    try:
+        with contextlib.redirect_stdout(out):
+            stack.cmd_cut(
+                argparse.Namespace(
+                    version=version, from_stack=from_stack, maturity=maturity, apps=None,
+                    org="test-org", dry_run=dry_run, registry="ghcr.io/test-org",
+                    replace_withdrawn=replace,
+                )
+            )
+    except SystemExit as exc:
+        refusal = str(exc)
+    finally:
+        stack.REPO_ROOT, stack._latest_published = original
+    return refusal, out.getvalue(), asked
+
+
+def _block_text(text: str, name: str) -> str:
+    """One stack block of a versions.yaml text, from its key to the next one."""
+    lines = text.splitlines(keepends=True)
+    start, end = stack._block_span(lines, name)
+    return "".join(lines[start:end])
+
+
+def _graph_of(text: str) -> dict:
+    """What `dfe-stack graph` prints for a versions.yaml text."""
+    import argparse
+    import contextlib
+    import io
+    import json
+
+    original = stack.load_root
+    stack.load_root = lambda tag=None: stack.parse_simple_yaml(text)
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            stack.cmd_graph(argparse.Namespace())
+    finally:
+        stack.load_root = original
+    return json.loads(out.getvalue())
+
+
+def _has_cycle(edges: set[tuple[str, str]]) -> bool:
+    """Whether following upgrade edges can lead back to a stack already passed."""
+    onward: dict[str, set[str]] = {}
+    for frm, to in edges:
+        onward.setdefault(frm, set()).add(to)
+
+    def reaches(node: str, path: frozenset[str]) -> bool:
+        if node in path:
+            return True
+        return any(reaches(nxt, path | {node}) for nxt in onward.get(node, ()))
+
+    return any(reaches(node, frozenset()) for node in onward)
+
+
+def test_a_cut_from_a_withdrawn_stack_is_standard_support() -> None:
+    """The withdrawal belongs to the stack that was pulled, not to a candidate cut from it.
+
+    A plain clone carries `support: withdrawn` and the notes explaining why, so the
+    new candidate drops out of the upgrade chain until somebody edits it by hand.
+    """
+    import tempfile
+
+    for maturity, want in ((None, "rc"), ("beta", "beta")):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            refusal, out, _ = _withdrawn_cut(tmp, "9.9.1-rc.3", "9.9.1", maturity=maturity)
+            text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+        label = f"--maturity {maturity}" if maturity else "an inherited maturity"
+        expect(f"with {label} the cut writes the file", refusal is None, f"{refusal}")
+        if refusal is not None:
+            continue
+        cut = _block_text(text, "9.9.1-rc.3")
+        expect(
+            f"with {label} the new stack is standard support",
+            "\n    support: standard\n" in cut,
+            cut,
+        )
+        expect(
+            f"with {label} its maturity line carries no withdrawal note",
+            f"\n    maturity: {want}\n" in cut,
+            cut,
+        )
+        expect(
+            f"with {label} nothing of the withdrawal survives in it",
+            "withdrawn" not in cut.lower(),
+            cut,
+        )
+        expect(
+            f"with {label} the cut says what it changed",
+            "  support withdrawn -> standard (cloned from a withdrawn stack)\n" in out,
+            out,
+        )
+        expect(
+            f"with {label} the new stack is an upgrade target",
+            "9.9.1-rc.3" in stack.upgrade_targets(stack.parse_simple_yaml(text)),
+            f"{stack.upgrade_targets(stack.parse_simple_yaml(text))}",
+        )
+        expect(
+            f"with {label} the withdrawn stack keeps its own record",
+            _block_text(text, "9.9.1") == _block_text(_REPLACE_FIXTURE, "9.9.1"),
+            _block_text(text, "9.9.1"),
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        refusal, out, _ = _withdrawn_cut(tmp, "9.9.1-rc.3", "9.9.1-rc.1", maturity="beta")
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+    expect("a cut from a standard stack writes the file", refusal is None, f"{refusal}")
+    cut = _block_text(text, "9.9.1-rc.3") if refusal is None else ""
+    expect(
+        "and keeps the note on its maturity line",
+        "\n    maturity: beta                     # kept by every cut from this stack\n" in cut,
+        cut,
+    )
+    expect("and reports no support change", "support withdrawn" not in out, out)
+
+
+def test_replace_withdrawn_recuts_the_release_under_its_own_name() -> None:
+    """The release is re-cut from its last candidate under the name it was withdrawn from.
+
+    Without the flag cut refuses the name, and a hand splice leaves the candidate
+    cut from the withdrawn block naming it in previous: the re-cut release then
+    sits in a cycle with that candidate, read as a release-to-rc downgrade edge.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        refusal, out, _ = _withdrawn_cut(
+            tmp, "9.9.1", "9.9.1-rc.2", maturity="release", replace=True
+        )
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+        rules_file = tmp / "constraints" / "9.9.1.yaml"
+        rules = rules_file.read_text(encoding="utf-8") if rules_file.exists() else ""
+
+    expect("the cut writes the file", refusal is None, f"{refusal}")
+    if refusal is not None:
+        return
+    root = stack.parse_simple_yaml(text)
+    blocks = re.findall(r"^  ([0-9][A-Za-z0-9_.-]*):\s*$", text, re.MULTILINE)
+    expect(
+        "one 9.9.1 block, the new one, last in the file",
+        blocks == ["9.9.1-rc.1", "9.9.1-rc.2", "9.9.1"],
+        f"{blocks}",
+    )
+    release = root["stacks"]["9.9.1"]
+    expect(
+        "it is a standard-support release",
+        release.get("maturity") == "release" and release.get("support") == "standard",
+        f"{release}",
+    )
+    expect(
+        "cut from the last candidate",
+        release["stack"]["previous"] == "9.9.1-rc.2",
+        f"{release['stack']['previous']!r}",
+    )
+    expect(
+        "the withdrawn block and the comment above it are gone",
+        "Withdrawn as GA" not in text and "Tagged as the release" not in text,
+        text,
+    )
+    expect(
+        "the candidate cut from it inherits its predecessor instead",
+        root["stacks"]["9.9.1-rc.2"]["stack"]["previous"] == "9.9.1-rc.1",
+        f"{root['stacks']['9.9.1-rc.2']['stack']['previous']!r}",
+    )
+    expect(
+        "the cut says which previous it rewrote",
+        '  rewrote 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n' in out,
+        out,
+    )
+    expect("current moves to the release", root.get("current") == "9.9.1", f"{root.get('current')}")
+    expect(
+        "latest is left to the release workflow",
+        root.get("latest") == "9.9.0",
+        f"{root.get('latest')}",
+    )
+    expect(
+        "the release's constraints are cloned from the candidate",
+        "second-candidate-rule" in rules and 'stack: "9.9.1"' in rules,
+        rules,
+    )
+    expect(
+        "none of the withdrawn stack's rules survive", "withdrawn-release-rule" not in rules, rules
+    )
+
+    graph = _graph_of(text)
+    edges = {(e["from"], e["to"]) for e in graph["edges"]}
+    expect("the graph has no cycle", not _has_cycle(edges), f"{edges}")
+    expect("no edge leaves the release", all(frm != "9.9.1" for frm, _ in edges), f"{edges}")
+    expect(
+        "the release is reached from its last candidate",
+        ("9.9.1-rc.2", "9.9.1") in edges,
+        f"{edges}",
+    )
+    expect("nothing is withdrawn any more", "withdrawn" not in graph, f"{graph}")
+
+
+def test_replace_withdrawn_refuses_anything_but_a_withdrawn_stack() -> None:
+    """The flag deletes a stack block, so it only ever takes one already pulled."""
+    import tempfile
+
+    for name, version, from_stack, why in (
+        ("a standard stack", "9.9.1-rc.2", "9.9.1-rc.1", ("9.9.1-rc.2", "support: standard")),
+        ("a version that does not exist", "9.9.2", "9.9.1-rc.2", ("9.9.2", "nothing to replace")),
+        ("a cut from the stack it removes", "9.9.1", "9.9.1", ("--from 9.9.1",)),
+    ):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            refusal, out, asked = _withdrawn_cut(tmp, version, from_stack, replace=True)
+            text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+            rules = {
+                n: (tmp / "constraints" / f"{n}.yaml").read_text(encoding="utf-8")
+                for n in _REPLACE_RULES
+            }
+        expect(f"{name}: it refuses", refusal is not None, out)
+        expect(
+            f"{name}: naming why",
+            refusal is not None and all(part in refusal for part in why),
+            f"{refusal}",
+        )
+        expect(f"{name}: before reading the registry", not asked, f"{asked}")
+        expect(f"{name}: versions.yaml is untouched", text == _REPLACE_FIXTURE, text)
+        expect(
+            f"{name}: every constraints file is untouched",
+            rules == {n: _rules_text(n) for n in _REPLACE_RULES},
+            f"{rules}",
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        refusal, _, _ = _withdrawn_cut(Path(td), "9.9.1", "9.9.1-rc.2")
+    expect(
+        "without the flag a withdrawn name is refused, pointing at the flag",
+        refusal is not None and "already exists" in refusal and "--replace-withdrawn" in refusal,
+        f"{refusal}",
+    )
+
+
+def test_replace_withdrawn_dry_run_reports_and_writes_nothing() -> None:
+    """A replace deletes a block and a file, so its plan is readable before it runs."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        refusal, out, _ = _withdrawn_cut(
+            tmp, "9.9.1", "9.9.1-rc.2", maturity="release", replace=True, dry_run=True
+        )
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+        rules = {
+            n: (tmp / "constraints" / f"{n}.yaml").read_text(encoding="utf-8")
+            for n in _REPLACE_RULES
+            if (tmp / "constraints" / f"{n}.yaml").exists()
+        }
+
+    expect("the dry run completes", refusal is None, f"{refusal}")
+    expect("versions.yaml is byte for byte as it was", text == _REPLACE_FIXTURE, text)
+    expect(
+        "every constraints file is still there and unchanged",
+        rules == {n: _rules_text(n) for n in _REPLACE_RULES},
+        f"{rules}",
+    )
+    expect("it names the block it would splice", "  would splice out 9.9.1 (withdrawn)" in out, out)
+    expect(
+        "each previous it would rewrite, old -> new",
+        '  would rewrite 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n' in out,
+        out,
+    )
+    expect(
+        "and the constraints file it would remove",
+        "  would remove constraints/9.9.1.yaml (the withdrawn stack's rules)\n" in out,
+        out,
+    )
+    expect("and it says nothing was written", "dry-run: versions.yaml unchanged" in out, out)
 
 
 _REFRESH_FIXTURE = """\

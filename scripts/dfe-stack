@@ -224,6 +224,11 @@ def upgrade_targets(root: dict) -> list[str]:
     return [n for n in stack_names(root) if not is_withdrawn(stacks[n])]
 
 
+def stack_previous(v: dict) -> list[str]:
+    """The stacks a block names in its comma-separated `stack.previous`, in order."""
+    return [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
+
+
 def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
     """Resolve (name, pin-set) for a stack version (default: `current`)."""
     stacks = root.get("stacks", {})
@@ -611,8 +616,7 @@ def cmd_graph(args: argparse.Namespace) -> int:
     nodes: list[str] = list(names)
     edges: list[dict[str, str]] = []
     for name in upgrade_targets(root):
-        prev = root["stacks"][name].get("stack", {}).get("previous", "")
-        for p in [x.strip() for x in prev.split(",") if x.strip()]:
+        for p in stack_previous(root["stacks"][name]):
             edges.append({"from": by_norm.get(_norm_version(p), p), "to": name})
     graph = {"nodes": nodes, "edges": edges}
     withdrawn = [n for n in names if is_withdrawn(root["stacks"][n])]
@@ -715,13 +719,7 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
     if to_name and is_withdrawn(stacks[to_name]):
         print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is withdrawn)")
         return 1
-    declared: list[str] = []
-    if to_name:
-        declared = [
-            p.strip()
-            for p in stacks[to_name].get("stack", {}).get("previous", "").split(",")
-            if p.strip()
-        ]
+    declared = stack_previous(stacks[to_name]) if to_name else []
     if declared:
         ok = any(_norm_version(p) == _norm_version(args.frm) for p in declared)
         reason = (
@@ -1512,6 +1510,81 @@ def _restate_ref_evidence(block: list[str], key: str, sha: str, subject: str, da
     block[first : i + 1] = [evidence, *annotations, f"{pin.group(1)}{pin.group(2)}\n"]
 
 
+def _set_stack_field(block: list[str], key: str, value: str | None, keep_note: bool) -> None:
+    """Rewrite a stack block's own `key:` line; a value of None keeps the current one.
+
+    keep_note=False drops the trailing comment, which describes the stack the block
+    was cloned from rather than the one being cut.
+    """
+    for i, ln in enumerate(block):
+        m = re.match(rf"^(    {re.escape(key)}:\s*)(\S+)(.*)$", ln)
+        if m:
+            note = m.group(3) if keep_note else ""
+            block[i] = f"{m.group(1)}{value or m.group(2)}{note}\n"
+            return
+
+
+def _drop_withdrawn(
+    lines: list[str], root: dict, gone: str
+) -> tuple[list[tuple[str, str, str]], Path | None]:
+    """Remove a withdrawn stack from versions.yaml so its version can be cut again.
+
+    Every other stack naming it in `stack.previous` takes its predecessors in its
+    place. Left alone, the candidate cut from the withdrawn block keeps naming it,
+    so the re-cut release and that candidate each declare the other as their
+    predecessor: a cycle, and a release-to-rc edge in the upgrade graph.
+
+    Args:
+        lines: versions.yaml, rewritten in place.
+        root: The parsed file the lines came from.
+        gone: The withdrawn stack's version.
+
+    Returns:
+        (done, to do, what) for each change, and the withdrawn stack's
+        constraints file when it exists, for the caller to remove before the new
+        one is cloned: the clone never overwrites a file that is already there.
+    """
+    stacks = root.get("stacks", {})
+    inherited = stack_previous(stacks[gone])
+    changes: list[tuple[str, str, str]] = []
+    for name in stack_names(root):
+        declared = stack_previous(stacks[name])
+        if name == gone or all(_norm_version(p) != _norm_version(gone) for p in declared):
+            continue
+        merged: list[str] = []
+        seen = {_norm_version(name)}
+        for p in declared:
+            replacement = inherited if _norm_version(p) == _norm_version(gone) else [p]
+            for q in replacement:
+                if _norm_version(q) not in seen:
+                    seen.add(_norm_version(q))
+                    merged.append(q)
+        start, end = _block_span(lines, name)
+        block = lines[start:end]
+        if not _rewrite_scalar(block, "stack", "previous", ", ".join(merged)):
+            raise SystemExit(f"error: no stack.previous line in {name} to re-point")
+        lines[start:end] = block
+        old = stacks[name]["stack"]["previous"]
+        changes.append(
+            ("rewrote", "rewrite", f'{name} stack.previous: "{old}" -> "{", ".join(merged)}"')
+        )
+
+    start, end = _block_span(lines, gone)
+    # A comment directly above a block is that block's, so it goes with it.
+    while start > 0 and lines[start - 1].startswith("  #"):
+        start -= 1
+    del lines[start:end]
+    spliced = f"{gone} (withdrawn), versions.yaml lines {start + 1}-{end}"
+    changes.insert(0, ("spliced out", "splice out", spliced))
+
+    rel = stacks[gone].get("constraints")
+    rules = REPO_ROOT / rel if rel else None
+    if rules is None or not rules.exists():
+        return changes, None
+    changes.append(("removed", "remove", f"{rel} (the withdrawn stack's rules)"))
+    return changes, rules
+
+
 def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
@@ -1529,28 +1602,59 @@ def cmd_cut(args: argparse.Namespace) -> int:
     `stack.previous` is DERIVED, not cloned: the source block is by definition
     the new version's predecessor, so cut re-points it at `--from`.
 
+    A clone of a `support: withdrawn` block is cut as `support: standard`, without
+    the notes on its maturity and support lines: those explain the withdrawal.
+
+    `--replace-withdrawn` re-cuts a withdrawn version under its own name. It
+    splices the withdrawn block out first (_drop_withdrawn) and removes its
+    constraints file, so the new one is cloned from `--from`.
+
     Refuses rather than guesses -- an app with no published release, or a version
-    that already exists, stops the cut.
+    that already exists and is not being replaced, stops the cut.
     """
     root = load_root()
     from_name, _ = stack_pins(root, args.from_stack)
     new = _norm_version(args.version)
+    stacks = root.get("stacks", {})
+    replace = args.replace_withdrawn
 
-    if new in root.get("stacks", {}):
+    if new in stacks and not replace:
+        if is_withdrawn(stacks[new]):
+            raise SystemExit(
+                f"error: stack {new} already exists and is withdrawn -- pass "
+                f"--replace-withdrawn to cut it again under the same version"
+            )
         raise SystemExit(f"error: stack {new} already exists -- pick an unused version")
+    if replace:
+        if new not in stacks:
+            raise SystemExit(f"error: --replace-withdrawn has nothing to replace: no stack {new}")
+        if not is_withdrawn(stacks[new]):
+            support = stacks[new].get("support") or "unset"
+            raise SystemExit(
+                f"error: --replace-withdrawn only replaces a `support: {WITHDRAWN}` stack, "
+                f"and {new} is `support: {support}` -- pick an unused version"
+            )
+        if from_name == new:
+            raise SystemExit(
+                f"error: --from {from_name} is the stack --replace-withdrawn removes -- "
+                f"cut from the candidate that replaces it"
+            )
 
     path = REPO_ROOT / "versions.yaml"
     lines = path.read_text().splitlines(keepends=True)
+    replacing: list[tuple[str, str, str]] = []
+    gone_rules: Path | None = None
+    if replace:
+        replacing, gone_rules = _drop_withdrawn(lines, root, new)
     start, end = _block_span(lines, from_name)
     block = lines[start:end]
 
     block[0] = f"  {new}:\n"
-    if args.maturity:
-        for i, ln in enumerate(block):
-            m = re.match(r"^(    maturity:\s*)\S+(.*)$", ln)
-            if m:
-                block[i] = f"{m.group(1)}{args.maturity}{m.group(2)}\n"
-                break
+    from_withdrawn = is_withdrawn(stacks[from_name])
+    if args.maturity or from_withdrawn:
+        _set_stack_field(block, "maturity", args.maturity, keep_note=not from_withdrawn)
+    if from_withdrawn:
+        _set_stack_field(block, "support", "standard", keep_note=False)
     for i, ln in enumerate(block):
         if ln.lstrip().startswith("constraints:"):
             block[i] = re.sub(re.escape(from_name), new, ln)
@@ -1595,6 +1699,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     moved += repin_charts(block, args.org, host, held)
 
     print(f"cut {new} from {from_name}")
+    if from_withdrawn:
+        print(f"  support {WITHDRAWN} -> standard (cloned from a withdrawn stack)")
     for line in moved:
         print(f"  MOVED  {line}")
     for line in held:
@@ -1603,6 +1709,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
         print("  nothing moved -- every app was already at its latest published release")
 
     if args.dry_run:
+        for _, todo, what in replacing:
+            print(f"  would {todo} {what}")
         _, from_v = stack_pins(root, from_name)
         src_rel = from_v.get("constraints")
         if src_rel:
@@ -1618,6 +1726,10 @@ def cmd_cut(args: argparse.Namespace) -> int:
         raise SystemExit("error: no `current:` pointer to move -- refusing a half-written cut")
     path.write_text(text)
 
+    if gone_rules is not None:
+        gone_rules.unlink()
+    for done, _, what in replacing:
+        print(f"  {done} {what}")
     carried = _carry_constraints(root, from_name, new)
     if carried:
         print(f"  constraints -> {carried} (cloned from {from_name}; review the rules)")
@@ -1758,6 +1870,14 @@ def main() -> int:
     p.add_argument("--apps", default=None,
                    help="comma-separated apps to move; the rest hold at their --from pins")
     p.add_argument("--org", default="hyperi-io", help="GH org owning the packages")
+    p.add_argument(
+        "--replace-withdrawn",
+        action="store_true",
+        help=(
+            "re-cut a `support: withdrawn` version under the same name: splice its block "
+            "out, re-point every stack.previous naming it, and replace its constraints file"
+        ),
+    )
     p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     p.set_defaults(func=cmd_cut)
 
