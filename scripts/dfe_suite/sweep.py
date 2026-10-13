@@ -175,6 +175,7 @@ BACKLOG_JQ = (
     " else .data.organization.projectV2.items.nodes[] | tojson end"
 )
 WORKFLOWS_JQ = ".workflows[] | {id, path, state} | tojson"
+DEPENDABOT_UPDATES_PATH = "dynamic/dependabot/"
 RUNS_JQ = (
     ".workflow_runs[] | {id, name, workflow_id, path, event, conclusion, html_url, head_sha,"
     " created_at, check_suite_id} | tojson"
@@ -1297,6 +1298,10 @@ def _ci(
         ident = workflow.get("id")
         # A disabled workflow's last run is history, not the state of the branch.
         if workflow.get("state") != "active" or not ident:
+            continue
+        # A Dependabot update run speaks for its alert, which the dependabot tool reports
+        # while it is open; its last run otherwise outlives the alert indefinitely.
+        if str(workflow.get("path") or "").startswith(DEPENDABOT_UPDATES_PATH):
             continue
         try:
             runs += api(f"repos/{repo}/actions/workflows/{ident}/runs?{on_branch}",
