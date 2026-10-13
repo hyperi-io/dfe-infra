@@ -27,11 +27,22 @@ Configuration is environment only:
     DFE_REAPER_STATE_REGION   that bucket's region; defaults to the first region.
     DFE_RUN_STATE_PREFIX      per-run state prefix (default dfe-e2e-runs).
     DFE_RUN_TAG_KEY / DFE_RUN_EXPIRY_KEY   the run convention's keys (cloud_run.py).
+    CONFLUENT_CLOUD_API_KEY / CONFLUENT_CLOUD_API_SECRET   Confluent Cloud's
+                              organisation credential, read by the confluent
+                              provider; required to destroy a run whose
+                              kafka.provider is confluent-cloud.
+    REDPANDA_CLIENT_ID / REDPANDA_CLIENT_SECRET   Redpanda Cloud's client
+                              credential, read by the redpanda provider;
+                              required to destroy a run whose kafka.provider is
+                              redpanda-cloud. Any other run gets a placeholder,
+                              because the root configures that provider on
+                              every destroy.
 
 `reap` works in two passes, both with a grace of 0. First every run record
 under the prefix: one that fails `cloud_run.record_problems` is reported and
-left alone, an unexpired one is left alone, and an expired one gets `tofu
-destroy` against its own per-run state, from a copy of this checkout's
+left alone, an unexpired one is left alone, an expired one holding a SaaS broker
+whose vendor credential is unset is reported and kept for the next schedule, and
+any other expired one gets `tofu destroy` against its own per-run state, from a copy of this checkout's
 terraform/ tree so no run sees another's overlay. A secret Secrets Manager no
 longer holds is dropped from that state first, since the reaper's tag-scoped
 read cannot refresh it. A successful destroy removes the record, and so does a
@@ -61,8 +72,14 @@ OVERLAY_NAME = "zz-dfe-run.auto.tfvars.json"
 NOTICE_UNCONFIGURED = (
     "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
 )
+# The credential each SaaS broker's provider reads from the environment; the values come from the runner's secrets.
+VENDOR_PROVIDER_ENV: dict[str, tuple[str, ...]] = {
+    "confluent-cloud": ("CONFLUENT_CLOUD_API_KEY", "CONFLUENT_CLOUD_API_SECRET"),
+    "redpanda-cloud": ("REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET"),
+}
 # Providers a root configures whether or not the dial selects them; a placeholder satisfies their check.
-PLACEHOLDER_PROVIDER_ENV = ("REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET")
+PLACEHOLDER_PROVIDER_ENV = VENDOR_PROVIDER_ENV["redpanda-cloud"]
+PLACEHOLDER_VALUE = "unused-placeholder"
 
 
 class ReaperConfigError(ValueError):
@@ -217,12 +234,36 @@ def _owning_arn(resource: Mapping[str, object]) -> str:
     return str((resource.get("values") or {}).get(attribute, ""))  # type: ignore[union-attr]
 
 
+def kafka_provider(record: Mapping[str, object]) -> str:
+    """The kafka.provider a run applied with, or "" for a record whose tfvars name none."""
+    tfvars = record.get("tfvars")
+    kafka = tfvars.get("kafka") if isinstance(tfvars, Mapping) else None
+    provider = kafka.get("provider") if isinstance(kafka, Mapping) else None
+    return provider if isinstance(provider, str) else ""
+
+
+def missing_vendor_credentials(record: Mapping[str, object], env: Mapping[str, str]) -> list[str]:
+    """The vendor credential names a run's destroy needs that `env` leaves unset or blank.
+
+    A runner passes an undefined secret through as an empty string, so blank counts as unset.
+    """
+    return [name for name in VENDOR_PROVIDER_ENV.get(kafka_provider(record), ()) if not env.get(name, "").strip()]
+
+
+def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
+    """The environment one run's tofu commands get: this process's, plus a placeholder where nothing reads it."""
+    env = dict(os.environ)
+    if kafka_provider(record) != "redpanda-cloud":
+        for name in PLACEHOLDER_PROVIDER_ENV:
+            if not env.get(name, "").strip():
+                env[name] = PLACEHOLDER_VALUE
+    return env
+
+
 def destroy_run(record: Mapping[str, object]) -> int:
     """`tofu destroy` one run against its own state, from a private copy of terraform/."""
     tf_root = str(record["tf_root"])
-    env = dict(os.environ)
-    for name in PLACEHOLDER_PROVIDER_ENV:
-        env.setdefault(name, "unused-placeholder")
+    env = destroy_env(record)
     with tempfile.TemporaryDirectory(prefix="dfe-reaper-tf-") as scratch:
         copy = Path(scratch) / "terraform"
         shutil.copytree(
@@ -290,9 +331,18 @@ def reap_runs(config: ReaperConfig, now: float) -> list[str]:
             print(f"run {run_id}: not expired, left alone", file=sys.stderr)
             continue
         state = cloud_run.state_key(config.state_prefix, run_id)
-        if state_exists(config, state) and destroy_run(record) != 0:
-            problems.append(f"run {run_id}: tofu destroy failed; retried on the next schedule")
-            continue
+        if state_exists(config, state):
+            # Without its vendor credential tofu cannot reach the SaaS broker, so name what is missing first.
+            missing = missing_vendor_credentials(record, os.environ)
+            if missing:
+                problems.append(
+                    f"run {run_id}: holds {kafka_provider(record)} resources and its destroy needs "
+                    f"{', '.join(missing)}, which the environment leaves unset; retried on the next schedule"
+                )
+                continue
+            if destroy_run(record) != 0:
+                problems.append(f"run {run_id}: tofu destroy failed; retried on the next schedule")
+                continue
         delete_record(config, key)
         print(f"run {run_id}: destroyed and its record removed", file=sys.stderr)
     return problems

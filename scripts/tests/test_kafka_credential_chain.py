@@ -32,7 +32,9 @@ Confluent Cloud and Redpanda Cloud the credential reached no namespace an app
 reads from: layer2-data never named the provider, so the chart rendered a
 password-only secret in its own namespace, keyed on a store path nothing seeds.
 These tests render the appset's own values block for each broker and carry it
-through the kafka chart, the way Argo does.
+through the kafka chart, the way Argo does, and hold every property it reads to
+a field the deploy layer seeds -- Confluent's API key is the username, so its
+seed carries both.
 
 The broker side of each tier is the kafka and kafbat charts under layer2-data's
 value files and parameters; the app side is every component's golden under
@@ -686,6 +688,19 @@ def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
             f"{broker}: the chart reads dfe/test/{seed} and nothing else",
             keys == {f"dfe/test/{seed}"},
             f"got {sorted(keys)}",
+        )
+
+
+def test_a_managed_broker_seeds_every_property_its_chart_reads() -> None:
+    """A property the store does not hold leaves the ExternalSecret unsynced and dfe-kafka-user absent."""
+    for broker in MANAGED:
+        seeds = render_dial._seeds(broker)
+        seed = next(name for name in seeds if name.startswith("kafka/"))
+        reads = {prop for _, prop in store_reads(layer2_kafka(broker))}
+        expect(
+            f"{broker}: {seed} holds every property the chart reads",
+            bool(reads) and reads <= set(seeds[seed]),
+            f"unseeded: {sorted(reads - set(seeds[seed]))}",
         )
 
 

@@ -33,7 +33,7 @@ resource "confluent_gateway" "pni" {
   display_name = "${var.name}-pni"
 
   environment {
-    id = confluent_environment.this.id
+    id = local.environment_id
   }
 
   aws_private_network_interface_gateway {
@@ -70,7 +70,7 @@ resource "confluent_access_point" "pni" {
   display_name = "${var.name}-pni"
 
   environment {
-    id = confluent_environment.this.id
+    id = local.environment_id
   }
 
   gateway {

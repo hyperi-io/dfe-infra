@@ -204,6 +204,56 @@ run "the_internal_ca_write_grant_follows_the_store_prefix" {
   }
 }
 
+// Confluent's API key IS the username, and Confluent mints it, so the caller
+// hands both halves in and neither is generated here.
+run "a_confluent_seed_takes_the_callers_key_and_secret" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    seeds = {
+      "kafka/confluent-cloud" = { username = "", password = "" }
+      "ui/nextauth"           = { secret = "" }
+    }
+
+    kafka_username = "AAAAAAAAAAAAAAAA"
+  }
+
+  assert {
+    condition = jsondecode(aws_secretsmanager_secret_version.seed["kafka/confluent-cloud"].secret_string) == {
+      username = "AAAAAAAAAAAAAAAA"
+      password = "contract-only-not-a-real-credential"
+    }
+    error_message = "the kafka/confluent-cloud secret must carry the caller's key as username and the caller's secret as password"
+  }
+
+  assert {
+    condition     = keys(random_password.seed) == ["ui/nextauth|secret"]
+    error_message = "only the UI's own secret is generated here -- a username generated for Confluent could never match the key it minted"
+  }
+}
+
+run "a_seed_asking_for_a_username_refuses_a_missing_one" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    seeds = {
+      "kafka/confluent-cloud" = { username = "", password = "" }
+    }
+  }
+
+  expect_failures = [
+    var.kafka_username,
+  ]
+}
+
 // An account guardrail that refuses CreateRole without a boundary refuses the
 // external-secrets role without one.
 run "the_eso_role_carries_the_permissions_boundary" {

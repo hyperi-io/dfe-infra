@@ -278,6 +278,66 @@ run "redpanda_cloud_acls_at_on_prem_parity" {
   }
 }
 
+// A cloud cycle places its serverless cluster in a standing resource group
+// rather than one of its own, so the cluster and its private link both name it.
+run "redpanda_cloud_builds_in_a_standing_resource_group" {
+  command = plan
+
+  module {
+    source = "./redpanda-cloud"
+  }
+
+  variables {
+    resource_group_id = "11111111-2222-3333-4444-555555555555"
+  }
+
+  assert {
+    condition     = length(redpanda_resource_group.this) == 0
+    error_message = "a standing resource group is used as it is, with no second one created beside it"
+  }
+
+  assert {
+    condition     = redpanda_serverless_cluster.this.resource_group_id == "11111111-2222-3333-4444-555555555555"
+    error_message = "the cluster must be placed in the standing resource group"
+  }
+
+  assert {
+    condition     = redpanda_serverless_private_link.this[0].resource_group_id == "11111111-2222-3333-4444-555555555555"
+    error_message = "the private link must sit in the same resource group as the cluster it serves"
+  }
+}
+
+run "redpanda_cloud_creates_its_own_resource_group_by_default" {
+  command = plan
+
+  module {
+    source = "./redpanda-cloud"
+  }
+
+  assert {
+    condition     = length(redpanda_resource_group.this) == 1
+    error_message = "with no resource_group_id the module creates the group the cluster lives in"
+  }
+}
+
+// A Confluent environment id in the Redpanda slot is the likely mix-up, and
+// Redpanda would refuse it only at apply.
+run "redpanda_cloud_rejects_a_malformed_resource_group" {
+  command = plan
+
+  module {
+    source = "./redpanda-cloud"
+  }
+
+  variables {
+    resource_group_id = "env-abc123"
+  }
+
+  expect_failures = [
+    var.resource_group_id,
+  ]
+}
+
 // Dedicated and BYOC are Request-access and quote-only, so they fail at plan
 // rather than building something nobody can price.
 run "redpanda_cloud_rejects_dedicated" {

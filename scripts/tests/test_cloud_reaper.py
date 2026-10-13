@@ -3,9 +3,9 @@
 #  File:         test_cloud_reaper.py
 #  Purpose:      Guard the scheduled reaper: unconfigured it is a notice and a
 #                green run that touches nothing, configured it destroys only
-#                expired runs whose record points at their own state, and the
-#                workflow pins every action, holds no secret and gates the
-#                reaping job on the role variable.
+#                expired runs whose record points at their own state, and a
+#                run holding a SaaS broker is destroyed with that vendor's
+#                credential or not at all.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -349,6 +349,107 @@ def test_an_unreadable_secret_leaves_the_state_alone_and_still_destroys(monkeypa
 
 def test_no_state_answer_prunes_nothing() -> None:
     assert cloud_reaper.stale_state_addresses({}) == []
+
+
+# --- vendor credentials ------------------------------------------------------------------
+
+VENDOR_ENV = ("CONFLUENT_CLOUD_API_KEY", "CONFLUENT_CLOUD_API_SECRET", "REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET")
+
+
+def _saas_record(run_id: str, provider: str) -> dict:
+    """An expired run record whose tfvars select one Kafka provider."""
+    record = _record(run_id, NOW - 60)
+    record["tfvars"]["kafka"] = {"provider": provider}
+    return record
+
+
+def _reap_recording_env(
+    monkeypatch: pytest.MonkeyPatch, record: dict, env: dict[str, str]
+) -> tuple[list[str], list[dict], FakeBucket]:
+    """Reap one run with only `env` set of the vendor variables, keeping each tofu call's vendor variables.
+
+    Only the four vendor names are kept, never the whole environment, so a failed
+    assertion cannot print the host's or the runner's other variables.
+    """
+    for name in VENDOR_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    run_id = str(record["run_id"])
+    bucket = FakeBucket({run_id: record}, {cloud_run.state_key("dfe-e2e-runs", run_id)})
+    seen: list[dict] = []
+
+    def fake_tofu(args: list[str], cwd: Path, tofu_env: dict) -> int:
+        seen.append({name: tofu_env[name] for name in VENDOR_ENV if name in tofu_env})
+        return 0
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", bucket.run_aws)
+    monkeypatch.setattr(cloud_reaper, "run_tofu", fake_tofu)
+    monkeypatch.setattr(cloud_reaper, "state_json", lambda cwd, tofu_env: {})
+    config = cloud_reaper.load_config(ENV)
+    assert config is not None
+    return cloud_reaper.reap_runs(config, NOW), seen, bucket
+
+
+def test_a_run_holding_confluent_resources_destroys_with_the_runners_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, seen, bucket = _reap_recording_env(
+        monkeypatch,
+        _saas_record("run-cc", "confluent-cloud"),
+        {"CONFLUENT_CLOUD_API_KEY": "example-key", "CONFLUENT_CLOUD_API_SECRET": "example-secret"},
+    )
+    assert problems == []
+    assert seen
+    assert all(env["CONFLUENT_CLOUD_API_KEY"] == "example-key" for env in seen)
+    assert all(env["CONFLUENT_CLOUD_API_SECRET"] == "example-secret" for env in seen)
+    assert bucket.deleted == ["dfe-e2e-runs/run-cc/run.json"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "env", "missing"),
+    [
+        ("confluent-cloud", {}, ["CONFLUENT_CLOUD_API_KEY", "CONFLUENT_CLOUD_API_SECRET"]),
+        ("confluent-cloud", {"CONFLUENT_CLOUD_API_KEY": "example-key"}, ["CONFLUENT_CLOUD_API_SECRET"]),
+        ("redpanda-cloud", {}, ["REDPANDA_CLIENT_ID", "REDPANDA_CLIENT_SECRET"]),
+        ("redpanda-cloud", {"REDPANDA_CLIENT_ID": "", "REDPANDA_CLIENT_SECRET": "example-secret"}, ["REDPANDA_CLIENT_ID"]),
+    ],
+)
+def test_expected_fail_a_run_holding_saas_resources_without_the_credential_is_left_for_the_next_schedule(
+    monkeypatch: pytest.MonkeyPatch, provider: str, env: dict[str, str], missing: list[str]
+) -> None:
+    """With no vendor credential tofu cannot reach the broker; the reaper names what is missing instead of running it."""
+    problems, seen, bucket = _reap_recording_env(monkeypatch, _saas_record("run-saas", provider), env)
+    assert seen == []
+    assert bucket.deleted == []
+    assert len(problems) == 1
+    assert provider in problems[0]
+    assert all(name in problems[0] for name in missing)
+    assert "unused-placeholder" not in problems[0]
+
+
+def test_a_run_holding_redpanda_resources_destroys_with_the_real_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    problems, seen, bucket = _reap_recording_env(
+        monkeypatch,
+        _saas_record("run-rp", "redpanda-cloud"),
+        {"REDPANDA_CLIENT_ID": "example-client", "REDPANDA_CLIENT_SECRET": "example-secret"},
+    )
+    assert problems == []
+    assert seen
+    assert all(env["REDPANDA_CLIENT_ID"] == "example-client" for env in seen)
+    assert all(env["REDPANDA_CLIENT_SECRET"] == "example-secret" for env in seen)
+    assert bucket.deleted == ["dfe-e2e-runs/run-rp/run.json"]
+
+
+@pytest.mark.parametrize("blank", [{}, {"REDPANDA_CLIENT_ID": "", "REDPANDA_CLIENT_SECRET": ""}])
+def test_a_run_holding_no_saas_broker_still_configures_the_redpanda_provider(
+    monkeypatch: pytest.MonkeyPatch, blank: dict[str, str]
+) -> None:
+    """The root configures the redpanda provider on every destroy, and a runner secret that is unset arrives blank."""
+    problems, seen, bucket = _reap_recording_env(monkeypatch, _saas_record("run-msk", "msk"), blank)
+    assert problems == []
+    assert seen
+    assert all(env["REDPANDA_CLIENT_ID"] and env["REDPANDA_CLIENT_SECRET"] for env in seen)
+    assert all("CONFLUENT_CLOUD_API_KEY" not in env for env in seen)
+    assert bucket.deleted == ["dfe-e2e-runs/run-msk/run.json"]
 
 
 def test_an_expired_run_with_no_state_only_loses_its_record(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,7 +3,8 @@
 #  File:         test_cycle_backend.py
 #  Purpose:      Guard the per-run backend overlay: it merges without dropping
 #                any part of the dial, reads account values from the environment
-#                only, and the workflow offers exactly the overlays committed.
+#                only, and writes a dial render_dial.py turns into the root's
+#                variables.
 #  Language:     Python
 #
 #  License:      BUSL-1.1

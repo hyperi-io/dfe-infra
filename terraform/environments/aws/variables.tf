@@ -190,7 +190,7 @@ variable "storage_class" {
 // ---------------------------------------------------------------------------
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves, so name, env, network and the shared tuning are all this root passes either one."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region and an optional standing environment, and redpanda-cloud an optional standing resource group. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
   type = object({
     provider = string
     msk = optional(object({
@@ -227,6 +227,16 @@ variable "kafka" {
       partitions   = optional(number)
       retention_ms = optional(number)
     })), {})
+    // Read only for the two SaaS bodies. Private connectivity has the topics and
+    // ACLs written from inside the VPC, so a run from outside it asks for public.
+    connectivity = optional(string, "private")
+    // Read only when provider is confluent-cloud. An empty environment id has the
+    // body create one of its own.
+    confluent_tier           = optional(string, "freight")
+    confluent_environment_id = optional(string, "")
+    // Read only when provider is redpanda-cloud. An empty id has the body create
+    // a resource group of its own.
+    redpanda_resource_group_id = optional(string, "")
   })
 
   validation {
@@ -252,6 +262,17 @@ variable "kafka" {
     // landing topic, and dfe-loader treats a missing *_land topic as fatal.
     condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || length(var.kafka.landing_topics) > 0
     error_message = "kafka.provider is a managed SaaS body with no bootstrap Job of its own, so landing_topics must name at least one topic -- an empty map ships a cluster dfe-loader crash-loops against."
+  }
+
+  validation {
+    // Confluent caps a topic's max.message.bytes at 8388608 on Basic and Standard,
+    // and refuses a larger topic at apply, after the cluster has been created.
+    condition = !(
+      var.kafka.provider == "confluent-cloud"
+      && contains(["basic", "standard"], var.kafka.confluent_tier)
+      && coalesce(var.kafka.message_max_bytes, 0) > 8388608
+    )
+    error_message = "kafka.message_max_bytes is ${coalesce(var.kafka.message_max_bytes, 0)}, above the 8388608 a Confluent ${var.kafka.confluent_tier} cluster accepts for a topic. Lower the dial's kafka.msk.message_max_bytes to 8388608 or less, or set kafka.confluent_tier to freight or enterprise, which carry 20971520."
   }
 }
 

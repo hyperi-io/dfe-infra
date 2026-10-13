@@ -21,8 +21,19 @@ output "auth_type" {
 }
 
 output "credential_ref" {
-  description = "The Kafka API key's ID -- a reference, never a value. The secret behind it stays in state and in the secrets store, and is not handed out here."
+  description = "The Kafka API key's ID -- a reference, never a value. The secret behind it leaves this module only as the sensitive dfe_api_secret, bound for the secrets store."
   value       = confluent_api_key.dfe.id
+}
+
+output "dfe_api_key" {
+  description = "The DFE principal's Kafka API key id, which SASL PLAIN takes as the username. The root writes it into the kafka/confluent-cloud secret's username field."
+  value       = confluent_api_key.dfe.id
+}
+
+output "dfe_api_secret" {
+  description = "The DFE principal's Kafka API secret, which SASL PLAIN takes as the password. Confluent mints it inside this module, so it has to leave here to reach the secrets store; the root hands it to the store's password field and re-exports it nowhere."
+  value       = confluent_api_key.dfe.secret
+  sensitive   = true
 }
 
 output "network_attachment" {

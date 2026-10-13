@@ -66,7 +66,7 @@ resource "confluent_private_link_attachment" "this" {
   region       = local.region
 
   environment {
-    id = confluent_environment.this.id
+    id = local.environment_id
   }
 }
 
@@ -93,7 +93,7 @@ resource "confluent_private_link_attachment_connection" "this" {
   display_name = "${var.name}-plattc"
 
   environment {
-    id = confluent_environment.this.id
+    id = local.environment_id
   }
 
   aws {
