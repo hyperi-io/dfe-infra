@@ -63,7 +63,7 @@ class FakeGuard:
         self.deleted: list[str] = []
         self.kubeconfig_error: Exception | None = None
         self.sweeps: list[list[str]] = []
-        self.sweep_code = 0
+        self.sweep_code: int | list[int] = 0
         self.sweep_error: Exception | None = None
 
     def _maybe_missing(self, what: str, value: str) -> str:
@@ -109,9 +109,12 @@ class FakeGuard:
         self.records.pop(key, None)
 
     def sweep(self, args: list[str]) -> int:
+        """Record the sweep; a list of sweep codes answers the sweeps in order, its last repeating."""
         self.sweeps.append(args)
         if self.sweep_error:
             raise self.sweep_error
+        if isinstance(self.sweep_code, list):
+            return self.sweep_code.pop(0) if len(self.sweep_code) > 1 else self.sweep_code[0]
         return self.sweep_code
 
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
@@ -124,11 +127,12 @@ class FakeGuard:
 class FakeRunner:
     """Records each command; `codes` maps a word in the command to its exit code.
 
+    A list of codes answers that word's runs in order, its last code repeating.
     A command carrying a word in `stalls` runs past its deadline, so it raises
     the Runner's DeadlineError once recorded.
     """
 
-    def __init__(self, codes: dict[str, int] | None = None, on_run: dict | None = None,
+    def __init__(self, codes: dict[str, int | list[int]] | None = None, on_run: dict | None = None,
                  stalls: set[str] | None = None) -> None:
         self.commands: list[list[str]] = []
         self.envs: list[dict | None] = []
@@ -152,6 +156,8 @@ class FakeRunner:
             raise guard_mod.DeadlineError(f"{cmd[0]} ran past its deadline and was stopped")
         for word, code in self.codes.items():
             if word in cmd:
+                if isinstance(code, list):
+                    return code.pop(0) if len(code) > 1 else code[0]
                 return code
         return 0
 
@@ -164,9 +170,23 @@ class FakeRunner:
         return [next((w for w in verbs if w in cmd), cmd[0]) for cmd in self.commands]
 
 
+DEPLOY_TOOLS = ("kubectl", "helm", "python3", "openssl", "aws")
+
+
+def _tools(directory: Path, tools: tuple[str, ...] = DEPLOY_TOOLS) -> Path:
+    """A directory holding one executable stand-in per tool, for a PATH check (e) reads."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for tool in tools:
+        stand_in = directory / tool
+        stand_in.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stand_in.chmod(0o755)
+    return directory
+
+
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A repo-shaped tree holding one root with a rendered JSON dial."""
+    """A repo-shaped tree holding one root with a rendered JSON dial, on a PATH with every deploy tool."""
+    monkeypatch.setenv("PATH", f"{_tools(tmp_path / 'tools')}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(guard_mod, "RUNS_DIR", tmp_path / ".tmp" / "cloud-runs")
     tf_dir = tmp_path / "terraform" / "environments" / "aws"
@@ -212,7 +232,7 @@ def test_a_fully_guarded_account_passes_every_check(root: Path) -> None:
     assert report.ok, report.checks
     assert [c.name for c in report.checks] == [
         "account", "(a) guardrail role", "(a) sweeper", "(a) budget action", "(b) credential",
-        "(c) expired run resources", "(d) unfinished runs",
+        "(c) expired run resources", "(d) unfinished runs", "(e) deploy tools",
     ]
 
 
@@ -501,6 +521,65 @@ def test_refusal_d_resources_that_cannot_be_listed_fail_both_checks(root: Path) 
 
     guard.run_resources = refuse  # type: ignore[method-assign]
     assert _failed(_preflight(root, guard)) == ["(c) expired run resources", "(d) unfinished runs"]
+
+
+# --- (e) every tool the deploy and its teardown run is on the run's PATH ------------------------
+
+
+def _path_without(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *absent: str) -> None:
+    """PATH as the run's children get it, holding every deploy tool but `absent`."""
+    kept = tuple(t for t in DEPLOY_TOOLS if t not in absent)
+    monkeypatch.setenv("PATH", str(_tools(tmp_path / "partial-tools", kept)))
+
+
+def test_refusal_e_a_tool_missing_from_the_runs_path_fails_and_names_what_needs_it(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A deploy that finds a tool missing has already paid for the cluster the apply built."""
+    _path_without(monkeypatch, tmp_path, "openssl")
+    report = _preflight(root, FakeGuard())
+    assert _failed(report) == ["(e) deploy tools"]
+    detail = _check(report, "(e) deploy tools").detail
+    assert detail.startswith("not on PATH: openssl: mints the bundled deploy repo's admin password")
+    assert "kubectl" not in detail
+
+
+def test_refusal_e_an_aws_run_needs_the_aws_cli_its_teardown_sweeps_with(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _path_without(monkeypatch, tmp_path, "aws", "helm")
+    detail = _check(_preflight(root, FakeGuard()), "(e) deploy tools").detail
+    assert "helm: every chart install" in detail
+    assert "aws: destroy.sh step 9" in detail
+
+
+def test_the_deploy_tools_check_names_what_it_found(root: Path) -> None:
+    check = _check(_preflight(root, FakeGuard()), "(e) deploy tools")
+    assert check.ok
+    assert check.detail == "deploy tools on PATH: kubectl helm python3 openssl aws"
+
+
+def test_a_tool_check_that_cannot_run_fails_rather_than_passing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(guard_mod, "CHECK_TOOLS", tmp_path / "gone" / "check_tools.py")
+    check = _check(_preflight(root, FakeGuard()), "(e) deploy tools")
+    assert not check.ok
+    assert check.detail.startswith("check_tools.py exited 2: ")
+
+
+def test_expected_fail_a_runner_missing_a_deploy_tool_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _path_without(monkeypatch, tmp_path, "kubectl")
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner) == 2
+    assert runner.commands == []
+    assert guard.records == {}
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+    err = capsys.readouterr().err
+    assert "FAIL  (e) deploy tools: not on PATH: kubectl: every cluster call" in err
+    assert "cloud-cycle REFUSED: nothing was created." in err
 
 
 # --- (c) and (d) when the tagging API lists what EC2 has already deleted ------------------------
@@ -1001,6 +1080,9 @@ def test_sigterm_during_the_cycle_removes_workloads_then_destroys(root: Path, mo
     assert _cycle(root, monkeypatch, FakeGuard(), runner) == 143
     assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
     assert signal.getsignal(signal.SIGTERM) is not guard_mod._raise_interrupted
+    # The cluster secret may not exist yet, so destroy.sh gets the root's facts to sweep a test run by.
+    teardown = runner.commands[runner.words().index("teardown")]
+    assert teardown[teardown.index("--from-terraform") + 1] == str(root.resolve())
 
 
 # --- the run length is a deadline, and the teardown keeps its margin -------------------------------
@@ -1169,11 +1251,81 @@ def test_a_renamed_run_tag_key_reaches_the_teardown_sweep(root: Path, monkeypatc
     assert args[args.index("--tag-filter") + 1] == "ci-run=run-1"
 
 
-def test_expected_fail_a_failed_destroy_sweeps_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """With state left, the sweep would delete what tofu still holds and fail the reaper's destroy."""
+# What the teardown sweeps between a failed destroy and its second attempt.
+ENI_SWEEP_ARGS = [*SWEEP_ARGS, "--kind", "eni", "--yes"]
+
+
+def test_expected_fail_a_failed_destroy_sweeps_only_the_runs_network_interfaces(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With state left, a full sweep would delete what tofu still holds and fail the reaper's destroy."""
     guard = FakeGuard()
     assert _cycle(root, monkeypatch, guard, FakeRunner(codes={"destroy": 1})) == 1
-    assert guard.sweeps == []
+    assert guard.sweeps == [ENI_SWEEP_ARGS]
+
+
+def test_a_destroy_held_by_a_leaked_interface_sweeps_it_and_destroys_again(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The VPC CNI's interface outlived its node and held a subnet, which failed two destroys in a row."""
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": [1, 0]})
+    order: list[str] = []
+    runner.on_run = {"destroy": lambda: order.append("destroy")}
+    real_sweep = guard.sweep
+
+    def sweep(args: list[str]) -> int:
+        order.append("interface sweep" if "--kind" in args else "run sweep")
+        return real_sweep(args)
+
+    guard.sweep = sweep  # type: ignore[method-assign]
+    assert _cycle(root, monkeypatch, guard, runner) == 0
+    assert order == ["destroy", "interface sweep", "destroy", "run sweep"]
+    assert guard.sweeps == [ENI_SWEEP_ARGS, [*SWEEP_ARGS, "--yes"]]
+    parsed = cloud_sweep.build_parser().parse_args(guard.sweeps[0])
+    assert parsed.kind == ["eni"]
+    assert cloud_sweep.parse_tag_filter(parsed.tag_filter) == {"dfe-e2e": "run-1"}
+    assert (parsed.expired, parsed.include_untagged, parsed.delete, parsed.yes) == (False, False, True, True)
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+    err = capsys.readouterr().err
+    assert "tofu destroy failed; deleting the network interfaces that carry dfe-e2e=run-1" in err
+    assert "TEARDOWN FAILED" not in err
+
+
+def test_expected_fail_a_destroy_that_fails_again_is_reported_once_and_keeps_the_record(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1})
+    assert _cycle(root, monkeypatch, guard, runner) == 1
+    assert runner.words() == ["init", "apply", "cycle", "destroy", "destroy"]
+    assert guard.sweeps == [ENI_SWEEP_ARGS]
+    assert guard.deleted == []
+    assert "dfe-e2e-runs/run-1/run.json" in guard.records
+    assert (root / guard_mod.OVERLAY_NAME).exists()
+    assert capsys.readouterr().err.count("TEARDOWN FAILED for run run-1") == 1
+
+
+def test_an_interface_sweep_that_cannot_finish_still_destroys_again(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": [1, 0]})
+    guard.sweep_error = cloud_sweep.CloudSweepError("aws ec2 describe-network-interfaces failed: Throttling")
+    assert _cycle(root, monkeypatch, guard, runner) == 1  # the leftover sweep after it cannot list either
+    assert runner.words() == ["init", "apply", "cycle", "destroy", "destroy"]
+    assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
+    err = capsys.readouterr().err
+    assert "the network interface sweep could not finish: aws ec2 describe-network-interfaces failed" in err
+    assert "TEARDOWN FAILED" not in err
+
+
+def test_an_interface_ec2_will_not_delete_is_reported_and_the_destroy_still_runs_again(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    guard, runner = FakeGuard(), FakeRunner(codes={"destroy": [1, 0]})
+    guard.sweep_code = [1, 0]
+    assert _cycle(root, monkeypatch, guard, runner) == 0
+    assert runner.words() == ["init", "apply", "cycle", "destroy", "destroy"]
+    assert "network interfaces carrying dfe-e2e=run-1 are still there, named above" in capsys.readouterr().err
 
 
 def test_a_run_that_created_nothing_sweeps_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

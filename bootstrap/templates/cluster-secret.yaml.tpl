@@ -1,4 +1,4 @@
-# Rendered by bootstrap.sh via envsubst. All required vars must be set before running.
+# Rendered by bootstrap.sh via bootstrap/render_env.py. All required vars must be set before running.
 # This secret registers the cluster with ArgoCD AND carries all Terraform outputs
 # as dfe.hyperi.io/* annotations, which ApplicationSets read via {{ .metadata.annotations.* }}.
 apiVersion: v1

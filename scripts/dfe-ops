@@ -656,11 +656,37 @@ def cmd_deploy(args: argparse.Namespace) -> int:
     return _run_streaming(cmd)
 
 
+# The cloud root's outputs destroy.sh's step 9 reads when the cluster secret names no cloud.
+TEARDOWN_FACTS = ("DFE_CLOUD", "DFE_REGION", "DFE_KUBE_CLUSTER_NAME", "DFE_VPC_ID", "DFE_RUN_TAGS")
+
+
+def _teardown_facts(tf_dir: str) -> dict[str, str]:
+    """The non-empty TEARDOWN_FACTS among a root's outputs; empty when they cannot be read.
+
+    A teardown that stopped on an unreadable output would leave the workloads
+    running, so it goes on and destroy.sh reads the cluster secret alone.
+    """
+    try:
+        outputs = terraform_settings(tf_dir)
+    except SystemExit:
+        # bridge.get_tf_outputs exits on a failed `tofu output` rather than raising.
+        print(
+            f"  WARN: could not read the outputs of {tf_dir}; destroy.sh reads the cluster secret alone",
+            file=sys.stderr,
+        )
+        return {}
+    facts = {name: outputs[name] for name in TEARDOWN_FACTS if outputs.get(name)}
+    print(f"  loaded {len(facts)} cluster fact(s) from terraform {tf_dir}", file=sys.stderr)
+    return facts
+
+
 def cmd_teardown(args: argparse.Namespace) -> int:
     script = _require_script("destroy.sh")
     if script is None:
         return 1
     env = dict(os.environ)
+    if args.from_terraform:
+        env.update(_teardown_facts(args.from_terraform))
     cmd = ["bash", str(script)]
     if args.dry_run:
         env["DFE_DRY_RUN"] = "true"
@@ -4384,7 +4410,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         print("\n=== cycle stage: destroy ===", file=sys.stderr)
         teardown_cmd = [*self_cmd, "teardown", "--force"]
         if args.from_terraform:
-            teardown_cmd += ["--with-terraform", "--tf-dir", args.from_terraform]
+            teardown_cmd += [
+                "--from-terraform", args.from_terraform, "--with-terraform", "--tf-dir", args.from_terraform,
+            ]
         started = time.monotonic()
         rc = _run_streaming(teardown_cmd, env=stage_env)
         results.append(("destroy", rc, time.monotonic() - started))
@@ -4614,6 +4642,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tf-bin",
         default=("tofu" if shutil.which("tofu") else "terraform"),
         help="IaC binary for --with-terraform (auto: tofu if on PATH, else terraform)",
+    )
+    td.add_argument(
+        "--from-terraform",
+        default=None,
+        metavar="DIR",
+        help="read the cloud, region, cluster, VPC and run tags from this root's outputs, for "
+        "destroy.sh's step 9 when the cluster secret names none",
     )
     td.set_defaults(func=cmd_teardown)
 

@@ -1,5 +1,5 @@
 # The baseline gp3 StorageClass for a fresh EKS cluster. Rendered by
-# bootstrap.sh with envsubst, AWS only, and whenever DFE_STORAGE_CLASS does not
+# bootstrap.sh with bootstrap/render_env.py, AWS only, and whenever DFE_STORAGE_CLASS does not
 # already name a class on the cluster -- see bootstrap.sh step [1b/7]. EKS 1.30+
 # ships gp2 with no default, and the aws-ebs-csi-driver add-on makes gp3
 # POSSIBLE but creates no StorageClass object of its own, so the data pods' PVCs

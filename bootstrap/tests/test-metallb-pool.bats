@@ -7,25 +7,26 @@
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
     TPL="${REPO_ROOT}/bootstrap/templates/metallb-pool.yaml.tpl"
+    RENDER="${REPO_ROOT}/bootstrap/render_env.py"
     export DFE_GATEWAY_IP="192.0.2.10"
     export DFE_RECEIVER_IP="192.0.2.11"
 }
 
 @test "both front-door addresses render as single-address /32 entries" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"192.0.2.10/32"'* ]]
     [[ "$output" == *'"192.0.2.11/32"'* ]]
 }
 
 @test "nothing is left unsubstituted" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ ! "$output" == *'${'* ]]
 }
 
 @test "the pool and its advertisement render into metallb-system" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *"kind: IPAddressPool"* ]]
     [[ "$output" == *"kind: L2Advertisement"* ]]
@@ -33,20 +34,20 @@ setup() {
 }
 
 @test "the addresses are only handed to a Service that asks for them" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *"autoAssign: false"* ]]
 }
 
 @test "the advertisement names the pool it advertises" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *"ipAddressPools:"* ]]
     [[ "$(grep -c 'dfe-front-door' <<<"$output")" -eq 3 ]]
 }
 
 @test "an unset address renders a bare /32, which is why bootstrap.sh guards" {
-    run env DFE_GATEWAY_IP="" DFE_RECEIVER_IP="192.0.2.11" envsubst < "${TPL}"
+    run env DFE_GATEWAY_IP="" DFE_RECEIVER_IP="192.0.2.11" python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"/32"'* ]]
 }

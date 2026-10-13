@@ -12,7 +12,9 @@
 #   - helm 3.x installed
 #   - terraform >=1.6 or opentofu >=1.6 -- OPTIONAL here (used earlier for the
 #     apply; bootstrap.sh only consumes its outputs via env, never invokes it)
-#   - envsubst (gettext package)
+#   - python3 and openssl, and the aws CLI on DFE_CLOUD=aws for destroy.sh's
+#     sweep. bootstrap/check_tools.py holds the list and runs first, so a
+#     missing tool stops the deploy before any cluster call.
 #
 # Required environment variables (export from Terraform outputs):
 #   DFE_ENV                  dev | test | staging | prod | local | customer-<id>
@@ -208,6 +210,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Every tool this script and destroy.sh run, checked before the first one is needed.
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is not on PATH, and bootstrap.sh runs every helper with it" >&2; exit 1; }
+python3 "${SCRIPT_DIR}/check_tools.py"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 
 # Detect Terraform or OpenTofu (informational only). bootstrap.sh itself never
@@ -773,12 +778,12 @@ run helm repo update
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   echo "[DRY-RUN] kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
-  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl annotate --local -f - dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER} --overwrite -o yaml | kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
+  echo "[DRY-RUN] python3 render_env.py < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl annotate --local -f - dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER} --overwrite -o yaml | kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
 else
   kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
   # The e2e posture rides on the rendered secret, under the key the layer2-apps
   # appset hands dfe-engine as e2eServer.
-  envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" \
+  python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" \
     | kubectl annotate --local -f - "dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER}" --overwrite -o yaml \
     | dfe_apply_secret
 fi
@@ -854,9 +859,9 @@ if [[ "${DFE_CLOUD}" == "aws" ]] && ! kubectl get storageclass "${DFE_STORAGE_CL
   fi
   echo "  AWS: DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} does not exist -> creating it (gp3, ebs.csi.aws.com, default=${DFE_STORAGE_CLASS_IS_DEFAULT})"
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/storageclass-aws.yaml.tpl | kubectl apply -f -"
+    echo "[DRY-RUN] python3 render_env.py < ${TEMPLATES_DIR}/storageclass-aws.yaml.tpl | kubectl apply -f -"
   else
-    envsubst < "${TEMPLATES_DIR}/storageclass-aws.yaml.tpl" | kubectl apply -f -
+    python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/storageclass-aws.yaml.tpl" | kubectl apply -f -
   fi
 fi
 
@@ -926,7 +931,7 @@ else
     echo "           resolve to a live address. Set both and re-run, unless the cluster already"
     echo "           carried a LoadBalancer provider with a pool of its own."
   elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/metallb-pool.yaml.tpl | kubectl apply -f -"
+    echo "[DRY-RUN] python3 render_env.py < ${TEMPLATES_DIR}/metallb-pool.yaml.tpl | kubectl apply -f -"
   else
     # A provider that came with the cluster already owns its addressing, and
     # MetalLB refuses a pool whose range overlaps one it is already serving.
@@ -935,7 +940,7 @@ else
       echo "  Existing IPAddressPool(s) own this cluster's addressing (${pools}) -> DFE pool NOT applied."
       echo "  The gateway and receiver addresses must fall inside one of them."
     else
-      envsubst < "${TEMPLATES_DIR}/metallb-pool.yaml.tpl" | kubectl apply -f -
+      python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/metallb-pool.yaml.tpl" | kubectl apply -f -
       echo "  Applied the dfe-front-door IPAddressPool + L2Advertisement"
     fi
   fi
@@ -954,16 +959,16 @@ if [[ "${DFE_SECRETS_BACKEND}" == "none" ]]; then
   echo "  names dfe-secret-store stays unresolved. dfe-ops stack-deploy refuses a mode that has one."
 elif [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   if [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
-    echo "[DRY-RUN] envsubst ${ESO_STORE_TEMPLATE##*/} | kubectl apply -f -"
+    echo "[DRY-RUN] python3 render_env.py < ${ESO_STORE_TEMPLATE##*/} | kubectl apply -f -"
     echo "[DRY-RUN]   region=${DFE_SECRETS_REGION} prefix=${DFE_SECRETS_PREFIX_PATH:-<none>} auth=pod identity"
   else
-    echo "[DRY-RUN] seed dfe-vault-approle-secret + envsubst store + patch caBundle"
+    echo "[DRY-RUN] seed dfe-vault-approle-secret + render store + patch caBundle"
   fi
 elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
   # No SecretID and no CA patch: the store carries no auth block, so ESO falls
   # through to the pod's own credentials, and Secrets Manager is a public AWS
   # endpoint whose certificate the SDK already trusts.
-  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
+  python3 "${SCRIPT_DIR}/render_env.py" < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
   echo "  ClusterSecretStore dfe-secret-store -> Secrets Manager in ${DFE_SECRETS_REGION}"
 else
   # Seed the AppRole SecretID the store references. Nothing else creates it, so ESO
@@ -980,7 +985,7 @@ else
     echo "           Downstream: dfe-local/dfe-kafka-user never appears and the data plane sits in"
     echo "           CreateContainerConfigError. Set DFE_VAULT_SECRET_ID and re-run."
   fi
-  envsubst < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
+  python3 "${SCRIPT_DIR}/render_env.py" < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
   # ESO's vault provider cannot skip TLS verify (the env's VAULT_SKIP_VERIFY is for
   # terraform, which ESO ignores). Fetch OpenBao's issuing CA from its TLS handshake
   # and patch it into the store so it can verify the cert. No-op if none is found.
@@ -1209,9 +1214,9 @@ if [[ "${DFE_CLOUD}" == "aws" && "${DFE_TELEMETRY_SINK}" == "otel" ]]; then
     kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
   fi
   if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-    echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
+    echo "[DRY-RUN] python3 render_env.py < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
   else
-    envsubst < "${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl" | kubectl apply -f -
+    python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl" | kubectl apply -f -
     echo "  ConfigMap dfe-fetcher-aws-telemetry-preconfig applied in ${DFE_NAMESPACE}"
   fi
 else
@@ -1361,7 +1366,7 @@ fi
 # branch stranded them once that branch was deleted.
 # No KEDA scalers Application is applied here: each app's thin chart renders its
 # own ScaledObject from the app's keda values.
-# cluster-addons ApplicationSet uses goTemplate -- no envsubst needed
+# cluster-addons ApplicationSet uses goTemplate, so it is applied as written
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/argocd-cluster-addons.yaml"
 
 # Prove Argo can actually READ the chart repo before declaring bootstrap done.
