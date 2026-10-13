@@ -111,13 +111,7 @@ def run(args: argparse.Namespace) -> int:
     if not password:
         print("source: no login; pass --access-summary or run through dfe-ops acceptance", file=sys.stderr)
         return 2
-    store = Datastore(
-        host=os.environ.get("DFE_E2E_CH_HOST", ""),
-        port=int(os.environ.get("DFE_E2E_CH_PORT", "8123")),
-        user=os.environ.get("DFE_E2E_CH_USER", "default"),
-        password=os.environ.get("DFE_E2E_CH_PASSWORD", ""),
-        database=os.environ.get("DFE_E2E_CH_DB", "dfe"),
-    )
+    store = Datastore.from_env(os.environ)
     case = cases.build(args)
     engine_repo = Path(args.engine_repo).resolve()
     if args.transform_repo:

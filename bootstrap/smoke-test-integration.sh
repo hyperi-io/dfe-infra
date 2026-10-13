@@ -24,6 +24,11 @@
 #                  3. KAFKA SEAM (single/scale tiers only): the default landing
 #                     topic `main_land` is created, PRODUCED to (receiver) and
 #                     CONSUMED from (loader). Slim has no kafka -> skipped.
+#                An external ClickHouse (ClickHouse Cloud) is queried from the
+#                engine's own container as one node, and a managed broker (MSK,
+#                Confluent Cloud, Redpanda Cloud) from a short-lived client pod in
+#                the app namespace. DFE_CLICKHOUSE_MODE and DFE_KAFKA_MODE say which,
+#                else the dfe-cluster secret's clickhouse_mode and kafka_mode.
 #                Ancillary sub-chains (ferretdb->PG, hyperdx->ferretdb) are
 #                diagnostics that localise a CORE failure; add more per ancillary
 #                service over time.
@@ -110,6 +115,15 @@ check() {
 }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
+# One dfe.hyperi.io/* annotation off the cluster secret every appset renders from, empty when unreadable.
+cluster_fact() {
+  kubectl -n argocd get secret dfe-cluster -o "jsonpath={.metadata.annotations.dfe\.hyperi\.io/$1}" 2>/dev/null
+}
+
+# Where ClickHouse and the brokers run: the deploy's own env first, else the cluster secret.
+CH_MODE="${DFE_CLICKHOUSE_MODE:-$(cluster_fact clickhouse_mode)}"
+KAFKA_MODE="${DFE_KAFKA_MODE:-$(cluster_fact kafka_mode)}"
+
 # Every ClickHouse pod, in operator naming (<chi>-<cluster>-<shard>-<replica>-0).
 # NOT hardcoded `dfe-clickhouse-0`, which exists in no layout the operator produces --
 # every chq() call would have failed on exec, and the checks below would have read as
@@ -121,6 +135,19 @@ ch_pods() {
   kubectl -n "$NS_CH" get pods --no-headers -o custom-columns=N:.metadata.name 2>/dev/null \
     | grep -E -- '-clickhouse-[0-9]+(-[0-9]+-[0-9]+)?$'
 }
+
+# The nodes a query can be pinned to: every pod in-cluster, one node for an external server.
+ch_nodes() {
+  if [ "$CH_MODE" = external ]; then echo external; else ch_pods; fi
+}
+
+# Run by the engine container's own shell, so its host, port, scheme and credential never leave the pod.
+# shellcheck disable=SC2016  # Expanded inside the engine container, not here.
+ENGINE_CH_QUERY='scheme=http; insecure=
+[ "${DFE_CLICKHOUSE_SECURE:-}" = true ] && scheme=https
+[ "${DFE_CLICKHOUSE_VERIFY:-}" = false ] && insecure=--insecure
+login="${DFE_CLICKHOUSE_USERNAME:-default}:${DFE_CLICKHOUSE_PASSWORD:-}"
+exec curl -fsS --max-time 30 $insecure ${DFE_CLICKHOUSE_CA_CERT:+--cacert "$DFE_CLICKHOUSE_CA_CERT"} --user "$login" --data-binary @- "$scheme://$DFE_CLICKHOUSE_HOST:$DFE_CLICKHOUSE_PORT/"'
 
 # ClickHouse auth, RESOLVED once against the live cluster rather than assumed.
 #
@@ -168,18 +195,22 @@ resolve_ch_auth() {
   return 1
 }
 
-# Run a query on ONE named CH pod, echo the result.
+# Run a query on ONE named CH node, echo the result.
 chq_on() {
   local pod="$1" q="$2"
+  if [ "$CH_MODE" = external ]; then
+    printf '%s' "$q" | kubectl -n "$NS_APP" exec -i deploy/dfe-engine -c dfe-engine -- sh -c "$ENGINE_CH_QUERY" 2>/dev/null
+    return
+  fi
   resolve_ch_auth
   # shellcheck disable=SC2086  # CH_AUTH_ARGS is deliberately word-split.
   kubectl -n "$NS_CH" exec "$pod" -- clickhouse-client $CH_AUTH_ARGS --query "$q" 2>/dev/null
 }
 
-# Run a query on the FIRST CH pod -- for questions that are not about replication.
+# Run a query on the FIRST CH node -- for questions that are not about replication.
 chq() {
   local pod
-  pod="$(ch_pods | head -n1)"
+  pod="$(ch_nodes | head -n1)"
   [ -z "$pod" ] && return 1
   chq_on "$pod" "$1"
 }
@@ -194,7 +225,7 @@ chq() {
 # it green. Per-node counts make a split brain impossible to miss.
 marker_on_all_nodes() {
   local mark="$1" pods node_count=0 hit=0 n c
-  pods="$(ch_pods)"
+  pods="$(ch_nodes)"
   [ -z "$pods" ] && { echo "    no ClickHouse pods found in ns/$NS_CH"; return 1; }
   for n in $pods; do
     node_count=$((node_count+1))
@@ -227,7 +258,131 @@ kafka_broker_pod() {
   return 1
 }
 
+# The kafka chart's own apache/kafka pin, read from the chart so the managed-broker client cannot drift from it.
+kafka_chart_image() {
+  local line version="" digest="" in_kafka=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      kafka:*) in_kafka=1 ;;
+      [![:space:]#]*) in_kafka=0 ;;
+      "  version: "*) [ "$in_kafka" -eq 1 ] && [ -z "$version" ] && version="${line#  version: }" ;;
+      "  imageDigest: "*) [ "$in_kafka" -eq 1 ] && [ -z "$digest" ] && digest="${line#  imageDigest: }" ;;
+    esac
+  done < "$1"
+  version="${version//\"/}"
+  digest="${digest//\"/}"
+  [ -n "$version" ] && [ -n "$digest" ] && printf 'apache/kafka:%s@%s\n' "$version" "$digest"
+}
+
+# One NetworkPolicy port entry per distinct port the bootstrap list names, which a managed broker's brokers share.
+kafka_client_ports() {
+  local entry port seen=" " IFS=,
+  for entry in $1; do
+    port="${entry##*:}"
+    case "$port" in ''|*[!0-9]*) continue ;; esac
+    case "$seen" in *" $port "*) continue ;; esac
+    seen="$seen$port "
+    printf '        - port: %s\n          protocol: TCP\n' "$port"
+  done
+}
+
+# The client pod plus the broker egress the app namespace's baseline withholds, both labelled with MARK for one delete.
+kafka_client_up() {
+  local image ports state
+  image="${DFE_KAFKA_CLI_IMAGE:-$(kafka_chart_image "${POST_DIR}/../helm/charts/kafka/values.yaml" 2>/dev/null)}"
+  ports="$(kafka_client_ports "$KAFKA_ADDR")"
+  if [ -z "$ports" ] || [ -z "$image" ]; then
+    echo "  [WARN] managed broker: no bootstrap address with a port, or no client image -- CORE 3 will FAIL" >&2
+    return 1
+  fi
+  trap kafka_client_down EXIT
+  trap 'exit 130' INT TERM
+  kubectl apply -f - >/dev/null <<MANIFEST || return 1
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${KAFKA_CLIENT}
+  namespace: ${NS_APP}
+  labels:
+    app.kubernetes.io/name: dfe-smoke
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/smoke-run: ${MARK}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 1
+  activeDeadlineSeconds: 900
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: kafka
+      image: ${image}
+      command: ["sleep", "900"]
+      env:
+        - name: LOG_DIR
+          value: /tmp
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 768Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: credential
+          mountPath: /etc/dfe-kafka
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: credential
+      secret:
+        secretName: ${DFE_KAFKA_USER:-dfe-kafka-user}
+        defaultMode: 0440
+    - name: tmp
+      emptyDir: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ${KAFKA_CLIENT}
+  namespace: ${NS_APP}
+  labels:
+    app.kubernetes.io/name: dfe-smoke
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/smoke-run: ${MARK}
+spec:
+  podSelector:
+    matchLabels:
+      dfe.hyperi.io/smoke-run: ${MARK}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+${ports}
+MANIFEST
+  if ! kubectl -n "$NS_APP" wait --for=condition=Ready "pod/${KAFKA_CLIENT}" --timeout="${KAFKA_CLIENT_WAIT}s" >/dev/null 2>&1; then
+    state="$(kubectl -n "$NS_APP" get pod "$KAFKA_CLIENT" -o 'jsonpath={.status.phase} {.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null)"
+    echo "  [WARN] client pod ${KAFKA_CLIENT} not Ready after ${KAFKA_CLIENT_WAIT}s: ${state:-no status}" >&2
+    return 1
+  fi
+}
+
+kafka_client_down() {
+  kubectl -n "$NS_APP" delete pod,networkpolicy -l "dfe.hyperi.io/smoke-run=${MARK}" --ignore-not-found --wait=false >/dev/null 2>&1
+}
+
 echo "=== DFE VERTICAL-INTEGRATION smoke test (chains + freshness, not liveness) ==="
+[ "$CH_MODE" = external ] && echo "  ClickHouse is external: queried from deploy/dfe-engine's own container, as one node"
 
 # ---------------------------------------------------------------------------
 echo ""
@@ -372,10 +527,23 @@ echo "=== CORE 3: kafka seam (main_land created + produced + consumed) ==="
 # Only the kafka-based tiers (single/scale) run a broker. On slim and mesh the
 # receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
 KPOD=""
-kubectl get ns "$NS_KAFKA" >/dev/null 2>&1 && KPOD="$(kafka_broker_pod)"
+# The namespace the Kafka CLI runs in and the address it dials from there.
+KAFKA_CLI_NS="$NS_KAFKA"
+KAFKA_ADDR="localhost:9092"
+KAFKA_CLIENT_WAIT="${DFE_KAFKA_CLIENT_WAIT:-180}"
+if [ "$KAFKA_MODE" = external ]; then
+  # A managed broker has no pod to exec into, so the CLI runs beside the apps on their own credential.
+  KAFKA_CLI_NS="$NS_APP"
+  KAFKA_ADDR="${DFE_KAFKA_BOOTSTRAP:-$(cluster_fact kafka_bootstrap)}"
+  KAFKA_CLIENT="dfe-${MARK}-kafka"
+  echo "  managed broker: CORE 3 runs from client pod ${KAFKA_CLIENT} in ns/${NS_APP} over SASL_SSL"
+  kafka_client_up && KPOD="$KAFKA_CLIENT"
+elif kubectl get ns "$NS_KAFKA" >/dev/null 2>&1; then
+  KPOD="$(kafka_broker_pod)"
+fi
 if [ -n "$KPOD" ]; then
-  # Pick the broker CLI by image: redpanda -> rpk, apache/strimzi -> kafka CLI.
-  if kubectl -n "$NS_KAFKA" exec "$KPOD" -- sh -c 'command -v rpk' >/dev/null 2>&1; then
+  # Pick the broker CLI by image: redpanda -> rpk, apache/strimzi and the managed-broker client -> kafka CLI.
+  if [ "$KAFKA_MODE" != external ] && kubectl -n "$NS_KAFKA" exec "$KPOD" -- sh -c 'command -v rpk' >/dev/null 2>&1; then
     # Redpanda standalone (single tier).
     check "topic ${KAFKA_TOPIC} exists (created)" \
       "kubectl -n $NS_KAFKA exec $KPOD -- rpk topic list 2>/dev/null | grep -qw '${KAFKA_TOPIC}'"
@@ -403,17 +571,44 @@ if [ -n "$KPOD" ]; then
     # quoting did not survive, so every CORE 3 check failed on mangled args while the
     # seam underneath was fine (live-proven 2026-07-17: the same commands run by hand
     # listed main_land immediately). One layer of quoting, one place to get right.
-    KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
-    # The props file holds the SCRAM password, so it is private to the pod user and
-    # removed before the shell exits.
-    kafka_cli() {
-      kubectl -n "$NS_KAFKA" exec -i "$KPOD" -- sh -s <<KSH 2>/dev/null
-P=\$(umask 077; mktemp)
+    #
+    # A managed broker serves SASL_SSL only, and its client reads dfe-kafka-user's
+    # mechanism, username and password from the Secret mounted in its own pod, so
+    # no credential crosses kubectl at all.
+    KPW=""
+    if [ "$KAFKA_MODE" != external ]; then
+      KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+    fi
+    # The pod-side lines writing the client config to $P, escaping the quotes and backslashes a JAAS string cannot carry raw.
+    kafka_client_props() {
+      if [ "$KAFKA_MODE" = external ]; then
+        cat <<'PROPS'
+D=/etc/dfe-kafka
+M=$(cat $D/sasl.mechanism)
+L=org.apache.kafka.common.security.scram.ScramLoginModule
+[ "$M" = PLAIN ] && L=org.apache.kafka.common.security.plain.PlainLoginModule
+{
+  echo 'security.protocol=SASL_SSL'
+  echo "sasl.mechanism=$M"
+  printf 'sasl.jaas.config=%s required username="%s" password="%s";\n' "$L" "$(sed 's/[\\"]/\\&/g' $D/username)" "$(sed 's/[\\"]/\\&/g' $D/password)"
+} > $P
+PROPS
+      else
+        cat <<KPROPS
 {
   echo 'security.protocol=SASL_PLAINTEXT'
   echo 'sasl.mechanism=SCRAM-SHA-512'
   printf 'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";\n' '${DFE_KAFKA_USER:-dfe-kafka-user}' '${KPW}'
 } > \$P
+KPROPS
+      fi
+    }
+    # The props file holds the password, so it is private to the pod user and
+    # removed before the shell exits.
+    kafka_cli() {
+      kubectl -n "$KAFKA_CLI_NS" exec -i "$KPOD" -- sh -s <<KSH 2>/dev/null
+P=\$(umask 077; mktemp)
+$(kafka_client_props)
 $1
 rc=\$?
 rm -f \$P
@@ -425,30 +620,33 @@ KSH
     # kubectl exec upstream; under pipefail the pipeline then reports 141 and a
     # matching check FAILS.
     check "topic ${KAFKA_TOPIC} exists (created)" \
-      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${KAFKA_TOPIC}'"
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --list')\" | grep -qw '${KAFKA_TOPIC}'"
     # kafka-get-offsets.sh, NOT `kafka-run-class.sh kafka.tools.GetOffsetShell`: that
     # class is GONE in Kafka 4.x (the DFE broker line), so the old check errored and
     # summed to 0 -- reporting "receiver never produced" while the topic was in fact
     # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
-      "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
+      "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
     # A row of --describe naming the topic with a numeric committed offset above 0:
     # the tool prints its failures to stdout, so a non-empty reading proves nothing.
     check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --command-config \$P --describe --all-groups')\" | awk -v t='${KAFKA_TOPIC}' '\$2 == t && \$4 ~ /^[0-9]+\$/ && \$4 > 0 { n++ } END { exit !n }'"
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --all-groups')\" | awk -v t='${KAFKA_TOPIC}' '\$2 == t && \$4 ~ /^[0-9]+\$/ && \$4 > 0 { n++ } END { exit !n }'"
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,
     # and the file backend is an EROFS no-op under the read-only rootfs.
     for DLQ_TOPIC in dfe_receiver_dlq dfe_loader_dlq dfe_archiver_dlq dfe_fetcher_dlq dfe_transform_dlq; do
       check "DLQ topic ${DLQ_TOPIC} pre-created" \
-        "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --list')\" | grep -qw '${DLQ_TOPIC}'"
+        "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --list')\" | grep -qw '${DLQ_TOPIC}'"
     done
     # Dead letters must outlive a weekend, against the 72h data-topic default.
     # The DFE user holds DescribeConfigs on every broker (kafka-user.yaml), so a
     # describe that shows no retention is a FAIL, never a skip.
     check "DLQ retention is longer than the data-topic default (dfe_loader_dlq retention.ms=604800000)" \
-      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
+      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-topics.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --topic dfe_loader_dlq')\" | grep -q 'retention.ms=604800000'"
   fi
+elif [ "$KAFKA_MODE" = external ]; then
+  # A managed broker is never the brokerless tier, so a client that cannot start is a FAIL.
+  check "managed-broker client pod Ready in ns/$NS_APP (dfe-kafka-user mounted, waited ${KAFKA_CLIENT_WAIT}s)" "false"
 elif profile_has_kafka; then
   # The tier runs a broker, so a missing one is a REAL failure. Skipping here would
   # report the brokerless-tier story for a broken kafka deploy -- the exact false
@@ -456,6 +654,10 @@ elif profile_has_kafka; then
   check "kafka broker pod present in ns/$NS_KAFKA (required by the $PROFILE tier)" "false"
 else
   skip "kafka seam -- no broker pod in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
+fi
+if [ "$KAFKA_MODE" = external ]; then
+  kafka_client_down
+  trap - EXIT INT TERM
 fi
 
 # ---------------------------------------------------------------------------
@@ -511,7 +713,7 @@ fi
 if [ "$POST_CLEANUP" = "true" ]; then
   echo ""
   echo "=== POST cleanup: deleting this run's sample rows (DFE_POST_CLEANUP=true) ==="
-  for n in $(ch_pods); do
+  for n in $(ch_nodes); do
     chq_on "$n" "ALTER TABLE ${CH_DATA_TABLE} DELETE WHERE ${MARK_PREDICATE//__MARK__/$MARK}" >/dev/null 2>&1
     echo "    ${n}: delete mutation submitted"
   done
