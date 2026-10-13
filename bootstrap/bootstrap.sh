@@ -251,6 +251,12 @@ run() {
   fi
 }
 
+# Every Secret goes through here: client-side apply copies its data into the last-applied-configuration
+# annotation, and only a named field manager drops the copy an earlier client-side run left behind.
+dfe_apply_secret() {
+  run kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -
+}
+
 # Fills DFE_RELEASE_VALUES with the values helm_releases.py holds for one install,
 # the same ones `dfe-ops upgrade` prints. Expanded as ${A[@]+"${A[@]}"} because
 # bash 3.2 reads an empty array as unbound under set -u.
@@ -724,14 +730,14 @@ run helm repo update
 echo "==> [1/7] Applying ArgoCD namespace + cluster secret"
 if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
   echo "[DRY-RUN] kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -"
-  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl annotate --local -f - dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER} --overwrite -o yaml | kubectl apply -f -"
+  echo "[DRY-RUN] envsubst < ${TEMPLATES_DIR}/cluster-secret.yaml.tpl | kubectl annotate --local -f - dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER} --overwrite -o yaml | kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
 else
   kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
   # The e2e posture rides on the rendered secret, under the key the layer2-apps
   # appset hands dfe-engine as e2eServer.
   envsubst < "${TEMPLATES_DIR}/cluster-secret.yaml.tpl" \
     | kubectl annotate --local -f - "dfe.hyperi.io/e2e_server=${DFE_E2E_SERVER}" --overwrite -o yaml \
-    | kubectl apply -f -
+    | dfe_apply_secret
 fi
 
 echo "==> [1b/7] StorageClass (detect-or-install)"
@@ -837,7 +843,7 @@ fi
 if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   kubectl -n cert-manager create secret generic cert-manager-approle \
     --from-literal=secretId="${DFE_CERTMANAGER_SECRET_ID}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | dfe_apply_secret
   echo "  Seeded cert-manager AppRole SecretID (cert-manager-approle)"
 fi
 
@@ -923,7 +929,7 @@ else
     kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f -
     kubectl -n external-secrets create secret generic dfe-vault-approle-secret \
       --from-literal=roleSecretID="${DFE_VAULT_SECRET_ID}" \
-      --dry-run=client -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | dfe_apply_secret
     echo "  Seeded ESO AppRole SecretID (dfe-vault-approle-secret)"
   else
     echo "  WARNING: DFE_VAULT_SECRET_ID is unset, so dfe-vault-approle-secret was NOT created."
@@ -1042,7 +1048,7 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
       --docker-server="${DFE_PULL_SECRET_SERVER}" \
       --docker-username="${DFE_PULL_SECRET_USER:-token}" \
       --docker-password="${DFE_PULL_SECRET_TOKEN}" \
-      --dry-run=client -o yaml | run kubectl apply -f -
+      --dry-run=client -o yaml | dfe_apply_secret
   fi
 done
 if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
@@ -1070,12 +1076,12 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
   kubectl -n forgejo create secret generic dfe-forgejo-admin \
     --from-literal=username="${FORGEJO_ADMIN_USER}" \
     --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | dfe_apply_secret
   kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
   kubectl -n "${DFE_NAMESPACE}" create secret generic dfe-deploy-repo-auth \
     --from-literal=username="${FORGEJO_ADMIN_USER}" \
     --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | dfe_apply_secret
   echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
 
   # The Forgejo -> Argo push webhook's shared secret. Forgejo signs the delivery
@@ -1089,7 +1095,7 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
   fi
   kubectl -n forgejo create secret generic dfe-argo-webhook \
     --from-literal=secret="${ARGO_WEBHOOK_SECRET}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | dfe_apply_secret
   echo "  Argo push webhook secret minted (forgejo ns)"
 
   # Argo's read credential for the same repo, registered before [7/7] applies the
@@ -1099,7 +1105,7 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --from-literal=url="${DFE_CONFIG_REPO_URL}" \
     --from-literal=username="${FORGEJO_ADMIN_USER}" \
     --from-literal=password="${FORGEJO_ADMIN_PASSWORD}" \
-    --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+    --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
   echo "  Argo repo cred registered for ${DFE_CONFIG_REPO_URL}"
 elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   # EXTERNAL git (GitHub/GitLab/self-hosted): register the Argo READ credential so
@@ -1114,7 +1120,7 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
       --from-literal=type=git \
       --from-literal=url="${DFE_CONFIG_REPO_URL}" \
       --from-file=sshPrivateKey="${DFE_CONFIG_REPO_SSH_KEY}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
     echo "  Argo repo cred (SSH) registered for ${DFE_CONFIG_REPO_URL}"
   elif [[ -n "${DFE_CONFIG_REPO_TOKEN:-}" ]]; then
     kubectl -n argocd create secret generic repo-deploy \
@@ -1122,7 +1128,7 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
       --from-literal=url="${DFE_CONFIG_REPO_URL}" \
       --from-literal=username="${DFE_CONFIG_REPO_USER:-oauth2}" \
       --from-literal=password="${DFE_CONFIG_REPO_TOKEN}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
     echo "  Argo repo cred (HTTPS+token) registered for ${DFE_CONFIG_REPO_URL}"
   else
     echo "  WARNING: external deploy repo but no DFE_CONFIG_REPO_TOKEN/SSH_KEY -- Argo may not be able to pull it."
@@ -1135,7 +1141,7 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
     kubectl -n "${DFE_NAMESPACE}" create secret generic dfe-deploy-repo-auth \
       --from-literal=username="${DFE_CONFIG_REPO_USER:-oauth2}" \
       --from-literal=password="${DFE_CONFIG_REPO_TOKEN}" \
-      --dry-run=client -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | dfe_apply_secret
     echo "  Engine write cred dfe-deploy-repo-auth ready in ${DFE_NAMESPACE}"
   else
     echo "  WARNING: external deploy repo with no DFE_CONFIG_REPO_TOKEN -- the engine CANNOT push (gitcrud) over SSH; it needs an HTTPS token. Set DFE_CONFIG_REPO_TOKEN for engine writes."
@@ -1243,7 +1249,7 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
       --from-literal=type=git \
       --from-literal=url="${DFE_REPO_URL}" \
       --from-file=sshPrivateKey="${DFE_REPO_SSH_KEY}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
   elif [[ -n "${DFE_REPO_TOKEN:-}" ]]; then
     echo "  [chart repo] token supplied -> creating Argo repository credential"
     kubectl -n argocd create secret generic repo-charts \
@@ -1251,7 +1257,7 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
       --from-literal=url="${DFE_REPO_URL}" \
       --from-literal=username="${DFE_REPO_USER:-git}" \
       --from-literal=password="${DFE_REPO_TOKEN}" \
-      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+      --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
   else
     echo "  [chart repo] no DFE_REPO_TOKEN/DFE_REPO_SSH_KEY -- assuming ${DFE_REPO_URL} is PUBLIC"
   fi
@@ -1271,7 +1277,7 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
         --from-literal=url="oci://${DFE_REGISTRY}/charts/${chart}" \
         --from-literal=username="${DFE_PULL_SECRET_USER:-token}" \
         --from-literal=password="${DFE_PULL_SECRET_TOKEN}" \
-        --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | kubectl apply -f -
+        --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
     done
     echo "  [thin charts] Argo OCI credential registered for each chart under oci://${DFE_REGISTRY}/charts"
   else
@@ -1291,7 +1297,7 @@ kubectl -n argocd create secret generic repo-envoyproxy-oci \
   --from-literal=name=envoyproxy \
   --from-literal=url=registry-1.docker.io/envoyproxy \
   --from-literal=enableOCI="true" \
-  --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | run kubectl apply -f -
+  --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-app.yaml"
 if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   echo "  waiting for the Gateway API CRDs (installed by the operator app)..."

@@ -233,8 +233,6 @@ spec:
           name: clickhouse-ca
           readOnly: true
       enableServiceLinks: false
-      imagePullSecrets:
-      - name: ghcr-pull-secret
       initContainers:
       - command:
         - /bin/sh
@@ -653,8 +651,6 @@ spec:
         - mountPath: /git-sync-home
           name: git-sync-home
       enableServiceLinks: false
-      imagePullSecrets:
-      - name: ghcr-pull-secret
       initContainers:
       - command:
         - /bin/sh
@@ -841,8 +837,6 @@ spec:
         - mountPath: /tmp
           name: tmp
       enableServiceLinks: false
-      imagePullSecrets:
-      - name: ghcr-pull-secret
       nodeSelector:
         dfe.hyperi.io/workload: dfe
       securityContext:
