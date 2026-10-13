@@ -54,6 +54,17 @@ The run length is a deadline that apply and the cycle share: a cycle still runni
 
 `dfe-ops cycle --acceptance-suite <suite>` runs `acceptance` as a stage after smoke and before ui, from the deploy's terraform outputs and as its minted admin; a failed stage skips the rest and destroy still runs.
 
+### The edge stage
+
+`--acceptance-suite edge` proves the receiver's public door lets in the address on the allow list and no other. It admits one address on the ingest door and sends a record from it. The send has to be accepted, the row has to land in `dfe.main`, and dfe-ui's search and HyperDX both have to find it. Then it sends from the cluster's own NAT egress, which the list does not name, and expects a refusal, which proves the list rather than a dead door.
+
+The stage writes the allow list to the deploy repo's overlay and puts it back afterwards (`--keep` leaves it). Only a cloud lane has a public load balancer to send to, so `all` never includes it. It reads two inputs:
+
+- `DFE_RUN_INGEST_ALLOW_CIDR` is the address the suite sends from, taken from the environment or an `--env-file`. It has to be one network and never `/0`, because a refusal cannot prove a list that admits everyone.
+- `DFE_EGRESS_CIDRS` is the cluster's NAT egress as /32s, taken from the cloud root's tofu output through `--from-terraform`.
+
+A missing or `/0` allow address is refused before it costs a cluster. `dfe-ops cloud-cycle` refuses it ahead of the preflight and the apply, and `dfe-ops cycle` refuses it ahead of the deploy.
+
 ### Choosing the backend for one run
 
 `scripts/cycle_backend.py --dial <file> --backend <name>` picks what a run deploys against without editing the one dial. `default` runs the dial as written. Any other name applies `scripts/cycle-backends/<name>.yaml` over it, so it has to run before the tofu render and the sizing read the dial. An overlay commits only the shape -- `msk` sets `kafka.provider: msk` and the `kafka.msk` block -- and a value written `env:<NAME>` is read from the environment, so no host or cluster id reaches the repository or its logs.

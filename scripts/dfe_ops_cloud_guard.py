@@ -85,11 +85,16 @@ of it. The workload teardown gets half the margin and is stopped there, so
 apply strands its state lock and resources its state never recorded: an
 apply that finishes past the run length skips the cycle instead.
 
-A dial whose clickhouse.mode is external is refused unless DFE_CYCLE_CH_SERVICE_ID,
-DFE_CYCLE_CH_API_KEY_ID, DFE_CYCLE_CH_API_KEY_SECRET and
-TF_VAR_clickhouse_external_password are set. After its apply the run adds its NAT
+cloud-preflight and cloud-cycle both refuse a dial whose clickhouse.mode is external
+unless DFE_CYCLE_CH_SERVICE_ID, DFE_CYCLE_CH_API_KEY_ID, DFE_CYCLE_CH_API_KEY_SECRET
+and TF_VAR_clickhouse_external_password are set. After its apply the run adds its NAT
 egress (DFE_EGRESS_CIDRS) and the endpoint CIDR to the ClickHouse Cloud service's
 IP access list, and the teardown removes them first (scripts/clickhouse_cloud_access.py).
+
+cloud-cycle also refuses, before the preflight and the apply, a cycle that runs the edge
+suite (--acceptance-suite edge) when DFE_RUN_INGEST_ALLOW_CIDR is unset or admits every
+address. It is read from the environment and the cycle's --env-file files, as dfe-ops
+cycle reads it, which would otherwise refuse only after the apply had built the cluster.
 
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,
 DFE_GUARD_SWEEPER, DFE_GUARD_BUDGET_ACTION (`<budget-name>:<action-id>`),
@@ -701,6 +706,21 @@ def clickhouse_access_missing(tfvars: Mapping[str, object], env: Mapping[str, st
     return [name for name in CLICKHOUSE_ACCESS_ENV if not env.get(name, "").strip()]
 
 
+def require_clickhouse_access(tfvars: Mapping[str, object], env: Mapping[str, str]) -> None:
+    """Refuse an external-ClickHouse dial whose run settings `env` leaves unset.
+
+    Raises:
+        GuardError: The dial's clickhouse.mode is external and `env` leaves any of
+            CLICKHOUSE_ACCESS_ENV unset or blank.
+    """
+    missing = clickhouse_access_missing(tfvars, env)
+    if missing:
+        raise GuardError(
+            f"clickhouse.mode is external, and the environment does not set {', '.join(missing)}: the run "
+            "seeds the server's password and opens its access list with them"
+        )
+
+
 def clickhouse_access_command(verb: str, run_id: str, *extra: str) -> list[str]:
     """clickhouse_cloud_access.py for one run; its addresses travel in the environment, never here."""
     return [sys.executable, str(CLICKHOUSE_ACCESS), verb, "--run-id", run_id, *extra]
@@ -1037,6 +1057,25 @@ def cycle_command(raw: list[str], profile: str, tf_dir: Path, kubeconfig: Path) 
     return command
 
 
+def require_edge_inputs(cycle_argv: list[str]) -> None:
+    """Refuse a cycle running the edge suite without the address it sends from.
+
+    The cycle refuses the same, but only after the apply has built the cluster.
+
+    Raises:
+        GuardError: The cycle asks for the edge suite and dfe-ops finds its ingest
+            allow address unset, not one network or admitting every address,
+            in the environment or the env files the cycle passes.
+    """
+    dfe_ops = _dfe_ops()
+    parsed = _parse_cycle(cycle_argv)
+    if parsed.acceptance_suite != dfe_ops.EDGE_SUITE:
+        return
+    problem = dfe_ops.edge_inputs_problem(parsed.env_file, os.environ)
+    if problem:
+        raise GuardError(f"the edge acceptance stage cannot run: {problem}")
+
+
 def _make_guard(config: GuardConfig):
     return GUARDS[config.provider](config.region)
 
@@ -1045,6 +1084,7 @@ def cmd_cloud_preflight(args: argparse.Namespace) -> int:
     """`dfe-ops cloud-preflight`: read-only, exit 2 on any refusal."""
     try:
         config = resolve_config(args, os.environ)
+        require_clickhouse_access(config.tfvars, os.environ)
         report = run_preflight(config, _make_guard(config), now=time.time(), env=os.environ)
     except (GuardError, NotImplementedError) as exc:
         print(f"cloud-preflight refused: {exc}", file=sys.stderr)
@@ -1067,12 +1107,8 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         kubeconfig = RUNS_DIR / run_id / "kubeconfig"
         profile = str(config.tfvars.get("profile") or "")
         cycle_argv = cycle_command(args.cycle_args, profile, config.tf_dir, kubeconfig)
-        missing = clickhouse_access_missing(config.tfvars, os.environ)
-        if missing:
-            raise GuardError(
-                f"clickhouse.mode is external, and the environment does not set {', '.join(missing)}: the run "
-                "seeds the server's password and opens its access list with them"
-            )
+        require_clickhouse_access(config.tfvars, os.environ)
+        require_edge_inputs(cycle_argv)
         guard = _make_guard(config)
         report = run_preflight(config, guard, now=now, env=os.environ)
     except (GuardError, NotImplementedError, cloud_run.RunTagError) as exc:
