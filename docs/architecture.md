@@ -136,6 +136,8 @@ One mechanism: layer2-apps generates one Argo Application per `values/<service>-
 
 The overlay entry is `$values/{{ .path.path }}/{{ .path.filename }}` (`argocd/appsets/layer2-apps.yaml`), the directory and name of the file the generator matched, so each Application layers its own file and no other.
 
+Each Application is named `<service>-<instance>-<cluster>`, and that name is its Helm release name and the `app.kubernetes.io/instance` label on its objects. Helm refuses a release name past 53 characters, so a longer Application name installs under its first 44 characters, a `-` and the first 8 hex characters of its sha256.
+
 ## Documents in this area
 
 | Doc | Covers |

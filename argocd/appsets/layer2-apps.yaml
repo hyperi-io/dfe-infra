@@ -88,8 +88,10 @@ spec:
         # The thin chart, under the same registry annotation global.registry
         # reads, so a mirrored deployment moves its charts with its images. Its
         # name is the service, except hyperdx, whose contract names dfe-hyperdx.
-        # No releaseName on either helm source, so app.kubernetes.io/instance
-        # stays the Application name.
+        # Helm refuses a release name past 53 characters, so both helm sources set
+        # releaseName only for an Application name longer than that: its first 44
+        # characters and the first 8 of its sha256. Empty leaves Argo's default, the
+        # Application name, and app.kubernetes.io/instance is whichever was installed.
         - repoURL: 'oci://{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}/charts/{{ if eq .deploy.service "hyperdx" }}dfe-hyperdx{{ else }}{{ .deploy.service }}{{ end }}'
           path: "."
           # A literal map, because an appset cannot read versions.yaml:
@@ -120,6 +122,7 @@ spec:
             {{- end -}}
             {{- $pin -}}
           helm:
+            releaseName: '{{ $app := printf "%v-%v-%v" .deploy.service .deploy.instance .name }}{{ if gt (len $app) 53 }}{{ trunc 44 $app | trimSuffix "-" }}-{{ sha256sum $app | trunc 8 }}{{ end }}'
             ignoreMissingValueFiles: true
             # The stack's files, then the component's own, then the deploy repo's.
             # Read through the `infra` ref, because a chart pulled over OCI has
@@ -308,6 +311,9 @@ spec:
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
           path: helm/charts/dfe-extras
           helm:
+            # The thin chart's release name: Helm caps this source's alike, and
+            # dfe-common labels its objects app.kubernetes.io/instance with it.
+            releaseName: '{{ $app := printf "%v-%v-%v" .deploy.service .deploy.instance .name }}{{ if gt (len $app) 53 }}{{ trunc 44 $app | trimSuffix "-" }}-{{ sha256sum $app | trunc 8 }}{{ end }}'
             ignoreMissingValueFiles: true
             valueFiles:
               - "$infra/argocd/values/common.yaml"

@@ -388,8 +388,9 @@ def test_the_dfe_extras_source_reads_the_chart_sources_layers_with_its_chart_nam
     assert extras["helm"]["valueFiles"] == chart["helm"]["valueFiles"]
     chart_params = {p["name"]: p["value"] for p in chart["helm"]["parameters"]}
     assert {k: v for k, v in params.items() if k != "chartName"} == chart_params
-    # No release name: its objects carry the Application's app.kubernetes.io/instance.
-    assert "releaseName" not in extras["helm"]
+    # An empty release name, which Argo drops: its objects carry the Application's
+    # app.kubernetes.io/instance, as the chart's do.
+    assert extras["helm"].get("releaseName", "") == chart["helm"].get("releaseName", "") == ""
 
 
 def _reworked_tree(root: Path, ignore_missing: bool = True, extra_file: str | None = None) -> Path:

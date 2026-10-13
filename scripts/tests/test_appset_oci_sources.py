@@ -216,11 +216,14 @@ def test_both_helm_sources_read_the_value_layers_in_order(
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
 def test_no_helm_source_names_a_release(service: str, appset_name: str) -> None:
-    """Each object's app.kubernetes.io/instance is the Application name, on both sources alike."""
+    """Each object's app.kubernetes.io/instance is the Application name, on both sources alike.
+
+    A name Helm takes as it is renders an empty releaseName, which Argo drops.
+    """
     app = application(service, appset_name)
     assert app["metadata"]["name"] == f"{service}-default-in-cluster"
     for source in helm_sources(app):
-        assert "releaseName" not in source["helm"]
+        assert source["helm"].get("releaseName", "") == ""
 
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
