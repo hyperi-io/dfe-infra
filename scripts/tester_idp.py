@@ -638,9 +638,18 @@ def _run_text(cmd: list[str]) -> tuple[int, str]:
 
 
 def _apply(args: argparse.Namespace, objects: list[dict]) -> None:
-    """Apply objects by feeding kubectl one JSON List on stdin."""
+    """Apply objects by feeding kubectl one JSON List on stdin.
+
+    Server-side under a named manager, because a client-side apply copies every
+    Secret's data into its last-applied-configuration annotation, and only a
+    manager other than kubectl's default drops a copy an earlier run left.
+    """
     doc = json.dumps({"apiVersion": "v1", "kind": "List", "items": objects})
-    _run([*_kube(args), "apply", "-f", "-"], stdin=doc)
+    _run(
+        [*_kube(args), "apply", "--server-side", "--force-conflicts",
+         "--field-manager=dfe-ops", "-f", "-"],
+        stdin=doc,
+    )
 
 
 def get_json(args: argparse.Namespace, kind: str, name: str) -> dict | None:

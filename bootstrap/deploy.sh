@@ -8,8 +8,9 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly SCRIPT_DIR REPO_ROOT
 
 # Defaults
 CLOUD="${DFE_CLOUD:-local}"
@@ -78,16 +79,16 @@ else
 fi
 
 # Step 1b: Pull secret credentials
-# bootstrap.sh reads generic DFE_PULL_SECRET_SERVER/USER/TOKEN env vars.
-# Set these before running deploy.sh, or source them from your secrets manager.
-# Example (GHCR):
-#   export DFE_PULL_SECRET_SERVER=ghcr.io
-#   export DFE_PULL_SECRET_USER=myuser
-#   export DFE_PULL_SECRET_TOKEN=$(vault kv get -field=token secret/ghcr-pat)
+# Only a private registry needs a pull secret: set DFE_PULL_SECRET_TOKEN (and
+# DFE_PULL_SECRET_SERVER / DFE_PULL_SECRET_USER where the defaults miss) and
+# bootstrap.sh creates it. Unset, every image pulls anonymously.
 #
 # If a .env file exists in the terraform environment dir, source it.
 if [[ -f "${TF_DIR}/.env" ]]; then
-  set -a; source "${TF_DIR}/.env"; set +a
+  set -a
+  # shellcheck source=/dev/null # the operator's own file, absent from the repo
+  source "${TF_DIR}/.env"
+  set +a
 fi
 
 # Step 2: Bridge + Bootstrap

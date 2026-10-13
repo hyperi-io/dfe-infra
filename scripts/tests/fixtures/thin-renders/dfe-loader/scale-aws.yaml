@@ -206,8 +206,6 @@ spec:
           name: ca-bundle
           readOnly: true
       enableServiceLinks: false
-      imagePullSecrets:
-      - name: ghcr-pull-secret
       initContainers:
       - command:
         - /bin/sh

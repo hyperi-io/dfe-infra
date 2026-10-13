@@ -305,7 +305,7 @@ def test_the_render_puts_the_app_layers_after_the_profile_and_before_the_deploy_
         {"deploy": {"service": "dfe-ui", "instance": "default"}, "layer": "overlay", "env": "prod"},
     )
     rendered = w.render_app(
-        _target(),
+        _target(annotations=(("dfe.hyperi.io/image_pull_secret", "ghcr-pull-secret"),)),
         _inputs(
             appset=appset(),
             chart=_values_chart(tmp_path, "dfe-ui"),

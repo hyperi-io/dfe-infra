@@ -225,8 +225,6 @@ spec:
           name: archive
         workingDir: /tmp
       enableServiceLinks: false
-      imagePullSecrets:
-      - name: ghcr-pull-secret
       initContainers:
       - command:
         - /bin/sh

@@ -262,13 +262,13 @@ def evaluate_block(block: str, annotations: dict[str, str]) -> dict:
 
 
 def test_every_appset_names_the_pull_secret_only_when_one_was_created() -> None:
-    """A recorded name is named and a recorded empty names none. A cluster secret
-    written before the fact existed keeps the name the cloud overlays used to set."""
+    """A recorded name is named, and a recorded empty or an absent annotation names
+    none, because anonymous pulls are the default."""
     base = {ANNOTATION: REGISTRY}
     cases = (
         ("recorded", {**base, PULL_ANNOTATION: PULL_NAME}, [PULL_NAME]),
         ("recorded empty", {**base, PULL_ANNOTATION: ""}, None),
-        ("an older cluster secret", base, [PULL_NAME]),
+        ("an older cluster secret", base, None),
     )
     for appset, name in PULL_APPSETS:
         block = values_block(appset, name)

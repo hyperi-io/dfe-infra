@@ -261,10 +261,9 @@ spec:
                 DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
               {{- end }}
               {{- end }}
-              {{- $pullSecret := "ghcr-pull-secret" }}
-              {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+              {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
-              # Only the secret bootstrap.sh created, or ghcr-pull-secret on an older cluster secret.
+              # Only the secret bootstrap.sh created. An absent annotation names none: images pull anonymously.
               imagePullSecrets:
                 - {{ $pullSecret | quote }}
               {{- end }}
@@ -361,8 +360,7 @@ spec:
                 DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
               {{- end }}
               {{- end }}
-              {{- $pullSecret := "ghcr-pull-secret" }}
-              {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
+              {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
               imagePullSecrets:
                 - {{ $pullSecret | quote }}
