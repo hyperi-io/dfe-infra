@@ -31,7 +31,7 @@ extras:
     dfe-transform-vrl: "v1.1.33"
     dfe-transform-vector: "v1.0.49"
     dfe-transform-elastic: "v1.1.12"
-    culvert: "v2.1.19"
+    culvert: "v2.1.20"
     dfe-hyperdx: "v0.3.3"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
