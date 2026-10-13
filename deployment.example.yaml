@@ -612,6 +612,14 @@ kafka:
   ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
   ## refuses the move without --migrate.
   controller_pool: combined
+  ## The two SaaS bodies read these four. Leave one out and the aws root's own
+  ## default applies; a value outside its list, or an id in the wrong vendor's
+  ## shape, is refused at render (scripts/render_dial.py).
+  # connectivity: private     # private | public -- how the cluster is reached; both SaaS bodies
+  # confluent_tier: freight   # freight | enterprise | basic; basic caps a topic at 8388608
+  #                           # bytes, so msk.message_max_bytes must be that or less
+  # confluent_environment_id: env-abc123   # an existing Confluent environment; absent, the body creates one
+  # redpanda_resource_group_id: 00000000-0000-0000-0000-000000000000  # an existing resource group (a UUID); absent, the body creates one
   msk:
     shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
     broker_count: 3           # >= 3, and a multiple of the zone count

@@ -26,7 +26,7 @@ runs completely unattended -- but ``git push origin main`` is gone for good.
 The publish trigger is unchanged. hyperi-ci reads ``git log -1 --format=%B``
 on ``refs/heads/main`` and looks for a ``Publish: true`` trailer, so the
 SQUASH COMMIT MESSAGE we author carries the trailer onto main and the merge
-event is itself the publish run. ``hyperi-ci publish`` (the workflow_dispatch
+event is itself the publish run. ``hyperi-ci release`` (the workflow_dispatch
 escape hatch) is used only where there is no new commit to land, because it
 has silently created no run at all before now (2026-07-20). A ``rebuild-rs``
 of a consumer whose ``.hyperi-ci.yaml`` sets ``build.skip_optimize: true`` is

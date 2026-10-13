@@ -143,7 +143,7 @@ def ship_library(
         )
     if dry_run:
         say(
-            "[dry-run] nothing staged -- would dispatch `hyperi-ci publish` for main HEAD"
+            "[dry-run] nothing staged -- would dispatch `hyperi-ci release` for main HEAD"
         )
         return 0
 
@@ -162,7 +162,7 @@ def ship_library(
         repo=repo,
         slug=slug,
         sha=head_sha(repo),
-        dispatch=["hyperi-ci", "publish"],
+        dispatch=["hyperi-ci", "release"],
         artefact=spec.artefact,
         before=before,
         timeout=spec.run_timeout,
