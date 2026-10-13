@@ -19,14 +19,13 @@ tree, because that is the part of the product an operator reaches for the first
 time a source has no schema waiting for it.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from acceptance.clients import Engine
+from acceptance.source import steps
 
 HEADER = "common-header/timeseries"
 HEADER_VERSION = "1.0.1"
@@ -257,11 +256,16 @@ def source_body(
     }
 
 
-def create_source(engine: Engine, body: dict) -> str:
+def create_source(engine: Engine, body: dict) -> tuple[str, list[str]]:
+    """Create the fetched source, returning what was made and the restarts the create reported."""
     reply = engine.call("POST", "/sources", body)
     if reply.status not in (200, 201):
         raise RuntimeError(f"the source was refused: {reply.status} {reply.body}")
-    return f"created {body['source']} with an aws/{body['fetcher']['config']['services'][0]['name']} fetcher stanza"
+    upstream = body["fetcher"]["config"]["services"][0]["name"]
+    return (
+        f"created {body['source']} with an aws/{upstream} fetcher stanza",
+        steps.reply_hints(reply.body),
+    )
 
 
 def telemetry_name(engine: Engine, name: str) -> str:

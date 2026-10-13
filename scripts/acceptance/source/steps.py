@@ -67,6 +67,10 @@ DATA_STREAM_NAMESPACE = "default"
 MARKER = "_e2e"
 CORPUS = "corpus"
 PROBE = "probe"
+# The app that keeps an archived source's raw records.
+ARCHIVER_SERVICE = "dfe-archiver"
+# A recipe make reports as failed, which names the target and never the cause.
+_MAKE_RECIPE_FAILED = re.compile(r"^make(\[\d+\])?: \*\*\* \[")
 
 
 # --- console helpers ---------------------------------------------------------
@@ -621,6 +625,24 @@ def wait_rows(store: Datastore, table: str, wanted: int, deadline: float,
 # --- the archive -------------------------------------------------------------
 
 
+def archiver_runs(engine: Engine) -> bool:
+    """Whether this deployment runs a dfe-archiver to keep an archived source's records.
+
+    The engine lists every catalogued app whether or not it is deployed, so the
+    instances decide: the Compose slim tier lists dfe-archiver with none. A
+    source asking to be archived there is refused at its receiver on every
+    record, because the copy it sends to the archiver has nowhere to land.
+    """
+    reply = engine.call("GET", "/apps")
+    if reply.status != 200:
+        raise RuntimeError(f"the engine did not list its apps: {reply.status} {reply.body}")
+    return any(
+        entry.get("service") == ARCHIVER_SERVICE and bool(entry.get("instances"))
+        for entry in reply.body or []
+        if isinstance(entry, dict)
+    )
+
+
 def in_archiver(prefix: list[str], script: str) -> tuple[int, str]:
     """Run *script* under a shell inside the archiver, wherever it runs.
 
@@ -715,6 +737,31 @@ def hinted_service(hint: str) -> str:
     return found.group(1) if found else hint.rsplit(" ", 1)[-1]
 
 
+def reply_hints(body: object) -> list[str]:
+    """The restart commands one engine reply carries, empty when it names none."""
+    if not isinstance(body, dict):
+        return []
+    return [str(hint) for hint in body.get("restart_required") or [] if hint]
+
+
+def refused_line(reply: subprocess.CompletedProcess[str]) -> str:
+    """The line a refused restart said why on, bounded for the step table.
+
+    The last line make prints is its own summary of which recipe failed, and the
+    first is whatever the target printed before it started, so neither names the
+    cause. The last line that is not a recipe summary does.
+    """
+    said = (reply.stderr or "").strip() or (reply.stdout or "").strip()
+    lines = [line.strip() for line in said.splitlines() if line.strip()]
+    if not lines:
+        return f"exit {reply.returncode} and nothing printed"
+    causes = [line for line in lines if not _MAKE_RECIPE_FAILED.match(line)]
+    line = (causes or lines)[-1]
+    if len(line) > FAILURE_LINE_MAX:
+        line = line[: FAILURE_LINE_MAX - 3] + "..."
+    return line
+
+
 def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
     """Restart the apps the engine says cannot take a write where they stand.
 
@@ -740,8 +787,11 @@ def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
     done = []
     for hint in hints:
         service = hinted_service(hint)
-        reply = subprocess.run([*prefix, service], capture_output=True, text=True, check=False)
-        done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {(reply.stderr or reply.stdout).strip()[:120]}'}")
+        reply = subprocess.run(
+            [*prefix, service], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False,
+        )
+        done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {refused_line(reply)}'}")
     driver.record(
         "restart",
         "done" if all("restarted" in entry for entry in done) else "failed",

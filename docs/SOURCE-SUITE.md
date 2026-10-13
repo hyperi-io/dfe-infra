@@ -32,6 +32,8 @@ The corpus's cisco_ios lines are then posted at the receiver in the envelope an 
 
 One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella lines are not fed and this suite does not cover them.
 
+Archive stays off where the engine lists no `dfe-archiver` instance, as on the Compose slim tier: on direct the receiver also sends an archived record to the archiver, and with none it answers 503.
+
 Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e` rather than by rows gained, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` in its `_json` (`dataset`), the run's corpus rows carry `source_ip` (the program reads it out of the syslog body), a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
 
 `reporting` is not taken at face value. The engine answers it off the otel
@@ -111,13 +113,18 @@ CloudTrail is the service that proves anything.
 
 ## Restarting an app the writes cannot reach
 
-The deploy reply and each file-set write carry `restart_required`: one command
-per app whose running process cannot take that change where it stands. The
-engine works it out, so the runner does not. It is only ever non-empty where the
-engine renders the app's config itself -- a Compose deployment that named a
-config directory -- and only where the write changed something the process
-cannot pick up; a Kubernetes deploy reports none, because the chart's checksum
-rolls the pod.
+The create reply, the deploy reply and each file-set write carry
+`restart_required`: one command per app whose running process cannot take that
+change where it stands. The engine works it out, so the runner does not. It is
+only ever non-empty where the engine renders the app's config itself -- a
+Compose deployment that named a config directory -- and only where the write
+changed something the process cannot pick up; a Kubernetes deploy reports none,
+because the chart's checksum rolls the pod.
+
+On the direct transport the create is the write that adds the source's
+destination to the receiver, and the receiver builds its senders once at
+startup, so only the create's reply names it. The console makes that create and
+shows no hint, so the runner reads the reply the console was handed.
 
 `--restart-exec` is the command prefix that applies one; the runner appends the
 service the hint's `make apply SERVICES=<service>` names. On Compose the prefix
