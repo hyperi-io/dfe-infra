@@ -166,7 +166,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -265,12 +265,14 @@ def _last_line(text: str) -> str:
     return lines[-1] if lines else ""
 
 
-def _kubectl(kubeconfig: str | None, *args: str) -> subprocess.CompletedProcess:
+def _kubectl(kubeconfig: str | None, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
     cmd = ["kubectl"]
     if kubeconfig:
         cmd += ["--kubeconfig", kubeconfig]
     cmd += list(args)
-    return _run(cmd)
+    if stdin is None:
+        return _run(cmd)
+    return _run(cmd, input=stdin)
 
 
 # Bounds every read-only preflight kubectl call, so an unreachable cluster
@@ -779,21 +781,37 @@ def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
     return True, f"no KafkaRebalance in progress ({len(items)} total)"
 
 
+# Run by the ClickHouse pod's shell: a password line on stdin becomes clickhouse-client's
+# CLICKHOUSE_PASSWORD, so neither the kubectl command line nor the pod's carries it.
+CLICKHOUSE_CLIENT_SH = 'if IFS= read -r pw; then export CLICKHOUSE_PASSWORD="$pw"; fi; exec clickhouse-client "$@" </dev/null'
+
+
+@dataclass(frozen=True)
+class ClickHouseLogin:
+    """A clickhouse-client login: no user is the server's `default` with no password."""
+
+    user: str | None = None
+    password: str = field(default="", repr=False)
+
+
 def _clickhouse_client(
-    kubeconfig: str | None, namespace: str, pod: str, query: str, login: list[str]
+    kubeconfig: str | None, namespace: str, pod: str, query: str, login: ClickHouseLogin
 ) -> subprocess.CompletedProcess:
+    user = ["--user", login.user] if login.user else []
     return _kubectl(
         kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "exec", pod, "--", "clickhouse-client", *login, "-q", query,
+        "exec", "-i", pod, "--", "sh", "-c", CLICKHOUSE_CLIENT_SH, "sh", *user, "-q", query,
+        # Always given, even empty: exec -i with no stdin would read the caller's terminal.
+        stdin=f"{login.password}\n" if login.password else "",
     )
 
 
-def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: str) -> list[str]:
-    """The clickhouse-client login arguments that answer on `pod` -- raises UpgradeError.
+def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: str) -> ClickHouseLogin:
+    """The clickhouse-client login that answers on `pod` -- raises UpgradeError.
 
     The `password` key of the `store` Secret as each of CLICKHOUSE_USERS, then
     `default` with no password, the order bootstrap/smoke-test-integration.sh
-    resolves it in. The password goes into the arguments and nowhere else.
+    resolves it in. The password only ever travels on stdin.
     """
     read = _kubectl(
         kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
@@ -809,15 +827,15 @@ def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: s
         if pw:
             users = CLICKHOUSE_USERS
             for user in users:
-                login = ["--user", user, "--password", pw]
+                login = ClickHouseLogin(user=user, password=pw)
                 if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", login).returncode == 0:
                     return login
         else:
             unread = f"secret/{store} holds no password, "
     else:
         unread = f"secret/{store} unreadable ({_last_line(read.stderr) or 'kubectl failed'}), "
-    if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", []).returncode == 0:
-        return []
+    if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", ClickHouseLogin()).returncode == 0:
+        return ClickHouseLogin()
     tried = [f"secret/{store} as {user}" for user in users] + ["default with no password"]
     raise UpgradeError(f"no ClickHouse credential answers on {pod}: {unread}tried {', '.join(tried)}")
 

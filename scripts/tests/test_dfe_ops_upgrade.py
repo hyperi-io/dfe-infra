@@ -162,14 +162,23 @@ def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess
     return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> list[list[str]]:
-    """Replace this module's own subprocess boundary with one that returns
-    `responses` in call order and records each call's argv."""
-    queue = list(responses)
-    calls: list[list[str]] = []
+class _Calls(list[list[str]]):
+    """Each call's argv, with what it was given on stdin in `stdin` at the same index."""
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdin: list[object] = []
+
+
+def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> _Calls:
+    """Replace this module's own subprocess boundary with one that returns
+    `responses` in call order and records each call's argv and stdin."""
+    queue = list(responses)
+    calls = _Calls()
+
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
         calls.append(cmd)
+        calls.stdin.append(kwargs.get("input"))
         return queue.pop(0)
 
     monkeypatch.setattr(u, "_run", fake_run)
@@ -783,8 +792,12 @@ def _ch_password(value: str = CH_PASSWORD) -> subprocess.CompletedProcess:
 
 
 def _ch_auth(call: list[str]) -> list[str]:
-    """The arguments between clickhouse-client and its -q."""
-    return call[call.index("clickhouse-client") + 1 : call.index("-q")]
+    """The clickhouse-client arguments before its -q: what follows the in-pod script and its $0."""
+    return call[call.index(u.CLICKHOUSE_CLIENT_SH) + 2 : call.index("-q")]
+
+
+def _no_argv_carries(calls: list[list[str]], secret: str) -> bool:
+    return all(secret not in arg for call in calls for arg in call)
 
 
 def test_check_clickhouse_merges_queries_every_server_pod_with_the_resolved_credential(
@@ -800,8 +813,11 @@ def test_check_clickhouse_merges_queries_every_server_pod_with_the_resolved_cred
     assert secret[secret.index("get") + 1 : secret.index("get") + 3] == ["secret", "clickhouse-admin-password"]
     assert secret[-1] == "jsonpath={.data.password}"
     queries = calls[3:]
-    assert [c[c.index("exec") + 1] for c in queries] == ["ch-0-0", "ch-0-1", "ch-0-2"]
-    assert all(_ch_auth(c) == ["--user", "default", "--password", CH_PASSWORD] for c in calls[2:])
+    assert [c[c.index("exec") + 2] for c in queries] == ["ch-0-0", "ch-0-1", "ch-0-2"]
+    assert all(_ch_auth(c) == ["--user", "default"] for c in calls[2:])
+    assert calls.stdin[2:] == [f"{CH_PASSWORD}\n"] * 4
+    assert all("-i" in c[c.index("exec") : c.index("--")] for c in calls[2:])
+    assert _no_argv_carries(calls, CH_PASSWORD)
     assert CH_PASSWORD not in detail
     captured = capsys.readouterr()
     assert CH_PASSWORD not in captured.out + captured.err
@@ -844,7 +860,9 @@ def test_check_clickhouse_merges_falls_back_to_the_admin_user(monkeypatch: pytes
         _proc(0, stdout="1\n"), _proc(0, stdout="0\n"),
     )
     assert u.check_clickhouse_merges("kc")[0] is True
-    assert _ch_auth(calls[-1]) == ["--user", "admin", "--password", CH_PASSWORD]
+    assert _ch_auth(calls[-1]) == ["--user", "admin"]
+    assert calls.stdin[-1] == f"{CH_PASSWORD}\n"
+    assert _no_argv_carries(calls, CH_PASSWORD)
 
 
 def test_check_clickhouse_merges_without_the_secret_tries_default_with_no_password(
@@ -857,6 +875,8 @@ def test_check_clickhouse_merges_without_the_secret_tries_default_with_no_passwo
     assert u.check_clickhouse_merges("kc", credentials="clickhouse-admin-password")[0] is True
     assert _ch_auth(calls[2]) == []
     assert _ch_auth(calls[3]) == []
+    # Empty, never None: an exec -i given no stdin would read the caller's terminal.
+    assert calls.stdin[2:] == ["", ""]
 
 
 def test_check_clickhouse_merges_refuses_when_no_credential_answers_and_never_echoes_it(
@@ -3909,3 +3929,18 @@ def test_apply_on_a_deploy_repo_without_pins_yaml_commits_one_at_the_first_stage
     assert ("retarget", "2.0.0") in events
     assert u.read_deploy_pin(deploy) == "2.0.0"
     assert u._git(deploy, "status", "--porcelain").stdout == ""
+
+
+def test_the_in_pod_script_hands_the_stdin_password_to_clickhouse_client_by_environment(tmp_path: Path) -> None:
+    """Runs CLICKHOUSE_CLIENT_SH under a real sh, with a clickhouse-client that reports what it was given."""
+    fake = tmp_path / "clickhouse-client"
+    fake.write_text('#!/bin/sh\nprintf "env=%s\\n" "${CLICKHOUSE_PASSWORD-unset}"\nprintf "arg=%s\\n" "$@"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
+    argv = ["sh", "-c", u.CLICKHOUSE_CLIENT_SH, "sh", "--user", "admin", "-q", "SELECT 1"]
+
+    given = subprocess.run(argv, input="p w\"\\x\n", capture_output=True, text=True, env=env, check=True)
+    assert given.stdout.splitlines() == ["env=p w\"\\x", "arg=--user", "arg=admin", "arg=-q", "arg=SELECT 1"]
+
+    none = subprocess.run(argv, input="", capture_output=True, text=True, env=env, check=True)
+    assert none.stdout.splitlines()[0] == "env=unset"
