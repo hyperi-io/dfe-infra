@@ -1005,6 +1005,81 @@ def test_a_spot_request_whose_state_cannot_be_read_raises_rather_than_reading_as
         cloud_sweep.tagging_hit_gone(_tagging_hit(SPOT_ARN), REGION)
 
 
+LT_ID = "lt-0123456789abcdef0"
+LT_NAME = "karpenter.k8s.aws/1234567890123456789"
+LT_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:launch-template/{LT_ID}"
+LT_NOT_FOUND = "An error occurred (InvalidLaunchTemplateId.NotFound) when calling the DescribeLaunchTemplates operation"
+
+
+def test_launch_templates_are_listed_by_id_with_their_name_age_and_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_run(
+        monkeypatch,
+        _ok(
+            {
+                "LaunchTemplates": [
+                    {
+                        "LaunchTemplateId": LT_ID,
+                        "LaunchTemplateName": LT_NAME,
+                        "CreateTime": "2026-10-13T01:14:30+00:00",
+                        "Tags": DFE_TAGS,
+                    }
+                ]
+            }
+        ),
+    )
+    (found,) = cloud_sweep.list_launch_templates(REGION, TAG_FILTER)
+    assert (found.kind, found.id, found.name, found.created, found.tagged) == (
+        "launch-template", LT_ID, LT_NAME, "2026-10-13T01:14:30+00:00", True,
+    )
+
+
+def test_a_launch_template_delete_names_it_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    cloud_sweep.DELETE_FNS["launch-template"](_resource("launch-template", LT_ID, tagged=True), REGION)
+    (call,) = calls
+    assert call[:2] == ["ec2", "delete-launch-template"]
+    assert call[call.index("--launch-template-id") + 1] == LT_ID
+
+
+def test_a_runs_tag_sweep_deletes_the_launch_templates_karpenter_left(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Karpenter puts the run's tags on its launch templates, and the tagging API lists one after it goes."""
+    run_tags = [{"Key": "dfe-e2e", "Value": "run-1"}, {"Key": "karpenter.k8s.aws/ec2nodeclass", "Value": "general"}]
+    held = {LT_ID: {"LaunchTemplateId": LT_ID, "LaunchTemplateName": LT_NAME, "Tags": run_tags}}
+
+    def answer(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return _ok({"Account": ACCOUNT_ID})
+        if args[:2] == ["resourcegroupstaggingapi", "get-resources"]:
+            return _ok({"ResourceTagMappingList": [{"ResourceARN": LT_ARN, "Tags": run_tags}]})
+        if args[:2] == ["ec2", "describe-launch-templates"]:
+            if "--launch-template-ids" not in args:
+                return _ok({"LaunchTemplates": list(held.values())})
+            named = args[args.index("--launch-template-ids") + 1]
+            return _ok({"LaunchTemplates": [held[named]]}) if named in held else _fail(LT_NOT_FOUND)
+        if args[:2] == ["ec2", "delete-launch-template"]:
+            held.pop(args[args.index("--launch-template-id") + 1])
+            return _ok({})
+        return _ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", answer)
+    code = cloud_sweep.main(
+        ["--region", REGION, "--tag-filter", "dfe-e2e=run-1", "--delete", "--account", ACCOUNT_ID, "--yes"]
+    )
+    assert code == 0
+    assert held == {}
+    out = capsys.readouterr().out
+    assert f"deleted launch-template {LT_NAME}" in out
+    assert "sweep clean: nothing left to delete" in out
+
+
 def test_another_eks_class_is_never_judged_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
         raise AssertionError("nothing is described for a class with no gone-check")

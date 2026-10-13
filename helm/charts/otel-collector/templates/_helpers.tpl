@@ -46,3 +46,23 @@ both refusals read the same whichever chart an operator renders first.
 {{- fail "otel.ingress.enabled is true and otel.ingress.auth.remoteKey is empty -- OTLP ingest from outside the cluster admits only a bearer token, and this key names where the deployment's secret store holds it. Store the token (property token) at a path such as <project>/<env>/otel/ingress and set otel.ingress.auth.remoteKey to it in the deploy repo's infra/common.yaml. There is no unauthenticated mode" -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+otel-collector.validatePriorityClass -- the API server refuses a created class
+named system-* or valued above 1,000,000,000, and it refuses the daemonset's
+pods while the class they name does not exist.
+*/}}
+{{- define "otel-collector.validatePriorityClass" -}}
+{{- $pc := .Values.daemonset.priorityClass -}}
+{{- if $pc.create -}}
+{{- if not $pc.name -}}
+{{- fail "daemonset.priorityClass.create is true and daemonset.priorityClass.name is empty -- name the class to create, or set create false" -}}
+{{- end -}}
+{{- if hasPrefix "system-" (toString $pc.name) -}}
+{{- fail (printf "daemonset.priorityClass.name is %q -- the system- prefix is reserved for the cluster's own classes and the API server refuses to create one. Name a class of your own, or set daemonset.priorityClass.create false to use an existing one" (toString $pc.name)) -}}
+{{- end -}}
+{{- if or (le (int64 $pc.value) 0) (gt (int64 $pc.value) 1000000000) -}}
+{{- fail (printf "daemonset.priorityClass.value is %v -- above 0 to outrank a pod that names no class, and at most 1000000000, the ceiling on a user-defined class" $pc.value) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

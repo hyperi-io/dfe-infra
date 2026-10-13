@@ -89,6 +89,18 @@ daemonset:
     limits:
       cpu: 500m
       memory: 512Mi
+  # A daemonset pod can only run on its own node, so on a full node it waits
+  # unless it outranks a pod there. This class puts it above every pod that
+  # names none, and the scheduler evicts one of those to make room.
+  priorityClass:
+    # false where the cluster already defines the class `name` refers to.
+    create: true
+    # Empty renders no priorityClassName, and the pod ranks 0 with the apps.
+    name: dfe-node-critical
+    # Above the 0 a classless pod gets, and under the 1,000,000,000 ceiling on a
+    # user-defined class, so the cluster's own system-* classes still rank higher.
+    # The API server refuses a change to it, so a new value means a new name.
+    value: 1000000
 
 # Where the DFE apps run (the ApplicationSet passes the cluster annotation);
 # empty falls back to {project}-{env}.

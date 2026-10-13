@@ -16,6 +16,8 @@
 // website/content/en/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml
 // at v1.14.1, with the instance-profile lifecycle statements dropped: the
 // profile is created here, so the controller never creates, tags or deletes one.
+// The two instance-profile reads stay, because the controller makes them
+// whether or not it manages a profile.
 //
 // That published policy carries no KMS statement, because it has no idea which
 // key a caller's EC2NodeClass might encrypt volumes with. karpenter_kms below
@@ -467,14 +469,23 @@ data "aws_iam_policy_document" "karpenter_iam" {
     }
   }
 
+  // The instance-profile garbage collector and every EC2NodeClass finalizer
+  // list profiles, and a denied list stops the finalizer before it deletes the
+  // class's launch templates.
   statement {
-    sid     = "AllowInstanceProfileReadActions"
-    effect  = "Allow"
-    actions = ["iam:GetInstanceProfile"]
+    sid       = "AllowUnscopedInstanceProfileListAction"
+    effect    = "Allow"
+    actions   = ["iam:ListInstanceProfiles"]
+    resources = ["*"]
+  }
 
-    // Read only: the EC2NodeClass reports InstanceProfileReady from this call,
-    // and the profile itself is this module's to create and delete.
-    resources = [aws_iam_instance_profile.karpenter_node.arn]
+  // The finalizer also reads a legacy profile name Karpenter derives from the
+  // cluster, so the read reaches every profile in the account.
+  statement {
+    sid       = "AllowInstanceProfileReadActions"
+    effect    = "Allow"
+    actions   = ["iam:GetInstanceProfile"]
+    resources = ["arn:${data.aws_partition.current.partition}:iam::${var.provision.account}:instance-profile/*"]
   }
 }
 

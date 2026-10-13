@@ -1,0 +1,15 @@
+{{- $pc := .Values.daemonset.priorityClass -}}
+{{- if $pc.create }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ $pc.name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+  annotations:
+    # Argo applies a kind it does not order after the DaemonSet, and admission refuses a pod whose class is absent.
+    argocd.argoproj.io/sync-wave: "-1"
+value: {{ int64 $pc.value }}
+preemptionPolicy: PreemptLowerPriority
+description: "DFE node agents: one pod per node, so a full node evicts a lower-priority pod to fit it."
+{{- end }}

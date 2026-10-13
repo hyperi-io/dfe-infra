@@ -751,6 +751,51 @@ run "aws_karpenter_controller_can_use_the_deployment_key_for_ebs_encryption" {
   }
 }
 
+// An EC2NodeClass finalizer lists and reads instance profiles before it deletes
+// the class's launch templates, so a denied read leaves them behind the cluster.
+run "aws_karpenter_controller_reads_instance_profiles_and_manages_none" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.karpenter_iam.statement :
+      s.actions == toset(["iam:ListInstanceProfiles"]) && s.resources == toset(["*"])
+    ])
+    error_message = "the controller needs iam:ListInstanceProfiles, unscoped as the upstream policy grants it, or its garbage collector and every EC2NodeClass finalizer fail"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.karpenter_iam.statement :
+      s.actions == toset(["iam:GetInstanceProfile"])
+      && s.resources == toset(["arn:aws:iam::000000000000:instance-profile/*"])
+    ])
+    error_message = "an EC2NodeClass finalizer reads the legacy profile name Karpenter derives from the cluster, so iam:GetInstanceProfile must reach every profile in the account, as upstream grants it"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in concat(
+        data.aws_iam_policy_document.karpenter_iam.statement,
+        data.aws_iam_policy_document.karpenter_discovery.statement,
+        data.aws_iam_policy_document.karpenter_lifecycle.statement,
+      ) :
+      length(setintersection(s.actions, [
+        "iam:CreateInstanceProfile",
+        "iam:TagInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:DeleteInstanceProfile",
+      ])) == 0
+    ])
+    error_message = "the controller is handed a profile, so no statement may let it create, tag, re-role or delete one"
+  }
+}
+
 // Both selector terms in the EC2NodeClass match on this one tag, so a subnet or
 // security group missing it is capacity Karpenter cannot see.
 run "aws_karpenter_network_is_discoverable" {

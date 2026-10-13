@@ -101,8 +101,6 @@ scripts/yaml_subset.py, and the AWS API is reached by shelling out to the `aws`
 CLI the operator already has.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import math
@@ -205,6 +203,15 @@ CHART_DEFAULTS = {
         50,
         "helm/charts/clickhouse-cluster/values.yaml#clickhouse.storage.size",
     ),
+    # The default app set the general pool carries -- deployments seeded,
+    # replicas each, vCPU a replica requests -- held equal to the profile by
+    # test_resolve_sizing.py.
+    "app_deployments": (8, "argocd/values/profile-scale.yaml#deployRepo.seedApps"),
+    "app_replicas": (
+        2,
+        "argocd/values/profile-scale.yaml#replicaCount,keda.minReplicaCount",
+    ),
+    "app_vcpu_request": (0.5, "argocd/values/profile-scale.yaml#resources.requests.cpu"),
 }
 
 # Use cases whose IO is CONTINUOUS, so a burstable instance size cannot carry
@@ -669,6 +676,9 @@ class Core:
     # and _resolve_volumes.
     root_volume_demand_mib_s: float = 0.0
     root_volume_demand_iops: int = 0
+    # vCPU a shared pool's own workloads request, keyed by use case -- the
+    # demand build_karpenter_pools sizes a pool from when no Node carries it.
+    pool_vcpu: dict[str, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     used: list[Ratio] = field(default_factory=list)
     overridden: list[Override] = field(default_factory=list)
@@ -1018,6 +1028,19 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         ),
     )
 
+    # --- The general pool ----------------------------------------------------
+    # No Node carries it, so its demand is the default app set at its replica
+    # floor plus the focus's headroom, never its one floor-size node.
+    app_deployments, apps_source = CHART_DEFAULTS["app_deployments"]
+    app_replicas, replicas_source = CHART_DEFAULTS["app_replicas"]
+    app_vcpu, vcpu_source = CHART_DEFAULTS["app_vcpu_request"]
+    general_vcpu = app_deployments * app_replicas * app_vcpu * (1 + headroom)
+    notes.append(
+        f"The general pool carries {app_deployments} app deployments [{apps_source}] x "
+        f"{app_replicas} replicas [{replicas_source}] x {app_vcpu:g} vCPU [{vcpu_source}], "
+        f"plus {headroom:.0%} headroom: {general_vcpu:g} vCPU requested."
+    )
+
     # --- Retention -----------------------------------------------------------
     retention_ms = int(retention_hours * 3600 * 1000)
     retention_bytes = (
@@ -1056,6 +1079,7 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         keeper_parts_per_s=parts_per_s,
         root_volume_demand_mib_s=root_volume_demand_mib_s,
         root_volume_demand_iops=root_volume_demand_iops,
+        pool_vcpu={"general": general_vcpu},
         notes=notes,
         used=used,
     )
@@ -2499,11 +2523,13 @@ CAPACITY_TYPE_ON_DEMAND = ("on-demand",)
 CAPACITY_TYPE_SPOT_FIRST = ("spot", "on-demand")
 
 # One consolidation posture per workload shape: a pet holds still, elastic
-# infra consolidates promptly, and ci-burst matches the aggressive posture
+# infra waits out a deploy's convergence, and ci-burst matches the aggressive posture
 # compute-shapes.yaml's own comment already commits to ("a 100% disruption
 # budget with 60s consolidation is only safe here").
 _STATEFUL_CONSOLIDATION = {"policy": "WhenEmpty", "after": "10m"}
-_ELASTIC_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "5m"}
+# The clock restarts on every pod bind or removal, so twice the readiness gate's 900s
+# bound keeps a node a converging deploy filled from being replaced before it is judged.
+_ELASTIC_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "30m"}
 _CI_BURST_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "60s"}
 
 # The pets: a fixed EKS managed node group already carries their floor count
@@ -2563,7 +2589,9 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
 
 
 def build_karpenter_pools(
-    choices: dict[str, Choice], cloud_entry: dict[str, object]
+    choices: dict[str, Choice],
+    cloud_entry: dict[str, object],
+    pool_vcpu: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """Karpenter's NodePool/EC2NodeClass shaping, for every EC2-sourced choice.
 
@@ -2577,6 +2605,9 @@ def build_karpenter_pools(
         choices: Every use case this resolve picked a concrete shape for.
         cloud_entry: The cloud's shapes.clouds.<cloud> map, for each use
             case's generation policy and volume profiles.
+        pool_vcpu: vCPU a pool's own workloads request (Core.pool_vcpu). A
+            pool whose demand needs more of its chosen shape than the sized
+            count gets limits for that many nodes instead.
 
     Returns:
         `{name: pool}`, ready to nest under `karpenter.pools`; empty when
@@ -2623,6 +2654,12 @@ def build_karpenter_pools(
             capacity_types = list(CAPACITY_TYPE_ON_DEMAND)
             budget_nodes, expire_after = "25%", "720h"
 
+        nodes = max(choice.count, 1)
+        demand = (pool_vcpu or {}).get(use_case, 0.0)
+        if demand and choice.vcpu:
+            # Rounded first, so a float product landing on a whole node is not one node more.
+            nodes = max(nodes, math.ceil(round(demand / choice.vcpu, 6)))
+
         pool: dict[str, object] = {
             "families": families,
             "arch": str(entry.get("arch") or "arm64"),
@@ -2631,12 +2668,11 @@ def build_karpenter_pools(
             "budgetNodes": budget_nodes,
             "expireAfter": expire_after,
             "labels": {WORKLOAD_LABEL: use_case},
-            # Twice the sized fleet: headroom for Karpenter to grow the pool
-            # under load without an unbounded spend risk on a runaway workload
-            # -- the NodePool CRD demands a limit, and this is ours to set.
+            # Twice the nodes the sized fleet or the pool's own demand needs, in
+            # cpu and memory both, since Karpenter stops at whichever binds first.
             "limits": {
-                "cpu": str(int(choice.vcpu * max(choice.count, 1) * 2)),
-                "memory": f"{round(choice.memory_gib * max(choice.count, 1) * 2)}Gi",
+                "cpu": str(int(choice.vcpu * nodes * 2)),
+                "memory": f"{round(choice.memory_gib * nodes * 2)}Gi",
             },
         }
         # Karpenter takes the core Kubernetes effect spelling, not the EKS
@@ -2796,7 +2832,7 @@ def build_values(
     if ch:
         out["clickhouse"] = ch
     if choices and cloud_entry is not None:
-        pools = build_karpenter_pools(choices, cloud_entry)
+        pools = build_karpenter_pools(choices, cloud_entry, core.pool_vcpu)
         if pools:
             out["karpenter"] = {"pools": pools}
     return out
