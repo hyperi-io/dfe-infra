@@ -262,6 +262,11 @@ spec:
             {{- end -}}
             {{- $pin -}}
           helm:
+            # Helm refuses a release name past 53 characters, so both helm sources set
+            # releaseName only for an Application name longer than that: its first 44
+            # characters and the first 8 of its sha256. Empty leaves Argo's default, the
+            # Application name, and app.kubernetes.io/instance is whichever was installed.
+            releaseName: '{{ $app := printf "%v-%v-%v" .deploy.service .deploy.instance .name }}{{ if gt (len $app) 53 }}{{ trunc 44 $app | trimSuffix "-" }}-{{ sha256sum $app | trunc 8 }}{{ end }}'
             ignoreMissingValueFiles: true
             valueFiles:
               - "$infra/argocd/values/common.yaml"
@@ -349,6 +354,9 @@ spec:
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
           path: helm/charts/dfe-extras
           helm:
+            # The thin chart's release name: Helm caps this source's alike, and
+            # dfe-common labels its objects app.kubernetes.io/instance with it.
+            releaseName: '{{ $app := printf "%v-%v-%v" .deploy.service .deploy.instance .name }}{{ if gt (len $app) 53 }}{{ trunc 44 $app | trimSuffix "-" }}-{{ sha256sum $app | trunc 8 }}{{ end }}'
             ignoreMissingValueFiles: true
             valueFiles:
               - "$infra/argocd/values/common.yaml"
