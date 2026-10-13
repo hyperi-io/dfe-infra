@@ -33,21 +33,27 @@ does, so a component whose tag stays put while its digest moves still moves.
 
     plan       Diff FROM -> TO, ordered by stage, with each step's `before`/
                `finalise`/`pair`/`rollback` note attached. Runs
-               `dfe-stack compat-check --strict` for TO, and -- only when
-               `--dial` is given -- resolve_sizing.py's locked-change
-               classifier against the deploy's committed sizing/resolved.yaml.
+               `dfe-stack compat-check --strict` for TO, preflight's two
+               exposure checks (the ingest door and the web plane), and --
+               only when `--dial` is given -- resolve_sizing.py's
+               locked-change classifier against the deploy's committed
+               sizing/resolved.yaml.
                Writes the plan to --out, by default
                .tmp/upgrades/<from>-to-<to>.md in this checkout -- never the
                deploy repo, whose untracked files preflight refuses.
                Exit 0 nothing moves (or the plan is clean), 1 the plan is
-               BLOCKED (a compat-check failure, or a locked sizing change
-               with no --migrate evidence), 2 a pre-flight failure (the
-               deploy repo or the stack name do not resolve).
+               BLOCKED (a compat-check failure, a failed exposure check, or a
+               locked sizing change with no --migrate evidence), 2 a
+               pre-flight failure (the deploy repo or the stack name do not
+               resolve).
 
     preflight  The checks `apply` refuses to run without: the deploy repo is
                clean, its infra/common.yaml sets exposure.groups.ingest when
                the plan crosses INGEST_GROUP_STACK (where the receiver's door
-               stopped being exposure.mode), the cluster answers, every Argo
+               stopped being exposure.mode), it states the console and api
+               groups' allow lists when the plan crosses WEB_FENCE_STACK on an
+               internet-facing gateway (where an empty list started refusing
+               every address), the cluster answers, every Argo
                Application is Synced and Healthy, no KafkaRebalance is
                mid-flight, ClickHouse carries
                no long merge, every Strimzi CRD the 1.x operator needs stores
@@ -253,7 +259,30 @@ COMMON_OVERLAY = Path("infra") / "common.yaml"
 # The first stack whose receiver door is exposure.groups.ingest; below it the door is exposure.mode.
 INGEST_GROUP_STACK = "2.2.1-rc.7"
 INGEST_GROUP_PATH = ("exposure", "groups", "ingest")
-INGEST_UPGRADE_DOC = "docs/deployment/upgrades.md#from-220"
+FROM_220_DOC = "docs/deployment/upgrades.md#from-220"
+
+# The deploy repo's gateway overlay, layered after infra/common.yaml by argocd/appsets/layer2-edge.yaml.
+GATEWAY_OVERLAY = Path("infra") / "envoy-gateway-config.yaml"
+# The first stack whose internet-facing gateway refuses every address on a web route with an empty allow list.
+WEB_FENCE_STACK = "2.2.1-rc.6"
+# The first stack whose web allow lists are exposure.groups.<group>.allow; at WEB_FENCE_STACK it is ui.allowed_cidrs.
+WEB_GROUP_STACK = "2.2.1-rc.7"
+WEB_FENCE_KEY = ("ui", "allowed_cidrs")
+# The groups an empty allow list closes, and what each serves. A closed admin group fails the render instead (validateUi).
+WEB_GROUPS = {
+    "console": "dfe-ui, HyperDX and the engine's browser routes",
+    "api": "the engine's CLI routes and /openapi.json",
+}
+# The keys the gateway chart's groupFence reads a group's state from.
+WEB_GROUP_KEYS = ("enabled", "allow", "allowPublic")
+INTERNET_FACING_PATH = ("envoyGateway", "service", "internetFacing")
+CLOUD_ANNOTATION = "dfe.hyperi.io/cloud"
+# The gateway's values below the deploy repo's, layered in layer2-edge.yaml's order.
+GATEWAY_CHART_VALUES = REPO_ROOT / "helm" / "edge" / "gateway" / "values.yaml"
+ARGO_VALUES = REPO_ROOT / "argocd" / "values"
+# The clouds layer2-edge.yaml gives argocd/values/edge-onprem.yaml.
+ONPREM_CLOUDS = ("local", "local-dfe", "rancher")
+_CLOUD_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 class UpgradeError(RuntimeError):
@@ -1151,42 +1180,6 @@ def _dfe_stack() -> ModuleType:
     return module
 
 
-_VALUES_KEY = re.compile(r"^(\s*)([A-Za-z_][\w.-]*)\s*:(?:\s+(.*?))?\s*$")
-_FLOW_KEY = re.compile(r"[{,]\s*([A-Za-z_][\w-]*)\s*:")
-
-
-def ingest_group_keys(text: str) -> list[str]:
-    """The keys a values overlay sets under exposure.groups.ingest, in file order.
-
-    An indentation walk rather than a YAML parse, as render_dial.py reads the
-    cloud overlays: this module is stdlib only, and a values file carries lists
-    the restricted reader refuses. It reads block style, and a flow mapping on
-    the `ingest:` line. Any other spelling reads as unset, which refuses.
-
-    Args:
-        text: The overlay's body.
-
-    Returns:
-        Each key set under the group; empty when the group is absent, null or `{}`.
-    """
-    keys: list[str] = []
-    stack: list[tuple[int, str]] = []
-    for line in text.splitlines():
-        match = _VALUES_KEY.match(line)
-        if not match:
-            continue
-        indent = len(match[1])
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        stack.append((indent, match[2]))
-        path = tuple(key for _, key in stack)
-        if path[:-1] == INGEST_GROUP_PATH:
-            keys.append(path[-1])
-        elif path == INGEST_GROUP_PATH:
-            keys += _FLOW_KEY.findall((match[3] or "").split(" #", 1)[0])
-    return keys
-
-
 def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[bool, str]:
     """The deploy repo states its ingest door when the upgrade crosses INGEST_GROUP_STACK.
 
@@ -1195,8 +1188,10 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
     exposure.groups.ingest, whose cloud default renders no load balancer or
     carries HTTP alone, so a deploy repo that set neither key moves its door on
     upgrade without an error. An explicit block in infra/common.yaml, even
-    `allow: []`, is the operator's decision and passes. A stack name dfe-stack
-    cannot order counts as crossing the cutover, so it refuses rather than passes.
+    `allow: []`, is the operator's decision and passes. The block is read in
+    block style, or as a flow mapping on the `ingest:` line; any other spelling
+    reads as unset, which refuses. A stack name dfe-stack cannot order counts as
+    crossing the cutover, so it refuses rather than passes.
 
     Args:
         deploy: The deploy repo checkout.
@@ -1217,7 +1212,7 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
     if after is not None and after < cutover:
         return True, f"{to_stack} predates {INGEST_GROUP_STACK}, so the receiver's door does not move"
     overlay = deploy / COMMON_OVERLAY
-    keys = ingest_group_keys(overlay.read_text(encoding="utf-8")) if overlay.is_file() else []
+    keys = yaml_subset.keys_under(overlay.read_text(encoding="utf-8"), INGEST_GROUP_PATH) if overlay.is_file() else []
     if keys:
         return True, f"{COMMON_OVERLAY.as_posix()} sets exposure.groups.ingest: {', '.join(keys)}"
     return False, (
@@ -1228,8 +1223,232 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
         f"Under {to_stack} the cloud's own door applies, and door loadbalancer with an empty allow renders no "
         "load balancer at all. Set exposure.groups.ingest.door (loadbalancer, gateway or tunnel) and "
         f"exposure.groups.ingest.allow (the senders' CIDRs) in {COMMON_OVERLAY.as_posix()}. "
-        f"An explicit block, even allow: [], passes. See {INGEST_UPGRADE_DOC}."
+        f"An explicit block, even allow: [], passes. See {FROM_220_DOC}."
     )
+
+
+def read_cloud(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's cloud, which picks the gateway's values files. Raises UpgradeError when unreadable."""
+    return _cluster_secret_annotation(kubeconfig, namespace, CLOUD_ANNOTATION)
+
+
+def _read_layers(root: Path, paths: tuple[Path, ...]) -> list[tuple[str, str]]:
+    """(path under `root`, body) of each values file present, in layering order.
+
+    A missing file is skipped, as the appsets' ignoreMissingValueFiles skips it.
+    """
+    layers: list[tuple[str, str]] = []
+    for path in paths:
+        try:
+            layers.append((path.relative_to(root).as_posix(), path.read_text(encoding="utf-8")))
+        except OSError:
+            continue
+    return layers
+
+
+def gateway_values(cloud: str) -> list[tuple[str, str]]:
+    """(path, body) of this checkout's gateway values files for `cloud`, in layer2-edge.yaml's order.
+
+    The profile file is left out because no profile file sets a key the web
+    check reads, which scripts/tests/test_dfe_ops_upgrade.py holds.
+    """
+    flavour = "onprem" if cloud in ONPREM_CLOUDS else cloud
+    paths = (
+        GATEWAY_CHART_VALUES,
+        ARGO_VALUES / "common.yaml",
+        ARGO_VALUES / f"{cloud}.yaml",
+        ARGO_VALUES / f"edge-{flavour}.yaml",
+    )
+    return _read_layers(REPO_ROOT, paths)
+
+
+def _layered(layers: list[tuple[str, str]], path: tuple[str, ...]) -> tuple[str, str]:
+    """(the scalar the last layer setting `path` gives it, that layer's path); empty strings when none does."""
+    found = ("", "")
+    for name, text in layers:
+        value = yaml_subset.value_at(text, path)
+        if value is not None:
+            found = (value, name)
+    return found
+
+
+def _keys_set(overlays: list[tuple[str, str]], parent: tuple[str, ...], keys: tuple[str, ...]) -> list[str]:
+    """Which of `keys` any overlay sets under `parent`, each once, in file order."""
+    found: list[str] = []
+    for _name, text in overlays:
+        for key in yaml_subset.keys_under(text, parent):
+            if key in keys and key not in found:
+                found.append(key)
+    return found
+
+
+@dataclass(frozen=True, slots=True)
+class WebList:
+    """One allow list a deploy repo states for the web routes.
+
+    Attributes:
+        name: The key an operator sets, such as exposure.groups.console.
+        parent: The mapping the stating keys sit under.
+        keys: The keys whose presence states the list.
+        serves: What answers 403 while the list is empty.
+        group: The exposure group; empty for ui.allowed_cidrs, which covers every web route.
+    """
+
+    name: str
+    parent: tuple[str, ...]
+    keys: tuple[str, ...]
+    serves: str
+    group: str = ""
+
+
+def web_lists(*, grouped: bool) -> list[WebList]:
+    """The web allow lists a target stack reads: one per web group from WEB_GROUP_STACK, else ui.allowed_cidrs."""
+    if not grouped:
+        serves = "dfe-ui, HyperDX and the engine API"
+        return [WebList(".".join(WEB_FENCE_KEY), WEB_FENCE_KEY[:-1], WEB_FENCE_KEY[-1:], serves)]
+    return [
+        WebList(f"exposure.groups.{group}", ("exposure", "groups", group), WEB_GROUP_KEYS, serves, group)
+        for group, serves in WEB_GROUPS.items()
+    ]
+
+
+def _cloud_from_secret(kubeconfig: str | None, namespace: str) -> tuple[str, str]:
+    """(the cluster secret's cloud, why there is none when it is empty)."""
+    try:
+        cloud = read_cloud(kubeconfig, namespace)
+    except UpgradeError as err:
+        return "", str(err)
+    return cloud, f"secret/{ARGO_CLUSTER}'s {CLOUD_ANNOTATION} is empty"
+
+
+def _group_closes(layers: list[tuple[str, str]], parent: tuple[str, ...]) -> bool:
+    """Whether the layered values leave a group enabled without allowPublic, which an empty allow list closes."""
+    enabled = _layered(layers, (*parent, "enabled"))[0].lower() == "true"
+    open_to_all = _layered(layers, (*parent, "allowPublic"))[0].lower() == "true"
+    return enabled and not open_to_all
+
+
+def check_web_plane(
+    deploy: Path,
+    from_stack: str,
+    to_stack: str,
+    *,
+    cloud: str | None,
+    kubeconfig: str | None,
+    argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
+) -> tuple[bool, str]:
+    """The deploy repo states who reaches the web routes when the upgrade crosses WEB_FENCE_STACK.
+
+    Below that stack the gateway fenced no web route by address. From it an
+    internet-facing gateway refuses every address on a web route whose allow
+    list is empty, so a deploy repo that set nothing loses dfe-ui, HyperDX and
+    the engine API to 403 on upgrade without an error. From WEB_GROUP_STACK the
+    list is per exposure group, and a console or api group whose enabled, allow
+    or allowPublic the deploy repo's gateway overlays set is the operator's
+    decision and passes, `allow: []` included. Below it the list is
+    ui.allowed_cidrs. A gateway that is not internet-facing for the
+    deployment's cloud fences nothing and passes. The cloud is `cloud`, else the
+    cluster secret's, read only once a list is unstated. A stack name dfe-stack
+    cannot order counts as crossing the cutover, so it refuses rather than
+    passes.
+
+    Args:
+        deploy: The deploy repo checkout.
+        from_stack: The stack the deployment runs.
+        to_stack: The stack it moves to.
+        cloud: The deployment's cloud, as the cluster secret names it; None reads the secret.
+        kubeconfig: The kubeconfig that secret is read through.
+        argocd_namespace: The namespace holding that secret.
+
+    Returns:
+        (ok, the evidence line).
+    """
+    semver_key = _dfe_stack().semver_key
+    fence = semver_key(WEB_FENCE_STACK)
+    before, after = semver_key(from_stack), semver_key(to_stack)
+    if before is not None and before >= fence:
+        return True, f"{from_stack} is at or after {WEB_FENCE_STACK}: the web routes are already fenced"
+    if after is not None and after < fence:
+        return True, f"{to_stack} predates {WEB_FENCE_STACK}, so the web routes stay unfenced"
+
+    overlays = _read_layers(deploy, (deploy / COMMON_OVERLAY, deploy / GATEWAY_OVERLAY))
+    stated: list[str] = []
+    unstated: list[WebList] = []
+    for web in web_lists(grouped=after is None or after >= semver_key(WEB_GROUP_STACK)):
+        found = _keys_set(overlays, web.parent, web.keys)
+        if found:
+            stated.append(f"{web.name}: {', '.join(found)}" if web.group else web.name)
+        else:
+            unstated.append(web)
+    if not unstated:
+        return True, f"the deploy repo sets {'; '.join(stated)}"
+
+    crossing = (
+        f"{from_stack} predates {WEB_FENCE_STACK}, from which an internet-facing gateway answers 403 on every "
+        "web route whose allow list is empty"
+    )
+    unset = f"neither {COMMON_OVERLAY.as_posix()} nor {GATEWAY_OVERLAY.as_posix()} sets"
+    if not cloud:
+        cloud, why = _cloud_from_secret(kubeconfig, argocd_namespace)
+        if not cloud:
+            listed = [web.name for web in unstated]
+            return False, (
+                f"{crossing}, and {unset} {' or '.join(listed)}. Whether this gateway is internet-facing depends on "
+                f"the deployment's cloud, and {why}. Pass --cloud, or set {' and '.join(listed)} in "
+                f"{COMMON_OVERLAY.as_posix()}. See {FROM_220_DOC}."
+            )
+    if not _CLOUD_NAME.match(cloud):
+        return False, f"the cloud {cloud!r} is not a cloud name, so no argocd/values file can be read for it"
+
+    layers = gateway_values(cloud) + overlays
+    facing, facing_from = _layered(layers, INTERNET_FACING_PATH)
+    if facing.lower() != "true":
+        return True, f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing"
+    closed = [web for web in unstated if not web.group or _group_closes(layers, web.parent)]
+    if not closed:
+        names = " and ".join(web.name for web in unstated)
+        return True, f"the gateway is internet-facing on {cloud}, and its values leave {names} off or open"
+
+    served = "; ".join(f"{web.serves} ({web.name})" for web in closed)
+    if closed[0].group:
+        remedy = (
+            "Set exposure.groups.<group>.allow to the CIDRs that may reach them, for "
+            f"{' and '.join(web.group for web in closed)}, in {COMMON_OVERLAY.as_posix()}. Any explicit "
+            "enabled, allow or allowPublic passes, allow: [] included."
+        )
+    else:
+        remedy = (
+            f"Set ui.allowed_cidrs to the CIDRs that may reach them in {COMMON_OVERLAY.as_posix()}; from "
+            f"{WEB_GROUP_STACK} the list is exposure.groups.<group>.allow. Any explicit value passes, \"\" included."
+        )
+    return False, (
+        f"{crossing}. The gateway is internet-facing on {cloud} ({facing_from} sets "
+        f"{'.'.join(INTERNET_FACING_PATH)}: true), and {unset} {' or '.join(web.name for web in closed)}. "
+        f"Under {from_stack} the gateway fenced no web route by address. Under {to_stack} these answer 403 to "
+        f"every address from the first sync: {served}. {remedy} "
+        f"A /0 admits every address, as {from_stack} did. See {FROM_220_DOC}."
+    )
+
+
+def exposure_checks(
+    deploy: Path,
+    from_stack: str,
+    to_stack: str,
+    *,
+    cloud: str | None,
+    kubeconfig: str | None,
+    argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
+) -> list[tuple[str, bool, str]]:
+    """The preflight checks a plan runs too: the doors an upgrade can move or close without an error."""
+    return [
+        ("ingest door (exposure.groups.ingest)", *check_ingest_door(deploy, from_stack, to_stack)),
+        (
+            "web plane (exposure.groups console and api)",
+            *check_web_plane(
+                deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
+            ),
+        ),
+    ]
 
 
 def run_preflight(
@@ -1239,6 +1458,7 @@ def run_preflight(
     from_stack: str,
     to_stack: str,
     kubeconfig: str | None,
+    cloud: str | None = None,
     argocd_namespace: str = DEFAULT_ARGOCD_NAMESPACE,
     clickhouse_namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
     clickhouse_selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
@@ -1251,7 +1471,9 @@ def run_preflight(
     (cmd_upgrade_preflight, or apply before it acts) owns presentation."""
     checks: list[tuple[str, bool, str]] = []
     checks.append(("deploy repo clean", *check_deploy_clean(deploy)))
-    checks.append(("ingest door (exposure.groups.ingest)", *check_ingest_door(deploy, from_stack, to_stack)))
+    checks += exposure_checks(
+        deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
+    )
     checks.append(("cluster reachable", *check_cluster_reachable(kubeconfig)))
     checks.append(("argo apps synced and healthy", *check_argo_apps(kubeconfig, argocd_namespace)))
     checks.append(("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig)))
@@ -1270,10 +1492,14 @@ def run_preflight(
     return checks
 
 
+def _check_line(name: str, ok: bool, detail: str) -> str:
+    return f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}"
+
+
 def _print_checks(checks: list[tuple[str, bool, str]]) -> int:
     failed = 0
     for name, ok, detail in checks:
-        print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}")
+        print(_check_line(name, ok, detail))
         if not ok:
             failed += 1
     return failed
@@ -2034,6 +2260,14 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     if not compat_ok:
         blocked = True
 
+    exposure = exposure_checks(
+        deploy, from_name, to_name, cloud=args.cloud, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+    )
+    lines = "\n".join(_check_line(*check) for check in exposure)
+    sections.append(f"## exposure checks\n\n{lines}\n")
+    if not all(ok for _name, ok, _detail in exposure):
+        blocked = True
+
     if args.dial:
         previous = deploy / "sizing" / "resolved.yaml"
         sizing_ok, sizing_detail, sizing_blocked = check_locked_sizing(
@@ -2053,7 +2287,7 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     print(text)
     print(f"plan written to {out_path}", file=sys.stderr)
     if blocked:
-        print("dfe-ops upgrade plan: BLOCKED -- see compat-check / sizing sections above", file=sys.stderr)
+        print("dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / sizing sections above", file=sys.stderr)
         return EXIT_BLOCKED
     return EXIT_OK
 
@@ -2081,6 +2315,7 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
         from_stack=from_name,
         to_stack=to_name,
         kubeconfig=args.kubeconfig,
+        cloud=args.cloud,
         argocd_namespace=args.argocd_namespace,
         clickhouse_namespace=args.clickhouse_namespace,
         clickhouse_selector=args.clickhouse_selector,
@@ -2231,6 +2466,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             from_stack=from_name,
             to_stack=to_name,
             kubeconfig=args.kubeconfig,
+            cloud=args.cloud,
             argocd_namespace=args.argocd_namespace,
             clickhouse_namespace=args.clickhouse_namespace,
             clickhouse_selector=args.clickhouse_selector,
@@ -2720,6 +2956,14 @@ def _add_deploy_target_args(parser: argparse.ArgumentParser, *, to_required: boo
     )
 
 
+def _add_cloud_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cloud", default=None, metavar="<cloud>",
+        help=f"the deployment's cloud (aws, gcp, azure, local, ...), which decides whether its gateway is "
+        f"internet-facing (default: the cluster secret's {CLOUD_ANNOTATION}, read only when the web check needs it)",
+    )
+
+
 def _add_sizing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dial", default=None, help="deployment.yaml dial to re-resolve sizing against (default: skip the check)"
@@ -2761,9 +3005,11 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     )
     _add_deploy_target_args(plan)
     _add_sizing_args(plan)
+    _add_cloud_arg(plan)
     plan.add_argument(
         "--kubeconfig", default=None,
-        help="kubeconfig for the target cluster, read only when the deploy repo carries no pins.yaml",
+        help="kubeconfig for the target cluster, read only when the deploy repo carries no pins.yaml, "
+        "or for the cloud when --cloud is not given",
     )
     plan.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
     plan.add_argument(
@@ -2780,6 +3026,7 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     )
     _add_deploy_target_args(preflight)
     _add_preflight_args(preflight)
+    _add_cloud_arg(preflight)
     preflight.set_defaults(func=cmd_upgrade_preflight)
 
     apply_ = verbs.add_parser(
@@ -2790,6 +3037,7 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     _add_deploy_target_args(apply_)
     _add_sizing_args(apply_)
     _add_preflight_args(apply_)
+    _add_cloud_arg(apply_)
     apply_.add_argument("--yes", action="store_true", help="do not ask for confirmation between stages")
     apply_.add_argument("--push", action="store_true", help="git push after each stage's commit")
     apply_.add_argument(

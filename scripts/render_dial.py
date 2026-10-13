@@ -50,7 +50,7 @@ import sys
 from pathlib import Path
 
 import private_file
-from yaml_subset import YamlSubsetError, at, split_list
+from yaml_subset import YamlSubsetError, at, split_list, value_at
 from yaml_subset import parse as _parse_yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -274,27 +274,15 @@ _INGEST_RETIRED: dict[tuple[str, ...], str] = {
 
 
 def _values_ingest_door(cloud: str) -> str | None:
-    """exposure.groups.ingest.door as argocd/values/<cloud>.yaml sets it, else common.yaml.
-
-    A small indentation walk rather than a YAML parse, because this renderer is
-    stdlib only and those files carry lists the restricted reader refuses.
-    """
+    """exposure.groups.ingest.door as argocd/values/<cloud>.yaml sets it, else common.yaml."""
     for name in ([f"{cloud}.yaml"] if cloud else []) + ["common.yaml"]:
         try:
             text = (CLOUD_VALUES / name).read_text(encoding="utf-8")
         except OSError:
             continue
-        stack: list[tuple[int, str]] = []
-        for line in text.splitlines():
-            match = re.match(r"^(\s*)([A-Za-z][\w-]*):\s*([^#]*?)\s*(#.*)?$", line)
-            if not match:
-                continue
-            indent = len(match.group(1))
-            while stack and stack[-1][0] >= indent:
-                stack.pop()
-            stack.append((indent, match.group(2)))
-            if tuple(key for _, key in stack) == INGEST_DOOR_PATH and match.group(3):
-                return match.group(3)
+        door = value_at(text, INGEST_DOOR_PATH)
+        if door:
+            return door
     return None
 
 
