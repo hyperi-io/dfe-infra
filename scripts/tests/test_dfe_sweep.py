@@ -727,6 +727,25 @@ def test_each_workflows_own_newest_run_wins() -> None:
     assert [f.id for f in _by_tool(_collect(api))["ci_runs"]] == ["100"]
 
 
+def test_a_dependabot_update_run_is_never_read_but_a_code_scanning_run_is() -> None:
+    failed = {"conclusion": "failure", "head_sha": "c" * 40, "created_at": "2026-03-01T00:00:00Z"}
+    api, calls = _answers({
+        "repos/example-org/dfe-engine/actions/workflows": [
+            {"id": 1, "path": ".github/workflows/ci.yml", "state": "active"},
+            {"id": 7, "path": "dynamic/dependabot/dependabot-updates", "state": "active"},
+            {"id": 8, "path": "dynamic/github-code-scanning/codeql", "state": "active"},
+        ],
+        "repos/example-org/dfe-engine/actions/workflows/7/runs": AssertionError("dependabot runs read"),
+        "repos/example-org/dfe-engine/actions/workflows/8/runs": [
+            {**failed, "id": 108, "name": "CodeQL", "path": "dynamic/github-code-scanning/codeql",
+             "workflow_id": 8},
+        ],
+    })
+    findings = _by_tool(_collect(api))["ci_runs"]
+    assert sorted(f.id for f in findings) == ["100", "108"]
+    assert not any("/workflows/7/" in endpoint for endpoint, _, _ in calls)
+
+
 def test_a_workflow_whose_runs_cannot_be_read_is_named_and_the_rest_still_count() -> None:
     api, _ = _answers({
         "repos/example-org/dfe-engine/actions/workflows/2/runs": sweep.GhError(
