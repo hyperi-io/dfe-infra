@@ -24,6 +24,10 @@ spec:
       # definition for both workloads in this chart.
       {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.fullname" . }}
+      {{- with .Values.daemonset.priorityClass.name }}
+      # Outranks the app pods, so a full node evicts one for it (values.yaml, daemonset.priorityClass).
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
       {{- include "dfe-common.nodeSelector" . | nindent 6 }}
       # Every taint, rather than the deployment's own toleration list: this is a

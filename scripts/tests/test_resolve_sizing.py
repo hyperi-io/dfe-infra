@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
@@ -1793,6 +1794,22 @@ def test_karpenter_root_volume_carries_raid0_only_where_the_shape_asks_for_it() 
     assert pool["nodeClass"]["rootVolume"]["sizeGi"] == 40
 
 
+def test_karpenter_a_pool_demand_above_the_sized_fleet_raises_both_limits() -> None:
+    """Karpenter stops buying at whichever limit binds first, so a cpu ceiling
+    raised without its memory ceiling is still capped at the old node count."""
+    choice = _choice(
+        use_case="general", instance_type="m9g.xlarge", vcpu=4, memory_gib=16.0, count=1
+    )
+    sized_only = resolve_sizing.build_karpenter_pools({"general": choice}, {})["general"]
+    assert sized_only["limits"] == {"cpu": "8", "memory": "32Gi"}
+    # 11.2 vCPU is three 4-vCPU nodes, and the pool may hold twice that.
+    demanded = resolve_sizing.build_karpenter_pools({"general": choice}, {}, {"general": 11.2})
+    assert demanded["general"]["limits"] == {"cpu": "24", "memory": "96Gi"}
+    # A demand the sized fleet already covers changes nothing.
+    small = resolve_sizing.build_karpenter_pools({"general": choice}, {}, {"general": 2.0})
+    assert small["general"]["limits"] == sized_only["limits"]
+
+
 # ---------------------------------------------------------------------------
 # ci-burst -- joins every populated resolve, Karpenter-only
 # ---------------------------------------------------------------------------
@@ -1946,6 +1963,128 @@ def test_the_resolved_fragment_renders_against_its_chart(
     fragment = aws_golden_outputs[case] / "sizing" / "scale.values.yaml"
     result = _helm_template(chart, CHART_RENDER_BASES[chart], fragment)
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# The shared pools -- room for the default app set, and no node churn while a
+# deploy is still converging
+# ---------------------------------------------------------------------------
+
+PROFILE_SCALE = REPO_ROOT / "argocd" / "values" / "profile-scale.yaml"
+READINESS_GATE = REPO_ROOT / "bootstrap" / "smoke-test-readiness.sh"
+# The pools nothing taints, so every DFE service can land on them.
+SHARED_ELASTIC_POOLS = ("eks-system", "general")
+
+
+def _profile() -> dict:
+    return yaml.safe_load(PROFILE_SCALE.read_text(encoding="utf-8"))
+
+
+def _cpu(quantity: object) -> float:
+    """A Kubernetes CPU quantity (`500m`, `2`) in vCPU."""
+    text = str(quantity)
+    return int(text[:-1]) / 1000 if text.endswith("m") else float(text)
+
+
+def _scale_app_set_vcpu() -> float:
+    """What the scale tier's default app set requests at its replica floor, off the profile."""
+    profile = _profile()
+    replicas = max(profile["replicaCount"], profile["keda"]["minReplicaCount"])
+    request = _cpu(profile["resources"]["requests"]["cpu"])
+    return len(profile["deployRepo"]["seedApps"]) * replicas * request
+
+
+def _seconds(duration: str) -> int:
+    """A Karpenter duration (`60s`, `5m`, `1h30m`) in seconds."""
+    units = {"s": 1, "m": 60, "h": 3600}
+    return sum(int(n) * units[u] for n, u in re.findall(r"(\d+)([smh])", duration))
+
+
+def _readiness_timeout_s() -> int:
+    """The deploy readiness gate's own default bound, read off the gate."""
+    text = READINESS_GATE.read_text(encoding="utf-8")
+    match = re.search(r'TIMEOUT="\$\{READINESS_TIMEOUT:-(\d+)\}"', text)
+    assert match, "bootstrap/smoke-test-readiness.sh no longer states its READINESS_TIMEOUT default"
+    return int(match[1])
+
+
+def _pools(out: Path) -> dict:
+    return json.loads((out / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+
+
+def test_the_app_set_figures_match_the_scale_profile() -> None:
+    """The resolver carries the profile's numbers, so a profile edit has to move them too."""
+    profile = _profile()
+    defaults = resolve_sizing.CHART_DEFAULTS
+    assert defaults["app_deployments"][0] == len(profile["deployRepo"]["seedApps"])
+    # Engine and hyperdx run replicaCount, the KEDA-scaled apps their floor.
+    assert defaults["app_replicas"][0] == profile["replicaCount"]
+    assert defaults["app_replicas"][0] == profile["keda"]["minReplicaCount"]
+    assert defaults["app_vcpu_request"][0] == _cpu(profile["resources"]["requests"]["cpu"])
+
+
+def test_the_general_pool_holds_the_default_app_set_twice_over(tmp_path: Path) -> None:
+    """At no estimate the pool stopped at 8 vCPU, which the eight default apps
+    at two 500m replicas fill on their own, so the rest overflowed onto pools
+    built for other work and were churned off them."""
+    _run(_dial(tmp_path, estimate=None), tmp_path)
+    limits = _pools(tmp_path)["general"]["limits"]
+    floor = _scale_app_set_vcpu()
+    assert int(limits["cpu"]) >= 2 * floor, (limits, floor)
+
+
+def test_the_general_memory_limit_follows_its_cpu_limit(tmp_path: Path, catalogue) -> None:
+    _run(_dial(tmp_path, estimate=None), tmp_path)
+    limits = _pools(tmp_path)["general"]["limits"]
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    shape = catalogue.types[doc["resolved_shapes"]["general"]["instance_types"][0]]
+    nodes = int(limits["cpu"]) / shape.vcpu
+    assert limits["memory"] == f"{round(shape.memory_gib * nodes)}Gi", (limits, shape.name)
+
+
+@pytest.mark.parametrize("focus", ["balanced", "performance"])
+def test_the_focus_dial_moves_the_general_limit(tmp_path: Path, focus: str) -> None:
+    """More headroom asked of the deployment is more headroom on the pool its services run on."""
+    economy, other = tmp_path / "economy", tmp_path / focus
+    economy.mkdir()
+    other.mkdir()
+    _run(_dial(economy, focus="economy", estimate=None), economy)
+    _run(_dial(other, focus=focus, estimate=None), other)
+    assert int(_pools(other)["general"]["limits"]["cpu"]) > int(
+        _pools(economy)["general"]["limits"]["cpu"]
+    )
+
+
+def test_shared_pools_hold_still_through_a_deploys_readiness_window(tmp_path: Path) -> None:
+    """consolidateAfter restarts on every pod bind or removal, so a node the
+    deploy filled is replaceable that long after its last pod landed. Inside
+    the readiness bound, that replacement evicts pods the gate is waiting on."""
+    _run(_dial(tmp_path), tmp_path)
+    pools = _pools(tmp_path)
+    bound = _readiness_timeout_s()
+    for name in SHARED_ELASTIC_POOLS:
+        after = pools[name]["consolidation"]["after"]
+        assert _seconds(after) > bound, (name, after, bound)
+
+
+def test_the_general_nodepool_renders_its_sized_limit_and_consolidation_delay(
+    aws_golden_outputs: dict[str, Path],
+) -> None:
+    """The two halves meet here: what the resolver sized is what the NodePool carries."""
+    if HELM_BIN is None:
+        pytest.skip("helm is not on PATH")
+    out = aws_golden_outputs[_case_name("aws", "economy", None)]
+    fragment = out / "sizing" / "scale.values.yaml"
+    result = _helm_template("karpenter-pools", CHART_RENDER_BASES["karpenter-pools"], fragment)
+    assert result.returncode == 0, result.stderr
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+    nodepool = next(
+        d for d in docs if d["kind"] == "NodePool" and d["metadata"]["name"] == "general"
+    )
+    assert nodepool["spec"]["limits"] == _pools(out)["general"]["limits"]
+    assert int(nodepool["spec"]["limits"]["cpu"]) >= 2 * _scale_app_set_vcpu()
+    after = nodepool["spec"]["disruption"]["consolidateAfter"]
+    assert _seconds(after) > _readiness_timeout_s(), after
 
 
 # ---------------------------------------------------------------------------
