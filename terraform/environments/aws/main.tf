@@ -125,6 +125,7 @@ module "cluster" {
   name               = var.name
   env                = var.env
   kubernetes_version = var.kubernetes_version
+  addon_versions     = var.eks_addon_versions
   node_pools         = var.node_pools
   resolved_shapes    = var.resolved_shapes
   network            = var.network

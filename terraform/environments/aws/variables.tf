@@ -45,6 +45,12 @@ variable "kubernetes_version" {
   type        = string
 }
 
+variable "eks_addon_versions" {
+  description = "The EKS add-on versions, keyed by add-on name. Null (the default) takes the cluster module's pins, which are for the Kubernetes minor versions.yaml's eks-addons name. A kubernetes_version on any other minor sets all five, and the plan refuses a kube-proxy built for another minor."
+  type        = map(string)
+  default     = null
+}
+
 variable "node_pools" {
   description = "Managed node groups, keyed by pool name. shape_ref indexes resolved_shapes; an instance type is never written here."
   type = map(object({

@@ -53,6 +53,25 @@ variable "kubernetes_version" {
   }
 }
 
+variable "addon_versions" {
+  description = "The EKS add-on versions, keyed by add-on name, one for every add-on eks.tf installs. Each is built for one Kubernetes minor, so the default is the set for the minor versions.yaml's eks-addons were chosen for, and check_versions_drift.py holds it to them. A cluster on another minor sets all five to what `aws eks describe-addon-versions --kubernetes-version <minor>` lists, and the plan refuses a kube-proxy built for any minor but kubernetes_version. Null takes the default."
+  type        = map(string)
+  nullable    = false
+
+  default = {
+    "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+    "coredns"                = "v1.14.7-eksbuild.11"
+    "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+    "kube-proxy"             = "v1.36.0-eksbuild.45"
+    "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  validation {
+    condition     = alltrue([for v in values(var.addon_versions) : can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$", v))])
+    error_message = "Every addon_versions value must be an EKS add-on version such as v1.36.0-eksbuild.45, never a bare upstream version or latest."
+  }
+}
+
 variable "node_pools" {
   description = "Managed node groups, keyed by pool name. shape_ref indexes resolved_shapes -- an instance type is never written here."
   type = map(object({

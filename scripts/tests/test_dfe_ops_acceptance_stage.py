@@ -132,12 +132,14 @@ def test_a_failed_acceptance_stage_skips_the_rest_and_still_destroys(monkeypatch
         monkeypatch, "--e2e", "--ui-repo", "/nonexistent/dfe-ui", "--acceptance-suite", "source",
         fail="acceptance",
     )
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "acceptance", "teardown"]
+    assert [word for word, _ in ran] == [
+        "stack-deploy", "verify", "acceptance", "failure-evidence", "teardown"
+    ]
 
 
 def test_a_failed_smoke_stage_runs_no_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
     ran = _cycle(monkeypatch, "--acceptance-suite", "source", fail="verify")
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "teardown"]
+    assert [word for word, _ in ran] == ["stack-deploy", "verify", "failure-evidence", "teardown"]
 
 
 def test_a_failed_acceptance_stage_fails_the_cycle(monkeypatch: pytest.MonkeyPatch) -> None:

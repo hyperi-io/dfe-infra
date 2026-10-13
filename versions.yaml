@@ -4168,6 +4168,19 @@ stacks:
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
 
+    # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, mirrored into its
+    # addon_versions default. Each is built for one Kubernetes minor, and kube-proxy's version IS
+    # that minor: the module refuses a plan whose kube-proxy minor is not kubernetes_version, and
+    # scripts/tests/test_eks_addon_pins.py holds it to the minor deployment.example.yaml runs.
+    # These are what EKS resolved for 1.36 on 2026-10-13. EKS publishes the build suffix only
+    # through `aws eks describe-addon-versions --kubernetes-version <minor>`.
+    eks-addons:
+      aws-ebs-csi-driver: "v1.66.0-eksbuild.1"     # upstream v1.66.0, 2026-09-10.
+      coredns: "v1.14.7-eksbuild.11"               # upstream v1.14.7, 2026-08-19.
+      eks-pod-identity-agent: "v1.4.0-eksbuild.3"  # AWS's own numbering, which no upstream tag carries.
+      kube-proxy: "v1.36.0-eksbuild.45"            # Kubernetes v1.36.0, 2026-04-22.
+      vpc-cni: "v1.23.2-eksbuild.1"                # upstream v1.23.2, 2026-09-30.
+
     stack:
       # The release an environment upgrades to this one from.
       previous: "2.2.1-rc.7"

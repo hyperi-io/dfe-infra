@@ -107,7 +107,8 @@ def _failing_conditions(item: dict, wanted: Iterable[str] | None = None) -> list
     return lines
 
 
-def _pod_ready(pod: dict) -> bool:
+def pod_ready(pod: dict) -> bool:
+    """Whether a pod is Running with every container ready."""
     status = _status(pod)
     containers = status.get("containerStatuses") or []
     return (
@@ -164,7 +165,7 @@ def pod_lines(pods: list[dict], globs: Iterable[str]) -> list[str]:
     for pod in pods:
         meta, status, spec = _meta(pod), _status(pod), pod.get("spec") or {}
         namespace = meta.get("namespace") or ""
-        if not judged(namespace, globs) or status.get("phase") == "Succeeded" or _pod_ready(pod):
+        if not judged(namespace, globs) or status.get("phase") == "Succeeded" or pod_ready(pod):
             continue
         lines.append(
             f"pod {namespace}/{meta.get('name')} phase={status.get('phase')} "
@@ -419,7 +420,8 @@ def application_lines(apps: list[dict]) -> list[str]:
 # --- reading the cluster ----------------------------------------------------------
 
 
-def _kubectl_prefix(args: argparse.Namespace) -> list[str]:
+def kubectl_prefix(args: argparse.Namespace) -> list[str]:
+    """The `--kubeconfig` and `--context` flags `args` names, ahead of every kubectl verb."""
     prefix = []
     if args.kubeconfig:
         prefix += ["--kubeconfig", args.kubeconfig]
@@ -506,7 +508,7 @@ def _karpenter(prefix: list[str]) -> list[str]:
 
 def report(args: argparse.Namespace) -> list[str]:
     """Every section, read from the cluster `args` names."""
-    prefix = _kubectl_prefix(args)
+    prefix = kubectl_prefix(args)
     globs = args.namespaces.split()
     pods = read(prefix, ["pods", "-A"])
     events = read(prefix, ["events", "-A"])
