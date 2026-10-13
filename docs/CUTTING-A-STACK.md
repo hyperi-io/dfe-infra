@@ -44,6 +44,7 @@ overriding a policy gate.
 | `--from` | stack to clone the shape from (default `current`) |
 | `--maturity` | alpha, beta, rc or release (default: inherit) |
 | `--apps` | move only these; the rest hold at their `--from` pins |
+| `--replace-withdrawn` | re-cut a withdrawn version under the same name (see below) |
 | `--dry-run` | print the plan, write nothing |
 
 Output names every app as MOVED or held, with the reason, so the cut is
@@ -51,7 +52,8 @@ reviewable as a diff rather than trusted.
 
 ## What it refuses
 
-- A version that already exists.
+- A version that already exists, unless it is withdrawn and `--replace-withdrawn` is passed.
+- `--replace-withdrawn` on a version that is missing or not withdrawn, or with `--from` naming the withdrawn stack itself.
 - An app whose `apps.<name>` pin is missing from the source block.
 - Writing anything when the `current:` pointer cannot be moved, so a cut is
   never half-written.
@@ -60,6 +62,24 @@ An app with no published release is HELD, not fatal -- the alpha transforms have
 never shipped to GHCR and a cut must not stall on them. A registry failure that
 is not a missing package DOES stop the cut, so auth or network trouble never
 reads as "unpublished".
+
+## Withdrawn stacks
+
+A `support: withdrawn` stack was pulled after its tag was cut. Environments may still run it, so it stays an upgrade source, but nothing upgrades onto it.
+
+A cut FROM a withdrawn stack is `support: standard`. The comments on its `maturity:` and `support:` lines are dropped, because they explain the withdrawal, not the new candidate. The cut prints `support withdrawn -> standard` when it does this.
+
+Cutting the withdrawn version again under the same name needs `--replace-withdrawn`:
+
+    python3 scripts/dfe-stack cut 2.3.0 --from 2.3.0-rc.4 --maturity release --replace-withdrawn --dry-run
+
+Before the normal cut it:
+
+- splices the withdrawn block out of `versions.yaml`, with any comment directly above it;
+- rewrites every `stack.previous` that names it to the withdrawn stack's own predecessors. Otherwise the candidate cut from the withdrawn block and the new release each name the other as predecessor, a cycle in the upgrade graph;
+- removes the withdrawn stack's constraints file, so the new one is cloned from `--from` rather than kept.
+
+`--dry-run` prints each of these and writes nothing. The cut never moves `latest:` -- the release workflow does that on a release tag -- and never touches the withdrawn stack's git tag. That workflow publishes nothing for a version whose tag already exists, so the withdrawn tag has to be deleted before the re-cut reaches `main`.
 
 ## After the cut
 
