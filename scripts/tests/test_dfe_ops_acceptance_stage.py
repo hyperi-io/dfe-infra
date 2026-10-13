@@ -201,6 +201,7 @@ def _acceptance(
 
     monkeypatch.setattr(dfeops, "_forward", lambda *args, **_k: forwards.append(args))
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_a, **_k: True)
+    monkeypatch.setattr(dfeops, "_external_datastore", lambda _kube: None)
     monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "_secret_value", lambda *_a, **_k: "")
     monkeypatch.setattr(dfeops, "_pods_of", lambda *_a, **_k: [])

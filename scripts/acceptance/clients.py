@@ -21,8 +21,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 
 
 def tls_context(verify: bool) -> ssl.SSLContext | None:
@@ -127,18 +129,32 @@ RECORD_TEXT = "toString(_json)"
 
 @dataclass
 class Datastore:
-    """ClickHouse over its HTTP interface."""
+    """ClickHouse over its HTTP interface, or over HTTPS verified against the system roots."""
 
     host: str
     port: int
     user: str
     password: str = field(default="", repr=False)
     database: str = "dfe"
+    secure: bool = False
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> Self:
+        """The datastore `dfe-ops acceptance` names in a suite's DFE_E2E_CH_* variables."""
+        return cls(
+            host=env.get("DFE_E2E_CH_HOST", ""),
+            port=int(env.get("DFE_E2E_CH_PORT", "8123")),
+            user=env.get("DFE_E2E_CH_USER", "default"),
+            password=env.get("DFE_E2E_CH_PASSWORD", ""),
+            database=env.get("DFE_E2E_CH_DB", "dfe"),
+            secure=env.get("DFE_E2E_CH_SECURE", "") == "true",
+        )
 
     def query(self, sql: str) -> list[list]:
         params = urllib.parse.urlencode({"database": self.database, "default_format": "JSONCompact"})
+        scheme = "https" if self.secure else "http"
         request = urllib.request.Request(
-            f"http://{self.host}:{self.port}/?{params}",
+            f"{scheme}://{self.host}:{self.port}/?{params}",
             data=sql.encode(),
             method="POST",
             headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
