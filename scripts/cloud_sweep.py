@@ -21,8 +21,8 @@ about. Route 2 is a dedicated lister per resource class the tagging API
 reaches unreliably or not at all -- because a controller created it without
 copying the stack's tags, or because the service does not support tags at
 all (target groups, security groups, ENIs, subnets, route tables): EKS and
-MSK clusters, EC2 instances, EBS volumes and snapshots, NAT gateways and
-EIPs, load balancers (v2) and target groups, non-default security groups,
+MSK clusters, EC2 instances, EBS volumes and snapshots, launch templates, NAT
+gateways and EIPs, load balancers (v2) and target groups, non-default security groups,
 ENIs, non-default VPCs and their subnets/route tables/internet gateways/
 endpoints, Route 53 hosted zones, CloudWatch log groups, Secrets Manager
 secrets (including ones already scheduled for deletion), KMS aliases, and S3
@@ -61,9 +61,9 @@ deleting anything, unless --yes is given to skip that prompt (for CI).
 
 --include-untagged is DANGEROUS with --delete. It drops the one filter that
 keeps this script's own deletions to what the tag-filter names, so --delete
---include-untagged removes EVERY resource the 21 listers found in --region,
-tagged or not, in whatever account --account named -- EC2 instances, EKS and
-MSK clusters, NAT gateways, security groups, non-default VPCs and their
+--include-untagged removes EVERY resource the 22 listers found in --region,
+tagged or not, in whatever account --account named -- EC2 instances, launch
+templates, EKS and MSK clusters, NAT gateways, security groups, non-default VPCs and their
 subnets, Route 53 zones, log groups, Secrets Manager secrets (with
 --force-delete-without-recovery), KMS aliases and S3 buckets (with
 --exclude-bucket the only exemption). Reach for it only when the sweep is
@@ -378,6 +378,20 @@ def list_ebs_snapshots(region: str, tag_filter: dict[str, str]) -> list[Resource
         tag_filter,
         created_field="StartTime",
         kind="ebs-snapshot",
+    )
+
+
+def list_launch_templates(region: str, tag_filter: dict[str, str]) -> list[Resource]:
+    """Every launch template, including the ones Karpenter leaves when its cluster goes first."""
+    return _list_ec2(
+        ["describe-launch-templates"],
+        "LaunchTemplates",
+        "LaunchTemplateId",
+        region,
+        tag_filter,
+        name_field="LaunchTemplateName",
+        created_field="CreateTime",
+        kind="launch-template",
     )
 
 
@@ -711,6 +725,7 @@ PER_SERVICE_COLLECTORS: list[Callable[[str, dict], list[Resource]]] = [
     list_ec2_instances,
     list_ebs_volumes,
     list_ebs_snapshots,
+    list_launch_templates,
     list_nat_gateways,
     list_eips,
     list_load_balancers,
@@ -1180,6 +1195,10 @@ def _delete_ebs_snapshot(r: Resource, region: str) -> None:
     run_aws(["ec2", "delete-snapshot", "--snapshot-id", r.id], region)
 
 
+def _delete_launch_template(r: Resource, region: str) -> None:
+    run_aws(["ec2", "delete-launch-template", "--launch-template-id", r.id], region)
+
+
 def _zone_apex_record(record: dict, zone_name: str) -> bool:
     """The zone's own SOA and NS sets, which Route 53 refuses to delete and removes with the zone."""
     name = record.get("Name", "").rstrip(".").lower()
@@ -1252,6 +1271,7 @@ DELETE_ORDER: list[str] = [
     # Tier 4: the rest.
     "ebs-volume",
     "ebs-snapshot",
+    "launch-template",
     "route53-zone",
     "log-group",
     "secret",
@@ -1276,6 +1296,7 @@ DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
     "vpc": _delete_vpc,
     "ebs-volume": _delete_ebs_volume,
     "ebs-snapshot": _delete_ebs_snapshot,
+    "launch-template": _delete_launch_template,
     "route53-zone": _delete_route53_zone,
     "log-group": _delete_log_group,
     "secret": _delete_secret,

@@ -118,3 +118,20 @@ jobs:
             exit 1
           fi
           echo "validated $count environment roots"
+
+      # Each root's tests mock every provider, so they need no credential, and zero
+      # roots with tests fails rather than passing over nothing.
+      - name: Run every environment root's tests
+        run: |
+          set -e
+          count=0
+          while IFS= read -r dir; do
+            echo "==> Testing $dir"
+            tofu -chdir="$dir" test
+            count=$((count + 1))
+          done < <(find terraform/environments -name '*.tftest.hcl' -printf '%h\n' | sed 's:/tests$::' | sort -u)
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::no .tftest.hcl found under terraform/environments -- no root test ran"
+            exit 1
+          fi
+          echo "tested $count environment roots"

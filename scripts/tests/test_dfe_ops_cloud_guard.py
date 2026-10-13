@@ -1128,7 +1128,7 @@ def test_expected_fail_a_sweep_that_cannot_list_fails_the_run(
 
 
 class FakeRegion:
-    """The aws CLI for one region holding secrets and instances, each with its tags.
+    """The aws CLI for one region holding secrets, instances and launch templates, each with its tags.
 
     A forced secret delete leaves the secret listed as scheduled for one more listing,
     as the background purge does, and the tagging API goes on listing everything the
@@ -1138,6 +1138,7 @@ class FakeRegion:
     def __init__(self) -> None:
         self.secrets: dict[str, dict] = {}
         self.instances: dict[str, dict] = {}
+        self.launch_templates: dict[str, dict] = {}
         self.ever_tagged: dict[str, list[dict[str, str]]] = {}
         self.purging: dict[str, int] = {}
         self.calls: list[list[str]] = []
@@ -1155,6 +1156,23 @@ class FakeRegion:
         self.instances[instance_id] = {"InstanceId": instance_id, "State": {"Name": "running"}, "Tags": tag_list}
         self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{instance_id}"] = tag_list
         return instance_id
+
+    def add_launch_template(self, template_id: str, name: str, tags: dict[str, str]) -> str:
+        tag_list = [{"Key": k, "Value": v} for k, v in tags.items()]
+        self.launch_templates[template_id] = {"LaunchTemplateId": template_id, "LaunchTemplateName": name, "Tags": tag_list}
+        self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:launch-template/{template_id}"] = tag_list
+        return template_id
+
+    def _describe_launch_templates(self, args: list[str]) -> subprocess.CompletedProcess:
+        if "--launch-template-ids" not in args:
+            return _aws_ok({"LaunchTemplates": list(self.launch_templates.values())})
+        named = args[args.index("--launch-template-ids") + 1]
+        if named not in self.launch_templates:
+            return _aws_fail(
+                "An error occurred (InvalidLaunchTemplateId.NotFound) when calling the DescribeLaunchTemplates "
+                f"operation: {named}"
+            )
+        return _aws_ok({"LaunchTemplates": [self.launch_templates[named]]})
 
     def _list_secrets(self) -> list[dict]:
         for arn in [a for a, left in self.purging.items() if left == 0]:
@@ -1199,6 +1217,13 @@ class FakeRegion:
             named = args[args.index("--instance-ids") + 1] if "--instance-ids" in args else None
             found = [i for i in self.instances.values() if named in (None, i["InstanceId"])]
             return _aws_ok({"Reservations": [{"Instances": found}]})
+        if args[:2] == ["ec2", "describe-launch-templates"]:
+            return self._describe_launch_templates(args)
+        if args[:2] == ["ec2", "delete-launch-template"]:
+            template_id = args[args.index("--launch-template-id") + 1]
+            self.deleted.append(template_id)
+            del self.launch_templates[template_id]
+            return _aws_ok({})
         if args[:2] == ["resourcegroupstaggingapi", "get-resources"]:
             return _aws_ok({"ResourceTagMappingList": self._tagged(args)})
         return _aws_ok({})
@@ -1252,6 +1277,36 @@ def test_after_the_teardown_the_next_preflight_finds_nothing_of_the_run(
     report = guard_mod.run_preflight(_config(root), AwsRegionGuard(), now=NOW, env={})
     assert report.ok, [c.detail for c in report.checks if not c.ok]
     assert sorted(region.deleted) == sorted(pushed)
+
+
+KARPENTER_LT_NAME = "karpenter.k8s.aws/1234567890123456789"
+
+
+def test_a_launch_template_karpenter_left_is_swept_so_the_next_preflight_finds_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, region: FakeRegion
+) -> None:
+    """Karpenter puts the run's tags on its launch templates, and a teardown that removes Karpenter
+    before its EC2NodeClasses finish deleting leaves them behind."""
+    left: list[str] = []
+
+    def karpenter_launches() -> None:
+        tags = {**cloud_run.run_tags("run-1", RUN_EXPIRES_AT), "karpenter.k8s.aws/ec2nodeclass": "general"}
+        left.append(region.add_launch_template("lt-0run1", KARPENTER_LT_NAME, tags))
+
+    assert _cycle(root, monkeypatch, AwsRegionGuard(), FakeRunner(on_run={"cycle": karpenter_launches})) == 0
+    report = guard_mod.run_preflight(_config(root), AwsRegionGuard(), now=NOW, env={})
+    assert report.ok, [c.detail for c in report.checks if not c.ok]
+    assert region.deleted == left
+
+
+def test_refusal_c_names_an_expired_launch_template_by_the_class_its_sweep_deletes(
+    root: Path, region: FakeRegion
+) -> None:
+    """(c) hands the operator a sweep command, so what it names has to be something that sweep removes."""
+    region.add_launch_template("lt-0prev", KARPENTER_LT_NAME, cloud_run.run_tags("r-prev", int(NOW) - 60))
+    report = _preflight(root, AwsRegionGuard())
+    assert _failed(report) == ["(c) expired run resources"]
+    assert f"launch-template {KARPENTER_LT_NAME}" in _check(report, "(c) expired run resources").detail
 
 
 def test_refusal_d_a_run_secret_only_scheduled_for_deletion_still_holds_its_name(
