@@ -68,6 +68,7 @@ extras:
         mode: ""
         bootstrapServers: ""
         securityProtocol: ""
+        messageMaxBytes: ""
       dlq:
         topic: dfe_receiver_dlq
         mode: kafka_only

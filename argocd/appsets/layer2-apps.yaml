@@ -230,10 +230,36 @@ spec:
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
                 # The message size the broker was built with, whether or not
-                # kafka_mode is set, so the topics dfe-engine creates are not
-                # left at the broker's default. Only dfe-engine reads it.
+                # kafka_mode is set. dfe-extras reads it for dfe-engine's topics
+                # and dfe-receiver's body limit; the block below derives the
+                # limits only an app's own config file or env carries.
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
                 {{- end }}
+              {{- end }}
+              {{- if $kafkaMessageMaxBytes }}
+              {{- if eq .deploy.service "dfe-receiver" "dfe-loader" }}
+              # The producer's own record ceiling, so a record the topic would
+              # refuse is dead-lettered before the send. A config file's map
+              # replaces the app's default overrides whole, so the statistics
+              # interval each default carried is restated.
+              configOverrides:
+                kafka:
+                  librdkafka_overrides:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
+                    statistics.interval.ms: {{ ternary "0" "5000" (eq .deploy.service "dfe-receiver") | quote }}
+              {{- else if eq .deploy.service "dfe-transform-vrl" "dfe-transform-vector" }}
+              # The sink producer's record ceiling, and the size dfe-transform-vector
+              # filters records off Vector's Kafka sink at.
+              configOverrides:
+                sink:
+                  librdkafka_options:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
+              {{- else if eq .deploy.service "dfe-transform-elastic" }}
+              # Its producer keeps the stack's ceiling, so its record budget sits
+              # under the broker's by the 1 MiB in 16 the app keeps for framing.
+              extraEnv:
+                DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
+              {{- end }}
               {{- end }}
               {{- $pullSecret := "ghcr-pull-secret" }}
               {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}
@@ -317,6 +343,23 @@ spec:
                 {{- if $kafkaMessageMaxBytes }}
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
                 {{- end }}
+              {{- end }}
+              {{- if $kafkaMessageMaxBytes }}
+              {{- if eq .deploy.service "dfe-receiver" "dfe-loader" }}
+              configOverrides:
+                kafka:
+                  librdkafka_overrides:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
+                    statistics.interval.ms: {{ ternary "0" "5000" (eq .deploy.service "dfe-receiver") | quote }}
+              {{- else if eq .deploy.service "dfe-transform-vrl" "dfe-transform-vector" }}
+              configOverrides:
+                sink:
+                  librdkafka_options:
+                    message.max.bytes: {{ $kafkaMessageMaxBytes | quote }}
+              {{- else if eq .deploy.service "dfe-transform-elastic" }}
+              extraEnv:
+                DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
+              {{- end }}
               {{- end }}
               {{- $pullSecret := "ghcr-pull-secret" }}
               {{- range $key, $name := .metadata.annotations }}{{ if eq $key "dfe.hyperi.io/image_pull_secret" }}{{ $pullSecret = $name }}{{ end }}{{ end }}

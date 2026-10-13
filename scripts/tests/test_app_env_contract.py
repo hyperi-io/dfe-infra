@@ -322,7 +322,12 @@ def appset_values(scenario: str) -> str:
     """
     doc = yaml.safe_load(LAYER2_APPS.read_text(encoding="utf-8"))
     block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
-    annotations = yaml.safe_dump({"metadata": {"annotations": CLUSTER_ANNOTATIONS[scenario]}})
+    # The git generator's deploy block, which every Application carries; dfe-engine
+    # takes no per-service key from the block.
+    deploy = {"service": "dfe-engine", "instance": "default"}
+    annotations = yaml.safe_dump(
+        {"metadata": {"annotations": CLUSTER_ANNOTATIONS[scenario]}, "deploy": deploy}
+    )
     with tempfile.TemporaryDirectory() as tmp:
         chart = Path(tmp) / "appset"
         (chart / "templates").mkdir(parents=True)
