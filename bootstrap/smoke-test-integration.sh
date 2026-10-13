@@ -142,12 +142,21 @@ ch_nodes() {
 }
 
 # Run by the engine container's own shell, so its host, port, scheme and credential never leave the pod.
+# The credential reaches curl as an escaped config line on stdin, and the query on fd 3, so no argv carries it.
 # shellcheck disable=SC2016  # Expanded inside the engine container, not here.
 ENGINE_CH_QUERY='scheme=http; insecure=
 [ "${DFE_CLICKHOUSE_SECURE:-}" = true ] && scheme=https
 [ "${DFE_CLICKHOUSE_VERIFY:-}" = false ] && insecure=--insecure
-login="${DFE_CLICKHOUSE_USERNAME:-default}:${DFE_CLICKHOUSE_PASSWORD:-}"
-exec curl -fsS --max-time 30 $insecure ${DFE_CLICKHOUSE_CA_CERT:+--cacert "$DFE_CLICKHOUSE_CA_CERT"} --user "$login" --data-binary @- "$scheme://$DFE_CLICKHOUSE_HOST:$DFE_CLICKHOUSE_PORT/"'
+exec 3<&0
+{
+  printf "user = \""
+  printf "%s:%s" "${DFE_CLICKHOUSE_USERNAME:-default}" "${DFE_CLICKHOUSE_PASSWORD:-}" | sed "s/[\\\\\"]/\\\\&/g"
+  printf "\"\n"
+} | curl -fsS --max-time 30 $insecure ${DFE_CLICKHOUSE_CA_CERT:+--cacert "$DFE_CLICKHOUSE_CA_CERT"} -K - --data-binary @/dev/fd/3 "$scheme://$DFE_CLICKHOUSE_HOST:$DFE_CLICKHOUSE_PORT/"'
+
+# Run by the ClickHouse pod's shell: a password line on stdin becomes clickhouse-client's CLICKHOUSE_PASSWORD, so no argv carries it.
+# shellcheck disable=SC2016  # Expanded inside the ClickHouse pod, not here.
+CH_CLIENT_SH='if IFS= read -r pw; then export CLICKHOUSE_PASSWORD="$pw"; fi; exec clickhouse-client "$@" </dev/null'
 
 # ClickHouse auth, RESOLVED once against the live cluster rather than assumed.
 #
@@ -159,17 +168,29 @@ exec curl -fsS --max-time 30 $insecure ${DFE_CLICKHOUSE_CA_CERT:+--cacert "$DFE_
 #
 # Order: an explicit DFE_CH_USER/DFE_CH_PASSWORD wins; else the admin secret IF it
 # actually authenticates; else the default user (how dfe-loader itself connects here).
-CH_AUTH_ARGS=""
+# Only a working login is cached, so a server not yet answering is asked again by the next query.
+CH_USER=""
+CH_PASSWORD=""
+CH_PASSWORD_SET=0
 CH_AUTH_RESOLVED=0
+
+# clickhouse-client on pod $1 with the resolved login and the remaining args; the password goes in on stdin.
+ch_client() {
+  local pod="$1"
+  shift
+  {
+    if [ "$CH_PASSWORD_SET" -eq 1 ]; then printf '%s\n' "$CH_PASSWORD"; fi
+  } | kubectl -n "$NS_CH" exec -i "$pod" -- sh -c "$CH_CLIENT_SH" sh ${CH_USER:+--user "$CH_USER"} "$@"
+}
+
 resolve_ch_auth() {
   [ "$CH_AUTH_RESOLVED" -eq 1 ] && return 0
-  CH_AUTH_RESOLVED=1
-  local pod pw
+  local pod pw u
   pod="$(ch_pods | head -n1)"
   [ -z "$pod" ] && return 1
 
   if [ -n "${DFE_CH_USER:-}" ]; then
-    CH_AUTH_ARGS="--user ${DFE_CH_USER} --password ${DFE_CH_PASSWORD:-}"
+    CH_USER="$DFE_CH_USER" CH_PASSWORD="${DFE_CH_PASSWORD:-}" CH_PASSWORD_SET=1 CH_AUTH_RESOLVED=1
     return 0
   fi
 
@@ -177,18 +198,20 @@ resolve_ch_auth() {
   # `admin` stays in the list so an older deploy still resolves.
   pw="$(kubectl -n "$NS_CH" get secret "${DFE_CH_ADMIN_SECRET:-clickhouse-admin-password}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
   if [ -n "$pw" ]; then
+    CH_PASSWORD="$pw" CH_PASSWORD_SET=1
     for u in default admin; do
-      if kubectl -n "$NS_CH" exec "$pod" -- \
-           clickhouse-client --user "$u" --password "$pw" --query "SELECT 1" >/dev/null 2>&1; then
-        CH_AUTH_ARGS="--user $u --password $pw"
+      CH_USER="$u"
+      if ch_client "$pod" --query "SELECT 1" >/dev/null 2>&1; then
+        CH_AUTH_RESOLVED=1
         return 0
       fi
     done
   fi
 
   # Default user, no password -- prove it works rather than silently degrading.
-  if kubectl -n "$NS_CH" exec "$pod" -- clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
-    CH_AUTH_ARGS=""
+  CH_USER="" CH_PASSWORD="" CH_PASSWORD_SET=0
+  if ch_client "$pod" --query "SELECT 1" >/dev/null 2>&1; then
+    CH_AUTH_RESOLVED=1
     return 0
   fi
   echo "  [WARN] no working ClickHouse credential found -- CH checks below will fail" >&2
@@ -203,8 +226,7 @@ chq_on() {
     return
   fi
   resolve_ch_auth
-  # shellcheck disable=SC2086  # CH_AUTH_ARGS is deliberately word-split.
-  kubectl -n "$NS_CH" exec "$pod" -- clickhouse-client $CH_AUTH_ARGS --query "$q" 2>/dev/null
+  ch_client "$pod" --query "$q" 2>/dev/null
 }
 
 # Run a query on the FIRST CH node -- for questions that are not about replication.
@@ -424,6 +446,9 @@ else
   # would fail for that one reason.
   check "dfe-engine deployment present in ns/$NS_APP (nothing else creates the schema)" "false"
 fi
+
+# Resolved here in the parent shell: every query below runs inside $(...), where a resolution is lost on return.
+[ "$CH_MODE" = external ] || resolve_ch_auth
 
 # ---------------------------------------------------------------------------
 echo ""
