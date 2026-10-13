@@ -200,6 +200,29 @@ spec:
                   {{- end }}
                 {{- end }}
               {{- end }}
+              {{- $clickhouseMode := index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "" }}
+              {{- if eq $clickhouseMode "external" }}
+              {{- $chHost := index .metadata.annotations "dfe.hyperi.io/clickhouse_host" }}
+              {{- $chPort := index .metadata.annotations "dfe.hyperi.io/clickhouse_port" }}
+              {{- $chUser := index .metadata.annotations "dfe.hyperi.io/clickhouse_user" }}
+              # The deployer's own server, whose certificate the system roots verify, so no CA copy is named.
+              clickhouse:
+                mode: external
+                host: {{ $chHost | quote }}
+                port: {{ $chPort }}
+                nativePort: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
+                user: {{ $chUser | quote }}
+                tls:
+                  enabled: {{ eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_secure" | default "") "true" }}
+                  port: {{ $chPort }}
+                  ca:
+                    secretName: ""
+                    configMapName: ""
+                external:
+                  host: {{ $chHost | quote }}
+                  port: {{ $chPort }}
+                  user: {{ $chUser | quote }}
+              {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
               # Only the secret bootstrap.sh created. An absent annotation names none: images pull anonymously.

@@ -85,6 +85,12 @@ of it. The workload teardown gets half the margin and is stopped there, so
 apply strands its state lock and resources its state never recorded: an
 apply that finishes past the run length skips the cycle instead.
 
+A dial whose clickhouse.mode is external is refused unless DFE_CYCLE_CH_SERVICE_ID,
+DFE_CYCLE_CH_API_KEY_ID, DFE_CYCLE_CH_API_KEY_SECRET and
+TF_VAR_clickhouse_external_password are set. After its apply the run adds its NAT
+egress (DFE_EGRESS_CIDRS) and the endpoint CIDR to the ClickHouse Cloud service's
+IP access list, and the teardown removes them first (scripts/clickhouse_cloud_access.py).
+
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,
 DFE_GUARD_SWEEPER, DFE_GUARD_BUDGET_ACTION (`<budget-name>:<action-id>`),
 DFE_GUARD_PERMISSIONS_BOUNDARY, DFE_GUARD_IAM_PATH, DFE_GUARD_S3_BUCKET_PREFIX,
@@ -137,6 +143,16 @@ TEARDOWN_SIGNALS = tuple(
     getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
 )
 ENDPOINT_CIDR_ENV = "DFE_RUN_ENDPOINT_CIDR"
+# The ClickHouse Cloud access list a run against an external server opens and closes.
+CLICKHOUSE_ACCESS = REPO_ROOT / "scripts" / "clickhouse_cloud_access.py"
+CLICKHOUSE_ACCESS_CIDRS_ENV = "DFE_CH_ACCESS_CIDRS"
+CLICKHOUSE_ACCESS_ENV = (
+    "DFE_CYCLE_CH_SERVICE_ID",
+    "DFE_CYCLE_CH_API_KEY_ID",
+    "DFE_CYCLE_CH_API_KEY_SECRET",
+    "TF_VAR_clickhouse_external_password",
+)
+CLICKHOUSE_CLOSE_TIMEOUT = 120  # seconds the close gets, out of the teardown margin
 
 
 class GuardError(RuntimeError):
@@ -672,6 +688,24 @@ def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
     return {**os.environ, "AWS_REGION": config.region, "AWS_DEFAULT_REGION": config.region, **extra}
 
 
+def clickhouse_external(tfvars: Mapping[str, object]) -> bool:
+    """Whether the dial points the run at an external ClickHouse, whose access list it opens."""
+    clickhouse = tfvars.get("clickhouse")
+    return isinstance(clickhouse, Mapping) and clickhouse.get("mode") == "external"
+
+
+def clickhouse_access_missing(tfvars: Mapping[str, object], env: Mapping[str, str]) -> list[str]:
+    """The settings an external-ClickHouse run needs that `env` leaves unset or blank; empty otherwise."""
+    if not clickhouse_external(tfvars):
+        return []
+    return [name for name in CLICKHOUSE_ACCESS_ENV if not env.get(name, "").strip()]
+
+
+def clickhouse_access_command(verb: str, run_id: str, *extra: str) -> list[str]:
+    """clickhouse_cloud_access.py for one run; its addresses travel in the environment, never here."""
+    return [sys.executable, str(CLICKHOUSE_ACCESS), verb, "--run-id", run_id, *extra]
+
+
 def run_sweep_args(config: GuardConfig, run_id: str) -> list[str]:
     """cloud_sweep.py arguments that delete what carries this run's tag, in its region and account.
 
@@ -795,6 +829,7 @@ class Teardown:
     record_key: str
     provisioning_started: bool = False
     cycle_finished: bool = False
+    clickhouse_opened: bool = False
     result: int | None = None
 
     def run(self) -> int:
@@ -807,6 +842,39 @@ class Teardown:
                 self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
             self.result = 0
             return 0
+        access_left = self.close_clickhouse_access()
+        result = self.destroy()
+        if access_left and result == 0:
+            result = 1
+        self.result = result
+        return result
+
+    def close_clickhouse_access(self) -> bool:
+        """Remove the run's access-list entries; True when they may still stand."""
+        if not self.clickhouse_opened:
+            return False
+        try:
+            closed = self.runner.run(
+                clickhouse_access_command("close", self.run_id),
+                env=run_env(self.config),
+                new_session=True,
+                deadline=time.monotonic() + CLICKHOUSE_CLOSE_TIMEOUT,
+            )
+        except DeadlineError:
+            closed = 1
+        if closed == 0:
+            return False
+        print(
+            f"ACCESS LIST NOT CLOSED for run {self.run_id}: its entries on the ClickHouse Cloud service stay "
+            "until the reaper's sweep removes them once the run expires. Remove them now with: "
+            f"python3 scripts/clickhouse_cloud_access.py close --run-id {self.run_id}",
+            file=sys.stderr,
+        )
+        return True
+
+    def destroy(self) -> int:
+        """The workloads, then `tofu destroy`, then the run's own leftovers; the run's exit code."""
+        overlay = self.config.tf_dir / OVERLAY_NAME
         tofu = shutil.which("tofu") or "tofu"
         if not self.cycle_finished and self.kubeconfig.is_file():
             # Controllers own load balancers and volumes tofu cannot see, so the workloads go first.
@@ -837,15 +905,13 @@ class Teardown:
                 f"{self.config.tf_dir} to finish it now.",
                 file=sys.stderr,
             )
-            self.result = destroyed
             return destroyed
         overlay.unlink(missing_ok=True)
         try:
             self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
         except cloud_sweep.CloudSweepError as exc:
             print(f"run {self.run_id} destroyed; its run record stays: {exc}", file=sys.stderr)
-        self.result = self.sweep_leftovers()
-        return self.result
+        return self.sweep_leftovers()
 
     def sweep_leftovers(self) -> int:
         """Delete what still carries this run's tag once its state is destroyed; 1 when any is left.
@@ -1001,6 +1067,12 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
         kubeconfig = RUNS_DIR / run_id / "kubeconfig"
         profile = str(config.tfvars.get("profile") or "")
         cycle_argv = cycle_command(args.cycle_args, profile, config.tf_dir, kubeconfig)
+        missing = clickhouse_access_missing(config.tfvars, os.environ)
+        if missing:
+            raise GuardError(
+                f"clickhouse.mode is external, and the environment does not set {', '.join(missing)}: the run "
+                "seeds the server's password and opens its access list with them"
+            )
         guard = _make_guard(config)
         report = run_preflight(config, guard, now=now, env=os.environ)
     except (GuardError, NotImplementedError, cloud_run.RunTagError) as exc:
@@ -1057,14 +1129,23 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
                 guard.write_kubeconfig(_tofu_output(config.tf_dir, "cluster_name"), kubeconfig)
                 if time.monotonic() >= deadline:
                     raise DeadlineError("tofu apply finished past it, so the cycle never started")
-                returncode = runner.run(
-                    [sys.executable, str(DFE_OPS), "cycle", *cycle_argv],
-                    env=child_env,
-                    new_session=True,
-                    deadline=deadline,
-                    stop_timeout=DEADLINE_STOP_TIMEOUT,
-                )
-                teardown.cycle_finished = True
+                if clickhouse_external(config.tfvars):
+                    # Marked first, so an open cut short is still closed.
+                    teardown.clickhouse_opened = True
+                    addresses = [_tofu_output(config.tf_dir, "DFE_EGRESS_CIDRS"), config.endpoint_cidr]
+                    returncode = runner.run(
+                        clickhouse_access_command("open", run_id, "--expires-at", str(expires_at)),
+                        env={**child_env, CLICKHOUSE_ACCESS_CIDRS_ENV: ",".join(a for a in addresses if a)},
+                    )
+                if returncode == 0:
+                    returncode = runner.run(
+                        [sys.executable, str(DFE_OPS), "cycle", *cycle_argv],
+                        env=child_env,
+                        new_session=True,
+                        deadline=deadline,
+                        stop_timeout=DEADLINE_STOP_TIMEOUT,
+                    )
+                    teardown.cycle_finished = True
     except DeadlineError as exc:
         print(f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
               file=sys.stderr)

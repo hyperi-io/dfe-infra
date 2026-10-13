@@ -208,6 +208,20 @@ spec:
               kafka:
                 mode: {{ $kafkaMode | quote }}
               {{- end }}
+              {{- if eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "") "external" }}
+              # network-policies opens the ClickHouse clients' egress on the external server's own ports.
+              clickhouse:
+                mode: external
+              externalEgress:
+                clickhouse:
+                  ports:
+                    - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_port" }}
+                      protocol: TCP
+                    - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
+                      protocol: TCP
+                    - port: 443
+                      protocol: TCP
+              {{- end }}
               {{- if eq .app "karpenter-pools" }}
               {{- $pools := index .metadata.annotations "dfe.hyperi.io/karpenter_pools" }}
               # The three facts karpenter.cluster.* names, carried onto the

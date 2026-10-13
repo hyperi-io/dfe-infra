@@ -119,6 +119,14 @@ metadata:
     # record limits. Empty on an in-cluster broker, where every app keeps its own
     # default.
     dfe.hyperi.io/kafka_message_max_bytes: "${DFE_KAFKA_MESSAGE_MAX_BYTES}"
+    # Where ClickHouse runs: external points clickhouse-cluster, network-policies,
+    # the collector and every app at this host, and empty or in_cluster moves nothing.
+    dfe.hyperi.io/clickhouse_mode: "${DFE_CLICKHOUSE_MODE}"
+    dfe.hyperi.io/clickhouse_host: "${DFE_CLICKHOUSE_HOST}"
+    dfe.hyperi.io/clickhouse_port: "${DFE_CLICKHOUSE_PORT}"
+    dfe.hyperi.io/clickhouse_native_port: "${DFE_CLICKHOUSE_NATIVE_PORT}"
+    dfe.hyperi.io/clickhouse_secure: "${DFE_CLICKHOUSE_SECURE}"
+    dfe.hyperi.io/clickhouse_user: "${DFE_CLICKHOUSE_USER}"
     dfe.hyperi.io/otel_endpoint: "${DFE_OTEL_ENDPOINT}"
     # Deployment-wide retention; layer2-apps injects it into the dfe-engine
     # chart as retention.defaultTtlDays.

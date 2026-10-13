@@ -330,12 +330,64 @@ variable "seeds" {
 // ---------------------------------------------------------------------------
 
 variable "endpoints" {
-  description = "In-cluster service addresses the DFE stack resolves each other by. kafka_bootstrap is the in-cluster broker on a strimzi or redpanda deployment and empty on a brokerless profile; on kafka.provider msk the module's own bootstrap replaces it. clickhouse_host becomes a toolbox forward target only when it names an address outside the cluster -- a Kubernetes Service name resolves through CoreDNS, which the toolbox instance cannot reach, so an in-cluster ClickHouse is port-forwarded over the eks-api target instead."
+  description = "In-cluster service addresses the DFE stack resolves each other by. kafka_bootstrap is the in-cluster broker on a strimzi or redpanda deployment and empty on a brokerless profile; on kafka.provider msk the module's own bootstrap replaces it. clickhouse_host is the external server on clickhouse.mode external, and becomes a toolbox forward target only when it names an address outside the cluster -- a Kubernetes Service name resolves through CoreDNS, which the toolbox instance cannot reach, so an in-cluster ClickHouse is port-forwarded over the eks-api target instead."
   type = object({
     clickhouse_host = string
     kafka_bootstrap = string
     otel_endpoint   = string
   })
+}
+
+variable "clickhouse" {
+  description = "Where ClickHouse runs. in_cluster (the default) deploys DFE's own server from the clickhouse-cluster chart and reads nothing else here. external connects to a server the deployer brought, ClickHouse Cloud first: its host is endpoints.clickhouse_host, port is its HTTP(S) port, native_port its native protocol port, secure says whether both speak TLS, and user is the account the apps and the collector connect as. The defaults are ClickHouse Cloud's. The password is never here: it is clickhouse_external_password."
+  type = object({
+    mode        = optional(string, "in_cluster")
+    port        = optional(number, 8443)
+    native_port = optional(number, 9440)
+    secure      = optional(bool, true)
+    user        = optional(string, "default")
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["in_cluster", "external"], var.clickhouse.mode)
+    error_message = "clickhouse.mode must be in_cluster or external."
+  }
+
+  validation {
+    condition = alltrue([
+      for port in [var.clickhouse.port, var.clickhouse.native_port] : port == floor(port) && port >= 1 && port <= 65535
+    ])
+    error_message = "clickhouse.port and clickhouse.native_port must be whole port numbers between 1 and 65535."
+  }
+
+  validation {
+    condition     = trimspace(var.clickhouse.user) != ""
+    error_message = "clickhouse.user must name the account the apps connect as."
+  }
+
+  // A Service name resolves through CoreDNS only, so an external server it names
+  // is one no pod could reach.
+  validation {
+    condition = var.clickhouse.mode != "external" || (
+      strcontains(var.endpoints.clickhouse_host, ".")
+      && !endswith(var.endpoints.clickhouse_host, ".cluster.local")
+      && !endswith(var.endpoints.clickhouse_host, ".svc")
+    )
+    error_message = "clickhouse.mode is external, so endpoints.clickhouse_host must name the external server -- a dotted host name outside the cluster."
+  }
+}
+
+variable "clickhouse_external_password" {
+  description = "The external ClickHouse's password, set as TF_VAR_clickhouse_external_password and never in a tfvars file. The secrets module seeds it at <project>/<env>/clickhouse/external, where the clickhouse-cluster chart reads it. Required when clickhouse.mode is external, unread otherwise. Only the first apply writes it: the store keeps that value."
+  type        = string
+  sensitive   = true
+  default     = null
+
+  validation {
+    condition     = var.clickhouse.mode != "external" || (var.clickhouse_external_password != null ? var.clickhouse_external_password != "" : false)
+    error_message = "clickhouse.mode is external, so TF_VAR_clickhouse_external_password must hold the external server's password."
+  }
 }
 
 variable "repo_url" {

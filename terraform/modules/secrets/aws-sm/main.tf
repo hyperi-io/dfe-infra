@@ -28,11 +28,18 @@ locals {
   // generated in here could never match it. Read off the seed NAMES and FIELDS
   // rather than off kafka_password and kafka_username, because what a for_each
   // covers has to be known at plan and the values are not.
-  caller_supplied = toset(flatten([
+  kafka_supplied = toset(flatten([
     for name, fields in var.seeds : [
       for field in keys(fields) : "${name}|${field}" if contains(["password", "username"], field)
     ] if startswith(name, "kafka/")
   ]))
+
+  // An external ClickHouse already holds its password, so the caller's copy is the only one that matches.
+  clickhouse_supplied = toset([
+    for field in keys(lookup(var.seeds, "clickhouse/external", {})) : "clickhouse/external|${field}" if field == "password"
+  ])
+
+  caller_supplied = setunion(local.kafka_supplied, local.clickhouse_supplied)
 
   generated = setsubtract(local.empty_fields, local.caller_supplied)
 
@@ -76,9 +83,11 @@ resource "aws_secretsmanager_secret_version" "seed" {
   secret_string = jsonencode({
     for field, value in each.value :
     field => value != "" ? value : (
-      contains(local.caller_supplied, "${each.key}|${field}")
-      ? (field == "username" ? var.kafka_username : var.kafka_password)
-      : random_password.seed["${each.key}|${field}"].result
+      contains(local.clickhouse_supplied, "${each.key}|${field}") ? var.clickhouse_password : (
+        contains(local.kafka_supplied, "${each.key}|${field}")
+        ? (field == "username" ? var.kafka_username : var.kafka_password)
+        : random_password.seed["${each.key}|${field}"].result
+      )
     )
   })
 

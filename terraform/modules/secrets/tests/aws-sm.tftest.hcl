@@ -254,6 +254,61 @@ run "a_seed_asking_for_a_username_refuses_a_missing_one" {
   ]
 }
 
+// An external ClickHouse already holds its password, so the caller hands it in
+// and nothing here generates one.
+run "an_external_clickhouse_seed_takes_the_callers_password" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    seeds = {
+      "kafka/msk"           = { password = "" }
+      "clickhouse/external" = { password = "" }
+    }
+
+    clickhouse_password = "contract-only-not-a-clickhouse-credential"
+  }
+
+  assert {
+    condition = jsondecode(aws_secretsmanager_secret_version.seed["clickhouse/external"].secret_string) == {
+      password = "contract-only-not-a-clickhouse-credential"
+    }
+    error_message = "the clickhouse/external secret must carry the caller's password"
+  }
+
+  assert {
+    condition     = length(random_password.seed) == 0
+    error_message = "no password is generated for an external ClickHouse, nor for the broker"
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.seed["clickhouse/external"].name == "dfe/test/clickhouse/external"
+    error_message = "the secret must be named <project>/<env>/clickhouse/external, the key the clickhouse-cluster chart reads"
+  }
+}
+
+run "an_external_clickhouse_seed_refuses_a_missing_password" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    seeds = {
+      "kafka/msk"           = { password = "" }
+      "clickhouse/external" = { password = "" }
+    }
+  }
+
+  expect_failures = [
+    var.clickhouse_password,
+  ]
+}
+
 // An account guardrail that refuses CreateRole without a boundary refuses the
 // external-secrets role without one.
 run "the_eso_role_carries_the_permissions_boundary" {

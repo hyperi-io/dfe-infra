@@ -261,6 +261,22 @@ spec:
                 DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
               {{- end }}
               {{- end }}
+              {{- if eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "") "external" }}
+              {{- $chPort := index .metadata.annotations "dfe.hyperi.io/clickhouse_port" }}
+              # The deployer's own server, which every app dials in its own scheme and verifies against the system roots.
+              clickhouse:
+                mode: external
+                host: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_host" | quote }}
+                port: {{ $chPort }}
+                nativePort: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
+                user: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_user" | quote }}
+                tls:
+                  enabled: {{ eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_secure" | default "") "true" }}
+                  port: {{ $chPort }}
+                  ca:
+                    secretName: ""
+                    configMapName: ""
+              {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
               # Only the secret bootstrap.sh created. An absent annotation names none: images pull anonymously.
@@ -359,6 +375,21 @@ spec:
               extraEnv:
                 DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES: {{ div (mul (int64 $kafkaMessageMaxBytes) 15) 16 | quote }}
               {{- end }}
+              {{- end }}
+              {{- if eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "") "external" }}
+              {{- $chPort := index .metadata.annotations "dfe.hyperi.io/clickhouse_port" }}
+              clickhouse:
+                mode: external
+                host: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_host" | quote }}
+                port: {{ $chPort }}
+                nativePort: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
+                user: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_user" | quote }}
+                tls:
+                  enabled: {{ eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_secure" | default "") "true" }}
+                  port: {{ $chPort }}
+                  ca:
+                    secretName: ""
+                    configMapName: ""
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}

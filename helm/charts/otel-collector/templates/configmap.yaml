@@ -45,7 +45,7 @@ data:
       # each SELECT is a fixed set of named columns rather than a metric/value pair.
       sqlquery/clickhouse:
         driver: clickhouse
-        datasource: "clickhouse://{{ .Values.clickhouse.user }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}"
+        datasource: "clickhouse://{{ .Values.clickhouse.user }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
         collection_interval: {{ .Values.clusterTelemetry.clickhouse.collectionInterval }}
         queries:
           # Instantaneous counters from system.metrics.
@@ -341,7 +341,7 @@ data:
         # Derived from the shared clickhouse facts rather than held twice: the
         # Service name differs per mode, so a second copy resolves to no such
         # host on the mode it was not written for.
-        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort) }}
+        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v%s" .Values.clickhouse.host .Values.clickhouse.nativePort (include "otel-collector.clickhouseQuery" .)) }}
         database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
         username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
         password: ${env:CLICKHOUSE_PASSWORD}

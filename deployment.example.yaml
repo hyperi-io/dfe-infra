@@ -660,6 +660,24 @@ kafka:
   landing_topics:
     main_land: {}
 
+## CLICKHOUSE -- where the datastore runs. in_cluster (the default) deploys DFE's
+## own server, single or clustered by the profile. external connects to one you
+## brought, ClickHouse Cloud first, and deploys none: host is the server
+## (endpoints.clickhouse_host below may name it too, never a different one),
+## port its HTTP(S) port, native_port its native protocol port, secure whether
+## both speak TLS, and user the account the apps connect as. Left out, each
+## takes ClickHouse Cloud's own value: 8443, 9440, "true", default. Every other
+## field is refused beside in_cluster. The password is NEVER here: set
+## TF_VAR_clickhouse_external_password where the plan runs, and the secrets
+## module stores it at <project>/<env>/clickhouse/external.
+clickhouse:
+  mode: in_cluster           # in_cluster | external
+  # host: ""
+  # port: 8443
+  # native_port: 9440
+  # secure: "true"
+  # user: default
+
 ## Where the tofu state lives. The store is created once per account by
 ## terraform/environments/<cloud>-state, before the first plan here.
 state:

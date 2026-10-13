@@ -114,7 +114,8 @@ clickhouse:
       name: dfe-keeper
       automountServiceAccountToken: false
   # External CH (mode=external): connect to a supplied endpoint; deploy nothing.
-  # Password materialised by ESO from Vault <project>/<env>/clickhouse/external.
+  # ESO reads the password from the store at <project>/<env>/clickhouse/external, into this
+  # namespace as secretName and into appNamespace and extraCredentialNamespaces as users.admin.secretName.
   external:
     host: ""
     port: 8123

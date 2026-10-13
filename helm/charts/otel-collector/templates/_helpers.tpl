@@ -21,6 +21,18 @@ it, so the file the extension reads is the one the Secret projects.
 {{- end -}}
 
 {{/*
+otel-collector.clickhouseQuery -- the query string the exporter and the sqlquery
+receiver append to the native address: secure=true on an external server that
+speaks TLS. An in-cluster server stays on plaintext 9000 whatever clickhouse.tls
+says, because clickhouse-cluster keeps 9000 open beside 9440 for this collector.
+*/}}
+{{- define "otel-collector.clickhouseQuery" -}}
+{{- $ch := .Values.clickhouse | default dict -}}
+{{- $external := eq (toString (dig "mode" "" $ch)) "external" -}}
+{{- if and $external (eq (toString (dig "tls" "enabled" false $ch)) "true") -}}?secure=true{{- end -}}
+{{- end -}}
+
+{{/*
 otel-collector.validateIngress -- the otel.ingress render guards. The messages
 are the gateway chart's own, word for word (helm/edge/gateway _routes.tpl), so
 both refusals read the same whichever chart an operator renders first.

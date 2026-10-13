@@ -390,6 +390,9 @@ module "secrets" {
   kafka_username = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_key) : null
   kafka_password = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_secret) : random_password.kafka_scram.result
 
+  // The external server's own password, which the clickhouse/external seed carries in external mode only.
+  clickhouse_password = var.clickhouse_external_password
+
   kms_key_arn                    = module.cluster.kms_key_arn
   cluster_name                   = module.cluster.cluster_name
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json

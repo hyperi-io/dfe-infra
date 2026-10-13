@@ -59,6 +59,18 @@ variable "kafka_username" {
   }
 }
 
+variable "clickhouse_password" {
+  description = "The external ClickHouse's password, from the caller's sensitive TF_VAR_clickhouse_external_password. It fills the password field of the clickhouse/external seed, which this module never generates, because the server already holds its own. Null is for a deployment whose seeds carry no clickhouse/external entry."
+  type        = string
+  sensitive   = true
+  default     = null
+
+  validation {
+    condition     = var.clickhouse_password != null || !contains(keys(var.seeds), "clickhouse/external")
+    error_message = "seeds carry clickhouse/external, so clickhouse_password has to be supplied: the external server already has its password and cannot be handed one generated here."
+  }
+}
+
 variable "recovery_window_days" {
   description = "Secrets Manager's deletion delay. Defaults to the vendor's own 30 days; the caller sets this from the dial's tags.lifecycle, passing 0 explicitly for an ephemeral deployment torn down and rebuilt under the same names, where the 30-day default would make the second create fail on a name that still exists."
   type        = number
