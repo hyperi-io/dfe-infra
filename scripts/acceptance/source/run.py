@@ -161,19 +161,9 @@ def run(args: argparse.Namespace) -> int:
             receiver_url=os.environ.get("DFE_E2E_RECEIVER_URL", ""), verify=verify,
         )
         try:
-            try:
-                steps.open_console(
-                    driver, engine, admin_user, password, args.org, args.first_user, new_password
-                )
-            except Exception as exc:
-                # Chrome reconfigures its certificate verifier right after
-                # launch and fails the first navigation with ERR_CERT_VERIFIER_CHANGED.
-                if "ERR_CERT_VERIFIER_CHANGED" not in str(exc):
-                    raise
-                driver.page.wait_for_timeout(3000)
-                steps.open_console(
-                    driver, engine, admin_user, password, args.org, args.first_user, new_password
-                )
+            steps.open_console_settled(
+                driver, engine, admin_user, password, args.org, args.first_user, new_password
+            )
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
             walk(current, case, archive_exec, restart_exec)
         except Exception as exc:  # a Playwright timeout IS the finding

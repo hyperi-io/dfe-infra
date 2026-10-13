@@ -177,6 +177,22 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
     driver.record("console", "done", f"the console opened for {admin_user} after the setup wizard")
 
 
+def open_console_settled(driver, engine: Engine, admin_user: str, password: str, org: str,
+                         first_user: str, new_password: str = "") -> None:
+    """``open_console``, once more after Chrome's first-navigation certificate hiccup.
+
+    Chrome reconfigures its certificate verifier right after launch and fails
+    the first navigation with ERR_CERT_VERIFIER_CHANGED.
+    """
+    try:
+        open_console(driver, engine, admin_user, password, org, first_user, new_password)
+    except Exception as exc:
+        if "ERR_CERT_VERIFIER_CHANGED" not in str(exc):
+            raise
+        driver.page.wait_for_timeout(3000)
+        open_console(driver, engine, admin_user, password, org, first_user, new_password)
+
+
 def sweep_strays(engine: Engine, verify: bool) -> str:
     """Remove sources an earlier run left behind, so this run starts clean.
 
@@ -868,6 +884,8 @@ def record_hyperdx_source(driver, engine: Engine, name: str, deployed: dict) -> 
 OBSERVE_DEADLINE = 90.0
 # The frame groups thousands with a comma, so "1,050 Results" is a count too.
 RESULTS_LINE = re.compile(r"^([\d,]+) Results?$")
+# The search page's where box, by the test id HyperDX's own page objects drive it by.
+WHERE_INPUT = "search-input"
 
 
 def results_count(results: str) -> int | None:
@@ -876,7 +894,8 @@ def results_count(results: str) -> int | None:
     return int(found.group(1).replace(",", "")) if found else None
 
 
-def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str) -> tuple[str, str]:
+def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str,
+                    marker: str = "") -> tuple[str, str]:
     """The step result for the console's Observe search over *name*.
 
     Args:
@@ -885,6 +904,7 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
         blocked: The console's own error line when it refused the frame.
         picked: Whether the frame's source picker offered the source.
         results: The frame's results line, such as "12 Results".
+        marker: The term the search was narrowed to; empty searches every row.
 
     Returns:
         The status and detail for ``Driver.record``.
@@ -896,9 +916,10 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
         # names the cause where "does not offer" alone would hide it.
         why = f" ({results})" if results else ""
         return "failed", f"the frame's source picker does not offer {name}{why}"
+    searched = f"{name} for {marker}" if marker else name
     if (results_count(results) or 0) > 0:
-        return "done", f"Observe search over {name}: {results}"
-    return "failed", f"Observe search over {name} returned {results or 'no results line'}"
+        return "done", f"Observe search over {searched}: {results}"
+    return "failed", f"Observe search over {searched} returned {results or 'no results line'}"
 
 
 def hyperdx_frame(page):
@@ -911,8 +932,17 @@ def hyperdx_frame(page):
     return frame
 
 
-def search_results(frame, name: str) -> tuple[bool, str]:
-    """Pick *name* in the frame's source picker and read the results line."""
+def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
+    """Pick *name* in the frame's source picker, search for *marker*, and read the results line.
+
+    Args:
+        frame: The HyperDX frame the console embeds.
+        name: The source to pick.
+        marker: A term to type in the where box first; empty searches every row.
+
+    Returns:
+        Whether the picker offered the source, and the results line.
+    """
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     # The frame fills its source list after the page paints, so an empty picker
@@ -940,6 +970,13 @@ def search_results(frame, name: str) -> tuple[bool, str]:
         if not option.count():
             return False, ""
         option.first.click(timeout=STEP_TIMEOUT_MS)
+    if marker:
+        # A clean profile opens the box on Lucene, where a bare term matches the source's implicit column.
+        where = frame.get_by_test_id(WHERE_INPUT)
+        where.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+        where.fill(marker, timeout=STEP_TIMEOUT_MS)
+        # The box's suggestion popover sits over the Run button until it is dismissed.
+        where.press("Escape")
     frame.get_by_role("button", name="Run", exact=True).click(timeout=STEP_TIMEOUT_MS)
     line = frame.get_by_text(RESULTS_LINE)
     until = time.monotonic() + OBSERVE_DEADLINE
@@ -957,12 +994,13 @@ def search_results(frame, name: str) -> tuple[bool, str]:
         time.sleep(5)
 
 
-def record_observe(driver, name: str) -> None:
+def record_observe(driver, name: str, marker: str = "") -> None:
     """Open the console's Observe search on the source and see its rows.
 
     The console iframes HyperDX from a second origin, so this one step meets
     what a tester meets: the embed's frame-ancestors, the login shared across
-    the two origins, and the source's own view, together.
+    the two origins, and the source's own view, together. A *marker* narrows
+    the search to the rows that carry it.
     """
     page = driver.page
     blocked: list[str] = []
@@ -978,9 +1016,9 @@ def record_observe(driver, name: str) -> None:
         frame = hyperdx_frame(page)
         frame_url = frame.url if frame is not None else ""
         if frame is not None and not frame_url.startswith("chrome-error://"):
-            picked, results = search_results(frame, name)
+            picked, results = search_results(frame, name, marker)
     except Exception as exc:
         results = refusal(exc)
     finally:
         page.remove_listener("console", on_console)
-    driver.record("observe", *observe_outcome(name, frame_url, "; ".join(blocked), picked, results))
+    driver.record("observe", *observe_outcome(name, frame_url, "; ".join(blocked), picked, results, marker))
