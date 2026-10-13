@@ -4,7 +4,8 @@
 #  Purpose:      Guard `dfe-ops failure-evidence` and the cycle hook that runs it:
 #                the kubectl calls it makes, that one failing capture never stops
 #                the rest, that every capture is bounded, that no call reads a
-#                Secret, and that a failed stage writes evidence before destroy.
+#                Secret or describes a pod, that no env value reaches a file, and
+#                that a failed stage writes evidence before destroy.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -126,7 +127,10 @@ def _waiting_pod(namespace: str, name: str, *, reason: str = "", init_reason: st
 
     return {
         "metadata": {"name": name, "namespace": namespace},
-        "spec": {"initContainers": [{"name": "copyutil"}], "containers": [{"name": "main"}]},
+        "spec": {
+            "initContainers": [{"name": "copyutil", "image": "registry.example/copyutil:1"}],
+            "containers": [{"name": "main", "image": "registry.example/main:1"}],
+        },
         "status": {
             "phase": "Pending" if reason or init_reason else "Running",
             "initContainerStatuses": [status("copyutil", init_reason)],
@@ -144,6 +148,30 @@ ALL_PODS = [
     _waiting_pod("dfe", "dfe-ui-1", reason="ContainerCreating"),
     _waiting_pod("dfe", "dfe-receiver-1"),
 ]
+
+
+SENTINEL = "SENTINEL-NOT-EVIDENCE"
+
+
+def _with_private_fields(pod: dict) -> dict:
+    """A copy of `pod` whose env, envFrom, args, command, volumes and annotations hold SENTINEL."""
+    copy = json.loads(json.dumps(pod))
+    copy["metadata"]["annotations"] = {"example.dev/note": f"{SENTINEL}-annotation"}
+    copy["spec"]["volumes"] = [{"name": "creds", "secret": {"secretName": f"{SENTINEL}-volume"}}]
+    for container in [*copy["spec"].get("initContainers", []), *copy["spec"]["containers"]]:
+        container["env"] = [{"name": "API_TOKEN", "value": SENTINEL}]
+        container["envFrom"] = [{"secretRef": {"name": f"{SENTINEL}-envfrom"}}]
+        container["args"] = [f"--token={SENTINEL}-args"]
+        container["command"] = ["run", f"{SENTINEL}-command"]
+    return copy
+
+
+def _pod_events(namespace: str, pod: str) -> str:
+    """The events call for one pod, as the joined kubectl arguments."""
+    return (
+        f"get events -n {namespace} --field-selector involvedObject.name={pod} "
+        "--sort-by=.metadata.creationTimestamp -o wide"
+    )
 
 
 def _items(items: list[dict]) -> fe.Outcome:
@@ -245,6 +273,89 @@ def test_a_name_becomes_one_safe_path_segment() -> None:
     assert fe.safe_name("") == "_"
 
 
+def test_a_pod_summary_has_the_node_phase_conditions_and_every_containers_state() -> None:
+    pod = {
+        "metadata": {"name": "dfe-loader-1", "namespace": "dfe"},
+        "spec": {
+            "nodeName": "node-a",
+            "initContainers": [{"name": "migrate", "image": "registry.example/migrate:1"}],
+            "containers": [
+                {"name": "main", "image": "registry.example/loader:2"},
+                {"name": "sidecar", "image": "registry.example/side:3"},
+            ],
+        },
+        "status": {
+            "phase": "Pending",
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "reason": "ContainersNotReady",
+                    "message": "containers with unready status: [main]",
+                },
+                {"type": "PodScheduled", "status": "True"},
+            ],
+            "initContainerStatuses": [
+                {
+                    "name": "migrate",
+                    "restartCount": 0,
+                    "state": {"terminated": {"reason": "Completed", "exitCode": 0}},
+                }
+            ],
+            "containerStatuses": [
+                {
+                    "name": "main",
+                    "restartCount": 4,
+                    "state": {
+                        "waiting": {
+                            "reason": "CrashLoopBackOff",
+                            "message": "back-off 2m40s restarting failed container",
+                        }
+                    },
+                    "lastState": {
+                        "terminated": {"reason": "Error", "exitCode": 137, "message": "one\ntwo"}
+                    },
+                }
+            ],
+        },
+    }
+    assert fe.pod_summary_lines("dfe", pod) == [
+        "pod dfe/dfe-loader-1",
+        "  node node-a",
+        "  phase Pending",
+        "  condition Ready=False ContainersNotReady: containers with unready status: [main]",
+        "  condition PodScheduled=True",
+        "  init container migrate",
+        "    image registry.example/migrate:1",
+        "    state terminated, reason Completed, exit code 0",
+        "    restartCount 0",
+        "  container main",
+        "    image registry.example/loader:2",
+        "    state waiting, reason CrashLoopBackOff, "
+        "message: back-off 2m40s restarting failed container",
+        "    restartCount 4",
+        "    last state terminated, reason Error, exit code 137, message: one two",
+        "  container sidecar",
+        "    image registry.example/side:3",
+        "    state not reported",
+        "    restartCount 0",
+    ]
+
+
+def test_a_pod_summary_carries_the_pods_own_reason_for_an_eviction() -> None:
+    pod = {
+        "metadata": {"name": "worker-1"},
+        "spec": {"nodeName": "node-a", "containers": [{"name": "main", "image": "r.example/w:1"}]},
+        "status": {
+            "phase": "Failed",
+            "reason": "Evicted",
+            "message": "The node was low on resource: ephemeral-storage.",
+        },
+    }
+    lines = fe.pod_summary_lines("dfe", pod)
+    assert "  status Evicted: The node was low on resource: ephemeral-storage." in lines
+
+
 # --- the calls it makes --------------------------------------------------------------
 
 
@@ -258,11 +369,17 @@ def test_every_capture_the_brief_names_is_issued(monkeypatch: pytest.MonkeyPatch
         in issued
     )
     assert "get pods -A -o json" in issued
-    assert "-n argocd describe pods argocd-dex-server-1 argocd-server-1" in issued
-    assert "-n dfe describe pods dfe-engine-1 dfe-loader-1" in issued
-    assert "-n monitoring describe pods collector-1" in issued
+    for namespace, pod in (
+        ("argocd", "argocd-dex-server-1"),
+        ("argocd", "argocd-server-1"),
+        ("dfe", "dfe-engine-1"),
+        ("dfe", "dfe-loader-1"),
+        ("monitoring", "collector-1"),
+        ("kube-system", "coredns-1"),
+        ("kube-system", "ebs-csi-node-1"),
+    ):
+        assert _pod_events(namespace, pod) in issued
     assert "-n kube-system get events --sort-by=.metadata.creationTimestamp -o wide" in issued
-    assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
     assert (
         "get events -A --field-selector involvedObject.kind=Node,involvedObject.name=node-a "
         "--sort-by=.metadata.creationTimestamp" in issued
@@ -320,7 +437,19 @@ def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tm
     assert "condition Ready=False" in (out / "node-conditions.txt").read_text(encoding="utf-8")
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "nodes-wide.txt: ok\n    kubectl get nodes -o wide\n" in index
-    assert "stuck-pods/argocd.txt: ok\n    kubectl -n argocd describe pods " in index
+    assert (
+        "stuck-pods/argocd.txt: 2 pod(s) summarised from the pod list, each with its events\n"
+        "stuck-pods/argocd.txt, events of argocd-dex-server-1: ok\n"
+        f"    kubectl {_pod_events('argocd', 'argocd-dex-server-1')}\n"
+    ) in index
+    report = (out / "stuck-pods" / "argocd.txt").read_text(encoding="utf-8")
+    assert report.startswith("pod argocd/argocd-dex-server-1\n")
+    assert "    state waiting, reason ImagePullBackOff, message: ImagePullBackOff detail\n" in report
+    assert f"  events: ok\noutput of {_pod_events('argocd', 'argocd-server-1')}\n" in report
+    unready = (out / "kube-system-not-ready.txt").read_text(encoding="utf-8")
+    assert "pod kube-system/coredns-1\n" in unready
+    assert "pod kube-system/ebs-csi-node-1\n" in unready
+    assert "pod kube-system/kube-proxy-1\n" not in unready
 
 
 def test_the_warnings_keep_their_newest_end_and_the_rest_their_head(
@@ -340,10 +469,15 @@ def test_the_warnings_keep_their_newest_end_and_the_rest_their_head(
     assert warnings
     assert all(tails[call] for call in warnings)
     assert tails["get pods -A -o wide"] is False
-    assert tails["-n argocd describe pods argocd-dex-server-1 argocd-server-1"] is False
+    assert tails[_pod_events("argocd", "argocd-dex-server-1")] is False
 
 
-def test_stuck_pods_past_the_cap_are_described_up_to_it_and_the_index_says_so(
+def _stuck_pod_events(calls: list[list[str]]) -> list[list[str]]:
+    """The per-pod events calls made outside kube-system."""
+    return [c for c in calls if c[:3] == ["get", "events", "-n"] and c[3] != "kube-system"]
+
+
+def test_stuck_pods_past_the_cap_are_summarised_up_to_it_and_the_index_says_so(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     many = [
@@ -355,12 +489,16 @@ def test_stuck_pods_past_the_cap_are_described_up_to_it_and_the_index_says_so(
         return _items(many) if " ".join(args) == "get pods -A -o json" else _answer(args)
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
-    described = [c for c in calls if "describe" in c and c[1] != "kube-system"]
-    named = [name for c in described for name in c[c.index("pods") + 1 :]]
-    assert len(named) == fe.MAX_STUCK
-    assert [c[1] for c in described] == ["ns-0", "ns-1", "ns-2"]
+    events = _stuck_pod_events(calls)
+    assert len(events) == fe.MAX_STUCK
+    assert sorted({c[3] for c in events}) == ["ns-0", "ns-1", "ns-2"]
+    summarised = [
+        sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("pod "))
+        for path in sorted((out / "stuck-pods").iterdir())
+    ]
+    assert summarised == [15, 15, 10]
     index = (out / fe.INDEX).read_text(encoding="utf-8")
-    assert f"{fe.MAX_STUCK + 5} pods are stuck, and the first {fe.MAX_STUCK} are described" in index
+    assert f"{fe.MAX_STUCK + 5} pods are stuck, and the first {fe.MAX_STUCK} are summarised" in index
 
 
 def test_no_stuck_pod_is_a_named_skip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -373,7 +511,8 @@ def test_no_stuck_pod_is_a_named_skip(monkeypatch: pytest.MonkeyPatch, tmp_path:
         return _items(healthy) if " ".join(args) == "get pods -A -o json" else _answer(args)
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
-    assert not any("describe" in c and c[1] != "kube-system" for c in calls)
+    assert _stuck_pod_events(calls) == []
+    assert not (out / "stuck-pods").exists()
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "stuck-pods/: not run: no container is waiting on CrashLoopBackOff, " in index
 
@@ -388,8 +527,10 @@ def test_one_failing_capture_does_not_stop_the_rest(
     )
     issued = [" ".join(c) for c in calls]
     bounds = f"--tail={fe.LOG_TAIL} --limit-bytes={fe.TEXT_BYTES} --timestamps"
-    assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
-    assert "-n argocd describe pods argocd-dex-server-1 argocd-server-1" in issued
+    assert _pod_events("kube-system", "coredns-1") in issued
+    assert _pod_events("kube-system", "ebs-csi-node-1") in issued
+    assert _pod_events("argocd", "argocd-dex-server-1") in issued
+    assert _pod_events("argocd", "argocd-server-1") in issued
     assert "warning-events.txt: exit 1: Error from server (InternalError): boom" in (
         out / fe.INDEX
     ).read_text(encoding="utf-8")
@@ -434,8 +575,9 @@ def test_an_unreadable_cluster_wide_pod_list_still_captures_kube_system(
 ) -> None:
     calls, out = _run(monkeypatch, tmp_path, fail=("get pods -A",))
     issued = [" ".join(c) for c in calls]
-    assert "-n kube-system describe pods coredns-1 ebs-csi-node-1" in issued
-    assert not any(c.startswith("-n argocd ") for c in issued)
+    assert _pod_events("kube-system", "coredns-1") in issued
+    assert _pod_events("kube-system", "ebs-csi-node-1") in issued
+    assert _stuck_pod_events(calls) == []
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "pods-wide.txt: exit 1: Error from server (InternalError): boom" in index
     assert "stuck-pods/: not run: the pods in every namespace were not read" in index
@@ -456,10 +598,80 @@ def test_no_call_reads_a_secret_or_a_pods_environment(monkeypatch: pytest.Monkey
         words = [w.lower() for w in call]
         assert not any("secret" in w for w in words), call
         assert "yaml" not in words, call
+        assert "describe" not in words, call
         if "exec" in words:
             command = words[words.index("--") + 1 :]
             assert command[0] == "cat", call
             assert command[1].startswith(fe.CNI_LOG_MOUNT + "/"), call
+
+
+@pytest.mark.parametrize(
+    "fail",
+    [(), ("get events",), ("get pods -A",), ("-n kube-system get pods",), ("proxy/logs",), ("get",)],
+    ids=["healthy", "events-fail", "pod-list-fails", "kube-system-fails", "no-cni-log", "all-fail"],
+)
+def test_no_describe_is_issued_whatever_the_cluster_answers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fail: tuple[str, ...]
+) -> None:
+    calls, _out = _run(monkeypatch, tmp_path, fail=fail)
+    assert calls
+    assert not any("describe" in word.lower() for call in calls for word in call)
+
+
+def test_a_pods_env_args_command_volumes_and_annotations_reach_no_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kube_system = [_with_private_fields(pod) for pod in PODS]
+    everywhere = [_with_private_fields(pod) for pod in ALL_PODS]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        joined = " ".join(args)
+        if joined == "-n kube-system get pods -o json":
+            return _items(kube_system)
+        if joined == "get pods -A -o json":
+            return _items(everywhere)
+        return _answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    written = sorted(path for path in out.rglob("*") if path.is_file())
+    assert out / "kube-system-not-ready.txt" in written
+    assert out / "stuck-pods" / "dfe.txt" in written
+    for path in written:
+        assert SENTINEL not in path.read_text(encoding="utf-8", errors="replace"), path
+    # The summary was built from these very pods, so the check above is not vacuous.
+    stuck = (out / "stuck-pods" / "dfe.txt").read_text(encoding="utf-8")
+    assert "pod dfe/dfe-loader-1\n" in stuck
+    assert "    image registry.example/main:1\n" in stuck
+
+
+def test_a_failing_events_call_keeps_that_pods_summary_and_is_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _calls, out = _run(monkeypatch, tmp_path, fail=("involvedObject.name=argocd-server-1",))
+    report = (out / "stuck-pods" / "argocd.txt").read_text(encoding="utf-8")
+    assert "pod argocd/argocd-server-1\n" in report
+    assert "  events: exit 1: Error from server (InternalError): boom\n" in report
+    assert f"  events: ok\noutput of {_pod_events('argocd', 'argocd-dex-server-1')}\n" in report
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    assert (
+        "stuck-pods/argocd.txt, events of argocd-server-1: exit 1: "
+        "Error from server (InternalError): boom\n"
+    ) in index
+
+
+def test_a_spent_budget_still_writes_the_summary_and_runs_no_events_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(fe, "run_bounded", lambda argv, **_kw: calls.append(argv))
+    out = tmp_path / "evidence"
+    out.mkdir()
+    evidence = fe.Evidence(out, [], 300.0, time.monotonic() - 1)
+    evidence.pod_report("pods.txt", "dfe", [ALL_PODS[2]])
+    assert calls == []
+    report = (out / "pods.txt").read_text(encoding="utf-8")
+    assert "pod dfe/dfe-loader-1\n" in report
+    assert "  events: not run: the 300s budget was spent\n" in report
 
 
 # --- the bounded runner, against real child processes --------------------------------
@@ -565,7 +777,9 @@ def test_the_cli_writes_its_captures_and_exits_zero_with_one_read_forbidden(tmp_
     fixture = {
         "json": {
             f"{prefix} get nodes -o json": [_node("node-a")],
-            f"{prefix} -n kube-system get pods -o json": PODS[:3],
+            f"{prefix} -n kube-system get pods -o json": [
+                _with_private_fields(pod) for pod in PODS[:3]
+            ],
         },
         "broken": ["get events -A --field-selector reason="],
     }
@@ -579,6 +793,14 @@ def test_the_cli_writes_its_captures_and_exits_zero_with_one_read_forbidden(tmp_
     assert "(the InvalidDiskCapacity node events): exit 1: Error from server (Forbidden): forbidden" in index
     calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
     assert all(call.startswith(prefix) for call in calls)
+    assert not any("describe" in call for call in calls)
+    assert f"{prefix} {_pod_events('kube-system', 'coredns-1')}" in calls
+    unready = (out / "kube-system-not-ready.txt").read_text(encoding="utf-8")
+    assert "pod kube-system/coredns-1\n" in unready
+    assert f"captured: {prefix} {_pod_events('kube-system', 'coredns-1')}" in unready
+    for path in out.rglob("*"):
+        if path.is_file():
+            assert SENTINEL not in path.read_text(encoding="utf-8", errors="replace"), path
 
 
 def test_the_cli_with_no_kubectl_records_why_and_exits_zero(tmp_path: Path) -> None:

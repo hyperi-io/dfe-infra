@@ -22,10 +22,11 @@ evidence outlives the cluster. Each capture is one file under DIR:
   warning-events.txt         every namespace's Warning events, oldest first, the newest
                              kept when they pass the byte cap
   kube-system-events.txt     kube-system events, oldest first
-  kube-system-not-ready.txt  kubectl describe of each kube-system pod not Running and Ready
-  stuck-pods/<namespace>.txt kubectl describe of each pod in that namespace with a container
-                             waiting on ImagePullBackOff, ErrImagePull, CrashLoopBackOff or
-                             CreateContainerConfigError, the kubelet's own error included
+  kube-system-not-ready.txt  a summary and the events of each kube-system pod not Running and Ready
+  stuck-pods/<namespace>.txt a summary and the events of each pod in that namespace with a
+                             container waiting on ImagePullBackOff, ErrImagePull,
+                             CrashLoopBackOff or CreateContainerConfigError; the events carry
+                             the kubelet's own pull or config error
   node-events/<node>.txt     the events of each node whose kubelet reported InvalidDiskCapacity
   aws-node/<pod>.<container>.log
                              each aws-node container's newest lines, the init container
@@ -33,6 +34,13 @@ evidence outlives the cluster. Each capture is one file under DIR:
   aws-node/<node>.<file>     the CNI's own ipamd.log and plugin.log, newest bytes, through
                              the kubelet's /logs endpoint, else from the aws-node container
   index.txt                  every capture, the command behind it and how it ended
+
+A pod summary is built from the pod list already read, and names each field it
+keeps: the node, phase, conditions, and for every init and main container its
+image, state, restart count and last termination. A container's env, envFrom,
+args and command, the pod's volumes and annotations are never read, which is why
+no capture runs `kubectl describe`: it prints each container's literal env values,
+and the output is uploaded as a CI artefact.
 
 Every capture is bounded in time and bytes, and the run as a whole in time. One
 that fails is recorded in index.txt and the rest still run. It reads and never
@@ -62,8 +70,8 @@ STDERR_BYTES = 8192
 LOG_TAIL = 2000  # lines read from each aws-node container
 MAX_AWS_NODE_PODS = 20
 MAX_DISK_NODES = 20
-MAX_DESCRIBED = 40
-MAX_STUCK = 40  # stuck pods described across every namespace together
+MAX_UNREADY = 40  # unready kube-system pods summarised
+MAX_STUCK = 40  # stuck pods summarised across every namespace together
 CHUNK = 65536
 POLL = 0.1
 JOIN_TIMEOUT = 5.0
@@ -74,7 +82,7 @@ CNI_CONTAINER = "aws-node"
 CNI_LOG_MOUNT = "/host/var/log/aws-routed-eni"
 CNI_LOGS = ("ipamd.log", "plugin.log")
 DISK_REASON = "InvalidDiskCapacity"
-# A container waiting on one of these never starts by itself, and its describe carries the reason.
+# A container waiting on one of these never starts by itself, and its events carry the reason.
 STUCK_REASONS = frozenset(
     {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"}
 )
@@ -277,6 +285,12 @@ def disk_capacity_nodes(events: list[dict]) -> list[str]:
     return sorted(names)
 
 
+def _identity(pod: dict) -> tuple[str, str]:
+    """(namespace, name) of a pod, empty where the list does not carry one."""
+    meta = pod.get("metadata") or {}
+    return meta.get("namespace") or "", meta.get("name") or ""
+
+
 def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
     """(namespace, name) of every pod with an init or main container waiting on a stuck reason."""
     found = []
@@ -290,6 +304,69 @@ def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
         if reasons & STUCK_REASONS and meta.get("namespace") and meta.get("name"):
             found.append((meta["namespace"], meta["name"]))
     return sorted(found)
+
+
+# --- a pod summary that cannot carry an env value ------------------------------------
+# Each function reads the named keys below and nothing else. A pod's env, envFrom, args,
+# command, volumes and annotations are not among them, so none can reach a file.
+
+
+def _text(value: object) -> str:
+    """One line from something the cluster reported: runs of whitespace become one space."""
+    return " ".join(str(value).split())
+
+
+def _state_text(state: dict) -> str:
+    """A container state as `waiting, reason R, message: M`, or "" when it reports none."""
+    for kind in ("waiting", "running", "terminated"):
+        if kind not in state:
+            continue
+        detail = state[kind] or {}
+        parts = [kind]
+        if detail.get("reason"):
+            parts.append(f"reason {_text(detail['reason'])}")
+        if detail.get("exitCode") is not None:
+            parts.append(f"exit code {_text(detail['exitCode'])}")
+        if detail.get("message"):
+            parts.append(f"message: {_text(detail['message'])}")
+        return ", ".join(parts)
+    return ""
+
+
+def container_lines(pod: dict) -> list[str]:
+    """Each init and main container's image, state, restarts and last termination, as text."""
+    spec, status = pod.get("spec") or {}, pod.get("status") or {}
+    lines: list[str] = []
+    for label, declared_key, status_key in (
+        ("init container", "initContainers", "initContainerStatuses"),
+        ("container", "containers", "containerStatuses"),
+    ):
+        declared = {c["name"]: c for c in spec.get(declared_key) or [] if c.get("name")}
+        reported = {c["name"]: c for c in status.get(status_key) or [] if c.get("name")}
+        for name in [*declared, *(n for n in reported if n not in declared)]:
+            known, seen = declared.get(name) or {}, reported.get(name) or {}
+            lines.append(f"  {label} {name}")
+            lines.append(f"    image {_text(known.get('image') or seen.get('image') or '-')}")
+            state = _state_text(seen.get("state") or {})
+            lines.append(f"    state {state or 'not reported'}")
+            lines.append(f"    restartCount {int(seen.get('restartCount') or 0)}")
+            if last := _state_text(seen.get("lastState") or {}):
+                lines.append(f"    last state {last}")
+    return lines
+
+
+def pod_summary_lines(namespace: str, pod: dict) -> list[str]:
+    """A pod's node, phase, conditions and containers, as text that holds no env value."""
+    meta, spec, status = pod.get("metadata") or {}, pod.get("spec") or {}, pod.get("status") or {}
+    lines = [f"pod {namespace}/{meta.get('name')}", f"  node {spec.get('nodeName') or '-'}"]
+    lines.append(f"  phase {status.get('phase') or '-'}")
+    if status.get("reason") or status.get("message"):
+        why = ": ".join(_text(p) for p in (status.get("reason"), status.get("message")) if p)
+        lines.append(f"  status {why}")
+    for cond in status.get("conditions") or []:
+        why = ": ".join(_text(p) for p in (cond.get("reason"), cond.get("message")) if p)
+        lines.append(f"  condition {cond.get('type')}={cond.get('status')} {why}".rstrip())
+    return [*lines, *container_lines(pod)]
 
 
 # --- the run ------------------------------------------------------------------------
@@ -358,6 +435,30 @@ class Evidence:
         self.note(name, how, full)
         return items
 
+    def pod_report(self, name: str, namespace: str, pods: list[dict]) -> None:
+        """The file `name`: each pod's summary from the pod list, then that pod's events.
+
+        An events call that fails is recorded in the file and the index, and the summary stays.
+        """
+        self.note(name, f"{len(pods)} pod(s) summarised from the pod list, each with its events")
+        sections: list[str] = []
+        for pod in pods:
+            pod_name = (pod.get("metadata") or {}).get("name") or ""
+            selector = f"involvedObject.name={pod_name}"
+            args = ["get", "events", "-n", namespace, "--field-selector", selector]
+            args += [OLDEST_FIRST, "-o", "wide"]
+            outcome = self._kubectl(args, limit=TEXT_BYTES, tail=False)
+            self.runs += 1
+            if outcome and outcome.ok:
+                self.answered += 1
+            how = verdict(outcome, self.budget)
+            self.note(f"{name}, events of {pod_name}", how, args)
+            events = outcome.output.decode("utf-8", errors="replace") if outcome else ""
+            sections.append(
+                "\n".join(pod_summary_lines(namespace, pod)) + f"\n  events: {how}\n{events}\n"
+            )
+        self.write(name, "\n".join(sections).encode("utf-8"))
+
 
 def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
     """Each aws-node container's newest lines, then each node's CNI log files."""
@@ -386,9 +487,9 @@ def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
 
 
 def _capture_stuck(evidence: Evidence) -> None:
-    """A describe of every stuck pod in any namespace, one file per namespace."""
+    """A summary and the events of every stuck pod in any namespace, one file per namespace."""
     pods = evidence.read(
-        "(the pods in every namespace the stuck-pod describes are chosen from)",
+        "(the pods in every namespace the stuck pods are chosen from)",
         ["get", "pods", "-A"],
     )
     if pods is None:
@@ -400,15 +501,14 @@ def _capture_stuck(evidence: Evidence) -> None:
         evidence.note("stuck-pods/", f"not run: no container is waiting on {waits}")
         return
     if len(stuck) > MAX_STUCK:
-        described = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are described"
-        evidence.note("stuck-pods/", described)
-    by_namespace: dict[str, list[str]] = {}
-    for namespace, name in stuck[:MAX_STUCK]:
-        by_namespace.setdefault(namespace, []).append(name)
-    for namespace, names in by_namespace.items():
-        evidence.capture(
-            f"stuck-pods/{safe_name(namespace)}.txt", ["-n", namespace, "describe", "pods", *names]
-        )
+        summarised = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are summarised"
+        evidence.note("stuck-pods/", summarised)
+    listed = {_identity(pod): pod for pod in pods}
+    by_namespace: dict[str, list[dict]] = {}
+    for key in stuck[:MAX_STUCK]:
+        by_namespace.setdefault(key[0], []).append(listed[key])
+    for namespace, chosen in by_namespace.items():
+        evidence.pod_report(f"stuck-pods/{safe_name(namespace)}.txt", namespace, chosen)
 
 
 def collect(evidence: Evidence) -> None:
@@ -442,9 +542,9 @@ def collect(evidence: Evidence) -> None:
     if pods is None:
         evidence.note(unready_file, "not run: the kube-system pods were not read")
     elif unready := not_ready_pods(pods):
-        evidence.capture(
-            unready_file, ["-n", "kube-system", "describe", "pods", *unready[:MAX_DESCRIBED]]
-        )
+        listed = {(pod.get("metadata") or {}).get("name") or "": pod for pod in pods}
+        chosen = [listed[name] for name in unready[:MAX_UNREADY]]
+        evidence.pod_report(unready_file, "kube-system", chosen)
     else:
         evidence.note(unready_file, "not run: every kube-system pod is Running and Ready")
 
@@ -501,14 +601,15 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "stage fails and before the destroy",
         description="Reads the cluster and writes one file per capture under --out: nodes -o "
         "wide, each node's conditions and allocatable, pods -A -o wide, every namespace's "
-        "Warning events oldest first, kube-system events oldest first, describe of each "
-        "kube-system pod not Running and Ready, describe of each pod in any namespace with a "
-        "container waiting on ImagePullBackOff, ErrImagePull, CrashLoopBackOff or "
-        "CreateContainerConfigError, the events of each node reporting InvalidDiskCapacity, "
-        "every aws-node container's newest log lines, and the CNI's ipamd and plugin logs. "
-        "Every capture is bounded in time and bytes, one that fails is recorded "
-        "in index.txt and the rest still run, and nothing reads a Secret. Writes nothing to the "
-        "cluster; exits 0.",
+        "Warning events oldest first, kube-system events oldest first, a summary and the events "
+        "of each kube-system pod not Running and Ready, a summary and the events of each pod in "
+        "any namespace with a container waiting on ImagePullBackOff, ErrImagePull, "
+        "CrashLoopBackOff or CreateContainerConfigError, the events of each node reporting "
+        "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "
+        "and plugin logs. A pod summary leaves out every container's env, args and command, the "
+        "pod's volumes and its annotations. Every capture is bounded in time and bytes, one that "
+        "fails is recorded in index.txt and the rest still run, and nothing reads a Secret. "
+        "Writes nothing to the cluster; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     fe.add_argument("--out", required=True, help="directory the captures and index.txt go to")

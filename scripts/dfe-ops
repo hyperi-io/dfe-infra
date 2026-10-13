@@ -122,12 +122,13 @@ Subcommands:
                Healthy. The readiness gate runs it once when it fails.
   failure-evidence
                READ-ONLY. Writes the nodes' conditions and allocatable, every
-               pod, every namespace's Warning events, a describe of each pod
-               stuck on an image pull, a crash loop or its config, kube-system
-               events and unready pods, the events of nodes reporting
-               InvalidDiskCapacity, and the aws-node and CNI logs to one file
-               each, every capture bounded in time and bytes. The
-               cycle runs it once when a stage fails, before the destroy.
+               pod, every namespace's Warning events, a summary and the events
+               of each pod stuck on an image pull, a crash loop or its config,
+               kube-system events and unready pods, the events of nodes
+               reporting InvalidDiskCapacity, and the aws-node and CNI logs to
+               one file each, every capture bounded in time and bytes. A pod
+               summary leaves out env, args, command, volumes and annotations.
+               The cycle runs it once when a stage fails, before the destroy.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
