@@ -833,6 +833,95 @@ def test_preflight_says_who_can_reach_the_api(
     assert names in capsys.readouterr().err
 
 
+# --- cloud-preflight: an external ClickHouse needs its settings before anything is read -------------
+
+CH_ENV = {
+    "DFE_CYCLE_CH_SERVICE_ID": "placeholder-service",
+    "DFE_CYCLE_CH_API_KEY_ID": "placeholder-key-id",
+    "DFE_CYCLE_CH_API_KEY_SECRET": "placeholder-key-secret",
+    "TF_VAR_clickhouse_external_password": "placeholder-password",
+}
+
+
+def _clickhouse_dial(tf_dir: Path, mode: str | None) -> None:
+    tfvars = TFVARS if mode is None else {**TFVARS, "clickhouse": {"mode": mode}}
+    (tf_dir / "dial.auto.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
+
+
+def _clickhouse_env(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
+    """Leave exactly `env` of the four ClickHouse settings set, whatever the shell holds."""
+    for name in CH_ENV:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+
+def _preflight_command(root: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+    monkeypatch.setattr(guard_mod, "_make_guard", lambda config: FakeGuard())
+    monkeypatch.setattr(guard_mod.time, "time", lambda: NOW)
+    return guard_mod.cmd_cloud_preflight(_args(root))
+
+
+@pytest.mark.parametrize("missing", sorted(CH_ENV))
+def test_expected_fail_preflight_of_an_external_dial_missing_a_setting_is_refused(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, missing: str
+) -> None:
+    _clickhouse_dial(root, "external")
+    env = {name: value for name, value in CH_ENV.items() if name != missing}
+    _clickhouse_env(monkeypatch, env)
+    assert _preflight_command(root, monkeypatch) == 2
+    printed = capsys.readouterr().err
+    assert printed.startswith("cloud-preflight refused: clickhouse.mode is external")
+    assert missing in printed
+    assert [name for name in env if name in printed] == []
+    assert not any(value in printed for value in env.values())
+    assert "PASS" not in printed
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_expected_fail_preflight_reads_a_blank_clickhouse_setting_as_unset(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, blank: str
+) -> None:
+    _clickhouse_dial(root, "external")
+    _clickhouse_env(monkeypatch, {**CH_ENV, "DFE_CYCLE_CH_SERVICE_ID": blank})
+    assert _preflight_command(root, monkeypatch) == 2
+    assert "DFE_CYCLE_CH_SERVICE_ID" in capsys.readouterr().err
+
+
+def test_preflight_of_an_external_dial_with_every_setting_passes(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clickhouse_dial(root, "external")
+    _clickhouse_env(monkeypatch, CH_ENV)
+    assert _preflight_command(root, monkeypatch) == 0
+    assert "cloud-preflight passed." in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mode", ["in_cluster", None])
+def test_preflight_of_an_in_cluster_dial_needs_no_clickhouse_setting(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, mode: str | None
+) -> None:
+    _clickhouse_dial(root, mode)
+    _clickhouse_env(monkeypatch, {})
+    assert _preflight_command(root, monkeypatch) == 0
+    assert "cloud-preflight passed." in capsys.readouterr().err
+
+
+def test_preflight_and_cycle_refuse_an_external_dial_in_the_same_words(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _clickhouse_dial(root, "external")
+    _clickhouse_env(monkeypatch, {})
+    assert _preflight_command(root, monkeypatch) == 2
+    preflight = capsys.readouterr().err
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == 2
+    cycle = capsys.readouterr().err
+    assert runner.commands == []
+    assert all(name in preflight for name in CH_ENV)
+    assert preflight.replace("cloud-preflight refused", "cloud-cycle refused", 1) == cycle
+
+
 # --- cloud-cycle: nothing created on a refusal, torn down on every exit ------------------------------
 
 
@@ -1374,6 +1463,88 @@ def test_the_acceptance_stage_flag_passes_the_cycles_own_parser(
     argv = runner.commands[2][runner.commands[2].index("cycle") + 1:]
     assert argv[4:] == [*given, "--mode", "single"]
     assert guard_mod._parse_cycle(argv).acceptance_suite == "source"
+
+
+# --- the edge suite needs the address it sends from before anything is created -----------------
+
+INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDR"
+# A documentation range only: this repository is public.
+INGEST_SENDER = "203.0.113.7/32"
+
+
+def _ingest_allow(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv(INGEST_ALLOW_VAR, raising=False)
+    else:
+        monkeypatch.setenv(INGEST_ALLOW_VAR, value)
+
+
+@pytest.mark.parametrize(("value", "why"), [
+    (None, "is unset"),
+    ("", "is unset"),
+    ("   ", "is unset"),
+    ("0.0.0.0/0", "every address"),
+    ("::/0", "every address"),
+    ("not-an-address", "is not a network"),
+])
+def test_expected_fail_an_edge_cycle_without_a_usable_send_address_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    value: str | None, why: str
+) -> None:
+    """Found missing after the apply, it costs the cluster the apply built."""
+    _ingest_allow(monkeypatch, value)
+    guard, runner = FakeGuard(), FakeRunner()
+    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--", "--acceptance-suite", "edge"]) == 2
+    printed = capsys.readouterr().err
+    assert printed.startswith("cloud-cycle refused: the edge acceptance stage cannot run: ")
+    assert INGEST_ALLOW_VAR in printed
+    assert why in printed
+    assert "PASS" not in printed
+    assert runner.commands == []
+    assert guard.records == {}
+    assert not (root / guard_mod.OVERLAY_NAME).exists()
+
+
+def test_an_edge_cycle_with_a_send_address_in_the_environment_runs(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ingest_allow(monkeypatch, INGEST_SENDER)
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--acceptance-suite", "edge"]) == 0
+    assert runner.words() == ["init", "apply", "cycle", "destroy"]
+
+
+def test_an_edge_cycle_reads_the_send_address_from_the_env_file_it_passes(
+    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _ingest_allow(monkeypatch, None)
+    env_file = tmp_path / "run.env"
+    env_file.write_text(f"{INGEST_ALLOW_VAR}={INGEST_SENDER}\n", encoding="utf-8")
+    runner = FakeRunner()
+    given = ["--acceptance-suite", "edge", "--env-file", str(env_file)]
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    assert runner.words() == ["init", "apply", "cycle", "destroy"]
+
+
+def test_expected_fail_an_edge_cycle_whose_env_file_cannot_be_read_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path
+) -> None:
+    _ingest_allow(monkeypatch, INGEST_SENDER)
+    runner = FakeRunner()
+    given = ["--acceptance-suite", "edge", "--env-file", str(tmp_path / "absent.env")]
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 2
+    assert "the edge acceptance stage cannot run" in capsys.readouterr().err
+    assert runner.commands == []
+
+
+@pytest.mark.parametrize("given", [["--acceptance-suite", "source"], ["--acceptance-suite", "all"]])
+def test_a_cycle_on_another_suite_never_asks_for_the_send_address(
+    root: Path, monkeypatch: pytest.MonkeyPatch, given: list[str]
+) -> None:
+    _ingest_allow(monkeypatch, None)
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    assert runner.words() == ["init", "apply", "cycle", "destroy"]
 
 
 # --- the cycle's mode is the dial's profile -------------------------------------------------------
