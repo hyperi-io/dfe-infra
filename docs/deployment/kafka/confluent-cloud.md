@@ -43,7 +43,7 @@ narrow allowed range.
 | `log.segment.bytes=512 MiB` | LOCKED -- not exposed (Confluent manages segments). |
 | `cleanup.policy=delete` | Settable per topic (default `delete`). |
 | `message.max.bytes` (default) | PER TOPIC as `max.message.bytes` (default 2,097,164; at most 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, 20 MB on Freight -- keep aligned with the scalo client budgets). |
-| App record limits (16 MiB producers, 10 MiB receiver request body) | Follow the size bootstrap writes on the cluster secret from `DFE_KAFKA_MESSAGE_MAX_BYTES`, which the aws root sets: the receiver, loader and transform producers take it as `message.max.bytes`, the receiver refuses a request body over 5/8 of it, and dfe-transform-elastic drops a record over 15/16 of it. dfe-fetcher and dfe-archiver keep 16 MiB, so on Basic or Standard the broker refuses a record of theirs over 8,388,608 bytes. |
+| App record limits (16 MiB producers, 10 MiB receiver request body) | Follow the size bootstrap writes on the cluster secret from `DFE_KAFKA_MESSAGE_MAX_BYTES`, which the aws root sets: the receiver, loader, fetcher, archiver and transform producers take it as `message.max.bytes`, the receiver refuses a request body over 5/8 of it, and dfe-transform-elastic drops a record over 15/16 of it. dfe-fetcher and dfe-archiver read it from their first release after v1.4.36 and v1.7.32; an earlier image ignores it and keeps 16 MiB. |
 
 Net: on Confluent Cloud the DFE opinion reduces to a per-topic config of
 `min.insync.replicas=2`, `partitions=12`, `retention.ms=259200000`,
