@@ -1909,6 +1909,17 @@ def test_a_sweep_with_only_the_backlog_open_gates_nothing() -> None:
     assert not any(entry["gates"] for entry in slack["keys"])
 
 
+def test_one_tool_refused_for_two_reasons_gates_once_like_its_one_key() -> None:
+    unreadable = [sweep.Unreadable("example-org/dfe-engine", "ci_annotations", "HTTP 403"),
+                  sweep.Unreadable("example-org/dfe-engine", "ci_annotations", "HTTP 404")]
+    report = _backlog_only_report(unreadable)
+    assert report["totals"]["gating"]["unreadable"] == 1
+    slack = sweep.render_slack(report)
+    gating_keys = {entry["key"] for entry in slack["keys"] if entry["gates"]}
+    assert gating_keys == {"example-org/dfe-engine:ci_annotations"}
+    assert slack["stats"]["gating"] == len(gating_keys)
+
+
 def test_an_unreadable_backlog_never_gates_but_any_other_unreadable_tool_does() -> None:
     unreadable = [sweep.Unreadable("example-org/dfe-engine", "backlog", "no scope"),
                   sweep.Unreadable("example-org/dfe-engine", "issues", "HTTP 403")]

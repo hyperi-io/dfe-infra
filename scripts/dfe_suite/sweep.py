@@ -1696,7 +1696,8 @@ def build_report(
     rows = chain.from_iterable(result.backlog for result in results)
     backlog = [_report_row(row) for row in rows]
     drift = list(chain.from_iterable(result.drift for result in results))
-    blocked = sum(unreadable_gates(u.tool) for u in unreadable)
+    # Counted per repo and tool, the unit the Slack keys carry, so the two totals agree.
+    blocked = len({(u.repo, u.tool) for u in unreadable if unreadable_gates(u.tool)})
     report = {
         "generated_at": generated_at or datetime.now(UTC).isoformat(timespec="seconds"),
         "stack": stack,
