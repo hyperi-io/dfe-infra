@@ -52,6 +52,9 @@ HYPERDX_WINDOW_MINUTES = 60
 # The path the fork's browser client posts to (packages/app/src/clickhouse.ts). With a
 # trailing slash the frontend answers its own 308, and a redirect is never followed.
 CLICKHOUSE_PROXY = "/api/clickhouse-proxy"
+# The cookie dfe-ui plants across the domain for the console's HyperDX iframe, which sends no
+# Authorization header, so the search here authenticates the way a user's does.
+TOKEN_COOKIE = "dfe_token"
 POLL_INTERVAL = 5.0
 # How long the run waits on the probe pod, and the pod's own limit inside that.
 PROBE_DEADLINE = 300.0
@@ -537,7 +540,7 @@ def record_refused(results: list[wizard.StepResult], kube: list[str], namespace:
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse every redirect: urllib carries the bearer token to whatever host one names."""
+    """Refuse every redirect: urllib carries the token cookie to whatever host one names."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -583,6 +586,9 @@ def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | 
                  headers: Mapping[str, str] | None = None) -> tuple[int, object]:
     """One call to HyperDX's API through its frontend, as the embedded app makes it.
 
+    The token rides in the ``dfe_token`` cookie, as it does from the console's
+    iframe.
+
     Returns:
         The status and the decoded body, or the body's first 200 characters
         when it is not JSON.
@@ -592,7 +598,7 @@ def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | 
         f"{base.rstrip('/')}{path}",
         data=body.encode() if body is not None else None,
         method="POST" if body is not None else "GET",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json", **(headers or {})},
+        headers={"Cookie": f"{TOKEN_COOKIE}={token}", "Accept": "application/json", **(headers or {})},
     )
     try:
         with opener.open(request, timeout=60) as response:
@@ -616,9 +622,9 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
                    deadline: float) -> None:
     """Find the marker through HyperDX's own API, under an engine-minted token.
 
-    The two calls the search page makes: the team's sources, to resolve `main`
-    and its connection, then the query through HyperDX's ClickHouse proxy, which
-    runs it as the team's own ClickHouse user.
+    The two calls the search page makes, with its credential: the team's
+    sources, to resolve `main` and its connection, then the query through
+    HyperDX's ClickHouse proxy, which runs it as the team's own ClickHouse user.
     """
     if not base:
         row(results, "hyperdx", "failed", (
