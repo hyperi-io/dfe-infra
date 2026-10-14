@@ -885,7 +885,13 @@ OBSERVE_DEADLINE = 90.0
 # The frame groups thousands with a comma, so "1,050 Results" is a count too.
 RESULTS_LINE = re.compile(r"^([\d,]+) Results?$")
 # The search page's where box, by the test id HyperDX's own page objects drive it by.
+# Only the Lucene box carries it.
 WHERE_INPUT = "search-input"
+# The language switch beside the where box, present in both languages. The fork
+# opens the box on SQL for a profile that never chose (SearchWhereInput.tsx).
+WHERE_SWITCH = "where-language-switch"
+WHERE_LANGUAGE_LABEL = "Query language"
+LUCENE = "Lucene"
 
 
 def results_count(results: str) -> int | None:
@@ -932,6 +938,21 @@ def hyperdx_frame(page):
     return frame
 
 
+def where_on_lucene(frame) -> None:
+    """Put the frame's where box on Lucene, where a bare term searches the source's implicit column."""
+    switch = frame.get_by_test_id(WHERE_SWITCH).first
+    switch.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    language = switch.get_by_label(WHERE_LANGUAGE_LABEL)
+    if language.input_value(timeout=STEP_TIMEOUT_MS).strip() == LUCENE:
+        return
+    language.click(timeout=STEP_TIMEOUT_MS)
+    # The dropdown is portalled out of the switch, so its option is found from the frame.
+    option = frame.get_by_role("option", name=LUCENE, exact=True)
+    option.click(timeout=STEP_TIMEOUT_MS)
+    # An open dropdown covers the box it is about to fill.
+    option.wait_for(state="hidden", timeout=STEP_TIMEOUT_MS)
+
+
 def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
     """Pick *name* in the frame's source picker, search for *marker*, and read the results line.
 
@@ -941,8 +962,19 @@ def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
         marker: A term to type in the where box first; empty searches every row.
 
     Returns:
-        Whether the picker offered the source, and the results line.
+        Whether the picker offered the source, and the results line, or the
+        refusal that stopped the search once the source was picked.
     """
+    if not pick_source(frame, name):
+        return False, ""
+    try:
+        return True, run_search(frame, marker)
+    except Exception as exc:  # a timeout after the pick is the search failing, not the picker
+        return True, refusal(exc)
+
+
+def pick_source(frame, name: str) -> bool:
+    """Pick *name* in the frame's source picker; False when the picker does not offer it."""
     picker = frame.get_by_placeholder("Data Source")
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     # The frame fills its source list after the page paints, so an empty picker
@@ -968,10 +1000,15 @@ def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
         except Exception:  # absence is decided by count() below, not this wait
             pass
         if not option.count():
-            return False, ""
+            return False
         option.first.click(timeout=STEP_TIMEOUT_MS)
+    return True
+
+
+def run_search(frame, marker: str = "") -> str:
+    """Search the picked source for *marker*, and read the results line once it counts rows."""
     if marker:
-        # A clean profile opens the box on Lucene, where a bare term matches the source's implicit column.
+        where_on_lucene(frame)
         where = frame.get_by_test_id(WHERE_INPUT)
         where.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
         where.fill(marker, timeout=STEP_TIMEOUT_MS)
@@ -988,9 +1025,9 @@ def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
             except Exception:  # the line re-renders between count() and the read
                 pass
             if (results_count(results) or 0) > 0:
-                return True, results
+                return results
         if time.monotonic() >= until:
-            return True, results
+            return results
         time.sleep(5)
 
 

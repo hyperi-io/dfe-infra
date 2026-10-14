@@ -131,7 +131,8 @@ def run(args: argparse.Namespace) -> int:
     if endpoint is not None and accepted:
         edge.record_refused(
             results, kube, args.namespace, endpoint, args.gateway_address, args.allow,
-            edge.split_cidrs(args.egress_cidrs), run_id, args.receiver_deployment,
+            edge.split_cidrs(args.egress_cidrs), run_id,
+            console_url=args.ui_url, receiver_deployment=args.receiver_deployment,
         )
     else:
         edge.row(results, "refused", "failed", (
@@ -162,7 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--egress-cidrs", required=True, metavar="CIDRS",
                         help="the cluster's NAT egress, comma separated: where a send from inside it comes from")
     parser.add_argument("--gateway-address", default="",
-                        help="the gateway load balancer's address, which the in-cluster probe reaches as its control")
+                        help="the gateway load balancer's address, which the in-cluster probe reaches as its control, "
+                             "asking for the console's own hostname")
     parser.add_argument("--hyperdx-url", default="", help="HyperDX's URL through the gateway")
     parser.add_argument("--receiver-deployment", default="dfe-receiver",
                         help="the receiver's Deployment, whose image and placement the probe pod borrows")

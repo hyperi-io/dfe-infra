@@ -465,7 +465,11 @@ class AwsGuard:
         Raises:
             CloudSweepError: A listing failed, so what is left cannot be known.
         """
-        return cloud_sweep.main(args)
+        try:
+            return cloud_sweep.main(args)
+        finally:
+            # A pipe holds the sweep's stdout until exit, behind every stderr line written after it.
+            sys.stdout.flush()
 
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
