@@ -57,7 +57,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, effective_env, golden, object_id
+from _gate import CLOUDS, configmap_files, effective_env, golden, object_id
 from _weave import CONTRACTS, render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -407,7 +407,7 @@ def has_value(value: object) -> bool:
 def config_file(docs: list[dict], app: str) -> dict:
     """The app's config file as the thin chart writes it into <app>-config."""
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{app}-config")
-    (text,) = configmap["data"].values()
+    (text,) = configmap_files(configmap).values()
     return yaml.safe_load(text) or {}
 
 

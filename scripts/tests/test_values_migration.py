@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from _gate import configmap_files
 from _weave import helm, render_app, render_extras, weave
 
 TESTS = Path(__file__).resolve().parent
@@ -241,7 +242,7 @@ def test_a_transform_mounts_the_files_the_220_chart_mounted(service: str, carrie
     values = load(overlay(FIXTURES, service, instance))
     docs = render_thin(service, instance, "local", carried)
     data = {
-        d["metadata"]["name"].rsplit("-", 1)[-1]: d.get("data") or {}
+        d["metadata"]["name"].rsplit("-", 1)[-1]: configmap_files(d)
         for d in docs
         if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith(("-transforms", "-enrichment"))
     }
@@ -252,7 +253,7 @@ def test_a_transform_mounts_the_files_the_220_chart_mounted(service: str, carrie
 def test_vrl_registers_every_table_at_the_directory_it_mounts(carried: Path) -> None:
     docs = render_thin("dfe-transform-vrl", "merakivrl", "local", carried)
     config = next(d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("-config"))
-    body = yaml.safe_load(config["data"]["config.yaml"])
+    body = yaml.safe_load(configmap_files(config)["config.yaml"])
     assert body["enrichment_tables"] == [{"name": "timezones", "path": f"{ENRICHMENT}/timezones.csv"}]
     mounts = [
         m["mountPath"]

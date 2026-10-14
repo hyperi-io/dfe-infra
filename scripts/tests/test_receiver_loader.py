@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, effective_env, golden
+from _gate import CLOUDS, configmap_files, effective_env, golden
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -61,7 +61,7 @@ def receiver_config(docs: list[dict]) -> dict:
     cm = next(
         d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
     )
-    return yaml.safe_load(cm["data"]["config.yaml"]) or {}
+    return yaml.safe_load(configmap_files(cm)["config.yaml"]) or {}
 
 
 def endpoint_of(docs: list[dict]) -> str:

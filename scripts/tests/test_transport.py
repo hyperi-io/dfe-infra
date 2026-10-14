@@ -37,7 +37,7 @@ import yaml
 
 from _charts import CHART_TREES
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, effective_env, golden, object_id
+from _gate import CLOUDS, configmap_files, effective_env, golden, object_id
 from _weave import render_app, render_extras, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -205,7 +205,7 @@ def test_the_push_service_renders_on_direct_only() -> None:
 
 def transform_config(docs_: list[dict], stage: str) -> dict:
     doc = next(d for d in docs_ if object_id(d) == f"ConfigMap/{stage}-config")
-    return yaml.safe_load(doc["data"]["config.yaml"]) or {}
+    return yaml.safe_load(configmap_files(doc)["config.yaml"]) or {}
 
 
 def test_the_transform_config_names_the_transport() -> None:
