@@ -45,7 +45,6 @@ EDGE_KIND_NAMES = [
     "image-pin",
     "mirrored-logic",
     "python-dep",
-    "python-dep-undeclared",
     "vendored-file",
     "version-pin",
 ]
@@ -435,7 +434,7 @@ def test_live_file() -> None:
     expect("the verified date parses as YYYY-MM-DD", parsed, str(g.get("verified")))
     expect("every lane member is a node", all(
         m in g["nodes"] for lane in g["lanes"] for m in lane["members"]))
-    expect("the edge-kind vocabulary is the documented ten",
+    expect("the edge-kind vocabulary is the documented nine",
            sorted(g["edge_kinds"]) == EDGE_KIND_NAMES, str(sorted(g["edge_kinds"])))
     expect("the runtime-kind vocabulary is separate and declared",
            sorted(g["runtime_kinds"]) == RUNTIME_KIND_NAMES, str(sorted(g.get("runtime_kinds", {}))))

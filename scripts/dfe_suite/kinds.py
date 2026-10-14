@@ -42,7 +42,6 @@ from dfe_suite.repos import find_repo
 ACTION_REBUILD_RUST = "rebuild_rust"
 ACTION_REBUILD_PYTHON = "rebuild_python"
 ACTION_WIDEN_RANGE = "widen-range"
-ACTION_RUN_TESTS = "run-tests"
 ACTION_REGENERATE = "regenerate-and-diff"
 ACTION_CONTRACT_TEST = "run-contract-test"
 ACTION_REVENDOR = "re-vendor"
@@ -513,27 +512,6 @@ def check_python_dep(
     )
 
 
-def check_python_dep_undeclared(
-    edge: dict,
-    *,
-    producer_version: str,
-    consumer_repo: Path,
-    package: str | None = None,
-    dry_run: bool = True,
-) -> CheckResult:
-    """No range exists, so only running the named import sites answers this."""
-    ref = _first(edge)
-    return CheckResult(
-        None,
-        _with_note(
-            edge,
-            f"No declared range. Install {producer_version} beside the consumer "
-            f"and run the tests covering the import site at {ref.describe()}.",
-        ),
-        ACTION_RUN_TESTS,
-    )
-
-
 _SCHEMA_VERSION = re.compile(r"(?im)^\W*schema version:\s*(\S+)\s*$")
 _REGENERATE = re.compile(r"(?im)^\W*regenerate with:\s*(.+?)\s*$")
 
@@ -751,7 +729,6 @@ CheckFunction = Callable[..., CheckResult]
 CHECKS: dict[str, CheckFunction] = {
     "cargo-dep": check_cargo_dep,
     "python-dep": check_python_dep,
-    "python-dep-undeclared": check_python_dep_undeclared,
     "generated-file": check_generated_file,
     "contract-guard": check_contract_guard,
     "vendored-file": check_vendored_file,
@@ -773,10 +750,6 @@ KIND_SUMMARY: dict[str, str] = {
         "reads every PEP 440 specifier the cited manifest declares for the "
         "distribution and answers whether each admits the new version; relock "
         "if all do, widen the one that does not first"
-    ),
-    "python-dep-undeclared": (
-        "no range exists, so it hands back the named import sites to run the "
-        "tests against"
     ),
     "generated-file": (
         "reads the generated header for its schema version and hands back the "

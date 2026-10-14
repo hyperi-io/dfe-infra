@@ -266,16 +266,14 @@ flowchart LR
 
 ### logreducer
 
-dfe-engine imports it and declares no dependency on it, deliberately: the
-sampler degrades with a message when it is absent. There is no range to test,
-so the check is running the tests that cover the named import sites.
+dfe-engine takes it as a package dependency by range, with the `enhanced` extra, and imports it lazily for the sampler's smart and anomaly modes.
 
 <!-- suite-graph:begin producer:logreducer -->
 ```mermaid
 flowchart LR
   logreducer["logreducer"]:::producer
   dfe_engine["dfe-engine"]:::suite
-  logreducer -->|python-dep-undeclared, potential| dfe_engine
+  logreducer -->|python-dep, potential| dfe_engine
   classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
   classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
 ```

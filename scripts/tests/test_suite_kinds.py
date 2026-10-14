@@ -25,7 +25,6 @@ from dfe_suite.kinds import (
     ACTION_REBUILD_RUST,
     ACTION_REGENERATE,
     ACTION_REVENDOR,
-    ACTION_RUN_TESTS,
     ACTION_WIDEN_RANGE,
     CHECKS,
     KIND_SUMMARY,
@@ -37,7 +36,6 @@ from dfe_suite.kinds import (
     check_image_pin,
     check_mirrored_logic,
     check_python_dep,
-    check_python_dep_undeclared,
     check_vendored_file,
     check_version_pin,
     parse_evidence,
@@ -430,33 +428,6 @@ class PythonDepTests(unittest.TestCase):
         )
         assert result.moved is None
         assert "does not exist" in result.detail
-
-
-class UndeclaredDependencyTests(unittest.TestCase):
-    """No range exists, so only running the named import sites answers it."""
-
-    def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory(prefix="suite-kinds-undeclared-")
-        self.addCleanup(tmp.cleanup)
-        self.repo = Path(tmp.name)
-
-    def test_the_import_site_is_handed_back_with_the_version_to_install(self) -> None:
-        edge = {
-            "from": "logreducer",
-            "to": "dfe-engine",
-            "kind": "python-dep-undeclared",
-            "type": "potential",
-            "evidence": "dfe-engine/src/dfe_engine/sampling/service.py:200",
-            "note": "Also imported at service.py:236.",
-        }
-        result = check_python_dep_undeclared(
-            edge, producer_version="1.4.0", consumer_repo=self.repo
-        )
-        assert result.moved is None
-        assert result.action == ACTION_RUN_TESTS
-        assert "service.py:200" in result.detail
-        assert "1.4.0" in result.detail
-        assert "service.py:236" in result.detail
 
 
 class GeneratedFileTests(unittest.TestCase):
