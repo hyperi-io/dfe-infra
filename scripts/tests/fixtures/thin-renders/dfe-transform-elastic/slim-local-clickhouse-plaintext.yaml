@@ -17,10 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: '{}
-
-    '
+binaryData:
+  config.yaml: e30K
 kind: ConfigMap
 metadata:
   labels:

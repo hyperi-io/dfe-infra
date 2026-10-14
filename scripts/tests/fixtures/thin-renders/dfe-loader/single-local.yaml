@@ -17,8 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  loader.yaml: "clickhouse:\n  protocol: http\n"
+binaryData:
+  loader.yaml: Y2xpY2tob3VzZToKICBwcm90b2NvbDogaHR0cAo=
 kind: ConfigMap
 metadata:
   labels:

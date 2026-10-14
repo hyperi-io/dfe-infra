@@ -17,8 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "sink:\n  endpoint: http://dfe-loader:6000\n  transport: direct\nsource:\n  listen: 0.0.0.0:6000\n  transport: direct\n"
+binaryData:
+  config.yaml: c2luazoKICBlbmRwb2ludDogaHR0cDovL2RmZS1sb2FkZXI6NjAwMAogIHRyYW5zcG9ydDogZGlyZWN0CnNvdXJjZToKICBsaXN0ZW46IDAuMC4wLjA6NjAwMAogIHRyYW5zcG9ydDogZGlyZWN0Cg==
 kind: ConfigMap
 metadata:
   labels:

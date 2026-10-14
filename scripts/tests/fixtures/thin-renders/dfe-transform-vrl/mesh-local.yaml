@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-transform-vrl
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,8 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "sink:\n  endpoint: http://dfe-loader-mesh.envoy-gateway-system.svc.cluster.local:6000\n  transport: direct\nsource:\n  listen: 0.0.0.0:6000\n  transport: direct\n"
+binaryData:
+  config.yaml: c2luazoKICBlbmRwb2ludDogaHR0cDovL2RmZS1sb2FkZXItbWVzaC5lbnZveS1nYXRld2F5LXN5c3RlbS5zdmMuY2x1c3Rlci5sb2NhbDo2MDAwCiAgdHJhbnNwb3J0OiBkaXJlY3QKc291cmNlOgogIGxpc3RlbjogMC4wLjAuMDo2MDAwCiAgdHJhbnNwb3J0OiBkaXJlY3QK
 kind: ConfigMap
 metadata:
   labels:

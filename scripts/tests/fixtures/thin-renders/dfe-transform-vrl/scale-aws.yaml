@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-transform-vrl
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,8 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "sink:\n  transport: bus\nsource:\n  auto_offset_reset: earliest\n  transport: bus\n"
+binaryData:
+  config.yaml: c2luazoKICB0cmFuc3BvcnQ6IGJ1cwpzb3VyY2U6CiAgYXV0b19vZmZzZXRfcmVzZXQ6IGVhcmxpZXN0CiAgdHJhbnNwb3J0OiBidXMK
 kind: ConfigMap
 metadata:
   labels:

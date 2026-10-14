@@ -17,8 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "buffer:\n  memory_limit: 0\ndestinations:\n  default: loader\ngrpc:\n  bind_address: 0.0.0.0:6000\n  enabled: true\nloader:\n  grpc_endpoint: http://dfe-loader:6000\n  transport: grpc\n"
+binaryData:
+  config.yaml: YnVmZmVyOgogIG1lbW9yeV9saW1pdDogMApkZXN0aW5hdGlvbnM6CiAgZGVmYXVsdDogbG9hZGVyCmdycGM6CiAgYmluZF9hZGRyZXNzOiAwLjAuMC4wOjYwMDAKICBlbmFibGVkOiB0cnVlCmxvYWRlcjoKICBncnBjX2VuZHBvaW50OiBodHRwOi8vZGZlLWxvYWRlcjo2MDAwCiAgdHJhbnNwb3J0OiBncnBjCg==
 kind: ConfigMap
 metadata:
   labels:
