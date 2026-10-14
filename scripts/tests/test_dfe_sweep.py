@@ -429,6 +429,7 @@ PROJECT_NODES = [
     _issue_node(31, "Backlog", priority="P2", effort="4h"),
     _issue_node(33, "Backlog", labels=("backlog",), priority="P0"),
     _issue_node(32, "Next", labels=("backlog",)),
+    _issue_node(36, "In progress", priority="P1"),
     _issue_node(40, "Backlog", state="CLOSED"),
     _issue_node(31, "Backlog", repo="other-org/elsewhere"),
     {"fieldValueByName": {"name": "Backlog"}, "content": {}},
@@ -532,6 +533,12 @@ def _answers(overrides: dict | None = None):
              "is_pr": False, "labels": ["backlog"], "created_at": "2026-10-03"},
             {"number": 34, "title": "labelled, on no project", "user": "someone",
              "is_pr": False, "labels": ["backlog", "bug"], "created_at": "2026-10-03"},
+            {"number": 35, "title": "unlabelled, on no project", "user": "someone",
+             "is_pr": False, "labels": [], "html_url": "https://example.com/i/35",
+             "created_at": "2026-10-04"},
+            {"number": 36, "title": "unlabelled, in progress", "user": "someone",
+             "is_pr": False, "labels": ["bug"], "type": "Bug",
+             "html_url": "https://example.com/i/36", "created_at": "2026-10-05"},
             {"number": 20, "title": "chore(deps): bump", "user": "renovate[bot]",
              "is_pr": True},
         ],
@@ -608,7 +615,7 @@ def test_every_tool_is_collected_from_the_default_branch() -> None:
     assert [f.id for f in tools["advisories"]] == ["GHSA-t"]
     assert [f.id for f in tools["bot_prs"]] == ["20"]
     assert [f.id for f in tools["ci_runs"]] == ["100"]
-    assert [issue["number"] for issue in result.issues] == [31, 32, 33, 34]
+    assert [issue["number"] for issue in result.issues] == [35, 36]
     assert result.project == 7
     code_scanning = next(c for c in calls if "/code-scanning/" in c[0])
     assert "ref=refs%2Fheads%2Fmain" in code_scanning[0]
@@ -620,13 +627,13 @@ def test_issues_and_backlog_are_work_items_not_findings() -> None:
     assert not {"issues", "backlog"} & {f.tool for f in result.findings}
     report = sweep.build_report("2.2.0", [result], CONFIG.tools, generated_at="t")
     assert not {"issues", "backlog"} & set(report["totals"]["by_tool"])
-    assert report["issues"][0] == {
-        "repo": "example-org/dfe-engine", "number": 31, "title": "a real bug",
-        "labels": ["bug"], "type": "Bug", "url": "https://example.com/i/31",
-        "created_at": "2026-10-02",
+    assert report["issues"][1] == {
+        "repo": "example-org/dfe-engine", "number": 36, "title": "unlabelled, in progress",
+        "labels": ["bug"], "type": "Bug", "url": "https://example.com/i/36",
+        "created_at": "2026-10-05",
     }
-    assert set(report["backlog"][0]) == set(sweep.BACKLOG_FIELDS)
-    assert report["totals"]["work_items"] == {"issues": 4, "backlog": 4, "backlog_drift": 3}
+    assert all(set(row) == set(sweep.BACKLOG_FIELDS) for row in report["backlog"])
+    assert report["totals"]["work_items"] == {"issues": 2, "backlog": 5, "backlog_drift": 3}
     assert report["members"][0]["project"] == 7
     json.dumps(report)
 
@@ -855,6 +862,7 @@ def test_backlog_rows_flatten_open_issues_only() -> None:
         (31, "example-org/dfe-engine"),
         (33, "example-org/dfe-engine"),
         (32, "example-org/dfe-engine"),
+        (36, "example-org/dfe-engine"),
         (31, "other-org/elsewhere"),
     ]
     first = rows[0]
@@ -899,7 +907,10 @@ def test_no_project_is_a_normal_state_not_unreadable() -> None:
     api, _ = _answers()
     result = _collect(api, projects=sweep.ProjectIndex(numbers={"some-other-repo": 3}))
     assert result.project == sweep.NO_PROJECT
-    assert result.backlog == []
+    assert [(r["number"], r["project"], r["status"]) for r in result.backlog] == [
+        (32, None, ""), (33, None, ""), (34, None, ""),
+    ], "with no project the label alone puts an issue on the backlog"
+    assert [issue["number"] for issue in result.issues] == [31, 35, 36]
     assert result.unreadable == []
     assert [(d["number"], d["problem"]) for d in result.drift] == [
         (32, "labelled backlog but the repo has no backlog project"),
@@ -917,7 +928,8 @@ def test_projects_the_token_cannot_list_are_unreadable() -> None:
         ("backlog", f"projects not readable: {missing}")
     ]
     assert result.drift == [], "drift cannot be judged without the project"
-    assert [issue["number"] for issue in result.issues] == [31, 32, 33, 34]
+    assert [issue["number"] for issue in result.issues] == [31, 35, 36]
+    assert [row["number"] for row in result.backlog] == [32, 33, 34]
 
 
 @pytest.mark.parametrize(
@@ -963,19 +975,35 @@ def test_the_summary_counts_by_status_and_priority() -> None:
     text = sweep.render_text(report, CONFIG.backlog)
     summary = text.split("SUMMARY", 1)[1].split("\n\n", 1)[0]
     assert (
-        "example-org/dfe-engine: 4 open issue(s); backlog project 7: 4 item(s), status "
-        "Backlog 3, Next 1; priority P0 1, P2 1, unprioritised 2; 3 label drift"
+        "example-org/dfe-engine: 2 active issue(s); backlog project 7: 5 item(s), status "
+        "Backlog 3, Next 1, no status 1; priority P0 1, P2 1, unprioritised 3; 3 label drift"
     ) in summary
     assert "    backlog  Backlog      P0   #33 item 33" in summary
+    assert "    backlog  -            -    #34 labelled, on no project" in summary
     assert text.index("SUMMARY") < text.index("CRITICAL")
-    assert "work items: 4 open issue(s), 4 backlog item(s), 3 label drift" in text
+    assert "work items: 2 active issue(s), 5 backlog item(s), 3 label drift" in text
+    assert (
+        "  gating: 14 (12 finding(s), 2 active issue(s), 0 not readable), the backlog never gates"
+    ) in text
 
 
 def test_a_repo_with_no_project_says_so_in_the_summary() -> None:
     api, _ = _answers()
     result = _collect(api, projects=sweep.ProjectIndex())
     report = sweep.build_report("2.2.0", [result], CONFIG.tools, generated_at="t")
-    assert "4 open issue(s); backlog: no project" in sweep.render_text(report)
+    assert (
+        "3 active issue(s); backlog, no project: 3 item(s), status no status 3; priority "
+        "unprioritised 3; 3 label drift"
+    ) in sweep.render_text(report)
+    empty = {"issues": [], "backlog": [], "drift": []}
+    model = sweep.BacklogModel()
+    assert sweep._work_counts(sweep.NO_PROJECT, empty, model) == (
+        "0 active issue(s); backlog: no project"
+    )
+    assert sweep._work_counts(sweep.NOT_READ, empty, model) == (
+        "0 active issue(s); backlog: project not read"
+    )
+    assert sweep._work_counts("", empty, model) == "0 active issue(s); backlog: project off"
 
 
 # ---------------------------------------------------------------------------
@@ -1039,11 +1067,12 @@ def test_the_slack_summary_never_passes_eight_lines() -> None:
     assert summary[-1].startswith("*Alert bridge gap*")
 
 
-def test_secret_scanning_leads_the_slack_summary() -> None:
-    summary = sweep.render_slack(_slack_report(EVERYTHING))["summary"].splitlines()
-    assert summary[1] == "*Secret scanning: 1 open alert(s)* on scalo-py 1"
-    assert summary[2].startswith("*Security: 1 critical, 2 high* on ")
-    assert summary[3] == "*Failing main CI*: 1 workflow(s) on logreducer 1"
+def test_the_gating_line_leads_the_slack_summary_and_secret_scanning_follows() -> None:
+    summary = sweep.render_slack(_slack_report(EVERYTHING, issues=2))["summary"].splitlines()
+    assert summary[1] == "*Gating: 11* -- 9 findings, 2 active issues"
+    assert summary[2] == "*Secret scanning: 1 open alert(s)* on scalo-py 1"
+    assert summary[3].startswith("*Security: 1 critical, 2 high* on ")
+    assert summary[4] == "*Failing main CI*: 1 workflow(s) on logreducer 1"
 
 
 def test_an_all_clear_sweep_is_a_two_line_summary() -> None:
@@ -1106,7 +1135,7 @@ def test_slack_detail_groups_come_in_order_and_empty_ones_are_left_out() -> None
     ]
     detail = sweep.render_slack(_slack_report(findings, issues=2))["detail"]
     assert [reply["group"] for reply in detail] == [
-        "Secret scanning", "Dependabot", "CI on main", "Open issues"
+        "Secret scanning", "Dependabot", "CI on main", "Active issues"
     ]
     assert detail[1]["text"].splitlines()[:3] == [
         "*Dependabot* -- 1 (1 high)",
@@ -1146,7 +1175,7 @@ def test_a_group_past_its_budget_ends_with_how_many_more(url, ending) -> None:
     detail = sweep.render_slack(_slack_report(issues=2000, title="y" * 200), report_url=url)[
         "detail"
     ]
-    assert [reply["group"] for reply in detail] == ["Open issues"] * 2
+    assert [reply["group"] for reply in detail] == ["Active issues"] * 2
     assert detail[-1]["text"].splitlines()[-1].endswith(ending)
     assert _more(detail) == 2000 - _shown(detail)
     assert all(len(reply["text"]) < sweep.SLACK_REPLY_CHARS for reply in detail)
@@ -1179,10 +1208,10 @@ def test_every_non_empty_group_posts_however_long_the_others_are() -> None:
     groups = list(dict.fromkeys(reply["group"] for reply in detail))
     assert groups == [
         "Secret scanning", "Code scanning", "Dependabot", "Security advisories", "CI on main",
-        "Bot PRs and Renovate", "Backlog drift", "Open issues", "Backlog items",
-        "Not readable",
+        "Bot PRs and Renovate", "Active issues", "Not readable", "Backlog items",
+        "Backlog drift",
     ]
-    for name in ("Code scanning", "CI on main", "Open issues"):
+    for name in ("Code scanning", "CI on main", "Active issues"):
         replies = [reply for reply in detail if reply["group"] == name]
         assert len(replies) == 2, name
         assert "more, run `dfe-sweep`" in replies[-1]["text"].splitlines()[-1]
@@ -1380,7 +1409,7 @@ def test_every_line_kind_but_not_readable_ends_in_its_age() -> None:
         "- <https://example.com/example-dfe/ci_runs/38433690502|ci_runs #38433690502> "
         "high: CI: failure (6d)"
     )
-    assert lines["Open issues"] == "- <https://example.com/i/1|#1> an issue 1 (5h)"
+    assert lines["Active issues"] == "- <https://example.com/i/1|#1> an issue 1 (5h)"
     assert lines["Backlog items"] == "- <https://example.com/i/1|#1> Next P1: an issue 1 (<1h)"
     assert lines["Backlog drift"] == (
         "- <https://example.com/i/1|#1> labelled backlog but at Next: an issue 1 (2d)"
@@ -1404,7 +1433,13 @@ def test_drift_and_backlog_rows_carry_the_created_at_of_their_issue() -> None:
         32: "2026-10-03",
         34: "2026-10-03",
     }
-    assert {r["created_at"] for r in result.backlog} == {"2026-10-01T00:00:00Z"}
+    # Project items carry the project's createdAt, and a labelled issue off the project its own.
+    assert {(r["number"], r["created_at"]) for r in result.backlog} == {
+        (31, "2026-10-01T00:00:00Z"),
+        (32, "2026-10-01T00:00:00Z"),
+        (33, "2026-10-01T00:00:00Z"),
+        (34, "2026-10-03"),
+    }
 
 
 def test_a_clipped_line_keeps_its_age_whole() -> None:
@@ -1627,7 +1662,7 @@ def test_slack_keys_list_every_row_once_with_its_detail_line() -> None:
         by_group.setdefault(entry["group"], []).append(entry["key"])
     assert by_group["Dependabot"] == ["https://example.com/dfe-ui/dependabot/2",
                                       "https://example.com/dfe-ui/dependabot/8"]
-    assert by_group["Open issues"] == ["https://example.com/i/1", "https://example.com/i/2"]
+    assert by_group["Active issues"] == ["https://example.com/i/1", "https://example.com/i/2"]
     assert by_group["Backlog items"] == ["example-org/dfe-engine:backlog:https://example.com/i/1"]
     assert by_group["Backlog drift"] == ["example-org/dfe-engine:drift:https://example.com/i/1"]
     assert by_group["Not readable"] == ["example-org/dfe-engine:backlog"]
@@ -1771,6 +1806,160 @@ def test_the_report_file_is_a_setting_checked_before_the_sweep(tmp_path, monkeyp
     for bad in (str(tmp_path), str(tmp_path / "missing" / "r.txt"), ["r.txt"]):
         with pytest.raises(FleetError, match="report_file"):
             _options([], report_file=bad)
+
+
+# ---------------------------------------------------------------------------
+# Gating: findings and active issues gate, the backlog never does
+# ---------------------------------------------------------------------------
+
+# The keys _keys_report gives. A poster stores its new and resolved history under these, so no
+# change to how rows are grouped or counted may change one of them.
+KEYS_OF_THE_KEYS_REPORT = {
+    "https://example.com/scalo-py/secret_scanning/1",
+    "https://example.com/dfe-engine/code_scanning/3",
+    "https://example.com/dfe-ui/dependabot/2",
+    "https://example.com/dfe-ui/dependabot/8",
+    "https://example.com/dfe-ui/advisories/9",
+    "example-org/logreducer:.github/workflows/ci.yml::16d34b5e7bcb",
+    "example-org/dfe-loader:.github/workflows/ci.yml:test:7b014fde8738",
+    "https://example.com/dfe-docker/bot_prs/6",
+    "example-org/dfe-infra:renovate_dashboard:ff3fe8c77c3c",
+    "example-org/dfe-engine:drift:https://example.com/i/1",
+    "https://example.com/i/1",
+    "https://example.com/i/2",
+    "example-org/dfe-engine:backlog:https://example.com/i/1",
+    "example-org/dfe-engine:backlog",
+}
+
+
+def _backlog_only_report(unreadable=()) -> dict:
+    """One member with one backlog item drifting off its label, and nothing else open."""
+    member = sweep.Member("dfe-engine", "example-org/dfe-engine", ("stack apps",))
+    row = {"repo": member.repo, "number": 9, "title": "parked", "url": "https://example.com/i/9",
+           "created_at": RAISED}
+    backlog = {**row, "project": 7, "status": "Backlog", "priority": "P1", "effort": "",
+               "type": "Task"}
+    drift = {**row, "status": "Backlog", "problem": "at Backlog without the backlog label"}
+    result = sweep.RepoResult(member, "main", HEAD, False, [], list(unreadable),
+                              backlog=[backlog], drift=[drift], project=7)
+    return sweep.build_report("2.2.0", [result], sweep.TOOLS, generated_at=NOW)
+
+
+def test_a_backlog_labelled_issue_lands_in_the_backlog_and_not_in_active_issues() -> None:
+    api, _ = _answers()
+    result = _collect(api)
+    active = {issue["number"] for issue in result.issues}
+    parked = {row["number"] for row in result.backlog
+              if row["issue_repo"] == "example-org/dfe-engine"}
+    # Labelled and at Next, labelled and at Backlog, and labelled with no project item.
+    for number in (32, 33, 34):
+        assert number not in active, number
+        assert number in parked, number
+    off_project = next(row for row in result.backlog if row["number"] == 34)
+    assert (off_project["project"], off_project["status"]) == (None, "")
+    report = sweep.build_report("2.2.0", [result], CONFIG.tools, generated_at=NOW)
+    groups = {entry["key"]: entry["group"] for entry in sweep.render_slack(report)["keys"]}
+    assert groups["example-org/dfe-engine:backlog:34"] == "Backlog items"
+    assert "example-org/dfe-engine:issue:34" not in groups
+    assert groups["https://example.com/i/35"] == "Active issues"
+
+
+def test_the_backlog_status_alone_parks_an_issue_and_a_later_status_is_active() -> None:
+    api, _ = _answers()
+    result = _collect(api)
+    assert [issue["number"] for issue in result.issues] == [35, 36]
+    own = [row for row in result.backlog if row["issue_repo"] == "example-org/dfe-engine"]
+    assert 31 in {row["number"] for row in own}, "at Backlog with no label is on the backlog"
+    assert 36 not in {row["number"] for row in result.backlog}, "In progress is active work"
+
+
+@pytest.mark.parametrize("with_project", [True, False])
+def test_every_open_issue_is_active_or_on_the_backlog_and_never_both(with_project) -> None:
+    repo = "example-org/dfe-engine"
+    api, _ = _answers()
+    issues = sweep.issue_items(repo, api(f"repos/{repo}/issues", "", True), CONFIG.bot_logins)
+    rows = sweep.backlog_rows(repo, 7, PROJECT_NODES) if with_project else []
+    active, backlog = sweep.backlog_split(repo, issues, rows, sweep.BacklogModel())
+    active_numbers = {issue["number"] for issue in active}
+    parked = {row["number"] for row in backlog if row["issue_repo"] == repo}
+    assert not active_numbers & parked
+    assert active_numbers | parked == {issue["number"] for issue in issues}
+    assert len(parked) == len([row for row in backlog if row["issue_repo"] == repo])
+
+
+def test_gating_counts_findings_and_active_issues_and_never_the_backlog() -> None:
+    api, _ = _answers()
+    report = sweep.build_report("2.2.0", [_collect(api)], CONFIG.tools, generated_at=NOW)
+    assert report["totals"]["gating"] == {"total": 14, "findings": 12, "issues": 2,
+                                          "unreadable": 0}
+    assert len(report["backlog"]) == 5
+    stats = sweep.render_slack(report)["stats"]
+    assert {key: stats[key] for key in ("gating", "findings", "issues", "backlog", "drift")} == {
+        "gating": 14, "findings": 12, "issues": 2, "backlog": 5, "drift": 3,
+    }
+
+
+def test_a_sweep_with_only_the_backlog_open_gates_nothing() -> None:
+    slack = sweep.render_slack(_backlog_only_report())
+    assert (slack["stats"]["gating"], slack["stats"]["backlog"]) == (0, 1)
+    assert slack["summary"].splitlines()[1:] == [
+        "*Gating: 0* -- 0 findings, 0 active issues. Not gating: backlog 1 (P1 1), 1 label drift"
+    ]
+    assert [entry["group"] for entry in slack["keys"]] == ["Backlog items", "Backlog drift"]
+    assert not any(entry["gates"] for entry in slack["keys"])
+
+
+def test_one_tool_refused_for_two_reasons_gates_once_like_its_one_key() -> None:
+    unreadable = [sweep.Unreadable("example-org/dfe-engine", "ci_annotations", "HTTP 403"),
+                  sweep.Unreadable("example-org/dfe-engine", "ci_annotations", "HTTP 404")]
+    report = _backlog_only_report(unreadable)
+    assert report["totals"]["gating"]["unreadable"] == 1
+    slack = sweep.render_slack(report)
+    gating_keys = {entry["key"] for entry in slack["keys"] if entry["gates"]}
+    assert gating_keys == {"example-org/dfe-engine:ci_annotations"}
+    assert slack["stats"]["gating"] == len(gating_keys)
+
+
+def test_an_unreadable_backlog_never_gates_but_any_other_unreadable_tool_does() -> None:
+    unreadable = [sweep.Unreadable("example-org/dfe-engine", "backlog", "no scope"),
+                  sweep.Unreadable("example-org/dfe-engine", "issues", "HTTP 403")]
+    report = _backlog_only_report(unreadable)
+    assert report["totals"]["gating"] == {"total": 1, "findings": 0, "issues": 0,
+                                          "unreadable": 1}
+    slack = sweep.render_slack(report)
+    gates = {entry["key"]: entry["gates"] for entry in slack["keys"]}
+    assert gates["example-org/dfe-engine:backlog"] is False
+    assert gates["example-org/dfe-engine:issues"] is True
+    assert slack["summary"].splitlines()[1] == (
+        "*Gating: 1* -- 0 findings, 0 active issues, 1 not readable. Not gating: backlog 1 "
+        "(P1 1), 1 label drift, 1 not readable"
+    )
+    assert "  gating: 1 (0 finding(s), 0 active issue(s), 1 not readable)" in sweep.render_text(
+        report
+    )
+
+
+def test_every_key_says_whether_it_gates_and_only_backlog_rows_never_do() -> None:
+    slack = sweep.render_slack(_keys_report())
+    flags: dict[str, set[bool]] = {}
+    for entry in slack["keys"]:
+        assert type(entry["gates"]) is bool, entry
+        flags.setdefault(entry["group"], set()).add(entry["gates"])
+    assert flags.pop("Backlog items") == {False}
+    assert flags.pop("Backlog drift") == {False}
+    # Both of this report's unreadable rows are the backlog tool.
+    assert flags.pop("Not readable") == {False}
+    assert set(flags) == {"Secret scanning", "Code scanning", "Dependabot", "Security advisories",
+                          "CI on main", "Bot PRs and Renovate", "Active issues"}
+    assert all(value == {True} for value in flags.values())
+    # No two gating rows here share a key, so the count of gating keys is the gating stat.
+    assert sum(entry["gates"] for entry in slack["keys"]) == slack["stats"]["gating"] == 11
+
+
+def test_the_split_keeps_every_key_a_poster_has_stored() -> None:
+    keys = [entry["key"] for entry in sweep.render_slack(_keys_report())["keys"]]
+    assert set(keys) == KEYS_OF_THE_KEYS_REPORT
+    assert len(keys) == len(KEYS_OF_THE_KEYS_REPORT)
 
 
 # ---------------------------------------------------------------------------
@@ -2112,6 +2301,8 @@ def test_a_clean_sweep_exits_zero(tmp_path: Path, monkeypatch, capsys) -> None:
     assert report["findings"] == []
     assert report["unreadable"] == []
     assert report["bridge"]["missing"] == []
+    assert report["totals"]["gating"] == {"total": 0, "findings": 0, "issues": 0,
+                                          "unreadable": 0}
 
 
 def test_an_org_alert_the_sweep_missed_exits_three(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -2134,6 +2325,8 @@ def test_one_run_prints_the_slack_json_and_writes_the_text_report(
     slack = json.loads(out)
     assert list(slack) == ["summary", "detail", "stats", "keys"]
     assert "*Alert bridge gap*" in slack["summary"]
+    assert list(slack["stats"]) == list(sweep.SLACK_STATS)
+    assert slack["stats"]["gating"] == 0
     assert written.read_text(encoding="utf-8") == text
 
 
