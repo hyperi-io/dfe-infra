@@ -608,7 +608,7 @@ def test_stuck_pods_past_the_cap_are_summarised_up_to_it_and_the_index_says_so(
 
 def test_no_stuck_pod_is_a_named_skip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     healthy = [
-        _waiting_pod("dfe", "dfe-receiver-1"),
+        _running("dfe", "dfe-receiver-1", ready=True),
         _waiting_pod("dfe", "dfe-ui-1", reason="ContainerCreating"),
     ]
 
@@ -620,6 +620,7 @@ def test_no_stuck_pod_is_a_named_skip(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert not (out / "stuck-pods").exists()
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "stuck-pods/: not run: no container is waiting on CrashLoopBackOff, " in index
+    assert "no init is unfinished and no pod is Running but not Ready" in index
 
 
 def test_one_failing_capture_does_not_stop_the_rest(
@@ -1220,6 +1221,145 @@ def test_a_noisy_pod_is_cut_to_its_newest_bytes_and_redacted_end_to_end(tmp_path
     for path in out.rglob("*"):
         if path.is_file():
             assert FAKE not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+# --- pods Running but not Ready, in any namespace -------------------------------------
+
+
+def _running(namespace: str, name: str, *, ready: bool = False, deleting: bool = False) -> dict:
+    """A Running pod with one container, ready or not, and an init container that finished."""
+    pod = _pod(
+        namespace,
+        name,
+        init=[_container("setup", state=EXITED_ZERO, ready=True)],
+        main=[_container("main", state=RUNNING, ready=ready)],
+    )
+    pod["status"]["phase"] = "Running"
+    if deleting:
+        pod["metadata"]["deletionTimestamp"] = "2026-10-14T15:00:00Z"
+    return pod
+
+
+# Running 0/1 with /readyz answering 503: no wait reason, no restart, the cause only in its log.
+ENGINE = _pod(
+    "dfe-test",
+    "dfe-engine-7c9d6b5f4-x2k8p",
+    main=[_container("dfe-engine", state=RUNNING, ready=False)],
+)
+ENGINE["status"]["phase"] = "Running"
+READYZ = "2026-10-14T19:40:11Z readyz: 503 schema store unreachable: dial tcp 10.90.4.7:9000\n"
+
+
+def test_a_running_pod_that_is_not_ready_is_found_but_not_a_finished_or_deleted_one() -> None:
+    pods = [
+        ENGINE,
+        _running("dfe-test", "ready-1", ready=True),
+        _running("dfe-test", "terminating-1", deleting=True),
+        _pod("dfe-test", "pending-1", main=[_container("main", state=RUNNING)]),
+        _running("kube-system", "coredns-9"),
+    ]
+    assert fe.running_unready_pods(pods) == [
+        ("dfe-test", "dfe-engine-7c9d6b5f4-x2k8p"),
+        ("kube-system", "coredns-9"),
+    ]
+    assert fe.running_unready_pods(pods, skip=("kube-system",)) == [
+        ("dfe-test", "dfe-engine-7c9d6b5f4-x2k8p")
+    ]
+
+
+def test_a_running_pod_with_a_failing_readiness_probe_has_its_log_in_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(everywhere=[ENGINE], logs={"-c dfe-engine --tail": READYZ})
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    pod = "dfe-engine-7c9d6b5f4-x2k8p"
+    assert _log_calls(calls) == [f"-n dfe-test logs {pod} -c dfe-engine --tail=200 --timestamps"]
+    assert _pod_events("dfe-test", pod) in [" ".join(c) for c in calls]
+    report = _read(out, "stuck-pods/dfe-test.txt")
+    assert f"pod dfe-test/{pod}\n" in report
+    assert f"  logs of container dfe-engine, current run: ok\n{READYZ}" in report
+
+
+def _pod_names(report: str) -> list[str]:
+    return [line.split("/", 1)[1] for line in report.splitlines() if line.startswith("pod ")]
+
+
+def test_not_ready_pods_follow_the_stuck_ones_and_the_report_stays_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stuck = [_waiting_pod(f"ns-{i % 3}", f"stuck-{i:02d}", reason="ImagePullBackOff") for i in range(30)]
+    unready = [_running("aa-first", f"slow-{i:02d}") for i in range(20)]
+    answer = _cluster(everywhere=[*unready, *stuck])
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    events = _stuck_pod_events(calls)
+    assert len(events) == fe.MAX_STUCK
+    first = _read(out, "stuck-pods/aa-first.txt")
+    assert _pod_names(first) == [f"slow-{i:02d}" for i in range(10)]
+    stuck_names = [n for ns in ("ns-0", "ns-1", "ns-2") for n in _pod_names(_read(out, f"stuck-pods/{ns}.txt"))]
+    assert sorted(stuck_names) == [f"stuck-{i:02d}" for i in range(30)]
+    names = ", ".join(f"aa-first/slow-{i:02d}" for i in range(10, 20))
+    closing = f"+10 more not-Ready pods, not summarised: {names}"
+    assert _read(out, "stuck-pods/aa-first.txt").endswith(closing + "\n")
+    index = _read(out, fe.INDEX)
+    assert f"stuck-pods/: {closing}\n" in index
+    assert "pods are stuck, and the first" not in index
+
+
+def test_the_closing_line_names_ten_pods_and_counts_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    unready = [_running("dfe", f"slow-{i:02d}") for i in range(fe.MAX_STUCK + 25)]
+    calls, out = _run(monkeypatch, tmp_path, answer=_cluster(everywhere=unready))
+    assert len(_stuck_pod_events(calls)) == fe.MAX_STUCK
+    report = _read(out, "stuck-pods/dfe.txt")
+    assert _pod_names(report) == [f"slow-{i:02d}" for i in range(fe.MAX_STUCK)]
+    names = ", ".join(f"dfe/slow-{i:02d}" for i in range(fe.MAX_STUCK, fe.MAX_STUCK + 10))
+    assert report.endswith(f"+25 more not-Ready pods, not summarised: {names}, and 15 more\n")
+
+
+def test_a_full_stuck_set_leaves_no_room_for_a_not_ready_pod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stuck = [_waiting_pod("zz", f"stuck-{i:02d}", reason="ErrImagePull") for i in range(fe.MAX_STUCK + 5)]
+    unready = [_running("aa", "slow-1"), _running("aa", "slow-2")]
+    calls, out = _run(monkeypatch, tmp_path, answer=_cluster(everywhere=[*unready, *stuck]))
+    assert len(_stuck_pod_events(calls)) == fe.MAX_STUCK
+    assert not (out / "stuck-pods" / "aa.txt").exists()
+    assert _read(out, "stuck-pods/zz.txt").endswith(
+        "+2 more not-Ready pods, not summarised: aa/slow-1, aa/slow-2\n"
+    )
+    index = _read(out, fe.INDEX)
+    assert f"{fe.MAX_STUCK + 5} pods are stuck, and the first {fe.MAX_STUCK} are summarised" in index
+
+
+def test_a_pod_stuck_on_a_wait_reason_is_reported_once_not_again_as_not_ready(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    crashing = _waiting_pod("dfe", "dfe-loader-1", reason="CrashLoopBackOff")
+    crashing["status"]["phase"] = "Running"
+    calls, out = _run(monkeypatch, tmp_path, answer=_cluster(everywhere=[crashing]))
+    assert len(_stuck_pod_events(calls)) == 1
+    assert _pod_names(_read(out, "stuck-pods/dfe.txt")) == ["dfe-loader-1"]
+
+
+def test_a_kube_system_pod_is_not_summarised_twice_when_its_own_report_holds_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(everywhere=[STALLED_DNS], kube_system=[STALLED_DNS])
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not (out / "stuck-pods" / "kube-system.txt").exists()
+    assert "pod kube-system/coredns-2\n" in _read(out, "kube-system-not-ready.txt")
+    assert _log_calls(calls) == ["-n kube-system logs coredns-2 -c coredns --tail=200 --timestamps"]
+
+
+def test_a_kube_system_pod_is_summarised_in_the_stuck_report_when_its_own_list_was_not_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(everywhere=[STALLED_DNS])
+    calls, out = _run(monkeypatch, tmp_path, answer=answer, fail=("-n kube-system get pods",))
+    assert "pod kube-system/coredns-2\n" in _read(out, "stuck-pods/kube-system.txt")
+    assert not (out / "kube-system-not-ready.txt").exists()
+    assert len(_log_calls(calls)) == 1
 
 
 # --- the load balancer controller, its webhooks and the Services it programs ---------
