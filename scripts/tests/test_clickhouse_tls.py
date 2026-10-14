@@ -36,6 +36,7 @@ import functools
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -418,6 +419,108 @@ def test_hyperdx_adds_the_ca_to_node_and_rolls_on_a_new_one() -> None:
         annotations = one(docs, "Deployment", "dfe-hyperdx")["metadata"].get("annotations") or {}
         expect(f"{tier} and Reloader restarts it when that Secret changes",
                annotations.get("reloader.stakater.com/auto") == "true", f"got {annotations}")
+
+
+HYPERDX_CA_GATE = "wait-for-clickhouse-ca"
+
+
+def hyperdx_ca_gate(pod: dict) -> dict | None:
+    return next((c for c in pod.get("initContainers") or [] if c["name"] == HYPERDX_CA_GATE), None)
+
+
+def test_hyperdx_starts_node_only_once_the_ca_is_there() -> None:
+    """Node reads NODE_EXTRA_CA_CERTS once, at start, and the CA volume is optional, so a
+    pod that starts before the CA's copy lands never trusts ClickHouse. An init
+    container reading the same variable off the same volume holds the pod until it is there."""
+    for tier in TIERS:
+        for cloud in CLOUDS:
+            where = f"{tier}/{cloud}"
+            docs = tuple(golden("hyperdx", tier, cloud))
+            pod = pods(docs).get("dfe-hyperdx")
+            if pod is None:
+                expect(f"{where} renders hyperdx", False, "")
+                continue
+            container = pod["containers"][0]
+            path = str(workload_env(docs, "dfe-hyperdx").get("NODE_EXTRA_CA_CERTS", ""))
+            gate = hyperdx_ca_gate(pod)
+            expect(
+                f"{where} hyperdx holds Node until the ClickHouse CA is there",
+                gate is not None,
+                f"init containers: {[c['name'] for c in pod.get('initContainers') or []]}",
+            )
+            if gate is None:
+                continue
+            expect(
+                f"{where} the gate reads NODE_EXTRA_CA_CERTS from the app's own ConfigMap",
+                gate.get("envFrom") == container.get("envFrom"),
+                f"gate {gate.get('envFrom')} app {container.get('envFrom')}",
+            )
+            expect(
+                f"{where} and finds that path on the volume Node reads it from",
+                ca_volume_holds(mounted_file(pod, gate, path))
+                and mounted_file(pod, gate, path) == mounted_file(pod, container, path),
+                f"got {path!r}",
+            )
+            expect(
+                f"{where} the gate waits on that variable",
+                '[ -s "${NODE_EXTRA_CA_CERTS}" ]' in " ".join(gate.get("command") or []),
+                "",
+            )
+
+
+def run_ca_gate(
+    command: list[str], env: dict[str, str], land: Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run the gate's own script; *land* is written a second in, as the CA copy would be."""
+    proc = subprocess.Popen(
+        command,
+        env={"PATH": "/usr/bin:/bin", **env},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if land is not None:
+        time.sleep(1)
+        land.write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8", newline="\n")
+    out, err = proc.communicate(timeout=60)
+    return subprocess.CompletedProcess(command, proc.returncode, out, err)
+
+
+def test_the_hyperdx_ca_gate_passes_only_once_the_file_is_there() -> None:
+    gate = hyperdx_ca_gate(pods(tuple(golden("hyperdx", "scale", "aws")))["dfe-hyperdx"])
+    expect("scale/aws renders the hyperdx CA gate", gate is not None, "")
+    if gate is None:
+        return
+    command = list(gate["command"])
+    with tempfile.TemporaryDirectory(prefix="dfe-ca-gate-") as scratch:
+        ca = Path(scratch) / "ca.crt"
+        quick = {"WAIT_TIMEOUT_SECONDS": "1", "WAIT_INTERVAL_SECONDS": "1"}
+        unset = run_ca_gate(command, quick)
+        expect("no CA named: the gate lets Node start", unset.returncode == 0, unset.stderr)
+        missing = run_ca_gate(command, {**quick, "NODE_EXTRA_CA_CERTS": str(ca)})
+        expect(
+            "a CA that never lands fails the gate, naming the file and the Secret",
+            missing.returncode == 1
+            and str(ca) in missing.stderr
+            and "Secret dfe-clickhouse-ca" in missing.stderr,
+            f"rc={missing.returncode} stderr={missing.stderr!r}",
+        )
+        late = run_ca_gate(
+            command,
+            {
+                "WAIT_TIMEOUT_SECONDS": "30",
+                "WAIT_INTERVAL_SECONDS": "1",
+                "NODE_EXTRA_CA_CERTS": str(ca),
+            },
+            land=ca,
+        )
+        expect(
+            "a CA that lands after the pod starts opens the gate",
+            late.returncode == 0 and "ClickHouse CA present" in late.stdout,
+            f"rc={late.returncode} stdout={late.stdout!r} stderr={late.stderr!r}",
+        )
 
 
 def test_hyperdx_names_the_clickhouse_host_as_a_url() -> None:

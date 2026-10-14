@@ -62,12 +62,63 @@ initContainers:
       limits:
         cpu: 200m
         memory: 128Mi
+  # Node reads NODE_EXTRA_CA_CERTS once, as each process starts, and the CA lands
+  # here through two asynchronous copies (clickhouse-cluster's tls-ca.yaml and
+  # clickhouse-admin-appns.yaml), so this holds the pod until the file
+  # dfe-hyperdx-env names is present. It exits at once where that names none.
+  - name: wait-for-clickhouse-ca
+    image: '{{ include "scalo-service.image" . }}'
+    imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    envFrom:
+      - configMapRef:
+          name: '{{ include "scalo-service.fullname" . }}-env'
+    env:
+      - name: WAIT_TIMEOUT_SECONDS
+        value: '{{ .Values.waitForClickhouseCa.timeoutSeconds }}'
+      - name: WAIT_INTERVAL_SECONDS
+        value: '{{ .Values.waitForClickhouseCa.intervalSeconds }}'
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ -z "${NODE_EXTRA_CA_CERTS:-}" ]; then
+          exit 0
+        fi
+        DEADLINE=$(( $(date +%s) + ${WAIT_TIMEOUT_SECONDS} ))
+        echo "waiting for ${NODE_EXTRA_CA_CERTS}"
+        until [ -s "${NODE_EXTRA_CA_CERTS}" ]; do
+          if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
+            echo "no ClickHouse CA at ${NODE_EXTRA_CA_CERTS} after ${WAIT_TIMEOUT_SECONDS}s -- {{ if .Values.clickhouse.tls.ca.secretName }}Secret{{ else }}ConfigMap{{ end }} {{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName }} has not reached this namespace" >&2
+            exit 1
+          fi
+          sleep "${WAIT_INTERVAL_SECONDS}"
+        done
+        echo "ClickHouse CA present"
+    volumeMounts:
+      - name: clickhouse-ca
+        mountPath: /etc/dfe/clickhouse-ca
+        readOnly: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 32Mi
 
 extraVolumes:
   - name: dashboards
     emptyDir: {}
   # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. tpl
+  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. There,
+  # wait-for-clickhouse-ca holds the pod until the CA is in this volume. tpl
   # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
   # from a ConfigMap.
   - name: clickhouse-ca
@@ -92,6 +143,10 @@ mongodb:
   uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
   passwordSecretName: dfe-ferretdb-password
   passwordSecretKey: password
+
+waitForClickhouseCa:
+  timeoutSeconds: 600
+  intervalSeconds: 5
 
 sessionSecret:
   name: dfe-hyperdx-session
