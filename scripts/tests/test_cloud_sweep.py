@@ -1645,12 +1645,17 @@ IN_USE = (
     "An error occurred (InvalidNetworkInterface.InUse) when calling the DeleteNetworkInterface "
     "operation: Interface eni-attached is currently in use."
 )
+ENI_NOT_FOUND = (
+    "An error occurred (InvalidNetworkInterfaceID.NotFound) when calling the DeleteNetworkInterface "
+    "operation: The networkInterface ID '{eni}' does not exist"
+)
 
 
 class InterfaceRegion:
     """The aws CLI for one region holding network interfaces and a security group, and nothing else.
 
     A delete of an interface named in `in_use` is refused the way EC2 refuses an attached one.
+    One named in `gone` was removed by someone else after the listing, so its delete answers NotFound.
     """
 
     def __init__(self) -> None:
@@ -1665,6 +1670,7 @@ class InterfaceRegion:
         }
         self.groups = {"sg-run": {"GroupId": "sg-run", "GroupName": "run", "Tags": [{"Key": "dfe-e2e", "Value": "run-1"}]}}
         self.in_use = {"eni-attached"}
+        self.gone: set[str] = set()
         self.calls: list[list[str]] = []
 
     def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
@@ -1675,6 +1681,9 @@ class InterfaceRegion:
             return _ok({"NetworkInterfaces": list(self.interfaces.values())})
         if args[:2] == ["ec2", "delete-network-interface"]:
             eni = args[args.index("--network-interface-id") + 1]
+            if eni in self.gone:
+                del self.interfaces[eni]
+                return _fail(ENI_NOT_FOUND.format(eni=eni))
             if eni in self.in_use:
                 return _fail(IN_USE)
             del self.interfaces[eni]
@@ -1728,6 +1737,63 @@ def test_expected_fail_an_attached_interface_is_reported_left_and_the_sweep_fini
     assert "FAILED to delete eni eni-attached" in captured.err
     assert "InvalidNetworkInterface.InUse" in captured.err
     assert "remaining after sweep:\n  eni eni-attached" in captured.out
+
+
+def test_an_interface_gone_before_its_delete_is_reported_already_gone_and_not_deleted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Something else removed it between the listing and the delete, so this sweep deleted nothing."""
+    region = InterfaceRegion()
+    del region.interfaces["eni-attached"]
+    region.gone = {"eni-leaked"}
+    assert _kind_sweep(monkeypatch, region, "eni") == 0
+    captured = capsys.readouterr()
+    assert "already gone eni eni-leaked" in captured.out
+    assert "deleted eni" not in captured.out
+    assert "FAILED" not in captured.err
+    assert "sweep clean: nothing left to delete" in captured.out
+
+
+def test_delete_resources_names_what_it_deleted_and_what_was_already_gone_apart(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    region = InterfaceRegion()
+    del region.interfaces["eni-attached"]
+    region.interfaces["eni-second"] = {
+        "NetworkInterfaceId": "eni-second",
+        "Status": "available",
+        "TagSet": RUN_ENI_TAGS,
+    }
+    region.gone = {"eni-leaked"}
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", region)
+    found = cloud_sweep.list_enis(REGION, {"dfe-e2e": "run-1"})
+    failures = cloud_sweep.delete_resources([r for r in found if r.tagged], REGION)
+    assert failures == []
+    assert capsys.readouterr().out.splitlines() == [
+        "already gone eni eni-leaked",
+        "deleted eni eni-second",
+    ]
+
+
+def test_a_not_found_from_a_compound_delete_is_still_a_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A cluster delete also deletes its nodegroups, so a NotFound there may name a nodegroup."""
+    _mock_run(
+        monkeypatch,
+        _ok({"nodegroups": ["ng-1"]}),
+        _fail(
+            "An error occurred (ResourceNotFoundException) when calling the DeleteNodegroup "
+            "operation: No node group found for name: ng-1."
+        ),
+    )
+    cluster = cloud_sweep.Resource(kind="eks-cluster", id="c-1", name="c-1", created=None, tagged=True)
+    failures = cloud_sweep.delete_resources([cluster], REGION)
+    assert len(failures) == 1
+    assert failures[0].startswith("eks-cluster c-1:")
+    captured = capsys.readouterr()
+    assert "already gone" not in captured.out
+    assert "FAILED to delete eks-cluster c-1" in captured.err
 
 
 def test_repeated_kinds_run_each_lister_and_delete_in_dependency_order(monkeypatch: pytest.MonkeyPatch) -> None:

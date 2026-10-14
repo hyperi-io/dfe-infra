@@ -199,6 +199,14 @@ def validate(graph: dict) -> list[str]:
                 problems.append(
                     f"node {name}: `{field}` is {node[field]!r}, which is not true or false"
                 )
+        if "unconsumed" in node:
+            note = node["unconsumed"]
+            if not isinstance(note, str) or not note.strip():
+                problems.append(f"node {name}: `unconsumed` is empty, so it says nothing")
+            elif not node.get("package"):
+                problems.append(
+                    f"node {name}: `unconsumed` needs a `package`, or no lock can contradict it"
+                )
         for artefact in node.get("artefacts", []) or []:
             if not isinstance(artefact, dict):
                 continue

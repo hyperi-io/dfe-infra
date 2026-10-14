@@ -241,6 +241,15 @@ def test_validate_negative_cases() -> None:
     expect("a node in no lane is named", any(
         "in no lane" in p
         for p in broken(lambda g: g["lanes"][0]["members"].remove("lib-a"))))
+    expect("an empty unconsumed note is named", any(
+        "`unconsumed` is empty" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", ""))))
+    expect("an unconsumed note on a node with no package is named", any(
+        "`unconsumed` needs a `package`" in p
+        for p in broken(lambda g: g["nodes"]["app-b"].__setitem__("unconsumed", "nothing uses it"))))
+    expect("an unconsumed note on a node with a package is sound", not any(
+        "unconsumed" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", "nothing uses it"))))
 
 
 def test_queries() -> None:

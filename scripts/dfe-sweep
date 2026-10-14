@@ -59,11 +59,13 @@ exactly as the repo, read with one GraphQL query joining its Status to the Prior
 issue fields, grouped by Status, highest priority first. A repo with no project is "no
 project"; a token that cannot list projects (it needs ``read:project``) is unreadable. An open
 issue is on the backlog when it carries the ``backlog.label`` label or sits at the backlog
-Status, the first of ``backlog.statuses``. Every other open issue is active, so one at Next or
-In progress without the label is active. The backlog lists every project item at the backlog
-Status or carrying the label, and each labelled issue the project does not hold. An open issue
-at the backlog Status without the label, or carrying the label anywhere else, is reported as
-label drift.
+Status, the first of ``backlog.statuses``. The label wins: a labelled issue is backlog whatever
+its project Status. Every other open issue is active, so one at Next or In progress without the
+label is active. The backlog lists every project item at the backlog Status or carrying the
+label, and each labelled issue the project does not hold. Label drift is a real conflict and
+nothing less: an item at the backlog Status without the label, or a labelled item the project
+holds at another Status. A labelled issue the project does not hold, a repo with no project and
+an item with no Status set have nothing to contradict the label and are not drift.
 
 GATING. Findings and active issues gate a release. The backlog and label drift never do. A tool
 that could not be read gates as well, since zero cannot be claimed over a read that did not

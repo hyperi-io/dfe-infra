@@ -62,6 +62,8 @@ A few things hold for every deployment:
   `aws` CLI directly, before the zone itself is destroyed. It runs under
   whatever AWS identity `tofu destroy` is already authenticated as, so the
   one added prerequisite is the `aws` CLI on the machine running the destroy.
+  The cluster module's destroy-time sweep of leaked CNI network interfaces
+  (`eks.tf`) needs it too, and a destroy without the CLI fails.
 - One file drives all of it: the deployment dial, `deployment.yaml`, copied
   from `deployment.example.yaml`.
 

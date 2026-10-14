@@ -3,7 +3,8 @@
 #  File:         test_manifest_deps.py
 #  Purpose:      Prove scripts/manifest_deps.py finds every declaration of a
 #                package in a Cargo.toml or pyproject.toml, in every form those
-#                manifests write one, and nothing that only looks like one.
+#                manifests write one, and nothing that only looks like one,
+#                and the versions a Cargo.lock or uv.lock resolves for one.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from manifest_deps import Declaration, declarations, requirement
+from manifest_deps import LOCK_FILES, PACKAGE_KINDS, Declaration, declarations, locked, requirement
 
 
 def _cargo(body: str) -> list[Declaration]:
@@ -189,3 +190,83 @@ def test_a_kind_that_cites_no_declaration_is_refused() -> None:
 def test_an_empty_manifest_declares_nothing() -> None:
     assert declarations("", "cargo-dep", "scalo") == []
     assert declarations("", "python-dep", "scalo") == []
+
+
+# ---------------------------------------------------------------------- locks
+
+CARGO_LOCK = """\
+version = 4
+
+[[package]]
+name = "app"
+version = "0.1.0"
+
+[[package]]
+name = "scalo"
+version = "2.14.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "scalo"
+version = "2.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "scalo-macros"
+version = "9.9.9"
+"""
+
+UV_LOCK = """\
+version = 1
+requires-python = ">=3.14"
+
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { editable = "." }
+
+[[package]]
+name = "dfe-schemas"
+version = "0.2.11"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+
+def test_a_cargo_lock_lists_every_resolved_copy_in_order() -> None:
+    assert locked(CARGO_LOCK, "cargo-dep", "scalo") == ["2.14.9", "2.15.0"]
+
+
+def test_a_neighbouring_crate_is_not_a_resolved_copy() -> None:
+    assert locked(CARGO_LOCK, "cargo-dep", "scalo-macro") == []
+    assert locked(CARGO_LOCK, "cargo-dep", "factbook") == []
+
+
+def test_a_uv_lock_names_compare_the_way_pep_503_normalises_them() -> None:
+    assert locked(UV_LOCK, "python-dep", "dfe_schemas") == ["0.2.11"]
+    assert locked(UV_LOCK, "python-dep", "DFE.Schemas") == ["0.2.11"]
+
+
+def test_a_crate_name_compares_exactly() -> None:
+    lock = '[[package]]\nname = "clickhouse-dfe"\nversion = "0.1.1"\n'
+    assert locked(lock, "cargo-dep", "clickhouse-dfe") == ["0.1.1"]
+    assert locked(lock, "cargo-dep", "clickhouse_dfe") == []
+
+
+def test_a_lock_with_no_packages_resolves_nothing() -> None:
+    assert locked("", "cargo-dep", "scalo") == []
+    assert locked("version = 1\n", "python-dep", "scalo") == []
+
+
+def test_a_lock_that_is_not_toml_raises_a_value_error() -> None:
+    with pytest.raises(ValueError, match="line 1"):
+        locked("[[package\nname = ", "cargo-dep", "scalo")
+
+
+def test_a_kind_that_has_no_lock_is_refused() -> None:
+    with pytest.raises(ValueError, match="mirrored-logic"):
+        locked("", "mirrored-logic", "scalo")
+
+
+def test_each_package_kind_names_the_lock_it_resolves_into() -> None:
+    assert LOCK_FILES == {"cargo-dep": "Cargo.lock", "python-dep": "uv.lock"}
+    assert set(LOCK_FILES) == set(PACKAGE_KINDS)

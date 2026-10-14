@@ -57,7 +57,9 @@ passes 0. --now previews a later moment and is refused with --delete.
 matched against the live session, never a name, because a name describes
 intent and an id is what the delete calls actually land against. It then
 prints the full eligible list and asks for an explicit "yes" before
-deleting anything, unless --yes is given to skip that prompt (for CI).
+deleting anything, unless --yes is given to skip that prompt (for CI). A
+resource that AWS no longer has when its delete arrives prints `already gone`
+instead of `deleted` and is no failure, because this sweep did not remove it.
 
 --include-untagged is DANGEROUS with --delete. It drops the one filter that
 keeps this script's own deletions to what the tag-filter names, so --delete
@@ -1328,8 +1330,22 @@ DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
 }
 
 
+# Deletes of more than one call, where a NotFound may name a nodegroup, a VPC, a record or an
+# object rather than the resource, so only the single-call kinds can read it as "already gone".
+COMPOUND_DELETES = frozenset({"eks-cluster", "internet-gateway", "route53-zone", "s3-bucket"})
+
+
+def _already_gone(kind: str, exc: CloudSweepError) -> bool:
+    """True when AWS answered NotFound to the one call that deletes a resource of `kind`."""
+    return kind not in COMPOUND_DELETES and "NotFound" in str(exc)
+
+
 def delete_resources(resources: list[Resource], region: str) -> list[str]:
-    """Delete `resources` in DELETE_ORDER, returning one message per failure."""
+    """Delete `resources` in DELETE_ORDER, returning one message per failure.
+
+    A resource AWS no longer has when its delete arrives is reported as already
+    gone and is no failure: this sweep did not delete it.
+    """
     by_kind: dict[str, list[Resource]] = {}
     for r in resources:
         by_kind.setdefault(r.kind, []).append(r)
@@ -1340,6 +1356,9 @@ def delete_resources(resources: list[Resource], region: str) -> list[str]:
                 DELETE_FNS[kind](r, region)
                 print(f"deleted {kind} {r.name}")
             except CloudSweepError as exc:
+                if _already_gone(kind, exc):
+                    print(f"already gone {kind} {r.name}")
+                    continue
                 failures.append(f"{kind} {r.name}: {exc}")
                 print(f"FAILED to delete {kind} {r.name}: {exc}", file=sys.stderr)
     unhandled = {r.kind for r in resources} - set(DELETE_FNS)

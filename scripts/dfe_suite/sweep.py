@@ -27,8 +27,11 @@ backlog follows hyperi-ai's ``pm backlog`` model: the org project titled exactly
 read with one GraphQL query (a ``query``, never a mutation) that joins the project's Status to
 the Priority and Effort org issue fields. A repo with no such project is "no project"; projects
 the token cannot list are unreadable. An open issue is on the backlog when it carries the
-backlog label or sits at the backlog Status, and every other open issue is active. An open
-issue whose backlog label disagrees with its project Status is reported as drift.
+backlog label or sits at the backlog Status, and every other open issue is active, so the
+label wins: a labelled issue is backlog whatever its project Status. Drift is a real conflict
+between the two and nothing less: an item at the backlog Status without the label, or a
+labelled item the project holds at another Status. A labelled issue the project does not
+hold, or one in a repo with no backlog project, has no Status to contradict and is not drift.
 
 Findings and active issues gate a release, and the backlog never does. A tool that could not be
 read gates too, except the backlog, whose read only ever moves issues out of the gating count.
@@ -345,7 +348,7 @@ class RepoResult:
         unreadable: The tools that could not be read.
         issues: Active issues, the open issues not on the backlog, as work items.
         backlog: The backlog, as backlog_split builds it, as work items.
-        drift: Open issues whose backlog label and project Status disagree.
+        drift: Open issues whose backlog label and project Status contradict each other.
         project: The project number, NO_PROJECT, NOT_READ, or empty when backlog is off.
         repo_id: GitHub's id for the repo, or None when it was not read.
         full_name: The repo's current ``owner/name``, which differs from the member's slug
@@ -371,7 +374,7 @@ class BacklogModel:
     """How a repo project's backlog is read.
 
     Attributes:
-        label: The label every open issue at the first status carries, and no other does.
+        label: The label that puts an open issue on the backlog whatever its project Status.
         statuses: The project Status options in workflow order; the first is the backlog.
         priorities: The Priority options, highest first.
     """
@@ -1034,22 +1037,24 @@ def backlog_drift(
     issues: list[dict],
     backlog: list[dict],
     model: BacklogModel,
-    *,
-    has_project: bool = True,
 ) -> list[dict]:
-    """Open issues whose backlog label and project Status disagree.
+    """Open issues whose backlog label and project Status contradict each other.
+
+    The label wins in backlog_split, so a labelled issue is backlog whatever its Status.
+    Drift is only where both signals are present and disagree. An issue the project does not
+    hold, a repo with no project and an item with no Status set have no second signal to
+    contradict the label, so none of them is drift.
 
     Args:
         repo: The member.
         issues: Its open issues, as issue_items returns them.
         backlog: Its project rows, as backlog_rows returns them.
         model: The label and the backlog Status.
-        has_project: Whether the repo has a backlog project at all.
 
     Returns:
-        An item at the backlog Status without the label, and a labelled issue anywhere else,
-        including one that is not on the repo's project or whose repo has none. Each carries
-        the created_at of the project item or issue it came from.
+        An item at the backlog Status without the label, and a labelled item the project
+        holds at another Status. Each carries the created_at of the project item or issue it
+        came from.
     """
     own = [row for row in backlog if row["issue_repo"].lower() == repo.lower()]
     status_of = {row["number"]: row["status"] for row in own}
@@ -1068,15 +1073,9 @@ def backlog_drift(
         if row["status"] == at and label not in row["labels"]
     ]
     for issue in issues:
-        if label not in issue["labels"]:
-            continue
         status = status_of.get(issue["number"])
-        if status == at:
+        if label not in issue["labels"] or not status or status == at:
             continue
-        if issue["number"] in status_of:
-            where = f"at {status or 'no status'}"
-        else:
-            where = "not on the project" if has_project else "the repo has no backlog project"
         drift.append(
             {
                 "repo": repo,
@@ -1084,8 +1083,8 @@ def backlog_drift(
                 "title": issue["title"],
                 "url": issue["url"],
                 "created_at": issue["created_at"],
-                "status": status or "",
-                "problem": f"labelled {label} but {where}",
+                "status": status,
+                "problem": f"labelled {label} but at {status}",
             }
         )
     return sorted(drift, key=lambda row: row["number"])
@@ -1470,10 +1469,7 @@ def collect_repo(
     drift: list[dict] = []
     if "backlog" in config.tools:
         project, rows = _backlog(member, config, graphql, projects, unreadable)
-        if project != NOT_READ:
-            drift = backlog_drift(
-                repo, issues or [], rows, config.backlog, has_project=project != NO_PROJECT
-            )
+        drift = backlog_drift(repo, issues or [], rows, config.backlog)
     active, backlog = backlog_split(repo, issues or [], rows, config.backlog)
     # One refusal repeated per workflow run is still one gap.
     distinct = list(dict.fromkeys(unreadable))
@@ -1785,7 +1781,7 @@ _PROJECT_WORDS = {"": "project off", NOT_READ: "project not read", NO_PROJECT: "
 def _work_counts(project: int | str, items: dict[str, list[dict]], model: BacklogModel) -> str:
     """One member's work items as counts: active issues, then its backlog by Status and Priority.
 
-    Label drift is counted only where it was judged: against a project, or a repo with none.
+    Label drift is counted only where it was judged, which takes a project to judge against.
     """
     active = f"{len(items['issues'])} active issue(s)"
     words = _PROJECT_WORDS.get(project) if isinstance(project, str) else None
@@ -1796,7 +1792,7 @@ def _work_counts(project: int | str, items: dict[str, list[dict]], model: Backlo
         (r["priority"] for r in items["backlog"]), model.priorities, "unprioritised"
     )
     where = f"backlog project {project}" if words is None else f"backlog, {words}"
-    judged = project not in ("", NOT_READ)
+    judged = isinstance(project, int)
     drift = f"; {len(items['drift'])} label drift" if judged else ""
     return (
         f"{active}; {where}: {len(items['backlog'])} item(s), status {statuses}; "
