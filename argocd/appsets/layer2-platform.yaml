@@ -198,18 +198,23 @@ spec:
             # tests parse as plain YAML before any Go templating runs.
             values: |
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
+              {{- $kafkaProvider := index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "" }}
               {{- if $kafkaMode }}
               # network-policies derives its external-service egress from the
               # declared mode, so without this the baseline default-deny holds
               # and no pod can reach a managed broker at all. bootstrap.sh sets
               # the annotation only for msk, confluent-cloud and redpanda-cloud;
               # an in-cluster broker keeps the profile overlay's own kafka.mode
-              # and renders no external egress.
+              # and renders no external egress. The provider picks the ports
+              # that broker serves, in place of the generic listener range.
               kafka:
                 mode: {{ $kafkaMode | quote }}
+                {{- if and (eq $kafkaMode "external") $kafkaProvider }}
+                provider: {{ $kafkaProvider | quote }}
+                {{- end }}
               {{- end }}
               {{- if eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "") "external" }}
-              # network-policies opens the ClickHouse clients' egress on the external server's own ports.
+              # network-policies opens the ClickHouse clients' egress on the external server's own two ports.
               clickhouse:
                 mode: external
               externalEgress:
@@ -218,8 +223,6 @@ spec:
                     - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_port" }}
                       protocol: TCP
                     - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
-                      protocol: TCP
-                    - port: 443
                       protocol: TCP
               {{- end }}
               {{- if eq .app "karpenter-pools" }}

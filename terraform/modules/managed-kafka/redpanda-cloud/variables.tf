@@ -18,6 +18,16 @@ variable "implementation" {
   }
 }
 
+variable "cloud" {
+  description = "Redpanda's own token for the cloud the cluster runs on. The root reads it from terraform/modules/managed-backends for the deployment's own cloud and never takes it from the dial, so the cluster is always Redpanda's instance on that cloud. This body builds Serverless on AWS -- the region is the aws provider's and the private half is AWS PrivateLink -- so it accepts aws alone."
+  type        = string
+
+  validation {
+    condition     = var.cloud == "aws"
+    error_message = "cloud is ${var.cloud}, and this body builds Redpanda Cloud Serverless on AWS only: its region is the aws provider's and its private attachment is AWS PrivateLink. A GCP deployment needs that cloud's own body, which none here builds yet, and Redpanda runs no Serverless cluster on Azure."
+  }
+}
+
 variable "connectivity" {
   description = "private puts the cluster behind an AWS PrivateLink endpoint in the deployment VPC and disables its public endpoint. public is the reachable-from-anywhere shape and has to be asked for."
   type        = string

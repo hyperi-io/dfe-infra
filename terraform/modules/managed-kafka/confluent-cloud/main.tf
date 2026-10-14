@@ -34,9 +34,9 @@ data "aws_availability_zone" "this" {
 }
 
 locals {
-  // Confluent's own token for the cloud this body's second provider talks to.
-  // GCP and Azure get their own second provider when S9.T6 cuts them.
-  cloud = "AWS"
+  // Confluent's own token for the deployment's cloud, from the managed-backends
+  // offering; var.cloud refuses all but the AWS half this body builds.
+  cloud = var.cloud
 
   // confluent_kafka_cluster.this builds on EVERY tier, private or public, so
   // its region has to resolve even when data.aws_region is not read: on the

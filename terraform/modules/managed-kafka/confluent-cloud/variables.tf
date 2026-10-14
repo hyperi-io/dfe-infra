@@ -18,6 +18,16 @@ variable "implementation" {
   }
 }
 
+variable "cloud" {
+  description = "Confluent's own token for the cloud the cluster runs on. The root reads it from terraform/modules/managed-backends for the deployment's own cloud and never takes it from the dial, so the cluster is always Confluent's instance on that cloud. This body builds the AWS half of the private handshake, so it accepts AWS alone."
+  type        = string
+
+  validation {
+    condition     = var.cloud == "AWS"
+    error_message = "cloud is ${var.cloud}, and this body builds Confluent Cloud's AWS instance only: its private attachment is AWS PrivateLink or network interfaces in an AWS VPC, and it reads the region from the aws provider. A GCP or Azure deployment needs that cloud's own half, which no body here builds yet."
+  }
+}
+
 variable "tier" {
   description = "Which Confluent Cloud cluster type carries the deployment. Freight is the default -- it autoscales on eCKUs, is the cheapest at the top band, and is private-networking-only. Enterprise is the answer where Freight's unpublished end-to-end latency rules it out. Basic exists for a cheap public proof and carries no private networking."
   type        = string

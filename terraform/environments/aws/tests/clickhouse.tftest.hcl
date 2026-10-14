@@ -245,6 +245,64 @@ run "external_hands_bootstrap_every_fact" {
   }
 }
 
+// A ClickHouse Cloud service on aws is the offered one. Its host names the
+// cloud, so the root hands it to managed-backends, whose refusal of any other
+// cloud is proven in that module's own tests.
+run "an_aws_clickhouse_cloud_service_is_the_offered_one" {
+  command = plan
+
+  variables {
+    clickhouse = { mode = "external" }
+
+    endpoints = {
+      clickhouse_host = "abc123.us-west-2.aws.clickhouse.cloud"
+      kafka_bootstrap = "dfe-kafka.strimzi.svc.cluster.local:9092"
+      otel_endpoint   = "otel-collector-gateway.otel.svc.cluster.local:4317"
+    }
+
+    seeds = {
+      "kafka/strimzi"       = { password = "" }
+      "ui/nextauth"         = { secret = "" }
+      "clickhouse/external" = { password = "" }
+    }
+
+    clickhouse_external_password = "contract-only-not-a-real-credential"
+  }
+
+  assert {
+    condition     = module.managed_backends.clickhouse.service == "clickhouse-cloud" && module.managed_backends.clickhouse.vendor_cloud == "aws"
+    error_message = "the root must hand managed-backends the external host and its mode"
+  }
+}
+
+// A server the deployer runs is not a vendor's service, so no cloud is read off it.
+run "a_byo_server_is_not_a_clickhouse_cloud_service" {
+  command = plan
+
+  variables {
+    clickhouse = { mode = "external" }
+
+    endpoints = {
+      clickhouse_host = "ch.example.com"
+      kafka_bootstrap = "dfe-kafka.strimzi.svc.cluster.local:9092"
+      otel_endpoint   = "otel-collector-gateway.otel.svc.cluster.local:4317"
+    }
+
+    seeds = {
+      "kafka/strimzi"       = { password = "" }
+      "ui/nextauth"         = { secret = "" }
+      "clickhouse/external" = { password = "" }
+    }
+
+    clickhouse_external_password = "contract-only-not-a-real-credential"
+  }
+
+  assert {
+    condition     = module.managed_backends.clickhouse.service == ""
+    error_message = "a host outside the vendor's domains is a server the deployer runs"
+  }
+}
+
 run "external_carries_the_dials_own_ports_scheme_and_user" {
   command = plan
 

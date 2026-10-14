@@ -1,0 +1,104 @@
+# The managed backends DFE offers, by the cloud the deployment runs on, and the
+# ports a DFE client dials on each. A managed backend is offered only as its
+# instance on the deployment's own cloud: a service on another provider is
+# reached over the internet, and every byte to it is billed as internet egress.
+# A backend absent from a cloud's list is not offered on that cloud.
+#
+# One file, three readers: this module (main.tf), which refuses anything else at
+# plan; the network-policies chart's copy of the ports, which
+# scripts/tests/test_managed_backend_egress.py holds equal to this; and
+# docs/deployment/managed-backends.md, which renders it for people.
+#
+# vendor_cloud is the token the vendor's own API takes for that cloud
+# (Confluent's `cloud`, Redpanda's `cloud_provider`, ClickHouse Cloud's
+# hostname label). tiers are the tiers a body here builds that the vendor runs
+# on that cloud.
+#
+# Every fact is the vendor's, retrieved 2026-10-15:
+#   MSK                 AWS-only service; ports
+#                       https://docs.aws.amazon.com/msk/latest/developerguide/port-info.html
+#   Confluent Cloud     clouds and tiers per cloud
+#                       https://docs.confluent.io/cloud/current/clusters/regions.html
+#                       cloud tokens AWS, AZURE, GCP; Freight on AWS only
+#                       https://github.com/confluentinc/terraform-provider-confluent/blob/master/docs/resources/confluent_kafka_cluster.md
+#                       ports
+#                       https://docs.confluent.io/cloud/current/networking/networking-faq.html
+#   Redpanda Cloud      Serverless on AWS and GCP (GCP in beta), not Azure
+#                       https://docs.redpanda.com/redpanda-cloud/get-started/cloud-overview/
+#                       https://docs.redpanda.com/redpanda-cloud/reference/tiers/serverless-regions/
+#                       ports: seed 9092, brokers 9093-9095
+#                       https://docs.redpanda.com/cloud-data-platform/networking/serverless/aws/privatelink-api/
+#   ClickHouse Cloud    AWS, Google Cloud and Azure
+#                       https://clickhouse.com/docs/cloud/reference/supported-regions
+#                       hostname labels aws, gcp, azure
+#                       https://clickhouse.com/docs/manage/security/aws-privatelink
+#                       https://clickhouse.com/docs/manage/security/gcp-private-service-connect
+#                       https://clickhouse.com/docs/cloud/security/azure-privatelink
+#                       https://clickhouse.com/docs/cloud/reference/byoc/connect
+#                       ports
+#                       https://clickhouse.com/docs/guides/sre/network-ports
+
+clouds:
+  aws:
+    kafka:
+      msk:
+        vendor_cloud: aws
+      confluent-cloud:
+        vendor_cloud: AWS
+        tiers: [freight, enterprise, basic]
+      redpanda-cloud:
+        vendor_cloud: aws
+        tiers: [serverless]
+    clickhouse:
+      clickhouse-cloud:
+        vendor_cloud: aws
+
+  gcp:
+    kafka:
+      confluent-cloud:
+        vendor_cloud: GCP
+        tiers: [enterprise, basic]
+      # Redpanda runs Serverless on GCP as a beta, in one region, with no private
+      # connectivity.
+      redpanda-cloud:
+        vendor_cloud: gcp
+        tiers: [serverless]
+    clickhouse:
+      clickhouse-cloud:
+        vendor_cloud: gcp
+
+  # No redpanda-cloud: Redpanda runs no Serverless cluster on Azure, and its
+  # Dedicated and BYOC tiers there are quote-only, which redpanda-cloud refuses.
+  azure:
+    kafka:
+      confluent-cloud:
+        vendor_cloud: AZURE
+        tiers: [enterprise, basic]
+    clickhouse:
+      clickhouse-cloud:
+        vendor_cloud: azure
+
+# client_ports: what every DFE client of the backend dials. bootstrap_ports:
+# what only the in-cluster bootstrap Job dials -- MSK's SASL/IAM listener, the
+# one path that may write the first Kafka ACL.
+backends:
+  msk:
+    service: kafka
+    client_ports: [9096]
+    bootstrap_ports: [9098]
+  confluent-cloud:
+    service: kafka
+    client_ports: [9092]
+    bootstrap_ports: []
+  redpanda-cloud:
+    service: kafka
+    client_ports: [9092, 9093, 9094, 9095]
+    bootstrap_ports: []
+  # A ClickHouse Cloud service is named by its host: <id>.<region>.<cloud>.clickhouse.cloud,
+  # with vpce, p or privatelink before the cloud label on a private endpoint, and
+  # clickhouse-byoc.com in place of clickhouse.cloud for BYOC.
+  clickhouse-cloud:
+    service: clickhouse
+    client_ports: [8443, 9440]
+    bootstrap_ports: []
+    host_domains: [clickhouse.cloud, clickhouse-byoc.com]

@@ -253,6 +253,48 @@ run "one_port_on_both_sides_of_the_boundary_gets_a_rule_each" {
   }
 }
 
+// A Kafka client on the instance follows the brokers' metadata past the one
+// bootstrap a target forwards to, so the managed backend's other ports open too,
+// with no Session document of their own.
+run "backend_egress_opens_every_broker_port_without_a_document" {
+  command = plan
+
+  variables {
+    targets = {
+      kafka = { host = "seed-0000.example.invalid", port = 9092, scope = "internet" }
+    }
+    backend_egress = [
+      { port = 9092, scope = "internet" },
+      { port = 9093, scope = "internet" },
+      { port = 9094, scope = "internet" },
+      { port = 9095, scope = "internet" },
+      { port = 443, scope = "internet" },
+    ]
+  }
+
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_egress_rule.targets : r.from_port if r.cidr_ipv4 == "0.0.0.0/0"
+    ]) == toset([9092, 9093, 9094, 9095])
+    error_message = "each broker port gets one internet rule, the target's own port is not doubled, and 443 stays with the control rule"
+  }
+
+  assert {
+    condition     = toset(keys(aws_ssm_document.forward)) == toset(["kafka"])
+    error_message = "a backend port is egress only and never a forward document"
+  }
+}
+
+run "rejects_a_backend_egress_scope_outside_the_two" {
+  command = plan
+
+  variables {
+    backend_egress = [{ port = 9440, scope = "public" }]
+  }
+
+  expect_failures = [var.backend_egress]
+}
+
 // Joining the hub as an admin peer is a UDP handshake, and every other egress
 // rule here is TCP -- without this one the handshake leaves and nothing answers.
 run "the_tunnel_address_opens_udp_egress_on_each_listener_and_nowhere_else" {

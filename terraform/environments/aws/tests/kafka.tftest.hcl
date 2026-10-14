@@ -293,6 +293,13 @@ run "confluent_basic_public_reaches_the_body" {
     condition     = output.DFE_KAFKA_MESSAGE_MAX_BYTES == "8388608"
     error_message = "the size the topics were created with is the size the engine is told"
   }
+
+  // The body refuses any cloud token but AWS, so a clean plan is proof the
+  // offering's token reached it.
+  assert {
+    condition     = module.managed_backends.kafka.vendor_cloud == "AWS"
+    error_message = "an aws deployment's Confluent cluster is Confluent's AWS instance"
+  }
 }
 
 // Above Basic's ceiling Confluent refuses the topics at apply, after the cluster
@@ -370,6 +377,11 @@ run "redpanda_public_reaches_the_body" {
   assert {
     condition     = module.redpanda[0].network_attachment.security_group_id == ""
     error_message = "a public Redpanda cluster builds no PrivateLink endpoint"
+  }
+
+  assert {
+    condition     = module.managed_backends.kafka.vendor_cloud == "aws" && module.managed_backends.kafka.client_ports == tolist([9092, 9093, 9094, 9095])
+    error_message = "an aws deployment's Redpanda cluster is Serverless on aws, dialled on its seed and broker ports"
   }
 }
 

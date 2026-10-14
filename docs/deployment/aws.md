@@ -258,6 +258,11 @@ priced on this scale in [edge.md](edge.md).
 
 ## Kafka and ClickHouse
 
+Every managed backend on AWS is the vendor's AWS instance: the plan refuses a
+backend AWS does not offer and a ClickHouse Cloud service on another cloud.
+[managed-backends.md](managed-backends.md) has the rule, the per-cloud table and
+the egress ports.
+
 ### Kafka
 
 - `kafka.provider: msk` is the only managed Kafka the AWS root builds today.

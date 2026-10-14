@@ -27,6 +27,11 @@ an egress-safe Redpanda Cloud or Confluent Cloud, through that vendor's own
 provider -- so the contract treats SaaS-with-private-connectivity as the primary
 shape and MSK as the one native implementation, rather than the reverse.
 
+Which body a cloud may select, and on which vendor cloud, is
+`terraform/modules/managed-backends/offering.yaml`: a SaaS cluster is always the
+vendor's instance on the deployment's own cloud
+(docs/deployment/managed-backends.md).
+
 ## Two providers, designed in now
 
 A SaaS body configures TWO providers: the vendor's, which creates the cluster,
@@ -62,6 +67,7 @@ using the second.
 | `region` | `string` | `confluent-cloud`-only, and read only on `connectivity = public`: on `private` the region is discovered from the VPC's own provider configuration, because a private attachment has to sit in the same region as the network it attaches to. `basic` tier has no VPC to discover it from, so this is that path's only source. The aws root passes the deployment's own region. |
 | `environment_id` | `string` | `confluent-cloud`-only. A standing Confluent environment (`env-` id) to create the cluster in; empty creates one named `<name>-<env>`. |
 | `resource_group_id` | `string` | `redpanda-cloud`-only. A standing Redpanda resource group (a UUID) to create the cluster and its private link in; empty creates one named after the deployment. |
+| `cloud` | `string` | `confluent-cloud` and `redpanda-cloud` only, with no default. The vendor's own token for the deployment's cloud (`AWS` for Confluent, `aws` for Redpanda), which the root reads from `terraform/modules/managed-backends` and never from the dial, so the cluster is always the vendor's instance on the deployment's own cloud. Each body builds the AWS half of the private handshake and refuses any other token. |
 
 ## Outputs
 

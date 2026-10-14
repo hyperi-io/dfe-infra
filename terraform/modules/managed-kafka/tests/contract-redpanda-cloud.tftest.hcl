@@ -68,6 +68,9 @@ variables {
   name = "dfe-kafka-contract"
   env  = "test"
 
+  // What terraform/modules/managed-backends hands the body on an aws deployment.
+  cloud = "aws"
+
   network = {
     vpc_id             = "vpc-00000000000000000"
     cidr               = "10.90.0.0/16"
@@ -335,6 +338,24 @@ run "redpanda_cloud_rejects_a_malformed_resource_group" {
 
   expect_failures = [
     var.resource_group_id,
+  ]
+}
+
+// The body builds Serverless on AWS alone, so a cluster on another cloud is
+// refused before its region or its private link is planned.
+run "redpanda_cloud_rejects_another_cloud" {
+  command = plan
+
+  module {
+    source = "./redpanda-cloud"
+  }
+
+  variables {
+    cloud = "gcp"
+  }
+
+  expect_failures = [
+    var.cloud,
   ]
 }
 

@@ -38,17 +38,18 @@ locals {
   // the other is what a group it does not own has to admit it on.
   kubernetes_api_port = 443
 
-  // Every OTHER target port -- Kafka, ClickHouse, a future Keeper -- gets one
-  // egress rule, aimed by that target's own scope: the VPC CIDR for an
-  // address inside the VPC, 0.0.0.0/0 for one the deployer brought from
-  // outside it. Keyed on the scope AND the port, so two targets sharing a
-  // port on opposite sides of the VPC boundary get a rule each rather than
-  // collapsing into whichever one the key happened to keep.
+  // Every OTHER target port -- Kafka, ClickHouse, a future Keeper -- and every
+  // managed-backend port in var.backend_egress gets one egress rule, aimed by
+  // its own scope: the VPC CIDR for an address inside the VPC, 0.0.0.0/0 for
+  // one the deployer brought from outside it. Keyed on the scope AND the port,
+  // so two entries sharing a port on opposite sides of the VPC boundary get a
+  // rule each rather than collapsing into whichever one the key happened to keep.
   target_egress = {
-    for pair in distinct([
-      for t in var.targets : { scope = t.scope, port = t.port }
-      if t.port != local.control_egress_port
-    ]) : "${pair.scope}-${pair.port}" => pair
+    for pair in distinct(concat(
+      [for t in var.targets : { scope = t.scope, port = t.port }],
+      [for e in var.backend_egress : { scope = e.scope, port = e.port }],
+    )) : "${pair.scope}-${pair.port}" => pair
+    if pair.port != local.control_egress_port
   }
 }
 
@@ -90,7 +91,7 @@ resource "aws_vpc_security_group_egress_rule" "targets" {
   from_port   = each.value.port
   to_port     = each.value.port
 
-  description = "Forward target on ${each.value.port}, scope ${each.value.scope}"
+  description = "Forward target or managed backend on ${each.value.port}, scope ${each.value.scope}"
 }
 
 // The tunnel's own UDP listeners -- the only non-TCP egress this module has.

@@ -147,7 +147,10 @@ internetEgress:
 # Each purpose grants ONLY the ports that dependency speaks, so an app never
 # inherits another purpose's ports -- the fetcher does not get ClickHouse ports
 # because the loader needed them. `apps` matches app.kubernetes.io/name, and the
-# single entry "*" means every pod in the namespace.
+# single entry "*" means every pod in the namespace. `appPorts` gives one app
+# ports of its own in place of the purpose's. `providers` is keyed by the
+# provider the declaration names (kafka.provider), and the entry for it replaces
+# the purpose's ports, appPorts and extraNamespaceApps whole.
 #
 # baseline-egress rule 3 (the Kubernetes API allow) carries ports with no `to`,
 # which in NetworkPolicy semantics is EVERY destination, so TCP 443 and 6443 are
@@ -185,14 +188,15 @@ externalEgress:
     # Apps outside the DFE namespaces, keyed by the namespace they run in. The
     # namespace must already carry a baseline policy.
     extraNamespaceApps: {}
-    # TLS ports only. ClickHouse Cloud publishes 8443 (HTTPS) and 9440 (native
-    # TLS) and answers plain 443 on its own endpoints. A BYO server on plaintext
-    # 8123/9000 is a deployer override, never the default -- credentials cross an
-    # untrusted network here.
+    # TLS ports only: ClickHouse Cloud's two, which every client here dials
+    # (terraform/modules/managed-backends/offering.yaml). layer2-platform
+    # replaces them with the cluster secret's clickhouse_port and
+    # clickhouse_native_port, so a BYO server on plaintext 8123/9000 opens those
+    # instead -- a deployer's choice, never the default, since credentials cross
+    # an untrusted network here.
     ports:
       - { port: 8443, protocol: TCP }   # HTTPS interface
       - { port: 9440, protocol: TCP }   # native protocol over TLS
-      - { port: 443,  protocol: TCP }   # cloud HTTPS endpoints
 
   # Every chart that resolves kafka.bootstrapServers. NOT kafbat (namespace
   # `kafka`) or the collector (namespace `otel`) -- neither namespace carries a
@@ -220,9 +224,10 @@ externalEgress:
     extraNamespaceApps:
       strimzi:
         - dfe-kafka        # kafka/templates/msk-bootstrap-job.yaml
-    # The managed-broker listener range. 9092-9096 covers the SASL_SSL and
-    # SASL_PLAINTEXT listeners Confluent Cloud, MSK and Redpanda Cloud publish
-    # between them, and 9098 is MSK's IAM listener.
+    # A broker whose provider has no entry below, one the deployer brought: the
+    # listener range Confluent Cloud, MSK and Redpanda Cloud publish between
+    # them. 9092-9096 covers their SASL_SSL and SASL_PLAINTEXT listeners and 9098
+    # is MSK's IAM listener.
     ports:
       - { port: 9092, protocol: TCP }
       - { port: 9093, protocol: TCP }
@@ -230,6 +235,31 @@ externalEgress:
       - { port: 9095, protocol: TCP }
       - { port: 9096, protocol: TCP }
       - { port: 9098, protocol: TCP }   # MSK SASL/IAM
+    # A managed broker the aws root builds opens only the ports its vendor serves
+    # DFE on. Each list is offering.yaml's client_ports, plus its bootstrap_ports
+    # for the bootstrap Job alone (terraform/modules/managed-backends);
+    # scripts/tests/test_managed_backend_egress.py holds the two equal.
+    providers:
+      msk:
+        ports:
+          - { port: 9096, protocol: TCP }   # SASL/SCRAM, every app
+        extraNamespaceApps:
+          strimzi:
+            - dfe-kafka
+        appPorts:
+          dfe-kafka:
+            - { port: 9098, protocol: TCP }   # SASL/IAM, the bootstrap Job alone
+      # Neither SaaS provider has a bootstrap Job: the vendor's tofu provider
+      # writes the ACLs and topics, so nothing in strimzi dials the broker.
+      confluent-cloud:
+        ports:
+          - { port: 9092, protocol: TCP }   # Kafka over TLS, bootstrap and brokers
+      redpanda-cloud:
+        ports:
+          - { port: 9092, protocol: TCP }   # seed
+          - { port: 9093, protocol: TCP }   # brokers
+          - { port: 9094, protocol: TCP }
+          - { port: 9095, protocol: TCP }
 
   # The engine fetches OIDC discovery and JWKS from the IdP itself. Envoy is not
   # here: the gateway runs in envoy-gateway-system, which carries no policy.

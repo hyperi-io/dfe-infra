@@ -124,6 +124,20 @@ variable "targets" {
   }
 }
 
+variable "backend_egress" {
+  description = "Ports this instance dials on the deployment's managed backends beyond its forward targets, computed by the aws root from terraform/modules/managed-backends. A target forwards to one bootstrap broker, but a Kafka client run on the instance follows the brokers' metadata to every broker port, and a ClickHouse client may use either of the service's ports. Egress only: no Session document is created for an entry. scope aims the rule the way a target's does."
+  type = list(object({
+    port  = number
+    scope = optional(string, "vpc")
+  }))
+  default = []
+
+  validation {
+    condition     = alltrue([for e in var.backend_egress : contains(["vpc", "internet"], e.scope) && e.port > 0 && e.port < 65536])
+    error_message = "every backend_egress entry needs a TCP port between 1 and 65535 and a scope of vpc or internet."
+  }
+}
+
 variable "tunnel" {
   description = "The fleet tunnel this instance dials when it joins the hub as an admin peer (`dfe-ops bastion join`, docs/deployment/edge-vpn.md). address is the edge module's own tunnel_address output and ports are its tunnel_listener_ports, so neither is restated here. Both are empty on edge.tunnel.address.mode byo, where the deployer holds an address this deployment never sees, and on a deployment with no tunnel at all -- an empty PORT LIST renders no egress rule, so a deployer bringing their own address opens that egress themselves. The rule set is keyed on the ports rather than the address because an Elastic IP is unknown until apply and a for_each that reads one refuses to plan on the run that creates it. This is the only UDP egress the toolbox has: every other rule here is TCP, and without it a WireGuard handshake leaves and nothing answers, which reads as a broken peer config and is not. client_cidr and reach are the reach-back's own half and need no address: an operator reaches one appliance by routing the client range at the culvert pod, so those rules are TCP to a tunnel address and are absent when the admin class is off."
   type = object({
