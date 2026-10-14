@@ -31,8 +31,10 @@ evidence outlives the cluster. Each capture is one file under DIR:
   stuck-pods/<namespace>.txt a summary, the events and the container logs of each pod in that
                              namespace with a container waiting on ImagePullBackOff,
                              ErrImagePull, CrashLoopBackOff or CreateContainerConfigError, or
-                             with an init container not yet finished (Init:N/M); the events
-                             carry the kubelet's own pull or config error
+                             with an init container not yet finished (Init:N/M), then each
+                             pod Running but not Ready; the events carry the kubelet's own pull
+                             or config error. Past 40 pods in all, the last file closes on a
+                             `+N more not-Ready pods` line
   node-events/<node>.txt     the events of each node whose kubelet reported InvalidDiskCapacity
   aws-load-balancer-controller/webhook-ca.txt
                              each of the controller's webhook configurations: its CA injection
@@ -80,7 +82,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
@@ -96,7 +98,7 @@ LOG_TAIL = 2000  # lines read from each aws-node container
 MAX_AWS_NODE_PODS = 20
 MAX_DISK_NODES = 20
 MAX_UNREADY = 40  # unready kube-system pods summarised
-MAX_STUCK = 40  # stuck pods summarised across every namespace together
+MAX_STUCK = 40  # stuck and not-Ready pods summarised across every namespace together
 MAX_CONTROLLER_PODS = 4  # load balancer controller pods whose logs are read
 POD_LOG_TAIL = 200  # newest lines read from one container of a stuck or unready pod
 POD_LOG_BYTES = 64 * 1024  # newest bytes kept from one such read
@@ -507,6 +509,22 @@ def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
     return sorted(found)
 
 
+def running_unready_pods(pods: list[dict], skip: Collection[str] = ()) -> list[tuple[str, str]]:
+    """(namespace, name) of every Running pod with a container not ready, in no `skip` namespace.
+
+    A pod being deleted is left out: its readiness drops as it stops, which says nothing
+    about why a stage failed.
+    """
+    found = []
+    for pod in pods:
+        meta, status = pod.get("metadata") or {}, pod.get("status") or {}
+        if status.get("phase") != "Running" or pod_ready(pod) or meta.get("deletionTimestamp"):
+            continue
+        if meta.get("namespace") and meta.get("name") and meta["namespace"] not in skip:
+            found.append((meta["namespace"], meta["name"]))
+    return sorted(found)
+
+
 @dataclass(frozen=True, slots=True)
 class LogPlan:
     """One container log a pod report asks for: which container, which run, or why none exists."""
@@ -751,12 +769,12 @@ class Evidence:
             sections.append(f"{title}: {how}\n{text}")
         return "".join(sections)
 
-    def pod_report(self, name: str, namespace: str, pods: list[dict]) -> None:
+    def pod_report(self, name: str, namespace: str, pods: list[dict], closing: str = "") -> None:
         """The file `name`: each pod's summary from the pod list, its events, then its logs.
 
         An events or log call that fails is recorded in the file and the index, and the
         summary stays. The summary and events are redacted too, as a termination message or
-        a failed probe's output is container text.
+        a failed probe's output is container text. `closing` is a last line for the file.
         """
         self.note(
             name, f"{len(pods)} pod(s) summarised from the pod list, each with its events and logs"
@@ -776,6 +794,8 @@ class Evidence:
             events = outcome.output.decode("utf-8", errors="replace") if outcome else ""
             summary = "\n".join(pod_summary_lines(namespace, pod)) + f"\n  events: {how}\n{events}"
             sections.append(redact(summary) + "\n" + self.pod_logs(name, namespace, pod))
+        if closing:
+            sections.append(closing + "\n")
         self.write(name, "\n".join(sections).encode("utf-8"))
 
 
@@ -831,8 +851,14 @@ def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
             evidence.capture(target, ["-n", "kube-system", *inside], tail=True, log=True)
 
 
-def _capture_stuck(evidence: Evidence) -> None:
-    """A summary and the events of every stuck pod in any namespace, one file per namespace."""
+def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
+    """A summary, events and logs of every stuck or not-Ready pod in any namespace.
+
+    One file per namespace. Pods stuck on a wait reason or an unfinished init come first, then
+    pods Running but not Ready, and MAX_STUCK pods are summarised in all; a not-Ready pod past
+    that is named on a closing `+N more` line of the last file and in the index.
+    `covered` names namespaces whose not-Ready pods another report already holds.
+    """
     pods = evidence.read(
         "(the pods in every namespace the stuck pods are chosen from)",
         ["get", "pods", "-A"],
@@ -841,21 +867,37 @@ def _capture_stuck(evidence: Evidence) -> None:
         evidence.note("stuck-pods/", "not run: the pods in every namespace were not read")
         return
     stuck = stuck_pods(pods)
-    if not stuck:
+    held = set(stuck)
+    unready = [key for key in running_unready_pods(pods, skip=covered) if key not in held]
+    if not stuck and not unready:
         waits = ", ".join(sorted(STUCK_REASONS))
         evidence.note(
-            "stuck-pods/", f"not run: no container is waiting on {waits}, and no init is unfinished"
+            "stuck-pods/",
+            f"not run: no container is waiting on {waits}, no init is unfinished "
+            "and no pod is Running but not Ready",
         )
         return
     if len(stuck) > MAX_STUCK:
         summarised = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are summarised"
         evidence.note("stuck-pods/", summarised)
+    room = max(0, MAX_STUCK - len(stuck))
+    skipped = unready[room:]
     listed = {_identity(pod): pod for pod in pods}
     by_namespace: dict[str, list[dict]] = {}
-    for key in stuck[:MAX_STUCK]:
+    for key in [*stuck[:MAX_STUCK], *unready[:room]]:
         by_namespace.setdefault(key[0], []).append(listed[key])
-    for namespace, chosen in by_namespace.items():
-        evidence.pod_report(f"stuck-pods/{safe_name(namespace)}.txt", namespace, chosen)
+    closing = ""
+    if skipped:
+        shown = ", ".join(f"{ns}/{name}" for ns, name in skipped[:10])
+        more = f", and {len(skipped) - 10} more" if len(skipped) > 10 else ""
+        closing = f"+{len(skipped)} more not-Ready pods, not summarised: {shown}{more}"
+        evidence.note("stuck-pods/", closing)
+    files = list(by_namespace.items())
+    for number, (namespace, chosen) in enumerate(files):
+        last = number == len(files) - 1
+        evidence.pod_report(
+            f"stuck-pods/{safe_name(namespace)}.txt", namespace, chosen, closing if last else ""
+        )
 
 
 def collect(evidence: Evidence) -> None:
@@ -901,7 +943,8 @@ def collect(evidence: Evidence) -> None:
     else:
         evidence.note(unready_file, "not run: every kube-system pod is Running and Ready")
 
-    _capture_stuck(evidence)
+    # The not-Ready kube-system pods are in kube-system-not-ready.txt whenever that list was read.
+    _capture_stuck(evidence, covered=() if pods is None else ("kube-system",))
     _capture_load_balancer_controller(evidence, pods)
 
     disk_events = f"reason={DISK_REASON},involvedObject.kind=Node"
@@ -960,9 +1003,10 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "-o wide, the cert-manager Certificates in kube-system, a summary, the events and the "
         "container logs of each kube-system pod not Running and Ready, the same for each pod in "
         "any namespace with a container waiting on ImagePullBackOff, ErrImagePull, "
-        "CrashLoopBackOff or CreateContainerConfigError or an init container not yet finished "
-        "(the previous run of a restarted container, a running or failed init container, a "
-        "running container that is not ready), the AWS Load Balancer Controller's "
+        "CrashLoopBackOff or CreateContainerConfigError or an init container not yet finished, "
+        "then each pod Running but not Ready, 40 pods in all (the previous run of a restarted "
+        "container, a running or failed init container, a running container that is not "
+        "ready), the AWS Load Balancer Controller's "
         "webhook configurations with each caBundle as a digest and its containers' newest log "
         "lines, the events of each node reporting "
         "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "

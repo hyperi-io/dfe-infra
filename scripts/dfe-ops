@@ -125,7 +125,8 @@ Subcommands:
                pod, Service and Gateway, every namespace's Warning events, a
                summary, the events and the container logs of each pod stuck on
                an image pull, a crash loop, its config or an unfinished init
-               container, kube-system events, Certificates and unready pods,
+               container, then each pod Running but not Ready, kube-system
+               events, Certificates and unready pods,
                the AWS load balancer controller's webhook CA digests and logs,
                the events of nodes reporting InvalidDiskCapacity, and the
                aws-node and CNI logs to one file each, every capture bounded in
