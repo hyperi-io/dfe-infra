@@ -45,7 +45,8 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
 the tagging API goes on listing for a while: an EC2 object, a KMS key scheduled
 for deletion, an EKS pod identity association whose cluster is gone, or a secret
 Secrets Manager no longer lists. One whose state cannot be read counts as
-present, and so does a secret scheduled for deletion, which keeps its name.
+present, and so does a secret scheduled for deletion, which keeps its name. (d)
+says how many hits it dropped, and names the first ten.
 
 It also refuses a dial whose tags.lifecycle is not ephemeral, because a
 persistent deployment's deletion protection would stop the teardown short.
@@ -434,13 +435,20 @@ class AwsGuard:
         except ValueError as exc:
             raise GuardError(f"the credential's Expiration is not an ISO-8601 instant: {exc}") from exc
 
-    def run_resources(self, keys: cloud_run.RunTagKeys, exclude_bucket: str) -> list:
+    def run_resources(
+        self,
+        keys: cloud_run.RunTagKeys,
+        exclude_bucket: str,
+        gone: list[cloud_sweep.Resource] | None = None,
+    ) -> list:
         """Every run-tagged resource in the region, whatever its run or expiry, the state bucket aside.
 
         A hit the tagging API still lists after AWS deleted it is not one: collect
-        drops it (cloud_sweep.tagging_hit_gone names the classes it can judge).
+        drops it (cloud_sweep.tagging_hit_gone names the classes it can judge) and
+        appends it to `gone` when given.
         """
-        found = cloud_sweep.AwsProvider(self.region).collect({}, exclude_bucket, run_key=keys.run)
+        provider = cloud_sweep.AwsProvider(self.region)
+        found = provider.collect({}, exclude_bucket, run_key=keys.run, gone=gone)
         return [
             r for r in found
             if r.tags.get(keys.run)
@@ -642,8 +650,9 @@ def deploy_tools(provider: str, env: Mapping[str, str]) -> tuple[bool, str]:
 
 def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, now: float) -> None:
     """(c) and (d): read the region's run-tagged resources once and split them by expiry."""
+    ghosts: list[cloud_sweep.Resource] = []
     try:
-        found = guard.run_resources(config.keys, config.state_bucket)
+        found = guard.run_resources(config.keys, config.state_bucket, gone=ghosts)
     except cloud_sweep.CloudSweepError as exc:
         report.add("(c) expired run resources", False, f"could not list: {exc}")
         report.add("(d) unfinished runs", False, f"could not list the region's run resources: {exc}")
@@ -678,15 +687,22 @@ def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, no
     held = [f"run record {key}" for key in records]
     if live:
         held.append(_resource_names([r for r, _ in live], [note for _, note in live]))
+    # The tagging API lists these after AWS deleted them, so they hold no run up.
+    dropped = ""
+    if ghosts:
+        dropped = (
+            f"; dropped {len(ghosts)} tagged resource(s) the tagging API lists and AWS no longer has "
+            f"({_resource_names(ghosts)})"
+        )
     if held:
         report.add(
             "(d) unfinished runs",
             False,
-            f"{'; '.join(held)}. A run whose destroy has not succeeded still holds them: wait for it, run "
-            "`tofu destroy` against its state, or let the reaper remove it once it expires",
+            f"{'; '.join(held)}{dropped}. A run whose destroy has not succeeded still holds them: wait for "
+            "it, run `tofu destroy` against its state, or let the reaper remove it once it expires",
         )
     else:
-        clear = f"no run record under {config.state_prefix}/, no live run resources"
+        clear = f"no run record under {config.state_prefix}/, no live run resources{dropped}"
         report.add("(d) unfinished runs", True, clear)
 
 
