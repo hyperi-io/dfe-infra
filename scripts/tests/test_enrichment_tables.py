@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, golden, object_id
+from _gate import CLOUDS, configmap_files, golden, object_id
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -83,7 +83,7 @@ VECTOR_MOUNTED = {"fileSets": {"enrichment": {"files": [TABLE_FILE]}}}
 
 def config(docs: list[dict], app: str) -> dict:
     doc = next(d for d in docs if object_id(d) == f"ConfigMap/{app}-config")
-    return yaml.safe_load(doc["data"]["config.yaml"]) or {}
+    return yaml.safe_load(configmap_files(doc)["config.yaml"]) or {}
 
 
 def mounts(docs: list[dict], app: str) -> dict[str, dict]:
@@ -111,7 +111,7 @@ def test_the_registered_path_is_where_the_file_lands() -> None:
     """A path the mount does not serve fails to compile the same way."""
     docs = render_app(VRL, *DIAL_CELL, overlay=MOUNTED)
     entry = config(docs, VRL)["enrichment_tables"][0]
-    data = next(d for d in docs if object_id(d) == f"ConfigMap/{VRL}-enrichment")["data"]
+    data = configmap_files(next(d for d in docs if object_id(d) == f"ConfigMap/{VRL}-enrichment"))
     mount = mounts(docs, VRL)["fileset-enrichment"]
     expect("the entry points into the mount",
            entry["path"] == f"{mount['mountPath']}/timezones.csv",

@@ -42,7 +42,7 @@ import sys
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import effective_env, goldens, object_id
+from _gate import configmap_files, effective_env, goldens, object_id
 from _weave import render_app
 
 ARCHIVER = "dfe-archiver"
@@ -67,7 +67,7 @@ def env_of(docs: list[dict]) -> dict[str, object]:
 
 def mounted_config(docs: list[dict]) -> dict:
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{ARCHIVER}-config")
-    return yaml.safe_load(configmap["data"]["archiver.yaml"]) or {}
+    return yaml.safe_load(configmap_files(configmap)["archiver.yaml"]) or {}
 
 
 def env_refs(docs: list[dict]) -> dict[str, dict]:

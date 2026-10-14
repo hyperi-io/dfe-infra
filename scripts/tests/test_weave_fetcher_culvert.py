@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _gate import APPSETS, INSTANCE, PROFILES, golden
+from _gate import APPSETS, INSTANCE, PROFILES, configmap_files, golden
 from _weave import CONTRACTS, REPO_ROOT, appset, helm, library, render_app, weave
 
 APPS = REPO_ROOT / "argocd" / "values" / "apps"
@@ -198,7 +198,7 @@ def test_an_overlays_own_brokers_win() -> None:
     overlay = {"config": {"kafka": {"brokers": ["broker.example.com:9092"]}}}
     new = _render("dfe-fetcher", "single", "aws", overlay)
     assert _env(new)["DFE_FETCHER_KAFKA_BROKERS"]["value"] == ""
-    configmap = _named(new, "ConfigMap")["dfe-fetcher-config"]["data"]["fetcher.yaml"]
+    configmap = configmap_files(_named(new, "ConfigMap")["dfe-fetcher-config"])["fetcher.yaml"]
     assert yaml.safe_load(configmap)["kafka"]["brokers"] == ["broker.example.com:9092"]
 
 

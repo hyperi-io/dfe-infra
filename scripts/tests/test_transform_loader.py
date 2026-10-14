@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, golden
+from _gate import CLOUDS, configmap_files, golden
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -58,7 +58,7 @@ def of_kind(docs: list[dict], kind: str) -> list[dict]:
 
 def app_config(docs: list[dict], service: str) -> dict:
     cm = next(d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == f"{service}-config")
-    (text,) = cm["data"].values()
+    (text,) = configmap_files(cm).values()
     return yaml.safe_load(text) or {}
 
 

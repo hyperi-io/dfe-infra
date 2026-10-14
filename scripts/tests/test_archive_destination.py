@@ -37,7 +37,7 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import effective_env, golden, goldens, object_id
+from _gate import configmap_files, effective_env, golden, goldens, object_id
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -212,7 +212,7 @@ def test_the_overlay_topics_survive_into_the_config() -> None:
     expect("nothing outranks the compiled list", "KAFKA_TOPIC_INCLUDE" not in env,
            f"got {env.get('KAFKA_TOPIC_INCLUDE')!r}")
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{ARCHIVER}-config")
-    blob = yaml.safe_load(configmap["data"]["archiver.yaml"])
+    blob = yaml.safe_load(configmap_files(configmap)["archiver.yaml"])
     expect("and the overlay's topics reach archiver.yaml",
            blob.get("kafka", {}).get("topics") == ["okta_land"],
            f"got {blob.get('kafka', {}).get('topics')!r}")

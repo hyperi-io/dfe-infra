@@ -42,7 +42,7 @@ import yaml
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, golden
+from _gate import CLOUDS, configmap_files, golden
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
@@ -343,7 +343,7 @@ def test_the_receiver_buffers_what_the_profile_says() -> None:
         cfg = next(
             d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
         )
-        buffer = yaml.safe_load(cfg["data"]["config.yaml"])["buffer"]
+        buffer = yaml.safe_load(configmap_files(cfg)["config.yaml"])["buffer"]
         expect(f"the memory ceiling is stated, not auto-detected, on {cloud}",
                buffer["memory_limit"] == 3221225472, f"got {buffer.get('memory_limit')!r}")
         expect(f"spillover is on, on {cloud}", buffer["spillover"]["enabled"] is True,

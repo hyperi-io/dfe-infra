@@ -29,7 +29,7 @@ from pathlib import Path
 
 import yaml
 
-from _gate import CLOUDS, effective_env, golden, object_id
+from _gate import CLOUDS, configmap_files, effective_env, golden, object_id
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -63,7 +63,7 @@ def _render(overlay: dict | None = None, bootstrap: str | None = None) -> list[d
 
 def _config(docs: list[dict]) -> dict:
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{ELASTIC}-config")
-    return yaml.safe_load(configmap["data"]["config.yaml"]) or {}
+    return yaml.safe_load(configmap_files(configmap)["config.yaml"]) or {}
 
 
 def _env(docs: list[dict]) -> dict[str, object]:

@@ -1,0 +1,30 @@
+# The ConfigMaps of one dfe-transform-vrl render through the scalo-service library
+# at scalo-rs cad2f079142e7525e2b60fcfacccfcf9bf8d0ed9 (charts/scalo-service), which
+# base64-encodes a thin chart's config file and file sets under binaryData:
+#
+#   scripts/dfe-weave render --service dfe-transform-vrl --profile single --cloud local \
+#     --contract scripts/tests/fixtures/contracts/dfe-transform-vrl.json \
+#     --library <scalo-rs>/charts/scalo-service --deploy-repo <deploy repo> --no-extras
+#
+# with test_configmap_files.py's OVERLAY as the instance file, each ConfigMap cut to
+# its name and binaryData. The base64 is Helm's. Do not edit it.
+apiVersion: v1
+binaryData:
+  config.yaml: Zml4dHVyZToKICBhYnNlbnQ6IDxubyB2YWx1ZT4KICB0ZW1wbGF0ZTogJ3t7IC5WYWx1ZXMuc2VjcmV0IH19JwogIHRleHQ6IGNhZsOpIOKCrCDDvApzaW5rOgogIHRyYW5zcG9ydDogYnVzCnNvdXJjZToKICBhdXRvX29mZnNldF9yZXNldDogZWFybGllc3QKICB0cmFuc3BvcnQ6IGJ1cwo=
+kind: ConfigMap
+metadata:
+  name: dfe-transform-vrl-config
+---
+apiVersion: v1
+binaryData:
+  timezones.csv: YWJicmV2aWF0aW9uLG9mZnNldApBRVNULCsxMDowMAo=
+kind: ConfigMap
+metadata:
+  name: dfe-transform-vrl-enrichment
+---
+apiVersion: v1
+binaryData:
+  filebeat.vrl: LnRhZyA9ICI8bm8gdmFsdWU+IgoudHBsID0gInt7IC5WYWx1ZXMuc2VjcmV0IH19IgogIC50ZXh0ID0gImNhZsOpIOKCrCDDvCIK
+kind: ConfigMap
+metadata:
+  name: dfe-transform-vrl-transforms

@@ -14,7 +14,8 @@
 The engine reads apps.yaml from the copy the charts mount, at the revision the
 appset deploys. A path in it the deployed chart does not read is a write the
 engine commits and no pod sees, so each is rendered through the chart the appset
-deploys, with a probe value, and the probe looked for in the objects:
+deploys, with a probe value, and the probe looked for in the objects and in the
+files their ConfigMaps mount:
 
 - each file set's values_path, holding one probe file
 - the config block, which carries every config.-rooted path the engine writes:
@@ -33,6 +34,7 @@ import json
 import pytest
 import yaml
 
+from _gate import configmap_files
 from _weave import REPO_ROOT, render_app
 
 MANIFEST = REPO_ROOT / "apps.yaml"
@@ -59,8 +61,13 @@ def _nested(path: str, value: object) -> dict:
 
 
 def _render(service: str, overlay: dict) -> str:
-    """The objects the appset's chart renders for an instance overlay, as one string."""
-    return json.dumps(render_app(service, PROFILE, CLOUD, overlay=overlay))
+    """The objects the appset's chart renders for an instance overlay, and their files, as text.
+
+    A file under ``binaryData`` is base64 in the object, so its decoded text is added.
+    """
+    docs = render_app(service, PROFILE, CLOUD, overlay=overlay)
+    files = [configmap_files(d) for d in docs if d.get("kind") == "ConfigMap"]
+    return json.dumps([*docs, *files])
 
 
 def _file_set_cases() -> list:

@@ -51,7 +51,7 @@ import functools
 import pytest
 import yaml
 
-from _gate import effective_env, golden, object_id, render_differences
+from _gate import configmap_files, effective_env, golden, object_id, render_differences
 from _weave import render_app
 
 SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
@@ -101,7 +101,7 @@ def _render(app: str, size: str) -> tuple[dict, ...]:
 def config_file(docs: list[dict] | tuple[dict, ...], app: str) -> dict:
     """The app's config file as the thin chart writes it into <app>-config."""
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{app}-config")
-    (text,) = configmap["data"].values()
+    (text,) = configmap_files(configmap).values()
     return yaml.safe_load(text) or {}
 
 

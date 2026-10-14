@@ -33,7 +33,7 @@ import pytest
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, golden, object_id
+from _gate import CLOUDS, configmap_files, golden, object_id
 from _weave import render_app
 
 APP = "dfe-transform-vector"
@@ -49,7 +49,7 @@ DIAL_CELL = ("single", "local")
 def app_source(docs: list[dict]) -> dict:
     """The source block of the app's config.yaml as the thin chart renders it."""
     doc = next(d for d in docs if object_id(d) == f"ConfigMap/{APP}-config")
-    return (yaml.safe_load(doc["data"]["config.yaml"]) or {}).get("source") or {}
+    return (yaml.safe_load(configmap_files(doc)["config.yaml"]) or {}).get("source") or {}
 
 
 def overlay_source(source: dict) -> dict:
