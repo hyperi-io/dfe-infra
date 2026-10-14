@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-receiver
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,8 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "buffer:\n  memory_limit: 3221225472\n  spillover:\n    enabled: true\n    path: /var/spool/dfe-receiver\ndestinations:\n  default: loader\ngrpc:\n  bind_address: 0.0.0.0:6000\n  enabled: true\nloader:\n  grpc_endpoint: http://dfe-loader-mesh.envoy-gateway-system.svc.cluster.local:6000\n  transport: grpc\n"
+binaryData:
+  config.yaml: YnVmZmVyOgogIG1lbW9yeV9saW1pdDogMzIyMTIyNTQ3MgogIHNwaWxsb3ZlcjoKICAgIGVuYWJsZWQ6IHRydWUKICAgIHBhdGg6IC92YXIvc3Bvb2wvZGZlLXJlY2VpdmVyCmRlc3RpbmF0aW9uczoKICBkZWZhdWx0OiBsb2FkZXIKZ3JwYzoKICBiaW5kX2FkZHJlc3M6IDAuMC4wLjA6NjAwMAogIGVuYWJsZWQ6IHRydWUKbG9hZGVyOgogIGdycGNfZW5kcG9pbnQ6IGh0dHA6Ly9kZmUtbG9hZGVyLW1lc2guZW52b3ktZ2F0ZXdheS1zeXN0ZW0uc3ZjLmNsdXN0ZXIubG9jYWw6NjAwMAogIHRyYW5zcG9ydDogZ3JwYwo=
 kind: ConfigMap
 metadata:
   labels:

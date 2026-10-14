@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-transform-elastic
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,8 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "source:\n  brokers: []\n  group_id: \"\"\n  name: \"\"\n  topics: []\n"
+binaryData:
+  config.yaml: c291cmNlOgogIGJyb2tlcnM6IFtdCiAgZ3JvdXBfaWQ6ICIiCiAgbmFtZTogIiIKICB0b3BpY3M6IFtdCg==
 kind: ConfigMap
 metadata:
   labels:

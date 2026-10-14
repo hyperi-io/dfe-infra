@@ -17,10 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  archiver.yaml: 'transport: grpc
-
-    '
+binaryData:
+  archiver.yaml: dHJhbnNwb3J0OiBncnBjCg==
 kind: ConfigMap
 metadata:
   labels:
