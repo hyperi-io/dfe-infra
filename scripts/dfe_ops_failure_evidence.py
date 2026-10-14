@@ -22,12 +22,22 @@ evidence outlives the cluster. Each capture is one file under DIR:
   warning-events.txt         every namespace's Warning events, oldest first, the newest
                              kept when they pass the byte cap
   kube-system-events.txt     kube-system events, oldest first
+  services-wide.txt          kubectl get services -A -o wide: each load balancer's address
+  gateways-wide.txt          kubectl get gateways -A -o wide (Gateway API)
+  kube-system-certificates.txt
+                             the cert-manager Certificates in kube-system, ready or not
   kube-system-not-ready.txt  a summary and the events of each kube-system pod not Running and Ready
   stuck-pods/<namespace>.txt a summary and the events of each pod in that namespace with a
                              container waiting on ImagePullBackOff, ErrImagePull,
                              CrashLoopBackOff or CreateContainerConfigError; the events carry
                              the kubelet's own pull or config error
   node-events/<node>.txt     the events of each node whose kubelet reported InvalidDiskCapacity
+  aws-load-balancer-controller/webhook-ca.txt
+                             each of the controller's webhook configurations: its CA injection
+                             source and every webhook's caBundle as a digest, never the bundle
+  aws-load-balancer-controller/<pod>.<container>.log
+                             each controller container's newest lines, plus the previous run of
+                             any that restarted
   aws-node/<pod>.<container>.log
                              each aws-node container's newest lines, the init container
                              included, plus the previous run of any that restarted
@@ -48,6 +58,7 @@ writes to the cluster, it never reads a Secret, and it exits 0 whatever it finds
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -72,6 +83,7 @@ MAX_AWS_NODE_PODS = 20
 MAX_DISK_NODES = 20
 MAX_UNREADY = 40  # unready kube-system pods summarised
 MAX_STUCK = 40  # stuck pods summarised across every namespace together
+MAX_CONTROLLER_PODS = 4  # load balancer controller pods whose logs are read
 CHUNK = 65536
 POLL = 0.1
 JOIN_TIMEOUT = 5.0
@@ -82,6 +94,14 @@ CNI_CONTAINER = "aws-node"
 CNI_LOG_MOUNT = "/host/var/log/aws-routed-eni"
 CNI_LOGS = ("ipamd.log", "plugin.log")
 DISK_REASON = "InvalidDiskCapacity"
+# The AWS Load Balancer Controller chart labels its pods and its webhook configurations with this.
+CONTROLLER_DIR = "aws-load-balancer-controller"
+CONTROLLER_LABEL = ("app.kubernetes.io/name", "aws-load-balancer-controller")
+WEBHOOK_CONFIGS = "mutatingwebhookconfigurations,validatingwebhookconfigurations"
+INJECT_CA = "cert-manager.io/inject-ca-from"
+# Named in full: Istio serves a `gateways` resource too, and a bare name resolves to one group.
+GATEWAYS = "gateways.gateway.networking.k8s.io"
+CERTIFICATES = "certificates.cert-manager.io"
 # A container waiting on one of these never starts by itself, and its events carry the reason.
 STUCK_REASONS = frozenset(
     {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"}
@@ -252,11 +272,50 @@ def not_ready_pods(pods: list[dict]) -> list[str]:
     )
 
 
-def aws_node_pods(pods: list[dict]) -> list[dict]:
-    """The aws-node DaemonSet's pods, ordered by the node each runs on."""
-    key, value = AWS_NODE_LABEL
+def _labelled(pods: list[dict], label: tuple[str, str]) -> list[dict]:
+    """The pods carrying `label`, ordered by the node each runs on."""
+    key, value = label
     found = [p for p in pods if ((p.get("metadata") or {}).get("labels") or {}).get(key) == value]
     return sorted(found, key=lambda p: (p.get("spec") or {}).get("nodeName") or "")
+
+
+def aws_node_pods(pods: list[dict]) -> list[dict]:
+    """The aws-node DaemonSet's pods, ordered by the node each runs on."""
+    return _labelled(pods, AWS_NODE_LABEL)
+
+
+def controller_pods(pods: list[dict]) -> list[dict]:
+    """The AWS Load Balancer Controller's pods, ordered by the node each runs on."""
+    return _labelled(pods, CONTROLLER_LABEL)
+
+
+def bundle_digest(bundle: str | None) -> str:
+    """A caBundle as the first 16 hex of its sha256 and its length, or `absent`."""
+    if not bundle:
+        return "absent"
+    digest = hashlib.sha256(bundle.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest} ({len(bundle)} base64 chars)"
+
+
+def webhook_ca_lines(configs: list[dict]) -> list[str]:
+    """Each webhook configuration's CA injection source and every webhook's caBundle digest.
+
+    The digests show whether the webhooks agree on one CA and whether cert-manager
+    has injected it yet; a bundle is a CA certificate, and only its digest is kept.
+    """
+    lines: list[str] = []
+    digests: set[str] = set()
+    for config in configs:
+        meta = config.get("metadata") or {}
+        lines.append(f"{config.get('kind') or 'WebhookConfiguration'} {meta.get('name')}")
+        injected_from = (meta.get("annotations") or {}).get(INJECT_CA)
+        lines.append(f"  {INJECT_CA} {injected_from or '-'}")
+        for hook in config.get("webhooks") or []:
+            digest = bundle_digest((hook.get("clientConfig") or {}).get("caBundle"))
+            digests.add(digest)
+            lines.append(f"  webhook {hook.get('name')} caBundle {digest}")
+    lines.append(f"distinct caBundle values: {len(digests)}")
+    return lines
 
 
 def containers_of(pod: dict) -> list[tuple[str, int]]:
@@ -460,17 +519,43 @@ class Evidence:
         self.write(name, "\n".join(sections).encode("utf-8"))
 
 
-def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
-    """Each aws-node container's newest lines, then each node's CNI log files."""
+def _capture_logs(evidence: Evidence, directory: str, targets: list[dict]) -> None:
+    """Each kube-system container's newest lines, and its previous run if it restarted."""
     bounds = [f"--tail={LOG_TAIL}", f"--limit-bytes={TEXT_BYTES}", "--timestamps"]
     for pod in targets:
         name = (pod.get("metadata") or {}).get("name") or ""
         for container, restarts in containers_of(pod):
-            stem = f"aws-node/{safe_name(name)}.{safe_name(container)}"
+            stem = f"{directory}/{safe_name(name)}.{safe_name(container)}"
             logs = ["-n", "kube-system", "logs", name, "-c", container, *bounds]
             evidence.capture(f"{stem}.log", logs)
             if restarts:
                 evidence.capture(f"{stem}.previous.log", [*logs, "--previous"])
+
+
+def _capture_load_balancer_controller(evidence: Evidence, pods: list[dict] | None) -> None:
+    """The controller's webhook CA digests, then each controller container's newest lines."""
+    key, value = CONTROLLER_LABEL
+    selector = f"{key}={value}"
+    webhook_file = f"{CONTROLLER_DIR}/webhook-ca.txt"
+    configs = evidence.read(webhook_file, ["get", WEBHOOK_CONFIGS, "-l", selector])
+    if configs:
+        evidence.write(webhook_file, ("\n".join(webhook_ca_lines(configs)) + "\n").encode("utf-8"))
+    elif configs is not None:
+        evidence.note(webhook_file, f"no webhook configuration carries {selector}, nothing written")
+
+    if pods is None:
+        evidence.note(f"{CONTROLLER_DIR}/", "not run: the kube-system pods were not read")
+        return
+    targets = controller_pods(pods)[:MAX_CONTROLLER_PODS]
+    if not targets:
+        evidence.note(f"{CONTROLLER_DIR}/", f"not run: no kube-system pod carries {selector}")
+        return
+    _capture_logs(evidence, CONTROLLER_DIR, targets)
+
+
+def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
+    """Each aws-node container's newest lines, then each node's CNI log files."""
+    _capture_logs(evidence, "aws-node", targets)
     for pod in targets:
         name = (pod.get("metadata") or {}).get("name") or ""
         node = (pod.get("spec") or {}).get("nodeName") or ""
@@ -537,6 +622,12 @@ def collect(evidence: Evidence) -> None:
         "kube-system-events.txt",
         ["-n", "kube-system", "get", "events", OLDEST_FIRST, "-o", "wide"],
     )
+    # A load balancer that was never programmed shows as a Service with no address.
+    evidence.capture("services-wide.txt", ["get", "services", "-A", "-o", "wide"])
+    evidence.capture("gateways-wide.txt", ["get", GATEWAYS, "-A", "-o", "wide"])
+    evidence.capture(
+        "kube-system-certificates.txt", ["-n", "kube-system", "get", CERTIFICATES, "-o", "wide"]
+    )
 
     unready_file = "kube-system-not-ready.txt"
     if pods is None:
@@ -549,6 +640,7 @@ def collect(evidence: Evidence) -> None:
         evidence.note(unready_file, "not run: every kube-system pod is Running and Ready")
 
     _capture_stuck(evidence)
+    _capture_load_balancer_controller(evidence, pods)
 
     disk_events = f"reason={DISK_REASON},involvedObject.kind=Node"
     events = evidence.read(
@@ -596,15 +688,19 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
     """Register `dfe-ops failure-evidence`."""
     fe = sub.add_parser(
         "failure-evidence",
-        help="READ-ONLY: write node conditions, every pod, Warning events, stuck pods, kube-system "
-        "events and unready pods, and the aws-node and CNI logs to files, for after a cycle "
-        "stage fails and before the destroy",
+        help="READ-ONLY: write node conditions, every pod, Services and Gateways, Warning events, "
+        "stuck pods, kube-system events and unready pods, the load balancer controller's webhook "
+        "CA digests and logs, and the aws-node and CNI logs to files, for after a cycle stage "
+        "fails and before the destroy",
         description="Reads the cluster and writes one file per capture under --out: nodes -o "
         "wide, each node's conditions and allocatable, pods -A -o wide, every namespace's "
-        "Warning events oldest first, kube-system events oldest first, a summary and the events "
+        "Warning events oldest first, kube-system events oldest first, services and Gateways -A "
+        "-o wide, the cert-manager Certificates in kube-system, a summary and the events "
         "of each kube-system pod not Running and Ready, a summary and the events of each pod in "
         "any namespace with a container waiting on ImagePullBackOff, ErrImagePull, "
-        "CrashLoopBackOff or CreateContainerConfigError, the events of each node reporting "
+        "CrashLoopBackOff or CreateContainerConfigError, the AWS Load Balancer Controller's "
+        "webhook configurations with each caBundle as a digest and its containers' newest log "
+        "lines, the events of each node reporting "
         "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "
         "and plugin logs. A pod summary leaves out every container's env, args and command, the "
         "pod's volumes and its annotations. Every capture is bounded in time and bytes, one that "

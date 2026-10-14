@@ -99,6 +99,20 @@ def _plain_pod(name: str, *, ready: bool, phase: str = "Running") -> dict:
     }
 
 
+def _controller_pod(name: str, node: str, *, restarts: int = 0) -> dict:
+    labels = {"app.kubernetes.io/name": "aws-load-balancer-controller"}
+    return {
+        "metadata": {"name": name, "labels": labels},
+        "spec": {"nodeName": node, "containers": [{"name": "aws-load-balancer-controller"}]},
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {"name": "aws-load-balancer-controller", "ready": True, "restartCount": restarts}
+            ],
+        },
+    }
+
+
 PODS = [
     _aws_node_pod("aws-node-b2", "node-b"),
     _aws_node_pod("aws-node-a1", "node-a", restarts=2),
@@ -106,7 +120,39 @@ PODS = [
     _plain_pod("ebs-csi-node-1", ready=False, phase="Pending"),
     _plain_pod("kube-proxy-1", ready=True),
     _plain_pod("migrate-1", ready=False, phase="Succeeded"),
+    _controller_pod("lbc-b", "node-b"),
+    _controller_pod("lbc-a", "node-a", restarts=1),
 ]
+
+# A CA bundle as the API server holds it: base64 of a PEM certificate, never written to a file.
+BUNDLE = "LS0tLS1CRUdJTi" + "QUJD" * 40
+WEBHOOK_CONFIGS = [
+    {
+        "kind": "MutatingWebhookConfiguration",
+        "metadata": {
+            "name": "aws-load-balancer-webhook",
+            "annotations": {
+                "cert-manager.io/inject-ca-from": "kube-system/aws-load-balancer-serving-cert",
+                "kubectl.kubernetes.io/last-applied-configuration": json.dumps(
+                    {"webhooks": [{"clientConfig": {"caBundle": BUNDLE}}]}
+                ),
+            },
+        },
+        "webhooks": [
+            {"name": "mpod.elbv2.k8s.aws", "clientConfig": {"caBundle": BUNDLE}},
+            {"name": "mtargetgroupbinding.elbv2.k8s.aws", "clientConfig": {"caBundle": BUNDLE}},
+        ],
+    },
+    {
+        "kind": "ValidatingWebhookConfiguration",
+        "metadata": {"name": "aws-load-balancer-webhook"},
+        "webhooks": [{"name": "vtargetgroupbinding.elbv2.k8s.aws", "clientConfig": {}}],
+    },
+]
+WEBHOOK_READ = (
+    "get mutatingwebhookconfigurations,validatingwebhookconfigurations "
+    "-l app.kubernetes.io/name=aws-load-balancer-controller -o json"
+)
 DISK_EVENTS = [
     {"reason": "InvalidDiskCapacity", "involvedObject": {"kind": "Node", "name": "node-a"}},
     {"reason": "InvalidDiskCapacity", "involvedObject": {"kind": "Node", "name": "node-a"}},
@@ -189,6 +235,8 @@ def _answer(args: list[str]) -> fe.Outcome:
         return _items(ALL_PODS)
     if joined.startswith("get events -A --field-selector reason=InvalidDiskCapacity"):
         return _items(DISK_EVENTS)
+    if joined == WEBHOOK_READ:
+        return _items(WEBHOOK_CONFIGS)
     return fe.Outcome(output=f"output of {joined}\n".encode(), returncode=0)
 
 
@@ -397,9 +445,10 @@ def test_only_a_restarted_container_has_its_previous_run_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, _out = _run(monkeypatch, tmp_path)
-    previous = [" ".join(c) for c in calls if "--previous" in c]
-    assert len(previous) == 1
+    previous = sorted(" ".join(c) for c in calls if "--previous" in c)
+    assert len(previous) == 2
     assert previous[0].startswith("-n kube-system logs aws-node-a1 -c aws-node ")
+    assert previous[1].startswith("-n kube-system logs lbc-a -c aws-load-balancer-controller ")
 
 
 def test_the_container_is_asked_for_a_cni_log_only_when_the_kubelet_did_not_serve_it(
@@ -568,6 +617,7 @@ def test_an_unreadable_pod_list_still_captures_the_cluster_wide_evidence(
     assert "kube-system-not-ready.txt: not run: the kube-system pods were not read" in index
     assert "stuck-pods/: not run: the pods in every namespace were not read" in index
     assert "aws-node/: not run: the kube-system pods were not read" in index
+    assert "aws-load-balancer-controller/: not run: the kube-system pods were not read" in index
 
 
 def test_an_unreadable_cluster_wide_pod_list_still_captures_kube_system(
@@ -672,6 +722,95 @@ def test_a_spent_budget_still_writes_the_summary_and_runs_no_events_call(
     report = (out / "pods.txt").read_text(encoding="utf-8")
     assert "pod dfe/dfe-loader-1\n" in report
     assert "  events: not run: the 300s budget was spent\n" in report
+
+
+# --- the load balancer controller, its webhooks and the Services it programs ---------
+
+
+def test_a_bundle_is_kept_as_a_digest_and_never_whole() -> None:
+    assert fe.bundle_digest(None) == "absent"
+    assert fe.bundle_digest("") == "absent"
+    digest = fe.bundle_digest(BUNDLE)
+    assert digest.startswith("sha256:")
+    assert digest.endswith(f"({len(BUNDLE)} base64 chars)")
+    assert BUNDLE not in digest
+    # The same bundle gives the same digest, so two webhooks can be compared by it.
+    assert fe.bundle_digest(BUNDLE) == digest
+    assert fe.bundle_digest(BUNDLE + "QQ") != digest
+
+
+def test_the_webhook_summary_names_each_injection_source_and_digest() -> None:
+    digest = fe.bundle_digest(BUNDLE)
+    assert fe.webhook_ca_lines(WEBHOOK_CONFIGS) == [
+        "MutatingWebhookConfiguration aws-load-balancer-webhook",
+        "  cert-manager.io/inject-ca-from kube-system/aws-load-balancer-serving-cert",
+        f"  webhook mpod.elbv2.k8s.aws caBundle {digest}",
+        f"  webhook mtargetgroupbinding.elbv2.k8s.aws caBundle {digest}",
+        "ValidatingWebhookConfiguration aws-load-balancer-webhook",
+        "  cert-manager.io/inject-ca-from -",
+        "  webhook vtargetgroupbinding.elbv2.k8s.aws caBundle absent",
+        "distinct caBundle values: 2",
+    ]
+
+
+def test_services_gateways_certificates_and_the_controller_are_captured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path)
+    issued = [" ".join(c) for c in calls]
+    assert "get services -A -o wide" in issued
+    assert "get gateways.gateway.networking.k8s.io -A -o wide" in issued
+    assert "-n kube-system get certificates.cert-manager.io -o wide" in issued
+    assert WEBHOOK_READ in issued
+    bounds = f"--tail={fe.LOG_TAIL} --limit-bytes={fe.TEXT_BYTES} --timestamps"
+    for pod in ("lbc-a", "lbc-b"):
+        assert f"-n kube-system logs {pod} -c aws-load-balancer-controller {bounds}" in issued
+    for name in (
+        "services-wide.txt",
+        "gateways-wide.txt",
+        "kube-system-certificates.txt",
+        "aws-load-balancer-controller/webhook-ca.txt",
+        "aws-load-balancer-controller/lbc-a.aws-load-balancer-controller.log",
+        "aws-load-balancer-controller/lbc-a.aws-load-balancer-controller.previous.log",
+        "aws-load-balancer-controller/lbc-b.aws-load-balancer-controller.log",
+    ):
+        assert (out / name).is_file(), name
+    summary = (out / "aws-load-balancer-controller" / "webhook-ca.txt").read_text(encoding="utf-8")
+    assert summary.splitlines() == fe.webhook_ca_lines(WEBHOOK_CONFIGS)
+
+
+def test_no_file_carries_a_ca_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The bundle sits in each webhook and the last-applied annotation; neither reaches a file."""
+    _calls, out = _run(monkeypatch, tmp_path)
+    written = [path for path in out.rglob("*") if path.is_file()]
+    assert out / "aws-load-balancer-controller" / "webhook-ca.txt" in written
+    for path in written:
+        assert BUNDLE not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+def test_a_cluster_without_the_controller_says_so_and_reads_no_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    others = [pod for pod in PODS if not pod["metadata"]["name"].startswith("lbc-")]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        joined = " ".join(args)
+        if joined == "-n kube-system get pods -o json":
+            return _items(others)
+        if joined == WEBHOOK_READ:
+            return _items([])
+        return _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not any("logs lbc-" in " ".join(c) for c in calls)
+    assert not (out / "aws-load-balancer-controller").exists()
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    selector = "app.kubernetes.io/name=aws-load-balancer-controller"
+    assert (
+        "aws-load-balancer-controller/webhook-ca.txt: "
+        f"no webhook configuration carries {selector}, nothing written" in index
+    )
+    assert f"aws-load-balancer-controller/: not run: no kube-system pod carries {selector}" in index
 
 
 # --- the bounded runner, against real child processes --------------------------------
