@@ -5,7 +5,8 @@
 #
 # OWNERSHIP (dedup fix, dfe-infra#4): cert-manager + external-secrets are
 # detect-or-installed by bootstrap.sh -- they are needed BEFORE Argo (ESO backs
-# the ClusterSecretStore + repo creds; cert-manager backs the gateway certs). They
+# the ClusterSecretStore + repo creds; cert-manager backs the gateway certs and the
+# AWS load balancer controller's webhook certificate). They
 # are deliberately NOT listed here, else Argo installs a SECOND copy alongside the
 # bootstrap one (two ESO cert-controllers + two cert-manager cainjectors churning
 # ~0.8 core, and double-reconciling every CR). bootstrap owns cert-manager+ESO;
@@ -247,6 +248,10 @@ spec:
             # controller is down no LoadBalancer Service can be created at all.
             # Off: the Services that want it say so by annotation.
             enableServiceMutatorWebhook: false
+            # cert-manager issues the webhook's serving certificate and injects
+            # its CA into the webhook configurations, so a re-render cannot split
+            # the two: the chart's own default mints a new CA on every render.
+            enableCertManager: true
             # A test run's id and expiry on every load balancer, target group and
             # security group the controller creates, which default_tags never
             # reaches; the annotation is absent outside a run. JSON keeps an
