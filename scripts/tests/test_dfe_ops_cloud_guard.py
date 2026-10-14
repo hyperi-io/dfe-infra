@@ -1502,6 +1502,47 @@ def test_the_teardown_sweep_deletes_this_runs_resources_and_never_touches_anothe
     assert region.instances["i-0run2"]["State"] == {"Name": "running"}
 
 
+class PipeOut:
+    """A stdout that, like a pipe, keeps what is written until it is flushed."""
+
+    def __init__(self) -> None:
+        self.held: list[str] = []
+        self.flushed: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.held.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self.flushed.extend(self.held)
+        self.held.clear()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_the_sweeps_own_lines_are_out_before_the_teardown_writes_the_next(
+    monkeypatch: pytest.MonkeyPatch, fails: bool,
+) -> None:
+    """Held until exit, they printed after TEARDOWN FAILED and read as interfaces left behind."""
+    out = PipeOut()
+    monkeypatch.setattr(sys, "stdout", out)
+
+    def sweep(_args: list[str]) -> int:
+        print("deleted eni eni-0run1")
+        if fails:
+            raise cloud_sweep.CloudSweepError("listing failed")
+        return 0
+
+    monkeypatch.setattr(cloud_sweep, "main", sweep)
+    guard = guard_mod.AwsGuard("us-west-2")
+    if fails:
+        with pytest.raises(cloud_sweep.CloudSweepError):
+            guard.sweep([])
+    else:
+        assert guard.sweep([]) == 0
+    assert out.held == []
+    assert "deleted eni eni-0run1" in "".join(out.flushed)
+
+
 def test_after_the_teardown_the_next_preflight_finds_nothing_of_the_run(
     root: Path, monkeypatch: pytest.MonkeyPatch, region: FakeRegion
 ) -> None:

@@ -141,6 +141,22 @@ read_cluster_facts() {
     CLUSTER_FACTS_SOURCE="the DFE_* environment"
 }
 
+# An Application that syncs ApplicationSets recreates any one deleted, and its own delete then
+# cascades through every Application the copy adopted, both controllers included.
+release_applicationset_owners() {
+    local name kinds
+    while read -r name kinds; do
+        [[ -n "${name}" && " ${kinds} " == *" ApplicationSet "* ]] || continue
+        if kubectl -n argocd patch applications.argoproj.io "${name}" --type merge \
+            -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 \
+            && kubectl -n argocd delete applications.argoproj.io "${name}" --wait=false >/dev/null 2>&1; then
+            echo "  ${name} syncs ApplicationSets: deleted it without its finalizer, so it neither puts them back nor cascades through them"
+        else
+            echo "  WARN: could not delete ${name}, which syncs ApplicationSets, without its finalizer"
+        fi
+    done < <(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.resources[*].kind}{"\n"}{end}' 2>/dev/null || true)
+}
+
 # "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools) or other -- and nothing when they cannot be listed.
 application_roles() {
     local listing name sources role
@@ -423,6 +439,13 @@ echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets"
 # Orphaned, so Argo stops generating Applications while each one stays, still
 # carrying the finalizer that deletes what it deployed, until it is deleted below.
 run kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
+# Then whatever syncs ApplicationSets, and once more for any it put back in between.
+if [[ "${DRY_RUN}" != "true" ]]; then
+    release_applicationset_owners
+    kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
+else
+    echo "[DRY-RUN] delete every Application that syncs ApplicationSets without its finalizer, then orphan the ApplicationSets again"
+fi
 # KEDA clears its own finalizer.keda.sh, so its resources go while it still runs.
 run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true

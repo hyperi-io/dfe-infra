@@ -19,6 +19,7 @@
 #   nodeclaim-polls    how many NodeClaim listings still show two NodeClaims once
 #                      karpenter-pools is deleted; before that they always show
 #   nodeclaims-unreadable  listing the NodeClaims fails
+#   owner-patch-refused  patching an Application by its plain name fails
 # aws is a stub too: it logs every call to aws.log, answers the three describes
 # from security-groups.json, interfaces.json and instances.json, refuses every
 # delete with an error naming an account when aws-refuses exists, and refuses a
@@ -62,6 +63,9 @@ case "$*" in
         ;;
     "patch "*)
         : > "${STUB_DIR}/patched"
+        ;;
+    "-n argocd patch applications.argoproj.io "*)
+        [[ -f "${STUB_DIR}/owner-patch-refused" ]] && exit 1
         ;;
     "-n argocd get applications.argoproj.io -o jsonpath="*)
         [[ -f "${STUB_DIR}/applications" ]] && cat "${STUB_DIR}/applications"
@@ -563,6 +567,63 @@ run_facts_in_the_environment() {
     [ "${controller}" -lt "${sweep}" ]
     [ ! -s "${STUB_DIR}/kubectl.log" ]
     [ ! -s "${STUB_DIR}/aws.log" ]
+}
+
+# The cluster add-ons Application, whose resources are ApplicationSets, beside the load balancer
+# controller and one app. The listing prints each one's resource kinds where it prints charts.
+applicationset_owner() {
+    printf '%s\n' \
+        'dfe-addons-dfe-aws-test ApplicationSet ApplicationSet' \
+        'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller' \
+        'dfe-receiver-default-dfe-aws-test  helm/charts/dfe-receiver' > "${STUB_DIR}/applications"
+}
+
+@test "the Application syncing the ApplicationSets goes without its finalizer, between two orphaning deletes" {
+    applicationset_owner
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first patched deleted second others
+    log_text="$(log)"
+    first="$(line_of '-n argocd delete applicationset --all --cascade=orphan' "${log_text}")"
+    patched="$(line_of '-n argocd patch applications.argoproj.io dfe-addons-dfe-aws-test --type merge -p {"metadata":{"finalizers":null}}' "${log_text}")"
+    deleted="$(line_of '-n argocd delete applications.argoproj.io dfe-addons-dfe-aws-test --wait=false' "${log_text}")"
+    second="$(last_line_of '-n argocd delete applicationset --all --cascade=orphan' "${log_text}")"
+    others="$(line_of 'dfe-receiver-default-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${first}" ]
+    [ -n "${patched}" ]
+    [ -n "${deleted}" ]
+    [ -n "${others}" ]
+    [ "${first}" -lt "${patched}" ]
+    [ "${patched}" -lt "${deleted}" ]
+    [ "${deleted}" -lt "${second}" ]
+    [ "${second}" -lt "${others}" ]
+    # The controllers and the app keep their finalizers, which delete what they deployed.
+    [ "$(grep -c -- '-n argocd patch applications.argoproj.io' <<<"${log_text}")" -eq 1 ]
+    [[ "${output}" == *"dfe-addons-dfe-aws-test syncs ApplicationSets: deleted it without its finalizer"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "an ApplicationSet owner whose finalizer stays is never deleted, and the teardown goes on" {
+    applicationset_owner
+    touch "${STUB_DIR}/owner-patch-refused"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(log)" != *"-n argocd delete applications.argoproj.io dfe-addons-dfe-aws-test --wait=false"* ]]
+    [[ "${output}" == *"WARN: could not delete dfe-addons-dfe-aws-test, which syncs ApplicationSets, without its finalizer"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
+}
+
+@test "the dry run names the ApplicationSet owners between the orphaning delete and KEDA" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local appset owners scaledobject
+    appset="$(line_of 'kubectl -n argocd delete applicationset --all' "${output}")"
+    owners="$(line_of 'delete every Application that syncs ApplicationSets without its finalizer' "${output}")"
+    scaledobject="$(line_of 'kubectl delete scaledobject --all -A' "${output}")"
+    [ -n "${owners}" ]
+    [ "${appset}" -lt "${owners}" ]
+    [ "${owners}" -lt "${scaledobject}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
 }
 
 # An AWS deployment's Applications: both controllers, Karpenter's pools and one app,
