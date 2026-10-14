@@ -1517,7 +1517,9 @@ def test_main_expired_lists_only_expired_and_exits_one_while_any_remain(
         _run_resource("i-bare", {}),
     ]
 
-    def fake_collect(region: str, tf: dict, bucket: str | None, *, route1_filter: dict | None = None) -> list:
+    def fake_collect(
+        region: str, tf: dict, bucket: str | None, *, route1_filter: dict | None = None, kinds: object = None
+    ) -> list:
         seen_run_keys.append(next(iter(route1_filter)) if route1_filter else None)
         return resources
 
@@ -1620,9 +1622,266 @@ def test_the_aws_provider_widens_the_catch_all_to_the_run_key_only_in_expired_mo
 ) -> None:
     seen: list[dict | None] = []
     monkeypatch.setattr(
-        cloud_sweep, "collect", lambda region, tf, bucket, *, route1_filter=None: seen.append(route1_filter) or []
+        cloud_sweep,
+        "collect",
+        lambda region, tf, bucket, *, route1_filter=None, kinds=None: seen.append(route1_filter) or [],
     )
     provider = cloud_sweep.AwsProvider(REGION)
     provider.collect(TAG_FILTER, None, run_key=None)
     provider.collect(TAG_FILTER, None, run_key="dfe-e2e")
     assert seen == [None, {"dfe-e2e": None}]
+
+
+# ---------------------------------------------------------------------------
+# --kind: a sweep limited to some kinds
+# ---------------------------------------------------------------------------
+
+RUN_ENI_TAGS = [
+    {"Key": "dfe-e2e", "Value": "run-1"},
+    {"Key": "eks:eni:owner", "Value": "amazon-vpc-cni"},
+    {"Key": "node.k8s.amazonaws.com/instance_id", "Value": "i-0gone"},
+]
+IN_USE = (
+    "An error occurred (InvalidNetworkInterface.InUse) when calling the DeleteNetworkInterface "
+    "operation: Interface eni-attached is currently in use."
+)
+ENI_NOT_FOUND = (
+    "An error occurred (InvalidNetworkInterfaceID.NotFound) when calling the DeleteNetworkInterface "
+    "operation: The networkInterface ID '{eni}' does not exist"
+)
+
+
+class InterfaceRegion:
+    """The aws CLI for one region holding network interfaces and a security group, and nothing else.
+
+    A delete of an interface named in `in_use` is refused the way EC2 refuses an attached one.
+    One named in `gone` was removed by someone else after the listing, so its delete answers NotFound.
+    """
+
+    def __init__(self) -> None:
+        self.interfaces = {
+            "eni-leaked": {"NetworkInterfaceId": "eni-leaked", "Status": "available", "TagSet": RUN_ENI_TAGS},
+            "eni-attached": {"NetworkInterfaceId": "eni-attached", "Status": "in-use", "TagSet": RUN_ENI_TAGS},
+            "eni-other-run": {
+                "NetworkInterfaceId": "eni-other-run",
+                "Status": "available",
+                "TagSet": [{"Key": "dfe-e2e", "Value": "run-2"}],
+            },
+        }
+        self.groups = {"sg-run": {"GroupId": "sg-run", "GroupName": "run", "Tags": [{"Key": "dfe-e2e", "Value": "run-1"}]}}
+        self.in_use = {"eni-attached"}
+        self.gone: set[str] = set()
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return _ok({"Account": ACCOUNT_ID})
+        if args[:2] == ["ec2", "describe-network-interfaces"]:
+            return _ok({"NetworkInterfaces": list(self.interfaces.values())})
+        if args[:2] == ["ec2", "delete-network-interface"]:
+            eni = args[args.index("--network-interface-id") + 1]
+            if eni in self.gone:
+                del self.interfaces[eni]
+                return _fail(ENI_NOT_FOUND.format(eni=eni))
+            if eni in self.in_use:
+                return _fail(IN_USE)
+            del self.interfaces[eni]
+            return _ok({})
+        if args[:2] == ["ec2", "describe-security-groups"]:
+            return _ok({"SecurityGroups": list(self.groups.values())})
+        if args[:2] == ["ec2", "delete-security-group"]:
+            del self.groups[args[args.index("--group-id") + 1]]
+            return _ok({})
+        raise AssertionError(f"a sweep limited by --kind made a call outside its kinds: {args}")
+
+
+def _kind_sweep(monkeypatch: pytest.MonkeyPatch, region: InterfaceRegion, *kinds: str) -> int:
+    """The teardown's run-tag sweep for run-1, limited to `kinds`, against `region`."""
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", region)
+    argv = ["--region", REGION, "--tag-filter", "dfe-e2e=run-1", "--delete", "--account", ACCOUNT_ID, "--yes"]
+    for kind in kinds:
+        argv += ["--kind", kind]
+    return cloud_sweep.main(argv)
+
+
+def test_a_sweep_limited_to_enis_deletes_the_runs_detached_interface_and_lists_nothing_else(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The VPC CNI's interface outlives its node, carries the run tag, and holds its subnet."""
+    region = InterfaceRegion()
+    del region.interfaces["eni-attached"]
+    assert _kind_sweep(monkeypatch, region, "eni") == 0
+    assert set(region.interfaces) == {"eni-other-run"}
+    assert set(region.groups) == {"sg-run"}
+    called = {tuple(call[:2]) for call in region.calls}
+    assert called == {
+        ("sts", "get-caller-identity"),
+        ("ec2", "describe-network-interfaces"),
+        ("ec2", "delete-network-interface"),
+    }
+    out = capsys.readouterr().out
+    assert "deleted eni eni-leaked" in out
+    assert "sweep clean: nothing left to delete" in out
+
+
+def test_expected_fail_an_attached_interface_is_reported_left_and_the_sweep_finishes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """EC2 refuses to delete an interface still attached, and that refusal is a finding, not a crash."""
+    region = InterfaceRegion()
+    assert _kind_sweep(monkeypatch, region, "eni") == 1
+    assert set(region.interfaces) == {"eni-attached", "eni-other-run"}
+    captured = capsys.readouterr()
+    assert "deleted eni eni-leaked" in captured.out
+    assert "FAILED to delete eni eni-attached" in captured.err
+    assert "InvalidNetworkInterface.InUse" in captured.err
+    assert "remaining after sweep:\n  eni eni-attached" in captured.out
+
+
+def test_an_interface_gone_before_its_delete_is_reported_already_gone_and_not_deleted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Something else removed it between the listing and the delete, so this sweep deleted nothing."""
+    region = InterfaceRegion()
+    del region.interfaces["eni-attached"]
+    region.gone = {"eni-leaked"}
+    assert _kind_sweep(monkeypatch, region, "eni") == 0
+    captured = capsys.readouterr()
+    assert "already gone eni eni-leaked" in captured.out
+    assert "deleted eni" not in captured.out
+    assert "FAILED" not in captured.err
+    assert "sweep clean: nothing left to delete" in captured.out
+
+
+def test_delete_resources_names_what_it_deleted_and_what_was_already_gone_apart(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    region = InterfaceRegion()
+    del region.interfaces["eni-attached"]
+    region.interfaces["eni-second"] = {
+        "NetworkInterfaceId": "eni-second",
+        "Status": "available",
+        "TagSet": RUN_ENI_TAGS,
+    }
+    region.gone = {"eni-leaked"}
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", region)
+    found = cloud_sweep.list_enis(REGION, {"dfe-e2e": "run-1"})
+    failures = cloud_sweep.delete_resources([r for r in found if r.tagged], REGION)
+    assert failures == []
+    assert capsys.readouterr().out.splitlines() == [
+        "already gone eni eni-leaked",
+        "deleted eni eni-second",
+    ]
+
+
+def test_a_not_found_from_a_compound_delete_is_still_a_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A cluster delete also deletes its nodegroups, so a NotFound there may name a nodegroup."""
+    _mock_run(
+        monkeypatch,
+        _ok({"nodegroups": ["ng-1"]}),
+        _fail(
+            "An error occurred (ResourceNotFoundException) when calling the DeleteNodegroup "
+            "operation: No node group found for name: ng-1."
+        ),
+    )
+    cluster = cloud_sweep.Resource(kind="eks-cluster", id="c-1", name="c-1", created=None, tagged=True)
+    failures = cloud_sweep.delete_resources([cluster], REGION)
+    assert len(failures) == 1
+    assert failures[0].startswith("eks-cluster c-1:")
+    captured = capsys.readouterr()
+    assert "already gone" not in captured.out
+    assert "FAILED to delete eks-cluster c-1" in captured.err
+
+
+def test_repeated_kinds_run_each_lister_and_delete_in_dependency_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    region = InterfaceRegion()
+    # Named group first, so the order below is DELETE_ORDER's rather than the command line's.
+    assert _kind_sweep(monkeypatch, region, "security-group", "eni") == 1  # the attached interface stays
+    deletes = [call[1] for call in region.calls if call[1].startswith("delete-")]
+    assert deletes == ["delete-network-interface", "delete-network-interface", "delete-security-group"]
+    assert region.groups == {}
+
+
+def test_without_kind_every_lister_and_the_tagging_api_still_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def record(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
+    assert cloud_sweep.main(["--region", REGION]) == 0
+    called = {tuple(call[:2]) for call in calls}
+    assert ("resourcegroupstaggingapi", "get-resources") in called
+    assert ("ec2", "describe-network-interfaces") in called
+    assert ("s3api", "list-buckets") in called
+
+
+def test_a_kind_limited_collect_skips_the_tagging_api_whose_hits_have_no_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tagging-API hit is labelled by service, so --kind could never select it, only list it as undeletable."""
+    calls: list[list[str]] = []
+
+    def record(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok({})
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
+    assert cloud_sweep.collect(REGION, TAG_FILTER, None, kinds=["s3-bucket"]) == []
+    assert [call[:2] for call in calls] == [["s3api", "list-buckets"]]
+
+
+def test_expected_fail_an_unknown_kind_is_refused_before_any_aws_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("no aws call should happen before --kind is checked")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    with pytest.raises(SystemExit) as exited:
+        cloud_sweep.main(["--region", REGION, "--kind", "network-interface"])
+    assert exited.value.code == 2
+    assert "invalid choice: 'network-interface'" in capsys.readouterr().err
+
+
+def test_every_kind_a_sweep_deletes_has_exactly_one_lister() -> None:
+    """--kind picks listers by the kind each reports, so a kind with none could never be swept."""
+    assert sorted([*cloud_sweep.LISTERS, "s3-bucket"]) == sorted(cloud_sweep.DELETE_ORDER)
+    assert cloud_sweep.PER_SERVICE_COLLECTORS == list(cloud_sweep.LISTERS.values())
+
+
+@pytest.mark.parametrize("kind", sorted(set(cloud_sweep.DELETE_ORDER) - {"s3-bucket"}))
+def test_each_lister_reports_the_kind_it_is_listed_under(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """A lister filed under the wrong kind would be skipped by a --kind sweep that asked for it."""
+    body = {
+        "Reservations": [{"Instances": [{"InstanceId": "i-1", "State": {"Name": "running"}}]}],
+        "Volumes": [{"VolumeId": "vol-1"}],
+        "Snapshots": [{"SnapshotId": "snap-1"}],
+        "LaunchTemplates": [{"LaunchTemplateId": "lt-1", "LaunchTemplateName": "lt"}],
+        "NatGateways": [{"NatGatewayId": "nat-1", "State": "available"}],
+        "Addresses": [{"AllocationId": "eipalloc-1", "PublicIp": "192.0.2.1"}],
+        "LoadBalancers": [{"LoadBalancerArn": "arn:lb", "LoadBalancerName": "lb"}],
+        "TargetGroups": [{"TargetGroupArn": "arn:tg", "TargetGroupName": "tg"}],
+        "TagDescriptions": [],
+        "SecurityGroups": [{"GroupId": "sg-1", "GroupName": "run"}],
+        "NetworkInterfaces": [{"NetworkInterfaceId": "eni-1"}],
+        "Vpcs": [{"VpcId": "vpc-1"}],
+        "Subnets": [{"SubnetId": "subnet-1", "VpcId": "vpc-1"}],
+        "RouteTables": [{"RouteTableId": "rtb-1", "VpcId": "vpc-1"}],
+        "InternetGateways": [{"InternetGatewayId": "igw-1"}],
+        "VpcEndpoints": [{"VpcEndpointId": "vpce-1", "VpcId": "vpc-1", "State": "available"}],
+        "HostedZones": [{"Id": "/hostedzone/Z1", "Name": "example.internal."}],
+        "logGroups": [{"logGroupName": "/dfe/run"}],
+        "SecretList": [{"ARN": "arn:secret", "Name": "dfe/run"}],
+        "Aliases": [{"AliasName": "alias/dfe-run"}],
+        "clusters": ["dfe-run"],
+        "cluster": {"tags": {}},
+        "ClusterInfoList": [{"ClusterArn": "arn:msk", "ClusterName": "dfe-run", "State": "ACTIVE"}],
+    }
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_kwargs: _ok(body))
+    found = cloud_sweep.collect(REGION, TAG_FILTER, None, kinds=[kind])
+    assert {r.kind for r in found} == {kind}

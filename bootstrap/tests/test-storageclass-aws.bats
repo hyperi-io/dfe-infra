@@ -11,24 +11,25 @@
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
     TPL="${REPO_ROOT}/bootstrap/templates/storageclass-aws.yaml.tpl"
+    RENDER="${REPO_ROOT}/bootstrap/render_env.py"
     export DFE_STORAGE_CLASS="gp3"
     export DFE_STORAGE_CLASS_IS_DEFAULT="true"
 }
 
 @test "the class takes its name from DFE_STORAGE_CLASS" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'name: "gp3"'* ]]
 }
 
 @test "nothing is left unsubstituted" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ ! "$output" == *'${'* ]]
 }
 
 @test "it provisions gp3 on the EBS CSI driver at the free-tier baseline" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *"provisioner: ebs.csi.aws.com"* ]]
     [[ "$output" == *"type: gp3"* ]]
@@ -37,7 +38,7 @@ setup() {
 }
 
 @test "volumes are encrypted and bound only once a pod needs them" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'encrypted: "true"'* ]]
     [[ "$output" == *"volumeBindingMode: WaitForFirstConsumer"* ]]
@@ -45,14 +46,14 @@ setup() {
 }
 
 @test "a cluster with no default gets this class as the default" {
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'storageclass.kubernetes.io/is-default-class: "true"'* ]]
 }
 
 @test "a cluster that already has a default keeps it" {
     export DFE_STORAGE_CLASS_IS_DEFAULT="false"
-    run envsubst < "${TPL}"
+    run python3 "${RENDER}" < "${TPL}"
     [ "$status" -eq 0 ]
     [[ "$output" == *'storageclass.kubernetes.io/is-default-class: "false"'* ]]
     [[ ! "$output" == *'is-default-class: "true"'* ]]

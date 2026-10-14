@@ -493,3 +493,61 @@ def test_status_and_down_are_registered() -> None:
 
 def test_state_lives_under_the_gitignored_tmp_tree() -> None:
     assert kind.state_dir("dfe-kind").relative_to(REPO_ROOT).parts[:2] == (".tmp", "kind")
+
+
+# ---------------------------------------------------------------------------
+# The tools `up` refuses to start without
+# ---------------------------------------------------------------------------
+
+_check_tools_spec = importlib.util.spec_from_file_location("check_tools", kind.CHECK_TOOLS)
+check_tools = importlib.util.module_from_spec(_check_tools_spec)
+_check_tools_spec.loader.exec_module(check_tools)
+
+
+@pytest.mark.parametrize("cloud", ["local-dfe", "aws"])
+def test_up_checks_its_own_tools_and_every_tool_the_deploy_runs(cloud: str) -> None:
+    names = [tool for tool, _ in kind.required_tools(cloud)]
+    assert names[: len(kind.KIND_TOOLS)] == [tool for tool, _ in kind.KIND_TOOLS]
+    assert {tool for tool, _ in check_tools.required(cloud)} <= set(names)
+    assert len(names) == len(set(names)), names
+
+
+def test_up_needs_no_envsubst_since_templates_render_through_python() -> None:
+    assert "envsubst" not in [tool for tool, _ in kind.required_tools("local-dfe")]
+
+
+def _path_with(tmp_path: Path, tools: list[str]) -> str:
+    """A PATH directory holding an executable stand-in for each named tool, and nothing else."""
+    for tool in tools:
+        stub = tmp_path / tool
+        stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8", newline="\n")
+        stub.chmod(0o755)
+    return str(tmp_path)
+
+
+def test_a_missing_tool_is_named_with_what_needs_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    present = [tool for tool, _ in kind.required_tools("local-dfe") if tool != "openssl"]
+    monkeypatch.setenv("PATH", _path_with(tmp_path, present))
+    assert kind.missing_tools("local-dfe") == [
+        ("openssl", dict(check_tools.TOOLS)["openssl"]),
+    ]
+
+
+def test_nothing_is_missing_when_every_tool_is_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every = [tool for tool, _ in kind.required_tools("local-dfe")]
+    monkeypatch.setenv("PATH", _path_with(tmp_path, every))
+    assert kind.missing_tools("local-dfe") == []
+
+
+def test_up_refuses_before_touching_anything_when_a_tool_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    present = [tool for tool, _ in kind.required_tools("local-dfe") if tool != "kind"]
+    monkeypatch.setenv("PATH", _path_with(tmp_path, present))
+    assert kind.cmd_kind_up(_up_args()) == 2
+    err = capsys.readouterr().err
+    assert "kind: creates, reads and deletes the cluster" in err

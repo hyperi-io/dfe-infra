@@ -24,6 +24,7 @@ engine and Sprig functions Argo CD's goTemplate does.
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -32,6 +33,7 @@ from _charts import chart_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 AWS_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
@@ -119,7 +121,7 @@ def test_the_cluster_secret_carries_the_tags() -> None:
     done = _run(_annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"',
                 DFE_RESOURCE_TAGS=json.dumps({**TAGS, "owner": "platform's"}))
     rendered = subprocess.run(
-        ["envsubst"],
+        [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS_ANNOTATION": done.stdout.strip()},
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,

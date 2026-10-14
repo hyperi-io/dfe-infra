@@ -25,6 +25,7 @@ template engine and Sprig functions Argo CD's goTemplate does.
 """
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from _charts import chart_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -120,7 +122,7 @@ def test_bootstrap_no_longer_reads_or_writes_an_allow_list() -> None:
 
 def test_the_cluster_secret_carries_both_annotations() -> None:
     rendered = subprocess.run(
-        ["envsubst"],
+        [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         env={
             "PATH": "/usr/bin:/bin",

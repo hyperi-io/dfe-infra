@@ -43,6 +43,7 @@ from _gate import (
     PIN_TOKEN_RE,
     PROFILES,
     WORKLOAD_KINDS,
+    configmap_files,
     effective_env,
     exposed,
     forward_references,
@@ -121,8 +122,15 @@ def _main(docs: list[dict], name: str | None = None) -> dict:
 def config_file(docs: list[dict], service: str) -> dict:
     """The app's rendered config file, parsed."""
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{service}-config")
-    (text,) = configmap["data"].values()
+    (text,) = configmap_files(configmap).values()
     return yaml.safe_load(text) or {}
+
+
+def rewrite_file(configmap: dict, name: str, text: str) -> None:
+    """Set one file of a ConfigMap to ``text``, every file then held under ``data``."""
+    files = configmap_files(configmap)
+    configmap.pop("binaryData", None)
+    configmap["data"] = {**files, name: text}
 
 
 # ------------------------------------------------------------------ identity
@@ -429,16 +437,17 @@ def test_a_receiver_render_with_no_delivery_path_is_caught() -> None:
     """A direct profile whose config file lost the loader transport falls to the brokerless bus."""
     docs = golden("dfe-receiver", "slim", "local")
     configmap = next(d for d in docs if object_id(d) == "ConfigMap/dfe-receiver-config")
-    config = yaml.safe_load(configmap["data"]["config.yaml"])
+    config = yaml.safe_load(configmap_files(configmap)["config.yaml"])
     del config["loader"]
-    configmap["data"]["config.yaml"] = yaml.safe_dump(config)
+    rewrite_file(configmap, "config.yaml", yaml.safe_dump(config))
     assert delivery_paths(docs) == []
 
 
 def test_a_loader_config_file_with_a_keda_block_is_caught() -> None:
     docs = golden("dfe-loader", "scale", "aws")
     configmap = next(d for d in docs if object_id(d) == "ConfigMap/dfe-loader-config")
-    configmap["data"]["loader.yaml"] += "keda:\n  max_replicas: 4\n"
+    text = configmap_files(configmap)["loader.yaml"]
+    rewrite_file(configmap, "loader.yaml", text + "keda:\n  max_replicas: 4\n")
     assert "keda" in config_file(docs, "dfe-loader")
 
 

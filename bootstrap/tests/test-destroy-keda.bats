@@ -19,6 +19,7 @@
 #   nodeclaim-polls    how many NodeClaim listings still show two NodeClaims once
 #                      karpenter-pools is deleted; before that they always show
 #   nodeclaims-unreadable  listing the NodeClaims fails
+#   owner-patch-refused  patching an Application by its plain name fails
 # aws is a stub too: it logs every call to aws.log, answers the three describes
 # from security-groups.json, interfaces.json and instances.json, refuses every
 # delete with an error naming an account when aws-refuses exists, and refuses a
@@ -62,6 +63,9 @@ case "$*" in
         ;;
     "patch "*)
         : > "${STUB_DIR}/patched"
+        ;;
+    "-n argocd patch applications.argoproj.io "*)
+        [[ -f "${STUB_DIR}/owner-patch-refused" ]] && exit 1
         ;;
     "-n argocd get applications.argoproj.io -o jsonpath="*)
         [[ -f "${STUB_DIR}/applications" ]] && cat "${STUB_DIR}/applications"
@@ -157,7 +161,7 @@ STUB
     chmod +x "${STUB_DIR}/bin/"*
     export STUB_DIR
     export PATH="${STUB_DIR}/bin:${PATH}"
-    unset DFE_DRY_RUN
+    unset DFE_DRY_RUN DFE_CLOUD DFE_REGION DFE_KUBE_CLUSTER_NAME DFE_VPC_ID DFE_RUN_TAGS
 }
 
 stick() {
@@ -483,10 +487,58 @@ applications_wait_seconds() {
 }
 
 @test "a cluster that is not on AWS makes no aws call" {
+    printf '%s\n' local local dfe-local "" "" > "${STUB_DIR}/cluster-facts"
     run bash "${DESTROY}" --force
     [ "$status" -eq 0 ]
     [ ! -s "${STUB_DIR}/aws.log" ]
-    [[ "${output}" == *"not an AWS cluster"* ]]
+    [[ "${output}" == *"the cluster secret names local, not aws, so there is nothing to sweep"* ]]
+}
+
+@test "with no cluster secret and no DFE_CLOUD nothing is swept, and it says neither names a cloud" {
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [ ! -s "${STUB_DIR}/aws.log" ]
+    [[ "${output}" == *"neither the cluster secret nor DFE_CLOUD names a cloud"* ]]
+    [[ "${output}" != *"not aws"* ]]
+}
+
+# The cloud root's facts for the same run a_test_run describes, as dfe-ops teardown --from-terraform passes them.
+run_facts_in_the_environment() {
+    export DFE_CLOUD=aws DFE_REGION=us-west-2 DFE_KUBE_CLUSTER_NAME=dfe-cycle DFE_VPC_ID=vpc-0run DFE_RUN_TAGS="${RUN_TAGS}"
+}
+
+@test "with no cluster secret the caller's DFE_* facts mark the test run, and step 9 sweeps it" {
+    run_facts_in_the_environment
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"the cluster secret names no cloud, so the run's facts come from DFE_CLOUD, DFE_REGION, DFE_KUBE_CLUSTER_NAME, DFE_VPC_ID and DFE_RUN_TAGS"* ]]
+    [[ "$(aws_log)" == *"ec2 describe-security-groups --region us-west-2 --output json --filters Name=vpc-id,Values=vpc-0run Name=tag:elbv2.k8s.aws/cluster,Values=dfe-cycle"* ]]
+    [[ "${output}" == *"deleted security group sg-run"* ]]
+    [[ "${output}" == *"left security group sg-other-run: it does not carry dfe-e2e"* ]]
+}
+
+@test "the caller's facts without run tags sweep nothing, and say where they came from" {
+    run_facts_in_the_environment
+    unset DFE_RUN_TAGS
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [ ! -s "${STUB_DIR}/aws.log" ]
+    [[ "${output}" == *"the DFE_* environment names no run tags, VPC, cluster or region"* ]]
+}
+
+@test "a cluster secret that names a cloud wins over the caller's facts" {
+    a_test_run
+    run_facts_in_the_environment
+    export DFE_VPC_ID=vpc-other DFE_REGION=eu-west-1
+    security_groups
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(aws_log)" == *"--region us-west-2 --output json --filters Name=vpc-id,Values=vpc-0run"* ]]
+    [[ "$(aws_log)" != *"vpc-other"* ]]
+    [[ "$(aws_log)" != *"eu-west-1"* ]]
+    [[ "${output}" != *"the run's facts come from DFE_CLOUD"* ]]
 }
 
 @test "a delete AWS refuses is reported by its error code, never its message" {
@@ -515,6 +567,63 @@ applications_wait_seconds() {
     [ "${controller}" -lt "${sweep}" ]
     [ ! -s "${STUB_DIR}/kubectl.log" ]
     [ ! -s "${STUB_DIR}/aws.log" ]
+}
+
+# The cluster add-ons Application, whose resources are ApplicationSets, beside the load balancer
+# controller and one app. The listing prints each one's resource kinds where it prints charts.
+applicationset_owner() {
+    printf '%s\n' \
+        'dfe-addons-dfe-aws-test ApplicationSet ApplicationSet' \
+        'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller' \
+        'dfe-receiver-default-dfe-aws-test  helm/charts/dfe-receiver' > "${STUB_DIR}/applications"
+}
+
+@test "the Application syncing the ApplicationSets goes without its finalizer, between two orphaning deletes" {
+    applicationset_owner
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first patched deleted second others
+    log_text="$(log)"
+    first="$(line_of '-n argocd delete applicationset --all --cascade=orphan' "${log_text}")"
+    patched="$(line_of '-n argocd patch applications.argoproj.io dfe-addons-dfe-aws-test --type merge -p {"metadata":{"finalizers":null}}' "${log_text}")"
+    deleted="$(line_of '-n argocd delete applications.argoproj.io dfe-addons-dfe-aws-test --wait=false' "${log_text}")"
+    second="$(last_line_of '-n argocd delete applicationset --all --cascade=orphan' "${log_text}")"
+    others="$(line_of 'dfe-receiver-default-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${first}" ]
+    [ -n "${patched}" ]
+    [ -n "${deleted}" ]
+    [ -n "${others}" ]
+    [ "${first}" -lt "${patched}" ]
+    [ "${patched}" -lt "${deleted}" ]
+    [ "${deleted}" -lt "${second}" ]
+    [ "${second}" -lt "${others}" ]
+    # The controllers and the app keep their finalizers, which delete what they deployed.
+    [ "$(grep -c -- '-n argocd patch applications.argoproj.io' <<<"${log_text}")" -eq 1 ]
+    [[ "${output}" == *"dfe-addons-dfe-aws-test syncs ApplicationSets: deleted it without its finalizer"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "an ApplicationSet owner whose finalizer stays is never deleted, and the teardown goes on" {
+    applicationset_owner
+    touch "${STUB_DIR}/owner-patch-refused"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "$(log)" != *"-n argocd delete applications.argoproj.io dfe-addons-dfe-aws-test --wait=false"* ]]
+    [[ "${output}" == *"WARN: could not delete dfe-addons-dfe-aws-test, which syncs ApplicationSets, without its finalizer"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
+}
+
+@test "the dry run names the ApplicationSet owners between the orphaning delete and KEDA" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local appset owners scaledobject
+    appset="$(line_of 'kubectl -n argocd delete applicationset --all' "${output}")"
+    owners="$(line_of 'delete every Application that syncs ApplicationSets without its finalizer' "${output}")"
+    scaledobject="$(line_of 'kubectl delete scaledobject --all -A' "${output}")"
+    [ -n "${owners}" ]
+    [ "${appset}" -lt "${owners}" ]
+    [ "${owners}" -lt "${scaledobject}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
 }
 
 # An AWS deployment's Applications: both controllers, Karpenter's pools and one app,

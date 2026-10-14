@@ -574,7 +574,11 @@ def test_expected_fail_a_door_that_never_opens_names_the_overlay_to_check(monkey
 
 
 class Listener:
-    """A receiver or a HyperDX on a port the kernel picks, answering from a script."""
+    """A receiver or a HyperDX on a port the kernel picks, answering from a script.
+
+    A path with a trailing slash gets the 308 to the bare path that HyperDX's
+    Next.js frontend answers, before any route sees the request.
+    """
 
     def __init__(self) -> None:
         self.statuses: list[int] = []
@@ -583,8 +587,11 @@ class Listener:
         self.port = 0
 
     def answer(self, method: str, path: str) -> tuple[int, object]:
+        bare = path.split("?")[0]
+        if bare != "/" and bare.endswith("/"):
+            return 308, bare.rstrip("/")
         status = self.statuses.pop(0) if self.statuses else 200
-        return status, self.bodies.get(f"{method} {path.split('?')[0]}", {})
+        return status, self.bodies.get(f"{method} {bare}", {})
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -600,6 +607,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(out)))
+        if status == 308:
+            self.send_header("Location", str(payload))
         self.end_headers()
         self.wfile.write(out)
 
@@ -744,6 +753,14 @@ def test_expected_fail_a_pod_that_reaches_nothing_proves_nothing() -> None:
     assert "reached nothing" in detail
 
 
+def test_expected_fail_a_control_the_gateway_connected_but_never_answered_is_not_called_unreachable() -> None:
+    """curl exit 35 is a handshake that failed on a connection the gateway accepted."""
+    status, detail = edge.refused_outcome({"control": (35, "000"), "target": (28, "000")}, ENDPOINT, GATEWAY, list(NAT), [SENDER])
+    assert status == "failed"
+    assert "got no HTTP answer (curl exit 35)" in detail
+    assert "reached nothing" not in detail
+
+
 @pytest.mark.parametrize("readings", [{"control": (0, "404"), "target": (6, "000")}, {"control": (0, "404")}, {}])
 def test_expected_fail_anything_but_a_timeout_or_a_refused_connect_is_not_a_refusal(readings: dict) -> None:
     assert edge.refused_outcome(readings, ENDPOINT, GATEWAY, list(NAT), [SENDER])[0] == "failed"
@@ -761,8 +778,29 @@ RECEIVER = {
 }
 
 
+CONSOLE_URL = "https://dfe.run.example"
+CONTROL = edge.Control("https://dfe.run.example:443/", f"dfe.run.example:443:{GATEWAY}:443")
+
+
+def test_the_control_asks_the_gateway_for_the_consoles_own_name() -> None:
+    """Envoy picks a listener by SNI, so the load balancer's own name gets no handshake."""
+    assert edge.gateway_control(CONSOLE_URL, GATEWAY) == CONTROL
+    assert edge.gateway_control("https://dfe.run.example:8443/x", GATEWAY) == edge.Control(
+        "https://dfe.run.example:8443/", f"dfe.run.example:8443:{GATEWAY}:8443")
+    assert edge.gateway_control(CONSOLE_URL, "2001:db8::7").connect == "dfe.run.example:443:[2001:db8::7]:443"
+
+
+@pytest.mark.parametrize(("console", "gateway"), [("", GATEWAY), ("not a url", GATEWAY), (CONSOLE_URL, "")])
+def test_expected_fail_no_host_or_no_gateway_makes_no_control(console: str, gateway: str) -> None:
+    assert edge.gateway_control(console, gateway) is None
+
+
+def test_the_probe_dials_the_control_through_the_connect_to_variable() -> None:
+    assert '--connect-to "$PROBE_CONTROL_CONNECT" "$PROBE_CONTROL_URL"' in edge.PROBE_SCRIPT
+
+
 def test_the_probe_pod_runs_the_receivers_own_image_where_the_receiver_can_run() -> None:
-    pod = edge.probe_pod("edge-probe-ns", RECEIVER, f"https://{GATEWAY}/", ENDPOINT.liveness_url)
+    pod = edge.probe_pod("edge-probe-ns", RECEIVER, CONTROL, ENDPOINT.liveness_url)
     spec = pod["spec"]
     container = spec["containers"][0]
     template = RECEIVER["spec"]["template"]["spec"]
@@ -776,10 +814,12 @@ def test_the_probe_pod_runs_the_receivers_own_image_where_the_receiver_can_run()
     assert spec["automountServiceAccountToken"] is False
     assert spec["activeDeadlineSeconds"] > 0
     env = {item["name"]: item["value"] for item in container["env"]}
-    assert env == {"PROBE_CONTROL_URL": f"https://{GATEWAY}/", "PROBE_TARGET_URL": ENDPOINT.liveness_url}
+    assert env == {"PROBE_CONTROL_URL": CONTROL.url, "PROBE_CONTROL_CONNECT": CONTROL.connect,
+                   "PROBE_TARGET_URL": ENDPOINT.liveness_url}
     # The addresses reach the shell as variables, never spliced into the script.
     assert LB_HOST not in container["command"][-1]
     assert GATEWAY not in container["command"][-1]
+    assert "dfe.run.example" not in container["command"][-1]
     assert pod["metadata"]["namespace"] == "edge-probe-ns"
 
 
@@ -810,11 +850,12 @@ class Kube:
 
 
 def _refused(monkeypatch: pytest.MonkeyPatch, kube: Kube, *, allow: tuple[str, ...] = (SENDER,),
-             gateway: str = GATEWAY) -> list[wizard.StepResult]:
+             gateway: str = GATEWAY, console_url: str = CONSOLE_URL) -> list[wizard.StepResult]:
     monkeypatch.setattr(edge, "kubectl", kube)
     monkeypatch.setattr(edge.time, "sleep", lambda _s: None)
     results: list[wizard.StepResult] = []
-    edge.record_refused(results, ["kubectl"], "dfe-run", ENDPOINT, gateway, list(allow), list(NAT), "edgeabc")
+    edge.record_refused(results, ["kubectl"], "dfe-run", ENDPOINT, gateway, list(allow), list(NAT), "edgeabc",
+                        console_url=console_url)
     return results
 
 
@@ -844,15 +885,24 @@ def test_expected_fail_a_probe_that_never_finished_still_takes_its_namespace_awa
     assert kube.calls[-1][0][:2] == ("delete", "namespace")
 
 
-@pytest.mark.parametrize(("allow", "gateway", "said"), [
-    (("198.51.100.0/24",), GATEWAY, "198.51.100.1/32 in 198.51.100.0/24"),
-    ((SENDER,), "", "no gateway address"),
+def test_the_probe_pod_carries_the_control_the_console_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    kube = Kube()
+    _refused(monkeypatch, kube)
+    pod = next(json.loads(stdin) for argv, stdin in kube.calls if argv[:1] == ("create",) and '"Pod"' in stdin)
+    env = {item["name"]: item["value"] for item in pod["spec"]["containers"][0]["env"]}
+    assert (env["PROBE_CONTROL_URL"], env["PROBE_CONTROL_CONNECT"]) == (CONTROL.url, CONTROL.connect)
+
+
+@pytest.mark.parametrize(("allow", "gateway", "console_url", "said"), [
+    (("198.51.100.0/24",), GATEWAY, CONSOLE_URL, "198.51.100.1/32 in 198.51.100.0/24"),
+    ((SENDER,), "", CONSOLE_URL, "no gateway address"),
+    ((SENDER,), GATEWAY, "", "no console host"),
 ])
 def test_expected_fail_a_refusal_that_could_prove_nothing_is_never_attempted(
-    monkeypatch: pytest.MonkeyPatch, allow: tuple[str, ...], gateway: str, said: str,
+    monkeypatch: pytest.MonkeyPatch, allow: tuple[str, ...], gateway: str, console_url: str, said: str,
 ) -> None:
     kube = Kube()
-    results = _refused(monkeypatch, kube, allow=allow, gateway=gateway)
+    results = _refused(monkeypatch, kube, allow=allow, gateway=gateway, console_url=console_url)
     assert results[0].status == "failed"
     assert said in results[0].detail
     assert kube.calls == []
@@ -921,27 +971,44 @@ class ChangingEngine(TokenEngine):
 
 
 def test_a_login_that_made_the_forced_change_signs_in_again_for_hyperdx(listener: Listener) -> None:
-    listener.bodies = {"GET /api/sources": [MAIN], "POST /api/clickhouse-proxy/": {"data": [["1"]]}}
+    listener.bodies = {"GET /api/sources": [MAIN], "POST /api/clickhouse-proxy":{"data": [["1"]]}}
     engine = ChangingEngine()
     results: list[wizard.StepResult] = []
     edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", engine, "edgeabc", True, 5.0)
     assert results[0].status == "done", results[0].detail
     assert engine.logins == 2
-    assert {seen["headers"]["authorization"] for seen in listener.seen} == {f"Bearer {TokenEngine.MINTED}"}
+    assert {seen["headers"]["cookie"] for seen in listener.seen} == {f"dfe_token={TokenEngine.MINTED}"}
 
 
 def test_hyperdx_finds_the_marker_through_its_own_api(listener: Listener) -> None:
     listener.bodies = {"GET /api/sources": [{"name": "hunts"}, MAIN],
-                       "POST /api/clickhouse-proxy/": {"data": [["1"]]}}
+                       "POST /api/clickhouse-proxy":{"data": [["1"]]}}
     results: list[wizard.StepResult] = []
     edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", TokenEngine(), "edgeabc", True, 5.0)
     assert (results[0].slug, results[0].status) == ("hyperdx", "done"), results[0].detail
     sources, query = listener.seen
-    assert sources["headers"]["authorization"] == "Bearer engine-token"
+    # The console's iframe credential: the dfe_token cookie, never an Authorization header.
+    for seen in (sources, query):
+        assert seen["headers"]["cookie"] == "dfe_token=engine-token"
+        assert "authorization" not in seen["headers"]
+    # The browser client's own path: the frontend 308s the trailing-slash form.
+    assert query["path"] == "/api/clickhouse-proxy"
     assert query["headers"]["x-hyperdx-connection-id"] == MAIN["connection"]
-    assert query["headers"]["authorization"] == "Bearer engine-token"
     assert "ILIKE '%edgeabc%'" in query["body"]
     assert "engine-token" not in results[0].detail
+
+
+def test_expected_fail_a_redirect_is_the_finding_and_is_never_followed(
+    listener: Listener, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """urllib would carry the token cookie to whatever host a redirect names."""
+    monkeypatch.setattr(edge, "CLICKHOUSE_PROXY", "/api/clickhouse-proxy/")
+    listener.bodies = {"GET /api/sources": [MAIN]}
+    results: list[wizard.StepResult] = []
+    edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", TokenEngine(), "edgeabc", True, 0.0)
+    assert results[0].status == "failed"
+    assert "answered 308" in results[0].detail
+    assert [seen["path"] for seen in listener.seen] == ["/api/sources", "/api/clickhouse-proxy/"]
 
 
 def test_expected_fail_no_main_source_names_where_the_fork_seeds_it(listener: Listener) -> None:
@@ -961,7 +1028,7 @@ def test_expected_fail_a_token_hyperdx_refuses_is_the_finding(listener: Listener
 
 
 def test_expected_fail_zero_rows_through_hyperdx_is_a_failure(listener: Listener) -> None:
-    listener.bodies = {"GET /api/sources": [MAIN], "POST /api/clickhouse-proxy/": {"data": [["0"]]}}
+    listener.bodies = {"GET /api/sources": [MAIN], "POST /api/clickhouse-proxy":{"data": [["0"]]}}
     results: list[wizard.StepResult] = []
     edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", TokenEngine(), "edgeabc", True, 0.0)
     assert results[0].status == "failed"
@@ -978,11 +1045,16 @@ def test_expected_fail_no_hyperdx_url_fails_rather_than_skips() -> None:
 
 
 class Frame:
-    """HyperDX's search frame, already on the source, recording what was typed where."""
+    """HyperDX's search frame, already on the source, recording what was typed where.
+
+    The where box opens on *language*, the label its language switch shows; the
+    fork opens it on SQL for a profile that never chose.
+    """
 
     url = "https://hyperdx.example/search"
 
-    def __init__(self) -> None:
+    def __init__(self, language: str = "SQL") -> None:
+        self.language = language
         self.visited: list[str] = []
         self.typed: list[tuple[str, str]] = []
         self.pressed: list[str] = []
@@ -999,6 +1071,9 @@ class Frame:
     def get_by_test_id(self, name: str) -> Frame:
         return self._here(f"testid:{name}")
 
+    def get_by_label(self, name: str) -> Frame:
+        return self._here(f"label:{name}")
+
     def get_by_role(self, role: str, name: str = "", exact: bool = False) -> Frame:
         return self._here(f"{role}:{name}")
 
@@ -1013,7 +1088,7 @@ class Frame:
         return None
 
     def input_value(self, **_kwargs: object) -> str:
-        return "main"
+        return self.language if self._at.startswith("label:") else "main"
 
     def fill(self, value: str, **_kwargs: object) -> None:
         self.typed.append((self._at, value))
@@ -1039,11 +1114,45 @@ def test_the_marker_is_searched_in_the_where_box_before_run() -> None:
     assert frame.visited.index(f"testid:{source_steps.WHERE_INPUT}") < frame.visited.index("click:button:Run")
 
 
+def test_a_box_the_fork_opened_on_sql_goes_to_lucene_before_the_marker_is_typed() -> None:
+    """Only the Lucene box carries the search-input test id; the SQL editor has none."""
+    frame = Frame(language="SQL")
+    assert source_steps.search_results(frame, "main", "edgeabc") == (True, "1 Results")
+    switch = frame.visited.index(f"click:label:{source_steps.WHERE_LANGUAGE_LABEL}")
+    lucene = frame.visited.index("click:option:Lucene")
+    where = frame.visited.index(f"testid:{source_steps.WHERE_INPUT}")
+    assert switch < lucene < where
+
+
+def test_a_box_already_on_lucene_is_left_alone() -> None:
+    frame = Frame(language="Lucene")
+    assert source_steps.search_results(frame, "main", "edgeabc") == (True, "1 Results")
+    assert not any(v.startswith("click:label:") or v == "click:option:Lucene" for v in frame.visited)
+
+
+class StuckWhereFrame(Frame):
+    """A frame whose where box never appears, as in a SQL box nobody switched."""
+
+    def wait_for(self, **_kwargs: object) -> None:
+        if self._at == f"testid:{source_steps.WHERE_INPUT}":
+            raise TimeoutError('Locator.wait_for: Timeout 30000ms exceeded.\n  - waiting for get_by_test_id("search-input")')
+
+
+def test_expected_fail_a_search_that_stops_after_the_pick_never_blames_the_picker() -> None:
+    picked, results = source_steps.search_results(StuckWhereFrame(language="Lucene"), "main", "edgeabc")
+    assert picked
+    status, detail = source_steps.observe_outcome("main", Frame.url, "", picked, results, "edgeabc")
+    assert status == "failed"
+    assert "does not offer" not in detail
+    assert detail.startswith("Observe search over main for edgeabc returned the console could not: TimeoutError")
+    assert 'get_by_test_id("search-input")' in detail
+
+
 def test_a_search_with_no_marker_never_touches_the_where_box() -> None:
     frame = Frame()
     source_steps.search_results(frame, "main")
     assert frame.typed == []
-    assert not any(v.startswith("testid:") for v in frame.visited)
+    assert not any(v.startswith(("testid:", "label:")) for v in frame.visited)
 
 
 def test_the_observe_row_names_the_marker_it_searched_for() -> None:

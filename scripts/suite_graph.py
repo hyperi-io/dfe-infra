@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from manifest_deps import PACKAGE_KINDS
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SUITE_FILE = REPO_ROOT / "suite.yaml"
 
@@ -39,6 +41,9 @@ NODE_REQUIRED = ("repo", "role", "language", "audience", "maturity", "support",
 # and is named rather than silently taken for truth.
 NODE_FLAGS = ("default_in_pass", "optional")
 ARTEFACT_FLAGS = ("public", "published")
+
+# The `:<line>` or `:<start>-<end>` a citation may end in.
+_CITED_LINE = re.compile(r":\d+(?:-\d+)?$")
 
 BEGIN = "<!-- suite-graph:begin {name} -->"
 END = "<!-- suite-graph:end {name} -->"
@@ -194,6 +199,14 @@ def validate(graph: dict) -> list[str]:
                 problems.append(
                     f"node {name}: `{field}` is {node[field]!r}, which is not true or false"
                 )
+        if "unconsumed" in node:
+            note = node["unconsumed"]
+            if not isinstance(note, str) or not note.strip():
+                problems.append(f"node {name}: `unconsumed` is empty, so it says nothing")
+            elif not node.get("package"):
+                problems.append(
+                    f"node {name}: `unconsumed` needs a `package`, or no lock can contradict it"
+                )
         for artefact in node.get("artefacts", []) or []:
             if not isinstance(artefact, dict):
                 continue
@@ -223,6 +236,12 @@ def validate(graph: dict) -> list[str]:
             problems.append(f"{where}: type must be one of {', '.join(EDGE_TYPES)}")
         if not edge.get("evidence"):
             problems.append(f"{where}: no evidence cited")
+        elif edge.get("kind") in PACKAGE_KINDS and _CITED_LINE.search(str(edge["evidence"])):
+            problems.append(
+                f"{where}: a {edge['kind']} edge cites the manifest alone, never a line -- "
+                f"the declaration is found by the producer's `package`, and a line moves "
+                f"with every dependency added above it"
+            )
     for edge in graph.get("runtime_edges", []):
         where = f"runtime edge {edge.get('from')} -> {edge.get('to')}"
         for end in ("from", "to"):

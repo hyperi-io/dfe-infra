@@ -25,7 +25,7 @@ import json
 
 import pytest
 
-from _gate import PROFILES, golden
+from _gate import PROFILES, configmap_files, golden
 from _weave import contract, render_app
 
 SERVICES = ("dfe-archiver", "dfe-transform-vrl", "dfe-transform-vector", "dfe-transform-elastic")
@@ -87,7 +87,7 @@ def test_transform_files_reach_the_pod(service: str) -> None:
     files = [{"name": "10-route.vrl", "content": "  .x = 1\n.y = 2\n"}]
     docs = _render_with(service, "single", {"fileSets": {"transforms": {"files": files}}})
     configmap = next(d for d in docs if d["metadata"]["name"] == f"{service}-transforms")
-    assert configmap["data"] == {"10-route.vrl": "  .x = 1\n.y = 2\n"}
+    assert configmap_files(configmap) == {"10-route.vrl": "  .x = 1\n.y = 2\n"}
     directory = f"/etc/{service}-transforms"
     mounts = {m["mountPath"]: m for m in _pod(docs)["containers"][0]["volumeMounts"]}
     assert mounts[directory]["readOnly"] is True

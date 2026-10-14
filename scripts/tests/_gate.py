@@ -26,9 +26,14 @@ The goldens hold each image tag and digest versions.yaml pins as a token naming
 the pin (PIN_TOKEN), so a release that moves a pin leaves them alone. golden()
 puts the current values back.
 
+configmap_files() is how a test reads a file a thin chart mounts, whichever of
+``data`` and ``binaryData`` the library wrote it under.
+
 The leading underscore keeps pytest from collecting this module as a test file.
 """
 
+import base64
+import binascii
 import contextlib
 import copy
 import functools
@@ -207,6 +212,35 @@ def object_id(doc: dict) -> str:
     return f"{doc.get('kind')}/{doc.get('metadata', {}).get('name')}"
 
 
+def configmap_files(doc: dict) -> dict[str, str]:
+    """Each file a ConfigMap mounts, name -> text, from ``data`` and ``binaryData`` alike.
+
+    The scalo-service library writes a thin chart's config file and file sets
+    base64-encoded under ``binaryData``, so Helm cannot strip ``<no value>`` out of
+    them. Its earlier releases, and every chart this repo owns, write ``data``. The
+    kubelet mounts both maps as files but reads only ``data`` into env, so an
+    envFrom reader keeps to ``data``.
+
+    Raises:
+        ValueError: A key sits in both maps, which the API server refuses, or a
+            ``binaryData`` value is not base64-encoded UTF-8 text.
+    """
+    where = object_id(doc)
+    plain = doc.get("data") or {}
+    encoded = doc.get("binaryData") or {}
+    both = sorted(set(plain) & set(encoded))
+    if both:
+        raise ValueError(f"{where} holds {both} in both data and binaryData")
+    files = dict(plain)
+    for name, value in encoded.items():
+        try:
+            files[name] = base64.b64decode(value, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as error:
+            message = f"{where} binaryData[{name}] is not base64-encoded UTF-8 text: {error}"
+            raise ValueError(message) from error
+    return files
+
+
 # ---------------------------------------------------------------------- goldens
 
 # A pin in a golden file: the versions.yaml key whose current value stood there.
@@ -365,6 +399,7 @@ def _effective_env(container: dict, configmaps: dict[str, dict]) -> Keyed:
         prefix = source.get("prefix", "")
         if "configMapRef" in source:
             ref = source["configMapRef"].get("name", "")
+            # The kubelet reads only data into env, never binaryData.
             data = (configmaps.get(ref) or {}).get("data")
             if data is None:
                 env[f"{prefix}*<configMap {ref}>"] = ABSENT
@@ -462,7 +497,8 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
     A workload's main container is ``containers[main]`` whatever its name, its env
     is the effective env (envFrom ConfigMaps of the render, then env), its probes
     carry Kubernetes' defaults with named ports resolved, and lists Kubernetes
-    merges by key are compared by that key.
+    merges by key are compared by that key. A ConfigMap's ``binaryData`` holds the
+    decoded text each file mounts as.
     """
     configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
     numbers = port_numbers(docs)
@@ -478,6 +514,9 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
             body.update(
                 {k: v for k, v in doc.items() if k not in ("apiVersion", "kind", "metadata")}
             )
+            if kind == "ConfigMap" and doc.get("binaryData"):
+                files = configmap_files(doc)
+                body["binaryData"] = {name: files[name] for name in doc["binaryData"]}
         body["apiVersion"] = doc.get("apiVersion")
         flat: dict[str, object] = {}
         _flatten(body, "", flat)
@@ -532,6 +571,7 @@ def forward_references(docs: list[dict]) -> list[str]:
             for source in container.get("envFrom") or []:
                 ref = (source.get("configMapRef") or {}).get("name")
                 prefix = source.get("prefix", "")
+                # The kubelet reads only data into env, never binaryData.
                 data = (configmaps.get(ref) or {}).get("data") or {}
                 declared |= {prefix + name for name in data}
             for entry in container.get("env") or []:

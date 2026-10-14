@@ -132,22 +132,20 @@ def test_a_stamp_in_no_spelling_at_all_is_unavailable(tmp_path: Path, monkeypatc
     assert "age unavailable" in dfeops._ephemeral_notice()
 
 
-def test_a_tofu_read_that_exits_does_not_take_the_command_with_it(tmp_path: Path, monkeypatch) -> None:
-    """bridge.get_tf_outputs exits the process when tofu fails -- an
-    uninitialised root, a deployment never applied -- and a banner may not."""
+def test_a_root_bridge_cannot_read_does_not_take_the_command_with_it(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The real bridge reads a root with no tofu on PATH and no state -- a
+    deployment never applied -- and raises, which a banner may not."""
     environments = tmp_path / "terraform" / "environments"
     (environments / "aws").mkdir(parents=True)
     monkeypatch.setattr(dfeops, "TF_ENVIRONMENTS", environments)
-
-    def _exit(_tf_dir: str) -> dict[str, tuple[str, bool]]:
-        print("ERROR: tofu output failed", file=sys.stderr)
-        raise SystemExit(1)
-
-    fake = types.ModuleType("bridge")
-    fake.get_tf_outputs = _exit
-    monkeypatch.setitem(sys.modules, "bridge", fake)
+    monkeypatch.delitem(sys.modules, "bridge", raising=False)
+    (tmp_path / "bin").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
     assert dfeops._tf_output("aws", "cluster_created_at") is None
+    assert capsys.readouterr().err == ""
 
 
 def test_an_environment_that_does_not_exist_is_never_read(tmp_path: Path, monkeypatch) -> None:

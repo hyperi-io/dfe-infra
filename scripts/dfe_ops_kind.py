@@ -58,6 +58,7 @@ created and that directory, then proves each is gone.
 """
 
 import argparse
+import importlib.util
 import ipaddress
 import json
 import os
@@ -104,7 +105,13 @@ DEFAULT_REMOTE = "origin"
 ARGOCD_NAMESPACE = "argocd"
 KIND_CLUSTER_LABEL = "io.x-k8s.kind.cluster"
 MANAGED_BY = "dfe-ops-kind"
-REQUIRED_TOOLS = ("kind", "docker", "kubectl", "helm", "git", "envsubst", "openssl")
+# What `up` runs itself. The deploy's own tools are bootstrap/check_tools.py's list.
+KIND_TOOLS = (
+    ("kind", "creates, reads and deletes the cluster"),
+    ("docker", "inspects the kind network and removes the node volumes"),
+    ("git", "resolves the ref and checks it out"),
+)
+CHECK_TOOLS = REPO_ROOT / "bootstrap" / "check_tools.py"
 # Required by bootstrap, recorded on the cluster secret, and named identically on
 # every cluster, so they are read from the ref's own env template.
 TEMPLATE_KEYS = ("DFE_CLICKHOUSE_HOST", "DFE_OTEL_ENDPOINT")
@@ -426,8 +433,27 @@ def removes_network(state: dict, network: str, name: str) -> bool:
 
 
 # --- cluster-facing steps ----------------------------------------------------
-def _missing_tools() -> list[str]:
-    return [tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None]
+def required_tools(cloud: str) -> tuple[tuple[str, str], ...]:
+    """Every (tool, what needs it) pair `up` and the deploy it runs need, each tool once.
+
+    Args:
+        cloud: The overlay the deploy runs as, DFE_CLOUD, which may add its own CLI.
+
+    Returns:
+        KIND_TOOLS, then bootstrap/check_tools.py's list for that cloud.
+    """
+    spec = importlib.util.spec_from_file_location("check_tools", CHECK_TOOLS)
+    check_tools = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(check_tools)
+    named: dict[str, str] = {}
+    for tool, why in (*KIND_TOOLS, *check_tools.required(cloud)):
+        named.setdefault(tool, why)
+    return tuple(named.items())
+
+
+def missing_tools(cloud: str) -> list[tuple[str, str]]:
+    """The required_tools pairs not on this process's PATH, which the deploy's children inherit."""
+    return [(tool, why) for tool, why in required_tools(cloud) if shutil.which(tool) is None]
 
 
 def _clusters() -> list[str]:
@@ -596,9 +622,11 @@ def _write_state(name: str, state: dict) -> None:
 
 
 def cmd_kind_up(args: argparse.Namespace) -> int:
-    missing = _missing_tools()
+    missing = missing_tools(args.cloud_overlay)
     if missing:
-        print(f"kind up: not on PATH: {', '.join(missing)}", file=sys.stderr)
+        print("kind up: not on PATH, and the deploy cannot finish without them:", file=sys.stderr)
+        for tool, why in missing:
+            print(f"  {tool}: {why}", file=sys.stderr)
         return 2
     if args.node_image == KIND_NODE_IMAGE and (found := _kind_version()) != KIND_RELEASE:
         print(

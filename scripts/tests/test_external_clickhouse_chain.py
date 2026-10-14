@@ -25,6 +25,7 @@ library (_weave.library). Every host is under the reserved example domain.
 
 import functools
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from _weave import render_app, render_extras
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -145,7 +147,7 @@ def test_the_cluster_secret_carries_every_fact() -> None:
     for name, annotation in FACTS.items():
         assert f'{annotation}: "${{{name}}}"' in template, annotation
     rendered = subprocess.run(
-        ["envsubst"], input=template, env=env,
+        [sys.executable, str(RENDER_ENV)], input=template, env=env,
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]

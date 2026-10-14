@@ -32,7 +32,7 @@ override.tf.json
 *.p12
 .env
 .env.*
-!.env.example
+!.env*.example
 # bootstrap secret env (holds AppRole secret-id, GHCR PAT) -- the bare `.env`
 # pattern misses this named file, so ignore it explicitly. Never commit.
 bootstrap/local.env
@@ -85,6 +85,7 @@ Thumbs.db
 # Local test artefacts
 .coverage*
 cov.xml
+.benchmarks/
 
 # Local working files (not committed)
 #
@@ -116,12 +117,14 @@ GEMINI.md
 .codex/
 .cursor/
 .gemini/
+.superpowers/
 .cursorrules
 
 # hyperi-ai per-project workspace (plans, sessions, scratch). NEVER
 # committed -- it holds working notes, not project content. Mirrored
-# in .git/info/exclude, which is the authoritative copy.
-.hyperi-ai/
+# in .git/info/exclude, which is the authoritative copy. No trailing slash: a
+# directory pattern does not match the symlink.
+.hyperi-ai
 
 # Git worktrees (local dev convenience)
 .worktrees/

@@ -36,7 +36,10 @@ cloud-preflight reads and never writes. It REFUSES (exit 2) when:
   (d) a run is unfinished: a run record exists under the state prefix, or a
       run-tagged resource in the region has not yet expired. A run's names come
       from its dial, so applying the dial again stops on AlreadyExists after
-      paying for part of a deployment.
+      paying for part of a deployment;
+  (e) a command bootstrap.sh or destroy.sh runs is not on the PATH the run's
+      children get (bootstrap/check_tools.py names them). The deploy would
+      otherwise stop at it after `tofu apply` had built the cluster.
 
 (c) and (d) leave out a hit AWS reports deleted, terminated or not found, which
 the tagging API goes on listing for a while: an EC2 object, a KMS key scheduled
@@ -67,6 +70,10 @@ From then on every way out -- success, failure, an exception, SIGINT, SIGTERM,
 SIGHUP, the run length running out -- tears the run down: the in-flight child
 is stopped, the cluster's workloads go if the cycle did not reach its own
 destroy, then `tofu destroy`.
+When `tofu destroy` fails, cloud_sweep.py deletes the network interfaces that
+carry the run's tag, and the destroy runs once more. The VPC CNI allocates
+those outside tofu, and one whose node terminated mid-destroy stays behind
+holding its subnet. Nothing else is swept while state remains.
 Only a destroy that succeeds removes the overlay and the run record; a failed
 one leaves both, and the run's tags, for the reaper. After a successful destroy
 cloud_sweep.py deletes what still carries the run tag with this run's id --
@@ -158,6 +165,9 @@ CLICKHOUSE_ACCESS_ENV = (
     "TF_VAR_clickhouse_external_password",
 )
 CLICKHOUSE_CLOSE_TIMEOUT = 120  # seconds the close gets, out of the teardown margin
+# The one list of what bootstrap.sh and destroy.sh run, checked before the apply.
+CHECK_TOOLS = REPO_ROOT / "bootstrap" / "check_tools.py"
+CHECK_TOOLS_TIMEOUT = 60  # seconds; it only searches PATH
 
 
 class GuardError(RuntimeError):
@@ -455,7 +465,11 @@ class AwsGuard:
         Raises:
             CloudSweepError: A listing failed, so what is left cannot be known.
         """
-        return cloud_sweep.main(args)
+        try:
+            return cloud_sweep.main(args)
+        finally:
+            # A pipe holds the sweep's stdout until exit, behind every stderr line written after it.
+            sys.stdout.flush()
 
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,13 +597,57 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
     except GuardError as exc:
         report.add("(b) credential", False, str(exc))
 
-    # (c) and (d) read the region's run-tagged resources once and split them by expiry.
+    _run_resource_checks(report, config, guard, now)
+
+    # (e) the run's children find every tool the deploy and its teardown run.
+    report.add("(e) deploy tools", *deploy_tools(config.provider, run_env(config)))
+    return report
+
+
+def deploy_tools(provider: str, env: Mapping[str, str]) -> tuple[bool, str]:
+    """Whether bootstrap/check_tools.py finds every tool on `env`'s PATH, and what it said.
+
+    It runs as a child with the environment the run's own children get, so it
+    searches the PATH bootstrap.sh and destroy.sh will.
+
+    Args:
+        provider: The run's cloud, which adds its own CLI to the list.
+        env: The environment the deploy runs in.
+
+    Returns:
+        (True, the tools found) when every one is there, else (False, each
+        missing tool with what needs it).
+    """
+    try:
+        done = subprocess.run(
+            [sys.executable, str(CHECK_TOOLS), "--cloud", provider],
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=CHECK_TOOLS_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"{CHECK_TOOLS.name} could not run: {exc}"
+    if done.returncode == 0:
+        return True, done.stdout.strip()
+    # check_tools.py exits 1 with one indented line per missing tool under a heading.
+    missing = [line.strip() for line in done.stderr.splitlines() if line.startswith("  ")]
+    if done.returncode != 1 or not missing:
+        return False, f"{CHECK_TOOLS.name} exited {done.returncode}: {done.stderr.strip()}"
+    return False, f"not on PATH: {'; '.join(missing)}. Install them on this machine before a run"
+
+
+def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, now: float) -> None:
+    """(c) and (d): read the region's run-tagged resources once and split them by expiry."""
     try:
         found = guard.run_resources(config.keys, config.state_bucket)
     except cloud_sweep.CloudSweepError as exc:
         report.add("(c) expired run resources", False, f"could not list: {exc}")
         report.add("(d) unfinished runs", False, f"could not list the region's run resources: {exc}")
-        return report
+        return
     expiry = cloud_sweep.ExpirySelection(keys=config.keys, now=now, grace=0)
     classified = [(r, expiry.state(r)) for r in found]
 
@@ -616,7 +674,7 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
         records = guard.run_records(config.state_bucket, config.state_region, config.state_prefix)
     except cloud_sweep.CloudSweepError as exc:
         report.add("(d) unfinished runs", False, f"could not list the run records: {exc}")
-        return report
+        return
     held = [f"run record {key}" for key in records]
     if live:
         held.append(_resource_names([r for r, _ in live], [note for _, note in live]))
@@ -630,7 +688,6 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
     else:
         clear = f"no run record under {config.state_prefix}/, no live run resources"
         report.add("(d) unfinished runs", True, clear)
-    return report
 
 
 def _resource_names(resources: list[cloud_sweep.Resource], notes: list[str] | None = None) -> str:
@@ -893,16 +950,19 @@ class Teardown:
         return True
 
     def destroy(self) -> int:
-        """The workloads, then `tofu destroy`, then the run's own leftovers; the run's exit code."""
+        """The workloads, then `tofu destroy`, then the run's own leftovers; the run's exit code.
+
+        A failed destroy is run once more after the run's leaked network interfaces go.
+        """
         overlay = self.config.tf_dir / OVERLAY_NAME
-        tofu = shutil.which("tofu") or "tofu"
         if not self.cycle_finished and self.kubeconfig.is_file():
             # Controllers own load balancers and volumes tofu cannot see, so the workloads go first.
             env = run_env(self.config, KUBECONFIG=str(self.kubeconfig))
             budget = self.config.teardown_margin * WORKLOAD_TEARDOWN_SHARE
             try:
                 self.runner.run(
-                    [sys.executable, str(DFE_OPS), "teardown", "--force"],
+                    [sys.executable, str(DFE_OPS), "teardown", "--force",
+                     "--from-terraform", str(self.config.tf_dir)],
                     env=env,
                     new_session=True,
                     deadline=time.monotonic() + budget,
@@ -913,11 +973,10 @@ class Teardown:
                     "teardown margin and was stopped, so tofu destroy runs now",
                     file=sys.stderr,
                 )
-        destroyed = self.runner.run(
-            [tofu, f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve", "-input=false"],
-            env=run_env(self.config),
-            new_session=True,
-        )
+        destroyed = self.tofu_destroy()
+        if destroyed != 0:
+            self.sweep_leaked_interfaces()
+            destroyed = self.tofu_destroy()
         if destroyed != 0:
             print(
                 f"TEARDOWN FAILED for run {self.run_id}: its run record and expiry tags stay, so the "
@@ -932,6 +991,43 @@ class Teardown:
         except cloud_sweep.CloudSweepError as exc:
             print(f"run {self.run_id} destroyed; its run record stays: {exc}", file=sys.stderr)
         return self.sweep_leftovers()
+
+    def tofu_destroy(self) -> int:
+        """`tofu destroy` of the run's state, in a session of its own; its exit code."""
+        return self.runner.run(
+            [shutil.which("tofu") or "tofu", f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve",
+             "-input=false"],
+            env=run_env(self.config),
+            new_session=True,
+        )
+
+    def sweep_leaked_interfaces(self) -> None:
+        """Delete the network interfaces that carry this run's tag, before the destroy runs again.
+
+        The VPC CNI allocates them outside tofu, and one whose node terminated
+        during the destroy stays behind holding its subnet. Interfaces are the one
+        kind swept while state remains, and a refresh drops any tofu itself owned
+        from that state. One EC2 will not delete, an attached one say, is named
+        in the sweep's output and left, and the destroy runs again regardless.
+        """
+        args = [*run_sweep_args(self.config, self.run_id), "--kind", "eni", "--yes"]
+        selector = args[args.index("--tag-filter") + 1]
+        print(
+            f"==> run {self.run_id}: tofu destroy failed; deleting the network interfaces that carry "
+            f"{selector}",
+            file=sys.stderr,
+        )
+        try:
+            left = self.guard.sweep(args)
+        except cloud_sweep.CloudSweepError as exc:
+            print(f"run {self.run_id}: the network interface sweep could not finish: {exc}", file=sys.stderr)
+        else:
+            if left:
+                print(
+                    f"run {self.run_id}: network interfaces carrying {selector} are still there, named above",
+                    file=sys.stderr,
+                )
+        print(f"==> run {self.run_id}: tofu destroy, once more", file=sys.stderr)
 
     def sweep_leftovers(self) -> int:
         """Delete what still carries this run's tag once its state is destroyed; 1 when any is left.

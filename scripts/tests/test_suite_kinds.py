@@ -7,8 +7,6 @@ tests set ``HYPERI_PROJECTS_ROOT`` at the temp root and let the real lookup
 run. Nothing here touches the network.
 """
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
@@ -27,11 +25,9 @@ from dfe_suite.kinds import (
     ACTION_REBUILD_RUST,
     ACTION_REGENERATE,
     ACTION_REVENDOR,
-    ACTION_RUN_TESTS,
     ACTION_WIDEN_RANGE,
     CHECKS,
     KIND_SUMMARY,
-    cargo_range,
     check_cargo_dep,
     check_contract_guard,
     check_derived_pins,
@@ -40,12 +36,10 @@ from dfe_suite.kinds import (
     check_image_pin,
     check_mirrored_logic,
     check_python_dep,
-    check_python_dep_undeclared,
     check_vendored_file,
     check_version_pin,
     parse_evidence,
     pep440_admits,
-    python_range,
     semver_admits,
 )
 from dfe_suite.repos import repo_slug
@@ -227,56 +221,8 @@ class Pep440MatcherTests(unittest.TestCase):
         assert pep440_admits(">=1.0", "1.0.0rc1") is None
 
 
-class RangeReaderTests(unittest.TestCase):
-    """A cited line carries several dependencies; only the producer's counts."""
-
-    def test_a_cargo_table_line_declaring_the_package(self) -> None:
-        line = 'scalo = { version = ">=2.10.14, <3", features = ["a"] }'
-        assert cargo_range(line, "scalo") == ">=2.10.14, <3"
-
-    def test_a_cargo_line_declaring_something_else_is_not_read(self) -> None:
-        line = 'tokio = { version = ">=1.48, <2", features = ["full"] }'
-        assert cargo_range(line, "scalo") is None
-
-    def test_a_cargo_bare_string_dependency(self) -> None:
-        assert cargo_range('scalo = ">=2.10.14, <3"', "scalo") == ">=2.10.14, <3"
-
-    def test_cargo_workspace_git_and_path_forms(self) -> None:
-        assert cargo_range("scalo = { workspace = true }", "scalo") is None
-        assert cargo_range("scalo.workspace = true", "scalo") is None
-        assert cargo_range('scalo = { git = "https://x", tag = "v2.10.14" }', "scalo") is None
-        assert cargo_range('scalo = { path = "../scalo", version = ">=2" }', "scalo") == ">=2"
-
-    def test_a_commented_out_cargo_line_declares_nothing(self) -> None:
-        assert cargo_range('# scalo = { version = ">=1.0" }', "scalo") is None
-
-    def test_a_python_requirement_with_extras(self) -> None:
-        line = '    "scalo[expression,http,metrics]>=2.30.0",'
-        assert python_range(line, "scalo") == ">=2.30.0"
-
-    def test_a_python_requirement_naming_another_distribution(self) -> None:
-        assert python_range('    "dfe-schemas>=0.2.0",', "scalo") is None
-        assert python_range('    "dfe-schemas>=0.2.0",', "dfe-schemas") == ">=0.2.0"
-
-    def test_a_python_prefix_is_not_a_name_match(self) -> None:
-        assert python_range('    "scalo-extra>=1.0",', "scalo") is None
-
-    def test_a_python_requirement_with_a_space_or_a_marker(self) -> None:
-        assert python_range('    "scalo >= 2.30.0",', "scalo") == ">= 2.30.0"
-        assert python_range("    \"scalo>=2; python_version>='3.12'\",", "scalo") == ">=2"
-
-    def test_a_python_declaration_with_no_range(self) -> None:
-        assert python_range('    "scalo",', "scalo") is None
-
-    def test_a_commented_out_python_requirement_declares_nothing(self) -> None:
-        assert python_range('    # "scalo>=2.30.0" is deliberate', "scalo") is None
-
-    def test_an_unrelated_quoted_string_is_not_a_requirement(self) -> None:
-        assert python_range('requires-python = ">=3.12"', "scalo") is None
-
-
 class CargoDepTests(unittest.TestCase):
-    """The range at the cited line is what decides the action."""
+    """Every range the cited manifest declares for the crate decides the action."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory(prefix="suite-kinds-cargo-")
@@ -284,10 +230,10 @@ class CargoDepTests(unittest.TestCase):
         self.repo = Path(tmp.name) / "dfe-loader"
         self.repo.mkdir()
 
-    def _manifest(self, dependency: str) -> dict:
+    def _manifest(self, dependency: str, dev: str = "") -> dict:
         (self.repo / "Cargo.toml").write_text(
             f'[package]\nname = "dfe-loader"\n\n[dependencies]\ntokio = "1"\n'
-            f"{dependency}\n",
+            f"{dependency}\n\n[dev-dependencies]\n{dev}\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -296,7 +242,7 @@ class CargoDepTests(unittest.TestCase):
             "to": "dfe-loader",
             "kind": "cargo-dep",
             "type": "potential",
-            "evidence": "dfe-loader/Cargo.toml:6",
+            "evidence": "dfe-loader/Cargo.toml",
         }
 
     def test_a_range_that_admits_asks_for_a_rebuild(self) -> None:
@@ -316,8 +262,45 @@ class CargoDepTests(unittest.TestCase):
             edge, producer_version="3.0.0", consumer_repo=self.repo, package="scalo"
         )
         assert result.action == ACTION_WIDEN_RANGE
-        # The detail has to name the line, or the finding is unactionable.
-        assert "dfe-loader/Cargo.toml:6" in result.detail
+        # The detail has to name where the range is declared, or the finding is unactionable.
+        assert "dfe-loader/Cargo.toml [dependencies] declares '>=2.10.14, <3'" in result.detail
+
+    def test_a_dev_range_that_does_not_admit_asks_for_that_one_to_widen(self) -> None:
+        edge = self._manifest(
+            'scalo = { version = ">=2.10.14, <4" }', dev='scalo = { version = ">=2.10.14, <3" }'
+        )
+        result = check_cargo_dep(
+            edge, producer_version="3.0.0", consumer_repo=self.repo, package="scalo"
+        )
+        assert result.action == ACTION_WIDEN_RANGE
+        assert "[dev-dependencies] declares '>=2.10.14, <3'" in result.detail
+        assert "[dependencies] declares" not in result.detail
+
+    def test_every_range_admitting_asks_for_a_rebuild_naming_each(self) -> None:
+        edge = self._manifest('scalo = ">=2.10.14, <3"', dev='scalo = { version = "2.10.14" }')
+        result = check_cargo_dep(
+            edge, producer_version="2.11.0", consumer_repo=self.repo, package="scalo"
+        )
+        assert result.action == ACTION_REBUILD_RUST
+        assert "[dependencies] declares '>=2.10.14, <3'" in result.detail
+        assert "[dev-dependencies] declares '2.10.14'" in result.detail
+
+    def test_a_line_number_on_the_citation_is_ignored(self) -> None:
+        edge = self._manifest('scalo = ">=2.10.14, <3"')
+        edge["evidence"] = "dfe-loader/Cargo.toml:2"
+        result = check_cargo_dep(
+            edge, producer_version="2.11.0", consumer_repo=self.repo, package="scalo"
+        )
+        assert result.action == ACTION_REBUILD_RUST
+
+    def test_a_manifest_that_is_not_toml_is_undetermined_not_a_crash(self) -> None:
+        edge = self._manifest("scalo = ")
+        result = check_cargo_dep(
+            edge, producer_version="2.11.0", consumer_repo=self.repo, package="scalo"
+        )
+        assert result.moved is None
+        assert result.action == ACTION_HUMAN_READ
+        assert "not readable TOML" in result.detail
 
     def test_a_bare_string_dependency_is_read_the_same_way(self) -> None:
         edge = self._manifest('scalo = ">=2.10.14, <3"')
@@ -383,7 +366,7 @@ class PythonDepTests(unittest.TestCase):
             "to": "dfe-engine",
             "kind": "python-dep",
             "type": "potential",
-            "evidence": "dfe-engine/pyproject.toml:5",
+            "evidence": "dfe-engine/pyproject.toml",
         }
 
     def test_a_specifier_that_admits_asks_for_a_rebuild(self) -> None:
@@ -401,7 +384,19 @@ class PythonDepTests(unittest.TestCase):
             edge, producer_version="2.29.20", consumer_repo=self.repo, package="scalo"
         )
         assert result.action == ACTION_WIDEN_RANGE
-        assert "dfe-engine/pyproject.toml:5" in result.detail
+        assert (
+            "dfe-engine/pyproject.toml [project.dependencies] declares '>=2.30.0'" in result.detail
+        )
+
+    def test_a_dev_group_range_is_held_to_the_new_version_too(self) -> None:
+        edge = self._pyproject('"scalo>=2.29.7"')
+        with (self.repo / "pyproject.toml").open("a", encoding="utf-8", newline="\n") as manifest:
+            manifest.write('\n[dependency-groups]\ndev = ["scalo[deployment]>=2.29.7,<2.29.10"]\n')
+        result = check_python_dep(
+            edge, producer_version="2.29.20", consumer_repo=self.repo, package="scalo"
+        )
+        assert result.action == ACTION_WIDEN_RANGE
+        assert "[dependency-groups.dev] declares '>=2.29.7,<2.29.10'" in result.detail
 
     def test_an_environment_marker_does_not_break_the_parse(self) -> None:
         edge = self._pyproject("\"scalo>=2.29.7 ; python_version >= '3.12'\"")
@@ -423,7 +418,7 @@ class PythonDepTests(unittest.TestCase):
             "from": "scalo-py",
             "to": "dfe-engine",
             "kind": "python-dep",
-            "evidence": "dfe-engine/pyproject.toml:5",
+            "evidence": "dfe-engine/pyproject.toml",
         }
         result = check_edge(
             edge,
@@ -433,33 +428,6 @@ class PythonDepTests(unittest.TestCase):
         )
         assert result.moved is None
         assert "does not exist" in result.detail
-
-
-class UndeclaredDependencyTests(unittest.TestCase):
-    """No range exists, so only running the named import sites answers it."""
-
-    def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory(prefix="suite-kinds-undeclared-")
-        self.addCleanup(tmp.cleanup)
-        self.repo = Path(tmp.name)
-
-    def test_the_import_site_is_handed_back_with_the_version_to_install(self) -> None:
-        edge = {
-            "from": "logreducer",
-            "to": "dfe-engine",
-            "kind": "python-dep-undeclared",
-            "type": "potential",
-            "evidence": "dfe-engine/src/dfe_engine/sampling/service.py:200",
-            "note": "Also imported at service.py:236.",
-        }
-        result = check_python_dep_undeclared(
-            edge, producer_version="1.4.0", consumer_repo=self.repo
-        )
-        assert result.moved is None
-        assert result.action == ACTION_RUN_TESTS
-        assert "service.py:200" in result.detail
-        assert "1.4.0" in result.detail
-        assert "service.py:236" in result.detail
 
 
 class GeneratedFileTests(unittest.TestCase):

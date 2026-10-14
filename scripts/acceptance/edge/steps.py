@@ -22,6 +22,7 @@ import socket
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Mapping
@@ -48,6 +49,12 @@ SEND_TIMEOUT = 15
 LANDED_DEADLINE = 300.0
 HYPERDX_DEADLINE = 120.0
 HYPERDX_WINDOW_MINUTES = 60
+# The path the fork's browser client posts to (packages/app/src/clickhouse.ts). With a
+# trailing slash the frontend answers its own 308, and a redirect is never followed.
+CLICKHOUSE_PROXY = "/api/clickhouse-proxy"
+# The cookie dfe-ui plants across the domain for the console's HyperDX iframe, which sends no
+# Authorization header, so the search here authenticates the way a user's does.
+TOKEN_COOKIE = "dfe_token"
 POLL_INTERVAL = 5.0
 # How long the run waits on the probe pod, and the pod's own limit inside that.
 PROBE_DEADLINE = 300.0
@@ -57,9 +64,11 @@ PROBE_CONNECT_SECONDS = 20
 # curl's exits for a connection the far end never accepted: refused or unreachable, and timed out.
 REFUSED_EXITS = (7, 28)
 # The URLs reach the shell as variables, so nothing a Service reports is ever parsed as shell.
+# The control dials the gateway under the console's own name: Envoy picks a listener by SNI and
+# closes a handshake for any name none of them carries, the load balancer's own included.
 PROBE_SCRIPT = (
     f'control=$(curl -sk -o /dev/null -w "%{{http_code}}" --max-time {PROBE_CONNECT_SECONDS} '
-    '"$PROBE_CONTROL_URL"); echo "control $? ${control:-000}"; '
+    '--connect-to "$PROBE_CONTROL_CONNECT" "$PROBE_CONTROL_URL"); echo "control $? ${control:-000}"; '
     f'target=$(curl -sk -o /dev/null -w "%{{http_code}}" --max-time {PROBE_CONNECT_SECONDS} '
     '"$PROBE_TARGET_URL"); echo "target $? ${target:-000}"'
 )
@@ -334,10 +343,15 @@ def refused_outcome(readings: Mapping[str, tuple[int, str]], endpoint: Endpoint,
             f"{', '.join(egress)} the allow list {', '.join(allow)} does not name: the load balancer is "
             "not enforcing the list"
         )
-    if control[0] != 0 or control[1] == "000":
+    if control[0] in REFUSED_EXITS:
         return "failed", (
             f"the probe pod reached nothing, not even the gateway at {gateway} (curl exit {control[0]}), "
             "so a refusal from it would prove nothing about the allow list"
+        )
+    if control[0] != 0 or control[1] == "000":
+        return "failed", (
+            f"the probe pod's control through the gateway at {gateway} got no HTTP answer "
+            f"(curl exit {control[0]}), so a refusal from it would prove nothing about the allow list"
         )
     if target[0] not in REFUSED_EXITS:
         return "failed", (
@@ -352,7 +366,25 @@ def refused_outcome(readings: Mapping[str, tuple[int, str]], endpoint: Endpoint,
     )
 
 
-def probe_pod(namespace: str, receiver: Mapping, control_url: str, target_url: str) -> dict:
+@dataclass(frozen=True, slots=True)
+class Control:
+    """What the probe asks the gateway for: the console's URL, and curl's --connect-to pair."""
+
+    url: str
+    connect: str
+
+
+def gateway_control(console_url: str, gateway: str) -> Control | None:
+    """The console's own name and port, dialled at *gateway*; None when the URL names no host."""
+    parts = urllib.parse.urlsplit(console_url)
+    host = parts.hostname or ""
+    if not host or not gateway:
+        return None
+    port = parts.port or 443
+    return Control(f"https://{_host(host)}:{port}/", f"{_host(host)}:{port}:{_host(gateway)}:{port}")
+
+
+def probe_pod(namespace: str, receiver: Mapping, control: Control, target_url: str) -> dict:
     """The probe Pod: the receiver's own image, placement and security context, running two curls.
 
     The image is one the cluster already pulls and carries curl, which the
@@ -365,7 +397,8 @@ def probe_pod(namespace: str, receiver: Mapping, control_url: str, target_url: s
         "image": source.get("image", ""),
         "command": ["/bin/sh", "-c", PROBE_SCRIPT],
         "env": [
-            {"name": "PROBE_CONTROL_URL", "value": control_url},
+            {"name": "PROBE_CONTROL_URL", "value": control.url},
+            {"name": "PROBE_CONTROL_CONNECT", "value": control.connect},
             {"name": "PROBE_TARGET_URL", "value": target_url},
         ],
         "resources": {"requests": {"cpu": "10m", "memory": "32Mi"},
@@ -435,7 +468,7 @@ def wait_pod(kube: list[str], namespace: str, deadline: float) -> tuple[str, str
 
 
 def _probe(kube: list[str], app_ns: str, probe_ns: str, receiver: Mapping, endpoint: Endpoint,
-           gateway: str, allow: list[str], egress: list[str]) -> tuple[str, str]:
+           gateway: str, control: Control, allow: list[str], egress: list[str]) -> tuple[str, str]:
     namespace = {"apiVersion": "v1", "kind": "Namespace",
                  "metadata": {"name": probe_ns, "labels": {"app.kubernetes.io/managed-by": "dfe-acceptance"}}}
     rc, _, err = kubectl(kube, "create", "-f", "-", stdin=json.dumps(namespace))
@@ -446,7 +479,7 @@ def _probe(kube: list[str], app_ns: str, probe_ns: str, receiver: Mapping, endpo
         name = str(ref.get("name") or "")
         if name and not copy_secret(kube, app_ns, probe_ns, name):
             return "failed", f"could not copy the receiver's pull secret {name} into {probe_ns}"
-    pod = probe_pod(probe_ns, receiver, f"https://{_host(gateway)}/", endpoint.liveness_url)
+    pod = probe_pod(probe_ns, receiver, control, endpoint.liveness_url)
     rc, _, err = kubectl(kube, "create", "-f", "-", stdin=json.dumps(pod))
     if rc != 0:
         return "failed", f"could not create the probe pod in {probe_ns}: {_first_line(err)}"
@@ -460,13 +493,14 @@ def _probe(kube: list[str], app_ns: str, probe_ns: str, receiver: Mapping, endpo
 
 
 def record_refused(results: list[wizard.StepResult], kube: list[str], namespace: str, endpoint: Endpoint,
-                   gateway: str, allow: list[str], egress: list[str], run_id: str,
-                   receiver_deployment: str = "dfe-receiver") -> None:
+                   gateway: str, allow: list[str], egress: list[str], run_id: str, *,
+                   console_url: str, receiver_deployment: str = "dfe-receiver") -> None:
     """Send to the public door from inside the cluster, and expect no answer.
 
     The probe runs in a namespace of its own: every DFE namespace carries a
     default-deny egress baseline, which would refuse the send before the load
-    balancer ever saw it. The namespace goes whatever the probe found.
+    balancer ever saw it. The namespace goes whatever the probe found. Its
+    control asks the gateway for *console_url*, a name the gateway answers on.
     """
     inside = egress_inside_allow(egress, allow)
     if not egress:
@@ -483,13 +517,20 @@ def record_refused(results: list[wizard.StepResult], kube: list[str], namespace:
             "no gateway address to reach as the control, so a refusal could not be told from a pod with no way out"
         ))
         return
+    control = gateway_control(console_url, gateway)
+    if control is None:
+        row(results, "refused", "failed", (
+            f"no console host in {console_url!r} for the control to ask the gateway for, so a refusal could not "
+            "be told from a pod with no way out"
+        ))
+        return
     rc, receiver, err = kubectl_json(kube, "-n", namespace, "get", "deployment", receiver_deployment)
     if rc != 0:
         row(results, "refused", "failed", f"could not read deployment/{receiver_deployment} for the probe's image: {err}")
         return
     probe_ns = f"{run_id}-probe"
     try:
-        status, detail = _probe(kube, namespace, probe_ns, receiver, endpoint, gateway, allow, egress)
+        status, detail = _probe(kube, namespace, probe_ns, receiver, endpoint, gateway, control, allow, egress)
     finally:
         kubectl(kube, "delete", "namespace", probe_ns, "--wait=false", "--ignore-not-found")
     row(results, "refused", status, detail)
@@ -499,7 +540,7 @@ def record_refused(results: list[wizard.StepResult], kube: list[str], namespace:
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse every redirect: urllib carries the bearer token to whatever host one names."""
+    """Refuse every redirect: urllib carries the token cookie to whatever host one names."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -545,6 +586,9 @@ def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | 
                  headers: Mapping[str, str] | None = None) -> tuple[int, object]:
     """One call to HyperDX's API through its frontend, as the embedded app makes it.
 
+    The token rides in the ``dfe_token`` cookie, as it does from the console's
+    iframe.
+
     Returns:
         The status and the decoded body, or the body's first 200 characters
         when it is not JSON.
@@ -554,7 +598,7 @@ def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | 
         f"{base.rstrip('/')}{path}",
         data=body.encode() if body is not None else None,
         method="POST" if body is not None else "GET",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json", **(headers or {})},
+        headers={"Cookie": f"{TOKEN_COOKIE}={token}", "Accept": "application/json", **(headers or {})},
     )
     try:
         with opener.open(request, timeout=60) as response:
@@ -578,9 +622,9 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
                    deadline: float) -> None:
     """Find the marker through HyperDX's own API, under an engine-minted token.
 
-    The two calls the search page makes: the team's sources, to resolve `main`
-    and its connection, then the query through HyperDX's ClickHouse proxy, which
-    runs it as the team's own ClickHouse user.
+    The two calls the search page makes, with its credential: the team's
+    sources, to resolve `main` and its connection, then the query through
+    HyperDX's ClickHouse proxy, which runs it as the team's own ClickHouse user.
     """
     if not base:
         row(results, "hyperdx", "failed", (
@@ -616,11 +660,11 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
         sql = hyperdx_count_sql(source, run_id)
         proxy = {"x-hyperdx-connection-id": str(source.get("connection") or ""), "Content-Type": "text/plain"}
         while True:
-            status, answer = hyperdx_call(base, "/api/clickhouse-proxy/", engine.token, verify, body=sql,
+            status, answer = hyperdx_call(base, CLICKHOUSE_PROXY, engine.token, verify, body=sql,
                                           headers=proxy)
             if status != 200:
                 row(results, "hyperdx", "failed", (
-                    f"the search through {base}/api/clickhouse-proxy answered {status}: {answer}"
+                    f"the search through {base}{CLICKHOUSE_PROXY} answered {status}: {answer}"
                 ))
                 return
             found = _count(answer)

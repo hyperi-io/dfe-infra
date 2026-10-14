@@ -17,8 +17,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  fetcher.yaml: "cursor:\n  directory: /var/lib/dfe-fetcher\n"
+binaryData:
+  fetcher.yaml: Y3Vyc29yOgogIGRpcmVjdG9yeTogL3Zhci9saWIvZGZlLWZldGNoZXIK
 kind: ConfigMap
 metadata:
   labels:

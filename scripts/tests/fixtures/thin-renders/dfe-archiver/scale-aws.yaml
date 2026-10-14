@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-archiver
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,10 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  archiver.yaml: '{}
-
-    '
+binaryData:
+  archiver.yaml: e30K
 kind: ConfigMap
 metadata:
   labels:

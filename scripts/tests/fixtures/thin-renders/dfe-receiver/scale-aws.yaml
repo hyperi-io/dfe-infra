@@ -19,6 +19,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-receiver
+  unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
 automountServiceAccountToken: false
@@ -37,8 +38,8 @@ metadata:
   namespace: dfe
 ---
 apiVersion: v1
-data:
-  config.yaml: "buffer:\n  memory_limit: 0\ngrpc:\n  bind_address: 0.0.0.0:6000\n  enabled: true\n"
+binaryData:
+  config.yaml: YnVmZmVyOgogIG1lbW9yeV9saW1pdDogMApncnBjOgogIGJpbmRfYWRkcmVzczogMC4wLjAuMDo2MDAwCiAgZW5hYmxlZDogdHJ1ZQo=
 kind: ConfigMap
 metadata:
   labels:

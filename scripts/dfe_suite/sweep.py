@@ -22,12 +22,19 @@ always as a GET and always with a ``--jq`` projection, so a secret-scanning aler
 never reaches this process. A feature GitHub refuses (403, 404) is reported as unreadable for
 that tool on that repo, never as zero findings.
 
-Open issues and the backlog are work items, kept apart from the severity-ranked findings. The
+Active issues and the backlog are work items, kept apart from the severity-ranked findings. The
 backlog follows hyperi-ai's ``pm backlog`` model: the org project titled exactly as the repo,
 read with one GraphQL query (a ``query``, never a mutation) that joins the project's Status to
 the Priority and Effort org issue fields. A repo with no such project is "no project"; projects
-the token cannot list are unreadable. An open issue whose backlog label disagrees with its
-project Status is reported as drift.
+the token cannot list are unreadable. An open issue is on the backlog when it carries the
+backlog label or sits at the backlog Status, and every other open issue is active, so the
+label wins: a labelled issue is backlog whatever its project Status. Drift is a real conflict
+between the two and nothing less: an item at the backlog Status without the label, or a
+labelled item the project holds at another Status. A labelled issue the project does not
+hold, or one in a repo with no backlog project, has no Status to contradict and is not drift.
+
+Findings and active issues gate a release, and the backlog never does. A tool that could not be
+read gates too, except the backlog, whose read only ever moves issues out of the gating count.
 
 Everything that decides something is a pure function over plain data, so it is tested with no
 network. The ``gh`` transport is the one function that touches the outside world.
@@ -42,7 +49,7 @@ import re
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 from itertools import chain, groupby
 from pathlib import Path
 from types import ModuleType
@@ -78,6 +85,10 @@ TOOLS = (
 
 # Tools that report work items rather than findings, so they are never severity-ranked.
 WORK_TOOLS = ("issues", "backlog")
+
+# A failed backlog read can only over-count what gates, because that read only moves issues
+# out of the gating count. A failed read of any other tool could hide a gating row.
+UNGATED_TOOLS = ("backlog",)
 
 # The tools whose org webhook events the alert bridge forwards, and the org-wide list of each.
 BRIDGED = {
@@ -131,7 +142,8 @@ PRIORITY_FIELD = "Priority"
 EFFORT_FIELD = "Effort"
 # A backlog row as the report carries it; its labels and issue_repo stay internal.
 BACKLOG_FIELDS = (
-    "repo", "project", "status", "priority", "effort", "type", "number", "title", "url"
+    "repo", "project", "status", "priority", "effort", "type", "number", "title", "url",
+    "created_at",
 )
 BACKLOG_QUERY = """\
 query($org: String!, $number: Int!, $endCursor: String) {
@@ -334,9 +346,9 @@ class RepoResult:
         archived: Whether GitHub reports the repo archived.
         findings: The open findings.
         unreadable: The tools that could not be read.
-        issues: Open issues, as work items.
-        backlog: Open items on the repo's project, as work items.
-        drift: Open issues whose backlog label and project Status disagree.
+        issues: Active issues, the open issues not on the backlog, as work items.
+        backlog: The backlog, as backlog_split builds it, as work items.
+        drift: Open issues whose backlog label and project Status contradict each other.
         project: The project number, NO_PROJECT, NOT_READ, or empty when backlog is off.
         repo_id: GitHub's id for the repo, or None when it was not read.
         full_name: The repo's current ``owner/name``, which differs from the member's slug
@@ -362,7 +374,7 @@ class BacklogModel:
     """How a repo project's backlog is read.
 
     Attributes:
-        label: The label every open issue at the first status carries, and no other does.
+        label: The label that puts an open issue on the backlog whatever its project Status.
         statuses: The project Status options in workflow order; the first is the backlog.
         priorities: The Priority options, highest first.
     """
@@ -993,6 +1005,7 @@ def backlog_rows(repo: str, project: int, nodes: list[dict]) -> list[dict]:
                 "number": content["number"],
                 "title": _text(content.get("title")),
                 "url": _text(content.get("url")),
+                "created_at": _text(content.get("createdAt")),
                 "issue_repo": _text((content.get("repository") or {}).get("nameWithOwner"))
                 or repo,
                 "labels": [_text(label.get("name")) for label in labels if isinstance(label, dict)],
@@ -1024,21 +1037,24 @@ def backlog_drift(
     issues: list[dict],
     backlog: list[dict],
     model: BacklogModel,
-    *,
-    has_project: bool = True,
 ) -> list[dict]:
-    """Open issues whose backlog label and project Status disagree.
+    """Open issues whose backlog label and project Status contradict each other.
+
+    The label wins in backlog_split, so a labelled issue is backlog whatever its Status.
+    Drift is only where both signals are present and disagree. An issue the project does not
+    hold, a repo with no project and an item with no Status set have no second signal to
+    contradict the label, so none of them is drift.
 
     Args:
         repo: The member.
         issues: Its open issues, as issue_items returns them.
         backlog: Its project rows, as backlog_rows returns them.
         model: The label and the backlog Status.
-        has_project: Whether the repo has a backlog project at all.
 
     Returns:
-        An item at the backlog Status without the label, and a labelled issue anywhere else,
-        including one that is not on the repo's project or whose repo has none.
+        An item at the backlog Status without the label, and a labelled item the project
+        holds at another Status. Each carries the created_at of the project item or issue it
+        came from.
     """
     own = [row for row in backlog if row["issue_repo"].lower() == repo.lower()]
     status_of = {row["number"]: row["status"] for row in own}
@@ -1049,6 +1065,7 @@ def backlog_drift(
             "number": row["number"],
             "title": row["title"],
             "url": row["url"],
+            "created_at": row["created_at"],
             "status": row["status"],
             "problem": f"at {at} without the {label} label",
         }
@@ -1056,26 +1073,79 @@ def backlog_drift(
         if row["status"] == at and label not in row["labels"]
     ]
     for issue in issues:
-        if label not in issue["labels"]:
-            continue
         status = status_of.get(issue["number"])
-        if status == at:
+        if label not in issue["labels"] or not status or status == at:
             continue
-        if issue["number"] in status_of:
-            where = f"at {status or 'no status'}"
-        else:
-            where = "not on the project" if has_project else "the repo has no backlog project"
         drift.append(
             {
                 "repo": repo,
                 "number": issue["number"],
                 "title": issue["title"],
                 "url": issue["url"],
-                "status": status or "",
-                "problem": f"labelled {label} but {where}",
+                "created_at": issue["created_at"],
+                "status": status,
+                "problem": f"labelled {label} but at {status}",
             }
         )
     return sorted(drift, key=lambda row: row["number"])
+
+
+def backlog_split(
+    repo: str, issues: list[dict], rows: list[dict], model: BacklogModel
+) -> tuple[list[dict], list[dict]]:
+    """Split a member's open issues into the active ones and its backlog.
+
+    An open issue is on the backlog when it carries the backlog label or sits at the backlog
+    Status on the repo's project. The backlog is every project row at that Status or carrying
+    the label, plus a row for each labelled issue the project does not hold, so every open
+    issue is in exactly one of the two lists.
+
+    Args:
+        repo: The member.
+        issues: Its open issues, as issue_items returns them.
+        rows: Its project rows, as backlog_rows returns them. Empty when the project was not
+            read or there is none, which leaves the label alone to decide.
+        model: The label and the backlog Status.
+
+    Returns:
+        ``(active, backlog)``: the active issues in their order, then the backlog rows. A
+        labelled issue the project does not hold has project None and no status or priority.
+    """
+    at, label = model.backlog_status, model.label
+    own = {row["number"]: row for row in rows if row["issue_repo"].lower() == repo.lower()}
+    labelled = {issue["number"] for issue in issues if label in issue["labels"]}
+    active = [
+        issue
+        for issue in issues
+        if issue["number"] not in labelled
+        and (own.get(issue["number"]) or {}).get("status") != at
+    ]
+    backlog = [
+        row
+        for row in rows
+        if row["status"] == at
+        or label in row["labels"]
+        or (row is own.get(row["number"]) and row["number"] in labelled)
+    ]
+    backlog += [
+        {
+            "repo": repo,
+            "project": None,
+            "status": "",
+            "priority": "",
+            "effort": "",
+            "type": issue["type"],
+            "number": issue["number"],
+            "title": issue["title"],
+            "url": issue["url"],
+            "created_at": issue["created_at"],
+            "issue_repo": repo,
+            "labels": list(issue["labels"]),
+        }
+        for issue in issues
+        if issue["number"] in labelled and issue["number"] not in own
+    ]
+    return active, backlog
 
 
 def _dashboard_severity(heading: str) -> str | None:
@@ -1395,14 +1465,12 @@ def collect_repo(
     if {"ci_runs", "ci_annotations"} & config.tools:
         findings += _ci(member, branch, head_sha, api, config, unreadable)
     project: int | str = ""
-    backlog: list[dict] = []
+    rows: list[dict] = []
     drift: list[dict] = []
     if "backlog" in config.tools:
-        project, backlog = _backlog(member, config, graphql, projects, unreadable)
-        if project != NOT_READ:
-            drift = backlog_drift(
-                repo, issues or [], backlog, config.backlog, has_project=project != NO_PROJECT
-            )
+        project, rows = _backlog(member, config, graphql, projects, unreadable)
+        drift = backlog_drift(repo, issues or [], rows, config.backlog)
+    active, backlog = backlog_split(repo, issues or [], rows, config.backlog)
     # One refusal repeated per workflow run is still one gap.
     distinct = list(dict.fromkeys(unreadable))
     return RepoResult(
@@ -1412,7 +1480,7 @@ def collect_repo(
         bool(meta.get("archived")),
         findings,
         distinct,
-        issues=(issues or []) if "issues" in config.tools else [],
+        issues=active if "issues" in config.tools else [],
         backlog=sort_backlog(backlog, config.backlog),
         drift=drift,
         project=project,
@@ -1496,7 +1564,7 @@ def sweep(
         if progress is not None:
             progress(
                 f"{member.repo}: {len(result.findings)} finding(s), {len(result.issues)} "
-                f"issue(s), {len(result.backlog)} backlog item(s), "
+                f"active issue(s), {len(result.backlog)} backlog item(s), "
                 f"{len(result.unreadable)} unreadable"
             )
         return result
@@ -1576,6 +1644,11 @@ def all_findings(results: Iterable[RepoResult]) -> list[Finding]:
     return list(chain.from_iterable(result.findings for result in results))
 
 
+def unreadable_gates(tool: str) -> bool:
+    """Whether a tool that could not be read counts as gating: any tool not in UNGATED_TOOLS."""
+    return tool not in UNGATED_TOOLS
+
+
 def _id_key(value: str) -> tuple[int, int, str]:
     return (0, int(value), "") if value.isdigit() else (1, 0, value)
 
@@ -1607,8 +1680,9 @@ def build_report(
 
     Returns:
         ``generated_at``, ``stack``, ``members``, the severity-ranked ``findings``, the work
-        items ``issues``, ``backlog`` and ``backlog_drift``, ``unreadable`` and ``totals``,
-        plus ``bridge`` when given.
+        items ``issues`` (the active issues), ``backlog`` and ``backlog_drift``, ``unreadable``
+        and ``totals``, plus ``bridge`` when given. ``totals.gating`` counts what gates: every
+        finding, every active issue and each unreadable tool unreadable_gates names.
     """
     findings = rank(all_findings(results))
     unreadable = list(chain.from_iterable(result.unreadable for result in results))
@@ -1618,6 +1692,8 @@ def build_report(
     rows = chain.from_iterable(result.backlog for result in results)
     backlog = [_report_row(row) for row in rows]
     drift = list(chain.from_iterable(result.drift for result in results))
+    # Counted per repo and tool, the unit the Slack keys carry, so the two totals agree.
+    blocked = len({(u.repo, u.tool) for u in unreadable if unreadable_gates(u.tool)})
     report = {
         "generated_at": generated_at or datetime.now(UTC).isoformat(timespec="seconds"),
         "stack": stack,
@@ -1642,6 +1718,12 @@ def build_report(
             "members": len(results),
             "findings": len(findings),
             "unreadable": len(unreadable),
+            "gating": {
+                "total": len(findings) + len(issues) + blocked,
+                "findings": len(findings),
+                "issues": len(issues),
+                "unreadable": blocked,
+            },
             "by_severity": {s: sum(f.severity == s for f in findings) for s in SEVERITIES},
             "by_tool": {t: sum(f.tool == t for f in findings) for t in enabled},
             "by_repo": {
@@ -1692,22 +1774,30 @@ def _work_by_repo(report: dict) -> dict[str, dict[str, list[dict]]]:
     return by_repo
 
 
+# How a member's summary line names a backlog project that is not a number.
+_PROJECT_WORDS = {"": "project off", NOT_READ: "project not read", NO_PROJECT: "no project"}
+
+
 def _work_counts(project: int | str, items: dict[str, list[dict]], model: BacklogModel) -> str:
-    """One member's work items as counts: issues, then its backlog by Status and by Priority."""
-    if project in ("", NOT_READ):
-        backlog = f"backlog {project or 'off'}"
-    elif project == NO_PROJECT:
-        backlog = "backlog: no project"
-    else:
-        statuses = _tally((r["status"] for r in items["backlog"]), model.statuses, "no status")
-        priorities = _tally(
-            (r["priority"] for r in items["backlog"]), model.priorities, "unprioritised"
-        )
-        backlog = (
-            f"backlog project {project}: {len(items['backlog'])} item(s), status "
-            f"{statuses}; priority {priorities}; {len(items['drift'])} label drift"
-        )
-    return f"{len(items['issues'])} open issue(s); {backlog}"
+    """One member's work items as counts: active issues, then its backlog by Status and Priority.
+
+    Label drift is counted only where it was judged, which takes a project to judge against.
+    """
+    active = f"{len(items['issues'])} active issue(s)"
+    words = _PROJECT_WORDS.get(project) if isinstance(project, str) else None
+    if words is not None and not items["backlog"]:
+        return f"{active}; backlog: {words}"
+    statuses = _tally((r["status"] for r in items["backlog"]), model.statuses, "no status")
+    priorities = _tally(
+        (r["priority"] for r in items["backlog"]), model.priorities, "unprioritised"
+    )
+    where = f"backlog project {project}" if words is None else f"backlog, {words}"
+    judged = isinstance(project, int)
+    drift = f"; {len(items['drift'])} label drift" if judged else ""
+    return (
+        f"{active}; {where}: {len(items['backlog'])} item(s), status {statuses}; "
+        f"priority {priorities}{drift}"
+    )
 
 
 def render_summary(report: dict, model: BacklogModel) -> list[str]:
@@ -1800,11 +1890,16 @@ def render_text(report: dict, model: BacklogModel | None = None) -> str:
         f"totals: {totals['findings']} finding(s) across {totals['members']} member(s), "
         f"{totals['unreadable']} unreadable"
     )
+    gating = totals["gating"]
     work = totals["work_items"]
+    lines.append(
+        f"  gating: {gating['total']} ({gating['findings']} finding(s), {gating['issues']} "
+        f"active issue(s), {gating['unreadable']} not readable), the backlog never gates"
+    )
     lines.append(f"  by severity: {severities}")
     lines.append(f"  by tool: {tools}")
     lines.append(
-        f"  work items: {work['issues']} open issue(s), {work['backlog']} backlog item(s), "
+        f"  work items: {work['issues']} active issue(s), {work['backlog']} backlog item(s), "
         f"{work['backlog_drift']} label drift"
     )
     return "\n".join(lines)
@@ -1819,6 +1914,10 @@ SLACK_REPLY_CHARS = 3500
 SLACK_REPLIES = 20
 # The per-group budget when the caller sets none; the cascade's slack.group_replies sets it.
 SLACK_GROUP_REPLIES = 2
+# The headline's name and the zone its time is shown in when the caller sets none; the
+# cascade's slack.title and slack.timezone set them.
+SLACK_TITLE = "DFE suite sweep"
+SLACK_ZONE: tzinfo = UTC
 # A link URL longer than this is shown as text, which bounds the "N more" line a reply keeps
 # room for.
 SLACK_URL_CHARS = 500
@@ -1826,15 +1925,16 @@ SLACK_MORE_CHARS = SLACK_URL_CHARS + 60
 # A link label past this many characters is clipped for reading.
 SLACK_LABEL_CHARS = 100
 SLACK_STATS = (
-    "secrets", "critical", "high", "medium", "low", "ci_failing", "issues", "backlog",
-    "bot_prs", "drift", "unreadable", "members",
+    "gating", "findings", "secrets", "critical", "high", "medium", "low", "ci_failing",
+    "issues", "backlog", "bot_prs", "drift", "unreadable", "members",
 )
 # The stats keys counted from findings; slack_buckets fills one list per key.
 SLACK_FINDING_STATS = ("secrets", "critical", "high", "medium", "low", "ci_failing")
 # The only tools stats critical and high, and the summary's Security line, count.
 SECURITY_TOOLS = ("dependabot", "code_scanning", "advisories")
 # The finding groups, each with the tools it holds, in the order their thread replies are
-# posted; slack_groups follows them with drift, open issues, backlog items and not readable.
+# posted; slack_groups follows them with active issues, not readable, backlog items and drift,
+# so what gates is posted before what does not.
 SLACK_FINDING_GROUPS = (
     ("Secret scanning", ("secret_scanning",)),
     ("Code scanning", ("code_scanning",)),
@@ -1844,6 +1944,8 @@ SLACK_FINDING_GROUPS = (
     ("Bot PRs and Renovate", ("bot_prs", "renovate_dashboard")),
 )
 _SAFE_URL = re.compile(r"^https://[^\s<>|]+$")
+# The age every dated line ends with, as _age_suffix writes it; _clip_line keeps it whole.
+_AGE_TAIL = re.compile(r" \((?:<1h|\d+[hd])\)$")
 
 # What differs between two runs of one CI message, tried in this order. An advisory id matches
 # first and is kept whole, because its digits are what tell two advisories apart.
@@ -1944,11 +2046,14 @@ def slack_stats(report: dict, buckets: Buckets) -> dict[str, int]:
         buckets: slack_buckets over the report's findings.
 
     Returns:
-        One integer per SLACK_STATS key, in that order.
+        One integer per SLACK_STATS key, in that order. gating is totals.gating's total, and
+        issues counts the active issues alone.
     """
     totals = report["totals"]
     counts = {key: len(buckets[key]) for key in SLACK_FINDING_STATS}
     counts |= {
+        "gating": totals["gating"]["total"],
+        "findings": totals["findings"],
         "issues": totals["work_items"]["issues"],
         "backlog": totals["work_items"]["backlog"],
         "bot_prs": sum(f["tool"] == "bot_prs" for f in report["findings"]),
@@ -1974,22 +2079,80 @@ def _repo_counts(rows: Iterable[dict], limit: int = 4) -> str:
     return f"{shown}, +{rest} more" if rest > 0 else shown
 
 
-def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
-    """At most SLACK_SUMMARY_LINES lines of mrkdwn: the headline, then what matters most first.
+def _instant(text: str) -> datetime:
+    """An RFC 3339 time as an aware datetime; a bare date or a time with no offset is UTC.
+
+    Raises:
+        FleetError: If the text is not a time.
+    """
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise FleetError(f"{text!r} is not an RFC 3339 timestamp") from exc
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _clock(generated_at: str, zone: tzinfo) -> str:
+    """The report's time in ``zone`` to the minute, as ``2026-10-13 05:00 AEST``.
+
+    The abbreviation is the zone's own for that instant, so a zone with daylight saving
+    reads AEDT in summer and AEST in winter.
+    """
+    moment = _instant(generated_at).astimezone(zone)
+    return f"{moment:%Y-%m-%d %H:%M} {moment.tzname()}"
+
+
+def _gating_line(report: dict, stats: dict[str, int], model: BacklogModel) -> str:
+    """The gating count and what makes it up, then what does not gate.
+
+    ``*Gating: 14* -- 11 findings, 3 active issues. Not gating: backlog 5 (P0 1, unprioritised
+    4), 2 label drift``. A not-readable count appears on the side its tools fall on.
+    """
+    blocked = report["totals"]["gating"]["unreadable"]
+    gating = [f"{stats['findings']} findings", f"{stats['issues']} active issues"]
+    if blocked:
+        gating.append(f"{blocked} not readable")
+    ungated = []
+    if stats["backlog"]:
+        priorities = _tally(
+            (r["priority"] for r in report["backlog"]), model.priorities, "unprioritised"
+        )
+        ungated.append(f"backlog {stats['backlog']} ({slack_escape(priorities)})")
+    if stats["drift"]:
+        ungated.append(f"{stats['drift']} label drift")
+    if stats["unreadable"] > blocked:
+        ungated.append(f"{stats['unreadable'] - blocked} not readable")
+    line = f"*Gating: {stats['gating']}* -- {', '.join(gating)}"
+    return f"{line}. Not gating: {', '.join(ungated)}" if ungated else line
+
+
+def slack_summary(
+    report: dict,
+    model: BacklogModel,
+    buckets: Buckets,
+    title: str = SLACK_TITLE,
+    zone: tzinfo = SLACK_ZONE,
+) -> str:
+    """At most SLACK_SUMMARY_LINES lines of mrkdwn: the headline, the gating line, then the rest.
 
     Args:
         report: The report build_report made.
         model: The backlog model, for the priority order.
         buckets: slack_buckets over the report's findings, the same lists the stats count.
+        title: The name the headline opens with.
+        zone: The zone the headline's time is shown in.
 
     Returns:
         The parent message.
+
+    Raises:
+        FleetError: If the report's generated_at is not an RFC 3339 timestamp.
     """
     findings = report["findings"]
     stats = slack_stats(report, buckets)
     lines = [
-        f"*DFE suite sweep*: stack {slack_escape(report['stack'])}, {stats['members']} members, "
-        f"{slack_escape(report['generated_at'])}"
+        f"*{slack_escape(title)}*: stack {slack_escape(report['stack'])}, "
+        f"{stats['members']} members, {_clock(report['generated_at'], zone)}"
     ]
     bridge = report.get("bridge")
     gap = bool(bridge and bridge["missing"])
@@ -1998,6 +2161,7 @@ def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
         holds = "; the alert bridge is a subset" if bridge else ""
         lines.append(f"All clear: nothing open on any member{holds}.")
         return "\n".join(lines)
+    lines.append(_gating_line(report, stats, model))
     if stats["secrets"]:
         lines.append(
             f"*Secret scanning: {stats['secrets']} open alert(s)* on "
@@ -2022,14 +2186,6 @@ def slack_summary(report: dict, model: BacklogModel, buckets: Buckets) -> str:
             if count:
                 groups.append(f"{name} {count}")
         lines.append(f"Medium {stats['medium']}, low {stats['low']}: {', '.join(groups)}")
-    if work or stats["bot_prs"]:
-        priorities = _tally((r["priority"] for r in report["backlog"]), model.priorities,
-                            "unprioritised")
-        backlog = f" ({slack_escape(priorities)})" if stats["backlog"] else ""
-        lines.append(
-            f"Work items: {stats['issues']} open issues, {stats['backlog']} backlog{backlog}, "
-            f"{stats['bot_prs']} bot PRs, {stats['drift']} label drift"
-        )
     if stats["unreadable"]:
         lines.append(
             f"Not readable: {stats['unreadable']} on {_repo_counts(report['unreadable'])}"
@@ -2073,6 +2229,35 @@ def _title(value: object) -> str:
     text = _text(value)
     clipped = text if len(text) <= SLACK_TITLE_CHARS else text[: SLACK_TITLE_CHARS - 3] + "..."
     return slack_escape(clipped)
+
+
+def _age_suffix(created_at: object, now: datetime) -> str:
+    """How long before ``now`` a row was raised, as `` (<1h)``, `` (5h)`` or `` (6d)``.
+
+    Hours below a day, whole days from one day on. A row with no created_at has no age and
+    gets no suffix. A row dated after ``now`` reads as under an hour.
+
+    Raises:
+        FleetError: If created_at is set and is not an RFC 3339 timestamp.
+    """
+    text = _text(created_at)
+    if not text:
+        return ""
+    age = now - _instant(text)
+    if age < timedelta(hours=1):
+        return " (<1h)"
+    if age < timedelta(days=1):
+        return f" ({age // timedelta(hours=1)}h)"
+    return f" ({age // timedelta(days=1)}d)"
+
+
+def _dated(build: Callable[[dict], str], now: datetime) -> Callable[[dict], str]:
+    """A line builder whose lines end with the row's age as of ``now``."""
+
+    def line(row: dict) -> str:
+        return build(row) + _age_suffix(row.get("created_at"), now)
+
+    return line
 
 
 def _finding_line(row: dict) -> str:
@@ -2145,8 +2330,9 @@ class SlackGroup:
         name: The name each of its replies and keys carries.
         note: The count its first header gives after the name.
         rows: Its report rows, each repo's together, in posting order.
-        line: One row's item line, escaped but not yet clipped.
+        line: One row's item line, escaped and ending in its age, but not yet clipped.
         key: One row's stable key.
+        gates: Whether one row counts toward the gating total.
     """
 
     name: str
@@ -2154,33 +2340,61 @@ class SlackGroup:
     rows: list[dict]
     line: Callable[[dict], str]
     key: Callable[[dict], str]
+    gates: Callable[[dict], bool]
+
+
+def _always_gates(row: dict) -> bool:
+    return True
+
+
+def _never_gates(row: dict) -> bool:
+    return False
+
+
+def _unreadable_row_gates(row: dict) -> bool:
+    return unreadable_gates(row["tool"])
 
 
 def slack_groups(report: dict, model: BacklogModel) -> list[SlackGroup]:
-    """Every non-empty group, in posting order."""
+    """Every non-empty group, in posting order.
+
+    Each line but a not-readable one ends with its row's age as of the report's generated_at.
+
+    Raises:
+        FleetError: If generated_at or a row's created_at is not an RFC 3339 timestamp.
+    """
+    now = _instant(report["generated_at"])
     groups = []
     for name, tools in SLACK_FINDING_GROUPS:
         rows = [f for f in report["findings"] if f["tool"] in tools]
         if rows:
             note = f"{len(rows)} ({_severity_note(rows)})"
-            groups.append(SlackGroup(name, note, _by_repo(rows), _finding_line, finding_key))
+            line = _dated(_finding_line, now)
+            groups.append(
+                SlackGroup(name, note, _by_repo(rows), line, finding_key, _always_gates)
+            )
     issues, backlog = report["issues"], report["backlog"]
     priorities = _tally((r["priority"] for r in backlog), model.priorities, "unprioritised")
     on_repos = f" on {len({r['repo'] for r in issues})} repo(s)"
     work = (
-        ("Backlog drift", report["backlog_drift"], "", _drift_line, _relisted_key("drift")),
-        ("Open issues", issues, on_repos, _issue_line, _issue_key),
-        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _backlog_line,
-         _relisted_key("backlog")),
-        ("Not readable", report["unreadable"], "", _unreadable_line, _unreadable_key),
+        ("Active issues", issues, on_repos, _dated(_issue_line, now), _issue_key,
+         _always_gates),
+        ("Not readable", report["unreadable"], "", _unreadable_line, _unreadable_key,
+         _unreadable_row_gates),
+        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _dated(_backlog_line, now),
+         _relisted_key("backlog"), _never_gates),
+        ("Backlog drift", report["backlog_drift"], "", _dated(_drift_line, now),
+         _relisted_key("drift"), _never_gates),
     )
-    for name, rows, note, line, key in work:
+    for name, rows, note, line, key, gates in work:
         if rows:
-            groups.append(SlackGroup(name, f"{len(rows)}{note}", _by_repo(rows), line, key))
+            groups.append(
+                SlackGroup(name, f"{len(rows)}{note}", _by_repo(rows), line, key, gates)
+            )
     return groups
 
 
-def slack_keys(groups: list[SlackGroup]) -> list[dict[str, str]]:
+def slack_keys(groups: list[SlackGroup]) -> list[dict[str, str | bool]]:
     """Every row of every group under its stable key, for a poster that posts only what is new.
 
     A row the reply budget cut from detail is keyed too, so a finding is new on the run it
@@ -2190,17 +2404,19 @@ def slack_keys(groups: list[SlackGroup]) -> list[dict[str, str]]:
         groups: The groups detail posts.
 
     Returns:
-        ``{"key", "group", "line"}`` per row, in posting order; ``line`` is the row's item line
-        exactly as detail renders it.
+        ``{"key", "group", "line", "gates"}`` per row, in posting order; ``line`` is the row's
+        item line exactly as detail renders it, and ``gates`` whether the row counts toward
+        the gating total, so the gating count is zero exactly when no entry gates.
     """
-    keyed: dict[str, dict[str, str]] = {}
+    keyed: dict[str, dict[str, str | bool]] = {}
     for group in groups:
         *_, cap = _headers(group.name, group.note)
         for row in group.rows:
             key = group.key(row)
             if key not in keyed:
                 line = _clip_line(group.line(row), cap)
-                keyed[key] = {"key": key, "group": group.name, "line": line}
+                keyed[key] = {"key": key, "group": group.name, "line": line,
+                              "gates": group.gates(row)}
     return list(keyed.values())
 
 
@@ -2293,15 +2509,20 @@ def _line_cap(header: str) -> int:
 
 
 def _clip_line(text: str, cap: int) -> str:
-    """A line cut to ``cap`` characters, never inside a link or an escaped character."""
+    """A line cut to ``cap`` characters, never inside a link or an escaped character.
+
+    A trailing age is kept whole: the text before it is what gets cut.
+    """
     if len(text) <= cap:
         return text
-    cut = text[: cap - 3]
+    age = _AGE_TAIL.search(text)
+    tail = age.group() if age else ""
+    cut = text[: len(text) - len(tail)][: max(cap - len(tail) - 3, 0)]
     if cut.rfind("<") > cut.rfind(">"):
         cut = cut[: cut.rfind("<")]
     if cut.rfind("&") > cut.rfind(";"):
         cut = cut[: cut.rfind("&")]
-    return cut + "..."
+    return cut + "..." + tail
 
 
 def _with_more(reply: Reply, cut: int, report_url: str) -> str:
@@ -2340,6 +2561,8 @@ def render_slack(
     model: BacklogModel | None = None,
     report_url: str = "",
     group_replies: int = SLACK_GROUP_REPLIES,
+    title: str = SLACK_TITLE,
+    zone: tzinfo = SLACK_ZONE,
 ) -> dict:
     """The report for a Slack poster: summary (parent message), detail (thread), stats, keys.
 
@@ -2348,16 +2571,22 @@ def render_slack(
         model: The backlog model, for the priority order.
         report_url: Where the full report can be read, for the cut-off line.
         group_replies: The most thread replies one group may take.
+        title: The name the summary's headline opens with.
+        zone: The zone the headline's time is shown in.
 
     Returns:
         ``{"summary": str, "detail": [{"group", "text"}], "stats": {name: int},
-        "keys": [{"key", "group", "line"}]}``.
+        "keys": [{"key", "group", "line", "gates"}]}``.
+
+    Raises:
+        FleetError: If the report's generated_at, or a row's created_at, is not an RFC 3339
+            timestamp.
     """
     model = model or BacklogModel()
     buckets = slack_buckets(report["findings"])
     groups = slack_groups(report, model)
     return {
-        "summary": slack_summary(report, model, buckets),
+        "summary": slack_summary(report, model, buckets, title, zone),
         "detail": slack_detail(groups, report_url, group_replies),
         "stats": slack_stats(report, buckets),
         "keys": slack_keys(groups),

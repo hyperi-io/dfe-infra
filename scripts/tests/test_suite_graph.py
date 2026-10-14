@@ -45,7 +45,6 @@ EDGE_KIND_NAMES = [
     "image-pin",
     "mirrored-logic",
     "python-dep",
-    "python-dep-undeclared",
     "vendored-file",
     "version-pin",
 ]
@@ -130,7 +129,7 @@ edges:
     to: app-b
     kind: cargo-dep
     type: potential
-    evidence: "app-b/Cargo.toml:35"
+    evidence: "app-b/Cargo.toml"
     note: "second range at Cargo.toml:180"
 runtime_edges:
   - from: app-b
@@ -212,6 +211,14 @@ def test_validate_negative_cases() -> None:
     expect("an edge citing nothing is named", any(
         "no evidence" in p
         for p in broken(lambda g: g["edges"][0].__setitem__("evidence", ""))))
+    for cited in ("app-b/Cargo.toml:35", "app-b/Cargo.toml:35-36"):
+        expect(f"a cargo-dep edge citing {cited} is named, the manifest alone being the citation", any(
+            "cites the manifest alone" in p
+            for p in broken(lambda g, cited=cited: g["edges"][0].__setitem__("evidence", cited))))
+    expect("a line on a kind that cites a code site is not refused", not any(
+        "cites the manifest alone" in p
+        for p in broken(lambda g: g["edges"][0].update(kind="mirrored-logic",
+                                                        evidence="app-b/src/config.rs:35"))))
     expect("a runtime edge into a non-node is named", any(
         "is not a node" in p
         for p in broken(lambda g: g["runtime_edges"][0].__setitem__("to", "ghost"))))
@@ -233,6 +240,15 @@ def test_validate_negative_cases() -> None:
     expect("a node in no lane is named", any(
         "in no lane" in p
         for p in broken(lambda g: g["lanes"][0]["members"].remove("lib-a"))))
+    expect("an empty unconsumed note is named", any(
+        "`unconsumed` is empty" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", ""))))
+    expect("an unconsumed note on a node with no package is named", any(
+        "`unconsumed` needs a `package`" in p
+        for p in broken(lambda g: g["nodes"]["app-b"].__setitem__("unconsumed", "nothing uses it"))))
+    expect("an unconsumed note on a node with a package is sound", not any(
+        "unconsumed" in p
+        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", "nothing uses it"))))
 
 
 def test_queries() -> None:
@@ -374,7 +390,7 @@ def test_brand_palette() -> None:
     expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")
     g = suite_graph.parse_block_yaml(SAMPLE)
     g["edges"].append({"from": "lib-a", "to": "side-c", "kind": "cargo-dep",
-                       "type": "potential", "evidence": "side-c/pyproject.toml:1"})
+                       "type": "potential", "evidence": "side-c/pyproject.toml"})
     allowed = set(suite_graph.PALETTE.values()) | {
         suite_graph.faded(c) for c in suite_graph.PALETTE.values()}
     for label, block in (("overview", suite_graph.mermaid_overview(g)),
@@ -418,7 +434,7 @@ def test_live_file() -> None:
     expect("the verified date parses as YYYY-MM-DD", parsed, str(g.get("verified")))
     expect("every lane member is a node", all(
         m in g["nodes"] for lane in g["lanes"] for m in lane["members"]))
-    expect("the edge-kind vocabulary is the documented ten",
+    expect("the edge-kind vocabulary is the documented nine",
            sorted(g["edge_kinds"]) == EDGE_KIND_NAMES, str(sorted(g["edge_kinds"])))
     expect("the runtime-kind vocabulary is separate and declared",
            sorted(g["runtime_kinds"]) == RUNTIME_KIND_NAMES, str(sorted(g.get("runtime_kinds", {}))))

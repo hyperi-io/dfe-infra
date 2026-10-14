@@ -122,11 +122,13 @@ Subcommands:
                Healthy. The readiness gate runs it once when it fails.
   failure-evidence
                READ-ONLY. Writes the nodes' conditions and allocatable, every
-               pod, every namespace's Warning events, a summary and the events
-               of each pod stuck on an image pull, a crash loop or its config,
-               kube-system events and unready pods, the events of nodes
-               reporting InvalidDiskCapacity, and the aws-node and CNI logs to
-               one file each, every capture bounded in time and bytes. A pod
+               pod, Service and Gateway, every namespace's Warning events, a
+               summary and the events of each pod stuck on an image pull, a
+               crash loop or its config, kube-system events, Certificates and
+               unready pods, the AWS load balancer controller's webhook CA
+               digests and logs, the events of nodes reporting
+               InvalidDiskCapacity, and the aws-node and CNI logs to one file
+               each, every capture bounded in time and bytes. A pod
                summary leaves out env, args, command, volumes and annotations.
                The cycle runs it once when a stage fails, before the destroy.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
@@ -261,6 +263,7 @@ import urllib.request
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap"
@@ -656,11 +659,37 @@ def cmd_deploy(args: argparse.Namespace) -> int:
     return _run_streaming(cmd)
 
 
+# The cloud root's outputs destroy.sh's step 9 reads when the cluster secret names no cloud.
+TEARDOWN_FACTS = ("DFE_CLOUD", "DFE_REGION", "DFE_KUBE_CLUSTER_NAME", "DFE_VPC_ID", "DFE_RUN_TAGS")
+
+
+def _teardown_facts(tf_dir: str) -> dict[str, str]:
+    """The non-empty TEARDOWN_FACTS among a root's outputs; empty when they cannot be read.
+
+    A teardown that stopped on an unreadable output would leave the workloads
+    running, so it goes on and destroy.sh reads the cluster secret alone.
+    """
+    try:
+        outputs = terraform_settings(tf_dir)
+    except _bridge().TerraformOutputError as exc:
+        print(
+            f"  WARN: could not read the outputs of {tf_dir} ({exc}); destroy.sh reads the cluster "
+            "secret alone",
+            file=sys.stderr,
+        )
+        return {}
+    facts = {name: outputs[name] for name in TEARDOWN_FACTS if outputs.get(name)}
+    print(f"  loaded {len(facts)} cluster fact(s) from terraform {tf_dir}", file=sys.stderr)
+    return facts
+
+
 def cmd_teardown(args: argparse.Namespace) -> int:
     script = _require_script("destroy.sh")
     if script is None:
         return 1
     env = dict(os.environ)
+    if args.from_terraform:
+        env.update(_teardown_facts(args.from_terraform))
     cmd = ["bash", str(script)]
     if args.dry_run:
         env["DFE_DRY_RUN"] = "true"
@@ -708,6 +737,15 @@ def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = Tr
     return env
 
 
+def _bridge() -> ModuleType:
+    """bootstrap/bridge.py as sys.modules holds it, so its error class is the one it raises."""
+    if str(BOOTSTRAP) not in sys.path:
+        sys.path.insert(0, str(BOOTSTRAP))
+    import bridge
+
+    return bridge
+
+
 def terraform_settings(tf_dir: str) -> dict[str, str]:
     """The DFE_* outputs of a terraform env dir, as strings a child's environment takes.
 
@@ -719,13 +757,13 @@ def terraform_settings(tf_dir: str) -> dict[str, str]:
 
     Returns:
         Each DFE_* output's value, keyed by its name.
-    """
-    sys.path.insert(0, str(BOOTSTRAP))
-    from bridge import get_tf_outputs
 
-    return {
-        k: value for k, (value, _sensitive) in get_tf_outputs(tf_dir).items() if k.startswith("DFE_")
-    }
+    Raises:
+        bridge.TerraformOutputError: The outputs cannot be read. main() reports it
+            and exits 1; a caller that can go on without them catches it.
+    """
+    outputs = _bridge().get_tf_outputs(tf_dir)
+    return {k: value for k, (value, _sensitive) in outputs.items() if k.startswith("DFE_")}
 
 
 def _suite_env(args: argparse.Namespace) -> dict[str, str]:
@@ -4384,7 +4422,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         print("\n=== cycle stage: destroy ===", file=sys.stderr)
         teardown_cmd = [*self_cmd, "teardown", "--force"]
         if args.from_terraform:
-            teardown_cmd += ["--with-terraform", "--tf-dir", args.from_terraform]
+            teardown_cmd += [
+                "--from-terraform", args.from_terraform, "--with-terraform", "--tf-dir", args.from_terraform,
+            ]
         started = time.monotonic()
         rc = _run_streaming(teardown_cmd, env=stage_env)
         results.append(("destroy", rc, time.monotonic() - started))
@@ -4614,6 +4654,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tf-bin",
         default=("tofu" if shutil.which("tofu") else "terraform"),
         help="IaC binary for --with-terraform (auto: tofu if on PATH, else terraform)",
+    )
+    td.add_argument(
+        "--from-terraform",
+        default=None,
+        metavar="DIR",
+        help="read the cloud, region, cluster, VPC and run tags from this root's outputs, for "
+        "destroy.sh's step 9 when the cluster secret names none",
     )
     td.set_defaults(func=cmd_teardown)
 
@@ -4984,21 +5031,17 @@ def _dial_tree() -> dict[str, object]:
 def _tf_output(cloud: str, name: str) -> str | None:
     """One root output, read through bridge.py's own reader, or None.
 
-    bridge exits the process on a tofu failure -- an uninitialised root, a
-    deployment that has never been applied -- and prints why, so both the exit
-    and the print are contained here: a banner may cost a command its output,
-    never its run.
+    A root bridge cannot read -- uninitialised, never applied -- and anything
+    bridge prints about it are both contained here: a banner may cost a command
+    its output, never its run.
     """
     tf_dir = TF_ENVIRONMENTS / cloud
     if not tf_dir.is_dir():
         return None
-    sys.path.insert(0, str(BOOTSTRAP))
     try:
-        from bridge import get_tf_outputs
-
         with contextlib.redirect_stderr(io.StringIO()):
-            value, _sensitive = get_tf_outputs(str(tf_dir)).get(name, (None, False))
-    except (Exception, SystemExit):
+            value, _sensitive = _bridge().get_tf_outputs(str(tf_dir)).get(name, (None, False))
+    except Exception:
         return None
     return value or None
 
@@ -5087,7 +5130,11 @@ def main(argv: list[str] | None = None) -> int:
     notice = _ephemeral_notice()
     if notice:
         print(notice, file=sys.stderr)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except _bridge().TerraformOutputError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

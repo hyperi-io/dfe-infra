@@ -19,6 +19,7 @@
     scripts/dfe-sweep --check-bridge                        # and prove the bridge is a subset
     scripts/dfe-sweep --format slack --report-url https://example.com/r
     scripts/dfe-sweep --format slack --report-file sweep-report.txt > sweep-slack.json
+    scripts/dfe-sweep --format slack --slack-title "Daily summary" --slack-timezone Europe/Berlin
     scripts/dfe-sweep --exclude dfe-hyperdx --tools dependabot,code_scanning
 
 The shebang runs it through ``uv run --script``, which installs scalo from the block above; on
@@ -52,13 +53,24 @@ workflow's own runs list, one call each; a disabled workflow is skipped. A tool 
 (403, 404), or a gh call that runs past ``gh_timeout_seconds``, is listed as not readable for
 that repo, never as zero; a workflow whose runs cannot be read is named in the reason.
 
-WORK ITEMS, listed and summarised per member but never severity-ranked: every open issue, and
-every open item on the repo's backlog project. The backlog follows hyperi-ai's ``pm backlog``
-model: the org project titled exactly as the repo, read with one GraphQL query joining its
-Status to the Priority and Effort issue fields, grouped by Status, highest priority first. A
-repo with no project is "no project"; a token that cannot list projects (it needs
-``read:project``) is unreadable. An open issue at the backlog Status without the ``backlog.label``
-label, or carrying that label anywhere else, is reported as label drift.
+WORK ITEMS, listed and summarised per member but never severity-ranked: the active issues and
+the backlog. The backlog follows hyperi-ai's ``pm backlog`` model: the org project titled
+exactly as the repo, read with one GraphQL query joining its Status to the Priority and Effort
+issue fields, grouped by Status, highest priority first. A repo with no project is "no
+project"; a token that cannot list projects (it needs ``read:project``) is unreadable. An open
+issue is on the backlog when it carries the ``backlog.label`` label or sits at the backlog
+Status, the first of ``backlog.statuses``. The label wins: a labelled issue is backlog whatever
+its project Status. Every other open issue is active, so one at Next or In progress without the
+label is active. The backlog lists every project item at the backlog Status or carrying the
+label, and each labelled issue the project does not hold. Label drift is a real conflict and
+nothing less: an item at the backlog Status without the label, or a labelled item the project
+holds at another Status. A labelled issue the project does not hold, a repo with no project and
+an item with no Status set have nothing to contradict the label and are not drift.
+
+GATING. Findings and active issues gate a release. The backlog and label drift never do. A tool
+that could not be read gates as well, since zero cannot be claimed over a read that did not
+happen, except the backlog: its read only ever moves issues out of the gating count, so losing
+it over-counts what gates and never hides any of it.
 
 ``--check-bridge`` also reads the org's open Dependabot, code-scanning and secret-scanning
 alerts, the steady state of what the org webhook alert bridge forwards, and fails if one on a
@@ -69,38 +81,66 @@ SLACK. The sweep never posts to Slack and never reads a Slack token: ``--format 
 one JSON object to stdout for a separate poster, which owns the channel and the credential.
 
     {"summary": "<mrkdwn>", "detail": [{"group": "<name>", "text": "<mrkdwn>"}, ...],
-     "stats": {"secrets": 0, "critical": 0, "high": 0, "medium": 0, "low": 0,
-               "ci_failing": 0, "issues": 0, "backlog": 0, "bot_prs": 0, "drift": 0,
-               "unreadable": 0, "members": 0},
-     "keys": [{"key": "<stable id>", "group": "<name>", "line": "<mrkdwn>"}, ...]}
+     "stats": {"gating": 0, "findings": 0, "secrets": 0, "critical": 0, "high": 0,
+               "medium": 0, "low": 0, "ci_failing": 0, "issues": 0, "backlog": 0,
+               "bot_prs": 0, "drift": 0, "unreadable": 0, "members": 0},
+     "keys": [{"key": "<stable id>", "group": "<name>", "line": "<mrkdwn>", "gates": true},
+              ...]}
 
 The poster posts ``summary`` as the parent message and each ``detail`` entry, in order, as a
-thread reply. ``summary`` is at most 8 lines: the headline, then secret scanning, critical and
-high security findings, failing main CI, the medium and low counts, the work items, what was
-not readable and the bridge check, each only when there is something to say. ``detail`` holds
-one reply or more per non-empty group (secret scanning, code scanning, Dependabot, security
-advisories, CI on main, bot PRs and Renovate, backlog drift, open issues, backlog items, not
-readable), each under 3,500 characters. A group that runs over continues under a ``(cont.)``
+thread reply. ``summary`` is at most 8 lines: the headline, the gating line, then secret
+scanning, critical and high security findings, failing main CI, the medium and low counts, what
+was not readable and the bridge check, each only when there is something to say. ``detail``
+holds one reply or more per non-empty group (secret scanning, code scanning, Dependabot,
+security advisories, CI on main, bot PRs and Renovate, active issues, not readable, backlog
+items, backlog drift), each under 3,500 characters, so every group that gates is posted before
+the two that never do. A group that runs over continues under a ``(cont.)``
 header for at most ``slack.group_replies`` replies (2 by default), so a long group cannot crowd
 a later one out, and its last reply says how many of its lines were left out, pointing at
 ``--report-url`` when one is given; the thread is capped at 20 replies the same way. Every
 string that came from GitHub is escaped, so no title can mention a channel or inject a link.
 
+HEADLINE. ``summary`` opens ``*<title>*: stack <stack>, <n> members, <time>``. The title is the
+``slack.title`` setting (``--slack-title``), "DFE suite sweep" by default. The time is when the
+report was generated, in the ``slack.timezone`` setting's IANA zone (``--slack-timezone``, UTC by
+default), to the minute and followed by the zone's own abbreviation for that instant:
+``DFE suite sweep: stack 2.2.0, 22 members, 2026-10-13 05:00 UTC``. A zone with daylight saving
+changes its abbreviation with the date, so Europe/Berlin reads CET in winter and CEST in summer.
+A zone the host's tz database does not know is a run error naming the setting, for every format.
+
+The gating line follows it, the gating count first and what does not gate after it:
+``*Gating: 14* -- 11 findings, 3 active issues. Not gating: backlog 5 (P0 1, unprioritised 4),
+2 label drift``. A not-readable count is added on whichever side its tools fall. A sweep with
+nothing open at all says ``All clear: nothing open on any member.`` instead.
+
+AGES. Each item line in ``detail`` ends with how long ago its row was raised, counted from the
+row's ``created_at`` to the report's generation time: ``(<1h)`` under an hour, ``(5h)`` under a
+day, then whole days, floored, as ``(6d)``. A line that is clipped is cut before its age, never
+through it. A not-readable line has no age. A backlog drift line takes the age of its issue.
+
 ``stats`` always carries every key above as an integer, counted from the same findings as the
-summary's lines. critical and high count code scanning, Dependabot and repository advisories
-only, the numbers on the Security line. A secret alert counts under ``secrets`` and a failed
-main run under ``ci_failing`` instead. medium and low count every tool, as the Medium line does.
+summary's lines. ``gating`` is ``findings`` plus ``issues`` plus each not-readable tool other
+than the backlog. ``findings`` counts every finding, ``issues`` the active issues and
+``backlog`` the backlog. critical and high count code scanning, Dependabot and repository
+advisories only, the numbers on the Security line. A secret alert counts under ``secrets`` and a
+failed main run under ``ci_failing`` instead. medium and low count every tool, as the Medium
+line does. ``--format json`` carries the same split as ``totals.gating``: ``total``,
+``findings``, ``issues`` and ``unreadable``.
 
 KEYS. ``keys`` is for a poster that posts only what is new: it diffs each run's keys against
 the set it last posted, and it stores hashes of the keys, never the lines. There is one entry
 per finding and work item in every group, in posting order, including a row the reply budget
 cut from ``detail``. ``group`` is the group's name in ``detail``, and ``line`` is the row's line
-exactly as ``detail`` renders it, escaped and clipped. A key appears once per output, for the
-first row that has it, and stays the same from run to run while the finding does:
+exactly as ``detail`` renders it, escaped, clipped and ending in its age, so it changes as the
+row ages while its key does not. ``gates`` is true for a row that counts toward ``gating``:
+every finding, every active issue and each not-readable tool but the backlog. It is false for a
+backlog item, label drift and a backlog that was not readable, so the gating count is zero
+exactly when no entry has ``gates`` true. A key appears once per output, for the first row that
+has it, and stays the same from run to run while the finding does:
 
-- an alert, a repository advisory, an open issue or a bot PR: its html_url.
+- an alert, a repository advisory, an active issue or a bot PR: its html_url.
 - a backlog item ``<repo>:backlog:<issue url>`` and label drift ``<repo>:drift:<issue url>``,
-  so an issue that is also open is keyed in each group it is listed in.
+  so a backlog issue that also drifts is keyed in each group it is listed in.
 - a failed main run ``<repo>:<workflow file>::<hash>`` of its conclusion, and a CI annotation
   ``<repo>:<workflow file>:<jobs>:<hash>`` of its level, file, title and message. Never the run
   or job URL, which changes every run.
@@ -131,7 +171,8 @@ settings load with the repository root as the working directory, wherever the sc
 from. settings.yaml and settings.<env>.yaml (in the repository root, its config/, or
 ~/.config/dfe-sweep/), a .env, then ``DFE_SWEEP__<KEY>`` environment variables override it, and
 the flags below override those. Examples: ``DFE_SWEEP__EXCLUDE='["dfe-hyperdx"]'``,
-``DFE_SWEEP__TOOLS__ISSUES=false``, ``DFE_SWEEP__SLACK__GROUP_REPLIES=3``.
+``DFE_SWEEP__TOOLS__ISSUES=false``, ``DFE_SWEEP__SLACK__GROUP_REPLIES=3``,
+``DFE_SWEEP__SLACK__TIMEZONE=Europe/Berlin``.
 
 gh is the only credential: the caller's own gh login or GH_TOKEN. scalo's .env layer exports
 every key of the .env it finds into the process environment, so the caller's environment is put
@@ -157,6 +198,8 @@ import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dfe_suite import sweep
 from dfe_suite.graph import load_graph
@@ -194,6 +237,8 @@ class Options:
         report_url: Where the full report is published, for the Slack cut-off line, or empty.
         report_file: Where the text report is also written, or None for nowhere.
         group_replies: The most Slack thread replies one group may take.
+        slack_title: The name the Slack headline opens with.
+        slack_zone: The zone the Slack headline's time is shown in.
         gh_timeout: Seconds one gh call may take before its read is reported unreadable.
         config: The collection settings.
     """
@@ -210,6 +255,8 @@ class Options:
     output: str
     project_limit: int
     group_replies: int
+    slack_title: str
+    slack_zone: tzinfo
     gh_timeout: int
     report_url: str
     report_file: Path | None
@@ -321,6 +368,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
     if not bots:
         raise _fail("bot_logins", settings.get("bot_logins"), "a non-empty list of logins")
     backlog = _section(settings, "backlog")
+    slack = _section(settings, "slack")
     statuses = _names(backlog.get("statuses"), "backlog.statuses")
     if not statuses:
         raise _fail("backlog.statuses", backlog.get("statuses"), "a non-empty list")
@@ -356,8 +404,13 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
         report_url=_report_url(pick(args.report_url, "report_url")),
         report_file=_report_file(pick(args.report_file, "report_file")),
-        group_replies=_count(_section(settings, "slack").get("group_replies"),
-                             "slack.group_replies"),
+        group_replies=_count(slack.get("group_replies"), "slack.group_replies"),
+        slack_title=_slack_title(
+            args.slack_title if args.slack_title is not None else slack.get("title")
+        ),
+        slack_zone=_slack_zone(
+            args.slack_timezone if args.slack_timezone is not None else slack.get("timezone")
+        ),
         gh_timeout=_count(settings.get("gh_timeout_seconds"), "gh_timeout_seconds"),
         config=config,
     )
@@ -377,6 +430,29 @@ def _report_url(value: object) -> str:
     if url and not sweep.safe_url(url):
         raise _fail("report_url", value, "an https URL with no spaces, <, > or |")
     return url
+
+
+def _slack_title(value: object) -> str:
+    """The name the Slack headline opens with, which must be a non-empty string."""
+    if not isinstance(value, str) or not value.strip():
+        raise _fail("slack.title", value, "a non-empty string")
+    return value.strip()
+
+
+def _slack_zone(value: object) -> tzinfo:
+    """The IANA zone the Slack headline's time is shown in, or a run error naming the setting.
+
+    UTC is answered without the host's tz database, so the default needs none.
+    """
+    name = value.strip() if isinstance(value, str) else ""
+    if name == "UTC":
+        return UTC
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise _fail(
+            "slack.timezone", value, "an IANA zone name such as UTC or Europe/Berlin"
+        ) from exc
 
 
 def _report_file(value: object) -> Path | None:
@@ -538,7 +614,12 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         print(json.dumps(report, indent=2), flush=True)
     elif options.output == "slack":
         slack = sweep.render_slack(
-            report, options.config.backlog, options.report_url, options.group_replies
+            report,
+            options.config.backlog,
+            options.report_url,
+            options.group_replies,
+            options.slack_title,
+            options.slack_zone,
         )
         print(json.dumps(slack, indent=2), flush=True)
     else:
@@ -552,7 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog=TAG,
         description=(
             "Collect every open GitHub-side finding on every repo the DFE suite consists of, "
-            "ranked by severity, and summarise each repo's open issues and backlog. Read-only."
+            "ranked by severity, and summarise each repo's active issues and backlog. Read-only."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -596,6 +677,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--report-file",
         metavar="PATH",
         help="also write the text report here, whatever --format prints (setting: report_file)",
+    )
+    parser.add_argument(
+        "--slack-title",
+        metavar="TEXT",
+        help="the name the Slack headline opens with (setting: slack.title)",
+    )
+    parser.add_argument(
+        "--slack-timezone",
+        metavar="ZONE",
+        help="IANA zone the Slack headline's time is shown in (setting: slack.timezone)",
     )
     parser.add_argument(
         "--members",

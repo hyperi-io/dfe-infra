@@ -21,12 +21,14 @@ NODECLAIMS_WAIT=600
 # namespace this teardown removes, and the only ones step 1 touches.
 DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
 PLATFORM_NAMESPACES=(argocd cert-manager external-secrets envoy-gateway-system)
-# Facts off the Argo CD cluster secret, which step 8 deletes; empty where it has none.
+# Facts off the Argo CD cluster secret, which step 8 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
 CLUSTER_REGION=""
 CLUSTER_NAME=""
 CLUSTER_VPC=""
 CLUSTER_RUN_TAGS=""
+# Where those facts came from, for step 9's report.
+CLUSTER_FACTS_SOURCE="the cluster secret"
 run() {
     if [[ "${DRY_RUN}" == "true" ]]; then
         echo "[DRY-RUN] $*"
@@ -123,10 +125,36 @@ torn_down_namespace() {
 }
 
 # The cluster secret lives in the argocd namespace step 8 deletes, so it is read first.
+# A bootstrap that stopped before writing it, or a second teardown, leaves none, and
+# then the caller's DFE_* facts stand in: `dfe-ops teardown --from-terraform` passes them.
 read_cluster_facts() {
     local facts
-    facts="$(kubectl -n argocd get secret dfe-cluster -o jsonpath='{.metadata.annotations.dfe\.hyperi\.io/cloud}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/region}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/cluster_name}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/vpc_id}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/run_tags}{"\n"}' 2>/dev/null)" || return 0
-    { read -r CLUSTER_CLOUD; read -r CLUSTER_REGION; read -r CLUSTER_NAME; read -r CLUSTER_VPC; read -r CLUSTER_RUN_TAGS; } <<<"${facts}" || true
+    if facts="$(kubectl -n argocd get secret dfe-cluster -o jsonpath='{.metadata.annotations.dfe\.hyperi\.io/cloud}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/region}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/cluster_name}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/vpc_id}{"\n"}{.metadata.annotations.dfe\.hyperi\.io/run_tags}{"\n"}' 2>/dev/null)"; then
+        { read -r CLUSTER_CLOUD; read -r CLUSTER_REGION; read -r CLUSTER_NAME; read -r CLUSTER_VPC; read -r CLUSTER_RUN_TAGS; } <<<"${facts}" || true
+    fi
+    [[ -z "${CLUSTER_CLOUD}" ]] || return 0
+    CLUSTER_CLOUD="${DFE_CLOUD:-}"
+    CLUSTER_REGION="${DFE_REGION:-}"
+    CLUSTER_NAME="${DFE_KUBE_CLUSTER_NAME:-}"
+    CLUSTER_VPC="${DFE_VPC_ID:-}"
+    CLUSTER_RUN_TAGS="${DFE_RUN_TAGS:-}"
+    CLUSTER_FACTS_SOURCE="the DFE_* environment"
+}
+
+# An Application that syncs ApplicationSets recreates any one deleted, and its own delete then
+# cascades through every Application the copy adopted, both controllers included.
+release_applicationset_owners() {
+    local name kinds
+    while read -r name kinds; do
+        [[ -n "${name}" && " ${kinds} " == *" ApplicationSet "* ]] || continue
+        if kubectl -n argocd patch applications.argoproj.io "${name}" --type merge \
+            -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 \
+            && kubectl -n argocd delete applications.argoproj.io "${name}" --wait=false >/dev/null 2>&1; then
+            echo "  ${name} syncs ApplicationSets: deleted it without its finalizer, so it neither puts them back nor cascades through them"
+        else
+            echo "  WARN: could not delete ${name}, which syncs ApplicationSets, without its finalizer"
+        fi
+    done < <(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.resources[*].kind}{"\n"}{end}' 2>/dev/null || true)
 }
 
 # "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools) or other -- and nothing when they cannot be listed.
@@ -297,14 +325,21 @@ delete_detached_interfaces() {
     done <<<"${verdicts}"
 }
 
-# Success when the cluster secret names an AWS test run step 9 can sweep, and says why not otherwise.
+# Success when the cluster facts name an AWS test run step 9 can sweep, and says why not otherwise.
 test_run_sweepable() {
+    if [[ "${CLUSTER_FACTS_SOURCE}" != "the cluster secret" ]]; then
+        echo "  the cluster secret names no cloud, so the run's facts come from DFE_CLOUD, DFE_REGION, DFE_KUBE_CLUSTER_NAME, DFE_VPC_ID and DFE_RUN_TAGS"
+    fi
+    if [[ -z "${CLUSTER_CLOUD}" ]]; then
+        echo "  neither the cluster secret nor DFE_CLOUD names a cloud, so nothing marks a test run to sweep"
+        return 1
+    fi
     if [[ "${CLUSTER_CLOUD}" != "aws" ]]; then
-        echo "  not an AWS cluster, so there is nothing to sweep"
+        echo "  ${CLUSTER_FACTS_SOURCE} names ${CLUSTER_CLOUD}, not aws, so there is nothing to sweep"
         return 1
     fi
     if [[ -z "${CLUSTER_RUN_TAGS}" || -z "${CLUSTER_VPC}" || -z "${CLUSTER_NAME}" || -z "${CLUSTER_REGION}" ]]; then
-        echo "  the cluster secret names no run tags, VPC, cluster or region, so nothing is marked as a test run's"
+        echo "  ${CLUSTER_FACTS_SOURCE} names no run tags, VPC, cluster or region, so nothing is marked as a test run's"
         return 1
     fi
     if ! command -v aws >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
@@ -323,7 +358,7 @@ terminate_karpenter_nodes() {
         return 0
     fi
     if ! verdicts="$(select_run_owned "${CLUSTER_RUN_TAGS}" "${CLUSTER_VPC}" "kubernetes.io/cluster/${CLUSTER_NAME}=owned" karpenter.sh/nodepool <<<"${reservations}")"; then
-        echo "  WARN: the run tags on the cluster secret are not a JSON object of strings, so no instance was terminated"
+        echo "  WARN: the run tags in ${CLUSTER_FACTS_SOURCE} are not a JSON object of strings, so no instance was terminated"
         return 0
     fi
     while read -r verdict id why; do
@@ -363,7 +398,7 @@ sweep_load_balancer_security_groups() {
         return 0
     fi
     if ! verdicts="$(select_run_owned "${CLUSTER_RUN_TAGS}" "${CLUSTER_VPC}" "elbv2.k8s.aws/cluster=${CLUSTER_NAME}" <<<"${groups}")"; then
-        echo "  WARN: the run tags on the cluster secret are not a JSON object of strings, so no security group was swept"
+        echo "  WARN: the run tags in ${CLUSTER_FACTS_SOURCE} are not a JSON object of strings, so no security group was swept"
         return 0
     fi
     while read -r verdict id why; do
@@ -404,6 +439,13 @@ echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets"
 # Orphaned, so Argo stops generating Applications while each one stays, still
 # carrying the finalizer that deletes what it deployed, until it is deleted below.
 run kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
+# Then whatever syncs ApplicationSets, and once more for any it put back in between.
+if [[ "${DRY_RUN}" != "true" ]]; then
+    release_applicationset_owners
+    kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
+else
+    echo "[DRY-RUN] delete every Application that syncs ApplicationSets without its finalizer, then orphan the ApplicationSets again"
+fi
 # KEDA clears its own finalizer.keda.sh, so its resources go while it still runs.
 run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true

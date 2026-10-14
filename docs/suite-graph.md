@@ -30,10 +30,15 @@ The diagrams on this page are generated from `suite.yaml` by
 
 That drift check has two halves. The in-repo half - structure, the charts, the
 pins, these diagrams - is binding wherever it runs. The cross-repo half reads
-each member's own file at the cited line, so it is SKIPPED, and says so, on a
-bare checkout with no member clones beside it, which is what CI has. An
-operator running it on a box with the clones on disk gets that half checked,
-and `--strict` there turns a skip into a failure.
+each member's own cited file and its `Cargo.lock` and `uv.lock`, so it is
+SKIPPED, and says so, on a bare checkout with no member clones beside it, which
+is what CI has. An operator running it on a box with the clones on disk gets
+that half checked, and `--strict` there turns a skip into a failure.
+
+The lock files are how an edge nobody drew gets found. A member whose lock
+resolves a producer's `package` with no edge from that producer fails the check.
+A node marked `unconsumed` warns when a lock resolves its package anyway, so the
+note cannot go on saying no member uses it.
 
 ## Reading a node
 
@@ -48,8 +53,8 @@ for the hyperi-io custom property that answers when the repo declares nothing.
 `audience` is the tag written for the reader we will have at OSS GA:
 
 - `general` - stands alone. Someone with no DFE deployment can install it and
-  get value. scalo-rs, scalo-py, logreducer, vector-vrl, clickhouse-dfe, and
-  culvert, the optional VPN.
+  get value. scalo-rs, factbook-rs, scalo-py, logreducer, vector-vrl,
+  clickhouse-dfe, and culvert, the optional VPN.
 - `suite` - only makes sense inside a DFE deployment.
 
 It is kept separate from whether the artefact is public, because those come
@@ -123,7 +128,10 @@ consumer is CHECKED. Not bumped - checked.
 The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the
 check and the gates once per kind. Every edge cites the consumer's own file at
 a line where a line is meaningful - a whole-file vendored copy cites the file,
-because no one line of it is the evidence. That citation is `evidence` and it
+because no one line of it is the evidence. A `cargo-dep` or `python-dep` edge
+cites the consumer's manifest alone: the tooling reads it as TOML and finds
+every declaration of the producer's `package`, so a dependency added above the
+declaration cannot move the citation off it. That citation is `evidence` and it
 is always the consumer's side; where the producer keeps its own copy of the
 same content, that copy is the edge's `source`, and it is the only second
 reference an edge carries. An edge nobody could cite from the consumer side is
@@ -258,20 +266,36 @@ flowchart LR
 
 ### logreducer
 
-dfe-engine imports it and declares no dependency on it, deliberately: the
-sampler degrades with a message when it is absent. There is no range to test,
-so the check is running the tests that cover the named import sites.
+dfe-engine takes it as a package dependency by range, with the `enhanced` extra, and imports it lazily for the sampler's smart and anomaly modes.
 
 <!-- suite-graph:begin producer:logreducer -->
 ```mermaid
 flowchart LR
   logreducer["logreducer"]:::producer
   dfe_engine["dfe-engine"]:::suite
-  logreducer -->|python-dep-undeclared, potential| dfe_engine
+  logreducer -->|python-dep, potential| dfe_engine
   classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
   classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
 ```
 <!-- suite-graph:end producer:logreducer -->
+
+### clickhouse-dfe
+
+dfe-fetcher takes it as an optional dependency, behind its db crate's
+`clickhouse` feature, for the ping and the typed server exception. dfe-loader
+still reaches ClickHouse through the upstream crate with a patch onto the
+clickhouse-rs fork, so a release here moves nothing there.
+
+<!-- suite-graph:begin producer:clickhouse-dfe -->
+```mermaid
+flowchart LR
+  clickhouse_dfe["clickhouse-dfe"]:::producer
+  dfe_fetcher["dfe-fetcher"]:::suite
+  clickhouse_dfe -->|cargo-dep, potential| dfe_fetcher
+  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
+  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+```
+<!-- suite-graph:end producer:clickhouse-dfe -->
 
 ## The build cycles: the deployed members
 
@@ -463,3 +487,13 @@ advisory nobody can act on trains the reader to skip the ones that mean
 something. The listing is checked rather than trusted: `check_suite_drift.py`
 fails when an entry is also a node, and when an entry names no chart and no
 app pin, so it cannot outlive what it silences.
+
+## Swept but not in the graph
+
+`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of
+its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or
+not suite.yaml has a node for it. A repo with a topic and no node is swept for
+open findings and work items, and that is all: it has no edge, no lane and no
+place in a release pass. macbash, which checks and fixes bash scripts for macOS,
+is the one as of 2026-10, tagged `hyperi-tools`. The sweep prints every reason a
+repo is in, so the topic is what says why.
