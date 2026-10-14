@@ -24,7 +24,7 @@ sweep:
   # latest (falling back to current when latest is empty), current, or a stack key.
   stack: latest
   # Every unarchived repo in the org carrying one of these topics is a member. Empty for none.
-  member_topics: [dfe-suite, hyperi-common]
+  member_topics: [dfe-suite, hyperi-common, hyperi-tools]
   # Names or owner/name slugs, applied after the derived membership.
   include: []
   exclude: []
@@ -42,7 +42,8 @@ sweep:
   # Each repo's backlog is the org project titled as the repo, read the way hyperi-ai's
   # `pm backlog` reads it.
   backlog:
-    # Every open issue at the first status carries this label, and no other open issue does.
+    # An open issue with this label is backlog whatever its project Status. Drift is a conflict:
+    # an item at the first status without the label, or a labelled item at any other status.
     label: backlog
     # Project Status options in workflow order; the first is the backlog.
     statuses: [Backlog, Next, "In progress", Done]

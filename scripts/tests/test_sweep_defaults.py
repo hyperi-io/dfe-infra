@@ -55,3 +55,10 @@ def test_the_defaults_name_a_slack_timezone_the_cli_accepts() -> None:
     assert isinstance(zone, str), zone
     assert zone.strip(), zone
     assert cli._slack_zone(zone) is not None
+
+
+def test_the_defaults_sweep_the_tools_topic_the_cli_accepts() -> None:
+    """The committed topics include hyperi-tools, which is the topic that brings macbash in."""
+    settings = yaml.safe_load(DEFAULTS.read_text(encoding="utf-8"))[cli.SECTION]
+    topics = cli._names(settings.get("member_topics"), "member_topics")
+    assert {"dfe-suite", "hyperi-common", "hyperi-tools"} <= set(topics)

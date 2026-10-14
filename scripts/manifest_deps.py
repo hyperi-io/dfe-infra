@@ -28,6 +28,10 @@ check_suite_drift.py holds the citation to a declaration that exists, and
 dfe_suite.kinds answers whether each declared range admits a new version. Two
 readers would let the drift check pass an edge the walk then cannot read.
 
+The same reader answers the other direction: ``locked`` lists the versions a
+Cargo.lock or uv.lock resolves for a package, which is how the drift check
+finds a consumer that no edge in suite.yaml accounts for.
+
 Stdlib only: check_suite_drift.py runs on a bare CI image.
 """
 
@@ -36,6 +40,9 @@ import tomllib
 from typing import NamedTuple
 
 PACKAGE_KINDS = ("cargo-dep", "python-dep")
+
+# The lock file each kind of edge resolves its package into, at a member's root.
+LOCK_FILES = {"cargo-dep": "Cargo.lock", "python-dep": "uv.lock"}
 
 # Cargo still accepts the underscore spellings, so a manifest written with them declares too.
 _CARGO_TABLES = (
@@ -184,3 +191,43 @@ def declarations(text: str, kind: str, package: str) -> list[Declaration]:
         raise ValueError(f"{kind!r} is not one of {', '.join(PACKAGE_KINDS)}")
     manifest = tomllib.loads(text)
     return _cargo(manifest, package) if kind == "cargo-dep" else _python(manifest, package)
+
+
+def locked(text: str, kind: str, package: str) -> list[str]:
+    """Every version a lock file resolves for ``package``, in the lock's order.
+
+    Cargo.lock and uv.lock both list resolved packages as ``[[package]]`` tables
+    with a ``name`` and a ``version``, so one reader serves both. A Python name
+    is compared as PEP 503 does, and a crate name exactly.
+
+    Args:
+        text: The lock's contents: a Cargo.lock for ``cargo-dep``, a uv.lock for
+            ``python-dep``.
+        kind: The edge kind, one of PACKAGE_KINDS.
+        package: The name the producer publishes under.
+
+    Returns:
+        One version per resolved copy; empty when the lock resolves none. A
+        resolved package with no version reads as an empty string.
+
+    Raises:
+        ValueError: The text is not TOML, or ``kind`` is not a package kind.
+    """
+    if kind not in PACKAGE_KINDS:
+        raise ValueError(f"{kind!r} is not one of {', '.join(PACKAGE_KINDS)}")
+    entries = tomllib.loads(text).get("package")
+    if not isinstance(entries, list):
+        return []
+
+    def same_package(name: str) -> bool:
+        if kind == "python-dep":
+            return _normalise(name) == _normalise(package)
+        return name == package
+
+    return [
+        str(entry.get("version", ""))
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("name"), str)
+        and same_package(entry["name"])
+    ]

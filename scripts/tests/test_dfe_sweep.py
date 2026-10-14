@@ -633,7 +633,7 @@ def test_issues_and_backlog_are_work_items_not_findings() -> None:
         "created_at": "2026-10-05",
     }
     assert all(set(row) == set(sweep.BACKLOG_FIELDS) for row in report["backlog"])
-    assert report["totals"]["work_items"] == {"issues": 2, "backlog": 5, "backlog_drift": 3}
+    assert report["totals"]["work_items"] == {"issues": 2, "backlog": 5, "backlog_drift": 2}
     assert report["members"][0]["project"] == 7
     json.dumps(report)
 
@@ -912,11 +912,7 @@ def test_no_project_is_a_normal_state_not_unreadable() -> None:
     ], "with no project the label alone puts an issue on the backlog"
     assert [issue["number"] for issue in result.issues] == [31, 35, 36]
     assert result.unreadable == []
-    assert [(d["number"], d["problem"]) for d in result.drift] == [
-        (32, "labelled backlog but the repo has no backlog project"),
-        (33, "labelled backlog but the repo has no backlog project"),
-        (34, "labelled backlog but the repo has no backlog project"),
-    ]
+    assert result.drift == [], "a repo with no project has no Status to contradict the label"
 
 
 def test_projects_the_token_cannot_list_are_unreadable() -> None:
@@ -959,14 +955,51 @@ def test_the_backlog_query_reads_and_names_the_project() -> None:
     assert "missing_project" in jq
 
 
-def test_label_drift_is_both_directions_and_only_this_repo() -> None:
+def test_label_drift_is_a_label_and_status_conflict_in_this_repo_only() -> None:
     api, _ = _answers()
     drift = {(d["number"], d["problem"]) for d in _collect(api).drift}
     assert drift == {
         (31, "at Backlog without the backlog label"),
         (32, "labelled backlog but at Next"),
-        (34, "labelled backlog but not on the project"),
-    }
+    }, "34 is labelled and on no project: the label wins and nothing contradicts it"
+
+
+def _drift_case(*, labels: tuple[str, ...], status: str, on_project: bool = True) -> list[dict]:
+    """Drift for one issue #5, with the labels and project Status the case names."""
+    repo = "example-org/dfe-engine"
+    issue = {"repo": repo, "number": 5, "title": "t", "labels": list(labels), "type": "",
+             "url": "https://example.com/i/5", "created_at": RAISED}
+    nodes = [_issue_node(5, status, labels=labels)] if on_project else []
+    rows = sweep.backlog_rows(repo, 7, nodes)
+    return sweep.backlog_drift(repo, [issue], rows, sweep.BacklogModel())
+
+
+@pytest.mark.parametrize(
+    ("labels", "status", "on_project", "problem"),
+    [
+        ((), "Backlog", True, "at Backlog without the backlog label"),
+        (("backlog",), "Next", True, "labelled backlog but at Next"),
+        (("backlog",), "In progress", True, "labelled backlog but at In progress"),
+    ],
+)
+def test_drift_reports_the_two_real_conflicts(labels, status, on_project, problem) -> None:
+    (row,) = _drift_case(labels=labels, status=status, on_project=on_project)
+    assert (row["number"], row["status"], row["problem"]) == (5, status, problem)
+
+
+@pytest.mark.parametrize(
+    ("labels", "status", "on_project"),
+    [
+        (("backlog",), "Backlog", True),
+        ((), "Next", True),
+        ((), "", True),
+        (("backlog",), "", True),
+        (("backlog",), "", False),
+        ((), "", False),
+    ],
+)
+def test_drift_ignores_agreement_and_a_missing_second_signal(labels, status, on_project) -> None:
+    assert _drift_case(labels=labels, status=status, on_project=on_project) == []
 
 
 def test_the_summary_counts_by_status_and_priority() -> None:
@@ -976,12 +1009,12 @@ def test_the_summary_counts_by_status_and_priority() -> None:
     summary = text.split("SUMMARY", 1)[1].split("\n\n", 1)[0]
     assert (
         "example-org/dfe-engine: 2 active issue(s); backlog project 7: 5 item(s), status "
-        "Backlog 3, Next 1, no status 1; priority P0 1, P2 1, unprioritised 3; 3 label drift"
+        "Backlog 3, Next 1, no status 1; priority P0 1, P2 1, unprioritised 3; 2 label drift"
     ) in summary
     assert "    backlog  Backlog      P0   #33 item 33" in summary
     assert "    backlog  -            -    #34 labelled, on no project" in summary
     assert text.index("SUMMARY") < text.index("CRITICAL")
-    assert "work items: 2 active issue(s), 5 backlog item(s), 3 label drift" in text
+    assert "work items: 2 active issue(s), 5 backlog item(s), 2 label drift" in text
     assert (
         "  gating: 14 (12 finding(s), 2 active issue(s), 0 not readable), the backlog never gates"
     ) in text
@@ -993,8 +1026,8 @@ def test_a_repo_with_no_project_says_so_in_the_summary() -> None:
     report = sweep.build_report("2.2.0", [result], CONFIG.tools, generated_at="t")
     assert (
         "3 active issue(s); backlog, no project: 3 item(s), status no status 3; priority "
-        "unprioritised 3; 3 label drift"
-    ) in sweep.render_text(report)
+        "unprioritised 3\n"
+    ) in sweep.render_text(report), "no project, so no label drift is counted"
     empty = {"issues": [], "backlog": [], "drift": []}
     model = sweep.BacklogModel()
     assert sweep._work_counts(sweep.NO_PROJECT, empty, model) == (
@@ -1431,7 +1464,6 @@ def test_drift_and_backlog_rows_carry_the_created_at_of_their_issue() -> None:
     assert {d["number"]: d["created_at"] for d in result.drift} == {
         31: "2026-10-01T00:00:00Z",
         32: "2026-10-03",
-        34: "2026-10-03",
     }
     # Project items carry the project's createdAt, and a labelled issue off the project its own.
     assert {(r["number"], r["created_at"]) for r in result.backlog} == {
@@ -1895,7 +1927,7 @@ def test_gating_counts_findings_and_active_issues_and_never_the_backlog() -> Non
     assert len(report["backlog"]) == 5
     stats = sweep.render_slack(report)["stats"]
     assert {key: stats[key] for key in ("gating", "findings", "issues", "backlog", "drift")} == {
-        "gating": 14, "findings": 12, "issues": 2, "backlog": 5, "drift": 3,
+        "gating": 14, "findings": 12, "issues": 2, "backlog": 5, "drift": 2,
     }
 
 

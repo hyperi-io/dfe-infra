@@ -94,7 +94,9 @@ tags:
 
   default_in_pass: "True where an unattended suite pass may pick the member up. Always false for alpha and beta, which need naming explicitly every time."
 
-  package: "The name a library node PUBLISHES under, which is not always the repo name. A cargo-dep or python-dep edge out of that node reads every declaration of THAT name in the cited manifest."
+  package: "The name a library node PUBLISHES under, which is not always the repo name. A cargo-dep or python-dep edge out of that node reads every declaration of THAT name in the cited manifest, and the drift check reads every member's Cargo.lock or uv.lock for that name to find a consumer with no edge."
+
+  unconsumed: "Why no suite member consumes this node's package, in one sentence. The drift check warns when a member's lock file resolves the package anyway, because the note is then false."
 
   classification_source: "Which rung answered `classification`: in-repo for a marker in the repo itself (.hyperi-ci.yaml or .hyperi-classification), org-property for the hyperi-io custom property that answers when the repo declares nothing."
 
@@ -466,14 +468,14 @@ nodes:
     classification: oss
     classification_source: in-repo
     default_in_pass: false
+    unconsumed: "No member's Cargo.lock resolves factbook. dfe-loader, dfe-transform-vrl and dfe-transform-elastic take maxminddb directly."
     artefacts:
       - kind: crate
         registry: crates.io
         public: true
     # The reference-data enricher extracted OUT of scalo: geoip is no longer
-    # in scalo. dfe-loader and dfe-transform-vector are its intended consumers;
-    # neither Cargo.lock resolves `factbook` yet, so no cargo-dep edge is drawn
-    # until one does.
+    # in scalo. The drift check fails once a member's Cargo.lock resolves it
+    # with no cargo-dep edge drawn.
 
   scalo-py:
     repo: hyperi-io/scalo-py
@@ -547,13 +549,13 @@ nodes:
     classification: general-oss
     classification_source: in-repo
     default_in_pass: true
+    unconsumed: "No member's uv.lock resolves vector-vrl: it is published for anyone, not for a suite member."
     artefacts:
       - kind: package
         registry: pypi
         public: true
     # A maturin wheel over a Rust crate, in a split layout with no manifest
-    # at the repo root. ZERO consumers inside the suite: a member on audience
-    # alone, as something we publish for anyone.
+    # at the repo root. A member on audience alone.
 
   culvert:
     repo: hyperi-io/culvert
@@ -594,9 +596,9 @@ nodes:
         registry: crates.io
         public: true
     # Our ClickHouse transport crate, published and recently first-tagged.
-    # NO suite member consumes it yet: dfe-loader still reaches ClickHouse
-    # through the upstream crate with a patch onto the clickhouse-rs fork, so
-    # a release here moves nothing until that patch is retired.
+    # dfe-fetcher takes it as an optional dependency behind its db crate's
+    # clickhouse feature. dfe-loader still reaches ClickHouse through the
+    # upstream crate with a patch onto the clickhouse-rs fork.
 
 # ---------------------------------------------------------------------------
 # NON-MEMBERS -- names this repo carries a chart or a versions.yaml app pin for
@@ -766,6 +768,15 @@ edges:
     type: potential
     evidence: "dfe-engine/src/dfe_engine/sampling/service.py:261"
     note: "Also imported in Sampler._build_reduce_source in service.py and build_source in sampling/kafka_reader.py. The `Optional lazy runtime integrations` comment in pyproject.toml's dependencies records the non-declaration as deliberate, and the sampler degrades with a message when it is absent."
+
+  # --- clickhouse-dfe ------------------------------------------------------
+
+  - from: clickhouse-dfe
+    to: dfe-fetcher
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-fetcher/crates/db/Cargo.toml"
+    note: "Optional, behind the db crate's clickhouse feature; ext supplies the ping and the typed server exception."
 
   # --- dfe-engine ----------------------------------------------------------
 

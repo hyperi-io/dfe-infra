@@ -3,16 +3,18 @@
 #  File:         check_suite_drift.py
 #  Purpose:      Keep suite.yaml honest: structurally sound, every edge
 #                citation still there, every cited manifest still declaring
-#                the producer's package with a version range, every chart and
-#                app pin matched to a member or to a declared non-member, and
-#                docs/suite-graph.md carrying the diagrams the file
-#                generates. The docs check is MARKERS-DRIVEN -- it renders
-#                the blocks the page already carries -- so a producer with no
-#                diagram block is an advisory rather than a failure.
-#                Cross-repo citations are read from each member clone's
-#                fetched `--ref` (default origin/main), never the clone's
-#                working tree, so a clone sitting on a feature branch or
-#                behind origin cannot produce a false pass or a false fail.
+#                the producer's package with a version range, every package a
+#                member's lock file resolves from a producer backed by an
+#                edge, every chart and app pin matched to a member or to a
+#                declared non-member, and docs/suite-graph.md carrying the
+#                diagrams the file generates. The docs check is MARKERS-DRIVEN
+#                -- it renders the blocks the page already carries -- so a
+#                producer with no diagram block is an advisory rather than a
+#                failure.
+#                Cross-repo citations and lock files are read from each member
+#                clone's fetched `--ref` (default origin/main), never the
+#                clone's working tree, so a clone sitting on a feature branch
+#                or behind origin cannot produce a false pass or a false fail.
 #                Reported SKIPPED, loudly, when the clone or the ref is not
 #                there to read.
 #  Language:     Python
@@ -25,22 +27,25 @@
 
 FAIL (exit 1): a structural problem, a citation whose file no longer exists, a
 cargo-dep or python-dep citation whose manifest no longer declares the
-producer's package with a version range, an image-pin edge into dfe-infra
-whose producer the current versions.yaml stack no longer pins, a `non_members`
-entry that is also a node or that names nothing, or a docs diagram that
-differs from what the file generates.
+producer's package with a version range, a member whose Cargo.lock or uv.lock
+resolves a producer's `package` with no edge from that producer to it, an
+image-pin edge into dfe-infra whose producer the current versions.yaml stack no
+longer pins, a `non_members` entry that is also a node or that names nothing,
+or a docs diagram that differs from what the file generates.
 
 WARN (exit 0): a chart in the tree, a thin chart the stack pins, or a
-versions.yaml app pin with no member, or a producer with out-edges and no
-diagram block on the docs page -- advisory, because a repo joins the suite
-when it tags and its chart may exist first. A name listed under `non_members`
-raises no advisory: the reason is recorded there instead.
+versions.yaml app pin with no member, a producer with out-edges and no
+diagram block on the docs page, or a node carrying an `unconsumed` note whose
+package a member's lock file resolves anyway -- advisory, because a repo joins
+the suite when it tags and its chart may exist first, and a stale note is a
+documentation fault rather than a broken edge. A name listed under
+`non_members` raises no advisory: the reason is recorded there instead.
 
-SKIPPED: a citation into a member repo that is not on disk, or whose `--ref`
-(default origin/main) the clone does not have. Exit 0 by default so the
-helm-lint job stays green on a bare checkout; exit 2 under --strict so a run
-that had the clones cannot pass on a check that never looked at them. A skip
-is printed either way -- a silent skip is how a check reports green while
+SKIPPED: a citation or lock file in a member repo that is not on disk, or
+whose `--ref` (default origin/main) the clone does not have. Exit 0 by default
+so the helm-lint job stays green on a bare checkout; exit 2 under --strict so
+a run that had the clones cannot pass on a check that never looked at them. A
+skip is printed either way -- a silent skip is how a check reports green while
 failing.
 
 `--strict` is for an OPERATOR'S pre-release run, on a box with the member
@@ -49,15 +54,20 @@ every cross-repo citation is skipped there and --strict would exit 2 every
 time.
 
 Member clones are looked for under --repos (default: the parent of this repo,
-which is where /projects/<name> puts them). A cross-repo citation is read from
-the clone's `--ref` (default origin/main) via `git show`, not the working
-tree -- a clone on a feature branch or behind origin cannot false-pass or
-false-fail a citation the main branch does not have. This check does NOT
-fetch: the operator runs `git fetch origin main` in each member clone first.
-Pass `--ref ""` to read the working tree instead, the old behaviour. dfe-infra's
-own citations always read this repo's working tree -- it is the repo under
-check, so a `--ref` on it would check whether this change has landed on main,
-which is backwards.
+which is where /projects/<name> puts them). A cross-repo citation or lock file
+is read from the clone's `--ref` (default origin/main) via `git show`, not the
+working tree -- a clone on a feature branch or behind origin cannot false-pass
+or false-fail what the main branch does not have. This check does NOT fetch:
+the operator runs `git fetch origin main` in each member clone first. Pass
+`--ref ""` to read the working tree instead, the old behaviour. dfe-infra's own
+files always read this repo's working tree -- it is the repo under check, so a
+`--ref` on it would check whether this change has landed on main, which is
+backwards.
+
+The lock scan reads Cargo.lock and uv.lock at each member's root, and a
+producer's package is matched in the ecosystem it publishes to: a rust
+producer in Cargo.lock, a python one in uv.lock. scalo-rs and scalo-py are both
+`scalo` and never answer for each other.
 """
 
 import argparse
@@ -65,6 +75,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -145,61 +156,142 @@ def declaration_problem(kind: str, manifest: str, package: str) -> str | None:
     return None
 
 
-def check_citations(
-    graph: dict, repos: Path, ref: str, git: str | None
-) -> tuple[list[str], list[str], list[str]]:
-    """In-repo citations read dfe-infra's working tree; cross-repo ones read `ref`.
+@dataclass(slots=True)
+class Clones:
+    """Where a member's files are read from, and which members could not be reached.
 
-    `ref` empty keeps the old working-tree read for cross-repo citations too.
-    Returns (fails, repos with no clone on disk, repos whose clone lacks `ref`).
+    dfe-infra's own files always come from this working tree. Another member's
+    come from `ref` in its clone, or from the clone's working tree when `ref` is
+    empty.
+
+    Attributes:
+        repos: The directory holding the member clones.
+        ref: The git ref cross-repo files are read at; empty reads the working tree.
+        git: The git binary, or None when it is not on PATH.
+        no_clone: Members with no clone on disk, as reads found them.
+        no_ref: Members whose clone lacks `ref`, or every one when git is missing.
     """
+
+    repos: Path
+    ref: str
+    git: str | None
+    no_clone: set[str] = field(default_factory=set)
+    no_ref: set[str] = field(default_factory=set)
+    _ref_present: dict[str, bool] = field(default_factory=dict, init=False, repr=False)
+
+    def read(self, repo: str, rel: str) -> tuple[bool, str] | None:
+        """One file of a member as (found, contents), or None when it cannot be reached.
+
+        A member that cannot be reached is recorded in no_clone or no_ref and is
+        not a finding here: the caller reports it as skipped.
+        """
+        if repo == "dfe-infra":
+            return _working_tree(REPO_ROOT / rel)
+        base = self.repos / repo
+        if not (base / ".git").exists():
+            self.no_clone.add(repo)
+            return None
+        if not self.ref:
+            return _working_tree(base / rel)
+        if not self.git:
+            self.no_ref.add(repo)
+            return None
+        if repo not in self._ref_present:
+            self._ref_present[repo] = _ref_exists(self.git, base, self.ref)
+        if not self._ref_present[repo]:
+            self.no_ref.add(repo)
+            return None
+        return _git_show(self.git, base, self.ref, rel)
+
+
+def _working_tree(path: Path) -> tuple[bool, str]:
+    """The file at `path` as (found, contents)."""
+    if not path.exists():
+        return False, ""
+    return True, path.read_text(encoding="utf-8", errors="replace")
+
+
+def check_citations(graph: dict, clones: Clones) -> list[str]:
+    """Every cited file is there, long enough, and for a package edge still declares the package."""
     fails: list[str] = []
-    no_clone: set[str] = set()
-    no_ref: set[str] = set()
-    ref_present: dict[str, bool] = {}
     for edge in graph["edges"] + graph.get("runtime_edges", []):
-        for field in ("evidence", "source"):
-            citation = edge.get(field)
+        for side in ("evidence", "source"):
+            citation = edge.get(side)
             if not citation:
                 continue
             repo, rel, _start, end = _cited(citation)
-            cross_repo = repo != "dfe-infra"
-            base = repos / repo if cross_repo else REPO_ROOT
-            if cross_repo and not (base / ".git").exists():
-                no_clone.add(repo)
+            read = clones.read(repo, rel)
+            if read is None:
                 continue
-            where = f"{edge['from']} -> {edge['to']} {field} {citation}"
-            if cross_repo and ref:
-                if not git:
-                    no_ref.add(repo)
-                    continue
-                if repo not in ref_present:
-                    ref_present[repo] = _ref_exists(git, base, ref)
-                if not ref_present[repo]:
-                    no_ref.add(repo)
-                    continue
-                found, content = _git_show(git, base, ref, rel)
-                if not found:
-                    fails.append(f"{where}: file is gone")
-                    continue
-            else:
-                target = base / rel
-                if not target.exists():
-                    fails.append(f"{where}: file is gone")
-                    continue
-                content = target.read_text(encoding="utf-8", errors="replace")
+            where = f"{edge['from']} -> {edge['to']} {side} {citation}"
+            found, content = read
+            if not found:
+                fails.append(f"{where}: file is gone")
+                continue
             if end is not None and len(_split_lines(content)) < end:
                 fails.append(f"{where}: file has fewer than {end} lines")
                 continue
             kind = edge.get("kind")
-            if field != "evidence" or kind not in manifest_deps.PACKAGE_KINDS:
+            if side != "evidence" or kind not in manifest_deps.PACKAGE_KINDS:
                 continue
             package = (graph["nodes"].get(edge["from"]) or {}).get("package")
             if not package:
                 fails.append(f"{where}: node {edge['from']} declares no `package`")
             elif problem := declaration_problem(kind, content, package):
                 fails.append(f"{where}: {problem}")
-    return fails, sorted(no_clone), sorted(no_ref)
+    return fails
+
+
+# A producer's package is resolved into the lock of the ecosystem it publishes to.
+_LOCK_KIND_BY_LANGUAGE = {"rust": "cargo-dep", "python": "python-dep"}
+
+
+def check_locks(graph: dict, clones: Clones) -> tuple[list[str], list[str]]:
+    """Every package a member's lock resolves from a producer has an edge from it.
+
+    A lock that resolves the package of a node with no edge to the member that
+    holds the lock is a consumer the graph does not know about, so it fails. A
+    node carrying an `unconsumed` note whose package a lock resolves anyway has a
+    note that is no longer true, so it warns.
+
+    Args:
+        graph: The parsed suite.yaml.
+        clones: Where the members' lock files are read from.
+
+    Returns:
+        (fails, warns).
+    """
+    nodes = graph["nodes"]
+    linked = {(edge["from"], edge["to"]) for edge in graph["edges"]}
+    fails: list[str] = []
+    warns: list[str] = []
+    for member in nodes:
+        for kind, lock in manifest_deps.LOCK_FILES.items():
+            producers = [
+                (name, node["package"])
+                for name, node in nodes.items()
+                if name != member
+                and node.get("package")
+                and _LOCK_KIND_BY_LANGUAGE.get(node.get("language")) == kind
+            ]
+            read = clones.read(member, lock) if producers else None
+            if read is None or not read[0]:
+                continue
+            _, text = read
+            for producer, package in producers:
+                try:
+                    versions = manifest_deps.locked(text, kind, package)
+                except ValueError as exc:
+                    fails.append(f"{member} {lock}: the lock is not readable TOML ({exc})")
+                    break
+                if not versions:
+                    continue
+                resolved = f"{member} {lock} resolves {package} {', '.join(versions)}"
+                if (producer, member) not in linked:
+                    fails.append(f"{resolved}, and suite.yaml has no edge {producer} -> {member}")
+                if nodes[producer].get("unconsumed"):
+                    warns.append(f"node {producer} is marked unconsumed, but {resolved}")
+    return fails, warns
 
 
 # A thin chart's name is its deploy.service, except where the appset maps one.
@@ -358,21 +450,24 @@ def main() -> int:
     parser.add_argument("--repos", type=Path, default=REPO_ROOT.parent,
                         help="directory holding the member clones (default: this repo's parent)")
     parser.add_argument("--ref", default="origin/main",
-                        help="git ref to read cross-repo citations from (default: origin/main); "
-                             "pass --ref '' to read each clone's working tree instead")
-    parser.add_argument("--strict", action="store_true", help="exit 2 when any citation had to be skipped")
+                        help="git ref to read cross-repo citations and lock files from "
+                             "(default: origin/main); pass --ref '' to read each clone's "
+                             "working tree instead")
+    parser.add_argument("--strict", action="store_true",
+                        help="exit 2 when any citation or lock file had to be skipped")
     args = parser.parse_args()
 
     graph = suite_graph.load()
     fails = [f"structure: {p}" for p in suite_graph.validate(graph)]
     warns: list[str] = []
-    no_clone: list[str] = []
-    no_ref: list[str] = []
     tool_skipped: list[str] = []
     git = shutil.which("git") if args.ref else None
+    clones = Clones(args.repos.resolve(), args.ref, git)
     if not fails:
-        f, no_clone, no_ref = check_citations(graph, args.repos.resolve(), args.ref, git)
+        fails += check_citations(graph, clones)
+        f, w = check_locks(graph, clones)
         fails += f
+        warns += w
         f, stack = read_stack()
         fails += f
         if not f:
@@ -393,11 +488,14 @@ def main() -> int:
         print(f"FAIL  {line}")
     for line in tool_skipped:
         print(f"SKIPPED  {line}")
+    no_clone = sorted(clones.no_clone)
+    no_ref = sorted(clones.no_ref)
     if no_clone:
-        print(f"SKIPPED  citations into {', '.join(no_clone)}: clone not found under {args.repos}")
+        print(f"SKIPPED  citations and lock files in {', '.join(no_clone)}: "
+              f"clone not found under {args.repos}")
     if no_ref:
         reason = f"{args.ref} not found -- git fetch first" if git else "git is not on PATH"
-        print(f"SKIPPED  citations into {', '.join(no_ref)}: {reason}")
+        print(f"SKIPPED  citations and lock files in {', '.join(no_ref)}: {reason}")
     skipped = no_clone + no_ref
     if fails:
         print(f"FAIL -- {len(fails)} problem(s) in suite.yaml")
@@ -405,7 +503,7 @@ def main() -> int:
     print(f"OK -- suite.yaml: {len(graph['nodes'])} members, {len(graph['edges'])} edges, "
           f"{len(warns)} advisory, {len(skipped)} repo(s) skipped")
     if skipped and args.strict:
-        print("FAIL -- --strict and the cross-repo citations were never checked")
+        print("FAIL -- --strict and the cross-repo citations and lock files were never checked")
         return 2
     return 0
 

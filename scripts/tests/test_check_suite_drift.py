@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_check_suite_drift.py
 #  Purpose:      Cover check_suite_drift.py's verdicts -- what FAILs, what is
-#                only advisory, and what --strict does about a citation that
-#                was never checked.
+#                only advisory, what the lock scan makes of a package a member
+#                resolves, and what --strict does about a citation or lock
+#                file that was never checked.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -191,6 +192,109 @@ PY_SUITE = SUITE.replace("  image-pin:\n", PY_KIND + "  image-pin:\n", 1).replac
     "lanes:\n", PY_EDGE + "lanes:\n", 1
 )
 
+# A second library the member takes only as an optional dependency, which is how
+# dfe-fetcher takes clickhouse-dfe: declared by range in its manifest, resolved in its lock.
+LIB_C_NODE = """\
+  lib-c:
+    repo: org/lib-c
+    package: libc-ext
+    role: library
+    language: rust
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    classification_source: in-repo
+    default_in_pass: true
+    artefacts:
+      - kind: crate
+        registry: crates.io
+        public: true
+"""
+
+LIB_C_EDGE = """\
+  - from: lib-c
+    to: app-b
+    kind: cargo-dep
+    type: potential
+    evidence: "app-b/Cargo.toml"
+"""
+
+# lib-c is a node with no edge to app-b.
+LIB_C_SUITE = SUITE.replace("edges:\n", LIB_C_NODE + "edges:\n", 1).replace(
+    "members: [lib-a]", "members: [lib-a, lib-c]", 1
+)
+LIB_C_EDGE_SUITE = LIB_C_SUITE.replace("lanes:\n", LIB_C_EDGE + "lanes:\n", 1)
+LIB_C_UNCONSUMED_SUITE = LIB_C_EDGE_SUITE.replace(
+    "    package: libc-ext\n",
+    '    package: libc-ext\n    unconsumed: "No member uses libc-ext."\n',
+    1,
+)
+
+CARGO_WITH_C = CARGO + 'libc-ext = { version = "0.1", optional = true }\n'
+
+CARGO_LOCK = '''\
+version = 4
+
+[[package]]
+name = "app-b"
+version = "0.1.0"
+
+[[package]]
+name = "liba"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+'''
+
+CARGO_LOCK_WITH_C = CARGO_LOCK + '''
+[[package]]
+name = "libc-ext"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+'''
+
+# A Python lock that happens to name a Rust producer's package: a different ecosystem.
+UV_LOCK_NAMING_LIB_C = '''\
+version = 1
+
+[[package]]
+name = "libc-ext"
+version = "9.9.9"
+source = { registry = "https://pypi.org/simple" }
+'''
+
+# lib-d publishes to PyPI under a name uv.lock writes in its normalised form.
+LIB_D_NODE = """\
+  lib-d:
+    repo: org/lib-d
+    package: Lib_D.pkg
+    role: library
+    language: python
+    audience: general
+    maturity: ga
+    support: standard
+    licence: Apache-2.0
+    classification: oss
+    classification_source: in-repo
+    default_in_pass: true
+    artefacts:
+      - kind: package
+        registry: pypi
+        public: true
+"""
+LIB_D_SUITE = SUITE.replace("edges:\n", LIB_D_NODE + "edges:\n", 1).replace(
+    "members: [lib-a]", "members: [lib-a, lib-d]", 1
+)
+UV_LOCK_NAMING_LIB_D = '''\
+version = 1
+
+[[package]]
+name = "lib-d-pkg"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+'''
+
 
 def build(
     root: Path,
@@ -204,12 +308,14 @@ def build(
     worktree_cargo: str | None = None,
     with_ref: bool = True,
     clone_files: dict[str, str] | None = None,
+    worktree_files: dict[str, str] | None = None,
 ) -> Path:
     """A whole tiny dfe-infra beside its member clones, ready to check.
 
     `worktree_cargo`, when given, overwrites app-b's Cargo.toml AFTER the
     commit -- an uncommitted change standing in for a feature branch or a
     clone behind origin, to prove the check reads `ref` and not the checkout.
+    `worktree_files` does the same for any other path in the clone.
     `with_ref` false leaves refs/remotes/origin/main unset, standing in for a
     clone that has never been fetched. `clone_files` adds files to app-b's
     commit, keyed by path in the clone.
@@ -245,6 +351,7 @@ def build(
             worktree_cargo=worktree_cargo,
             with_ref=with_ref,
             clone_files=clone_files or {},
+            worktree_files=worktree_files or {},
         )
     return infra
 
@@ -256,6 +363,7 @@ def _make_clone(
     worktree_cargo: str | None,
     with_ref: bool,
     clone_files: dict[str, str],
+    worktree_files: dict[str, str],
 ) -> None:
     """A real app-b repo: one commit, refs/remotes/origin/main standing in for a fetch."""
     clone.mkdir(parents=True)
@@ -272,6 +380,8 @@ def _make_clone(
         _run_git(clone, "update-ref", "refs/remotes/origin/main", "HEAD")
     if worktree_cargo is not None:
         _write(clone / "Cargo.toml", worktree_cargo)
+    for name, text in worktree_files.items():
+        _write(clone / name, text)
 
 
 def _run_git(cwd: Path, *args: str) -> None:
@@ -348,7 +458,7 @@ def main() -> int:
 
             code, output = check(infra, "--repos", str(root / "nowhere"))
             expect("without --strict the same skip exits 0 and says so",
-                   code == 0 and "SKIPPED  citations into app-b" in output,
+                   code == 0 and "SKIPPED  citations and lock files in app-b" in output,
                    f"exit {code}\n{output}")
 
         _one_case(
@@ -375,7 +485,7 @@ def main() -> int:
         _one_case(
             "a clone with no origin/main is SKIPPED, naming the ref",
             0,
-            "SKIPPED  citations into app-b: origin/main not found -- git fetch first",
+            "SKIPPED  citations and lock files in app-b: origin/main not found -- git fetch first",
             with_ref=False,
         )
         _one_case(
@@ -496,6 +606,97 @@ def main() -> int:
             suite=PY_SUITE,
             clone_files={"pyproject.toml": PYPROJECT.replace("liba>=", "liba-extra>=")},
         )
+        # The lock scan: the case it exists for is a member that resolves a library
+        # as an optional dependency while suite.yaml draws no edge to it.
+        _one_case(
+            "a Cargo.lock resolving a node's package with no edge to the member FAILs, naming both",
+            1,
+            "app-b Cargo.lock resolves libc-ext 0.1.1, and suite.yaml has no edge lib-c -> app-b",
+            suite=LIB_C_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK_WITH_C},
+        )
+        _one_case(
+            "the same lock with the edge drawn is OK",
+            0,
+            "OK -- suite.yaml",
+            suite=LIB_C_EDGE_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK_WITH_C},
+        )
+        _one_case(
+            "an edge whose package the lock does not resolve is OK",
+            0,
+            "OK -- suite.yaml",
+            suite=LIB_C_EDGE_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK},
+        )
+        _one_case(
+            "a lock resolving the package of a node the member already has an edge from is OK",
+            0,
+            "OK -- suite.yaml",
+            clone_files={"Cargo.lock": CARGO_LOCK},
+        )
+        _one_case(
+            "a lock is read from origin/main, so a working tree that resolves more is OK",
+            0,
+            "OK -- suite.yaml",
+            suite=LIB_C_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK},
+            worktree_files={"Cargo.lock": CARGO_LOCK_WITH_C},
+        )
+        _one_case(
+            "and a working tree that resolves less does not hide what origin/main resolves",
+            1,
+            "resolves libc-ext 0.1.1, and suite.yaml has no edge lib-c -> app-b",
+            suite=LIB_C_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK_WITH_C},
+            worktree_files={"Cargo.lock": CARGO_LOCK},
+        )
+        _one_case(
+            "a uv.lock naming a rust node's package is another ecosystem and is not read as it",
+            0,
+            "OK -- suite.yaml",
+            suite=LIB_C_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK, "uv.lock": UV_LOCK_NAMING_LIB_C},
+        )
+        _one_case(
+            "a uv.lock matches a python node's package by its PEP 503 name",
+            1,
+            "app-b uv.lock resolves Lib_D.pkg 0.4.0, and suite.yaml has no edge lib-d -> app-b",
+            suite=LIB_D_SUITE,
+            clone_files={"Cargo.lock": CARGO_LOCK, "uv.lock": UV_LOCK_NAMING_LIB_D},
+        )
+        _one_case(
+            "a lock that is not TOML FAILs rather than reading as resolving nothing",
+            1,
+            "app-b Cargo.lock: the lock is not readable TOML",
+            clone_files={"Cargo.lock": "[[package\n"},
+        )
+        _one_case(
+            "a node marked unconsumed whose package a lock resolves warns, and exits 0",
+            0,
+            "WARN  node lib-c is marked unconsumed, but app-b Cargo.lock resolves libc-ext 0.1.1",
+            suite=LIB_C_UNCONSUMED_SUITE,
+            cargo=CARGO_WITH_C,
+            clone_files={"Cargo.lock": CARGO_LOCK_WITH_C},
+        )
+        with tempfile.TemporaryDirectory(prefix="suite-drift-") as tmp:
+            root = Path(tmp)
+            infra = build(
+                root,
+                suite=LIB_C_UNCONSUMED_SUITE,
+                cargo=CARGO_WITH_C,
+                clone_files={"Cargo.lock": CARGO_LOCK},
+            )
+            code, output = check(infra, "--repos", str(root / "repos"))
+            expect("an unconsumed note that no lock contradicts raises no warning",
+                   code == 0 and "unconsumed" not in output, f"exit {code}\n{output}")
+
         _one_case(
             "a producer with no package declared FAILs rather than guessing",
             1,
