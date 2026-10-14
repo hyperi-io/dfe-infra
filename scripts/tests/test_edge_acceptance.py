@@ -977,7 +977,7 @@ def test_a_login_that_made_the_forced_change_signs_in_again_for_hyperdx(listener
     edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", engine, "edgeabc", True, 5.0)
     assert results[0].status == "done", results[0].detail
     assert engine.logins == 2
-    assert {seen["headers"]["authorization"] for seen in listener.seen} == {f"Bearer {TokenEngine.MINTED}"}
+    assert {seen["headers"]["cookie"] for seen in listener.seen} == {f"dfe_token={TokenEngine.MINTED}"}
 
 
 def test_hyperdx_finds_the_marker_through_its_own_api(listener: Listener) -> None:
@@ -987,11 +987,13 @@ def test_hyperdx_finds_the_marker_through_its_own_api(listener: Listener) -> Non
     edge.record_hyperdx(results, f"http://127.0.0.1:{listener.port}", TokenEngine(), "edgeabc", True, 5.0)
     assert (results[0].slug, results[0].status) == ("hyperdx", "done"), results[0].detail
     sources, query = listener.seen
-    assert sources["headers"]["authorization"] == "Bearer engine-token"
+    # The console's iframe credential: the dfe_token cookie, never an Authorization header.
+    for seen in (sources, query):
+        assert seen["headers"]["cookie"] == "dfe_token=engine-token"
+        assert "authorization" not in seen["headers"]
     # The browser client's own path: the frontend 308s the trailing-slash form.
     assert query["path"] == "/api/clickhouse-proxy"
     assert query["headers"]["x-hyperdx-connection-id"] == MAIN["connection"]
-    assert query["headers"]["authorization"] == "Bearer engine-token"
     assert "ILIKE '%edgeabc%'" in query["body"]
     assert "engine-token" not in results[0].detail
 
@@ -999,7 +1001,7 @@ def test_hyperdx_finds_the_marker_through_its_own_api(listener: Listener) -> Non
 def test_expected_fail_a_redirect_is_the_finding_and_is_never_followed(
     listener: Listener, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """urllib would carry the bearer token to whatever host a redirect names."""
+    """urllib would carry the token cookie to whatever host a redirect names."""
     monkeypatch.setattr(edge, "CLICKHOUSE_PROXY", "/api/clickhouse-proxy/")
     listener.bodies = {"GET /api/sources": [MAIN]}
     results: list[wizard.StepResult] = []
