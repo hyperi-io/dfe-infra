@@ -179,6 +179,28 @@ def test_the_managed_overlay_opens_the_broker_egress() -> None:
     expect("on the SCRAM and IAM listeners both", {9096, 9098} <= ports, f"got {sorted(ports)}")
 
 
+def test_the_engine_reaches_a_managed_broker() -> None:
+    """The engine dials the broker for its topic set and holds readiness on the
+    dead-letter topics, so an egress list without it leaves every app in Init."""
+    env = next(
+        d
+        for d in render_extras("dfe-engine", *APP_CELL, annotations=MANAGED_ANNOTATIONS)
+        if object_id(d) == "ConfigMap/dfe-engine-env"
+    )["data"]
+    expect("the engine is pointed at the managed broker",
+           env.get("DFE_KAFKA_BOOTSTRAP_SERVERS") == MANAGED_BOOTSTRAP,
+           f"got {env.get('DFE_KAFKA_BOOTSTRAP_SERVERS')!r}")
+    engine = [
+        p
+        for p in kafka_egress(with_managed("network-policies"))
+        if p["spec"]["podSelector"].get("matchLabels", {}).get("app.kubernetes.io/name")
+        == "dfe-engine"
+    ]
+    ports = {port["port"] for p in engine for rule in p["spec"]["egress"] for port in rule["ports"]}
+    expect("so the network policies open the SCRAM listener to the engine", 9096 in ports,
+           f"engine policies: {[p['metadata']['name'] for p in engine]}")
+
+
 def test_bootstrap_sets_external_for_exactly_the_managed_providers() -> None:
     """The mode is derived from the provider, never asked for twice."""
     script = BOOTSTRAP.read_text(encoding="utf-8")
