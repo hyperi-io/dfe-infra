@@ -495,6 +495,34 @@ run "aws_private_zone_teardown_captures_the_zone_to_empty" {
   }
 }
 
+// The destroy-time sweep of the CNI's leaked network interfaces, which would
+// otherwise hold the cluster security group and fail the VPC delete. As with the
+// zone above, only what it captures into self is assertable here; its command
+// and its place in the destroy order are read as text by
+// scripts/tests/test_cni_eni_teardown.py.
+run "aws_cni_eni_teardown_captures_this_vpc" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = terraform_data.cni_eni_teardown.input.vpc_id == aws_vpc.this.id
+    error_message = "the CNI sweep must be fenced to THIS deployment's own VPC, never one it is told about"
+  }
+
+  assert {
+    condition     = terraform_data.cni_eni_teardown.input.region == var.provision.region
+    error_message = "the CNI sweep must run its aws CLI calls against the deployment's own region"
+  }
+
+  assert {
+    condition     = terraform_data.cni_eni_teardown.triggers_replace[0] == aws_vpc.this.id
+    error_message = "a VPC replacement must replace the sweep too, or the old VPC's interfaces are never swept"
+  }
+}
+
 // The private endpoint is always on. The public one is off unless asked for,
 // and this is the assertion that keeps it that way.
 run "aws_private_endpoint_only" {
@@ -941,7 +969,7 @@ run "aws_vpc_cni_enables_network_policy" {
   }
 
   assert {
-    condition     = jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
+    condition     = jsondecode(aws_eks_addon.vpc_cni.configuration_values).enableNetworkPolicy == "true"
     error_message = "the vpc-cni add-on must set enableNetworkPolicy: \"true\" in its configuration_values, or every NetworkPolicy in the cluster is unenforced"
   }
 
@@ -1382,12 +1410,12 @@ run "aws_controller_tags_reach_the_addons" {
   }
 
   assert {
-    condition     = jsondecode(jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).env.ADDITIONAL_ENI_TAGS)["expires-at"] == "2026-10-08T12:00:00Z"
+    condition     = jsondecode(jsondecode(aws_eks_addon.vpc_cni.configuration_values).env.ADDITIONAL_ENI_TAGS)["expires-at"] == "2026-10-08T12:00:00Z"
     error_message = "the VPC CNI must tag every pod network interface it creates with controller_tags"
   }
 
   assert {
-    condition     = jsondecode(aws_eks_addon.this["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
+    condition     = jsondecode(aws_eks_addon.vpc_cni.configuration_values).enableNetworkPolicy == "true"
     error_message = "adding controller_tags must not drop enableNetworkPolicy"
   }
 }
@@ -1402,12 +1430,19 @@ run "aws_addons_install_the_pinned_versions" {
   }
 
   assert {
-    condition     = alltrue([for name, addon in aws_eks_addon.this : addon.addon_version == var.addon_versions[name]])
+    condition     = alltrue([for name, addon in aws_eks_addon.this : addon.addon_version == var.addon_versions[name]]) && aws_eks_addon.vpc_cni.addon_version == var.addon_versions["vpc-cni"]
     error_message = "every add-on must install exactly the version addon_versions pins for it"
   }
 
+  // vpc-cni is its own resource for its destroy order, so the five are the four
+  // here plus that one, each named exactly once.
   assert {
-    condition     = length(aws_eks_addon.this) == 5 && alltrue([for name in keys(aws_eks_addon.this) : can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.this[name].addon_version))])
+    condition     = sort(concat(keys(aws_eks_addon.this), [aws_eks_addon.vpc_cni.addon_name])) == sort(keys(var.addon_versions))
+    error_message = "every add-on addon_versions pins must be installed exactly once, vpc-cni included"
+  }
+
+  assert {
+    condition     = length(aws_eks_addon.this) == 4 && alltrue([for name in keys(aws_eks_addon.this) : can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.this[name].addon_version))]) && can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.vpc_cni.addon_version))
     error_message = "all five add-ons must carry a pinned EKS build, never an unset version EKS fills in"
   }
 
@@ -1430,7 +1465,7 @@ run "aws_addons_take_the_pins_when_the_caller_passes_null" {
   }
 
   assert {
-    condition     = aws_eks_addon.this["vpc-cni"].addon_version != null && can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.this["vpc-cni"].addon_version))
+    condition     = aws_eks_addon.vpc_cni.addon_version != null && can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.vpc_cni.addon_version))
     error_message = "a null addon_versions must fall back to the pinned default"
   }
 }
@@ -1477,6 +1512,8 @@ run "aws_addons_take_a_full_override_for_another_minor" {
 }
 
 // An override that leaves an add-on out would install it at whatever EKS picks.
+// vpc-cni is checked on its own resource, and a failure there stops the plan
+// before the nodes and the other add-ons, so each case leaves out one add-on.
 run "aws_addons_refuse_an_override_missing_an_addon" {
   command = plan
 
@@ -1486,11 +1523,33 @@ run "aws_addons_refuse_an_override_missing_an_addon" {
 
   variables {
     addon_versions = {
-      "kube-proxy" = "v1.36.0-eksbuild.45"
+      "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+      "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+      "kube-proxy"             = "v1.36.0-eksbuild.45"
+      "vpc-cni"                = "v1.23.2-eksbuild.1"
     }
   }
 
   expect_failures = [aws_eks_addon.this]
+}
+
+run "aws_addons_refuse_an_override_missing_vpc_cni" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    addon_versions = {
+      "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+      "coredns"                = "v1.14.7-eksbuild.11"
+      "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+      "kube-proxy"             = "v1.36.0-eksbuild.45"
+    }
+  }
+
+  expect_failures = [aws_eks_addon.vpc_cni]
 }
 
 run "aws_addons_refuse_a_version_that_is_not_an_eks_build" {

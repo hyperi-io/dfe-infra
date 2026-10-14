@@ -14,9 +14,10 @@ variable "provision" {
     error_message = "provision.account must be a 12-digit AWS account id."
   }
 
-  // The region is interpolated into the private zone's destroy-time local-exec
-  // (dns.tf), which runs under the destroying operator's own credentials, so it
-  // is shaped here rather than trusted.
+  // The region is interpolated into the destroy-time local-execs (dns.tf's
+  // private zone, eks.tf's CNI network interfaces), which run under the
+  // destroying operator's own credentials, so it is shaped here rather than
+  // trusted.
   validation {
     condition     = can(regex("^[a-z]{2}(-gov)?-[a-z]+-[0-9]$", var.provision.region))
     error_message = "provision.region must be an AWS region code such as us-west-2 or ap-southeast-2."
