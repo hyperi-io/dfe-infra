@@ -227,6 +227,38 @@ spec:
         volumeMounts:
         - mountPath: /etc/hyperdx/dashboards
           name: dashboards
+      - command:
+        - /bin/sh
+        - -c
+        - "set -eu\nif [ -z \"${NODE_EXTRA_CA_CERTS:-}\" ]; then\n  exit 0\nfi\nDEADLINE=$(( $(date +%s) + ${WAIT_TIMEOUT_SECONDS} ))\necho \"waiting for ${NODE_EXTRA_CA_CERTS}\"\nuntil [ -s \"${NODE_EXTRA_CA_CERTS}\" ]; do\n  if [ \"$(date +%s)\" -ge \"${DEADLINE}\" ]; then\n    echo \"no ClickHouse CA at ${NODE_EXTRA_CA_CERTS} after ${WAIT_TIMEOUT_SECONDS}s -- Secret dfe-clickhouse-ca has not reached this namespace\" >&2\n    exit 1\n  fi\n  sleep \"${WAIT_INTERVAL_SECONDS}\"\ndone\necho \"ClickHouse CA present\"\n"
+        env:
+        - name: WAIT_TIMEOUT_SECONDS
+          value: '600'
+        - name: WAIT_INTERVAL_SECONDS
+          value: '5'
+        envFrom:
+        - configMapRef:
+            name: dfe-hyperdx-env
+        image: registry.example.com/dfe/dfe-hyperdx:<pin:content.dfe-hyperdx>@<pin:digests.dfe-hyperdx>
+        imagePullPolicy: IfNotPresent
+        name: wait-for-clickhouse-ca
+        resources:
+          limits:
+            cpu: 100m
+            memory: 32Mi
+          requests:
+            cpu: 10m
+            memory: 16Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /etc/dfe/clickhouse-ca
+          name: clickhouse-ca
+          readOnly: true
       securityContext:
         fsGroup: 1000
         runAsGroup: 1000
