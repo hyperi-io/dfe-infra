@@ -123,13 +123,14 @@ Subcommands:
   failure-evidence
                READ-ONLY. Writes the nodes' conditions and allocatable, every
                pod, Service and Gateway, every namespace's Warning events, a
-               summary and the events of each pod stuck on an image pull, a
-               crash loop or its config, kube-system events, Certificates and
-               unready pods, the AWS load balancer controller's webhook CA
-               digests and logs, the events of nodes reporting
-               InvalidDiskCapacity, and the aws-node and CNI logs to one file
-               each, every capture bounded in time and bytes. A pod
-               summary leaves out env, args, command, volumes and annotations.
+               summary, the events and the container logs of each pod stuck on
+               an image pull, a crash loop, its config or an unfinished init
+               container, kube-system events, Certificates and unready pods,
+               the AWS load balancer controller's webhook CA digests and logs,
+               the events of nodes reporting InvalidDiskCapacity, and the
+               aws-node and CNI logs to one file each, every capture bounded in
+               time and bytes. A pod summary leaves out env, args, command,
+               volumes and annotations, and every log is redacted.
                The cycle runs it once when a stage fails, before the destroy.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived

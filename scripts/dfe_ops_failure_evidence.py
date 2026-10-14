@@ -26,11 +26,13 @@ evidence outlives the cluster. Each capture is one file under DIR:
   gateways-wide.txt          kubectl get gateways -A -o wide (Gateway API)
   kube-system-certificates.txt
                              the cert-manager Certificates in kube-system, ready or not
-  kube-system-not-ready.txt  a summary and the events of each kube-system pod not Running and Ready
-  stuck-pods/<namespace>.txt a summary and the events of each pod in that namespace with a
-                             container waiting on ImagePullBackOff, ErrImagePull,
-                             CrashLoopBackOff or CreateContainerConfigError; the events carry
-                             the kubelet's own pull or config error
+  kube-system-not-ready.txt  a summary, the events and the container logs of each kube-system pod
+                             not Running and Ready
+  stuck-pods/<namespace>.txt a summary, the events and the container logs of each pod in that
+                             namespace with a container waiting on ImagePullBackOff,
+                             ErrImagePull, CrashLoopBackOff or CreateContainerConfigError, or
+                             with an init container not yet finished (Init:N/M); the events
+                             carry the kubelet's own pull or config error
   node-events/<node>.txt     the events of each node whose kubelet reported InvalidDiskCapacity
   aws-load-balancer-controller/webhook-ca.txt
                              each of the controller's webhook configurations: its CA injection
@@ -51,6 +53,18 @@ image, state, restart count and last termination. A container's env, envFrom,
 args and command, the pod's volumes and annotations are never read, which is why
 no capture runs `kubectl describe`: it prints each container's literal env values,
 and the output is uploaded as a CI artefact.
+
+A pod report also carries container logs, since the state and events name a crash but not
+its cause. Per container it reads the previous run of one that restarted or sits in
+CrashLoopBackOff, the current run of an init container that is running or failed, and the
+current run of a main container that is running but not ready. A container that never
+started gets one line saying so.
+
+Logs are free text, so every container log, pod summary and events text passes through
+`redact` before it is written: credential-named values, URL userinfo, bearer tokens, private
+key blocks and common provider token shapes become `***REDACTED***`. A container read keeps
+its newest POD_LOG_TAIL lines within POD_LOG_BYTES, and all pod logs of a run stop at
+POD_LOG_TOTAL bytes.
 
 Every capture is bounded in time and bytes, and the run as a whole in time. One
 that fails is recorded in index.txt and the rest still run. It reads and never
@@ -84,6 +98,12 @@ MAX_DISK_NODES = 20
 MAX_UNREADY = 40  # unready kube-system pods summarised
 MAX_STUCK = 40  # stuck pods summarised across every namespace together
 MAX_CONTROLLER_PODS = 4  # load balancer controller pods whose logs are read
+POD_LOG_TAIL = 200  # newest lines read from one container of a stuck or unready pod
+POD_LOG_BYTES = 64 * 1024  # newest bytes kept from one such read
+POD_LOG_TOTAL = 8 * 1024 * 1024  # bytes all such reads of a run may keep together
+POD_LOG_TIMEOUT = 15.0  # seconds one such read may take; a pod on a dead node answers nothing
+# Share of the budget the pod log reads leave for the captures that run after them.
+POD_LOG_KEEP = 0.3
 CHUNK = 65536
 POLL = 0.1
 JOIN_TIMEOUT = 5.0
@@ -116,6 +136,106 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 def safe_name(text: str) -> str:
     """A path segment from a pod, node or stage name."""
     return _UNSAFE.sub("_", text) or "_"
+
+
+# --- redaction of free text ------------------------------------------------------------
+# Stdlib only, as dfe-ops carries no third-party dependency. The key names follow scalo's
+# SensitiveDataFilter and the token shapes its secrets scrubber.
+
+MASK = "***REDACTED***"
+# A key may carry a prefix (CLIENT_SECRET, x-auth-token, accessToken) but must end on the
+# name, so `token_count` stays readable. A bare `auth` must stand alone.
+_KEY = (
+    r"(?:pass(?:word|wd|phrase)|pwd|secret|token|api[_-]?key|access[_-]?key|"
+    r"(?:signing|encryption|master|ssh|tls|hmac|session)[_-]?key|private[_-]?key|"
+    r"authorization|credentials?|cookie|bearer|(?<![A-Za-z0-9])auth)"
+)
+# After the key: `=`, `:`, `:=` or `=>`, then a value that is quoted (plain or JSON-escaped),
+# a quote left open to the end of the line, or a run up to the next separator.
+_ASSIGNMENT = re.compile(
+    rf"""({_KEY}(?:\\?["'])?[ \t]*(?:=>|:=|[:=])[ \t]*)"""
+    r"""(\\"[^"\\\n]*\\"|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|["'][^\n]*|[^\s,;"'}\]\\]+)""",
+    re.IGNORECASE,
+)
+# A line with none of these cannot hold a key above, so the per-key patterns skip it.
+_KEY_HINTS = ("pass", "pwd", "secret", "token", "key", "credential", "auth", "cookie", "bearer")
+# A header's value runs to the end of the line: `Authorization: Token abc` is two words.
+_HEADER = re.compile(
+    r"""((?:proxy-)?authorization|(?:set-)?cookie)("?[ \t]*[:=][ \t]*)(?!["'\\])[^\n]+""",
+    re.IGNORECASE,
+)
+# The lookahead needs a digit or token punctuation, so prose such as "bearer authentication" stays.
+_BEARER = re.compile(
+    r"\bbearer[ \t]+(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE
+)
+# scheme://user:password@host and scheme://token@host
+_USERINFO = re.compile(r"(://)([^\s/@:]*:)?([^\s/]+)@")
+_SHAPES = re.compile(
+    "|".join(
+        [
+            r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",  # AWS access key id
+            r"\bgh[opsur]_[0-9A-Za-z]{36,}",  # GitHub
+            r"\bgithub_pat_[0-9A-Za-z_]{40,}",
+            r"\bglpat-[0-9A-Za-z_-]{20,}",  # GitLab
+            r"\bxox[abprs]-[0-9A-Za-z-]{10,}",  # Slack
+            r"\bsk-[0-9A-Za-z_-]{20,}",  # OpenAI, Anthropic
+            r"\b[rsp]k_(?:live|test)_[0-9A-Za-z]{24,}",  # Stripe
+            r"\bnpm_[0-9A-Za-z]{36}\b",
+            r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*",  # a JWT
+        ]
+    )
+)
+# A tail read can cut a block, leaving an END with no BEGIN or the reverse, and the body goes.
+_PEM = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL
+)
+_PEM_ORPHAN_END = re.compile(r"\A.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)
+# A flag with its value as the next word: `--password hunter2`.
+_FLAG = re.compile(rf"(?<!\S)(--[A-Za-z0-9-]*{_KEY}[ \t]+)(?!-)\S+", re.IGNORECASE)
+
+
+def redact(text: str) -> str:
+    """`text` with every credential-shaped value replaced by `***REDACTED***`.
+
+    Masks a value whose key names a credential (`password=x`, `"token": "x"`, the escaped
+    `\\"token\\":\\"x\\"` of a JSON string inside a log line), a header's whole value, the
+    userinfo of a URL, a bearer token, a PEM private key block and the common provider token
+    shapes. A secret printed bare, with no key or recognised shape, is not found.
+
+    Args:
+        text: Free text such as a container log.
+
+    Returns:
+        The same text, line structure intact, with each match masked.
+    """
+    text = _PEM.sub(MASK, text)
+    text = _PEM_ORPHAN_END.sub(MASK, text, count=1)
+    text = _USERINFO.sub(lambda m: f"{m[1]}{m[2] or ''}{MASK}@", text)
+    text = _SHAPES.sub(MASK, text)
+    text = _BEARER.sub(f"bearer {MASK}", text)
+    lines = text.split("\n")
+    for number, line in enumerate(lines):
+        lowered = line.lower()
+        if not any(hint in lowered for hint in _KEY_HINTS):
+            continue
+        line = _HEADER.sub(lambda m: f"{m[1]}{m[2]}{MASK}", line)
+        line = _FLAG.sub(lambda m: f"{m[1]}{MASK}", line)
+        lines[number] = _ASSIGNMENT.sub(_mask_value, line)
+    return "\n".join(lines)
+
+
+def _mask_value(match: re.Match[str]) -> str:
+    """The key and separator of an assignment with its value masked, a closed quote kept."""
+    key, value = match[1], match[2]
+    for quote in ('\\"', '"', "'"):
+        if len(value) >= 2 * len(quote) and value.startswith(quote) and value.endswith(quote):
+            return f"{key}{quote}{MASK}{quote}"
+    return f"{key}{MASK}"
+
+
+def redact_bytes(data: bytes) -> bytes:
+    """`redact` over output read as UTF-8, bytes that are not valid UTF-8 replaced."""
+    return redact(data.decode("utf-8", errors="replace")).encode("utf-8")
 
 
 # --- one bounded command -----------------------------------------------------------
@@ -350,8 +470,29 @@ def _identity(pod: dict) -> tuple[str, str]:
     return meta.get("namespace") or "", meta.get("name") or ""
 
 
+def _sidecars(pod: dict) -> set[str]:
+    """Init containers declared `restartPolicy: Always`: they run for the life of the pod."""
+    declared = (pod.get("spec") or {}).get("initContainers") or []
+    return {c["name"] for c in declared if c.get("name") and c.get("restartPolicy") == "Always"}
+
+
+def init_unfinished(pod: dict) -> bool:
+    """True while an init container has not exited 0: the pod shows Init:N/M.
+
+    A sidecar init container never exits, so it counts as finished once it has started.
+    """
+    sidecars = _sidecars(pod)
+    for container in (pod.get("status") or {}).get("initContainerStatuses") or []:
+        if container.get("name") in sidecars and container.get("started"):
+            continue
+        finished = (container.get("state") or {}).get("terminated") or {}
+        if finished.get("exitCode") != 0:
+            return True
+    return False
+
+
 def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
-    """(namespace, name) of every pod with an init or main container waiting on a stuck reason."""
+    """(namespace, name) of every pod with a stuck-reason wait or an init container unfinished."""
     found = []
     for pod in pods:
         meta, status = pod.get("metadata") or {}, pod.get("status") or {}
@@ -360,9 +501,58 @@ def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
             *(status.get("containerStatuses") or []),
         ]
         reasons = {((c.get("state") or {}).get("waiting") or {}).get("reason") for c in containers}
-        if reasons & STUCK_REASONS and meta.get("namespace") and meta.get("name"):
+        stuck = bool(reasons & STUCK_REASONS) or init_unfinished(pod)
+        if stuck and meta.get("namespace") and meta.get("name"):
             found.append((meta["namespace"], meta["name"]))
     return sorted(found)
+
+
+@dataclass(frozen=True, slots=True)
+class LogPlan:
+    """One container log a pod report asks for: which container, which run, or why none exists."""
+
+    container: str
+    init: bool
+    previous: bool = False
+    # Why there is nothing to read; empty when a read is worth making.
+    absent: str = ""
+
+
+def log_plans(pod: dict) -> list[LogPlan]:
+    """The container logs worth reading for a pod, read off the pod JSON alone.
+
+    An init container is read while it runs or after it fails, a main container or sidecar
+    only while it runs and is not ready, and any container that restarted or sits in
+    CrashLoopBackOff has its previous run read as well. A container that never started has
+    nothing to read, and one that is running and ready or finished cleanly is left out.
+    """
+    status = pod.get("status") or {}
+    sidecars = _sidecars(pod)
+    plans: list[LogPlan] = []
+    for init, key in ((True, "initContainerStatuses"), (False, "containerStatuses")):
+        for seen in status.get(key) or []:
+            name = seen.get("name")
+            if not name:
+                continue
+            state = seen.get("state") or {}
+            waiting = state.get("waiting") or {}
+            ended = state.get("terminated")
+            failed = ended is not None and ended.get("exitCode") != 0
+            lasting = not init or name in sidecars
+            live = "running" in state and (not seen.get("ready") if lasting else True)
+            restarted = int(seen.get("restartCount") or 0) > 0
+            crashed = bool((seen.get("lastState") or {}).get("terminated"))
+            crashing = waiting.get("reason") == "CrashLoopBackOff"
+            if live or failed:
+                plans.append(LogPlan(name, init))
+            if restarted or crashed or crashing:
+                plans.append(LogPlan(name, init, previous=True))
+            elif "waiting" in state or not state:
+                why = "no state reported" if not state else "waiting"
+                if waiting.get("reason"):
+                    why = f"waiting, reason {waiting['reason']}"
+                plans.append(LogPlan(name, init, absent=f"it has not started ({why})"))
+    return plans
 
 
 # --- a pod summary that cannot carry an env value ------------------------------------
@@ -442,13 +632,24 @@ class Evidence:
     runs: int = 0
     answered: int = 0
     files: set[str] = field(default_factory=set)
+    # Bytes the pod log reads of this run may still keep.
+    pod_log_left: int = POD_LOG_TOTAL
 
-    def _kubectl(self, args: list[str], *, limit: int, tail: bool) -> Outcome | None:
-        left = self.deadline - time.monotonic()
+    def _kubectl(
+        self,
+        args: list[str],
+        *,
+        limit: int,
+        tail: bool,
+        timeout: float = CAPTURE_TIMEOUT,
+        keep: float = 0.0,
+    ) -> Outcome | None:
+        """Run kubectl, or None when no more than `keep` seconds of the budget are left."""
+        left = self.deadline - time.monotonic() - keep
         if left <= 0:
             return None
         argv = ["kubectl", *self.prefix, *args]
-        return run_bounded(argv, timeout=min(CAPTURE_TIMEOUT, left), limit=limit, tail=tail)
+        return run_bounded(argv, timeout=min(timeout, left), limit=limit, tail=tail)
 
     def note(self, name: str, how: str, args: Iterable[str] = ()) -> None:
         """One index entry: where a capture went, how it ended and the command behind it."""
@@ -463,12 +664,17 @@ class Evidence:
         path.write_bytes(data)
         self.files.add(name)
 
-    def capture(self, name: str, args: list[str], *, tail: bool = False) -> Outcome | None:
-        """`kubectl <args>` into the file `name`; what it kept is written even when it failed."""
+    def capture(
+        self, name: str, args: list[str], *, tail: bool = False, log: bool = False
+    ) -> Outcome | None:
+        """`kubectl <args>` into the file `name`; what it kept is written even when it failed.
+
+        A `log` capture is free text, so it is redacted before it is written.
+        """
         outcome = self._kubectl(args, limit=TEXT_BYTES, tail=tail)
         self.runs += 1
         if outcome and outcome.output:
-            self.write(name, outcome.output)
+            self.write(name, redact_bytes(outcome.output) if log else outcome.output)
         if outcome and outcome.ok:
             self.answered += 1
         self.note(name, verdict(outcome, self.budget), args)
@@ -494,12 +700,67 @@ class Evidence:
         self.note(name, how, full)
         return items
 
-    def pod_report(self, name: str, namespace: str, pods: list[dict]) -> None:
-        """The file `name`: each pod's summary from the pod list, then that pod's events.
+    def pod_logs(self, name: str, namespace: str, pod: dict) -> str:
+        """The logs `log_plans` picks for one pod, as report text with every log redacted.
 
-        An events call that fails is recorded in the file and the index, and the summary stays.
+        A read that fails, or that has no instance to read, is one plain line and nothing more.
         """
-        self.note(name, f"{len(pods)} pod(s) summarised from the pod list, each with its events")
+        pod_name = (pod.get("metadata") or {}).get("name") or ""
+        plans = log_plans(pod)
+        if not plans:
+            return "  logs: no container is running, restarted or failed, so there are none\n"
+        sections: list[str] = []
+        for plan in plans:
+            kind = "init container" if plan.init else "container"
+            run = "previous run" if plan.previous else "current run"
+            title = f"  logs of {kind} {plan.container}, {run}"
+            if plan.absent:
+                sections.append(f"{title}: none, {plan.absent}\n")
+                continue
+            args = ["-n", namespace, "logs", pod_name, "-c", plan.container]
+            args += [f"--tail={POD_LOG_TAIL}", "--timestamps"]
+            if plan.previous:
+                args.append("--previous")
+            limit = min(POD_LOG_BYTES, self.pod_log_left)
+            outcome = None
+            if limit <= 0:
+                how = f"not read: the {POD_LOG_TOTAL} byte limit on pod logs was reached"
+            else:
+                outcome = self._kubectl(
+                    args,
+                    limit=limit,
+                    tail=True,
+                    timeout=POD_LOG_TIMEOUT,
+                    keep=self.budget * POD_LOG_KEEP,
+                )
+                self.runs += 1
+                how = "not run: the time left is kept for the other captures"
+                if outcome is not None:
+                    how = verdict(outcome, self.budget)
+            text = ""
+            if outcome:
+                if outcome.ok:
+                    self.answered += 1
+                self.pod_log_left -= len(outcome.output)
+                text = redact_bytes(outcome.output).decode("utf-8")
+                if not text and outcome.ok:
+                    how = f"{how}, it printed nothing"
+                elif text and not text.endswith("\n"):
+                    text += "\n"
+            self.note(f"{name}, {kind} {plan.container} {run} of {pod_name}", how, args)
+            sections.append(f"{title}: {how}\n{text}")
+        return "".join(sections)
+
+    def pod_report(self, name: str, namespace: str, pods: list[dict]) -> None:
+        """The file `name`: each pod's summary from the pod list, its events, then its logs.
+
+        An events or log call that fails is recorded in the file and the index, and the
+        summary stays. The summary and events are redacted too, as a termination message or
+        a failed probe's output is container text.
+        """
+        self.note(
+            name, f"{len(pods)} pod(s) summarised from the pod list, each with its events and logs"
+        )
         sections: list[str] = []
         for pod in pods:
             pod_name = (pod.get("metadata") or {}).get("name") or ""
@@ -513,9 +774,8 @@ class Evidence:
             how = verdict(outcome, self.budget)
             self.note(f"{name}, events of {pod_name}", how, args)
             events = outcome.output.decode("utf-8", errors="replace") if outcome else ""
-            sections.append(
-                "\n".join(pod_summary_lines(namespace, pod)) + f"\n  events: {how}\n{events}\n"
-            )
+            summary = "\n".join(pod_summary_lines(namespace, pod)) + f"\n  events: {how}\n{events}"
+            sections.append(redact(summary) + "\n" + self.pod_logs(name, namespace, pod))
         self.write(name, "\n".join(sections).encode("utf-8"))
 
 
@@ -527,9 +787,9 @@ def _capture_logs(evidence: Evidence, directory: str, targets: list[dict]) -> No
         for container, restarts in containers_of(pod):
             stem = f"{directory}/{safe_name(name)}.{safe_name(container)}"
             logs = ["-n", "kube-system", "logs", name, "-c", container, *bounds]
-            evidence.capture(f"{stem}.log", logs)
+            evidence.capture(f"{stem}.log", logs, log=True)
             if restarts:
-                evidence.capture(f"{stem}.previous.log", [*logs, "--previous"])
+                evidence.capture(f"{stem}.previous.log", [*logs, "--previous"], log=True)
 
 
 def _capture_load_balancer_controller(evidence: Evidence, pods: list[dict] | None) -> None:
@@ -564,11 +824,11 @@ def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
         for log in CNI_LOGS:
             target = f"aws-node/{safe_name(node)}.{log}"
             kubelet = f"/api/v1/nodes/{node}/proxy/logs/aws-routed-eni/{log}"
-            served = evidence.capture(target, ["get", "--raw", kubelet], tail=True)
+            served = evidence.capture(target, ["get", "--raw", kubelet], tail=True, log=True)
             if served is None or served.ok:
                 continue
             inside = ["exec", name, "-c", CNI_CONTAINER, "--", "cat", f"{CNI_LOG_MOUNT}/{log}"]
-            evidence.capture(target, ["-n", "kube-system", *inside], tail=True)
+            evidence.capture(target, ["-n", "kube-system", *inside], tail=True, log=True)
 
 
 def _capture_stuck(evidence: Evidence) -> None:
@@ -583,7 +843,9 @@ def _capture_stuck(evidence: Evidence) -> None:
     stuck = stuck_pods(pods)
     if not stuck:
         waits = ", ".join(sorted(STUCK_REASONS))
-        evidence.note("stuck-pods/", f"not run: no container is waiting on {waits}")
+        evidence.note(
+            "stuck-pods/", f"not run: no container is waiting on {waits}, and no init is unfinished"
+        )
         return
     if len(stuck) > MAX_STUCK:
         summarised = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are summarised"
@@ -689,21 +951,25 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
     fe = sub.add_parser(
         "failure-evidence",
         help="READ-ONLY: write node conditions, every pod, Services and Gateways, Warning events, "
-        "stuck pods, kube-system events and unready pods, the load balancer controller's webhook "
-        "CA digests and logs, and the aws-node and CNI logs to files, for after a cycle stage "
-        "fails and before the destroy",
+        "stuck pods and unready pods with their container logs, kube-system events, the load "
+        "balancer controller's webhook CA digests and logs, and the aws-node and CNI logs to "
+        "files, for after a cycle stage fails and before the destroy",
         description="Reads the cluster and writes one file per capture under --out: nodes -o "
         "wide, each node's conditions and allocatable, pods -A -o wide, every namespace's "
         "Warning events oldest first, kube-system events oldest first, services and Gateways -A "
-        "-o wide, the cert-manager Certificates in kube-system, a summary and the events "
-        "of each kube-system pod not Running and Ready, a summary and the events of each pod in "
+        "-o wide, the cert-manager Certificates in kube-system, a summary, the events and the "
+        "container logs of each kube-system pod not Running and Ready, the same for each pod in "
         "any namespace with a container waiting on ImagePullBackOff, ErrImagePull, "
-        "CrashLoopBackOff or CreateContainerConfigError, the AWS Load Balancer Controller's "
+        "CrashLoopBackOff or CreateContainerConfigError or an init container not yet finished "
+        "(the previous run of a restarted container, a running or failed init container, a "
+        "running container that is not ready), the AWS Load Balancer Controller's "
         "webhook configurations with each caBundle as a digest and its containers' newest log "
         "lines, the events of each node reporting "
         "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "
         "and plugin logs. A pod summary leaves out every container's env, args and command, the "
-        "pod's volumes and its annotations. Every capture is bounded in time and bytes, one that "
+        "pod's volumes and its annotations. Every log is redacted before it is written: values "
+        "under credential-named keys, URL userinfo, bearer tokens, private key blocks and common "
+        "token shapes become ***REDACTED***. Every capture is bounded in time and bytes, one that "
         "fails is recorded in index.txt and the rest still run, and nothing reads a Secret. "
         "Writes nothing to the cluster; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

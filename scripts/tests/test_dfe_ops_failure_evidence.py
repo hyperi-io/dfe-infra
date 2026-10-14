@@ -160,8 +160,19 @@ DISK_EVENTS = [
 ]
 
 
-def _waiting_pod(namespace: str, name: str, *, reason: str = "", init_reason: str = "") -> dict:
-    """A pod whose init container and main container wait on the reasons given, or run."""
+def _waiting_pod(
+    namespace: str,
+    name: str,
+    *,
+    reason: str = "",
+    init_reason: str = "",
+    init_running: bool = False,
+) -> dict:
+    """A pod whose init and main containers wait on the reasons given.
+
+    With no `init_reason` the init container has finished, or is still running (Init:0/1)
+    when `init_running` is set. A main container with no `reason` runs, not ready.
+    """
 
     def status(container: str, waiting: str) -> dict:
         state = (
@@ -171,6 +182,11 @@ def _waiting_pod(namespace: str, name: str, *, reason: str = "", init_reason: st
         )
         return {"name": container, "ready": False, "restartCount": 0, "state": state}
 
+    init = status("copyutil", init_reason)
+    if not init_reason and not init_running:
+        init["ready"] = True
+        init["state"] = {"terminated": {"reason": "Completed", "exitCode": 0}}
+    pending = reason or init_reason or init_running
     return {
         "metadata": {"name": name, "namespace": namespace},
         "spec": {
@@ -178,8 +194,8 @@ def _waiting_pod(namespace: str, name: str, *, reason: str = "", init_reason: st
             "containers": [{"name": "main", "image": "registry.example/main:1"}],
         },
         "status": {
-            "phase": "Pending" if reason or init_reason else "Running",
-            "initContainerStatuses": [status("copyutil", init_reason)],
+            "phase": "Pending" if pending else "Running",
+            "initContainerStatuses": [init],
             "containerStatuses": [status("main", reason)],
         },
     }
@@ -193,6 +209,7 @@ ALL_PODS = [
     _waiting_pod("monitoring", "collector-1", reason="ErrImagePull"),
     _waiting_pod("dfe", "dfe-ui-1", reason="ContainerCreating"),
     _waiting_pod("dfe", "dfe-receiver-1"),
+    _waiting_pod("dfe", "dfe-archiver-1", reason="PodInitializing", init_running=True),
 ]
 
 
@@ -257,7 +274,11 @@ def _run(
     def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
         assert argv[0] == "kubectl"
         assert 0 < timeout <= fe.CAPTURE_TIMEOUT
-        assert limit in (fe.TEXT_BYTES, fe.JSON_BYTES)
+        if f"--tail={fe.POD_LOG_TAIL}" in argv:
+            assert tail is True
+            assert 0 < limit <= fe.POD_LOG_BYTES
+        else:
+            assert limit in (fe.TEXT_BYTES, fe.JSON_BYTES)
         calls.append(argv[1:])
         joined = " ".join(argv[1:])
         if any(f in joined for f in fail):
@@ -305,14 +326,47 @@ def test_disk_capacity_nodes_are_named_once() -> None:
     assert fe.disk_capacity_nodes(DISK_EVENTS) == ["node-a"]
 
 
-def test_stuck_pods_are_found_by_an_init_or_main_container_waiting_reason() -> None:
+def test_stuck_pods_are_an_init_or_main_container_waiting_reason_or_an_unfinished_init() -> None:
     assert fe.stuck_pods(ALL_PODS) == [
         ("argocd", "argocd-dex-server-1"),
         ("argocd", "argocd-server-1"),
+        ("dfe", "dfe-archiver-1"),
         ("dfe", "dfe-engine-1"),
         ("dfe", "dfe-loader-1"),
         ("monitoring", "collector-1"),
     ]
+
+
+def test_an_init_container_that_exited_zero_is_finished_and_any_other_state_is_not() -> None:
+    def pod(*states: dict) -> dict:
+        seen = [{"name": f"i{n}", "state": s} for n, s in enumerate(states)]
+        return {"status": {"initContainerStatuses": seen}}
+
+    done = {"terminated": {"exitCode": 0}}
+    assert not fe.init_unfinished({})
+    assert not fe.init_unfinished(pod(done, done))
+    assert fe.init_unfinished(pod(done, {"running": {}}))
+    assert fe.init_unfinished(pod({"terminated": {"exitCode": 1}}))
+    assert fe.init_unfinished(pod({"waiting": {"reason": "PodInitializing"}}))
+    assert fe.init_unfinished(pod({}))
+
+
+def test_a_started_sidecar_init_container_does_not_make_a_pod_stuck() -> None:
+    mesh = _pod(
+        "dfe",
+        "meshed-1",
+        init=[_container("proxy", state=RUNNING, ready=True), _container("setup", state=EXITED_ZERO)],
+        main=[_container("app", state=RUNNING, ready=True)],
+    )
+    mesh["spec"]["initContainers"][0]["restartPolicy"] = "Always"
+    mesh["status"]["initContainerStatuses"][0]["started"] = True
+    assert not fe.init_unfinished(mesh)
+    assert fe.stuck_pods([mesh]) == []
+    assert fe.log_plans(mesh) == []
+    mesh["status"]["initContainerStatuses"][0]["ready"] = False
+    assert fe.log_plans(mesh) == [fe.LogPlan("proxy", init=True)]
+    mesh["status"]["initContainerStatuses"][0]["started"] = False
+    assert fe.init_unfinished(mesh)
 
 
 def test_a_name_becomes_one_safe_path_segment() -> None:
@@ -441,14 +495,15 @@ def test_every_capture_the_brief_names_is_issued(monkeypatch: pytest.MonkeyPatch
             assert f"get --raw /api/v1/nodes/{node}/proxy/logs/aws-routed-eni/{log}" in issued
 
 
-def test_only_a_restarted_container_has_its_previous_run_read(
+def test_only_a_restarted_or_crashlooping_container_has_its_previous_run_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, _out = _run(monkeypatch, tmp_path)
     previous = sorted(" ".join(c) for c in calls if "--previous" in c)
-    assert len(previous) == 2
-    assert previous[0].startswith("-n kube-system logs aws-node-a1 -c aws-node ")
-    assert previous[1].startswith("-n kube-system logs lbc-a -c aws-load-balancer-controller ")
+    assert len(previous) == 3
+    assert previous[0].startswith("-n dfe logs dfe-loader-1 -c main ")
+    assert previous[1].startswith("-n kube-system logs aws-node-a1 -c aws-node ")
+    assert previous[2].startswith("-n kube-system logs lbc-a -c aws-load-balancer-controller ")
 
 
 def test_the_container_is_asked_for_a_cni_log_only_when_the_kubelet_did_not_serve_it(
@@ -487,7 +542,8 @@ def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tm
     index = (out / fe.INDEX).read_text(encoding="utf-8")
     assert "nodes-wide.txt: ok\n    kubectl get nodes -o wide\n" in index
     assert (
-        "stuck-pods/argocd.txt: 2 pod(s) summarised from the pod list, each with its events\n"
+        "stuck-pods/argocd.txt: 2 pod(s) summarised from the pod list, each with its events"
+        " and logs\n"
         "stuck-pods/argocd.txt, events of argocd-dex-server-1: ok\n"
         f"    kubectl {_pod_events('argocd', 'argocd-dex-server-1')}\n"
     ) in index
@@ -724,6 +780,448 @@ def test_a_spent_budget_still_writes_the_summary_and_runs_no_events_call(
     assert "  events: not run: the 300s budget was spent\n" in report
 
 
+# --- redaction of free text -----------------------------------------------------------
+
+# Built from parts so no literal here looks like a credential to a secret scanner.
+FAKE = "hunter2-FAKE-" + "not-a-credential"
+AWS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
+GITHUB_TOKEN = "ghp_" + "a1B2" * 9
+JWT = "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "abc-DEF_123"
+PEM_BEGIN = "-----BEGIN " + "RSA PRIVATE KEY-----"
+PEM_END = "-----END " + "RSA PRIVATE KEY-----"
+
+# (log text, the part of it that must not survive)
+SECRET_LINES = [
+    (f"DB_PASSWORD={FAKE}", FAKE),
+    (f'{{"level":"error","password":"{FAKE}","msg":"x"}}', FAKE),
+    (f'{{"msg":"{{\\"token\\":\\"{FAKE}\\"}}"}}', FAKE),
+    (f'E1014 main.go:1] "msg"="boom" "client_secret"="{FAKE}" "other"="kept"', FAKE),
+    (f"connect to postgres://dfe:{FAKE}@db.example:5432/x failed", FAKE),
+    (f"fetch https://{FAKE}@git.example/x.git", FAKE),
+    (f"Authorization: Bearer {FAKE}", FAKE),
+    (f"authorization: Token {FAKE} trailing words", FAKE),
+    (f"Cookie: sid={FAKE}; other=1", FAKE),
+    (f"curl --password {FAKE} --user bob", FAKE),
+    (f"AWS_SECRET_ACCESS_KEY={FAKE}", FAKE),
+    (f"accessToken: {FAKE}", FAKE),
+    (f"password='{FAKE}' rest", FAKE),
+    (f'password="open quote {FAKE}', FAKE),
+    (f"token => {FAKE}", FAKE),
+    (f'"auth": "{FAKE}"', FAKE),
+    (f"key {AWS_KEY_ID} leaked", AWS_KEY_ID),
+    (f"gh {GITHUB_TOKEN} leaked", GITHUB_TOKEN),
+    (f"jwt {JWT} end", JWT),
+    (f"{PEM_BEGIN}\n{FAKE}\nMORE\n{PEM_END}\nafter", FAKE),
+    (f"{FAKE}\nBODY\n{PEM_END}\nafter", FAKE),
+    (f"before\n{PEM_BEGIN}\n{FAKE}\n", FAKE),
+]
+
+
+@pytest.mark.parametrize(("text", "planted"), SECRET_LINES)
+def test_redact_masks_each_credential_shape(text: str, planted: str) -> None:
+    redacted = fe.redact(text)
+    assert planted not in redacted
+    assert fe.MASK in redacted
+
+
+def test_redact_keeps_the_line_structure_and_the_text_around_a_credential() -> None:
+    assert fe.redact(f"before\npassword={FAKE} rest\nafter\n") == (
+        f"before\npassword={fe.MASK} rest\nafter\n"
+    )
+    assert fe.redact(f'{{"password":"{FAKE}","msg":"x"}}') == (
+        f'{{"password":"{fe.MASK}","msg":"x"}}'
+    )
+    assert fe.redact(f"{PEM_BEGIN}\n{FAKE}\n{PEM_END}\nafter") == f"{fe.MASK}\nafter"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "token_count=5 tokenizer: bert",
+        "restartCount=3 oauth: enabled",
+        "keys: 4 key_count=2 monkey=1",
+        'I1014 12:00:00.000 reconciler.go:12] "Starting" worker=3',
+        'Successfully pulled image "quay.io/jetstack/cert-manager-controller:v1.21.2"',
+        "https://github.com/hyperi-io/dfe-infra/pull/1",
+        "basic authentication required, bearer authentication too",
+    ],
+)
+def test_redact_leaves_ordinary_log_text_alone(text: str) -> None:
+    assert fe.redact(text) == text
+
+
+def test_redact_bytes_replaces_what_is_not_utf8_and_still_masks() -> None:
+    out = fe.redact_bytes(b"\xff password=" + FAKE.encode() + b"\n")
+    assert FAKE.encode() not in out
+    assert out.decode("utf-8").endswith(f"password={fe.MASK}\n")
+
+
+# --- the container logs of a stuck or unready pod -------------------------------------
+
+
+def _container(name: str, *, state: dict, ready: bool = False, restarts: int = 0, last=None) -> dict:
+    seen = {"name": name, "ready": ready, "restartCount": restarts, "state": state}
+    if last:
+        seen["lastState"] = {"terminated": last}
+    return seen
+
+
+def _pod(namespace: str, name: str, *, init: list[dict] = (), main: list[dict] = ()) -> dict:
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "initContainers": [{"name": c["name"], "image": "registry.example/i:1"} for c in init],
+            "containers": [{"name": c["name"], "image": "registry.example/m:1"} for c in main],
+        },
+        "status": {
+            "phase": "Pending",
+            "initContainerStatuses": list(init),
+            "containerStatuses": list(main),
+        },
+    }
+
+
+EXITED_ZERO = {"terminated": {"reason": "Completed", "exitCode": 0}}
+RUNNING = {"running": {}}
+CRASHED = {"reason": "Error", "exitCode": 1}
+# A controller in CrashLoopBackOff after 5 restarts, as a failed MSK cycle left it.
+CERT_MANAGER = _pod(
+    "cert-manager",
+    "cert-manager-58cbcbdbf4-tt6f5",
+    main=[
+        _container(
+            "cert-manager-controller",
+            state={"waiting": {"reason": "CrashLoopBackOff", "message": "back-off 2m40s"}},
+            restarts=5,
+            last=CRASHED,
+        )
+    ],
+)
+# Init:0/1 as a failed MSK cycle left it: the init container runs again after one crash.
+ARCHIVER = _pod(
+    "dfe-test",
+    "dfe-archiver-69ff4c69d9-9l7kk",
+    init=[_container("wait-for-kafka", state=RUNNING, restarts=1, last=CRASHED)],
+    main=[_container("dfe-archiver", state={"waiting": {"reason": "PodInitializing"}})],
+)
+# Init:0/2: the first init container cannot pull its image, so nothing has run.
+LOADER = _pod(
+    "dfe-test",
+    "dfe-loader-5ffb5569cd-2vjs4",
+    init=[
+        _container("copy-config", state={"waiting": {"reason": "ImagePullBackOff"}}),
+        _container("wait-db", state={"waiting": {"reason": "PodInitializing"}}),
+    ],
+    main=[_container("dfe-loader", state={"waiting": {"reason": "PodInitializing"}})],
+)
+STALLED_DNS = _pod(
+    "kube-system",
+    "coredns-2",
+    main=[
+        _container("coredns", state=RUNNING, ready=False),
+        _container("metrics", state=RUNNING, ready=True),
+    ],
+)
+STALLED_DNS["status"]["phase"] = "Running"
+
+
+def test_a_crashlooping_container_is_read_for_its_previous_run_only() -> None:
+    assert fe.log_plans(CERT_MANAGER) == [
+        fe.LogPlan("cert-manager-controller", init=False, previous=True)
+    ]
+
+
+def test_a_running_init_container_that_crashed_once_is_read_for_both_runs() -> None:
+    assert fe.log_plans(ARCHIVER) == [
+        fe.LogPlan("wait-for-kafka", init=True),
+        fe.LogPlan("wait-for-kafka", init=True, previous=True),
+        fe.LogPlan(
+            "dfe-archiver",
+            init=False,
+            absent="it has not started (waiting, reason PodInitializing)",
+        ),
+    ]
+
+
+def test_a_container_that_never_started_has_nothing_to_read() -> None:
+    plans = fe.log_plans(LOADER)
+    assert [p.container for p in plans] == ["copy-config", "wait-db", "dfe-loader"]
+    assert all(p.absent and not p.previous for p in plans)
+    assert plans[0].absent == "it has not started (waiting, reason ImagePullBackOff)"
+
+
+def test_a_running_main_container_is_read_only_while_it_is_not_ready() -> None:
+    assert fe.log_plans(STALLED_DNS) == [fe.LogPlan("coredns", init=False)]
+
+
+def test_a_finished_init_container_and_a_clean_exit_are_left_out_a_failed_one_is_read() -> None:
+    pod = _pod(
+        "dfe",
+        "job-1",
+        init=[
+            _container("done", state=EXITED_ZERO, ready=True),
+            _container("failed", state={"terminated": CRASHED}),
+        ],
+        main=[_container("main", state=EXITED_ZERO)],
+    )
+    assert fe.log_plans(pod) == [fe.LogPlan("failed", init=True)]
+    assert fe.log_plans({}) == []
+
+
+def _cluster(
+    *, everywhere: list[dict] | None = None, kube_system: list[dict] | None = None, logs=None
+):
+    """An `answer` for `_run`: the pod lists given, and `logs` as {text in the call: answer}."""
+    logs = logs or {}
+
+    def answer(args: list[str]) -> fe.Outcome:
+        joined = " ".join(args)
+        if joined == "get pods -A -o json" and everywhere is not None:
+            return _items(everywhere)
+        if joined == "-n kube-system get pods -o json" and kube_system is not None:
+            return _items(kube_system)
+        for needle, result in logs.items():
+            if needle in joined:
+                if isinstance(result, fe.Outcome):
+                    return result
+                return fe.Outcome(output=result.encode(), returncode=0)
+        return _answer(args)
+
+    return answer
+
+
+def _read(out: Path, name: str) -> str:
+    return (out / name).read_text(encoding="utf-8")
+
+
+def _log_calls(calls: list[list[str]]) -> list[str]:
+    return [" ".join(c) for c in calls if "logs" in c and f"--tail={fe.POD_LOG_TAIL}" in c]
+
+
+def test_a_crashlooping_pod_report_carries_the_crashed_runs_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    crash = '2026-10-14T15:36:00Z E1014 main.go:1] "msg"="boom: no matches for kind"\n'
+    answer = _cluster(
+        everywhere=[CERT_MANAGER],
+        logs={"cert-manager-controller --tail": crash},
+    )
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    pod = "cert-manager-58cbcbdbf4-tt6f5"
+    assert _log_calls(calls) == [
+        f"-n cert-manager logs {pod} -c cert-manager-controller --tail=200 --timestamps --previous"
+    ]
+    report = _read(out, "stuck-pods/cert-manager.txt")
+    assert f"  logs of container cert-manager-controller, previous run: ok\n{crash}" in report
+    assert report.index("  events: ok") < report.index("  logs of container")
+    assert (
+        f"stuck-pods/cert-manager.txt, container cert-manager-controller previous run of {pod}: ok\n"
+        f"    kubectl -n cert-manager logs {pod} -c cert-manager-controller "
+        "--tail=200 --timestamps --previous\n"
+    ) in _read(out, fe.INDEX)
+
+
+def test_a_pod_stuck_in_init_is_found_and_its_init_container_logs_are_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(
+        everywhere=[ARCHIVER],
+        logs={"-c wait-for-kafka --tail=200 --timestamps --previous": "crashed run\n",
+              "-c wait-for-kafka": "waiting for broker\n"},
+    )
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    pod = "dfe-archiver-69ff4c69d9-9l7kk"
+    assert _log_calls(calls) == [
+        f"-n dfe-test logs {pod} -c wait-for-kafka --tail=200 --timestamps",
+        f"-n dfe-test logs {pod} -c wait-for-kafka --tail=200 --timestamps --previous",
+    ]
+    report = _read(out, "stuck-pods/dfe-test.txt")
+    assert "  logs of init container wait-for-kafka, current run: ok\nwaiting for broker\n" in report
+    assert "  logs of init container wait-for-kafka, previous run: ok\ncrashed run\n" in report
+    assert (
+        "  logs of container dfe-archiver, current run: none, "
+        "it has not started (waiting, reason PodInitializing)\n"
+    ) in report
+
+
+def test_a_container_that_never_started_is_one_line_and_no_kubectl_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path, answer=_cluster(everywhere=[LOADER]))
+    assert _log_calls(calls) == []
+    report = _read(out, "stuck-pods/dfe-test.txt")
+    assert (
+        "  logs of init container copy-config, current run: none, "
+        "it has not started (waiting, reason ImagePullBackOff)\n"
+    ) in report
+    assert "pod dfe-test/dfe-loader-5ffb5569cd-2vjs4\n" in report
+
+
+def test_a_container_with_no_previous_instance_is_one_plain_line_and_the_rest_still_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gone = fe.Outcome(
+        returncode=1,
+        error='Error from server (BadRequest): previous terminated container '
+        '"cert-manager-controller" in pod "cert-manager-58cbcbdbf4-tt6f5" not found',
+    )
+    answer = _cluster(
+        everywhere=[CERT_MANAGER, ARCHIVER],
+        logs={"cert-manager-controller": gone, "-c wait-for-kafka": "waiting for broker\n"},
+    )
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert len(_log_calls(calls)) == 3
+    report = _read(out, "stuck-pods/cert-manager.txt")
+    assert (
+        "  logs of container cert-manager-controller, previous run: exit 1: Error from server "
+        '(BadRequest): previous terminated container "cert-manager-controller" in pod '
+        '"cert-manager-58cbcbdbf4-tt6f5" not found\n'
+    ) in report
+    assert "waiting for broker" in _read(out, "stuck-pods/dfe-test.txt")
+    assert "pod cert-manager/cert-manager-58cbcbdbf4-tt6f5\n" in report
+
+
+def test_a_failed_read_keeps_what_it_printed_and_names_the_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cut = fe.Outcome(output=b"first lines\n", returncode=1, error="unexpected EOF")
+    answer = _cluster(everywhere=[CERT_MANAGER], logs={"cert-manager-controller --tail": cut})
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    report = _read(out, "stuck-pods/cert-manager.txt")
+    assert "previous run: exit 1: unexpected EOF\nfirst lines\n" in report
+
+
+def test_a_running_unready_kube_system_container_has_its_current_logs_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(kube_system=[*PODS, STALLED_DNS], logs={"-c coredns": "plugin/ready: not ready\n"})
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert "-n kube-system logs coredns-2 -c coredns --tail=200 --timestamps" in _log_calls(calls)
+    assert not any("-c metrics" in line for line in _log_calls(calls))
+    unready = _read(out, "kube-system-not-ready.txt")
+    assert "  logs of container coredns, current run: ok\nplugin/ready: not ready\n" in unready
+
+
+def test_a_pod_with_no_container_status_says_there_is_nothing_to_read(tmp_path: Path) -> None:
+    evidence = fe.Evidence(tmp_path, [], 60.0, time.monotonic() + 60)
+    text = evidence.pod_logs("f.txt", "dfe", {"metadata": {"name": "unscheduled-1"}})
+    assert text == "  logs: no container is running, restarted or failed, so there are none\n"
+    assert evidence.runs == 0
+
+
+def test_pod_logs_are_redacted_before_they_are_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    leaky = (
+        f"2026-10-14T15:36:00Z DB_PASSWORD={FAKE}\n"
+        f'2026-10-14T15:36:01Z {{"client_secret":"{FAKE}","msg":"connect"}}\n'
+        f"2026-10-14T15:36:02Z dial postgres://dfe:{FAKE}@db.example/x\n"
+        f"2026-10-14T15:36:03Z using {GITHUB_TOKEN} and {JWT}\n"
+        f"2026-10-14T15:36:04Z Authorization: Bearer {FAKE}\n"
+        "2026-10-14T15:36:05Z connection refused to db.example:5432\n"
+    )
+    pod = json.loads(json.dumps(CERT_MANAGER))
+    last = pod["status"]["containerStatuses"][0]["lastState"]["terminated"]
+    last["message"] = f"fatal: postgres://dfe:{FAKE}@db.example/x"
+    answer = _cluster(everywhere=[pod], logs={"cert-manager-controller --tail": leaky})
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    report = _read(out, "stuck-pods/cert-manager.txt")
+    assert "connection refused to db.example:5432\n" in report
+    assert report.count(fe.MASK) >= 5
+    for path in out.rglob("*"):
+        if path.is_file():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for planted in (FAKE, GITHUB_TOKEN, JWT):
+                assert planted not in text, path
+
+
+def test_the_kube_system_container_and_cni_logs_are_redacted_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    answer = _cluster(
+        logs={
+            "logs aws-node-a1 -c aws-node ": f"level=error password={FAKE}\n",
+            "logs lbc-a -c aws-load-balancer-controller ": f'{{"token":"{FAKE}"}}\n',
+            "proxy/logs/aws-routed-eni/ipamd.log": f"api_key: {FAKE}\n",
+        }
+    )
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    files = [
+        "aws-node/aws-node-a1.aws-node.log",
+        "aws-node/aws-node-a1.aws-node.previous.log",
+        "aws-load-balancer-controller/lbc-a.aws-load-balancer-controller.log",
+        "aws-node/node-a.ipamd.log",
+    ]
+    for name in files:
+        text = _read(out, name)
+        assert FAKE not in text, name
+        assert fe.MASK in text, name
+    assert _read(out, "aws-node/node-b.plugin.log").startswith("output of get --raw")
+
+
+def test_pod_logs_stop_at_the_total_for_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    limits: list[int] = []
+
+    def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+        limits.append(limit)
+        data = b"x" * 100
+        return fe.Outcome(output=data[-limit:], returncode=0, truncated=len(data) > limit)
+
+    monkeypatch.setattr(fe, "run_bounded", fake)
+    pod = _pod("ns", "p", main=[_container(n, state=RUNNING) for n in ("a", "b", "c")])
+    evidence = fe.Evidence(tmp_path, [], 300.0, time.monotonic() + 300, pod_log_left=150)
+    text = evidence.pod_logs("f.txt", "ns", pod)
+    assert limits == [150, 50]
+    assert evidence.pod_log_left == 0
+    assert f"  logs of container c, current run: not read: the {fe.POD_LOG_TOTAL} byte limit" in text
+    assert "  logs of container b, current run: ok, truncated to 50 bytes\n" in text
+
+
+def test_pod_logs_leave_the_last_share_of_the_budget_to_the_other_captures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(fe, "run_bounded", lambda argv, **_kw: calls.append(argv))
+    pod = _pod("ns", "p", main=[_container("a", state=RUNNING)])
+    kept = 300.0 * fe.POD_LOG_KEEP
+    evidence = fe.Evidence(tmp_path, [], 300.0, time.monotonic() + kept - 1)
+    text = evidence.pod_logs("f.txt", "ns", pod)
+    assert calls == []
+    assert "  logs of container a, current run: not run: the time left is kept" in text
+
+
+def test_a_noisy_pod_is_cut_to_its_newest_bytes_and_redacted_end_to_end(tmp_path: Path) -> None:
+    prefix = "--kubeconfig /k/config"
+    noise = "".join(f"2026-10-14T15:36:00Z line {i:05d} {'x' * 80}\n" for i in range(5000))
+    noise += f"2026-10-14T15:36:01Z last line password={FAKE}\n"
+    fixture = {
+        "json": {
+            f"{prefix} get nodes -o json": [_node("node-a")],
+            f"{prefix} -n kube-system get pods -o json": [],
+            f"{prefix} get pods -A -o json": [CERT_MANAGER],
+        },
+        "log_text": noise,
+    }
+    done, out = _run_cli(tmp_path, fixture)
+    assert done.returncode == 0, done.stderr
+    assert len(noise) > 8 * fe.POD_LOG_BYTES
+    report = _read(out, "stuck-pods/cert-manager.txt")
+    assert len(report.encode("utf-8")) < fe.POD_LOG_BYTES + 8192
+    assert "last line password=" + fe.MASK in report
+    assert "line 04999" in report
+    assert "line 00000" not in report
+    pod = "cert-manager-58cbcbdbf4-tt6f5"
+    assert f"previous run of {pod}: ok, truncated to {fe.POD_LOG_BYTES}" in _read(out, fe.INDEX)
+    calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
+    read = f"-n cert-manager logs {pod} -c cert-manager-controller --tail=200 --timestamps"
+    assert f"{prefix} {read} --previous" in calls
+    for path in out.rglob("*"):
+        if path.is_file():
+            assert FAKE not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
 # --- the load balancer controller, its webhooks and the Services it programs ---------
 
 
@@ -878,6 +1376,9 @@ if joined in fixture.get("json", {}):
 if any(word in joined for word in fixture.get("broken", [])):
     print("Error from server (Forbidden): forbidden", file=sys.stderr)
     sys.exit(1)
+if "logs" in args and "log_text" in fixture:
+    sys.stdout.write(fixture["log_text"])
+    sys.exit(0)
 print("captured: " + joined)
 """
 
