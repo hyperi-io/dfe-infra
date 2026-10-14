@@ -240,6 +240,11 @@ USE_CASES = (
 # Which core requirement a shape entry reads when it is not its own name.
 BROKER_DEMAND = {"msk-broker": "kafka-broker"}
 
+# Instances tofu launches on demand (the toolbox, and the tunnel forwarder on its
+# shape): resolved for their type and root volume only, never a node pool, a
+# Karpenter pool, a cost row or compute-bucket vCPU.
+STANDALONE_USE_CASES = ("toolbox",)
+
 # Workloads that never become a FIXED-size EKS managed node group: msk-broker
 # because the vendor runs it and tofu asks for it by the vendor's own unit;
 # eks-system, general and ci-burst because they take Karpenter's dynamic
@@ -2407,7 +2412,32 @@ def merge_resolved(
     return ordered
 
 
-def build_tfvars(core: Core, choices: dict[str, Choice], dial: Dial) -> dict[str, object]:
+def _root_volume(choice: Choice) -> dict[str, object] | None:
+    """The type and size of a shape's root volume, or None for a shape with none."""
+    root = choice.volumes.get("root")
+    if not isinstance(root, dict) or not root.get("type") or not root.get("size_gib"):
+        return None
+    return {"type": str(root["type"]), "size_gib": int(root["size_gib"])}
+
+
+def _resolved_shape(choice: Choice) -> dict[str, object]:
+    """One resolved_shapes entry: the types best-first, the arch, and the root volume."""
+    shape: dict[str, object] = {
+        "instance_types": [choice.instance_type, *choice.fallbacks],
+        "arch": "arm64",
+    }
+    root_volume = _root_volume(choice)
+    if root_volume is not None:
+        shape["root_volume"] = root_volume
+    return shape
+
+
+def build_tfvars(
+    core: Core,
+    choices: dict[str, Choice],
+    dial: Dial,
+    standalone: dict[str, Choice] | None = None,
+) -> dict[str, object]:
     """The tofu inputs -- only the two keys the AWS root's variables.tf declares.
 
     node_pools and resolved_shapes are the sizing answer; every other variable is
@@ -2419,6 +2449,9 @@ def build_tfvars(core: Core, choices: dict[str, Choice], dial: Dial) -> dict[str
     on top. render_dial.py no longer emits node_pools at all, so there is
     exactly one place the two tfvars producers could otherwise collide on this
     variable, and this is it.
+
+    `standalone` holds the STANDALONE_USE_CASES choices, which join
+    resolved_shapes and never node_pools.
     """
     pools: dict[str, object] = dict(dial.node_pools)
     for use_case, choice in choices.items():
@@ -2437,15 +2470,10 @@ def build_tfvars(core: Core, choices: dict[str, Choice], dial: Dial) -> dict[str
             # pool below states the same taint as NoSchedule.
             "taints": _workload_taints(use_case, "NO_SCHEDULE"),
         }
+    shaped = {**choices, **(standalone or {})}
     return {
         "node_pools": pools,
-        "resolved_shapes": {
-            use_case: {
-                "instance_types": [choice.instance_type, *choice.fallbacks],
-                "arch": "arm64",
-            }
-            for use_case, choice in choices.items()
-        },
+        "resolved_shapes": {use_case: _resolved_shape(choice) for use_case, choice in shaped.items()},
     }
 
 
@@ -3212,6 +3240,61 @@ def build_report(
     return "\n".join(lines) + "\n"
 
 
+def _resolve_standalone(
+    cloud_entry: dict[str, object],
+    dial: Dial,
+    core: Core,
+    catalogue: Catalogue,
+    focus_generation: str,
+    notes: list[str],
+) -> dict[str, Choice]:
+    """Resolve each STANDALONE_USE_CASES entry against the cloud's API.
+
+    One instance each, off the shape's own floor size, with the deployer's
+    sizing.overrides applied. No cap assertion runs: the instance carries no
+    sized workload for a volume or instance ceiling to starve.
+
+    Args:
+        cloud_entry: The cloud's shapes.clouds.<cloud> map.
+        dial: The dial, for its overrides.
+        core: The sized core, for the root-volume demand and the override record.
+        catalogue: The cloud's answers.
+        focus_generation: The focus level's generation policy.
+        notes: Selection notes, appended to in place for the report.
+
+    Returns:
+        The chosen shape per use case; a use case the cloud names no EC2 source
+        for is noted and left out.
+
+    Raises:
+        ResolveError: The cloud has no entry for a standalone use case, or no
+            candidate meets its floor.
+    """
+    resolved: dict[str, Choice] = {}
+    for use_case in STANDALONE_USE_CASES:
+        entry = _at(cloud_entry, "use_cases", use_case)
+        if not isinstance(entry, dict):
+            raise ResolveError(f"{dial.cloud} has no {use_case} shape entry")
+        source = str(entry.get("source", ""))
+        if source != "ec2":
+            notes.append(f"{use_case} resolves against {source}, not an API this resolver reads")
+            continue
+        demand = Node(use_case, 1, 0, 0, 0, 0, 0, "one instance, launched on demand")
+        choice = select_shape(
+            use_case,
+            entry,
+            demand,
+            catalogue,
+            focus_generation,
+            notes,
+            core.root_volume_demand_mib_s,
+            core.root_volume_demand_iops,
+        )
+        _apply_shape_overrides(choice, dial.overrides, core, catalogue)
+        resolved[use_case] = choice
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # The two subcommands
 # ---------------------------------------------------------------------------
@@ -3232,6 +3315,7 @@ def run_resolve(args: argparse.Namespace) -> int:
 
     catalogue: Catalogue | None = None
     choices: dict[str, Choice] = {}
+    standalone: dict[str, Choice] = {}
     findings: list[Finding] = []
     notes: list[str] = []
 
@@ -3318,6 +3402,7 @@ def run_resolve(args: argparse.Namespace) -> int:
                     gp3_usd_per_gib_month=gp3_price,
                 )
             )
+        standalone = _resolve_standalone(cloud_entry, dial, core, catalogue, focus_generation, notes)
 
     core.notes.extend(notes)
 
@@ -3355,7 +3440,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         resolved_dir = out / "shapes" / "resolved"
         resolved_dir.mkdir(parents=True, exist_ok=True)
         resolved_path = resolved_dir / f"{dial.cloud}-{catalogue.region}.json"
-        merged = merge_resolved(resolved_path, choices, catalogue, dial.cloud)
+        merged = merge_resolved(resolved_path, {**choices, **standalone}, catalogue, dial.cloud)
         resolved_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         written.append(resolved_path)
 
@@ -3369,7 +3454,8 @@ def run_resolve(args: argparse.Namespace) -> int:
         # of which tier was resolved.
         tfvars_path = out / "sizing.auto.tfvars.json"
         tfvars_path.write_text(
-            json.dumps(build_tfvars(core, choices, dial), indent=2) + "\n", encoding="utf-8"
+            json.dumps(build_tfvars(core, choices, dial, standalone), indent=2) + "\n",
+            encoding="utf-8",
         )
         written.append(tfvars_path)
 

@@ -1062,7 +1062,48 @@ def test_the_node_pool_objects_carry_every_attribute_the_variable_type_demands(t
     for pool in doc["node_pools"].values():
         assert set(pool) == demanded
     for shape in doc["resolved_shapes"].values():
-        assert set(shape) == {"instance_types", "arch"}
+        assert {"instance_types", "arch"} <= set(shape) <= {"instance_types", "arch", "root_volume"}
+        assert set(shape.get("root_volume", {"type": "", "size_gib": 0})) == {"type", "size_gib"}
+
+
+def test_every_shape_with_a_root_volume_carries_its_type_and_size(tmp_path: Path) -> None:
+    """The toolbox and the forwarder size their root volume from this, never from a literal."""
+    shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
+    _run(_dial(tmp_path), tmp_path)
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    for use_case, shape in doc["resolved_shapes"].items():
+        root = shapes["clouds"]["aws"]["use_cases"][use_case]["volumes"].get("root")
+        if root is None:
+            assert "root_volume" not in shape, use_case
+            continue
+        assert shape["root_volume"] == {"type": root["type"], "size_gib": int(root["size_gib"])}, use_case
+
+
+def test_the_toolbox_resolves_into_resolved_shapes_and_nowhere_else(tmp_path: Path) -> None:
+    """An on-demand instance is a shape tofu reads, never a pool that stands up nodes."""
+    assert _run(_dial(tmp_path), tmp_path) == 0
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert doc["resolved_shapes"]["toolbox"]["instance_types"][0].startswith("t")
+    assert "toolbox" not in doc["node_pools"]
+    karpenter = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    assert "toolbox" not in karpenter
+    report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
+    assert "| toolbox |" not in report
+    resolved = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    assert resolved["toolbox"]["instance_types"] == doc["resolved_shapes"]["toolbox"]["instance_types"]
+
+
+def test_a_toolbox_override_is_the_type_tofu_launches(tmp_path: Path) -> None:
+    extra = "  overrides:\n    toolbox:\n      instance_type: t4g.medium"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 0
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert doc["resolved_shapes"]["toolbox"]["instance_types"] == ["t4g.medium"]
+
+
+def test_expected_fail_a_toolbox_override_absent_from_the_region_is_refused(tmp_path: Path, capsys) -> None:
+    extra = "  overrides:\n    toolbox:\n      instance_type: t99g.small"
+    assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
+    assert "sizing.overrides.toolbox.instance_type" in capsys.readouterr().err
 
 
 # karpenter-pools' own values.yaml documents its per-pool fields in a COMMENT
