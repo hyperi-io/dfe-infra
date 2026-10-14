@@ -52,7 +52,7 @@ run_test "Auth & Ingress" "smoke-test-auth.sh"
 # headers). Nothing upstream covers them, so an upstream sync can merge clean and
 # still break them -- this is where that shows up.
 run_test "HyperDX seams (auth/data/embed)" "smoke-test-hyperdx.sh"
-run_test "Transform file sets (engine list = pod mount)" "smoke-test-transforms.sh"
+run_test "Transform file sets (engine files = pod mount, byte for byte)" "smoke-test-transforms.sh"
 run_test "KEDA Autoscaling" "smoke-test-keda.sh"
 # The deep scale PROOF (artificial +1 pod via the fail-safe shim) mutates the cluster +
 # takes ~2-3 min, so it is gated. Defaults ON for full validation; set

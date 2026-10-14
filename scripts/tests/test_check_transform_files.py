@@ -2,8 +2,9 @@
 #  Project:      dfe-infra
 #  File:         test_check_transform_files.py
 #  Purpose:      Prove the transform file-set check passes an instance that mounts
-#                what the engine lists, and fails one that mounts something else,
-#                one with no program to run, and one under the bare chart name.
+#                what the engine lists and holds, and fails one that mounts
+#                something else or other bytes, one with no program to run, and
+#                one under the bare chart name.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -13,11 +14,13 @@
     python3 -m pytest scripts/tests/test_check_transform_files.py -q
 
 The stand-in kubectl is a script on PATH: it lists the spec's Deployments, cats
-the spec's values file for `exec <engine> -- sh -c cat ...`, and lists the spec's
-files for `exec deploy/<name> -- ls -1 <path>`. Anything else exits 2, as an
+the spec's values file for `exec <engine> -- sh -c cat ...`, lists the spec's
+files for `exec deploy/<name> -- ls -1 <path>`, and prints the spec's digests
+for `exec deploy/<name> -- sha256sum <path>...`. Anything else exits 2, as an
 unreachable cluster does.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -47,6 +50,13 @@ if "get" in args and "deployments" in args and "deployments" in spec:
 if "exec" in args:
     target = args[args.index("exec") + 1]
     command = args[args.index("--") + 1:]
+    if command[0] == "sha256sum":
+        keys = ["sha:" + target + ":" + path for path in command[1:]]
+        if all(key in spec for key in keys):
+            print("\\n".join(spec[key] + "  " + path for key, path in zip(keys, command[1:])))
+            sys.exit(0)
+        print("sha256sum: no such file", file=sys.stderr)
+        sys.exit(1)
     key = "engine:" + command[-1] if command[0] == "sh" else "ls:" + target + ":" + command[-1]
     if key in spec:
         value = spec[key]
@@ -79,13 +89,35 @@ def _carried_vrl(tmp_path: Path) -> str:
     return (root / "values" / OVERLAY).read_text(encoding="utf-8")
 
 
-def _spec(path: Path, overlay: str, transforms: list[str], enrichment: list[str]) -> None:
-    path.write_text(json.dumps({
+MOUNTS = {"transforms": "/etc/dfe-transform-vrl-transforms", "enrichment": "/etc/dfe-transform-vrl-enrichment"}
+
+
+def _held(overlay: str) -> dict[str, str]:
+    """The sha256 of each file the overlay holds, keyed by its mounted path, as a YAML loader reads it."""
+    sets = yaml.safe_load(overlay).get("fileSets") or {}
+    return {
+        f"{MOUNTS[name]}/{item['name']}": hashlib.sha256(item["content"].encode("utf-8")).hexdigest()
+        for name, file_set in sets.items()
+        for item in file_set.get("files") or []
+    }
+
+
+def _spec(
+    path: Path,
+    overlay: str,
+    transforms: list[str],
+    enrichment: list[str],
+    digests: dict[str, str] | None = None,
+) -> None:
+    spec = {
         "deployments": ["dfe-engine", VRL],
         f"engine:{OVERLAY}": overlay,
-        f"ls:deploy/{VRL}:/etc/dfe-transform-vrl-transforms": transforms,
-        f"ls:deploy/{VRL}:/etc/dfe-transform-vrl-enrichment": enrichment,
-    }), encoding="utf-8")
+        f"ls:deploy/{VRL}:{MOUNTS['transforms']}": transforms,
+        f"ls:deploy/{VRL}:{MOUNTS['enrichment']}": enrichment,
+    }
+    held = _held(overlay) if digests is None else digests
+    spec.update({f"sha:deploy/{VRL}:{mounted}": digest for mounted, digest in held.items()})
+    path.write_text(json.dumps(spec), encoding="utf-8")
 
 
 def test_an_instance_mounting_what_the_engine_lists_passes(
@@ -94,8 +126,51 @@ def test_an_instance_mounting_what_the_engine_lists_passes(
     _spec(cluster, _carried_vrl(tmp_path), ["filebeat.vrl"], ["timezones.csv"])
     assert ctf.main(["--namespace", "dfe"]) == ctf.EXIT_OK
     out = capsys.readouterr().out
-    assert "[PASS] dfe-transform-vrl/merakivrl transforms: 1 file(s)" in out
+    assert "[PASS] dfe-transform-vrl/merakivrl transforms: 1 file(s), as the engine lists and holds them\n" in out
+    assert "[PASS] dfe-transform-vrl/merakivrl enrichment: 1 file(s), as the engine lists and holds them\n" in out
+
+
+def test_a_file_mounted_with_other_bytes_fails_naming_it(
+    cluster: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A render that drops `<no value>` from a program mounts the right name with the wrong bytes."""
+    overlay = _carried_vrl(tmp_path)
+    digests = _held(overlay)
+    program = f"{MOUNTS['transforms']}/filebeat.vrl"
+    digests[program] = hashlib.sha256(b". = parse_json!(.message)\n").hexdigest()
+    _spec(cluster, overlay, ["filebeat.vrl"], ["timezones.csv"], digests)
+    assert ctf.main(["--namespace", "dfe"]) == ctf.EXIT_DIFFERS
+    out = capsys.readouterr().out
+    held = _held(overlay)[program]
+    assert (
+        "[FAIL] dfe-transform-vrl/merakivrl transforms: the pod mounts other bytes than the engine holds: "
+        f"filebeat.vrl (engine {held[:12]}, pod {digests[program][:12]})"
+    ) in out
     assert "[PASS] dfe-transform-vrl/merakivrl enrichment: 1 file(s)" in out
+
+
+def test_a_pod_that_cannot_digest_its_files_is_not_a_pass(
+    cluster: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _spec(cluster, _carried_vrl(tmp_path), ["filebeat.vrl"], ["timezones.csv"], {})
+    assert ctf.main(["--namespace", "dfe"]) == ctf.EXIT_DIFFERS
+    out = capsys.readouterr().out
+    assert "[FAIL] dfe-transform-vrl/merakivrl transforms: the pod's files could not be digested" in out
+    assert "[FAIL] dfe-transform-vrl/merakivrl enrichment: the pod's files could not be digested" in out
+
+
+def test_a_file_written_as_a_folded_block_is_named_as_not_compared(
+    cluster: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    overlay = _carried_vrl(tmp_path)
+    digests = _held(overlay)
+    table = "      - name: timezones.csv\n        content: "
+    folded = overlay.replace(f"{table}|", f"{table}>")
+    assert folded != overlay
+    _spec(cluster, folded, ["filebeat.vrl"], ["timezones.csv"], digests)
+    assert ctf.main(["--namespace", "dfe"]) == ctf.EXIT_OK
+    out = capsys.readouterr().out
+    assert "enrichment: 1 file(s), as the engine lists and holds them (1 written as a block not read here" in out
 
 
 def test_an_instance_mounting_something_else_fails_naming_both_sides(

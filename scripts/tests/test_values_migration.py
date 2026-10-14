@@ -801,3 +801,54 @@ def test_the_migration_runs_only_across_the_first_thin_chart_stack(
     from_stack: str, to_stack: str, crosses: bool
 ) -> None:
     assert u.values_cutover(from_stack, to_stack, vm.load_map().since)[0] is crosses
+
+
+# Each way a file set's content can be written, as PyYAML dumps it or a person might.
+CONTENT_SHAPES = {
+    "literal": "  - name: a\n    content: |\n      one\n        two\n\n      three\n",
+    "strip": "  - name: a\n    content: |-\n      one\n      two\n",
+    "keep, then a sibling": "  - name: a\n    content: |+\n      one\n\n\n  - name: b\n    content: x\n",
+    "keep, last in the file": "  - name: a\n    content: |+\n      one\n\n",
+    "indent indicator": "  - name: a\n    content: |2\n        leading spaces kept\n      two\n",
+    "chomp then indent": "  - name: a\n    content: |-2\n        kept\n",
+    "leading blank line": "  - name: a\n    content: |\n\n      after a blank\n",
+    "on the dash line": "  - content: |\n      first\n    name: a\n",
+    "double-quoted": '  - name: a\n    content: "one\\n<no value>\\ttab\\n"\n',
+    "single-quoted": "  - name: a\n    content: 'it''s'\n",
+    "plain": "  - name: a\n    content: plain words\n",
+    "comment after the header": "  - name: a\n    content: | # the program\n      body\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(CONTENT_SHAPES))
+def test_list_contents_reads_each_content_as_a_yaml_loader_does(shape: str) -> None:
+    nested = "fileSets:\n  transforms:\n    files:\n" + "".join(
+        f"    {line}\n" if line else "\n" for line in CONTENT_SHAPES[shape].split("\n")[:-1]
+    )
+    for text, path in (("files:\n" + CONTENT_SHAPES[shape], "files"), (nested, "fileSets.transforms.files")):
+        node = yaml.safe_load(text)
+        for step in path.split("."):
+            node = node[step]
+        expected = {item["name"]: item["content"] for item in node}
+        assert vm.list_contents(text, path) == expected, path
+
+
+def test_list_contents_leaves_a_folded_block_unread() -> None:
+    text = "files:\n  - name: a\n    content: >\n      folded\n      lines\n  - name: b\n    content: kept\n"
+    assert vm.list_contents(text, "files") == {"a": None, "b": "kept"}
+
+
+def test_list_contents_of_no_list() -> None:
+    assert vm.list_contents("files: []\n", "files") == {}
+    assert vm.list_contents("other: 1\n", "files") is None
+    assert vm.list_contents("files:\n  key: value\n", "files") is None
+
+
+def test_list_contents_reads_the_fixture_deploy_repo_as_yaml_does() -> None:
+    """The engine's own shapes: a long program double-quoted, a table as a literal block."""
+    for path in sorted((FIXTURES / "values").glob("dfe-transform-*-values.yaml")):
+        text = path.read_text(encoding="utf-8")
+        doc = yaml.safe_load(text)
+        for key in ("transformFiles", "enrichmentTables"):
+            expected = {item["name"]: item["content"] for item in doc.get(key) or []}
+            assert vm.list_contents(text, key) == (expected if key in doc else None), f"{path.name} {key}"
