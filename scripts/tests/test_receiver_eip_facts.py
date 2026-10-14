@@ -34,6 +34,7 @@ import render_dial  # noqa: E402
 from yaml_subset import parse as parse_dial  # noqa: E402
 
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 AWS_ROOT_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
 AWS_ROOT_MAIN = REPO_ROOT / "terraform" / "environments" / "aws" / "main.tf"
@@ -103,7 +104,7 @@ def test_expected_fail_lists_of_different_lengths_are_refused(eips: str, subnets
 
 def test_the_cluster_secret_carries_both_annotations() -> None:
     rendered = subprocess.run(
-        ["envsubst"],
+        [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         env={
             "PATH": "/usr/bin:/bin",

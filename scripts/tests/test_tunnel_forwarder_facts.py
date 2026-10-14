@@ -24,16 +24,16 @@ while every object involved reports healthy.
     python3 -m pytest scripts/tests/test_tunnel_forwarder_facts.py -q
 """
 
-from __future__ import annotations
-
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 # culvert's integration values, whose Services pin the nodePorts, and dfe-extras,
@@ -73,12 +73,14 @@ def _culvert_values() -> dict:
 
 
 def _render(**env: str) -> str:
-    """The cluster secret template through envsubst, as bootstrap.sh renders it."""
+    """The cluster secret template through render_env.py, as bootstrap.sh renders it."""
     result = subprocess.run(
-        ["envsubst"],
+        [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env={"PATH": "/usr/bin:/bin", **env},
         check=True,
     )

@@ -133,14 +133,36 @@ def test_expected_fail_outputs_that_cannot_be_read_still_tear_down(
     monkeypatch: pytest.MonkeyPatch,
     ran: list[tuple[list[str], dict]],
     capsys: pytest.CaptureFixture,
+    tmp_path: Path,
 ) -> None:
-    """bridge exits when `tofu output` fails, and a teardown that stopped there would leave the workloads."""
-    _bridge(monkeypatch, SystemExit(1))
-    assert _teardown("--from-terraform", "terraform/environments/aws") == 0
+    """A teardown that stopped on an unreadable root would leave the workloads running.
+
+    The real bridge reads a root with no tofu on PATH and no state file, which
+    raises its TerraformOutputError.
+    """
+    monkeypatch.delitem(sys.modules, "bridge", raising=False)
+    (tmp_path / "bin").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    root = tmp_path / "root"
+    root.mkdir()
+    assert _teardown("--from-terraform", str(root)) == 0
     ((cmd, env),) = ran
     assert cmd[-1] == "--force"
     assert [name for name in dfeops.TEARDOWN_FACTS if name in env] == []
-    assert "could not read the outputs of terraform/environments/aws" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert f"could not read the outputs of {root}" in err
+    assert "no local state to fall back on" in err
+
+
+def test_an_error_that_is_not_an_unreadable_root_is_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch, ran: list[tuple[list[str], dict]]
+) -> None:
+    """Only the bridge's own failure is a root that cannot be read; a bug elsewhere surfaces."""
+    _bridge(monkeypatch, KeyError("value"))
+    sys.modules["bridge"].TerraformOutputError = type("TerraformOutputError", (RuntimeError,), {})
+    with pytest.raises(KeyError):
+        _teardown("--from-terraform", "terraform/environments/aws")
+    assert ran == []
 
 
 def test_the_cycle_hands_its_root_to_the_teardown(monkeypatch: pytest.MonkeyPatch) -> None:

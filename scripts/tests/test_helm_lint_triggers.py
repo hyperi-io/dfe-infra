@@ -24,6 +24,7 @@ job runs the one script in .github/actions/changes, handing it that workflow's p
 script itself runs here against a scratch repository for each verdict it can reach.
 """
 
+import ast
 import re
 import subprocess
 import sys
@@ -91,11 +92,25 @@ def _triggers(doc: dict) -> dict:
     return doc.get("on", doc.get(True))  # YAML 1.1 reads a bare `on` as true
 
 
-def _filter_step(name: str) -> dict:
-    """The step of a workflow's `changes` job that runs the shared filter."""
+_WIRED = re.compile(r"\$\{\{ steps\.([\w-]+)\.outputs\.relevant \}\}")
+
+
+def _filter_steps(name: str) -> dict[str, dict]:
+    """The steps of a workflow's `changes` job that run the shared filter, by step id."""
     steps = [step for step in _load(name)["jobs"]["changes"]["steps"] if step.get("uses") == ACTION_REF]
-    assert len(steps) == 1, f"{name}'s changes job runs {ACTION_REF} {len(steps)} times"
-    return steps[0]
+    assert steps, f"{name}'s changes job never runs {ACTION_REF}"
+    ids = [step.get("id") for step in steps]
+    assert all(ids), f"{name}: every filter step needs an id: {ids}"
+    assert len(set(ids)) == len(ids), f"{name}: two filter steps share an id: {ids}"
+    return {step["id"]: step for step in steps}
+
+
+def _filter_step(name: str) -> dict:
+    """The workflow-wide filter: the step the `changes` job's `relevant` output carries."""
+    wired = _load(name)["jobs"]["changes"]["outputs"]["relevant"]
+    match = _WIRED.fullmatch(wired)
+    assert match, f"{name}'s changes job exports `relevant` from no filter step: {wired}"
+    return _filter_steps(name)[match.group(1)]
 
 
 def _patterns(text: str) -> list[str]:
@@ -180,6 +195,76 @@ def test_every_top_level_name_a_test_source_reads_is_in_the_filters() -> None:
     reached = {n for n in named if any(p == n or p.startswith(f"{n}/") for p in filters)}
     missing = sorted(named - reached)
     assert missing == [], f"named by a test, absent from helm-lint.yml's paths: {missing}"
+
+
+# --- the narrower filter in front of the third-party arch check ---------------------------------
+
+SCRIPTS = REPO_ROOT / "scripts"
+IMAGE_ARCH = SCRIPTS / "check_image_arch.py"
+IMAGE_ARCH_JOB = "third-party-arch"
+
+
+def _image_filters() -> list[str]:
+    return _patterns(_filter_steps(WORKFLOW.name)["images"]["with"]["paths"])
+
+
+def _script_closure(entry: Path) -> list[str]:
+    """Every scripts/ file `entry` reaches: modules it imports and files it loads by name.
+
+    A name a source writes as a string constant is a file it loads by path, the
+    way check_image_arch.py loads the extensionless dfe-stack.
+    """
+    seen: set[Path] = set()
+    todo = [entry]
+    while todo:
+        source = todo.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] + ".py" for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                names = [node.module.split(".")[0] + ".py"]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and "/" not in node.value:
+                names = [node.value]
+            else:
+                continue
+            todo += [SCRIPTS / name for name in names if name and (SCRIPTS / name).is_file()]
+    return sorted(path.relative_to(REPO_ROOT).as_posix() for path in seen)
+
+
+def test_the_closure_walk_reaches_the_path_loaded_cli() -> None:
+    closure = _script_closure(IMAGE_ARCH)
+    assert {"scripts/check_image_arch.py", "scripts/registry_pins.py", "scripts/dfe-stack"} <= set(
+        closure
+    ), closure
+
+
+def test_the_arch_check_runs_when_any_code_it_reaches_changes() -> None:
+    outside = [path for path in _script_closure(IMAGE_ARCH) if not _covers(_image_filters(), path)]
+    assert outside == [], f"reached by check_image_arch.py, outside its `images` filter: {outside}"
+
+
+def test_the_arch_check_runs_when_a_pin_it_reads_changes() -> None:
+    import check_image_arch
+
+    pinned = ["versions.yaml", *(path.as_posix() for path, _ in check_image_arch.CHART_VALUES_IMAGES.values())]
+    outside = [path for path in pinned if not _covers(_image_filters(), path)]
+    assert outside == [], f"read by check_image_arch.py, outside its `images` filter: {outside}"
+
+
+def test_the_arch_check_job_waits_on_its_own_filter() -> None:
+    jobs = _load(WORKFLOW.name)["jobs"]
+    assert jobs["changes"]["outputs"]["images"] == "${{ steps.images.outputs.relevant }}"
+    assert "needs.changes.outputs.images != 'false'" in str(jobs[IMAGE_ARCH_JOB]["if"])
+
+
+def test_a_change_the_images_filter_sees_also_starts_the_workflow() -> None:
+    """A narrower filter outside the workflow's own would gate a job that never starts."""
+    workflow = _filters()
+    outside = [p for p in _image_filters() if not _covers(workflow, p.removesuffix("**"))]
+    assert outside == [], f"in the `images` filter, outside helm-lint.yml's paths: {outside}"
 
 
 # --- the shared filter's own verdicts ---------------------------------------------------------
@@ -297,6 +382,39 @@ def test_a_paths_block_the_script_cannot_read_fails_rather_than_skipping(
     assert done.returncode == 1
     assert "::error::" in done.stdout
     assert output == ""
+
+
+@pytest.mark.parametrize(
+    ("changed", "verdict"),
+    [
+        # A deploy-tooling change of the shape that met a registry rate limit: no pin, no reader.
+        (["bootstrap/bootstrap.sh", "scripts/dfe-ops", "scripts/tests/test_render_env.py"], "false"),
+        (["bootstrap/bootstrap.sh", "versions.yaml"], "true"),
+        (["helm/charts/forgejo/values.yaml"], "true"),
+        (["scripts/registry_pins.py"], "true"),
+    ],
+)
+def test_the_images_filter_runs_the_arch_check_only_for_what_it_reads(
+    tmp_path: Path, changed: list[str], verdict: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    for name in changed:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text("changed\n", encoding="utf-8")
+        _git(repo, "add", name)
+    _git(repo, "commit", "-q", "-m", "change")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+    paths = _filter_steps(WORKFLOW.name)["images"]["with"]["paths"]
+    done, output = _run_filter(repo, paths, "pull_request")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == f"relevant={verdict}\n"
 
 
 def test_the_workflows_name_the_action_these_tests_run() -> None:

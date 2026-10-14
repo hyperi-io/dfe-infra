@@ -20,12 +20,14 @@ Uses tempfile for its fixtures, so nothing is written outside the process.
 No third-party deps and no test runner, matching the rest of scripts/tests.
 """
 
-from __future__ import annotations
-
+import contextlib
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 from _expect import expect, standalone, summary
@@ -64,26 +66,72 @@ def test_state_fallback_reads_outputs() -> None:
     expect("a null-valued output is dropped", "DFE_UNSET" not in out, f"{out}")
 
 
+def _raised(call) -> str:
+    """The TerraformOutputError message `call` raises, or "" when it raises none."""
+    try:
+        call()
+    except bridge.TerraformOutputError as exc:
+        return str(exc)
+    return ""
+
+
 def test_missing_state_is_fatal_and_says_why() -> None:
     """Silently returning {} would surface later as a confusing 'missing var'."""
     with tempfile.TemporaryDirectory() as tmp:
-        raised = False
-        try:
-            bridge._outputs_from_state(tmp)
-        except SystemExit:
-            raised = True
-    expect("no state file exits rather than returning empty", raised)
+        message = _raised(lambda: bridge._outputs_from_state(tmp))
+    expect("no state file raises rather than returning empty",
+           "no local state to fall back on" in message, message)
 
 
 def test_malformed_state_is_fatal() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "terraform.tfstate").write_text("{not json", encoding="utf-8", newline="\n")
-        raised = False
+        message = _raised(lambda: bridge._outputs_from_state(tmp))
+    expect("unparseable state raises rather than yielding nothing",
+           message.startswith("could not read"), message)
+
+
+@contextlib.contextmanager
+def _path_holding(tools: dict[str, str]) -> Iterator[None]:
+    """PATH set to one directory holding a shell script per tool name, for the block."""
+    saved = os.environ.get("PATH", "")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, body in tools.items():
+            script = Path(tmp) / name
+            script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8", newline="\n")
+            script.chmod(0o755)
+        os.environ["PATH"] = tmp
         try:
-            bridge._outputs_from_state(tmp)
-        except SystemExit:
-            raised = True
-    expect("unparseable state exits rather than yielding nothing", raised)
+            yield
+        finally:
+            os.environ["PATH"] = saved
+
+
+def test_a_failed_tofu_output_raises_naming_what_tofu_said() -> None:
+    """A caller that can go on without the outputs catches this; one that cannot reports it."""
+    with _path_holding({"tofu": "echo 'Error: no outputs found' >&2\nexit 1"}):
+        message = _raised(lambda: bridge.get_tf_outputs("/"))
+    expect("a non-zero tofu output raises with tofu's own stderr",
+           message.startswith("tofu output failed") and "no outputs found" in message, message)
+
+
+def test_tofu_output_that_is_not_json_raises() -> None:
+    with _path_holding({"tofu": "echo 'Warning: no state'"}):
+        message = _raised(lambda: bridge.get_tf_outputs("/"))
+    expect("output that is not JSON raises rather than a JSONDecodeError",
+           "printed no JSON" in message, message)
+
+
+def test_the_cli_reports_an_unreadable_root_and_exits_1() -> None:
+    """bridge.py's own command line keeps its ERROR line and exit code."""
+    with tempfile.TemporaryDirectory() as tmp, _path_holding({}):
+        done = subprocess.run(
+            [sys.executable, str(SCRIPT), "--tf-dir", tmp],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+    expect("exit 1", done.returncode == 1, f"exit {done.returncode}\n{done.stderr}")
+    expect("ERROR names the missing state", "ERROR: neither terraform nor opentofu" in done.stderr,
+           done.stderr)
 
 
 def test_json_output_reads_sensitive_flag_with_no_second_call() -> None:

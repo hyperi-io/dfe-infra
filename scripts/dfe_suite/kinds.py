@@ -26,13 +26,13 @@ pre-releases from a plain range, and answering yes there would move a consumer
 onto a release candidate.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
+
+import manifest_deps
 
 from dfe_suite.proc import FleetError, run
 from dfe_suite.repos import find_repo
@@ -345,70 +345,6 @@ def pep440_admits(spec: str, version: str) -> bool | None:
     return _admits_all(spec, version, bare_is_caret=False)
 
 
-_CARGO_TABLE = re.compile(r'version\s*=\s*"([^"]*)"')
-_CARGO_BARE = re.compile(r'^\s*[A-Za-z0-9_-]+\s*=\s*"([^"]*)"')
-_PY_STRING = re.compile(r'"([^"]*)"')
-# What may follow the package name and still leave the line a declaration OF
-# that package: extras, a space before the specifier, or a comparator.
-_PY_AFTER_NAME = ("", "[", " ", "<", ">", "=", "!", "~")
-
-
-def cargo_range(text: str, package: str) -> str | None:
-    """The version requirement the cited line declares FOR ``package``.
-
-    A line declaring something else has a range on it too, so the name is
-    checked first: without that, the check reads a neighbouring dependency's
-    range and reports on the wrong crate.
-
-    Args:
-        text: The cited line.
-        package: The crate the producer publishes.
-
-    Returns:
-        The requirement, or None when the line does not declare that crate or
-        declares it without a version (a workspace, path or git dependency).
-    """
-    if text.lstrip().startswith("#"):
-        return None
-    if not re.search(rf"^\s*{re.escape(package)}\s*(?:=|\.workspace\b)", text):
-        return None
-    table = _CARGO_TABLE.search(text)
-    if table:
-        return table.group(1)
-    bare = _CARGO_BARE.search(text)
-    return bare.group(1) if bare else None
-
-
-def python_range(text: str, package: str) -> str | None:
-    """The specifier set the cited line declares FOR ``package``.
-
-    Args:
-        text: The cited line.
-        package: The distribution the producer publishes.
-
-    Returns:
-        The specifier set, or None when the line declares another
-        distribution, or declares this one with no specifier at all.
-    """
-    if text.lstrip().startswith("#"):
-        return None
-    for candidate in _PY_STRING.findall(text):
-        requirement = candidate.strip()
-        if not requirement.startswith(package):
-            continue
-        rest = requirement[len(package) :]
-        if rest[:1] not in _PY_AFTER_NAME:
-            continue
-        if rest.startswith("["):
-            close = rest.find("]")
-            if close < 0:
-                continue
-            rest = rest[close + 1 :]
-        spec = rest.split(";")[0].strip()
-        return spec or None
-    return None
-
-
 # ---------------------------------------------------------------------------
 # One check per kind
 # ---------------------------------------------------------------------------
@@ -437,52 +373,85 @@ def _with_note(edge: dict, detail: str) -> str:
     return f"{detail} Note: {note}" if note else detail
 
 
-def _range_result(
+def _declared(manifest: Evidence, declarations: list[manifest_deps.Declaration]) -> str:
+    """Each ranged declaration as ``<manifest> [<table>] declares '<range>'``, joined."""
+    return "; ".join(
+        f"{manifest.describe()} [{declaration.table}] declares '{declaration.spec}'"
+        for declaration in declarations
+    )
+
+
+def _range_check(
     edge: dict,
-    ref: Evidence,
-    spec: str | None,
-    verdict: bool | None,
-    producer_version: str,
     *,
-    package: str,
+    kind: str,
+    producer_version: str,
+    consumer_repo: Path,
+    package: str | None,
+    admits: Callable[[str, str], bool | None],
     rebuild_action: str,
 ) -> CheckResult:
-    """The shared verdict shape for the two range-declaring kinds."""
-    if spec is None:
+    """The shared check for the two range-declaring kinds.
+
+    The edge cites the consumer's manifest, and every declaration of the
+    package in it is read: a dev or build range that does not admit the new
+    version stops the lock from moving as surely as the main one does.
+
+    Raises:
+        FleetError: If the manifest is not there.
+    """
+    ref = _first(edge)
+    if not package:
+        return _no_package(edge, ref)
+    manifest = ref._replace(start=None, end=None)
+    try:
+        found = manifest_deps.declarations(
+            cited_lines(manifest, consumer_repo), kind, package
+        )
+    except ValueError as exc:
+        return CheckResult(
+            None,
+            _with_note(edge, f"{manifest.describe()} is not readable TOML: {exc}"),
+            ACTION_HUMAN_READ,
+        )
+    ranged = [declaration for declaration in found if declaration.spec]
+    if not ranged:
         return CheckResult(
             None,
             _with_note(
                 edge,
-                f"{ref.describe()} declares no version range for {package} -- "
-                f"the line names something else, or names it with no range.",
+                f"{manifest.describe()} declares no version range for {package} -- "
+                f"it does not declare it, or declares it with no range.",
             ),
             ACTION_HUMAN_READ,
         )
-    if verdict is None:
+    verdicts = [
+        (declaration, admits(declaration.spec, producer_version)) for declaration in ranged
+    ]
+    unread = [declaration for declaration, verdict in verdicts if verdict is None]
+    if unread:
         return CheckResult(
             None,
-            _with_note(
-                edge, f"{ref.describe()} declares '{spec}', which this cannot parse."
-            ),
+            _with_note(edge, f"{_declared(manifest, unread)}, which this cannot parse."),
             ACTION_HUMAN_READ,
         )
-    if verdict:
+    narrow = [declaration for declaration, verdict in verdicts if not verdict]
+    if narrow:
         return CheckResult(
             True,
             _with_note(
                 edge,
-                f"{ref.describe()} declares '{spec}', which admits {producer_version}.",
+                f"{_declared(manifest, narrow)}, which does NOT admit "
+                f"{producer_version} -- widen it there first.",
             ),
-            rebuild_action,
+            ACTION_WIDEN_RANGE,
         )
     return CheckResult(
         True,
         _with_note(
-            edge,
-            f"{ref.describe()} declares '{spec}', which does NOT admit "
-            f"{producer_version} -- widen it there first.",
+            edge, f"{_declared(manifest, ranged)}, which admits {producer_version}."
         ),
-        ACTION_WIDEN_RANGE,
+        rebuild_action,
     )
 
 
@@ -508,23 +477,18 @@ def check_cargo_dep(
     package: str | None = None,
     dry_run: bool = True,
 ) -> CheckResult:
-    """Does the cited Cargo range admit the new version?
+    """Does every Cargo range the cited manifest declares for the crate admit the new version?
 
     Admitting means the lock can move with ``cargo update`` and the consumer
-    rebuilds; not admitting means the range is widened at the cited line first.
+    rebuilds; not admitting means the range is widened where it is declared first.
     """
-    ref = _first(edge)
-    if not package:
-        return _no_package(edge, ref)
-    spec = cargo_range(cited_lines(ref, consumer_repo), package)
-    verdict = semver_admits(spec, producer_version) if spec else None
-    return _range_result(
+    return _range_check(
         edge,
-        ref,
-        spec,
-        verdict,
-        producer_version,
+        kind="cargo-dep",
+        producer_version=producer_version,
+        consumer_repo=consumer_repo,
         package=package,
+        admits=semver_admits,
         rebuild_action=ACTION_REBUILD_RUST,
     )
 
@@ -537,19 +501,14 @@ def check_python_dep(
     package: str | None = None,
     dry_run: bool = True,
 ) -> CheckResult:
-    """Does the cited PEP 440 specifier admit the new version?"""
-    ref = _first(edge)
-    if not package:
-        return _no_package(edge, ref)
-    spec = python_range(cited_lines(ref, consumer_repo), package)
-    verdict = pep440_admits(spec, producer_version) if spec else None
-    return _range_result(
+    """Does every PEP 440 specifier the cited manifest declares for the distribution admit it?"""
+    return _range_check(
         edge,
-        ref,
-        spec,
-        verdict,
-        producer_version,
+        kind="python-dep",
+        producer_version=producer_version,
+        consumer_repo=consumer_repo,
         package=package,
+        admits=pep440_admits,
         rebuild_action=ACTION_REBUILD_PYTHON,
     )
 
@@ -806,12 +765,14 @@ CHECKS: dict[str, CheckFunction] = {
 # describes -- the honest half of the answer is that some kinds defer.
 KIND_SUMMARY: dict[str, str] = {
     "cargo-dep": (
-        "reads the Cargo range at the cited line and answers whether it admits "
-        "the new version; rebuild if it does, widen it first if it does not"
+        "reads every Cargo range the cited manifest declares for the crate and "
+        "answers whether each admits the new version; rebuild if all do, widen "
+        "the one that does not first"
     ),
     "python-dep": (
-        "reads the PEP 440 specifier at the cited line and answers whether it "
-        "admits the new version; relock if it does, widen it first if it does not"
+        "reads every PEP 440 specifier the cited manifest declares for the "
+        "distribution and answers whether each admits the new version; relock "
+        "if all do, widen the one that does not first"
     ),
     "python-dep-undeclared": (
         "no range exists, so it hands back the named import sites to run the "
@@ -858,8 +819,8 @@ def check_edge(
         producer_version: The version the producer is releasing.
         consumer_repo: The consumer's checkout.
         package: What the producer publishes under, from its node. The two
-            range kinds need it to tell the producer's declaration on the
-            cited line from a neighbour's.
+            range kinds find the producer's declarations in the cited manifest
+            by it.
         dry_run: Reserved for the checks that could act; every check here reads.
     """
     kind = str(edge.get("kind") or "")

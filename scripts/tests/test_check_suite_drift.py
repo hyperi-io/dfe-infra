@@ -12,7 +12,7 @@
 
 A drift check whose patterns have stopped matching prints the same OK as one
 that is working, so each verdict gets a case that produces it. Every case
-builds a whole tiny repo layout in a temp directory -- the two scripts, a
+builds a whole tiny repo layout in a temp directory -- the scripts, a
 suite.yaml, a versions.yaml, two charts, the docs page and the member clones --
 and runs the check there as a real subprocess. Nothing is mocked and no module
 attribute is patched: the check reads its own repo root off its own location,
@@ -28,8 +28,6 @@ Cargo.toml and then dirties the working tree with a different one afterward.
 
 No third-party deps and no test runner, matching the tools it tests.
 """
-
-from __future__ import annotations
 
 import os
 import shutil
@@ -114,7 +112,7 @@ edges:
     to: app-b
     kind: cargo-dep
     type: potential
-    evidence: "app-b/Cargo.toml:6"
+    evidence: "app-b/Cargo.toml"
   - from: app-b
     to: dfe-infra
     kind: image-pin
@@ -165,7 +163,7 @@ liba = { version = ">=1.0, <2" }
 PAGE_HEAD = "# page\n\n"
 
 # The same lib-a -> app-b dependency declared a second way, as a Python
-# distribution. The cited line is the fourth, the quoted requirement.
+# distribution.
 PYPROJECT = '''\
 [project]
 name = "app-b"
@@ -186,7 +184,7 @@ PY_EDGE = """\
     to: app-b
     kind: python-dep
     type: potential
-    evidence: "app-b/pyproject.toml:4"
+    evidence: "app-b/pyproject.toml"
 """
 
 PY_SUITE = SUITE.replace("  image-pin:\n", PY_KIND + "  image-pin:\n", 1).replace(
@@ -218,7 +216,7 @@ def build(
     """
     infra = root / "infra"
     (infra / "scripts").mkdir(parents=True)
-    for name in ("suite_graph.py", "check_suite_drift.py"):
+    for name in ("manifest_deps.py", "suite_graph.py", "check_suite_drift.py"):
         shutil.copyfile(SCRIPTS / name, infra / "scripts" / name)
     _write(infra / "suite.yaml", suite)
     _write(infra / "versions.yaml", versions)
@@ -429,12 +427,24 @@ def main() -> int:
             "a citation past the end of its file FAILs",
             1,
             "fewer than 99 lines",
-            suite=SUITE.replace("Cargo.toml:6", "Cargo.toml:99"),
+            suite=SUITE.replace('"dfe-infra/versions.yaml"', '"dfe-infra/versions.yaml:99"'),
         )
         _one_case(
-            "a cited line that declares another package FAILs",
+            "a cargo-dep citation carrying a line number is a structural failure",
             1,
-            "does not declare liba",
+            "cites the manifest alone, never a line",
+            suite=SUITE.replace('"app-b/Cargo.toml"', '"app-b/Cargo.toml:6"'),
+        )
+        _one_case(
+            "a dependency added above the declaration leaves the citation sound",
+            0,
+            "OK -- suite.yaml",
+            cargo=CARGO.replace('tokio = "1"\n', 'tokio = "1"\nserde = "1"\nbytes = "1"\n'),
+        )
+        _one_case(
+            "a manifest that no longer declares the package FAILs",
+            1,
+            "app-b/Cargo.toml: the manifest does not declare liba",
             cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
         )
         _one_case(
@@ -444,16 +454,34 @@ def main() -> int:
             cargo=CARGO.replace("liba =", "# liba ="),
         )
         _one_case(
-            "a python-dep citation on its requirement line is OK",
+            "a declaration under a table that is not a dependency table is not one",
+            1,
+            "does not declare liba",
+            cargo=CARGO.replace("[dependencies]", "[patch.crates-io]"),
+        )
+        _one_case(
+            "a declaration with no version range does not carry a cargo-dep edge",
+            1,
+            "declares liba with no version range ([dependencies])",
+            cargo=CARGO.replace('{ version = ">=1.0, <2" }', '{ path = "../lib-a" }'),
+        )
+        _one_case(
+            "a manifest that is not TOML FAILs rather than reading as undeclared",
+            1,
+            "the manifest is not readable TOML",
+            cargo=CARGO.replace("[dependencies]", "[dependencies"),
+        )
+        _one_case(
+            "a python-dep manifest declaring the distribution is OK",
             0,
             "OK -- suite.yaml",
             suite=PY_SUITE,
             clone_files={"pyproject.toml": PYPROJECT},
         )
         _one_case(
-            "a python-dep citation whose line moved FAILs",
-            1,
-            "app-b/pyproject.toml:4: the cited line does not declare liba",
+            "a python-dep requirement added above the declaration leaves the citation sound",
+            0,
+            "OK -- suite.yaml",
             suite=PY_SUITE,
             clone_files={
                 "pyproject.toml": PYPROJECT.replace(

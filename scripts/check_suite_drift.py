@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         check_suite_drift.py
-#  Purpose:      Keep suite.yaml honest: structurally sound, every in-repo
-#                edge citation still there and still naming the producer's
-#                package, every chart and app pin matched to a member or to a
-#                declared non-member, and docs/suite-graph.md carrying the
-#                diagrams the file
+#  Purpose:      Keep suite.yaml honest: structurally sound, every edge
+#                citation still there, every cited manifest still declaring
+#                the producer's package with a version range, every chart and
+#                app pin matched to a member or to a declared non-member, and
+#                docs/suite-graph.md carrying the diagrams the file
 #                generates. The docs check is MARKERS-DRIVEN -- it renders
 #                the blocks the page already carries -- so a producer with no
 #                diagram block is an advisory rather than a failure.
@@ -23,8 +23,9 @@
 
     python3 scripts/check_suite_drift.py [--repos DIR] [--ref REF] [--strict]
 
-FAIL (exit 1): a structural problem, an in-repo citation that no longer exists
-or no longer names the producer's package, an image-pin edge into dfe-infra
+FAIL (exit 1): a structural problem, a citation whose file no longer exists, a
+cargo-dep or python-dep citation whose manifest no longer declares the
+producer's package with a version range, an image-pin edge into dfe-infra
 whose producer the current versions.yaml stack no longer pins, a `non_members`
 entry that is also a node or that names nothing, or a docs diagram that
 differs from what the file generates.
@@ -59,8 +60,6 @@ check, so a `--ref` on it would check whether this change has landed on main,
 which is backwards.
 """
 
-from __future__ import annotations
-
 import argparse
 import re
 import shutil
@@ -69,6 +68,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import manifest_deps
 import suite_graph
 
 REPO_ROOT = suite_graph.REPO_ROOT
@@ -77,13 +77,6 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 VERSIONS = REPO_ROOT / "versions.yaml"
 
 _CITE = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+)/(?P<path>[^:]+?)(?::(?P<line>\d+)(?:-(?P<end>\d+))?)?$")
-
-# The kinds whose citation is a DECLARATION of the producer's package. The
-# cited line has to name that package, or the range the tooling reads there
-# belongs to something else.
-_PACKAGE_KINDS = ("cargo-dep", "python-dep")
-
-_PY_STRING = re.compile(r'"([^"]*)"')
 
 
 def _cited(evidence: str) -> tuple[str, str, int | None, int | None]:
@@ -108,10 +101,6 @@ def _split_lines(text: str) -> list[str]:
     return lines
 
 
-def _line_at(lines: list[str], number: int) -> str:
-    return lines[number - 1] if 0 < number <= len(lines) else ""
-
-
 def _ref_exists(git: str, clone: Path, ref: str) -> bool:
     proc = subprocess.run(
         [git, "-C", str(clone), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
@@ -129,23 +118,31 @@ def _git_show(git: str, clone: Path, ref: str, rel: str) -> tuple[bool, str]:
     return proc.returncode == 0, proc.stdout
 
 
-def declares_package(kind: str, line: str, package: str) -> bool:
-    """Whether a cited line declares ``package`` in that kind's manifest language.
+def declaration_problem(kind: str, manifest: str, package: str) -> str | None:
+    """Why a cited manifest does not carry a cargo-dep or python-dep edge, or None when it does.
 
-    A commented-out line declares nothing, whatever it says.
+    The edge means the consumer declares the producer's package BY RANGE, so a
+    declaration with no range (a workspace, path or git dependency) does not
+    carry it on its own.
+
+    Args:
+        kind: The edge kind, one of manifest_deps.PACKAGE_KINDS.
+        manifest: The cited manifest's contents.
+        package: The name the producer publishes under.
+
+    Returns:
+        One clause naming what is wrong, or None.
     """
-    if line.lstrip().startswith("#"):
-        return False
-    if kind == "cargo-dep":
-        return bool(re.search(rf"^\s*{re.escape(package)}\s*(?:=|\.workspace\b)", line))
-    for candidate in _PY_STRING.findall(line):
-        text = candidate.strip()
-        if not text.startswith(package):
-            continue
-        rest = text[len(package) :]
-        if not rest or rest[0] in "[ <>=!~":
-            return True
-    return False
+    try:
+        found = manifest_deps.declarations(manifest, kind, package)
+    except ValueError as exc:
+        return f"the manifest is not readable TOML ({exc})"
+    if not found:
+        return f"the manifest does not declare {package}"
+    if not any(declaration.spec for declaration in found):
+        tables = ", ".join(f"[{declaration.table}]" for declaration in found)
+        return f"the manifest declares {package} with no version range ({tables})"
+    return None
 
 
 def check_citations(
@@ -165,7 +162,7 @@ def check_citations(
             citation = edge.get(field)
             if not citation:
                 continue
-            repo, rel, start, end = _cited(citation)
+            repo, rel, _start, end = _cited(citation)
             cross_repo = repo != "dfe-infra"
             base = repos / repo if cross_repo else REPO_ROOT
             if cross_repo and not (base / ".git").exists():
@@ -185,24 +182,23 @@ def check_citations(
                 if not found:
                     fails.append(f"{where}: file is gone")
                     continue
-                lines = _split_lines(content)
             else:
                 target = base / rel
                 if not target.exists():
                     fails.append(f"{where}: file is gone")
                     continue
-                lines = _split_lines(target.read_text(encoding="utf-8", errors="replace"))
-            if end is not None and len(lines) < end:
+                content = target.read_text(encoding="utf-8", errors="replace")
+            if end is not None and len(_split_lines(content)) < end:
                 fails.append(f"{where}: file has fewer than {end} lines")
                 continue
             kind = edge.get("kind")
-            if field != "evidence" or kind not in _PACKAGE_KINDS or start is None:
+            if field != "evidence" or kind not in manifest_deps.PACKAGE_KINDS:
                 continue
             package = (graph["nodes"].get(edge["from"]) or {}).get("package")
             if not package:
                 fails.append(f"{where}: node {edge['from']} declares no `package`")
-            elif not declares_package(kind, _line_at(lines, start), package):
-                fails.append(f"{where}: the cited line does not declare {package}")
+            elif problem := declaration_problem(kind, content, package):
+                fails.append(f"{where}: {problem}")
     return fails, sorted(no_clone), sorted(no_ref)
 
 
