@@ -26,6 +26,10 @@ from pathlib import Path
 from shutil import which
 
 
+class TerraformOutputError(RuntimeError):
+    """A root's outputs could not be read; the message says why."""
+
+
 def _find_tf_binary() -> str | None:
     """The IaC binary, or None -- a missing one has a fallback, so it is not fatal."""
     for cmd in ("tofu", "terraform"):
@@ -45,20 +49,20 @@ def _outputs_from_state(tf_dir: str) -> dict[str, tuple[str, bool]]:
     Returns each output as (value, sensitive) -- state carries the same
     per-output `sensitive` flag `-json` does, so main()'s summary print can
     mask by that flag rather than guess from the key's name.
+
+    Raises:
+        TerraformOutputError: There is no state file, or it cannot be read.
     """
     state = Path(tf_dir) / "terraform.tfstate"
     if not state.is_file():
-        print(
-            f"ERROR: neither terraform nor opentofu is on PATH, and there is no "
-            f"local state to fall back on at {state}",
-            file=sys.stderr,
+        raise TerraformOutputError(
+            f"neither terraform nor opentofu is on PATH, and there is no "
+            f"local state to fall back on at {state}"
         )
-        sys.exit(1)
     try:
         raw = json.loads(state.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"ERROR: could not read {state}: {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise TerraformOutputError(f"could not read {state}: {exc}") from exc
 
     outputs = {
         k: (str(v.get("value", "")), bool(v.get("sensitive", False)))
@@ -129,21 +133,32 @@ def get_tf_outputs(tf_dir: str) -> dict[str, tuple[str, bool]]:
     a guess from the key's name.
 
     With no IaC binary installed, falls back to reading terraform.tfstate.
+
+    Raises:
+        TerraformOutputError: `output -json` failed or printed something that is
+            not its JSON, or the state-file fallback could not be read.
     """
     tf_bin = _find_tf_binary()
     if tf_bin is None:
         return _outputs_from_state(tf_dir)
-    result = subprocess.run(
-        [tf_bin, "output", "-json"],
-        cwd=tf_dir,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [tf_bin, "output", "-json"],
+            cwd=tf_dir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        raise TerraformOutputError(f"could not run {tf_bin} output in {tf_dir}: {exc}") from exc
     if result.returncode != 0:
-        print(f"ERROR: {tf_bin} output failed:\n{result.stderr}", file=sys.stderr)
-        sys.exit(1)
-
-    raw = json.loads(result.stdout)
+        raise TerraformOutputError(f"{tf_bin} output failed:\n{result.stderr}")
+    try:
+        raw = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise TerraformOutputError(f"{tf_bin} output -json printed no JSON: {exc}") from exc
     return {k: (str(v["value"]), bool(v.get("sensitive", False))) for k, v in raw.items()}
 
 
@@ -176,7 +191,11 @@ def main() -> None:
 
     # Read Terraform outputs
     print(f"Reading Terraform outputs from {tf_dir}...")
-    outputs = get_tf_outputs(str(tf_dir))
+    try:
+        outputs = get_tf_outputs(str(tf_dir))
+    except TerraformOutputError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     # Filter to DFE_* keys only, keeping the sensitive flag terraform reported
     # for each one -- the summary print below masks by that, not by a guess

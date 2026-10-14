@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
+      images: ${{ steps.images.outputs.relevant }}
     steps:
       # Depth 2 carries a pull request merge commit's two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,6 +77,38 @@ jobs:
             .gitignore
             # test_tester_idp.py holds the fixture to the spec's truth table.
             tests/e2e-ui/specs/engine/oidc-rba.spec.ts
+            # dfe-sweep's committed defaults, which test_sweep_defaults.py validates.
+            config/defaults.yaml
+
+      # The third-party arch check reads public registries, which rate-limit a shared
+      # runner, so it runs only where its verdict can change: the pins it reads and the
+      # code that reads them. test_helm_lint_triggers.py holds this list to the
+      # checker's own import closure.
+      - name: Match the changed files against what the arch check reads
+        id: images
+        uses: ./.github/actions/changes
+        with:
+          paths: |
+            versions.yaml
+            # CHART_VALUES_IMAGES in check_image_arch.py
+            helm/charts/forgejo/values.yaml
+            scripts/check_image_arch.py
+            scripts/dfe-stack
+            scripts/check_suite_drift.py
+            scripts/composition.py
+            scripts/envfile.py
+            scripts/manifest_deps.py
+            scripts/profiles.py
+            scripts/registry_pins.py
+            scripts/stack_images.py
+            scripts/suite_graph.py
+            scripts/version_range.py
+            scripts/yaml_subset.py
+            # The job's own environment.
+            .github/workflows/helm-lint.yml
+            .github/actions/**
+            .python-version
+            scripts/tests/requirements-ci.txt
 
   lint:
     name: helm lint + yaml validate
@@ -392,11 +425,11 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      # The bootstrap templates render through envsubst, so a runner without it
-      # fails here by name rather than as a dozen test failures.
+      # The bootstrap templates render through bootstrap/render_env.py, so a runner without
+      # python3 fails here by name rather than as a dozen test failures.
       - name: Run bootstrap/tests
         run: |
-          command -v envsubst
+          command -v python3
           .bats-core/bin/bats --formatter tap bootstrap/tests/
 
       - name: Shellcheck bootstrap/tests
@@ -404,11 +437,13 @@ jobs:
 
   # Third-party images are public, so the registry reads here need no secret.
   # The private DFE images are dfe-stack release-gate's, which reads them with
-  # a GHCR credential; --third-party-only keeps them out of this job.
+  # a GHCR credential; --third-party-only keeps them out of this job. A change
+  # touching nothing the check reads skips it, as the `images` filter above says,
+  # and release.yml runs the same check before it tags a stack.
   third-party-arch:
     name: third-party images carry amd64 and arm64
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' && needs.changes.outputs.images != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

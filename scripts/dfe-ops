@@ -261,6 +261,7 @@ import urllib.request
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOTSTRAP = REPO_ROOT / "bootstrap"
@@ -668,10 +669,10 @@ def _teardown_facts(tf_dir: str) -> dict[str, str]:
     """
     try:
         outputs = terraform_settings(tf_dir)
-    except SystemExit:
-        # bridge.get_tf_outputs exits on a failed `tofu output` rather than raising.
+    except _bridge().TerraformOutputError as exc:
         print(
-            f"  WARN: could not read the outputs of {tf_dir}; destroy.sh reads the cluster secret alone",
+            f"  WARN: could not read the outputs of {tf_dir} ({exc}); destroy.sh reads the cluster "
+            "secret alone",
             file=sys.stderr,
         )
         return {}
@@ -734,6 +735,15 @@ def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = Tr
     return env
 
 
+def _bridge() -> ModuleType:
+    """bootstrap/bridge.py as sys.modules holds it, so its error class is the one it raises."""
+    if str(BOOTSTRAP) not in sys.path:
+        sys.path.insert(0, str(BOOTSTRAP))
+    import bridge
+
+    return bridge
+
+
 def terraform_settings(tf_dir: str) -> dict[str, str]:
     """The DFE_* outputs of a terraform env dir, as strings a child's environment takes.
 
@@ -745,13 +755,13 @@ def terraform_settings(tf_dir: str) -> dict[str, str]:
 
     Returns:
         Each DFE_* output's value, keyed by its name.
-    """
-    sys.path.insert(0, str(BOOTSTRAP))
-    from bridge import get_tf_outputs
 
-    return {
-        k: value for k, (value, _sensitive) in get_tf_outputs(tf_dir).items() if k.startswith("DFE_")
-    }
+    Raises:
+        bridge.TerraformOutputError: The outputs cannot be read. main() reports it
+            and exits 1; a caller that can go on without them catches it.
+    """
+    outputs = _bridge().get_tf_outputs(tf_dir)
+    return {k: value for k, (value, _sensitive) in outputs.items() if k.startswith("DFE_")}
 
 
 def _suite_env(args: argparse.Namespace) -> dict[str, str]:
@@ -5019,21 +5029,17 @@ def _dial_tree() -> dict[str, object]:
 def _tf_output(cloud: str, name: str) -> str | None:
     """One root output, read through bridge.py's own reader, or None.
 
-    bridge exits the process on a tofu failure -- an uninitialised root, a
-    deployment that has never been applied -- and prints why, so both the exit
-    and the print are contained here: a banner may cost a command its output,
-    never its run.
+    A root bridge cannot read -- uninitialised, never applied -- and anything
+    bridge prints about it are both contained here: a banner may cost a command
+    its output, never its run.
     """
     tf_dir = TF_ENVIRONMENTS / cloud
     if not tf_dir.is_dir():
         return None
-    sys.path.insert(0, str(BOOTSTRAP))
     try:
-        from bridge import get_tf_outputs
-
         with contextlib.redirect_stderr(io.StringIO()):
-            value, _sensitive = get_tf_outputs(str(tf_dir)).get(name, (None, False))
-    except (Exception, SystemExit):
+            value, _sensitive = _bridge().get_tf_outputs(str(tf_dir)).get(name, (None, False))
+    except Exception:
         return None
     return value or None
 
@@ -5122,7 +5128,11 @@ def main(argv: list[str] | None = None) -> int:
     notice = _ephemeral_notice()
     if notice:
         print(notice, file=sys.stderr)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except _bridge().TerraformOutputError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

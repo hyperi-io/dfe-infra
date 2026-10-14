@@ -30,7 +30,7 @@ The diagrams on this page are generated from `suite.yaml` by
 
 That drift check has two halves. The in-repo half - structure, the charts, the
 pins, these diagrams - is binding wherever it runs. The cross-repo half reads
-each member's own file at the cited line, so it is SKIPPED, and says so, on a
+each member's own cited file, so it is SKIPPED, and says so, on a
 bare checkout with no member clones beside it, which is what CI has. An
 operator running it on a box with the clones on disk gets that half checked,
 and `--strict` there turns a skip into a failure.
@@ -123,7 +123,10 @@ consumer is CHECKED. Not bumped - checked.
 The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the
 check and the gates once per kind. Every edge cites the consumer's own file at
 a line where a line is meaningful - a whole-file vendored copy cites the file,
-because no one line of it is the evidence. That citation is `evidence` and it
+because no one line of it is the evidence. A `cargo-dep` or `python-dep` edge
+cites the consumer's manifest alone: the tooling reads it as TOML and finds
+every declaration of the producer's `package`, so a dependency added above the
+declaration cannot move the citation off it. That citation is `evidence` and it
 is always the consumer's side; where the producer keeps its own copy of the
 same content, that copy is the edge's `source`, and it is the only second
 reference an edge carries. An edge nobody could cite from the consumer side is

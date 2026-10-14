@@ -60,7 +60,7 @@ SLICE = {
             "to": "suite-consumer-xyzzy",
             "kind": "cargo-dep",
             "type": "potential",
-            "evidence": "suite-consumer-xyzzy/Cargo.toml:6",
+            "evidence": "suite-consumer-xyzzy/Cargo.toml",
         }
     ],
 }
@@ -150,7 +150,7 @@ GRAPH = {
             "to": "suite-rustapp-xyzzy",
             "kind": "cargo-dep",
             "type": "potential",
-            "evidence": "suite-rustapp-xyzzy/Cargo.toml:6",
+            "evidence": "suite-rustapp-xyzzy/Cargo.toml",
         },
         {
             "from": "suite-rustapp-xyzzy",
@@ -224,7 +224,7 @@ def _stub_infra(
 
 
 def _consumer(root: Path, dependency: str) -> Path:
-    """A consumer checkout whose Cargo.toml line 6 is the cited dependency."""
+    """A consumer checkout whose Cargo.toml declares the cited dependency."""
     repo = root / "suite-consumer-xyzzy"
     repo.mkdir(exist_ok=True)
     (repo / "Cargo.toml").write_text(
@@ -313,7 +313,7 @@ class CheckTests(unittest.TestCase):
         output = self._check('scalo = { version = ">=2.10.14, <3" }', "3.0.0")
         line = next(ln for ln in output.splitlines() if ln.startswith("suite-consumer"))
         assert "widen-range" in line
-        assert "suite-consumer-xyzzy/Cargo.toml:6" in line
+        assert "suite-consumer-xyzzy/Cargo.toml [dependencies] declares '>=2.10.14, <3'" in line
 
     def test_a_missing_consumer_checkout_is_one_bad_line_not_a_crash(self) -> None:
         infra = _stub_infra(self.root)

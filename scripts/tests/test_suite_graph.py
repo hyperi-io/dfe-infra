@@ -130,7 +130,7 @@ edges:
     to: app-b
     kind: cargo-dep
     type: potential
-    evidence: "app-b/Cargo.toml:35"
+    evidence: "app-b/Cargo.toml"
     note: "second range at Cargo.toml:180"
 runtime_edges:
   - from: app-b
@@ -212,6 +212,14 @@ def test_validate_negative_cases() -> None:
     expect("an edge citing nothing is named", any(
         "no evidence" in p
         for p in broken(lambda g: g["edges"][0].__setitem__("evidence", ""))))
+    for cited in ("app-b/Cargo.toml:35", "app-b/Cargo.toml:35-36"):
+        expect(f"a cargo-dep edge citing {cited} is named, the manifest alone being the citation", any(
+            "cites the manifest alone" in p
+            for p in broken(lambda g, cited=cited: g["edges"][0].__setitem__("evidence", cited))))
+    expect("a line on a kind that cites a code site is not refused", not any(
+        "cites the manifest alone" in p
+        for p in broken(lambda g: g["edges"][0].update(kind="mirrored-logic",
+                                                        evidence="app-b/src/config.rs:35"))))
     expect("a runtime edge into a non-node is named", any(
         "is not a node" in p
         for p in broken(lambda g: g["runtime_edges"][0].__setitem__("to", "ghost"))))
@@ -374,7 +382,7 @@ def test_brand_palette() -> None:
     expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")
     g = suite_graph.parse_block_yaml(SAMPLE)
     g["edges"].append({"from": "lib-a", "to": "side-c", "kind": "cargo-dep",
-                       "type": "potential", "evidence": "side-c/pyproject.toml:1"})
+                       "type": "potential", "evidence": "side-c/pyproject.toml"})
     allowed = set(suite_graph.PALETTE.values()) | {
         suite_graph.faded(c) for c in suite_graph.PALETTE.values()}
     for label, block in (("overview", suite_graph.mermaid_overview(g)),
