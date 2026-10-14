@@ -292,7 +292,9 @@ resource "aws_eks_node_group" "this" {
     max_unavailable = 1
   }
 
-  depends_on = [aws_iam_role_policy_attachment.nodes]
+  // vpc-cni is created before the nodes and destroyed after them, so the CNI
+  // outlives every node holding one of its network interfaces.
+  depends_on = [aws_iam_role_policy_attachment.nodes, aws_eks_addon.vpc_cni]
 
   lifecycle {
     precondition {
@@ -342,9 +344,111 @@ locals {
   kube_proxy_minor = try(regex("^v([0-9]+\\.[0-9]+)\\.", lookup(var.addon_versions, "kube-proxy", ""))[0], "")
 }
 
+// vpc-cni stands apart from the other add-ons for its order alone: created
+// before the node groups and destroyed after them (see their depends_on). It is
+// a DaemonSet, so it needs no node to become ACTIVE.
+resource "aws_eks_addon" "vpc_cni" {
+  depends_on = [terraform_data.cni_eni_teardown]
+
+  cluster_name  = aws_eks_cluster.this.name
+  addon_name    = "vpc-cni"
+  addon_version = lookup(var.addon_versions, "vpc-cni", null)
+
+  configuration_values = local.addon_configuration["vpc-cni"]
+
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  lifecycle {
+    precondition {
+      condition     = contains(keys(var.addon_versions), "vpc-cni")
+      error_message = "addon_versions names no version for vpc-cni. Give every add-on one, from `aws eks describe-addon-versions --kubernetes-version ${var.kubernetes_version} --addon-name vpc-cni`."
+    }
+  }
+}
+
+// Without it a deployment that already runs vpc-cni plans a delete and a create
+// of the same add-on instead of keeping it.
+moved {
+  from = aws_eks_addon.this["vpc-cni"]
+  to   = aws_eks_addon.vpc_cni
+}
+
+// The VPC CNI creates pod network interfaces itself, so none is in state. One
+// left `available` holds the EKS cluster security group, EKS cannot delete that
+// group with the cluster, and the VPC delete then fails on it. This deletes them
+// once the node groups and vpc-cni are gone, before the cluster is deleted.
+//
+// The filter is the one the CNI's own leak cleanup sends (amazon-vpc-cni-k8s
+// pkg/awsutils/awsutils.go, getLeakedENIs): the instance_id tag key, status
+// available and this VPC. Its optional cluster-name tag is left out because
+// CLUSTER_NAME may be unset, and this VPC is the module's own, holding no other
+// cluster.
+//
+// No on_failure = continue: an interface that cannot be deleted stops the
+// destroy here, rather than surfacing as the VPC's DependencyViolation later.
+resource "terraform_data" "cni_eni_teardown" {
+  // A dependent is destroyed first, so this runs before the cluster is deleted.
+  depends_on = [aws_eks_cluster.this]
+
+  // A destroy-time command may reference only self (dns.tf).
+  input = {
+    vpc_id = aws_vpc.this.id
+    region = var.provision.region
+  }
+
+  // A replaced VPC is swept by the old instance, before the old cluster goes.
+  triggers_replace = [aws_vpc.this.id]
+
+  // Retries for an interface still detaching: 12 rounds, 10 seconds apart.
+  provisioner "local-exec" {
+    when = destroy
+
+    command = <<-EOT
+      set -eu
+      vpc="${self.output.vpc_id}"
+      region="${self.output.region}"
+      cni_enis() {
+        ids="$(aws ec2 describe-network-interfaces --region "$region" --output text \
+          --filters "Name=vpc-id,Values=$vpc" \
+            "Name=tag-key,Values=node.k8s.amazonaws.com/instance_id" "$1" \
+          --query 'NetworkInterfaces[].NetworkInterfaceId')" || return 1
+        for id in $ids; do
+          case "$id" in eni-*) printf '%s ' "$id" ;; esac
+        done
+      }
+      attempt=1
+      while :; do
+        available="$(cni_enis Name=status,Values=available)"
+        for eni in $available; do
+          if out="$(aws ec2 delete-network-interface --region "$region" --network-interface-id "$eni" 2>&1)"; then
+            echo "deleted leaked CNI network interface $eni"
+          else
+            case "$out" in
+              *InvalidNetworkInterfaceID.NotFound*) ;;
+              *) echo "cannot delete $eni yet: $out" >&2 ;;
+            esac
+          fi
+        done
+        available="$(cni_enis Name=status,Values=available)"
+        detaching="$(cni_enis Name=attachment.status,Values=detaching)"
+        if [ -z "$available$detaching" ]; then
+          exit 0
+        fi
+        if [ "$attempt" -ge 12 ]; then
+          echo "CNI network interfaces still in $vpc after $attempt rounds: $available$detaching" >&2
+          exit 1
+        fi
+        attempt=$((attempt + 1))
+        sleep 10
+      done
+    EOT
+  }
+}
+
 // Pinned, never resolved: a version EKS publishes after the plan cannot reach a deploy unreviewed.
 resource "aws_eks_addon" "this" {
-  for_each = toset(local.addons)
+  for_each = setsubtract(local.addons, ["vpc-cni"])
 
   cluster_name  = aws_eks_cluster.this.name
   addon_name    = each.key
