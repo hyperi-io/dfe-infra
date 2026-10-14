@@ -767,6 +767,7 @@ def collect(
     *,
     route1_filter: dict[str, str | None] | None = None,
     kinds: Collection[str] | None = None,
+    gone: list[Resource] | None = None,
 ) -> list[Resource]:
     """Run every dedicated lister, then fold in anything the tagging API alone caught.
 
@@ -776,7 +777,8 @@ def collect(
     the common case without needing a parser for every AWS ARN shape.
 
     A hit AWS reports deleted is skipped too: the tagging API goes on listing it
-    after the delete, and no scripted delete can ever remove it.
+    after the delete, and no scripted delete can ever remove it. Each one skipped
+    is appended to `gone` when the caller passes a list.
 
     `route1_filter` is what the tagging API is asked for; it defaults to
     `tag_filter`, and --expired passes the run key with any value.
@@ -802,6 +804,8 @@ def collect(
         if tagged.id in known_ids or bare in known_ids:
             continue
         if _tagging_hit_deleted(tagged, region):
+            if gone is not None:
+                gone.append(tagged)
             continue
         resources.append(tagged)
         known_ids.add(tagged.id)
@@ -995,9 +999,11 @@ def _ebs_volume_gone(volume_id: str, region: str) -> bool:
 
 
 # Network classes a run creates, keyed by the tagging API's resource type: describe call, id flag, list key.
+# A security group rule carries the run tags itself, and the tagging API lists it after it is deleted.
 _EC2_DESCRIBE_BY_TYPE = {
     "subnet": ("describe-subnets", "--subnet-ids", "Subnets"),
     "security-group": ("describe-security-groups", "--group-ids", "SecurityGroups"),
+    "security-group-rule": ("describe-security-group-rules", "--security-group-rule-ids", "SecurityGroupRules"),
     "route-table": ("describe-route-tables", "--route-table-ids", "RouteTables"),
     "internet-gateway": ("describe-internet-gateways", "--internet-gateway-ids", "InternetGateways"),
     "vpc": ("describe-vpcs", "--vpc-ids", "Vpcs"),
@@ -1140,10 +1146,11 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
     """True when a tagging-API hit names an EC2 object, KMS key, EKS association or secret now gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
-    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE, instant EC2 fleets, spot requests,
-    KMS keys, EKS pod identity associations and secrets after they go. One still deleting or
-    shutting down is not gone, a KMS key scheduled for deletion is, a secret scheduled for
-    deletion is not, and any other hit is not judged and reads as present.
+    volumes, the network classes in _EC2_DESCRIBE_BY_TYPE (security group rules included),
+    instant EC2 fleets, spot requests, KMS keys, EKS pod identity associations and secrets
+    after they go. One still deleting or shutting down is not gone, a KMS key scheduled for
+    deletion is, a secret scheduled for deletion is not, and any other hit is not judged and
+    reads as present.
 
     Raises:
         CloudSweepError: The describe or list call failed for any reason but NotFound.
@@ -1404,10 +1411,12 @@ class SweepProvider(Protocol):
         *,
         run_key: str | None,
         kinds: Collection[str] | None = None,
+        gone: list[Resource] | None = None,
     ) -> list[Resource]:
         """Every resource found; `run_key` widens the catch-all to every run-tagged one.
 
-        `kinds` limits the listing to those kinds, and drops the catch-all.
+        `kinds` limits the listing to those kinds, and drops the catch-all. `gone` collects
+        the catch-all hits the cloud reports deleted, which the result leaves out.
         """
         ...
 
@@ -1433,9 +1442,12 @@ class AwsProvider:
         *,
         run_key: str | None,
         kinds: Collection[str] | None = None,
+        gone: list[Resource] | None = None,
     ) -> list[Resource]:
         route1: dict[str, str | None] | None = {run_key: None} if run_key else None
-        return collect(self.region, tag_filter, exclude_bucket, route1_filter=route1, kinds=kinds)
+        return collect(
+            self.region, tag_filter, exclude_bucket, route1_filter=route1, kinds=kinds, gone=gone
+        )
 
     def delete(self, resources: list[Resource]) -> list[str]:
         return delete_resources(resources, self.region)
@@ -1465,6 +1477,7 @@ class _UnbuiltProvider:
         *,
         run_key: str | None,
         kinds: Collection[str] | None = None,
+        gone: list[Resource] | None = None,
     ) -> list[Resource]:
         self._refuse()
 

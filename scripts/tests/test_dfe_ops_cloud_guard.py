@@ -93,7 +93,7 @@ class FakeGuard:
             raise guard_mod.GuardError(self.expiry_error)
         return self.expiry, "fake"
 
-    def run_resources(self, keys: object, exclude_bucket: str) -> list:
+    def run_resources(self, keys: object, exclude_bucket: str, gone: list | None = None) -> list:
         return self.leftovers
 
     def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
@@ -516,7 +516,7 @@ def test_refusal_d_run_records_that_cannot_be_listed_fail_rather_than_pass(root:
 def test_refusal_d_resources_that_cannot_be_listed_fail_both_checks(root: Path) -> None:
     guard = FakeGuard()
 
-    def refuse(*_args: object) -> list:
+    def refuse(*_args: object, **_kwargs: object) -> list:
         raise cloud_sweep.CloudSweepError("aws resourcegroupstaggingapi get-resources failed: Throttling")
 
     guard.run_resources = refuse  # type: ignore[method-assign]
@@ -590,7 +590,9 @@ INSTANCE_ID = "i-0123456789abcdef0"
 NAT_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:natgateway/{NAT_ID}"
 ENDPOINT_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:vpc-endpoint/{ENDPOINT_ID}"
 INSTANCE_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{INSTANCE_ID}"
-ID_FLAGS = ("--nat-gateway-ids", "--vpc-endpoint-ids", "--instance-ids")
+RULE_ID = "sgr-0123456789abcdef0"
+RULE_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:security-group-rule/{RULE_ID}"
+ID_FLAGS = ("--nat-gateway-ids", "--vpc-endpoint-ids", "--instance-ids", "--security-group-rule-ids")
 
 
 def _aws_ok(body: object) -> subprocess.CompletedProcess:
@@ -617,6 +619,17 @@ def _instances(state: str) -> dict:
     return {"Reservations": [{"Instances": [{"InstanceId": INSTANCE_ID, "State": {"Name": state}}]}]}
 
 
+def _rule(rule_id: str = RULE_ID) -> subprocess.CompletedProcess:
+    return _aws_ok({"SecurityGroupRules": [{"SecurityGroupRuleId": rule_id, "GroupId": "sg-1"}]})
+
+
+def _rule_not_found(rule_id: str = RULE_ID) -> subprocess.CompletedProcess:
+    return _aws_fail(
+        "An error occurred (InvalidSecurityGroupRuleId.NotFound) when calling the "
+        f"DescribeSecurityGroupRules operation: The security group rule ID '{rule_id}' does not exist"
+    )
+
+
 INSTANCE_NOT_FOUND = _aws_fail(
     "An error occurred (InvalidInstanceID.NotFound) when calling the DescribeInstances "
     f"operation: The instance ID '{INSTANCE_ID}' does not exist"
@@ -634,8 +647,8 @@ class AwsRegionGuard(FakeGuard):
     """FakeGuard's account reads, with the region's run resources and the teardown's sweep
     going through the real AwsGuard."""
 
-    def run_resources(self, keys: object, exclude_bucket: str) -> list:
-        return guard_mod.AwsGuard("us-west-2").run_resources(keys, exclude_bucket)
+    def run_resources(self, keys: object, exclude_bucket: str, gone: list | None = None) -> list:
+        return guard_mod.AwsGuard("us-west-2").run_resources(keys, exclude_bucket, gone=gone)
 
     def sweep(self, args: list[str]) -> int:
         return guard_mod.AwsGuard("us-west-2").sweep(args)
@@ -688,6 +701,8 @@ GONE_FROM_EC2 = [
     pytest.param(ENDPOINT_ARN, ENDPOINT_NOT_FOUND, None, id="vpc-endpoint-not-found"),
     pytest.param(INSTANCE_ARN, _instance("terminated"), LISTED_TERMINATED_INSTANCE, id="instance-terminated"),
     pytest.param(INSTANCE_ARN, INSTANCE_NOT_FOUND, None, id="instance-not-found"),
+    pytest.param(RULE_ARN, _rule_not_found(), None, id="security-group-rule-not-found"),
+    pytest.param(RULE_ARN, _aws_ok({"SecurityGroupRules": []}), None, id="security-group-rule-no-longer-listed"),
 ]
 
 
@@ -726,6 +741,7 @@ def test_refusal_c_ignores_an_expired_resource_the_tagging_api_lists_after_ec2_d
         pytest.param(ENDPOINT_ARN, _endpoint("Deleting"), ENDPOINT_ID, id="vpc-endpoint-still-deleting"),
         pytest.param(INSTANCE_ARN, _instance("running"), INSTANCE_ID, id="instance-running"),
         pytest.param(INSTANCE_ARN, _instance("shutting-down"), INSTANCE_ID, id="instance-shutting-down"),
+        pytest.param(RULE_ARN, _rule(), RULE_ID, id="security-group-rule-live"),
     ],
 )
 def test_refusal_d_still_refuses_a_tagged_resource_ec2_still_holds(
@@ -738,15 +754,59 @@ def test_refusal_d_still_refuses_a_tagged_resource_ec2_still_holds(
 
 
 @pytest.mark.parametrize("reason", ["UnauthorizedOperation", "RequestLimitExceeded"])
+@pytest.mark.parametrize(("arn", "name"), [(NAT_ARN, NAT_ID), (RULE_ARN, RULE_ID)], ids=["nat-gateway", "rule"])
 def test_refusal_d_counts_a_resource_live_when_its_deletion_cannot_be_read(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, reason: str
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, reason: str, arn: str, name: str
 ) -> None:
-    denied = _aws_fail(f"An error occurred ({reason}) when calling the DescribeNatGateways operation")
-    _stale_region(monkeypatch, [NAT_ARN], {NAT_ID: denied}, expires_at=int(NOW) + 3600)
+    denied = _aws_fail(f"An error occurred ({reason}) when calling the Describe operation")
+    _stale_region(monkeypatch, [arn], {name: denied}, expires_at=int(NOW) + 3600)
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(d) unfinished runs"]
-    assert f"tagged:ec2 {NAT_ID}" in _check(report, "(d) unfinished runs").detail
+    assert f"tagged:ec2 {name}" in _check(report, "(d) unfinished runs").detail
+    assert "dropped" not in _check(report, "(d) unfinished runs").detail
     assert reason in capsys.readouterr().err
+
+
+# What one MSK run leaves in the tagging API: four rules that describe-security-group-rules answers NotFound.
+GHOST_RULE_IDS = ["sgr-0aaaaaaaaaaaaaaa1", "sgr-0aaaaaaaaaaaaaaa2", "sgr-0aaaaaaaaaaaaaaa3", "sgr-0aaaaaaaaaaaaaaa4"]
+
+
+def _rule_arn(rule_id: str) -> str:
+    return f"arn:aws:ec2:us-west-2:{ACCOUNT}:security-group-rule/{rule_id}"
+
+
+def test_refusal_d_passes_on_ghost_rules_alone_and_says_how_many_it_dropped(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arns = [_rule_arn(i) for i in GHOST_RULE_IDS]
+    described = {i: _rule_not_found(i) for i in GHOST_RULE_IDS}
+    _stale_region(monkeypatch, arns, described, expires_at=int(NOW) + 3600)
+    report = _preflight(root, AwsRegionGuard())
+    assert report.ok, [c.detail for c in report.checks if not c.ok]
+    detail = _check(report, "(d) unfinished runs").detail
+    assert "dropped 4 tagged resource(s) the tagging API lists and AWS no longer has" in detail
+    assert all(i in detail for i in GHOST_RULE_IDS)
+    assert "dropped" not in _check(report, "(c) expired run resources").detail
+
+
+def test_refusal_d_drops_a_ghost_rule_beside_a_live_one_and_still_refuses_for_the_live_one(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live = "sgr-0bbbbbbbbbbbbbbb1"
+    ghost = GHOST_RULE_IDS[0]
+    described = {live: _rule(live), ghost: _rule_not_found(ghost)}
+    _stale_region(monkeypatch, [_rule_arn(live), _rule_arn(ghost)], described, expires_at=int(NOW) + 3600)
+    report = _preflight(root, AwsRegionGuard())
+    assert _failed(report) == ["(d) unfinished runs"]
+    detail = _check(report, "(d) unfinished runs").detail
+    assert f"tagged:ec2 {live} (until 2026-10-08T13:00:00Z)" in detail
+    assert "dropped 1 tagged resource(s)" in detail
+    assert f"tagged:ec2 {ghost} (until" not in detail
+
+
+def test_refusal_d_names_no_dropped_resources_when_there_were_none(root: Path) -> None:
+    detail = _check(_preflight(root, FakeGuard()), "(d) unfinished runs").detail
+    assert "dropped" not in detail
 
 
 def test_a_run_tagged_resource_of_another_class_is_never_judged_gone(

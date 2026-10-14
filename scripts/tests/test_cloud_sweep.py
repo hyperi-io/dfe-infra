@@ -457,6 +457,23 @@ def test_collect_drops_a_tagging_api_hit_aws_reports_deleted(monkeypatch: pytest
     assert [r.id for r in found] == [INSTANCE_ARN]
 
 
+def test_collect_hands_back_the_hits_it_dropped_as_gone(monkeypatch: pytest.MonkeyPatch) -> None:
+    rule_arn = f"arn:aws:ec2:{REGION}:{ACCOUNT_ID}:security-group-rule/sgr-1"
+    _tagging_only(
+        monkeypatch,
+        [_tagging_hit(ENDPOINT_ARN), _tagging_hit(INSTANCE_ARN), _tagging_hit(rule_arn)],
+        {
+            "vpce-1": _fail(ENDPOINT_NOT_FOUND),
+            "i-1": _instance("running"),
+            "sgr-1": _fail("An error occurred (InvalidSecurityGroupRuleId.NotFound) when calling the Describe"),
+        },
+    )
+    gone: list[cloud_sweep.Resource] = []
+    found = cloud_sweep.collect(REGION, TAG_FILTER, None, gone=gone)
+    assert [r.id for r in found] == [INSTANCE_ARN]
+    assert sorted(r.id for r in gone) == sorted([ENDPOINT_ARN, rule_arn])
+
+
 def test_collect_keeps_a_tagging_api_hit_whose_state_cannot_be_read(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
@@ -691,6 +708,7 @@ def test_a_tagging_hit_is_gone_when_aws_reports_it_deleted_or_unknown(
 NETWORK_CLASSES = [
     ("subnet", "subnet-1", "Subnets", "InvalidSubnetID.NotFound"),
     ("security-group", "sg-1", "SecurityGroups", "InvalidGroup.NotFound"),
+    ("security-group-rule", "sgr-1", "SecurityGroupRules", "InvalidSecurityGroupRuleId.NotFound"),
     ("route-table", "rtb-1", "RouteTables", "InvalidRouteTableID.NotFound"),
     ("internet-gateway", "igw-1", "InternetGateways", "InvalidInternetGatewayID.NotFound"),
     ("vpc", "vpc-1", "Vpcs", "InvalidVpcID.NotFound"),
@@ -1518,7 +1536,13 @@ def test_main_expired_lists_only_expired_and_exits_one_while_any_remain(
     ]
 
     def fake_collect(
-        region: str, tf: dict, bucket: str | None, *, route1_filter: dict | None = None, kinds: object = None
+        region: str,
+        tf: dict,
+        bucket: str | None,
+        *,
+        route1_filter: dict | None = None,
+        kinds: object = None,
+        gone: object = None,
     ) -> list:
         seen_run_keys.append(next(iter(route1_filter)) if route1_filter else None)
         return resources
@@ -1624,7 +1648,7 @@ def test_the_aws_provider_widens_the_catch_all_to_the_run_key_only_in_expired_mo
     monkeypatch.setattr(
         cloud_sweep,
         "collect",
-        lambda region, tf, bucket, *, route1_filter=None, kinds=None: seen.append(route1_filter) or [],
+        lambda region, tf, bucket, *, route1_filter=None, kinds=None, gone=None: seen.append(route1_filter) or [],
     )
     provider = cloud_sweep.AwsProvider(REGION)
     provider.collect(TAG_FILTER, None, run_key=None)
