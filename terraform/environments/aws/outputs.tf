@@ -93,7 +93,7 @@ output "DFE_KAFKA_BOOTSTRAP_IAM" {
 }
 
 output "DFE_KAFKA_CREDENTIAL_REF" {
-  description = "Where the broker's own copy of the SCRAM credential lives -- the secret MSK authenticates against, named rather than read. DFE's own copy is the <project>/<env>/kafka/<provider> entry under DFE_SECRETS_PREFIX, and both carry the same password."
+  description = "The ARN of the secret MSK authenticates against, named rather than read. On msk it is the one copy of the credential: bootstrap carries it onto the cluster secret as dfe.hyperi.io/kafka_credential_ref, and the kafka chart's ClusterExternalSecret reads the apps' dfe-kafka-user from it. Every other provider keeps the <project>/<env>/kafka/<provider> entry under DFE_SECRETS_PREFIX. Empty on a broker with no such secret."
   value       = local.managed_kafka.credential_ref
 }
 

@@ -71,6 +71,12 @@ variable "clickhouse_password" {
   }
 }
 
+variable "read_secret_arns" {
+  description = "Secrets outside the <prefix>/<project>/<env> path that ESO also reads, by ARN: the managed broker's own SCRAM secret, which MSK requires to be named AmazonMSK_<name> and which the apps read in place of a second copy. Read-only, and encrypted with the same deployment key."
+  type        = list(string)
+  default     = []
+}
+
 variable "recovery_window_days" {
   description = "Secrets Manager's deletion delay. Defaults to the vendor's own 30 days; the caller sets this from the dial's tags.lifecycle, passing 0 explicitly for an ephemeral deployment torn down and rebuilt under the same names, where the 30-day default would make the second create fail on a name that still exists."
   type        = number

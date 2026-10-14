@@ -87,14 +87,16 @@
 #                            DFE_REGISTRY) and DFE_PULL_SECRET_USER (default
 #                            token) go with it.
 #   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
-#                            (default, needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID
-#                            and an AppRole SecretID), aws-sm (needs none of
-#                            them -- external-secrets authenticates as the pod
-#                            it runs in, through EKS Pod Identity), or none (no
-#                            store at all, for a profile nothing in which reads
-#                            one -- dfe-ops stack-deploy checks that and picks
-#                            none itself when no backend and no OpenBao input
-#                            is given).
+#                            (needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and an
+#                            AppRole SecretID), aws-sm (needs none of them --
+#                            external-secrets authenticates as the pod it runs
+#                            in, through EKS Pod Identity), or none (no store at
+#                            all, for a profile nothing in which reads one --
+#                            dfe-ops stack-deploy checks that and picks none
+#                            itself when no backend and no OpenBao input is
+#                            given). Unset, aws-sm on DFE_CLOUD=aws and openbao
+#                            elsewhere. openbao is refused on aws, which runs
+#                            no OpenBao.
 #   DFE_SIZING_DIR           where resolve_sizing.py's --out pointed, which is
 #                            the directory `sizing/` hangs off. Defaults to
 #                            terraform/environments/<cloud> where that exists,
@@ -175,7 +177,8 @@
 #                            chart's tls.vault issuer mode. Set it and the edge
 #                            certificate chains to a root every client already
 #                            trusts; leave it unset and the deploy signs the edge
-#                            with its own private root.
+#                            with its own private root. Refused on
+#                            DFE_CLOUD=aws, which runs no OpenBao.
 #   DFE_CA_PERSIST           true|false (default: true when DFE_VAULT_SECRET_ID
 #                            is set) -- save the private root to the deployment's
 #                            secret store and restore it on the next bootstrap,
@@ -341,9 +344,26 @@ dfe_cloud_programs_loadbalancers() {
   [[ " ${DFE_CLOUD_LB_PROVIDERS} " == *" ${DFE_CLOUD} "* ]]
 }
 
-# Which secret store this deployment reads. openbao stays the default, so a
-# deployment that names no backend behaves exactly as it did.
-export DFE_SECRETS_BACKEND="${DFE_SECRETS_BACKEND:-openbao}"
+# Which secret store this deployment reads, when it names none: Secrets Manager
+# on aws, read through EKS Pod Identity, and OpenBao everywhere else. dfe-ops and
+# bootstrap/bridge.py resolve the same default (docs/deployment/managed-backends.md).
+if [[ -z "${DFE_SECRETS_BACKEND:-}" ]]; then
+  if [[ "${DFE_CLOUD:-}" == "aws" ]]; then
+    DFE_SECRETS_BACKEND="aws-sm"
+  else
+    DFE_SECRETS_BACKEND="openbao"
+  fi
+fi
+export DFE_SECRETS_BACKEND
+# Secrets Manager holds every secret of an aws deployment, which runs no OpenBao.
+if [[ "${DFE_CLOUD:-}" == "aws" && "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
+  echo "ERROR: DFE_CLOUD=aws keeps every secret in Secrets Manager and runs no OpenBao -- set DFE_SECRETS_BACKEND=aws-sm, or leave it unset" >&2
+  exit 1
+fi
+if [[ "${DFE_CLOUD:-}" == "aws" && -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]]; then
+  echo "ERROR: DFE_CERTMANAGER_SECRET_ID names an OpenBao PKI, and DFE_CLOUD=aws runs no OpenBao -- unset it; the private CA's root persists in Secrets Manager" >&2
+  exit 1
+fi
 case "${DFE_SECRETS_BACKEND}" in
   openbao|aws-sm|none) ;;
   *)
@@ -969,7 +989,7 @@ elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
   # through to the pod's own credentials, and Secrets Manager is a public AWS
   # endpoint whose certificate the SDK already trusts.
   python3 "${SCRIPT_DIR}/render_env.py" < "${ESO_STORE_TEMPLATE}" | kubectl apply -f -
-  echo "  ClusterSecretStore dfe-secret-store -> Secrets Manager in ${DFE_SECRETS_REGION}"
+  echo "  ClusterSecretStores dfe-secret-store and dfe-secret-store-unprefixed -> Secrets Manager in ${DFE_SECRETS_REGION}"
 else
   # Seed the AppRole SecretID the store references. Nothing else creates it, so ESO
   # could never authenticate to OpenBao (store stuck InvalidProviderConfig).

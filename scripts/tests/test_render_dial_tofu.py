@@ -475,8 +475,11 @@ def test_the_basic_ceiling_is_the_one_the_root_and_the_module_refuse_above() -> 
 
 
 def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
-    """Its last segment is the key the kafka chart reads the credential back by."""
-    assert "kafka/msk" in render()["seeds"]
+    """Its last segment is the key the kafka chart reads the credential back by.
+
+    MSK takes none: its own AmazonMSK_ secret is the one copy the apps read.
+    """
+    assert not any(name.startswith("kafka/") for name in render()["seeds"])
     assert "kafka/strimzi" in render(replace=("provider: msk", "provider: strimzi"))["seeds"]
     assert "kafka/confluent-cloud" in render(
         replace=("provider: msk", "provider: confluent-cloud")
@@ -490,7 +493,7 @@ def test_only_the_confluent_seed_carries_a_username_field() -> None:
     """Confluent's API key IS the username, so the store has to hold it beside the secret."""
     confluent = render(replace=("provider: msk", "provider: confluent-cloud"))["seeds"]
     assert confluent["kafka/confluent-cloud"] == {"username": "", "password": ""}
-    for provider in ("msk", "redpanda-cloud", "strimzi"):
+    for provider in ("redpanda-cloud", "strimzi"):
         seeds = render(replace=("provider: msk", f"provider: {provider}"))["seeds"]
         assert seeds[f"kafka/{provider}"] == {"password": ""}, provider
 

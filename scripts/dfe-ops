@@ -357,14 +357,23 @@ STORE_NAME = "dfe-secret-store"
 MANAGED_KAFKA_PROVIDERS = ("msk", "confluent-cloud", "redpanda-cloud")
 
 
+def _default_store_backend(env: Mapping[str, str]) -> str:
+    """bootstrap.sh's backend when DFE_SECRETS_BACKEND is unset or empty.
+
+    Secrets Manager on aws, which runs no OpenBao, and OpenBao everywhere else.
+    bootstrap/bridge.py resolves the same default.
+    """
+    return "aws-sm" if env.get("DFE_CLOUD") == "aws" else "openbao"
+
+
 def _bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
     """Everything bootstrap.sh cannot run without, for this deployment's backend.
 
-    An empty value reads as openbao, matching bootstrap.sh's own
-    ``${DFE_SECRETS_BACKEND:-openbao}`` -- a plain ``get(..., "openbao")`` would
-    read a present-but-empty value as aws-sm and drop both checks.
+    An empty value reads as bootstrap.sh's own default (_default_store_backend)
+    -- a plain ``get(..., default)`` would read a present-but-empty value as
+    none of the three and drop every store check.
     """
-    backend = env.get("DFE_SECRETS_BACKEND") or "openbao"
+    backend = env.get("DFE_SECRETS_BACKEND") or _default_store_backend(env)
     if backend == "openbao":
         return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_OPENBAO
     if backend == "aws-sm":
@@ -2536,9 +2545,10 @@ def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
 def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list[str]]:
     """The secrets backend bootstrap.sh gets, and what reads the store.
 
-    A declared backend wins, and any OpenBao input keeps the openbao default, so
-    every deployment that ran before resolves exactly as it did. Only a
-    deployment with neither, and nothing that reads the store, resolves to none.
+    A declared backend wins. Off aws any OpenBao input keeps openbao, so every
+    deployment that named one before resolves exactly as it did; on aws, which
+    runs no OpenBao, an OpenBao input selects nothing. A deployment left with no
+    backend gets _default_store_backend's, or none when nothing reads the store.
 
     Args:
         env: The assembled deploy environment.
@@ -2552,9 +2562,9 @@ def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list
     declared = env.get("DFE_SECRETS_BACKEND")
     if declared:
         return next((known for known in STORE_BACKENDS if known == declared), ""), uses
-    if any(env.get(key) for key in OPENBAO_INPUTS):
+    if env.get("DFE_CLOUD") != "aws" and any(env.get(key) for key in OPENBAO_INPUTS):
         return "openbao", uses
-    return ("openbao" if uses else "none"), uses
+    return (_default_store_backend(env) if uses else "none"), uses
 
 
 def _gateway_address(kube: list[str]) -> str:
@@ -4121,6 +4131,13 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     if not backend:
         print(
             f"ERROR: DFE_SECRETS_BACKEND must be one of {', '.join(STORE_BACKENDS)}",
+            file=sys.stderr,
+        )
+        return 1
+    if backend == "openbao" and env.get("DFE_CLOUD") == "aws":
+        print(
+            "ERROR: DFE_CLOUD=aws keeps every secret in Secrets Manager and runs no OpenBao "
+            "-- set DFE_SECRETS_BACKEND=aws-sm, or leave it unset",
             file=sys.stderr,
         )
         return 1

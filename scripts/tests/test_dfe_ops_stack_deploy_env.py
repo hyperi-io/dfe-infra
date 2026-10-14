@@ -371,6 +371,93 @@ def test_an_openbao_input_keeps_the_openbao_default(tmp_path: Path, monkeypatch)
     assert env["DFE_SECRETS_BACKEND"] == "openbao"
 
 
+BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
+
+# (env, the backend bootstrap.sh resolves when none is named). Placeholder values only.
+_STORE_DEFAULTS = (
+    ({"DFE_CLOUD": "aws"}, "aws-sm"),
+    ({"DFE_CLOUD": "aws", "DFE_VAULT_ADDR": "https://store.example.invalid:8200"}, "aws-sm"),
+    ({"DFE_CLOUD": "gcp"}, "openbao"),
+    ({"DFE_CLOUD": "azure"}, "openbao"),
+    ({"DFE_CLOUD": "local-dfe"}, "openbao"),
+)
+
+
+def _bootstrap_backend(env: dict[str, str]) -> subprocess.CompletedProcess:
+    """bootstrap.sh's own backend default and aws refusals, run from its text rather than restated."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    start = script.index('if [[ -z "${DFE_SECRETS_BACKEND:-}" ]]; then')
+    end = script.index('case "${DFE_SECRETS_BACKEND}" in', start)
+    return subprocess.run(
+        ["bash", "-c", script[start:end] + 'printf "%s" "${DFE_SECRETS_BACKEND}"\n'],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+
+
+def test_an_unnamed_backend_is_secrets_manager_on_aws_and_openbao_elsewhere() -> None:
+    for env, expected in _STORE_DEFAULTS:
+        done = _bootstrap_backend(env)
+        assert (done.returncode, done.stdout) == (0, expected), env
+        assert dfeops._default_store_backend(env) == expected, env
+
+
+def test_bootstrap_refuses_openbao_on_aws() -> None:
+    """An aws deployment keeps every secret in Secrets Manager and runs no OpenBao."""
+    for env in (
+        {"DFE_CLOUD": "aws", "DFE_SECRETS_BACKEND": "openbao"},
+        {"DFE_CLOUD": "aws", "DFE_CERTMANAGER_SECRET_ID": "approle-placeholder"},
+    ):
+        done = _bootstrap_backend(env)
+        assert done.returncode == 1, env
+        assert "runs no OpenBao" in done.stderr, env
+    done = _bootstrap_backend({"DFE_CLOUD": "gcp", "DFE_SECRETS_BACKEND": "openbao"})
+    assert (done.returncode, done.stdout) == (0, "openbao")
+
+
+def test_stack_deploy_refuses_openbao_on_aws(tmp_path: Path, monkeypatch) -> None:
+    rc, env = _outsider_deploy(
+        tmp_path, monkeypatch, "single", DFE_CLOUD="aws", DFE_SECRETS_BACKEND="openbao"
+    )
+    assert (rc, env) == (1, None)
+
+
+def test_an_openbao_address_selects_nothing_on_aws(tmp_path: Path, monkeypatch) -> None:
+    rc, env = _outsider_deploy(
+        tmp_path,
+        monkeypatch,
+        "single",
+        DFE_CLOUD="aws",
+        DFE_SECRETS_REGION="us-west-2",
+        DFE_VAULT_ADDR="https://store.example.invalid:8200",
+    )
+    assert rc == 0
+    assert env is not None
+    assert env["DFE_SECRETS_BACKEND"] == "aws-sm"
+
+
+def test_the_aws_default_is_what_dfe_ops_and_the_bridge_check_for() -> None:
+    sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
+    import bridge
+
+    store_inputs = {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID", "DFE_SECRETS_REGION"}
+    for env, expected in _STORE_DEFAULTS:
+        ours = set(dfeops._bootstrap_required(env)) & store_inputs
+        theirs = bridge._required_vars(env) & store_inputs
+        assert ours == theirs, env
+        assert ("DFE_SECRETS_REGION" in ours) == (expected == "aws-sm"), env
+
+
+def test_an_aws_deploy_that_reads_the_store_gets_aws_sm(tmp_path: Path, monkeypatch) -> None:
+    """aws.yaml turns the gateway's OIDC on, whose client secret lives in the store."""
+    rc, env = _outsider_deploy(
+        tmp_path, monkeypatch, "single", DFE_CLOUD="aws", DFE_SECRETS_REGION="us-west-2"
+    )
+    assert rc == 0
+    assert env is not None
+    assert env["DFE_SECRETS_BACKEND"] == "aws-sm"
+
+
 def test_ca_persistence_is_a_store_consumer(tmp_path: Path, monkeypatch) -> None:
     """The persisted root is an ExternalSecret against the store, which none never creates."""
     rc, env = _outsider_deploy(

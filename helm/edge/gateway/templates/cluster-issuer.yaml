@@ -1,6 +1,10 @@
 {{- if and .Values.tls.acme.email .Values.tls.vault.server }}
 {{- fail "tls.acme.email and tls.vault.server are exclusive -- set exactly one issuer mode" }}
 {{- end }}
+{{- /* An AWS deployment runs no OpenBao: its secrets live in Secrets Manager (docs/deployment/managed-backends.md). */}}
+{{- if and .Values.tls.vault.server (eq (.Values.cloud | toString) "aws") }}
+{{- fail "tls.vault.server is set on cloud aws, which runs no OpenBao -- leave tls.vault unset for the private CA issuer, whose root persists in Secrets Manager, or set tls.acme for a public one" }}
+{{- end }}
 {{- if .Values.tls.acme.email }}
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

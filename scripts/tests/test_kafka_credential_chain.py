@@ -47,6 +47,7 @@ Needs `helm` on PATH. No test runner, matching the other checks here.
 
 import importlib.machinery
 import importlib.util
+import re
 import subprocess
 import sys
 import tempfile
@@ -526,6 +527,9 @@ BROKERS = {
         "dfe.hyperi.io/kafka_mode": "external",
         "dfe.hyperi.io/kafka_bootstrap": "b-1.example.invalid:9096,b-2.example.invalid:9096",
         "dfe.hyperi.io/kafka_bootstrap_iam": "b-1.example.invalid:9098,b-2.example.invalid:9098",
+        "dfe.hyperi.io/kafka_credential_ref": (
+            "arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-example-AbCdEf"
+        ),
     },
     "confluent-cloud": {
         "dfe.hyperi.io/kafka_provider": "confluent-cloud",
@@ -539,6 +543,9 @@ BROKERS = {
     },
 }
 MANAGED = ("msk", "confluent-cloud", "redpanda-cloud")
+# Every managed broker the store holds a seed for. MSK holds none: its own
+# AmazonMSK_ secret is the one copy (test_msk_reads_the_one_copy_msk_holds).
+SEEDED = ("confluent-cloud", "redpanda-cloud")
 
 # Where apps read dfe-kafka-user: the app namespace, plus otel for the
 # collector's kafka_metrics receiver (common.yaml's extraAppNamespaces).
@@ -681,7 +688,7 @@ def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
     that module's tftest), so every key read here must be <project>/<env>/<seed>:
     anything else is an ExternalSecret that never syncs.
     """
-    for broker in MANAGED:
+    for broker in SEEDED:
         seed = next(name for name in render_dial._seeds(broker) if name.startswith("kafka/"))
         keys = {key for key, _ in store_reads(layer2_kafka(broker))}
         expect(
@@ -691,9 +698,56 @@ def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
         )
 
 
+def test_msk_reads_the_one_copy_msk_holds() -> None:
+    """No kafka/msk seed exists, so the apps' copy reads MSK's own secret by ARN, through the
+    store with no path prefix, for the password field scram.tf writes into it."""
+    expect("render_dial seeds no kafka entry for msk",
+           not any(name.startswith("kafka/") for name in render_dial._seeds("msk")),
+           f"got {sorted(render_dial._seeds('msk'))}")
+    doc = app_credential(layer2_kafka("msk"))
+    arn = BROKERS["msk"]["dfe.hyperi.io/kafka_credential_ref"]
+    expect("the copy reads the AmazonMSK_ secret's password alone",
+           store_reads([doc]) == {(arn, "password")}, f"got {sorted(store_reads([doc]))}")
+    store = doc["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] if doc else ""
+    expect("through the unprefixed store", store == "dfe-secret-store-unprefixed", f"got {store!r}")
+    scram = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk" / "scram.tf").read_text(
+        encoding="utf-8"
+    )
+    expect("and scram.tf writes a password field into that secret",
+           re.search(r"^\s*password\s*=\s*var\.scram_password\s*$", scram, re.M) is not None,
+           "no password field in the AmazonMSK_ secret_string")
+
+
+def test_bootstrap_creates_the_unprefixed_store_the_msk_copy_names() -> None:
+    """The store prefix would turn an AmazonMSK_ ARN into a key that does not exist, so the
+    copy reads through a second store with none, fenced to the namespaces the copy lands in."""
+    template = REPO_ROOT / "bootstrap" / "templates" / "eso-cluster-secret-store-aws.yaml.tpl"
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "DFE_NAMESPACE": "dfe-aws",
+        "DFE_SECRETS_REGION": "us-west-2",
+        "DFE_SECRETS_PREFIX_PATH": "org-secrets/",
+    }
+    out = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "bootstrap" / "render_env.py")],
+        input=template.read_text(encoding="utf-8"),
+        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    ).stdout
+    stores = {d["metadata"]["name"]: d for d in yaml.safe_load_all(out) if d}
+    chart = yaml.safe_load((KAFKA / "values.yaml").read_text(encoding="utf-8"))
+    name = chart["user"]["password"]["unprefixedStoreName"]
+    expect("bootstrap creates the store the chart names", name in stores, f"got {sorted(stores)}")
+    aws = stores.get(name, {}).get("spec", {}).get("provider", {}).get("aws", {})
+    expect("with no prefix", "prefix" not in aws, f"got {aws}")
+    allowed = {n for c in stores.get(name, {}).get("spec", {}).get("conditions", []) for n in c["namespaces"]}
+    expect("fenced to the namespaces the copy lands in", allowed == APP_NAMESPACES, f"got {sorted(allowed)}")
+    expect("and the prefixed store keeps its prefix",
+           stores["dfe-secret-store"]["spec"]["provider"]["aws"]["prefix"] == "org-secrets/", "")
+
+
 def test_a_managed_broker_seeds_every_property_its_chart_reads() -> None:
     """A property the store does not hold leaves the ExternalSecret unsynced and dfe-kafka-user absent."""
-    for broker in MANAGED:
+    for broker in SEEDED:
         seeds = render_dial._seeds(broker)
         seed = next(name for name in seeds if name.startswith("kafka/"))
         reads = {prop for _, prop in store_reads(layer2_kafka(broker))}

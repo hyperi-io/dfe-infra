@@ -385,6 +385,71 @@ run "redpanda_public_reaches_the_body" {
   }
 }
 
+// MSK's own AmazonMSK_ secret is the one copy of the credential: the store gets
+// no kafka seed, and the root names that secret for ESO to read.
+run "msk_keeps_one_copy_of_the_credential" {
+  command = plan
+
+  override_module {
+    target = module.kafka
+
+    outputs = {
+      bootstrap               = "b-1.example.invalid:9096"
+      bootstrap_port          = 9096
+      bootstrap_iam           = "b-1.example.invalid:9098"
+      auth_type               = "scram"
+      credential_ref          = "arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-example-AbCdEf"
+      network_attachment      = { security_group_id = "sg-00000000000000001", subnet_ids = [] }
+      cluster_arn             = "arn:aws:kafka:us-west-2:000000000000:cluster/dfe-example/00000000-0000-0000-0000-000000000000-1"
+      bootstrap_role_arn      = "arn:aws:iam::000000000000:role/dfe-example-kafka-bootstrap"
+      autoscaler_alarm_arn    = ""
+      autoscaler_function_arn = ""
+      broker_log_bucket       = ""
+    }
+  }
+
+  variables {
+    resolved_shapes = {
+      eks-system = {
+        instance_types = ["m7g.large"]
+        arch           = "arm64"
+      }
+      msk-broker = {
+        instance_types = ["express.m7g.large"]
+        arch           = "arm64"
+      }
+    }
+
+    kafka = {
+      provider = "msk"
+      msk = {
+        shape_ref         = "msk-broker"
+        broker_count      = 3
+        broker_version    = "4.2.x.kraft"
+        num_partitions    = 12
+        log_retention_ms  = 259200000
+        message_max_bytes = 16777216
+        scram_username    = "dfe-kafka-user"
+        bootstrap_job     = { namespace = "strimzi", service_account = "dfe-kafka-bootstrap" }
+      }
+    }
+
+    seeds = {
+      "ui/nextauth" = { secret = "" }
+    }
+  }
+
+  assert {
+    condition     = output.DFE_KAFKA_CREDENTIAL_REF == "arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-example-AbCdEf"
+    error_message = "the root names MSK's own secret, which the apps' copy reads"
+  }
+
+  assert {
+    condition     = output.DFE_KAFKA_PROVIDER == "msk" && output.DFE_SECRETS_BACKEND == "aws-sm"
+    error_message = "an msk deployment keeps its secrets in Secrets Manager"
+  }
+}
+
 // Private stays the default for every deployment that does not ask.
 run "an_unstated_connectivity_stays_private" {
   command = plan

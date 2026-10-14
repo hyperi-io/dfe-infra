@@ -57,7 +57,9 @@ only on `scale` clusters (`layer-scale.yaml`).
 condition and refuses `none` where one fires. `DFE_CA_PERSIST=true`, gateway
 OIDC (on in `aws.yaml`), an external or managed broker, an external ClickHouse
 and object storage each add a consumer on any tier. A deploy-repo overlay can
-too, unseen before the deploy. Any OpenBao value keeps the `openbao` default.
+too, unseen before the deploy. On AWS the backend is `aws-sm` and `openbao` is
+refused; elsewhere an unnamed backend is `openbao`, as is any OpenBao value
+([managed-backends.md](managed-backends.md)).
 
 The published images pull anonymously, so no pod names a pull secret unless
 `DFE_PULL_SECRET_TOKEN` is set for a private registry. bootstrap then creates

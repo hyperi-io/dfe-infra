@@ -460,6 +460,18 @@ def test_vault_mode_renders_neither_half() -> None:
     expect("and the edge issuer is the Vault-backed one", len(issuers) == 1, f"{len(issuers)}")
 
 
+def test_vault_mode_is_refused_on_aws() -> None:
+    """An aws deployment runs no OpenBao, so its private CA is the in-cluster one."""
+    cmd = ["helm", "template", "gw", str(CHART), "-f", str(COMMON_VALUES),
+           "--set", "domain=dfe.example.com", "--set", "env=local", "--set", "cloud=aws",
+           "--set", "tls.vault.server=https://bao.example.com:8200",
+           "--set", "tls.vault.path=pki_tls/sign/example-service",
+           "--set", "tls.vault.appRole.roleId=00000000-0000-0000-0000-000000000000"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    expect("the render refuses tls.vault on aws", out.returncode != 0, "it rendered")
+    expect("and says why", "runs no OpenBao" in out.stderr, out.stderr[-300:])
+
+
 def test_persistence_is_off_by_default_so_a_storeless_deploy_stays_healthy() -> None:
     """An ExternalSecret against a store that is not there is Degraded forever.
 

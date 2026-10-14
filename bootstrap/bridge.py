@@ -109,10 +109,12 @@ def _required_vars(env_vars: dict[str, str]) -> set[str]:
         "DFE_OTEL_ENDPOINT",
         "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
     }
-    # An empty value defaults to openbao the same way bootstrap.sh's
-    # ${DFE_SECRETS_BACKEND:-openbao} does; `.get(..., "openbao")` alone would
-    # read a present-but-empty output as aws-sm and drop both checks.
-    backend = env_vars.get("DFE_SECRETS_BACKEND") or "openbao"
+    # An empty value takes bootstrap.sh's own default: Secrets Manager on aws and
+    # openbao elsewhere. `.get(..., default)` alone would read a present-but-empty
+    # output as none of the three and drop every check.
+    backend = env_vars.get("DFE_SECRETS_BACKEND") or (
+        "aws-sm" if env_vars.get("DFE_CLOUD") == "aws" else "openbao"
+    )
     if backend == "openbao":
         required |= {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}
     elif backend == "aws-sm":

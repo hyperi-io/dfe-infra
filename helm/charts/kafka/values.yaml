@@ -140,6 +140,12 @@ kafka:
       # The SCRAM principal the ACLs are written FOR, which must equal the
       # username in the cluster's AmazonMSK_ secret or the grants name nobody.
       scramUsername: dfe-kafka-user
+      # The ARN of that AmazonMSK_ secret -- the managed-kafka/msk module's
+      # credential_ref output, carried by the cluster secret's
+      # dfe.hyperi.io/kafka_credential_ref. Set, it is the one copy of the
+      # credential: the apps' user.name copy reads its password from here through
+      # user.password.unprefixedStoreName, and nothing seeds a second one.
+      credentialRef: ""
       # Region the SASL/IAM handshake signs against. Empty leaves it to the
       # AWS_REGION the EKS Pod Identity agent already injects into the pod.
       region: ""
@@ -580,6 +586,9 @@ user:
     # (dfe-local/dfe-kafka-user NotFound, transforms in CreateContainerConfigError).
     fromSecretsStore: true
     secretStoreName: dfe-secret-store
+    # The store with no path prefix that bootstrap creates beside it on aws-sm,
+    # for a secret named outside the path: MSK's own (kafka.external.msk.credentialRef).
+    unprefixedStoreName: dfe-secret-store-unprefixed
     # Extra namespaces to project the credential into, beyond appNamespace.
     extraAppNamespaces: []
 

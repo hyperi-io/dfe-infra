@@ -73,6 +73,7 @@ driving the chart directly (a bespoke overlay, or outside `bootstrap.sh`).
 | `kafka.mode` / `kafka.provider` | `external` and `msk` -- the Job renders for nothing else. |
 | `kafka.external.msk.bootstrapIam` | The 9098 bootstrap string, `bootstrap_brokers_sasl_iam`. Empty renders no Job. |
 | `kafka.external.msk.scramUsername` | The principal the ACLs are written for; must equal the username in the `AmazonMSK_` secret. |
+| `kafka.external.msk.credentialRef` | The `AmazonMSK_` secret's ARN, the cluster secret's `dfe.hyperi.io/kafka_credential_ref`. The one copy of the credential: the apps' `dfe-kafka-user` reads its password from it through the `dfe-secret-store-unprefixed` store, and no `kafka/msk` seed exists. |
 | `kafka.external.msk.region` | Optional. Leave empty and the Pod Identity agent's own `AWS_REGION` is used. |
 | `kafka.external.msk.bootstrap.serviceAccount` | The ServiceAccount the Job runs as. |
 | `kafka.external.msk.bootstrap.iamAuth.version` / `.sha256` / `.url` | The jar pin, its published checksum, and the mirror override. |

@@ -93,7 +93,7 @@ def test_every_field_the_dial_sets_reaches_the_root() -> None:
 def test_external_seeds_an_empty_password_the_root_fills_from_its_own_variable() -> None:
     seeds = render(external(), endpoint_host="")["seeds"]
     assert seeds["clickhouse/external"] == {"password": ""}
-    assert "kafka/msk" in seeds
+    assert "ui/nextauth" in seeds
 
 
 def test_expected_fail_external_with_no_host_is_refused() -> None:
