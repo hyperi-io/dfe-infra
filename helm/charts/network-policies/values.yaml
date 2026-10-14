@@ -197,10 +197,12 @@ externalEgress:
   # Every chart that resolves kafka.bootstrapServers. NOT kafbat (namespace
   # `kafka`) or the collector (namespace `otel`) -- neither namespace carries a
   # baseline policy, so both already have unrestricted egress and a policy here
-  # would take it away. dfe-engine is absent because it is not a Kafka client:
-  # the engine chart references kafka nowhere.
+  # would take it away.
   kafka:
     apps:
+      # Creates the bootstrap and source topics, and holds its readiness (and so
+      # every app's wait-for-engine) until the dead-letter topics are on the broker.
+      - dfe-engine
       - dfe-receiver
       - dfe-loader
       - dfe-fetcher
@@ -212,10 +214,9 @@ externalEgress:
       # - dfe-transform-splack
       # - dfe-transform-wasm
     # The MSK bootstrap Job runs in `strimzi` (appsets/layer2-data.yaml pins the
-    # kafka chart there) and is the FIRST thing that has to reach a managed
-    # broker -- it writes the SCRAM principal's ACLs and pre-creates the landing
-    # topics, and dfe-loader crashloops without them. That namespace already
-    # carries a baseline policy, so its egress is denied until this names it.
+    # kafka chart there) and writes the SCRAM principal's ACLs over the IAM
+    # listener. That namespace already carries a baseline policy, so its egress
+    # is denied until this names it.
     extraNamespaceApps:
       strimzi:
         - dfe-kafka        # kafka/templates/msk-bootstrap-job.yaml

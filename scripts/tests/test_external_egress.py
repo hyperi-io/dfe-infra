@@ -46,6 +46,8 @@ CH_APPS = {
     "dfe-hyperdx",
 }
 KAFKA_APPS = {
+    # The engine creates the bootstrap and source topics, and its readiness waits on them.
+    "dfe-engine",
     "dfe-receiver",
     "dfe-loader",
     "dfe-fetcher",
