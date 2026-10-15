@@ -347,6 +347,16 @@ variable "autoscaling" {
   }
 }
 
+variable "broker_scaler_runtime" {
+  description = "The Lambda runtime the broker scaler's inline handler runs on, whose bundled boto3 it imports. From tfvars: render_dial.py renders versions.yaml's lambda-runtimes, so the root passes lambda_runtimes[\"msk-broker-scaler\"]. Read only when autoscaling.enabled."
+  type        = string
+
+  validation {
+    condition     = can(regex("^python3\\.[0-9]+$", var.broker_scaler_runtime))
+    error_message = "broker_scaler_runtime must be a Python Lambda runtime such as python3.14. It comes from the msk-broker-scaler entry of versions.yaml's lambda-runtimes, which render_dial.py writes into the root's lambda_runtimes."
+  }
+}
+
 variable "permissions_boundary" {
   description = "IAM policy ARN set as the permissions boundary on every role this module creates, or null for none."
   type        = string

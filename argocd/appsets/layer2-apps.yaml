@@ -103,7 +103,7 @@ spec:
             {{- $pins := dict
                 "culvert" "sha256:706f0c7f88c6e8eab86cd70112d4603d340e5f1c4cbfd7cb99d2d70117994b3e"
                 "dfe-archiver" "sha256:178bc132ed212cbc1f8773ce670aa4431eccd96c0c8a381b39e03175897ba7c4"
-                "dfe-engine" "sha256:efe0c5115020029c7d87dc37842e7d3e1e7a157ba4bf3bc2112d3d3430c90480"
+                "dfe-engine" "sha256:d0d5e520bf648eb4ca6ef89a60adeef52cd0a4f0662732a170650074f2ad3e82"
                 "dfe-fetcher" "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"
                 "dfe-loader" "sha256:0059c2ad010292655a137a8ee4f1bf5b8627e0362638267a1ff60bf3e301f09c"
                 "dfe-receiver" "sha256:0d39625a6b5d9db9346a2889615e1dacafcd209b0fef1d3229c7b0b8fea7cc89"
@@ -421,6 +421,19 @@ spec:
                 public:
                   eipAllocations: {{ splitList "," $eipAllocations | toJson }}
                   subnets: {{ splitList "," $subnets | toJson }}
+              {{- end }}
+              {{- if and (index .metadata.annotations "dfe.hyperi.io/engine_secrets_prefix" | default "") (eq .deploy.service "dfe-engine") }}
+              # Where the aws root fenced the engine's own role: what the engine
+              # mints goes to Secrets Manager under this prefix, region and key,
+              # tagged so a sweep finds it, and deletes keep no window. Here alone:
+              # the thin chart's schema holds every secrets.<key> to a secret group.
+              secrets:
+                provider: aws
+                region: {{ index .metadata.annotations "dfe.hyperi.io/region" | quote }}
+                namePrefix: {{ index .metadata.annotations "dfe.hyperi.io/engine_secrets_prefix" | quote }}
+                kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/kms_key_arn" | default "" | quote }}
+                tags: {{ index .metadata.annotations "dfe.hyperi.io/resource_tags" | default "{}" | fromJson | toJson }}
+                recoveryWindowDays: 0
               {{- end }}
         # This repo again, at the revision dfe-extras is read at: Argo reads one
         # revision per repo URL, and a second ref at another revision is read

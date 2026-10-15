@@ -1262,12 +1262,13 @@ def _toolbox_tool_versions() -> dict[str, str]:
     return versions
 
 
-def _eks_addon_versions() -> dict[str, str]:
-    """The EKS add-on pins in versions.yaml's eks-addons stage, keyed by add-on name.
+def _stack_pins(section: str) -> dict[str, str]:
+    """The pins in the current stack's `section` of versions.yaml, keyed by pin name.
 
-    Returns whatever the current stack pins, possibly empty: the cluster module's
-    own preconditions refuse a plan that leaves an add-on unpinned, the same way
-    _toolbox_tool_versions leaves a missing tool to the toolbox module.
+    Returns whatever the current stack pins, possibly empty: the module that reads
+    a pin refuses a plan that leaves it unset (the cluster module for eks-addons,
+    the msk module for lambda-runtimes), the same way _toolbox_tool_versions
+    leaves a missing tool to the toolbox module.
     """
     if not VERSIONS_FILE.is_file():
         return {}
@@ -1281,7 +1282,7 @@ def _eks_addon_versions() -> dict[str, str]:
     current = _scalar(tree, ("current",))
     if current is None:
         return {}
-    pins = _node(tree, ("stacks", current, "eks-addons"))
+    pins = _node(tree, ("stacks", current, section))
     return {name: value.strip() for name, value in pins.items() if isinstance(value, str) and value.strip()}
 
 
@@ -1674,7 +1675,8 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "env": _required(dial, ("k8s", "env")),
         "profile": _required(dial, ("profile",)),
         "kubernetes_version": _kubernetes_version(dial, cloud),
-        **({"eks_addon_versions": _eks_addon_versions()} if cloud == "aws" else {}),
+        **({"eks_addon_versions": _stack_pins("eks-addons")} if cloud == "aws" else {}),
+        **({"lambda_runtimes": _stack_pins("lambda-runtimes")} if cloud == "aws" else {}),
         "network": {
             "nat": _required(dial, ("network", "nat")),
             "az_count": az_count,

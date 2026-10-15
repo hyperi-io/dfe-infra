@@ -75,7 +75,7 @@ The same like-for-like rule decides the rest of an AWS deployment.
 | Secrets | Secrets Manager, the one copy of every secret the deploy layer holds, read by external-secrets through EKS Pod Identity | the default on AWS, and the only store: OpenBao runs nowhere in an AWS deployment, so `DFE_SECRETS_BACKEND=openbao` and `tls.vault` are refused, and nothing syncs between the two |
 | Kafka credential on MSK | MSK's own `AmazonMSK_<name>` secret | the one copy: the apps' `dfe-kafka-user` reads it by ARN through the `dfe-secret-store-unprefixed` store, and no `kafka/msk` seed exists |
 | Private CA root | cert-manager's CA issuer, its root persisted in Secrets Manager under `pki/` | |
-| Credentials dfe-engine mints | files on dfe-engine's own volume | on every cloud: its signing key, ClickHouse tenant passwords and OIDC client secrets do not reach Secrets Manager |
+| Credentials dfe-engine mints | Secrets Manager under `<path>/engine/`, encrypted with the deployment key | its signing key, ClickHouse service and tenant passwords and OIDC client secrets. The engine writes them through its own Pod Identity role, which reaches that prefix alone, and external-secrets is denied it. They sit outside tofu state: a test run's carry its run tag for the sweep, and `dfe-ops teardown --with-terraform` force-deletes the rest. Off AWS they are files on dfe-engine's own volume |
 | DNS | Route 53, through external-dns, and a private zone | |
 | Load balancers | AWS Load Balancer Controller | |
 | Object store | S3, with an S3 gateway endpoint | |

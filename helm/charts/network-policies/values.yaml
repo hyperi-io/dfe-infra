@@ -134,7 +134,7 @@ internetEgress:
 #   clickhouse    <- clickhouse.mode: external
 #   kafka         <- kafka.mode: external
 #   oidc          <- oidc.enabled: true
-#   secrets       <- vault.address non-empty
+#   secrets       <- vault.address non-empty, or secrets.provider: aws
 #   elasticsearch <- elasticsearch.endpoint non-empty
 #   otel          <- telemetry.mode: external, or otel.endpoint non-empty
 #
@@ -270,16 +270,21 @@ externalEgress:
     ports:
       - { port: 443, protocol: TCP }
 
-  # OpenBao / cloud KMS, per the secrets seam. ESO is not here -- it runs in
-  # external-secrets with no policy. NOTE the engine chart injects no OpenBao
-  # address today, so this is the policy half of a seam whose app half arrives
-  # with the secrets work. It opens on the declaration, not on the wiring.
+  # The store the engine writes what it mints to. ESO is not here -- it runs in
+  # external-secrets with no policy. layer2-platform declares provider aws from
+  # the cluster secret's engine_secrets_prefix; no chart injects an OpenBao
+  # address into the engine yet, so that half opens on the declaration alone.
   secrets:
     apps:
       - dfe-engine
     ports:
       - { port: 8200, protocol: TCP }   # OpenBao / Vault API
       - { port: 443,  protocol: TCP }   # cloud KMS and secret-manager APIs
+    providers:
+      # Secrets Manager and KMS answer on HTTPS alone, over NAT: no VPC endpoint.
+      aws:
+        ports:
+          - { port: 443, protocol: TCP }
 
   # Live index-server schema import, an engine surface. dfe-transform-elastic is
   # deliberately NOT here: it is a Kafka-to-Kafka transform with no Elasticsearch

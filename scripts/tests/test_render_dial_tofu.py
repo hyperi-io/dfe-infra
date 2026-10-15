@@ -243,6 +243,29 @@ def test_a_versions_file_with_no_eks_add_ons_renders_an_empty_map(
     assert render()["eks_addon_versions"] == {}
 
 
+def test_the_lambda_runtimes_are_the_versions_yaml_pins() -> None:
+    """The msk module pins no runtime of its own, so the render carries the stack's lambda-runtimes."""
+    import check_versions_drift as drift
+
+    pins = {
+        key.split(".", 1)[1]: value
+        for key, value in drift.load_versions().items()
+        if key.startswith("lambda-runtimes.")
+    }
+    assert pins, "versions.yaml's current stack pins no lambda-runtimes"
+    assert render()["lambda_runtimes"] == pins
+
+
+def test_a_versions_file_with_no_lambda_runtimes_renders_an_empty_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The msk module's validation refuses the plan, rather than this render guessing a runtime."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n', encoding="utf-8")
+    monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
+    assert render()["lambda_runtimes"] == {}
+
+
 def test_the_seventh_tag_names_the_root_that_created_the_resource() -> None:
     tags = render()["tags"]
     assert tags["iac-source"] == "dfe-infra/terraform/environments/aws"

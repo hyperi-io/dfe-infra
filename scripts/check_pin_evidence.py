@@ -61,7 +61,8 @@ _COMMENT = re.compile(r"^\s*#(?P<text>.*)$")
 # are the immutable half of a pin somewhere else and carry the image ref rather
 # than a justification, so a digest moving with its tag is not a detachment.
 PIN_SECTIONS = (
-    "bootstrap", "operators", "services", "apps", "content", "providers", "toolbox", "eks-addons"
+    "bootstrap", "operators", "services", "apps", "content", "providers", "toolbox", "eks-addons",
+    "lambda-runtimes",
 )
 
 

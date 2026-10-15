@@ -209,6 +209,11 @@ variable "storage_class" {
 // Kafka
 // ---------------------------------------------------------------------------
 
+variable "lambda_runtimes" {
+  description = "The Lambda runtimes the modules deploy, keyed by function. Pinned in tfvars: render_dial.py renders versions.yaml's lambda-runtimes, because a runtime Lambda publishes after review must not reach a deploy. msk-broker-scaler is the MSK broker scaler's, read only when kafka.provider is msk."
+  type        = map(string)
+}
+
 variable "kafka" {
   description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region and an optional standing environment, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
   type = object({

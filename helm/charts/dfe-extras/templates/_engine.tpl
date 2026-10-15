@@ -146,6 +146,61 @@ true
 {{- end -}}
 
 {{/*
+dfe-engine.secretsOnAws -- non-empty when the engine keeps what it mints in AWS
+Secrets Manager (secrets.provider aws), which layer2-apps.yaml sets from the
+cluster secret's engine_secrets_prefix.
+
+Empty keeps the files on the engine's config mount. Any other provider fails
+the render: nothing here wires its address or credentials.
+*/}}
+{{- define "dfe-engine.secretsOnAws" -}}
+{{- $provider := toString (dig "provider" "" (.Values.secrets | default dict)) -}}
+{{- if eq $provider "aws" -}}
+true
+{{- else if not (has $provider (list "" "<nil>")) -}}
+{{- fail (printf "secrets.provider is %q -- dfe-extras wires aws, or empty for files on the engine's config mount" $provider) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.sidecarServiceAccount -- the account the hunt runner or keda shim runs
+as. Takes (dict "ctx" . "name" <workload name>).
+
+On aws the engine's account carries its Secrets Manager write grant through EKS
+Pod Identity, so each of these takes an account of its own, rendered by
+dfe-engine.sidecarServiceAccountObject, that carries nothing.
+*/}}
+{{- define "dfe-engine.sidecarServiceAccount" -}}
+{{- if include "dfe-engine.secretsOnAws" .ctx -}}
+{{ .name }}
+{{- else -}}
+{{ include "dfe-common.serviceAccountName" .ctx }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.sidecarServiceAccountObject -- the ServiceAccount
+sidecarServiceAccount names on aws, and nothing elsewhere. Takes (dict "ctx" .
+"name" <workload name> "component" <app.kubernetes.io/component>).
+*/}}
+{{- define "dfe-engine.sidecarServiceAccountObject" -}}
+{{- if include "dfe-engine.secretsOnAws" .ctx }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/name: {{ .name }}
+    app.kubernetes.io/part-of: {{ .ctx.Values.project | quote }}
+    app.kubernetes.io/managed-by: "helm"
+    app.kubernetes.io/component: {{ .component }}
+    dfe.hyperi.io/env: {{ .ctx.Values.env | quote }}
+    dfe.hyperi.io/cloud: {{ .ctx.Values.cloud | quote }}
+---
+{{- end }}
+{{- end -}}
+
+{{/*
 dfe-engine.catalogueFile -- the mounted source catalogue, or empty when this
 deployment materialises none.
 

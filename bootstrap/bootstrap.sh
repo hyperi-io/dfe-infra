@@ -103,6 +103,11 @@
 #                            matching the resolve the deployment docs give.
 #   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
 #   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
+#   DFE_ENGINE_SECRETS_PREFIX  aws only: where dfe-engine's role writes what it
+#                            mints in Secrets Manager. Set, the engine's store
+#                            moves there; empty omits the annotation
+#   DFE_KMS_KEY_ARN          aws only: the key those secrets are encrypted with;
+#                            empty omits the annotation
 #   DFE_BASE_DOMAIN          estate domain the profile tag is prefixed to when
 #                            DFE_DOMAIN is unset (one cluster, one profile at a
 #                            time, one set of hostnames per profile)
@@ -561,6 +566,11 @@ export DFE_KARPENTER_INSTANCE_PROFILE="${DFE_KARPENTER_INSTANCE_PROFILE:-}"
 export DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION="${DFE_KARPENTER_INSTANCE_PROFILE:+dfe.hyperi.io/karpenter_instance_profile: \"${DFE_KARPENTER_INSTANCE_PROFILE}\"}"
 export DFE_KARPENTER_KMS_KEY_ID="${DFE_KARPENTER_KMS_KEY_ID:-}"
 export DFE_KARPENTER_KMS_KEY_ID_ANNOTATION="${DFE_KARPENTER_KMS_KEY_ID:+dfe.hyperi.io/karpenter_kms_key_id: \"${DFE_KARPENTER_KMS_KEY_ID}\"}"
+# dfe-engine's store prefix and key, each rendered only when set (AWS alone).
+export DFE_ENGINE_SECRETS_PREFIX="${DFE_ENGINE_SECRETS_PREFIX:-}"
+export DFE_ENGINE_SECRETS_PREFIX_ANNOTATION="${DFE_ENGINE_SECRETS_PREFIX:+dfe.hyperi.io/engine_secrets_prefix: \"${DFE_ENGINE_SECRETS_PREFIX}\"}"
+export DFE_KMS_KEY_ARN="${DFE_KMS_KEY_ARN:-}"
+export DFE_KMS_KEY_ARN_ANNOTATION="${DFE_KMS_KEY_ARN:+dfe.hyperi.io/kms_key_arn: \"${DFE_KMS_KEY_ARN}\"}"
 # The in-cluster toolbox pod's dial facts (deployment.yaml's toolbox.pod.*,
 # render_dial.py's DFE_TOOLBOX_POD_* keys). Unlike the karpenter facts above,
 # these are not conditional on AWS -- the chart deploys on every cloud -- so

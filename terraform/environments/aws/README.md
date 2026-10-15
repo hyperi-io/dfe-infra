@@ -77,6 +77,7 @@ Fill in, at minimum:
 | `kafka.landing_topics` | Required -- at least one topic -- when `kafka.provider` is `confluent-cloud` or `redpanda-cloud`. Neither runs a bootstrap Job of its own, so this root creates the topics tofu can reach; an empty map ships a cluster dfe-loader crash-loops against on a missing `*_land` topic. Ignored for `msk`, whose in-cluster Job creates the same topics from the chart's own values. |
 | `secrets.ref` | Optional. Empty puts the deployment's secrets at `<project>/<env>`, which is what a store holding one deployment wants. |
 | `eks_addon_versions` | Pinned in tfvars: `render_dial.py` writes the current stack's `eks-addons` from `versions.yaml`, built for the minor it names. On another `kubernetes_version`, set all five from `aws eks describe-addon-versions --kubernetes-version <minor>`. |
+| `lambda_runtimes` | Pinned in tfvars: `render_dial.py` writes the current stack's `lambda-runtimes` from `versions.yaml`, keyed by function. `msk-broker-scaler` is the MSK broker scaler's, read only when `kafka.provider` is `msk`. |
 
 Then:
 

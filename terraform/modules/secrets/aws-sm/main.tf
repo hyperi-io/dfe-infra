@@ -1,7 +1,8 @@
 // AWS Secrets Manager as the store ESO reads, and EKS Pod Identity as how it
 // reaches it. This is the swap the local path's OpenBao body describes: the
 // store changes and the ClusterSecretStore's provider block changes, while
-// every ExternalSecret and every reader downstream is unchanged.
+// every ExternalSecret and every reader downstream is unchanged. dfe-engine has
+// a second identity, which writes the secrets it mints under engine/.
 
 data "aws_region" "current" {}
 
@@ -46,6 +47,13 @@ locals {
   // Secrets Manager appends six random characters to every secret's ARN, so a
   // path is matched with a trailing wildcard rather than listed.
   secret_arn_prefix = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${local.path}"
+
+  // dfe-engine writes what it mints under this, and var.seeds refuses a name inside it.
+  engine_name_prefix = "${local.path}/engine"
+  engine_arn_prefix  = "${local.secret_arn_prefix}/engine"
+
+  // The engine's thin chart names its service account after the component (scalo-service).
+  engine_service_account = "dfe-engine"
 }
 
 // A generated value NEVER leaves this module -- it goes into the store and into
@@ -119,6 +127,13 @@ data "aws_iam_policy_document" "eso" {
     resources = ["${local.secret_arn_prefix}/*"]
   }
 
+  // The engine alone reads what it mints, so no ExternalSecret can copy its signing key or a tenant password out.
+  statement {
+    effect    = "Deny"
+    actions   = ["secretsmanager:*"]
+    resources = ["${local.engine_arn_prefix}/*"]
+  }
+
   // A secret whose name a service fixes outside the path, such as MSK's AmazonMSK_ one, read where it lives.
   dynamic "statement" {
     for_each = length(var.read_secret_arns) > 0 ? [1] : []
@@ -168,4 +183,59 @@ resource "aws_eks_pod_identity_association" "eso" {
   service_account = "external-secrets"
 
   role_arn = aws_iam_role.eso.arn
+}
+
+// ---------------------------------------------------------------------------
+// The identity dfe-engine writes what it mints with
+// ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "engine" {
+  name                 = "${var.cluster_name}-engine-secrets"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
+}
+
+data "aws_iam_policy_document" "engine" {
+  // The engine names every secret it reads or writes, so it lists nothing.
+  statement {
+    effect = "Allow"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:UpdateSecret",
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:DeleteSecret",
+      "secretsmanager:TagResource",
+    ]
+    resources = ["${local.engine_arn_prefix}/*"]
+  }
+
+  // The same key wraps EKS Secrets and MSK, so it is used only through Secrets Manager.
+  statement {
+    effect    = "Allow"
+    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+    resources = [var.kms_key_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "engine" {
+  name   = "${var.cluster_name}-engine-secrets"
+  role   = aws_iam_role.engine.name
+  policy = data.aws_iam_policy_document.engine.json
+}
+
+resource "aws_eks_pod_identity_association" "engine" {
+  cluster_name = var.cluster_name
+
+  namespace       = var.engine_namespace
+  service_account = local.engine_service_account
+
+  role_arn = aws_iam_role.engine.arn
 }

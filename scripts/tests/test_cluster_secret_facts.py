@@ -99,6 +99,16 @@ CONDITIONAL_FACTS = (
         "eipAllocations",
     ),
     ("DFE_RECEIVER_SUBNETS", "dfe.hyperi.io/receiver_subnets", "layer2-apps.yaml", "subnets"),
+    # test_engine_secrets_store.py renders both appsets to prove the engine's
+    # store and its egress follow the prefix, and nothing else does.
+    (
+        "DFE_ENGINE_SECRETS_PREFIX",
+        "dfe.hyperi.io/engine_secrets_prefix",
+        "layer2-apps.yaml",
+        "namePrefix",
+    ),
+    ("DFE_ENGINE_SECRETS_PREFIX", "dfe.hyperi.io/engine_secrets_prefix", "layer2-platform.yaml", "secrets"),
+    ("DFE_KMS_KEY_ARN", "dfe.hyperi.io/kms_key_arn", "layer2-apps.yaml", "kmsKeyId"),
 )
 
 # A JSON map carries double quotes of its own, so its annotation is

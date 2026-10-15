@@ -52,6 +52,7 @@ disk on every reload tick, and the engine governs them in that repo.
                     (printf "--ref=%s" .Values.gitops.branch)
                     (printf "--root=%s/repo" $gs.mountPath)
                     (printf "--link=%s" $gs.link) }}
+{{- include "dfe-engine.sidecarServiceAccountObject" (dict "ctx" . "name" "dfe-hunt-runner" "component" "hunt-runner") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -79,7 +80,7 @@ spec:
       labels: *hrLabels
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
-      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-hunt-runner") }}
       # The runner loads the engine's settings module, and svc/dfe-keda-shim makes the
       # kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080", which settings.py:1292 reads
       # as an int and exits on ("invalid literal for int() with base 10").
@@ -122,7 +123,7 @@ spec:
           command: ["dfe-hunt-runner"]
           args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
           env:
-            # The engine mints its key into a per-pod emptyDir, which this pod
+            # The engine mints its key into its own store, which this pod
             # cannot read; without the shared Secret it falls back to the dev
             # placeholder and DFESettings rejects that under env=production.
             - name: DFE_API_JWT_SECRET

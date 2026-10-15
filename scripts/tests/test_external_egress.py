@@ -227,6 +227,15 @@ def test_secret_backend_derives_from_the_address() -> None:
            ports_of(policies) == {8200, 443}, f"got {sorted(ports_of(policies))}")
 
 
+def test_an_aws_store_opens_the_engine_on_https_alone() -> None:
+    """Secrets Manager and KMS answer on 443 only, so the OpenBao port stays shut."""
+    policies = external(render("secrets.provider=aws"), "secrets")
+    expect("an aws store is the engine alone", apps_of(policies) == {"dfe-engine"},
+           f"got {sorted(apps_of(policies))}")
+    expect("an aws store grants only 443", ports_of(policies) == {443},
+           f"got {sorted(ports_of(policies))}")
+
+
 def test_elasticsearch_does_not_reach_the_transform() -> None:
     """dfe-transform-elastic is Kafka-to-Kafka and has no Elasticsearch client."""
     policies = external(render("elasticsearch.endpoint=https://es.example.com:9200"),
@@ -340,6 +349,7 @@ def main() -> int:
         test_kafka_internal_modes_open_nothing()
         test_oidc_is_engine_only_on_443()
         test_secret_backend_derives_from_the_address()
+        test_an_aws_store_opens_the_engine_on_https_alone()
         test_elasticsearch_does_not_reach_the_transform()
         test_external_otel_is_namespace_wide()
         test_otel_endpoint_override_also_declares()

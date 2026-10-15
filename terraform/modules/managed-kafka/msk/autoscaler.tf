@@ -46,9 +46,6 @@ locals {
 
   autoscaling_alarm_periods = var.autoscaling.evaluation_periods
 
-  // The runtime the inline handler below is written for, whose bundled boto3 it imports.
-  broker_scaler_runtime = "python3.13"
-
   // MSK numbers brokers from 1 up to the node count, the same ids that appear
   // in the b-1..b-N bootstrap broker hostnames.
   autoscaling_broker_ids = range(1, var.broker_count + 1)
@@ -200,7 +197,7 @@ resource "aws_iam_role_policy" "broker_scaler" {
   policy = data.aws_iam_policy_document.broker_scaler[0].json
 }
 
-// Stdlib + boto3 only (both ship in local.broker_scaler_runtime), so the code
+// Stdlib + boto3 only (both ship in var.broker_scaler_runtime), so the code
 // lives inline here rather than as a file the repo has to track and package
 // separately.
 data "archive_file" "broker_scaler" {
@@ -288,7 +285,7 @@ resource "aws_lambda_function" "broker_scaler" {
   source_code_hash = data.archive_file.broker_scaler[0].output_base64sha256
 
   handler       = "handler.handler"
-  runtime       = local.broker_scaler_runtime
+  runtime       = var.broker_scaler_runtime
   architectures = ["arm64"]
   timeout       = 60
 
