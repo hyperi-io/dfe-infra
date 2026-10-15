@@ -216,6 +216,7 @@ APP_ROWS = (
     ("dfe-loader", BUS, "DFE_LOADER_KAFKA_BROKERS", "src/config/loader.rs:223"),
     ("dfe-loader", BUS, "DFE_LOADER__KAFKA__SASL__USERNAME", "src/config/loader.rs:392"),
     ("dfe-loader", BUS, "DFE_LOADER__KAFKA__SASL__PASSWORD", "src/config/loader.rs:392"),
+    ("dfe-loader", BUS, "DFE_LOADER_KAFKA_SASL_MECHANISM", "src/config/loader.rs:275"),
     ("dfe-loader", BUS, "DFE_LOADER_DLQ_TOPIC", "src/config/loader.rs:273"),
     ("dfe-loader", DIALLED, "DFE_LOADER_KAFKA_SECURITY_PROTOCOL", "src/config/loader.rs:247"),
     ("dfe-loader", DIRECT, "DFE_LOADER_TRANSPORT", "src/config/loader.rs:61"),

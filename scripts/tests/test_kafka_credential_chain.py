@@ -36,6 +36,12 @@ through the kafka chart, the way Argo does, and hold every property it reads to
 a field the deploy layer seeds -- Confluent's API key is the username, so its
 seed carries both.
 
+**The mechanism each client dials with.** A client handed no mechanism falls
+back to its own SCRAM-SHA-512 default, which Confluent Cloud refuses at the
+handshake. Each client that accepts librdkafka's spelling reads `sasl.mechanism`
+from the Secret beside its credential, checked here against each broker's
+rendered Secret.
+
 The broker side of each tier is the kafka and kafbat charts under layer2-data's
 value files and parameters; the app side is every component's golden under
 fixtures/thin-renders, which test_thin_renders.py holds equal to what Argo deploys.
@@ -825,6 +831,76 @@ def test_the_in_cluster_credential_is_unchanged() -> None:
         doc.get("spec") == expected,
         f"got {doc.get('spec')}",
     )
+
+
+# --- the mechanism each client dials with -----------------------------------
+
+# The env name each client reads its mechanism from, in librdkafka's spelling.
+MECHANISM_ENV = {
+    "dfe-archiver": "KAFKA_SASL_MECHANISM",
+    "dfe-engine": "DFE_KAFKA_SASL_MECHANISM",
+    "dfe-fetcher": "DFE_FETCHER_KAFKA_SASL_MECHANISM",
+    "dfe-loader": "DFE_LOADER_KAFKA_SASL_MECHANISM",
+    "dfe-receiver": "DFE_RECEIVER_KAFKA_SASL_MECHANISM",
+    "dfe-transform-elastic": "KAFKA_SASL_MECHANISM",
+}
+
+# Clients whose validate_sasl takes only plain, scram_sha_256 and scram_sha_512,
+# refusing the Secret's SCRAM-SHA-512 and PLAIN, so they stay on their own
+# scram_sha_512 default until the app accepts librdkafka's spelling.
+REFUSES_SECRET_SPELLING = {
+    "dfe-transform-vector": "dfe-transform-vector src/config/loader.rs validate_sasl",
+    "dfe-transform-vrl": "dfe-transform-vrl src/config/validate.rs validate_sasl",
+}
+
+BUS_CELLS = [(profile, cloud) for profile in ("single", "scale") for cloud in CLOUDS]
+
+
+def mechanism_read(env_value: object, secret: dict) -> object:
+    """The mechanism an env entry resolves to against dfe-kafka-user's templated keys."""
+    if isinstance(env_value, dict):
+        ref = (env_value.get("valueFrom") or {}).get("secretKeyRef") or {}
+        return secret.get(ref.get("key")) if ref.get("name") == "dfe-kafka-user" else None
+    return env_value
+
+
+def test_every_client_reads_the_mechanism_its_broker_serves() -> None:
+    """A client left on its default speaks SCRAM-SHA-512 to a broker that serves PLAIN."""
+    for broker in BROKERS:
+        secret = template_data(app_credential(layer2_kafka(broker)))
+        want = CONTRACT_TABLE[broker][1]
+        for service, name in sorted(MECHANISM_ENV.items()):
+            for profile, cloud in BUS_CELLS:
+                env = effective_env(golden(service, profile, cloud), f"Deployment/{service}")
+                got = mechanism_read(env.get(name), secret)
+                expect(
+                    f"{broker}: {service} reads {want} from {name} [{profile}/{cloud}]",
+                    got == want,
+                    f"got {got!r}",
+                )
+
+
+def test_every_credential_reader_is_handed_a_mechanism_or_named() -> None:
+    """A new client would otherwise pass by being in neither table."""
+    covered = set(MECHANISM_ENV) | set(REFUSES_SECRET_SPELLING)
+    expect(
+        "every component reading dfe-kafka-user is accounted for",
+        covered == set(SECRET_CONSUMERS),
+        f"unaccounted {sorted(set(SECRET_CONSUMERS) - covered)}",
+    )
+
+
+def test_an_app_that_refuses_the_secret_spelling_is_not_handed_it() -> None:
+    """Its validation rejects SCRAM-SHA-512, so the pod would not start on any broker."""
+    for service, reader in sorted(REFUSES_SECRET_SPELLING.items()):
+        for profile, cloud in BUS_CELLS:
+            env = effective_env(golden(service, profile, cloud), f"Deployment/{service}")
+            handed = sorted(name for name in env if "SASL_MECHANISM" in name.replace("__", "_"))
+            expect(
+                f"{service} is handed no mechanism [{profile}/{cloud}]",
+                not handed,
+                f"got {handed}; {reader}",
+            )
 
 
 def main() -> int:

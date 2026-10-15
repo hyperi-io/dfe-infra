@@ -127,6 +127,12 @@ spec:
         - --config
         - /etc/dfe/loader.yaml
         env:
+        - name: DFE_LOADER_KAFKA_SASL_MECHANISM
+          valueFrom:
+            secretKeyRef:
+              key: sasl.mechanism
+              name: dfe-kafka-user
+              optional: true
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: POD_NAMESPACE
