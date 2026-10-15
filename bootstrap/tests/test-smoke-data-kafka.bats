@@ -106,12 +106,12 @@ add_pod() {
     [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"-n strimzi"* ]]
 }
 
-@test "the deploy's own env says managed, so the cluster secret is never read" {
+@test "the deploy's own env says managed, so the cluster secret's broker facts are never read" {
     export DFE_KAFKA_MODE=external DFE_KAFKA_PROVIDER=msk
     run bash "${SMOKE}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"[SKIP] kafka brokers -- managed broker (msk), nothing runs in the cluster"* ]]
-    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"get secret dfe-cluster"* ]]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"io/kafka_"* ]]
 }
 
 @test "a managed broker whose provider is not recorded still skips" {
@@ -187,5 +187,5 @@ add_pod() {
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"[SKIP] kafka broker -- not deployed on profile slim"* ]]
     [[ "${output}" != *"managed broker"* ]]
-    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"get secret dfe-cluster"* ]]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"io/kafka_"* ]]
 }

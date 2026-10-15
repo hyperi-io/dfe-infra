@@ -14,14 +14,13 @@ The proof used to fail on a fixed 120s bound whenever the cluster was busy
 reconciling a roll (dfe-infra #275), and to report one FAIL whether the scaler
 was broken or whether it was the unreproduced stall in dfe-infra #134. A fake
 `kubectl` first on PATH answers every read from a fixture, so the bound and the
-verdict are what is under test and no cluster is involved.
+verdict are what is under test and no cluster is involved. It records every exec
+with what it was sent on stdin, so a test can see where the pressure rows went.
 
     python3 scripts/tests/test_keda_scale_proof.py
 
 No third-party deps and no test runner, matching the script it tests.
 """
-
-from __future__ import annotations
 
 import json
 import os
@@ -78,7 +77,14 @@ if "apply" in args:
     sys.exit(0)
 if "delete" in args:
     sys.exit(0)
+if "secret" in args:
+    # The dfe-cluster facts: only clickhouse_mode is ever asked for.
+    print(fixture.get("clickhouse_mode", "") if "clickhouse_mode" in jsonpath() else "", end="")
+    sys.exit(0)
 if "exec" in args:
+    sent = sys.stdin.read() if "-i" in args else ""
+    with open(os.environ["FAKE_KUBECTL_EXECS"], "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"args": args, "stdin": sent}) + "\\n")
     print(1)
     sys.exit(0)
 if any("custom-columns" in arg for arg in args):
@@ -103,8 +109,12 @@ if "deploy" in args:
     print(take("ready", 1), end="")
     sys.exit(0)
 if "pod" in args or "pods" in args:
-    print("dfe-clickhouse-0", end="")
-    sys.exit(0)
+    if fixture.get("clickhouse_pods", True):
+        print("dfe-clickhouse-0", end="")
+        sys.exit(0)
+    # What kubectl answers a jsonpath of items[0] on an empty list.
+    sys.stderr.write("error: array index out of bounds: index 0, length 0\\n")
+    sys.exit(1)
 sys.exit(1)
 """
 
@@ -113,8 +123,10 @@ SETTLED: list[str] = []
 SCALED = ["2", "1"]
 
 
-def run_proof(fixture: dict, **env_overrides: str) -> subprocess.CompletedProcess:
-    """The proof against a fixed cluster reading, with the waits shortened."""
+def run_proof_logged(
+    fixture: dict, **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, list[dict]]:
+    """The proof against a fixed cluster reading, and every exec it made."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
         kubectl = bindir / "kubectl"
@@ -122,16 +134,18 @@ def run_proof(fixture: dict, **env_overrides: str) -> subprocess.CompletedProces
         kubectl.chmod(0o755)
         fixture_file = bindir / "fixture.json"
         fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
+        execs_file = bindir / "execs.jsonl"
 
-        env = dict(os.environ)
+        env = {k: v for k, v in os.environ.items() if k != "DFE_CLICKHOUSE_MODE"}
         env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
         env["FAKE_KUBECTL_FIXTURE"] = str(fixture_file)
         env["FAKE_KUBECTL_CALLS"] = str(bindir / "state.json")
+        env["FAKE_KUBECTL_EXECS"] = str(execs_file)
         env["DFE_WAIT_INTERVAL"] = "1"
         env["DFE_SETTLE_INTERVAL"] = "1"
         env["DFE_SCALE_IN_TIMEOUT"] = "2"
         env.update(env_overrides)
-        return subprocess.run(
+        out = subprocess.run(
             ["bash", str(PROOF)],
             capture_output=True,
             text=True,
@@ -140,6 +154,13 @@ def run_proof(fixture: dict, **env_overrides: str) -> subprocess.CompletedProces
             env=env,
             check=False,
         )
+        lines = execs_file.read_text(encoding="utf-8").splitlines() if execs_file.exists() else []
+        return out, [json.loads(line) for line in lines]
+
+
+def run_proof(fixture: dict, **env_overrides: str) -> subprocess.CompletedProcess:
+    """The proof against a fixed cluster reading, with the waits shortened."""
+    return run_proof_logged(fixture, **env_overrides)[0]
 
 
 def run_stalled(**hpa: str) -> subprocess.CompletedProcess:
@@ -258,6 +279,62 @@ def test_an_average_value_trigger_is_read_too() -> None:
 
     expect("the averageValue field answers", out.returncode == UNPROVEN,
            f"rc={out.returncode} {out.stdout}")
+
+
+def ran_in_engine(args: list[str]) -> bool:
+    """Whether a kubectl exec ran in the engine Deployment's own dfe-engine container."""
+    head = args[: args.index("--")]
+    return "deploy/dfe-engine" in head and head[head.index("-c") + 1] == "dfe-engine"
+
+
+def test_an_external_clickhouse_takes_the_pressure_through_the_engine() -> None:
+    """ClickHouse Cloud runs no pod here, and the shim reads the engine's own server."""
+    out, execs = run_proof_logged(
+        {
+            "rolling": [SETTLED],
+            "ready": SCALED,
+            "clickhouse_mode": "external",
+            "clickhouse_pods": False,
+        }
+    )
+
+    expect("the proof passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}{out.stderr}")
+    in_engine = [e for e in execs if ran_in_engine(e["args"])]
+    expect(
+        "every query ran in the engine's own container",
+        bool(execs) and in_engine == execs,
+        f"{execs}",
+    )
+    sent = [e["stdin"] for e in in_engine]
+    expect(
+        "the pressure row went in on stdin",
+        any(
+            s.startswith("INSERT INTO dfe.otel_metrics_gauge")
+            and "'dfe_scaling_pressure', 100" in s
+            for s in sent
+        ),
+        f"{sent}",
+    )
+    expect(
+        "and the cleanup tombstoned it the same way",
+        any(s.startswith("ALTER TABLE dfe.otel_metrics_gauge DELETE") for s in sent),
+        f"{sent}",
+    )
+
+
+def test_an_in_cluster_clickhouse_takes_the_pressure_through_its_pod() -> None:
+    """No clickhouse_mode fact keeps the injection on clickhouse-client in a ClickHouse pod."""
+    out, execs = run_proof_logged({"rolling": [SETTLED], "ready": SCALED})
+
+    expect("the proof passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}{out.stderr}")
+    expect(
+        "every query ran clickhouse-client in the ClickHouse pod",
+        bool(execs)
+        and all(
+            "dfe-clickhouse-0" in e["args"] and "clickhouse-client" in e["args"] for e in execs
+        ),
+        f"{execs}",
+    )
 
 
 def run_runner(codes: dict[str, int]) -> subprocess.CompletedProcess:

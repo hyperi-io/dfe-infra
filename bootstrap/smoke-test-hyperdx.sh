@@ -56,6 +56,10 @@ check() {
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 note() { echo "         $1"; }
 
+# engine_ch_url() -- the ClickHouse URL the engine dials, read from its own container.
+# shellcheck source-path=SCRIPTDIR source=scripts/engine-clickhouse.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/engine-clickhouse.sh"
+
 # The fork's runtime image ships node and neither curl nor wget, so the probes run
 # in the pod's node with values passed as env vars, never spliced into the JS.
 # A probe prints nothing on any failure, so an error is never read as a response.
@@ -202,11 +206,19 @@ check "HyperDX has a ClickHouse connection configured" "[ -n '$CH_HOST' ]"
 # Reaching ClickHouse FROM the HyperDX pod is the seam. Doing it from a CH pod (as
 # the integration test does) proves ClickHouse works, not that HyperDX can get to it
 # -- different NetworkPolicy, different service DNS, different credentials.
-# The URL HyperDX is configured with, dialled as is: the Service name differs per
-# mode, so a literal resolves to no such host on the mode it was not written for.
-CH_URL="$(hdx_env CLICKHOUSE_HOST)"
-CH_URL="${DFE_HYPERDX_CH_URL:-${CH_URL:-http://dfe-clickhouse.${NS_CH}.svc.cluster.local:${DFE_CH_HTTP_PORT:-8123}}}"
-check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL})" \
+# The URL dialled is the one HyperDX's proxy is handed: dfe-engine serves each team its
+# connection from its own settings, so a TLS server is reached over https on its TLS
+# port. CLICKHOUSE_HOST only keys HyperDX's webhook refusal, which reads its host and
+# port and never its scheme, so the chart's http:// there does not say how to dial.
+if kubectl -n "$NS_APP" get deploy "$ENGINE_DEPLOY" >/dev/null 2>&1; then
+  CH_URL="$(engine_ch_url "$NS_APP")"
+else
+  # With no engine to ask, the configured URL is dialled as is.
+  CH_URL="$(hdx_env CLICKHOUSE_HOST)"
+  CH_URL="${CH_URL:-http://dfe-clickhouse.${NS_CH}.svc.cluster.local:${DFE_CH_HTTP_PORT:-8123}}"
+fi
+CH_URL="${DFE_HYPERDX_CH_URL:-$CH_URL}"
+check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL:-deploy/${ENGINE_DEPLOY} named no ClickHouse URL})" \
   "hdx_probe GET '${CH_URL}/ping' | grep -q '^Ok'"
 
 # The query side of the same tables the integration test writes to. Rows may be

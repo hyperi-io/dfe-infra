@@ -69,7 +69,8 @@ with open(os.environ["FAKE_POD"], encoding="utf-8") as fh:
 if "get" in args:
     rest = args[args.index("get") + 1:]
     name = rest[1]
-    present = name == "dfe-hyperdx" or (name == "dfe-engine" and "engine_token" in pod)
+    engine = "engine_token" in pod or "engine_env" in pod
+    present = name == "dfe-hyperdx" or (name == "dfe-engine" and engine)
     if "-o" in rest:
         wanted = re.search(r'@\\.name=="([A-Za-z_]+)"', rest[rest.index("-o") + 1])
         sys.stdout.write(pod["env"].get(wanted.group(1), "") if wanted else "")
@@ -78,8 +79,15 @@ if "get" in args:
 if "exec" in args:
     target = next(a for a in args[args.index("exec") + 1:] if not a.startswith("-"))
     if target == "deploy/dfe-engine":
-        print(json.dumps({"access_token": pod["engine_token"]}))
-        sys.exit(0)
+        if "/api/v1/auth/token/smoke" in args[-1]:
+            if "engine_token" not in pod:
+                sys.exit(1)
+            print(json.dumps({"access_token": pod["engine_token"]}))
+            sys.exit(0)
+        # Any other engine command runs in the engine's own shell, under its environment.
+        engine_env = {"PATH": os.environ["FAKE_POD_BIN"], **pod.get("engine_env", {})}
+        command = args[args.index("--") + 1:]
+        sys.exit(subprocess.run(command, env=engine_env, check=False).returncode)
     if "-c" in args and args[args.index("-c") + 1] != "dfe-hyperdx":
         sys.stderr.write("error: container is not valid for pod\\n")
         sys.exit(1)
@@ -153,11 +161,14 @@ def run_smoke(
     node: bool = True,
     engine_token: str | None = None,
     in_deployment_env: bool = False,
+    engine_ch: dict | None = None,
 ) -> tuple[subprocess.CompletedProcess, dict]:
     """The smoke script against the local server, and what the server saw.
 
     The settings live in an envFrom ConfigMap, the thin chart's shape, unless
-    `in_deployment_env` puts them in the Deployment's own env.
+    `in_deployment_env` puts them in the Deployment's own env. `engine_ch` deploys
+    an engine whose ClickHouse settings name the local server, with these entries
+    laid over them; an entry of None leaves that variable unset.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), Frontend)
     server.cfg = {
@@ -199,6 +210,13 @@ def run_smoke(
             }
             if engine_token:
                 pod["engine_token"] = engine_token
+            if engine_ch is not None:
+                engine_env = {
+                    "DFE_CLICKHOUSE_HOST": "127.0.0.1",
+                    "DFE_CLICKHOUSE_PORT": base.rsplit(":", 1)[1],
+                    **engine_ch,
+                }
+                pod["engine_env"] = {k: v for k, v in engine_env.items() if v is not None}
             fixture = Path(tmp) / "pod.json"
             fixture.write_text(json.dumps(pod), encoding="utf-8", newline="\n")
 
@@ -312,10 +330,67 @@ def test_rejected_clickhouse_credentials_fail_the_table_check() -> None:
 
 
 def test_the_engine_issued_token_is_presented_as_a_bearer() -> None:
-    out, seen = run_smoke(engine_token=TOKEN)
+    out, seen = run_smoke(engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"})
 
     expect("the round trip passes", verdict(out, "PASS", BEARER), out.stdout)
     expect("the server saw the bearer", seen["bearer"] == f"Bearer {TOKEN}")
+    expect("no check failed", "0 failed" in out.stdout, out.stdout)
+
+
+# Nothing listens on the discard port, so a probe that dials it fails.
+DEAD_CLICKHOUSE_HOST = "http://127.0.0.1:9"
+
+
+def test_the_probe_dials_the_url_the_engine_hands_hyperdx() -> None:
+    """The engine serves HyperDX's proxy its ClickHouse URL. CLICKHOUSE_HOST only keys
+    HyperDX's webhook refusal, and the chart writes it http:// whatever the server speaks."""
+    out, seen = run_smoke(
+        engine_ch={"DFE_CLICKHOUSE_SECURE": "false"},
+        pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
+    )
+
+    for name in (PING, TABLE):
+        expect(f"{name} passes", verdict(out, "PASS", name), out.stdout)
+    line = next((ln for ln in out.stdout.splitlines() if PING in ln), "")
+    expect(
+        "the probe names the engine's URL, not CLICKHOUSE_HOST",
+        "(http://127.0.0.1:" in line and DEAD_CLICKHOUSE_HOST not in line,
+        line,
+    )
+    expect(
+        "the count query reached ClickHouse",
+        seen["queries"] == ["SELECT count() FROM dfe.otel_logs"],
+    )
+    expect("with the pod's own ClickHouse credentials", seen["ch_credentials_ok"])
+
+
+def test_an_engine_on_tls_is_dialled_over_https_on_its_port() -> None:
+    """The engine's own default is secure, so an unset flag is https too."""
+    for secure in ("true", None):
+        out, _ = run_smoke(
+            engine_ch={"DFE_CLICKHOUSE_SECURE": secure},
+            pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
+        )
+        line = next((ln for ln in out.stdout.splitlines() if PING in ln), "")
+        expect(
+            f"secure={secure!r} dials https on the engine's port",
+            "(https://127.0.0.1:" in line,
+            line,
+        )
+
+
+def test_an_engine_that_names_no_clickhouse_fails_the_probe_saying_so() -> None:
+    """An empty URL must never fall back to a guessed host and pass."""
+    out, _ = run_smoke(
+        engine_ch={"DFE_CLICKHOUSE_HOST": None},
+        pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
+    )
+
+    expect("the probe fails", verdict(out, "FAIL", PING), out.stdout)
+    expect(
+        "naming the engine", "deploy/dfe-engine named no ClickHouse URL" in out.stdout, out.stdout
+    )
+    expect("and the table check fails", verdict(out, "FAIL", TABLE), out.stdout)
 
 
 def main() -> int:
