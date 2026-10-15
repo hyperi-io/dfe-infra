@@ -18,12 +18,9 @@ run it when pins change, before the sweep lands.
 Usage:
     python3 scripts/check_image_pins.py [--app NAME ...] [--org ORG] [--stack VER]
 
-Digests resolve through registry_pins.tag_digest, so `docker buildx` alone is
-enough; a `gh` carrying read:packages is the fallback, and also what fills in the
-newest-tags hint when a tag turns out to be missing.
+Digests resolve through registry_pins.tag_digest and the newest-tags hint through
+registry_pins.package_tags, both anonymous registry reads.
 """
-
-from __future__ import annotations
 
 import argparse
 import sys
@@ -64,8 +61,7 @@ def _section(stack_map: object, name: str) -> dict[str, str]:
 def _newest_tags(org: str, app: str) -> str:
     """A ` (newest tags: ...)` aside for a missing-tag report, else empty.
 
-    Listing a package's tags needs read:packages, which resolving a digest no
-    longer does, so this hint is advisory -- its absence never changes a verdict.
+    Advisory: a registry that cannot list the tags drops the hint, never the verdict.
     """
     try:
         tags = package_tags(org, app)

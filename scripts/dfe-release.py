@@ -29,15 +29,11 @@ Subcommands (each is one `gh` orchestration):
   ship     open -> merge -> wait -> latest -> digest as one verb, printing a single
            `SHIPPED <repo> <tag> <digest>` line. Long-running -- run it backgrounded.
 
-The GHCR reads need a token with `read:packages`, which a developer's own
-`gh login` usually lacks. Pass `--env-file PATH` and the GHCR_TOKEN (or GH_TOKEN)
-in that file authenticates gh for this process:
+The digest is read from the registry anonymously; the other verbs use the
+caller's own `gh` login:
 
-    python3 scripts/dfe-release.py --env-file bootstrap/.env digest \\
-        --repo dfe-loader --version v1.18.21
+    python3 scripts/dfe-release.py digest --repo dfe-loader --version v1.18.21
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -50,7 +46,6 @@ SCRIPTS = Path(__file__).resolve().parent
 
 # Sibling modules, imported by path so this runs from any cwd.
 sys.path.insert(0, str(SCRIPTS))
-import envfile  # noqa: E402
 import registry_pins  # noqa: E402
 
 ORG = "hyperi-io"
@@ -348,20 +343,18 @@ def cmd_latest(a: argparse.Namespace) -> int:
 
 
 def _digest_for_tag(app: str, version: str) -> tuple[int, str, str]:
-    """The sha256 digest GHCR published for a version tag.
+    """The sha256 digest GHCR published for a version tag, read anonymously.
 
-    Resolved through registry_pins so this and the pin tooling read the packages
-    API one way: `gh api --paginate` concatenates one JSON array per page with no
-    separator, which a single json.loads cannot decode past the first page.
+    Resolved through registry_pins so this and the pin tooling read the registry
+    one way.
 
     Returns:
         (exit code, digest, error).
     """
     try:
-        tags = registry_pins.package_tags(ORG, app)
+        digest = registry_pins.resolve_digest(ORG, app, version)
     except registry_pins.RegistryError as exc:
         return 1, "", str(exc)
-    digest = tags.get(version)
     if not digest:
         return 1, "", f"version tag not found in GHCR: {version}"
     return 0, digest, ""
@@ -471,15 +464,6 @@ def cmd_ship(a: argparse.Namespace) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Scoped GHCR release driver for DFE app repos.")
-    p.add_argument(
-        "--env-file",
-        action="append",
-        metavar="PATH",
-        help=(
-            "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
-            "the registry reads; repeatable, later wins"
-        ),
-    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     po = sub.add_parser("open", help="create the PR for a pushed branch")
@@ -560,8 +544,6 @@ def main() -> int:
     ps.set_defaults(func=cmd_ship)
 
     a = p.parse_args()
-    # Every gh call below goes through _gh/registry_pins, which inherit os.environ.
-    envfile.apply_gh_token(a.env_file)
     return a.func(a)
 
 

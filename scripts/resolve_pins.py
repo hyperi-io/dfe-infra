@@ -51,14 +51,11 @@ Division of labour with the rest of the tooling (one SSoT per concern):
 So the flow is: bump-app to choose the version, then resolve_pins --write to pin
 its sha.
 
-Needs a `gh` token with read:packages: the ambient login, or GHCR_TOKEN / GH_TOKEN
-from an --env-file, the same way `dfe-stack --env-file` reads it. ruamel.yaml for
-the write path.
+Reads the registry anonymously, so it needs no token. ruamel.yaml for the write
+path.
 
-    python3 scripts/resolve_pins.py --env-file .tmp/ghcr.env --check
+    python3 scripts/resolve_pins.py --check
 """
-
-from __future__ import annotations
 
 import argparse
 import datetime
@@ -66,7 +63,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import envfile
 import stack_freeze
 from registry_pins import (
     RegistryError,
@@ -121,7 +117,7 @@ class Outcome:
     FRESH = "fresh"  # recorded digest == registry
     STALE = "stale"  # recorded digest != registry (or absent) -- a write target
     MISSING = "missing"  # the tag is not on the registry at all
-    ERROR = "error"  # gh/API failure resolving this app
+    ERROR = "error"  # the registry did not answer for this app
 
 
 class Row:
@@ -266,7 +262,6 @@ def cmd_pin(args: argparse.Namespace) -> int:
     if args.check and args.write:
         print("--check and --write are mutually exclusive", file=sys.stderr)
         return 2
-    envfile.apply_gh_token(args.env_file)
 
     # Every mode needs the stack map (tags + recorded digests); only --write
     # dumps the mutated tree back, so a clean read-only run never rewrites.
@@ -307,7 +302,7 @@ def cmd_pin(args: argparse.Namespace) -> int:
     stale = [r for r in rows if r.outcome == Outcome.STALE]
 
     if errors:
-        print(f"\n{len(errors)} app(s) failed to resolve (gh/API error).", file=sys.stderr)
+        print(f"\n{len(errors)} app(s) failed to resolve (registry error).", file=sys.stderr)
         return 1
 
     if args.write and stale:
@@ -378,16 +373,6 @@ def add_pin_subparser(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--stack", default=None, help="stack version (default: versions.yaml `current`)")
     p.add_argument("--org", default=DEFAULT_ORG, help="GH org owning the packages")
     p.add_argument("--registry", default=DEFAULT_REGISTRY, help="registry prefix for printed refs")
-    p.add_argument(
-        "--env-file",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help=(
-            "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for the "
-            "packages-API reads (read:packages); an ambient GH_TOKEN wins; repeatable, later wins"
-        ),
-    )
     p.add_argument(
         "--check",
         action="store_true",

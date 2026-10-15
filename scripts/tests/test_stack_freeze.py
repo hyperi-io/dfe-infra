@@ -523,9 +523,8 @@ def _pin_write(monkeypatch, repo: Path) -> int:
     )
     monkeypatch.setattr(resolve_pins, "VERSIONS", repo / "versions.yaml")
     monkeypatch.setattr(resolve_pins, "resolve_rows", lambda *args, **kwargs: [stale])
-    monkeypatch.setattr(resolve_pins.envfile, "apply_gh_token", lambda files: None)
     args = argparse.Namespace(
-        version=None, app=[], check=False, write=True, env_file=[], stack=None,
+        version=None, app=[], check=False, write=True, stack=None,
         org="hyperi-io", registry="ghcr.io/hyperi-io", cooldown_days=7, allow_fresh=True,
     )
     return resolve_pins.cmd_pin(args)

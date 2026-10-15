@@ -70,19 +70,9 @@ Examples:
 render/images/graph/check-upgrade/resolve/suite need only python3 + git.
 verify, refresh-digests, platforms, a release-maturity release-gate, and the
 chart-digests reads cut and bump-app make, read the registry through `docker
-buildx imagetools`, which authenticates from the docker credential store and
-needs no gh scope.
-
-cut still needs the GH packages API, because listing an app's published tags to
-pick the highest has no imagetools equivalent. That API wants the
-`read:packages` scope a developer's own `gh login` usually lacks -- pass
-`--env-file PATH` and the GHCR_TOKEN (or GH_TOKEN) in that file authenticates gh
-for this process:
-
-    python3 scripts/dfe-stack --env-file bootstrap/.env cut 2.2.0-rc.15
+buildx imagetools`. cut lists each app's published tags through the registry's
+OCI API. Every one of those reads is anonymous, so none needs a token.
 """
-
-from __future__ import annotations
 
 import argparse
 import datetime
@@ -98,7 +88,6 @@ SCRIPTS = Path(__file__).resolve().parent
 # Sibling modules, imported by path so `python3 scripts/dfe-stack` works from any cwd.
 sys.path.insert(0, str(SCRIPTS))
 import composition  # noqa: E402
-import envfile  # noqa: E402
 import profiles  # noqa: E402
 import registry_pins  # noqa: E402
 import stack_freeze  # noqa: E402
@@ -1379,21 +1368,22 @@ def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[i
 def _latest_published(org: str, app: str) -> tuple[str, str] | None:
     """The highest published tag for an app and its digest, or None if it has none.
 
-    Only version-shaped tags are considered, so `latest`/`main` never win a cut.
+    Only version-shaped tags are considered, so `latest`/`main` never win a cut. A
+    package with no tags is an app that has never shipped, so its pin holds.
     """
     try:
         tags = registry_pins.package_tags(org, app)
-    except registry_pins.RegistryError as exc:
-        # A missing PACKAGE is an app that has never shipped -- hold its pin. Any
-        # other failure is auth or network, which must not read as "unpublished".
-        if "404" in str(exc) or "not found" in str(exc).lower():
+        candidates = [t for t in tags if re.match(r"^v?\d+\.\d+\.\d+$", t)]
+        if not candidates:
             return None
+        best = max(candidates, key=registry_pins.version_key)
+        digest = registry_pins.resolve_digest(org, app, best)
+    except registry_pins.RegistryError as exc:
+        # A network failure must not read as "unpublished".
         raise SystemExit(f"error: cannot read {org}/{app} from the registry: {exc}") from exc
-    candidates = [t for t in tags if re.match(r"^v?\d+\.\d+\.\d+$", t)]
-    if not candidates:
-        return None
-    best = max(candidates, key=registry_pins.version_key)
-    return best, tags[best]
+    if digest is None:
+        raise SystemExit(f"error: {org}/{app} lists {best} but serves no manifest for it")
+    return best, digest
 
 
 def _scalar_line(block: list[str], section: str, key: str) -> int | None:
@@ -1768,15 +1758,6 @@ def main() -> int:
         default=DEFAULT_REGISTRY,
         help=f"image registry prefix (default {DEFAULT_REGISTRY})",
     )
-    parser.add_argument(
-        "--env-file",
-        action="append",
-        metavar="PATH",
-        help=(
-            "KEY=VALUE file; GHCR_TOKEN or GH_TOKEN in it authenticates gh for "
-            "the packages-API reads cut needs; repeatable, later wins"
-        ),
-    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
@@ -1914,8 +1895,6 @@ def main() -> int:
     p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()
-    # Every gh call below goes through _run/registry_pins, which inherit os.environ.
-    envfile.apply_gh_token(args.env_file)
     return args.func(args)
 
 

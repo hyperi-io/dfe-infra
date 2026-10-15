@@ -96,8 +96,8 @@ jobs:
             scripts/dfe-stack
             scripts/check_suite_drift.py
             scripts/composition.py
-            scripts/envfile.py
             scripts/manifest_deps.py
+            scripts/oci_registry.py
             scripts/profiles.py
             scripts/registry_pins.py
             scripts/stack_freeze.py

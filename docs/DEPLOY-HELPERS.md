@@ -28,16 +28,10 @@ settings.
 | `merge ... --publish [--subject <s>] [--note <n>]` | Squash-merge instead, stamping `Publish: true` on the squash message so the merge itself releases -- no separate `dispatch`. The squash subject is what `check-commits` validates on main, so its description must start lowercase; `--subject` overrides the PR title when it does not. |
 | `dispatch --repo <r> [--workflow CI] [--ref main]` | Trigger the CI workflow with `from-head=true`, which runs semantic-release plus the GHCR image build/publish. It releases from head, so it skips the commit-message gate. |
 | `wait --repo <r> [--workflow CI] [--interval 20] [--timeout 1800]` | Poll the latest CI run to completion; prints its conclusion. Long-running -- run it backgrounded. |
-| `digest --repo <r> --version <v>` | Resolve the sha256 digest GHCR published for a version tag, via `gh api /orgs/hyperi-io/packages/container/<r>/versions`. |
+| `digest --repo <r> --version <v>` | Resolve the sha256 digest GHCR published for a version tag, read anonymously from the registry. |
 | `ship --repo <r> --branch <b> --title <t> [--publish] [--body-file <f>]` | The whole chain: open/reuse the PR, merge, wait for CI, resolve the digest. Prints `SHIPPED <repo> <tag> <digest>`, progress on stderr. Long-running, like `wait`. |
 
-The GHCR reads need a `read:packages` token, which `gh login` usually lacks.
-`--env-file PATH` (repeatable, later wins) takes it from a flat KEY=VALUE file's
-`GHCR_TOKEN` or `GH_TOKEN` -- ambient `GH_TOKEN` wins, and the value is never
-printed. It precedes the subcommand; `dfe-stack` takes it too:
-
-    python3 scripts/dfe-release.py --env-file bootstrap/.env digest --repo <r> --version <v>
-    python3 scripts/dfe-stack --env-file bootstrap/.env verify
+The registry reads take no token. The other verbs run as your own `gh` login.
 
 ## scripts/dfe-ops deploy-values -- deploy-repo overlay CRUD
 

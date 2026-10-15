@@ -33,9 +33,8 @@ All component versions come from `versions.yaml` (the SSoT).
 - For the `scale` tier, or any setting that reads a secrets store, an OpenBao
   token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
   slim, single and mesh need no store at all
-  ([index.md](index.md#secrets-store-and-pull-secret)).
+  ([index.md](index.md#secrets-store)).
 - `bootstrap/local.env`: copy `bootstrap/local.env.example` at mode 0600, as in [Deploy](#deploy), and fill it in.
-  Registry pull credentials go in only for a private registry.
 - OpenTofu (or Terraform) and helm on PATH. CI pins the exact versions it uses in
   the workflows themselves (`.github/workflows/tf-validate.yml`,
   `.github/workflows/helm-lint.yml`) -- `versions.yaml` does not pin CI tooling.
@@ -152,7 +151,7 @@ Redeploy with `terraform apply` + `bridge.py` again.
 ## Troubleshooting
 
 - **ImagePullBackOff** -- check the image reference has a registry host first.
-  A private registry needs `DFE_PULL_SECRET_TOKEN` in `bootstrap/local.env`.
+  A mirror of your own that needs a login is covered in [index.md](index.md#optional-your-own-private-mirror).
 - **App stuck OutOfSync** -- `kubectl -n argocd get app`; check ESO / SecretStore health.
 - **Route not serving** -- is the Gateway/HTTPRoute programmed and the cert issued?
 - **Teardown hangs** -- clear CRD finalizers (`kubectl patch ... --type merge -p '{"metadata":{"finalizers":[]}}'`).
