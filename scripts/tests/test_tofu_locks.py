@@ -27,6 +27,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENVIRONMENTS = REPO_ROOT / "terraform" / "environments"
 LOCK = ".terraform.lock.hcl"
+REGISTRY = "registry.opentofu.org"
 TF_VALIDATE = REPO_ROOT / ".github" / "workflows" / "tf-validate.yml"
 
 PROVIDER_BLOCK = re.compile(r'(?ms)^provider "(?P<source>[^"]+)" \{\n(?P<body>.*?)^\}')
@@ -76,7 +77,7 @@ def test_a_lock_pins_every_provider_to_one_version_with_hashes_for_each_platform
     providers = _providers(root)
     assert providers, f"{root.name}'s lock names no provider"
     for source, body in providers.items():
-        assert source.startswith("registry.opentofu.org/"), source
+        assert source.split("/")[0] == REGISTRY, source
         version = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', body)
         assert version, f"{source} names no version"
         assert re.fullmatch(r"\d+\.\d+\.\d+", version[1]), f"{source} is not pinned to one version"
