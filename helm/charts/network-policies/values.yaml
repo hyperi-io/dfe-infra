@@ -9,6 +9,7 @@ networkModel:
   podCIDR: "198.18.0.0/16"
   serviceCIDR: "198.19.0.0/16"
   linkLocalCIDR: "169.254.0.0/16"
+  carveOut: [podCIDR, serviceCIDR, linkLocalCIDR]
 
 # Namespaces that get DFE app policies (ingress from gateway + dfe-*)
 dfeNamespaces:

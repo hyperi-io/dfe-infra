@@ -125,6 +125,10 @@
 #                            and the managed node groups keep the hop limit at
 #                            1, so it cannot learn its VPC from metadata; empty
 #                            omits the annotation (non-EKS clouds)
+#   DFE_POD_CIDR, DFE_SERVICE_CIDR  the ranges the cloud root built the cluster
+#                            with, one IPv4 CIDR each, for network-policies'
+#                            networkModel; empty omits the annotation and
+#                            common.yaml's range stands
 #   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
 #                            karpenter-pools' karpenter.cluster.discoveryTag;
 #                            empty omits the annotation (non-AWS clouds)
@@ -529,6 +533,21 @@ export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/
 # The EKS cluster's VPC id for the LBC appset's vpcId annotation, rendered only when set.
 export DFE_VPC_ID="${DFE_VPC_ID:-}"
 export DFE_VPC_ID_ANNOTATION="${DFE_VPC_ID:+dfe.hyperi.io/vpc_id: \"${DFE_VPC_ID}\"}"
+# The cluster's own pod and Service ranges, each rendered only when set.
+export DFE_POD_CIDR="${DFE_POD_CIDR:-}"
+export DFE_SERVICE_CIDR="${DFE_SERVICE_CIDR:-}"
+# Each lands as one ipBlock except entry, which Kubernetes refuses unless it sits strictly inside 0.0.0.0/0.
+dfe_cidr_re='^([0-9]{1,3}\.){3}[0-9]{1,3}/([1-9]|[12][0-9]|3[0-2])$'
+for dfe_range_var in DFE_POD_CIDR DFE_SERVICE_CIDR; do
+  dfe_range="${!dfe_range_var}"
+  if [[ -n "${dfe_range}" && ! "${dfe_range}" =~ ${dfe_cidr_re} ]]; then
+    echo "ERROR: ${dfe_range_var} must be one IPv4 CIDR with a prefix of /1 to /32 (got '${dfe_range}') -- network-policies carves it out of every internet allow as a single ipBlock except entry" >&2
+    exit 1
+  fi
+done
+unset dfe_cidr_re dfe_range_var dfe_range
+export DFE_POD_CIDR_ANNOTATION="${DFE_POD_CIDR:+dfe.hyperi.io/pod_cidr: \"${DFE_POD_CIDR}\"}"
+export DFE_SERVICE_CIDR_ANNOTATION="${DFE_SERVICE_CIDR:+dfe.hyperi.io/service_cidr: \"${DFE_SERVICE_CIDR}\"}"
 # The ClickHouse object-store bucket URL for the clickhouse-cluster chart's
 # clickhouse.objectStore.endpoint, rendered only when set -- empty on every
 # cloud but AWS, whose root always provisions a bucket.

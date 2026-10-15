@@ -1,6 +1,6 @@
 // The aws root's external ClickHouse wiring, executable: the facts it hands
 // bootstrap for each mode, the shapes it refuses before anything is planned, and
-// the cluster's egress addresses.
+// the cluster's egress addresses and own ranges.
 //
 // Provider-free by construction, like kafka.tftest.hcl beside it: every provider
 // is mocked and every module this file does not exercise is overridden.
@@ -42,6 +42,7 @@ override_module {
     private_zone_arn          = "arn:aws:route53:::hostedzone/Z0000000000000000000"
     kms_key_arn               = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
     nat_public_ips            = ["198.51.100.1", "198.51.100.2"]
+    service_cidr              = "172.20.0.0/16"
 
     pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
 
@@ -420,5 +421,15 @@ run "egress_cidrs_are_the_nat_addresses_as_slash_32s" {
   assert {
     condition     = output.DFE_EGRESS_CIDRS == "198.51.100.1/32,198.51.100.2/32"
     error_message = "DFE_EGRESS_CIDRS is every NAT public address as a /32, comma separated"
+  }
+}
+
+// The ranges network-policies carves out of every internet allow.
+run "cluster_ranges_are_the_vpc_and_the_service_range" {
+  command = plan
+
+  assert {
+    condition     = output.DFE_POD_CIDR == "10.90.0.0/16" && output.DFE_SERVICE_CIDR == "172.20.0.0/16"
+    error_message = "DFE_POD_CIDR is the VPC the CNI hands pods addresses out of, DFE_SERVICE_CIDR the cluster's Service range"
   }
 }

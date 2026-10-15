@@ -225,6 +225,18 @@ spec:
                     - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
                       protocol: TCP
               {{- end }}
+              {{- $podCIDR := index .metadata.annotations "dfe.hyperi.io/pod_cidr" | default "" }}
+              {{- $serviceCIDR := index .metadata.annotations "dfe.hyperi.io/service_cidr" | default "" }}
+              {{- if or $podCIDR $serviceCIDR }}
+              # The ranges the cloud root built the cluster with, inline so no deploy-repo overlay can restate them.
+              networkModel:
+                {{- if $podCIDR }}
+                podCIDR: {{ $podCIDR | quote }}
+                {{- end }}
+                {{- if $serviceCIDR }}
+                serviceCIDR: {{ $serviceCIDR | quote }}
+                {{- end }}
+              {{- end }}
               {{- if eq .app "karpenter-pools" }}
               {{- $pools := index .metadata.annotations "dfe.hyperi.io/karpenter_pools" }}
               # The three facts karpenter.cluster.* names, carried onto the

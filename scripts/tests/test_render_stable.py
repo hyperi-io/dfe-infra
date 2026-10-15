@@ -36,7 +36,7 @@ import yaml
 
 from _charts import CHART_TREES
 from _expect import expect, standalone, summary
-from _gate import CLOUDS, PROFILES, effective_env, golden
+from _gate import CLOUDS, COMPONENTS, PROFILES, effective_env, golden, goldens
 from _weave import render_app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -201,6 +201,43 @@ def test_the_engine_reads_the_minted_secret() -> None:
                f"got {bg}, minted {sorted(minted)}")
 
 
+def generator_of(doc: dict) -> tuple[str, str, str | None] | None:
+    """(kind, name, namespace) of the generator an ExternalSecret reads, or None."""
+    for entry in doc["spec"].get("dataFrom") or []:
+        ref = (entry.get("sourceRef") or {}).get("generatorRef")
+        if ref:
+            return ref["kind"], ref["name"], doc["metadata"].get("namespace")
+    return None
+
+
+def test_every_generator_an_external_secret_reads_is_rendered_beside_it() -> None:
+    """ESO looks a generator up in the ExternalSecret's own namespace, and an absent
+    one renders green and never writes the Secret."""
+    for component in COMPONENTS:
+        for cell, docs in goldens(component):
+            rendered = {(d["kind"], d["metadata"]["name"], d["metadata"].get("namespace")) for d in docs}
+            for doc in docs:
+                ref = generator_of(doc) if doc.get("kind") == "ExternalSecret" else None
+                expect(f"{'/'.join(cell)}: {doc['metadata']['name']} has its generator",
+                       ref is None or ref in rendered, f"missing {ref}")
+
+
+def test_an_aws_engine_mints_its_admin_password_like_every_other_cloud() -> None:
+    for profile in PROFILES:
+        docs = golden("dfe-engine", profile, "aws")
+        es = [d for d in docs if (d.get("kind"), d["metadata"]["name"])
+              == ("ExternalSecret", "dfe-engine-admin")]
+        gens = [d for d in docs if (d.get("kind"), d["metadata"]["name"])
+                == ("Password", "dfe-engine-admin-gen")]
+        expect(f"{profile}/aws renders the admin ExternalSecret", len(es) == 1, f"got {len(es)}")
+        expect(f"{profile}/aws renders its generator", len(gens) == 1, f"got {len(gens)}")
+        if es and gens:
+            expect(f"{profile}/aws: the ExternalSecret reads that generator, in its namespace",
+                   generator_of(es[0]) == ("Password", "dfe-engine-admin-gen",
+                                           gens[0]["metadata"].get("namespace")),
+                   f"got {generator_of(es[0])}")
+
+
 def test_a_non_dev_posture_cannot_render_without_minting() -> None:
     """The production half of the model: refuse at render, not at first login."""
     expect(
@@ -315,6 +352,8 @@ def main() -> int:
         test_the_admin_password_is_minted_once_like_the_signing_key()
         test_the_seed_accounts_secret_no_longer_claims_the_admin_password()
         test_the_engine_reads_the_minted_secret()
+        test_every_generator_an_external_secret_reads_is_rendered_beside_it()
+        test_an_aws_engine_mints_its_admin_password_like_every_other_cloud()
         test_a_non_dev_posture_cannot_render_without_minting()
         test_hyperdx_keys_are_minted_once_and_read_by_the_pod()
         test_hyperdx_keys_can_come_from_the_deployment()

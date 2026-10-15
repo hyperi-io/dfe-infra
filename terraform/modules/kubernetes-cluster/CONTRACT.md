@@ -62,6 +62,7 @@ map(object({
 | `oidc_issuer` | `string` | The cluster's OIDC issuer URL. |
 | `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already; anything else in the VPC has to be admitted by name. |
 | `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids })` | What the managed-kafka module attaches to. |
+| `service_cidr` | `string` | The range Service addresses come from, as the cloud reports it. network-policies carves it out of every internet allow. |
 | `nat_public_ips` | `list(string)` | The public addresses the cluster's own egress leaves from, one per NAT gateway. A fence on a public load balancer that in-cluster callers also reach has to admit them. |
 | `private_zone_id` | `string` | |
 | `private_zone_arn` | `string` | The private zone as an IAM resource, so the edge module's external-dns role is granted the internal half without creating the zone. |

@@ -337,12 +337,16 @@ elasticsearch:
 # are what the cluster was installed with, so a deployment on different ranges
 # changes them HERE and nowhere else. network-policies carves them out of every
 # internet allow (a compromised pod cannot then reach pod or service space) and
-# culvert pushes the service range as the route a tunnel client may take.
+# culvert pushes the service range as the route a tunnel client may take. A
+# cloud root that knows its cluster's ranges writes them onto the cluster secret,
+# and layer2-platform.yaml lays them over these for network-policies.
 networkModel:
   podCIDR: "198.18.0.0/16"
   serviceCIDR: "198.19.0.0/16"
   # Cloud metadata and the rest of link-local, never a destination for a DFE pod.
   linkLocalCIDR: "169.254.0.0/16"
+  # The ranges above that network-policies carves out.
+  carveOut: [podCIDR, serviceCIDR, linkLocalCIDR]
 
 # Edge-fleet VPN (the culvert chart). clientCIDR is the CGNAT range (RFC 6598)
 # reserved for tunnel clients and never for pod or service ranges, so an
