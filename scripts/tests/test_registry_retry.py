@@ -133,6 +133,7 @@ def test_a_chart_pull_waits_out_a_429_and_then_unpacks(monkeypatch, slept, tmp_p
         if len(attempts) == 1:
             return subprocess.CompletedProcess(cmd, 1, "", ECR_429_HELM)
         (tmp_path / "karpenter").mkdir()
+        (tmp_path / "karpenter" / "Chart.yaml").write_text("name: karpenter\n")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", helm_pull)
@@ -184,7 +185,9 @@ def test_the_failure_reaches_the_gate_as_a_named_error_not_a_pass(
 
     assert not [label for label, _ref in refs if "karpenter" in label]
     assert len(broken) == 1
-    assert broken[0].startswith("operators.karpenter: chart 1.14.1 did not resolve")
+    assert broken[0].startswith(
+        "operators.karpenter: chart 1.14.1 images karpenter controller did not resolve"
+    )
     assert "public.ecr.aws rate limited" in broken[0]
 
 

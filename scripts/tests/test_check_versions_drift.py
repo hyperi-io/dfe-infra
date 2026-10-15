@@ -610,7 +610,8 @@ def test_fix_refuses_a_stack_that_is_not_current() -> None:
 def test_pending_mirrors_is_exactly_the_documented_set() -> None:
     """Widening this list is the cheapest way to make a real drift failure go
     away, so it has to be a reviewed edit rather than a quiet one."""
-    expect("PENDING_MIRRORS holds the eighteen rc.14 patterns, the 2.2.1 eks-addons, the lambda-runtimes, and no more",
+    expect("PENDING_MIRRORS holds the eighteen rc.14 patterns, the 2.2.1 eks-addons, the lambda-runtimes, "
+           "the three 2.2.1-rc.14 addon digests, and no more",
            set(drift.PENDING_MIRRORS) == {
                "operators.karpenter",
                "operators.aws-load-balancer-controller",
@@ -632,6 +633,9 @@ def test_pending_mirrors_is_exactly_the_documented_set() -> None:
                "providers.hashicorp-archive",
                "eks-addons.*",
                "lambda-runtimes.*",
+               "services-digests.karpenter",
+               "services.aws-load-balancer-controller-image",
+               "services-digests.aws-load-balancer-controller-image",
            },
            f"{sorted(drift.PENDING_MIRRORS)}")
 
