@@ -19,7 +19,7 @@ jobs:
   # its paths, so a failure here runs the self-test rather than skipping it.
   changes:
     name: changed paths (e2e-ui)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
@@ -44,7 +44,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
