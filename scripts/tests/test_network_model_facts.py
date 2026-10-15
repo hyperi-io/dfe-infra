@@ -18,9 +18,10 @@ the aws root emits both, bootstrap.sh writes them onto the cluster secret, and
 layer2-platform.yaml hands them to the chart above any deploy-repo overlay.
 
 The VPC's private subnets also hold the MSK brokers and every PrivateLink
-endpoint (terraform/modules/kubernetes-cluster/aws/vpc.tf), so aws.yaml carves
-the Service range and leaves the pod range open: carving it would cut every
-in-VPC backend off its clients.
+endpoint (terraform/modules/kubernetes-cluster/aws/vpc.tf), so aws.yaml leaves
+the pod range open: carving it would cut every in-VPC backend off its clients.
+It leaves the Service range open too, because the VPC CNI policy agent enforces
+an except as a deny over every other rule on the pod, DNS included.
 
     python3 -m pytest scripts/tests/test_network_model_facts.py -q
 
@@ -197,9 +198,21 @@ def aws(*overlays: tuple[str, str]) -> list[set[str]]:
     return carve_outs(policies("aws", tuple(sorted({**AWS_RANGES, **MANAGED}.items())), overlays))
 
 
-def test_an_aws_cluster_carves_its_own_service_range() -> None:
-    expected = {SERVICE, model()["linkLocalCIDR"]}
+def test_an_aws_cluster_carves_link_local_only() -> None:
+    expected = {model()["linkLocalCIDR"]}
     assert all(found == expected for found in aws()), aws()
+
+
+def test_an_aws_carve_out_never_covers_the_service_range() -> None:
+    """The VPC CNI policy agent enforces an except as a deny over every other rule on the pod.
+
+    The baseline's DNS allow names ports and no destination, so an except over the
+    Service range drops every lookup to the kube-dns ClusterIP inside it
+    (aws/aws-network-policy-agent#326).
+    """
+    service = ipaddress.ip_network(SERVICE)
+    for found in aws():
+        assert not any(service.overlaps(ipaddress.ip_network(cidr)) for cidr in found), found
 
 
 def test_a_broker_in_the_vpc_stays_reachable() -> None:
@@ -216,13 +229,22 @@ def test_a_cluster_with_no_facts_keeps_the_common_ranges() -> None:
 
 
 def test_a_deploy_repo_overlay_cannot_move_a_cluster_fact() -> None:
+    """The overlay carves both ranges so the facts show, and restates them stale."""
     m = model()
-    stale = yaml.safe_dump({"networkModel": {"podCIDR": m["podCIDR"], "serviceCIDR": m["serviceCIDR"]}})
+    stale = yaml.safe_dump(
+        {
+            "networkModel": {
+                "podCIDR": m["podCIDR"],
+                "serviceCIDR": m["serviceCIDR"],
+                "carveOut": ["podCIDR", "serviceCIDR", "linkLocalCIDR"],
+            }
+        }
+    )
     found = aws(("common.yaml", stale), ("network-policies.yaml", stale))
-    assert all(f == {SERVICE, m["linkLocalCIDR"]} for f in found), found
+    assert all(f == {POD, SERVICE, m["linkLocalCIDR"]} for f in found), found
 
 
 def test_the_pod_range_reaches_the_model_for_a_deployment_that_carves_it() -> None:
-    carve = yaml.safe_dump({"networkModel": {"carveOut": ["podCIDR", "serviceCIDR", "linkLocalCIDR"]}})
+    carve = yaml.safe_dump({"networkModel": {"carveOut": ["podCIDR", "linkLocalCIDR"]}})
     found = aws(("network-policies.yaml", carve))
-    assert all(f == {POD, SERVICE, model()["linkLocalCIDR"]} for f in found), found
+    assert all(f == {POD, model()["linkLocalCIDR"]} for f in found), found

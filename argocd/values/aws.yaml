@@ -32,9 +32,11 @@ clickhouse:
 
 # Pods take VPC addresses from the private subnets MSK brokers and PrivateLink
 # endpoints share (kubernetes-cluster/aws/vpc.tf), so carving the pod range
-# would cut every in-VPC backend off its clients.
+# would cut every in-VPC backend off its clients. Nor the Service range: the VPC
+# CNI policy agent turns an except into a deny over every other rule on the pod,
+# which cuts it off kube-dns (aws/aws-network-policy-agent#326).
 networkModel:
-  carveOut: [serviceCIDR, linkLocalCIDR]
+  carveOut: [linkLocalCIDR]
 
 # THE RECEIVER'S FRONT DOOR is exposure.groups.ingest (common.yaml): its own
 # NLB, which renders only once the deploy repo's infra/common.yaml names the
