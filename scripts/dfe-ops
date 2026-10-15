@@ -128,10 +128,14 @@ Subcommands:
                container, then each pod Running but not Ready, kube-system
                events, Certificates and unready pods,
                the AWS load balancer controller's webhook CA digests and logs,
-               the events of nodes reporting InvalidDiskCapacity, and the
-               aws-node and CNI logs to one file each, every capture bounded in
+               the events of nodes reporting InvalidDiskCapacity, the aws-node
+               and CNI logs, every ExternalSecret's sync status and Normal
+               events, the external-secrets controller's log and the creation
+               time, resourceVersion and immutable flag of each Secret a
+               generator writes, to one file each, every capture bounded in
                time and bytes. A pod summary leaves out env, args, command,
-               volumes and annotations, and every log is redacted.
+               volumes and annotations, no Secret data is read, and every log
+               is redacted.
                The cycle runs it once when a stage fails, before the destroy.
   redact       Reads stdin and writes it to stdout a line at a time with every
                credential masked (the failure-evidence redactor), so a long-running

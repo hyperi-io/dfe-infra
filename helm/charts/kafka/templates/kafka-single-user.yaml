@@ -29,6 +29,10 @@ spec:
   target:
     name: {{ .Values.user.name }}
     creationPolicy: Owner
+    # CreatedOnce still re-runs the generator on any reconcile that finds no recorded
+    # sync or an altered Secret. Immutable keeps the first password, the one the broker
+    # registered as the user's SCRAM credential at its first start.
+    immutable: true
     template:
       engineVersion: v2
       data:

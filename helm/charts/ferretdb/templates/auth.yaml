@@ -1,9 +1,9 @@
 {{- if eq .Values.ferretdb.mode "deploy" }}
-# The backend password, generated IN-CLUSTER by ESO's Password generator.
-# CreatedOnce pins it: re-syncs never rotate a live credential. Alphanumeric
-# only, because the value is spliced into postgres:// and mongodb:// URIs by
-# kubelet env expansion and URI-reserved characters would need
-# percent-encoding.
+# The backend password, generated IN-CLUSTER by ESO's Password generator. The
+# backend takes it once, when it initialises an empty data directory, and FerretDB
+# and the app-namespace copy read it at their own start. Alphanumeric only,
+# because the value is spliced into postgres:// and mongodb:// URIs by kubelet
+# env expansion and URI-reserved characters would need percent-encoding.
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: Password
 metadata:
@@ -29,6 +29,10 @@ spec:
   target:
     name: {{ .Values.documentdb.auth.secretName }}
     creationPolicy: Owner
+    # CreatedOnce still re-runs the generator on any reconcile that finds no recorded
+    # sync or an altered Secret. Immutable keeps the first password, the one the backend
+    # set for its user when it initialised an empty data directory.
+    immutable: true
   dataFrom:
     - sourceRef:
         generatorRef:
