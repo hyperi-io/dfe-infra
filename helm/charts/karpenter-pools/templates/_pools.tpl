@@ -72,7 +72,7 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 {{- end -}}
 
 {{- /* Karpenter ANDs the requirements, so a floor at or above a listed family
-       silently deletes that family and the fallback list it was written for. */ -}}
+       silently deletes that family. */ -}}
 {{- range $family := $pool.families -}}
 {{- $gen := include "karpenter-pools.generation" (dict "family" $family) -}}
 {{- if not $gen -}}
@@ -83,7 +83,7 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 {{- fail (printf "karpenter.pools.%s pins generation %v and lists family %q, which is generation %s -- the two are ANDed, so that family can never be launched" $name $pool.generationIn $family $gen) -}}
 {{- end -}}
 {{- else if le (int $gen) (int $pool.generationGt) -}}
-{{- fail (printf "karpenter.pools.%s sets generationGt %v and lists family %q at generation %s -- the two are ANDed, so the fallback that family exists for is deleted. The floor is one BELOW the oldest family named" $name $pool.generationGt $family $gen) -}}
+{{- fail (printf "karpenter.pools.%s sets generationGt %v and lists family %q at generation %s -- the two are ANDed, so that family can never be launched. The floor is one BELOW the oldest family named" $name $pool.generationGt $family $gen) -}}
 {{- end -}}
 {{- end -}}
 

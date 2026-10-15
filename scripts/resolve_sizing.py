@@ -2623,6 +2623,41 @@ def _dedupe(items: list[str]) -> list[str]:
     return out
 
 
+def _karpenter_families(use_case: str, choice: Choice, entry: dict[str, object]) -> dict[str, int]:
+    """The instance families a Karpenter pool admits, chosen family first, each with its generation.
+
+    Karpenter launches the cheapest offering its requirements allow, so every
+    family on the list is one it will prefer over the resolver's pick whenever
+    it costs less -- an older generation almost always does. The pool admits
+    the chosen family alone, and under `cheapest-of` the generations that
+    policy compared on price, which is the same comparison Karpenter makes.
+    select_shape only considers a type every target zone offers, so the chosen
+    family needs no older fallback for a region that lacks it.
+
+    Raises:
+        ResolveError: A family carries no generation digit -- the same
+            fail-safe select_shape applies to a name it cannot parse, rather
+            than emitting a pool Karpenter's own render guard refuses.
+    """
+    ladder = _dedupe([name.split(".", 1)[0] for name in (choice.instance_type, *choice.fallbacks)])
+    generation_of: dict[str, int] = {}
+    for family in ladder:
+        match = _GENERATION_DIGIT.search(family)
+        if not match:
+            raise ResolveError(
+                f"{use_case}: resolved family {family!r} carries no generation digit -- "
+                "a Karpenter pool cannot floor a generation it cannot read"
+            )
+        generation_of[family] = int(match.group())
+    window = str(entry.get("price_generations", "")).strip()
+    if choice.price_policy != "cheapest-of" or not window.isdigit():
+        return {ladder[0]: generation_of[ladder[0]]}
+    compared = sorted(set(generation_of.values()), reverse=True)[: int(window)]
+    return {
+        family: generation for family, generation in generation_of.items() if generation in compared
+    }
+
+
 def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str, object]:
     """This pool's own EC2NodeClass override -- its resolved root volume, and
     RAID0 where the shape's own volume profile asks for one.
@@ -2661,11 +2696,11 @@ def build_karpenter_pools(
 ) -> dict[str, object]:
     """Karpenter's NodePool/EC2NodeClass shaping, for every EC2-sourced choice.
 
-    compute-shapes.yaml's own header promises this: "Karpenter NodePool
-    constraints render from the same entries, so a new generation arrives by
-    drift with no plan change." msk-broker is the one choice this does not
-    cover: MSK runs its own brokers, and there is no EC2 instance for
-    Karpenter to place.
+    Each pool renders from the shape the resolver chose and admits that
+    family alone (_karpenter_families), so a new generation reaches the pools
+    with the next resolve, as a reviewed diff. msk-broker is the one choice
+    this does not cover: MSK runs its own brokers, and there is no EC2
+    instance for Karpenter to place.
 
     Args:
         choices: Every use case this resolve picked a concrete shape for.
@@ -2688,22 +2723,11 @@ def build_karpenter_pools(
     for use_case, choice in choices.items():
         if use_case == "msk-broker":
             continue
-        families = _dedupe(
-            [choice.instance_type.split(".", 1)[0]]
-            + [name.split(".", 1)[0] for name in choice.fallbacks]
-        )
-        generations: list[int] = []
-        for family in families:
-            match = _GENERATION_DIGIT.search(family)
-            if not match:
-                raise ResolveError(
-                    f"{use_case}: resolved family {family!r} carries no generation digit -- "
-                    "a Karpenter pool cannot floor a generation it cannot read"
-                )
-            generations.append(int(match.group()))
-
         raw_entry = _at(cloud_entry, "use_cases", use_case)
         entry = raw_entry if isinstance(raw_entry, dict) else {}
+        admitted = _karpenter_families(use_case, choice, entry)
+        families = list(admitted)
+        generations = list(admitted.values())
         policy = str(entry.get("generation_policy", choice.generation_policy))
         pin = str(entry.get("generation_pin", "")).strip()
 

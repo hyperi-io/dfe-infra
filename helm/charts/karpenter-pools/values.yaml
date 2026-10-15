@@ -84,9 +84,13 @@ karpenter:
   # One entry per workload class, keyed by pool name. Each pool renders one
   # NodePool and one EC2NodeClass of the same name.
   #
-  #   families             instance families, best first. A LIST so an
-  #                        InsufficientCapacityError on one has somewhere to fall
-  #                        back to; a single-element list has none.
+  #   families             instance families, auto-selected by the shape resolver:
+  #                        the newest arm64 generation it picked, alone, or under
+  #                        a cheapest-of policy the generations that policy
+  #                        compared. Karpenter launches the cheapest family the
+  #                        list allows, so an older family listed as a fallback is
+  #                        the one it launches. A capacity shortfall falls back to
+  #                        another size of the same family.
   #   generationGt         the floor, as Karpenter's Gt operand -- one BELOW the
   #                        oldest generation the family list names. Karpenter ANDs
   #                        the requirements, so a floor above a listed family
