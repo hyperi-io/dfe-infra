@@ -22,7 +22,7 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.43"
+    dfe-engine: "v1.22.44"
     dfe-ui: "v1.7.19"
     dfe-receiver: "v1.15.49"
     dfe-loader: "v1.18.52"
@@ -31,7 +31,7 @@ extras:
     dfe-transform-vrl: "v1.1.35"
     dfe-transform-vector: "v1.0.51"
     dfe-transform-elastic: "v1.1.14"
-    culvert: "v2.1.22"
+    culvert: "v2.1.23"
     dfe-hyperdx: "v0.3.4"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
@@ -267,7 +267,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:4725e59f8726e69cea384a775883f2820668c1c269ea60471eb1e985afd4256d"
+        digest: "sha256:91c7f7cd058c51950821c4980d44a4d76f96fce97185eebdb5ab3a89b3122c80"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""

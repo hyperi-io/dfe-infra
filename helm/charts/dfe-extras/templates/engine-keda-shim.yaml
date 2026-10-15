@@ -7,6 +7,7 @@ dfe-keda-shim) so the engine's Service selector (name: dfe-engine) never routes 
 it and vice-versa -- the one reason it is not just another engine replica.
 */ -}}
 {{- if .Values.kedaShim.enabled }}
+{{- include "dfe-engine.sidecarServiceAccountObject" (dict "ctx" . "name" "dfe-keda-shim" "component" "keda-shim") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,7 +31,7 @@ spec:
       labels: *shimLabels
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
-      serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
+      serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-keda-shim") }}
       # svc/dfe-keda-shim makes the kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080",
       # which this pod reads as its own int setting; the env below sets it too, and
       # which of the two wins is not proven.
@@ -51,7 +52,7 @@ spec:
               containerPort: {{ .Values.kedaShim.port }}
           env:
             # Same shared signing key as the engine and the hunt runner -- this
-            # pod cannot read the engine's per-pod emptyDir either.
+            # pod cannot read the engine's store either.
             - name: DFE_API_JWT_SECRET
               valueFrom:
                 secretKeyRef:

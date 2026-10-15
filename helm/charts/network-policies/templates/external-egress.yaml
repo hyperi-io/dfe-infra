@@ -14,6 +14,7 @@
 {{- $kafka := .Values.kafka | default dict }}
 {{- $oidc := .Values.oidc | default dict }}
 {{- $vault := .Values.vault | default dict }}
+{{- $secrets := .Values.secrets | default dict }}
 {{- $es := .Values.elasticsearch | default dict }}
 {{- $telemetry := .Values.telemetry | default dict }}
 {{- $otel := .Values.otel | default dict }}
@@ -21,14 +22,18 @@
       "clickhouse"    (eq ($ch.mode | default "" | toString) "external")
       "kafka"         (eq ($kafka.mode | default "" | toString) "external")
       "oidc"          (eq ($oidc.enabled | default false | toString) "true")
-      "secrets"       (ne ($vault.address | default "" | toString) "")
+      "secrets"       (or (ne ($vault.address | default "" | toString) "")
+                          (eq ($secrets.provider | default "" | toString) "aws"))
       "elasticsearch" (ne ($es.endpoint | default "" | toString) "")
       "otel"          (or (eq ($telemetry.mode | default "" | toString) "external")
                           (ne ($otel.endpoint | default "" | toString) ""))
 }}
 {{- /* The provider a purpose's declaration names, which picks its entry under
        `providers` when it has one. */}}
-{{- $provider := dict "kafka" ($kafka.provider | default "" | toString) }}
+{{- $provider := dict
+      "kafka"   ($kafka.provider | default "" | toString)
+      "secrets" ($secrets.provider | default "" | toString)
+}}
 {{- /* Fixed order so a re-render diffs cleanly. */}}
 {{- range $purpose := list "clickhouse" "kafka" "oidc" "secrets" "elasticsearch" "otel" }}
 {{- $block := index $ext $purpose | default dict }}

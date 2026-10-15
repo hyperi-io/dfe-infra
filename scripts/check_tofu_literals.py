@@ -108,9 +108,6 @@ ALLOWED: dict[str, str] = {
         "Confluent's documented interface count per subnet for a Freight Private Network "
         "Interface attachment."
     ),
-    f"{_KAFKA}/msk/autoscaler.tf:locals:broker_scaler_runtime": (
-        "The Lambda runtime the inline handler beside it is written for."
-    ),
     f"{_KAFKA}/redpanda-cloud/variables.tf:variable.scram_password_version:default": (
         "A rotation counter the caller bumps to push a new password, starting at the first."
     ),

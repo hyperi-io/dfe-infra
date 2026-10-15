@@ -25,7 +25,8 @@ mock_provider "aws" {
 
   mock_data "aws_partition" {
     defaults = {
-      partition = "aws"
+      partition  = "aws"
+      dns_suffix = "amazonaws.com"
     }
   }
 
@@ -48,6 +49,7 @@ variables {
 
   kms_key_arn                    = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
   cluster_name                   = "dfe-contract"
+  engine_namespace               = "dfe-test"
   pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
 
   // No module default: the aws root always sets it from tags.lifecycle.
@@ -234,8 +236,8 @@ run "no_secret_outside_the_path_reads_nothing_more" {
   }
 
   assert {
-    condition     = length(data.aws_iam_policy_document.eso.statement) == 3
-    error_message = "with no read_secret_arns the policy keeps its three statements: path read, pki write, key decrypt"
+    condition     = length(data.aws_iam_policy_document.eso.statement) == 4
+    error_message = "with no read_secret_arns the policy keeps its four statements: path read, engine deny, pki write, key decrypt"
   }
 }
 
@@ -367,4 +369,169 @@ run "the_eso_role_carries_the_permissions_boundary" {
     condition     = aws_iam_role.eso.path == "/dfe-e2e/"
     error_message = "the external-secrets aws_iam_role must sit under var.iam_path"
   }
+
+  assert {
+    condition     = aws_iam_role.engine.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && aws_iam_role.engine.path == "/dfe-e2e/"
+    error_message = "the dfe-engine aws_iam_role must carry var.permissions_boundary and sit under var.iam_path"
+  }
+}
+
+// dfe-engine mints its signing key and ClickHouse passwords into the store, so it
+// writes, but only under <path>/engine/, and it names each secret rather than listing.
+run "the_engine_writes_its_own_prefix_and_nothing_else" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      s.effect == "Allow"
+      && s.actions == toset([
+        "secretsmanager:CreateSecret",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:TagResource",
+      ])
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*"])
+    ])
+    error_message = "the engine role must create, update, read, delete and tag under <path>/engine/ -- the calls the engine's store makes, tags riding on CreateSecret"
+  }
+
+  assert {
+    condition = length(data.aws_iam_policy_document.engine.statement) == 2 && alltrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      !contains(s.actions, "secretsmanager:ListSecrets")
+      && alltrue([for a in s.actions : !strcontains(a, "*")])
+      && !contains(s.resources, "*")
+    ])
+    error_message = "the engine role holds two statements, store and key, with no ListSecrets, no wildcard action and no wildcard resource"
+  }
+
+  assert {
+    condition     = output.engine_name_prefix == "dfe/test/engine"
+    error_message = "engine_name_prefix must be <project>/<env>/engine, the prefix the role is fenced to"
+  }
+}
+
+run "the_engine_prefix_follows_the_store_prefix" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    prefix = "org-secrets"
+  }
+
+  assert {
+    condition     = output.engine_name_prefix == "org-secrets/dfe/test/engine"
+    error_message = "engine_name_prefix must carry the store prefix, as every name under the path does"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/engine/*"])
+    ])
+    error_message = "the engine's write grant must follow the store prefix"
+  }
+}
+
+// The key also wraps EKS Secrets and MSK, and its policy delegates to IAM, so an
+// unconditioned grant would decrypt any ciphertext under it.
+run "the_engine_uses_the_key_through_secrets_manager_alone" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      s.effect == "Allow"
+      && s.actions == toset(["kms:GenerateDataKey", "kms:Decrypt"])
+      && s.resources == toset(["arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"])
+      && anytrue([
+        for c in s.condition :
+        c.test == "StringEquals" && c.variable == "kms:ViaService"
+        && length(c.values) == 1 && contains(c.values, "secretsmanager.us-west-2.amazonaws.com")
+      ])
+      if length([for a in s.actions : a if startswith(a, "kms:")]) > 0
+    ])
+    error_message = "the engine's KMS grant must be GenerateDataKey and Decrypt on the deployment key, conditioned on kms:ViaService secretsmanager.<region>"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      anytrue([
+        for c in s.condition :
+        c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN"
+        && length(c.values) == 1 && contains(c.values, "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*")
+      ])
+      if contains(s.actions, "kms:Decrypt")
+    ])
+    error_message = "the engine's KMS grant must be held to secrets under its own prefix by kms:EncryptionContext:SecretARN"
+  }
+}
+
+run "the_engine_role_binds_its_own_service_account" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.engine.namespace == "dfe-test" && aws_eks_pod_identity_association.engine.service_account == "dfe-engine"
+    error_message = "the engine role must be associated with the dfe-engine service account in engine_namespace"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.engine.cluster_name == "dfe-contract"
+    error_message = "the engine association must name the deployment's own cluster"
+  }
+}
+
+run "eso_is_denied_the_engine_prefix" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      s.effect == "Deny"
+      && s.actions == toset(["secretsmanager:*"])
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*"])
+    ])
+    error_message = "ESO's read grant spans the path, so it must be denied <path>/engine/ explicitly"
+  }
+}
+
+run "a_seed_under_the_engine_prefix_is_refused" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    seeds = {
+      "kafka/msk"   = { password = "" }
+      "engine/oops" = { value = "" }
+    }
+  }
+
+  expect_failures = [
+    var.seeds,
+  ]
 }

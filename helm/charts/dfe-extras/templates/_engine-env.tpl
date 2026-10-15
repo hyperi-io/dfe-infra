@@ -252,18 +252,42 @@ thin chart's env.
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
+            {{- if include "dfe-engine.secretsOnAws" . }}
+            {{- $store := .Values.secrets }}
+            {{- $window := int64 ($store.recoveryWindowDays | default 0) }}
+            {{- if and (ne $window 0) (or (lt $window 7) (gt $window 30)) }}
+            {{- fail (printf "secrets.recoveryWindowDays is %d -- Secrets Manager takes 0 (no window) or 7-30" $window) }}
+            {{- end }}
+            # Secrets the engine MINTS (JWT signing key, ClickHouse passwords,
+            # OIDC client secrets) go to Secrets Manager under the prefix the
+            # aws root fenced its role to, through EKS Pod Identity.
+            - name: DFE_SECRETS_PROVIDER
+              value: "aws"
+            - name: DFE_SECRETS_REGION
+              value: {{ required "secrets.region is empty: with secrets.provider aws the engine refuses to start without the store's region" $store.region | quote }}
+            - name: DFE_SECRETS_NAME_PREFIX
+              value: {{ required "secrets.namePrefix is empty: with secrets.provider aws the engine refuses to start without the prefix its role writes under" $store.namePrefix | quote }}
+            # Empty would fall back to the account's aws/secretsmanager key, outside the deployment's.
+            - name: DFE_SECRETS_KMS_KEY_ID
+              value: {{ required "secrets.kmsKeyId is empty: with secrets.provider aws the engine needs the deployment's key, the cluster secret's dfe.hyperi.io/kms_key_arn annotation" $store.kmsKeyId | quote }}
+            - name: DFE_SECRETS_RECOVERY_WINDOW_DAYS
+              value: {{ $window | quote }}
+            - name: DFE_SECRETS_TAGS
+              value: {{ $store.tags | default dict | toJson | quote }}
+            {{- else }}
             # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
             # the WRITABLE config mount. The default ./.secrets resolves to
             # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine
             # crashes minting the JWT signing key at startup. (Same fix as dfe-docker.)
             - name: DFE_SECRETS_PATH
               value: {{ .Values.config.mountPath }}/.secrets
+            {{- end }}
             # Auth stores (accounts/groups/api-keys, + oidc-providers) -- same
             # trap as DFE_SECRETS_PATH: without this the auth bootstrap falls
             # back to ./config/auth under the read-only /app WORKDIR and the
-            # pod crashloops at startup (v1.10.7+, dfe-engine#106). emptyDir =
-            # per-pod ephemeral: fine at 1 replica; >1 replica needs shared
-            # storage for cross-pod JWKS (image-side work, dfe-engine#106).
+            # pod crashloops at startup (v1.10.7+, dfe-engine#106). The mount is
+            # the PVC dfe-engine-config, so the stores outlive a restart; a
+            # second replica needs storage it can share (dfe-engine#106).
             - name: DFE_AUTH_DIR
               value: {{ .Values.config.mountPath }}/auth
             # The CLASS-WIDE guard for the same fallback: auth is not the only

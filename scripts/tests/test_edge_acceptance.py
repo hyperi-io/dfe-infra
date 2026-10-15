@@ -1201,6 +1201,7 @@ def test_the_runner_reads_the_datastore_acceptance_names_and_fails_every_row_beh
         return None, False, False
 
     monkeypatch.setattr(edge_run, "ingest_rows", no_door)
+    monkeypatch.setattr(edge, "record_minted_secrets", lambda results, *_a: edge.row(results, "minted-secrets-in-store", "skipped", "stub"))
     for name, value in {"DFE_E2E_ADMIN_PASSWORD": "minted", "DFE_E2E_CH_HOST": "clickhouse.example",
                         "DFE_E2E_CH_PORT": "8443", "DFE_E2E_CH_SECURE": "true"}.items():
         monkeypatch.setenv(name, value)
@@ -1230,3 +1231,149 @@ def test_the_report_names_the_failed_rows_and_carries_no_secret(tmp_path: Path) 
     text = edge_run.report(results, tmp_path, secrets=("sekrit-1",))
     assert "FAILED: hyperdx" in text
     assert "sekrit-1" not in text
+
+
+# --- dfe-engine's minted secrets ---------------------------------------------------------------
+
+PREFIX = "dfe/test/engine"
+KEY = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+RUN = {"dfe-e2e": "r20261016t000000z-abcdef", "expires-at": "2026-10-16T06:00:00Z"}
+FACTS = {
+    "dfe.hyperi.io/engine_secrets_prefix": PREFIX,
+    "dfe.hyperi.io/kms_key_arn": KEY,
+    "dfe.hyperi.io/region": "us-west-2",
+    "dfe.hyperi.io/run_tags": json.dumps(RUN),
+    "dfe.hyperi.io/resource_tags": json.dumps({**RUN, "service-name": "dfe"}),
+}
+
+
+def _entry(path: str, *, key: str = KEY, tags: dict | None = None) -> dict:
+    """One ListSecrets entry: what the API answers about a secret, never its value."""
+    carried = RUN if tags is None else tags
+    return {
+        "Name": f"{PREFIX}/{path}",
+        "KmsKeyId": key,
+        "Tags": [{"Key": k, "Value": v} for k, v in carried.items()],
+    }
+
+
+MINTED_ENTRIES = [_entry("jwt/signing-key"), _entry("ch/service/query_reader"), _entry("ch/orgs/acceptance")]
+
+
+def test_the_engine_store_is_secrets_manager_under_its_prefix_key_and_run() -> None:
+    status, detail = edge.minted_outcome(MINTED_ENTRIES, PREFIX, KEY, RUN)
+    assert status == "done", detail
+    assert "jwt/signing-key, ch/service/query_reader, ch/orgs/acceptance" in detail
+
+
+def test_a_key_listed_by_its_id_is_the_same_key() -> None:
+    entries = [_entry(e["Name"].removeprefix(f"{PREFIX}/"), key=KEY.rsplit("/", 1)[1]) for e in MINTED_ENTRIES]
+    assert edge.minted_outcome(entries, PREFIX, KEY, RUN)[0] == "done"
+
+
+@pytest.mark.parametrize(
+    ("entries", "said"),
+    [
+        (MINTED_ENTRIES[1:], f"holds no {PREFIX}/jwt/signing-key"),
+        (MINTED_ENTRIES[:2], f"holds no {PREFIX}/ch/orgs/<org>"),
+        ([*MINTED_ENTRIES[:2], _entry("ch/orgs/acceptance", key="")], "the AWS managed key"),
+        ([*MINTED_ENTRIES[:2], _entry("ch/orgs/acceptance", key=KEY.replace("0000-0000-0000", "1111-1111-1111"))], "not arn:"),
+        ([*MINTED_ENTRIES[:2], _entry("ch/orgs/acceptance", tags={})], "does not carry dfe-e2e, expires-at"),
+    ],
+    ids=["no-signing-key", "no-org-password", "aws-managed-key", "another-key", "no-run-tag"],
+)
+def test_expected_fail_the_store_is_named_where_it_falls_short(entries: list, said: str) -> None:
+    status, detail = edge.minted_outcome(entries, PREFIX, KEY, RUN)
+    assert status == "failed"
+    assert said in detail, detail
+
+
+class Engine:
+    """kubectl and the aws CLI as the row calls them, each answer fixed."""
+
+    def __init__(self, facts: dict | None = FACTS, listing: tuple[int, str, str] | None = None) -> None:
+        self.facts = facts
+        self.listing = listing or (0, json.dumps({"SecretList": MINTED_ENTRIES}), "")
+        self.kubectl: list[tuple[str, ...]] = []
+        self.aws: list[list[str]] = []
+
+    def kubectl_call(self, kube: list[str], *argv: str, stdin: str = "") -> tuple[int, str, str]:
+        self.kubectl.append(argv)
+        if self.facts is None:
+            return 1, "", 'Error from server (Forbidden): secrets "dfe-cluster" is forbidden'
+        return 0, json.dumps(self.facts), ""
+
+    def run(self, cmd: list[str], **_k: object) -> types.SimpleNamespace:
+        self.aws.append(cmd)
+        rc, out, err = self.listing
+        return types.SimpleNamespace(returncode=rc, stdout=out, stderr=err)
+
+
+def _minted(monkeypatch: pytest.MonkeyPatch, engine: Engine) -> list[wizard.StepResult]:
+    monkeypatch.setattr(edge, "kubectl", engine.kubectl_call)
+    monkeypatch.setattr(edge.subprocess, "run", engine.run)
+    results: list[wizard.StepResult] = []
+    edge.record_minted_secrets(results, ["kubectl"])
+    return results
+
+
+def test_the_row_reads_annotations_and_a_listing_and_never_a_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The runner's own credentials list the store; nothing runs inside the engine's pod."""
+    engine = Engine()
+    (result,) = _minted(monkeypatch, engine)
+    assert (result.slug, result.status) == ("minted-secrets-in-store", "done"), result.detail
+    (secret_read,) = engine.kubectl
+    assert secret_read[-2:] == ("-o", "jsonpath={.metadata.annotations}")
+    ((aws),) = engine.aws
+    assert aws[:3] == ["aws", "secretsmanager", "list-secrets"]
+    assert aws[aws.index("--region") + 1] == "us-west-2"
+    assert aws[aws.index("--filters") + 1] == f"Key=name,Values={PREFIX}/"
+    assert not any("get-secret-value" in part for call in engine.aws for part in call)
+
+
+def test_off_aws_the_row_is_skipped_and_nothing_is_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = Engine(facts={"dfe.hyperi.io/cloud": "local"})
+    (result,) = _minted(monkeypatch, engine)
+    assert result.status == "skipped"
+    assert "every cloud but AWS" in result.detail
+    assert len(engine.kubectl) == 1
+    assert engine.aws == []
+
+
+@pytest.mark.parametrize(
+    ("engine", "said"),
+    [
+        (Engine(facts=None), "could not read secret/dfe-cluster"),
+        (Engine(listing=(255, "", "An error occurred (AccessDeniedException) when calling the ListSecrets operation")), "list-secrets failed"),
+        (Engine(facts={**FACTS, "dfe.hyperi.io/run_tags": "{not json"}), "tags are not JSON"),
+    ],
+    ids=["cluster-secret-unreadable", "listing-refused", "tags-not-json"],
+)
+def test_expected_fail_a_row_that_cannot_look_fails_rather_than_skips(
+    monkeypatch: pytest.MonkeyPatch, engine: Engine, said: str,
+) -> None:
+    (result,) = _minted(monkeypatch, engine)
+    assert result.status == "failed"
+    assert said in result.detail, result.detail
+
+
+def test_a_case_twin_under_another_deployment_is_never_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The name filter is case-insensitive; DFE/Test/engine/ is another deployment's."""
+    twin = {**_entry("jwt/signing-key"), "Name": "DFE/Test/engine/jwt/signing-key"}
+    engine = Engine(listing=(0, json.dumps({"SecretList": [twin, *MINTED_ENTRIES[1:]]}), ""))
+    (result,) = _minted(monkeypatch, engine)
+    assert result.status == "failed"
+    assert f"holds no {PREFIX}/jwt/signing-key" in result.detail
+
+
+def test_the_runner_records_the_store_after_hyperdx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    before: list[str] = []
+    monkeypatch.setattr(edge_run, "ingest_rows", lambda results, *_a: (edge.row(results, "public-endpoint", "failed", "no door"), (None, False, False))[1])
+    monkeypatch.setattr(edge, "record_minted_secrets", lambda results, kube: before.extend([*kube, *(r.slug for r in results)]))
+    monkeypatch.setenv("DFE_E2E_ADMIN_PASSWORD", "minted")
+    args = edge_run.build_parser().parse_args([
+        "--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example", "--namespace", "dfe-run",
+        "--kubectl", "kubectl", "--allow", SENDER, "--egress-cidrs", EGRESS, "--shots-dir", str(tmp_path),
+    ])
+    edge_run.run(args)
+    assert before == ["kubectl", "public-endpoint", "observe", "hyperdx"]

@@ -290,6 +290,9 @@ module "kafka" {
   autoscaling = var.kafka.msk.autoscaling
   telemetry   = var.telemetry
 
+  // An empty string when the pin is absent, which the module's own validation refuses by name.
+  broker_scaler_runtime = lookup(var.lambda_runtimes, "msk-broker-scaler", "")
+
   permissions_boundary = var.permissions_boundary
   iam_path             = var.iam_path
   s3_bucket_prefix     = var.s3_bucket_prefix
@@ -437,6 +440,9 @@ module "secrets" {
   kms_key_arn                    = module.cluster.kms_key_arn
   cluster_name                   = module.cluster.cluster_name
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
+
+  // Where dfe-engine runs, the namespace DFE_NAMESPACE hands bootstrap.
+  engine_namespace = module.naming.k8s_namespace
 
   recovery_window_days = local.secret_recovery_window_days
 

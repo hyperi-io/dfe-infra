@@ -31,12 +31,15 @@ ClusterSecretStore provider block needs.
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Bodies whose backend has no separate key ignore it. |
 | `read_secret_arns` | `list(string)`, default `[]` | AWS-only (`aws-sm/`). Secrets outside the path that ESO also reads, by ARN, never writes: MSK's `AmazonMSK_<name>` SCRAM secret, the one copy of the Kafka credential on an msk deployment. |
 | `recovery_window_days` | `number`, default 30 | AWS-only today (`aws-sm/`). The store's deletion delay. The root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the vendor's 30-day window would fail the second create on a name still pending deletion. |
-| `cluster_name` | `string` | Which cluster's ESO gets the identity. |
+| `cluster_name` | `string` | Which cluster's ESO and dfe-engine get their identities. |
+| `engine_namespace` | `string` | AWS-only (`aws-sm/`). The namespace dfe-engine runs in, the naming module's `k8s_namespace`. Its `dfe-engine` service account gets the engine's identity. |
 | `pod_identity_trust_policy_json` | `string` | From the cluster module, so this module mints a workload identity without knowing how the cloud expresses cluster trust. |
 
 Secrets are created at `<prefix>/<project>/<env>/<seed name>`, and ESO's read
-grant is fenced to exactly that path. With no prefix the path starts at
-`<project>/<env>`, which is the same shape the OpenBao body uses.
+grant is fenced to exactly that path, less `engine/`. With no prefix the path
+starts at `<project>/<env>`, which is the same shape the OpenBao body uses.
+
+`<path>/engine/` belongs to dfe-engine: it creates, reads, updates and deletes the secrets it mints there (its JWT signing key, ClickHouse passwords and OIDC client secrets) through an identity of its own. No seed may be named under it, and ESO is denied it.
 
 ## The one credential no body generates
 
@@ -68,12 +71,18 @@ MSK takes no kafka seed at all. MSK requires its SCRAM secret to be named `Amazo
 |--------|------|---------|
 | `store_config` | `object` | Everything a ClusterSecretStore needs and nothing a caller has to interpret: `provider`, `service`, `region`, `auth`, `prefix`. Each body fills the fields its provider block reads. `prefix` is the `prefix` input alone, never the full path: every chart's remoteRef key already starts with `<project>/<env>`. |
 | `eso_role_arn` | `string` | The identity ESO assumes. Empty for a backend that authenticates some other way. |
+| `engine_role_arn` | `string` | AWS-only (`aws-sm/`). The identity dfe-engine assumes: write under `engine_name_prefix`, and the deployment key used through Secrets Manager alone, for secrets under that prefix. |
+| `engine_name_prefix` | `string` | AWS-only (`aws-sm/`). `<path>/engine`, which the root hands bootstrap as `DFE_ENGINE_SECRETS_PREFIX`. |
 
 ## Rules every body follows
 
-- **The store is the source of truth, and ESO's grant is READ-ONLY.** A
-  PushSecret from inside the cluster is refused by design, not by accident --
-  nothing in-cluster mints a credential.
+- **The store is the source of truth, and ESO's grant is READ-ONLY except
+  under `pki/`.** Two in-cluster writers exist, each fenced to its own prefix:
+  the gateway chart's PushSecret persists the internal CA root under `pki/`,
+  and dfe-engine writes what it mints under `engine/` with its own identity.
+  Nothing else in-cluster writes the store. The engine's secrets sit outside
+  tofu state, so a test run's are swept by their run tag and `dfe-ops teardown
+  --with-terraform` force-deletes the rest before `tofu destroy`.
 - **A generated value never leaves the module.** It goes into the store and
   into state; it is not an output.
 - **Seeds are never rotated on re-apply.** Re-running the deploy must not log

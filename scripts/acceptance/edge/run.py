@@ -25,8 +25,9 @@
 One row per claim, in the order they happen: the receiver's public door opens
 on the allow list, a send from the allow-listed address is accepted, its row
 lands in main, the console's Observe search finds it, HyperDX's own search finds
-it, and a send from the cluster's NAT egress, which the list does not name, is
-refused. A row that cannot run because one before it failed is recorded failed,
+it, the engine's minted secrets sit in Secrets Manager on the deployment key
+(skipped off AWS), and a send from the cluster's NAT egress, which the list does
+not name, is refused. A row that cannot run because one before it failed is recorded failed,
 never skipped, so the table cannot be read as green.
 
 This file is the order the rows happen in. What each decides is in ``steps``.
@@ -128,6 +129,7 @@ def run(args: argparse.Namespace) -> int:
     else:
         edge.row(results, "observe", "failed", "not searched: nothing landed to find")
         edge.row(results, "hyperdx", "failed", "not searched: nothing landed to find")
+    edge.record_minted_secrets(results, kube)
     if endpoint is not None and accepted:
         edge.record_refused(
             results, kube, args.namespace, endpoint, args.gateway_address, args.allow,

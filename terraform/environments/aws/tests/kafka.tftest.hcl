@@ -146,8 +146,8 @@ override_module {
 }
 
 // The store is planned for real, because its own validation refuses a kafka seed
-// that asks for a username the root did not hand it. Only the two values the
-// aws provider checks the shape of are pinned.
+// that asks for a username the root did not hand it. Only the values the aws
+// provider checks the shape of are pinned, for each of its two roles.
 override_data {
   target = module.secrets.data.aws_iam_policy_document.eso
 
@@ -161,6 +161,22 @@ override_resource {
 
   values = {
     arn = "arn:aws:iam::000000000000:role/dfe-example-external-secrets"
+  }
+}
+
+override_data {
+  target = module.secrets.data.aws_iam_policy_document.engine
+
+  values = {
+    json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+  }
+}
+
+override_resource {
+  target = module.secrets.aws_iam_role.engine
+
+  values = {
+    arn = "arn:aws:iam::000000000000:role/dfe-example-engine-secrets"
   }
 }
 
@@ -225,6 +241,10 @@ variables {
     "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
     "kube-proxy"             = "v1.36.0-eksbuild.45"
     "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  lambda_runtimes = {
+    "msk-broker-scaler" = "python3.14"
   }
 
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }

@@ -166,6 +166,10 @@ variables {
     "vpc-cni"                = "v1.23.2-eksbuild.1"
   }
 
+  lambda_runtimes = {
+    "msk-broker-scaler" = "python3.14"
+  }
+
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
   endpoint  = { public = false, allowed_cidrs = [] }
   dns       = { private_zone = "dfe-example.internal", public_zone = "" }

@@ -225,6 +225,11 @@ spec:
                     - port: {{ index .metadata.annotations "dfe.hyperi.io/clickhouse_native_port" }}
                       protocol: TCP
               {{- end }}
+              {{- /* dfe-engine writes Secrets Manager itself, so network-policies opens its secrets egress. */}}
+              {{- if and (eq .app "network-policies") (index .metadata.annotations "dfe.hyperi.io/engine_secrets_prefix" | default "") }}
+              secrets:
+                provider: aws
+              {{- end }}
               {{- $podCIDR := index .metadata.annotations "dfe.hyperi.io/pod_cidr" | default "" }}
               {{- $serviceCIDR := index .metadata.annotations "dfe.hyperi.io/service_cidr" | default "" }}
               {{- if or $podCIDR $serviceCIDR }}

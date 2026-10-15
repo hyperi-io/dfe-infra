@@ -213,6 +213,16 @@ output "DFE_ESO_ROLE_ARN" {
   value       = module.secrets.eso_role_arn
 }
 
+output "DFE_ENGINE_SECRETS_PREFIX" {
+  description = "The name prefix every secret dfe-engine mints sits under, <path>/engine. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/engine_secrets_prefix annotation, and layer2-apps.yaml then turns dfe-engine's store to Secrets Manager under it. The engine's role, associated with its service account here, writes there and nowhere else."
+  value       = module.secrets.engine_name_prefix
+}
+
+output "DFE_KMS_KEY_ARN" {
+  description = "The deployment's customer-managed key, which every secret dfe-engine mints is encrypted with. Bootstrap reads it into the dfe.hyperi.io/kms_key_arn annotation. The same key as DFE_KARPENTER_KMS_KEY_ID, under a name that does not tie the engine to a Karpenter fact."
+  value       = module.cluster.kms_key_arn
+}
+
 output "DFE_DNS_PROVIDER" {
   description = "external-dns provider name. Its own default is aws, and an uncredentialled install crash-loops against Route 53 -- so it is stated rather than defaulted."
   value       = "aws"

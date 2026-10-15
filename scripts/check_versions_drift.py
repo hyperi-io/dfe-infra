@@ -617,6 +617,19 @@ CHECKS += [
     for addon in _EKS_ADDONS
 ]
 
+# The Lambda runtimes, mirrored into the same example tfvars: render_dial.py renders the
+# same pins into a deployment's own lambda_runtimes.
+_LAMBDA_FUNCTIONS = ("msk-broker-scaler",)
+CHECKS += [
+    Check(
+        f"Lambda runtime {function} (aws example.tfvars.json lambda_runtimes)",
+        f"lambda-runtimes.{function}",
+        Path("terraform/environments/aws/example.tfvars.json"),
+        r'"' + re.escape(function) + r'"\s*:\s*"([^"]+)"',
+    )
+    for function in _LAMBDA_FUNCTIONS
+]
+
 # The DFE apps under versions.yaml apps:. Each deploys from its published thin
 # chart, which pins its own image, so the copies left to watch are the ones this
 # repo writes: the dfe-extras app versions below, and the content refs.
@@ -1017,6 +1030,7 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.forgejo": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "eks-addons.*": "pinned starting the 2.2.1 block; a stack that predates it resolved each add-on at plan time and has no value to compare",
+    "lambda-runtimes.*": "pinned starting the 2.2.1-rc.13 block; a stack that predates it carried the runtime as a literal in the msk module and has no value to compare",
 }
 
 

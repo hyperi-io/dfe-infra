@@ -67,6 +67,11 @@ metadata:
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}
     ${DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION}
     ${DFE_KARPENTER_KMS_KEY_ID_ANNOTATION}
+    # Where dfe-engine's role writes in Secrets Manager, and the key it encrypts
+    # with: layer2-apps.yaml moves the engine's store there where the prefix is
+    # set. Both blank on every cloud but AWS.
+    ${DFE_ENGINE_SECRETS_PREFIX_ANNOTATION}
+    ${DFE_KMS_KEY_ARN_ANNOTATION}
     # The pools themselves, as one line of JSON -- layer2-platform.yaml inlines
     # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
     # renders no NodePool at all, so a pending workload stays pending.

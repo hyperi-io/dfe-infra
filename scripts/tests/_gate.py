@@ -83,10 +83,28 @@ INSTANCE: dict[str, dict[str, dict]] = {
     },
 }
 
-# Deployment shapes the profile matrix does not reach, each rendered on slim/local:
-# the cluster facts it changes, the deploy repo's infra/common.yaml, and the
-# components it renders for where it is not every one.
+# Deployment shapes the profile matrix does not reach, each rendered on slim/local
+# unless it names its own profile and cloud: the cluster facts it changes, the
+# deploy repo's infra/common.yaml, and the components it renders for where it is
+# not every one.
 SCENARIOS: dict[str, dict] = {
+    # dfe-engine minting into Secrets Manager: an aws root's facts on a test run's cluster secret.
+    "engine-store": {
+        "facts": {
+            "annotations": {
+                "dfe.hyperi.io/region": "us-west-2",
+                "dfe.hyperi.io/engine_secrets_prefix": "dfe/test/engine",
+                "dfe.hyperi.io/kms_key_arn": "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000",
+                "dfe.hyperi.io/resource_tags": (
+                    '{"dfe-e2e":"r20261008t000000z-0a1b2c","expires-at":"2026-10-08T12:00:00Z","service-name":"dfe"}'
+                ),
+            }
+        },
+        "infra": None,
+        "components": ("dfe-engine",),
+        "profile": "scale",
+        "cloud": "aws",
+    },
     "no-domain": {"facts": {"domain": ""}, "infra": None},
     "prometheus": {"facts": {}, "infra": {"telemetry": {"mode": "prometheus"}}},
     # A ClickHouse CA the deployment supplies as a ConfigMap rather than a Secret.
@@ -121,9 +139,9 @@ SCENARIOS: dict[str, dict] = {
 }
 DEFAULT = "default"
 
-# Every cell: the matrix on the default scenario, then each scenario on slim/local.
+# Every cell: the matrix on the default scenario, then each scenario on its profile and cloud.
 CELLS = [(s, p, k, DEFAULT) for s, p, k in MATRIX] + [
-    (s, "slim", "local", scenario)
+    (s, shape.get("profile", "slim"), shape.get("cloud", "local"), scenario)
     for s in COMPONENTS
     for scenario, shape in SCENARIOS.items()
     if s in shape.get("components", COMPONENTS)

@@ -62,6 +62,10 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 
 8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka, PostgreSQL, FerretDB and Keeper are not covered yet. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace: the apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md).
 
+## Secrets dfe-engine mints
+
+The engine's JWT signing key, its ClickHouse service and tenant passwords and the OIDC client secrets an operator enters are reached through the engine alone. On AWS they sit in Secrets Manager under `<path>/engine/`, encrypted with the deployment key, and only the engine's Pod Identity role can read or write that prefix: external-secrets is denied it, and the hunt runner and keda shim run as service accounts with no AWS identity and no Kubernetes API token. Elsewhere they are files on the engine's own volume. A flaw that exposes them is graded as an engine compromise.
+
 ## What that means for a finding
 
 Grade by reachability first, then severity:

@@ -83,6 +83,22 @@ override_resource {
   }
 }
 
+override_data {
+  target = module.secrets.data.aws_iam_policy_document.engine
+
+  values = {
+    json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+  }
+}
+
+override_resource {
+  target = module.secrets.aws_iam_role.engine
+
+  values = {
+    arn = "arn:aws:iam::000000000000:role/dfe-example-engine-secrets"
+  }
+}
+
 override_module {
   target = module.toolbox
 
@@ -144,6 +160,10 @@ variables {
     "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
     "kube-proxy"             = "v1.36.0-eksbuild.45"
     "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  lambda_runtimes = {
+    "msk-broker-scaler" = "python3.14"
   }
 
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
@@ -431,5 +451,48 @@ run "cluster_ranges_are_the_vpc_and_the_service_range" {
   assert {
     condition     = output.DFE_POD_CIDR == "10.90.0.0/16" && output.DFE_SERVICE_CIDR == "172.20.0.0/16"
     error_message = "DFE_POD_CIDR is the VPC the CNI hands pods addresses out of, DFE_SERVICE_CIDR the cluster's Service range"
+  }
+}
+
+// dfe-engine's store: the prefix its role is fenced to and the key it encrypts with.
+run "the_engine_store_reaches_bootstrap" {
+  command = plan
+
+  assert {
+    condition     = output.DFE_ENGINE_SECRETS_PREFIX == "dfe/test/engine"
+    error_message = "DFE_ENGINE_SECRETS_PREFIX is <project>/<env>/engine, under the deployment's own path"
+  }
+
+  assert {
+    condition     = output.DFE_KMS_KEY_ARN == "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+    error_message = "DFE_KMS_KEY_ARN is the deployment's own key, the cluster module's kms_key_arn"
+  }
+
+  assert {
+    condition     = module.secrets.engine_name_prefix == output.DFE_ENGINE_SECRETS_PREFIX
+    error_message = "the prefix bootstrap writes is the one the engine's role is fenced to"
+  }
+}
+
+// A test account's boundary refuses CreateSecret without both run tags, and the
+// engine tags what it creates from this output, through the resource_tags annotation.
+run "a_runs_tags_reach_the_engine_store" {
+  command = plan
+
+  variables {
+    run = {
+      id         = "r20261008t000000z-0a1b2c"
+      expires_at = 1791460800
+    }
+  }
+
+  assert {
+    condition     = jsondecode(output.DFE_RESOURCE_TAGS)["dfe-e2e"] == "r20261008t000000z-0a1b2c"
+    error_message = "DFE_RESOURCE_TAGS must carry the run id under dfe-e2e"
+  }
+
+  assert {
+    condition     = jsondecode(output.DFE_RESOURCE_TAGS)["expires-at"] == "2026-10-08T12:00:00Z"
+    error_message = "DFE_RESOURCE_TAGS must carry the run's expiry under expires-at, as YYYY-MM-DDTHH:MM:SSZ"
   }
 }

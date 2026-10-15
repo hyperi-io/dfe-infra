@@ -32,6 +32,11 @@ variable "seeds" {
     condition     = alltrue([for fields in var.seeds : length(fields) > 0])
     error_message = "A seed with no fields creates an empty secret nothing can read."
   }
+
+  validation {
+    condition     = alltrue([for name in keys(var.seeds) : name != "engine" && !startswith(name, "engine/")])
+    error_message = "engine/ is dfe-engine's own prefix: it writes there through its own role, and ESO is denied it."
+  }
 }
 
 variable "kafka_password" {
@@ -93,8 +98,18 @@ variable "kms_key_arn" {
 }
 
 variable "cluster_name" {
-  description = "The EKS cluster whose external-secrets service account gets the identity."
+  description = "The EKS cluster whose external-secrets and dfe-engine service accounts get their identities."
   type        = string
+}
+
+variable "engine_namespace" {
+  description = "The namespace dfe-engine runs in, the naming module's k8s_namespace, which bootstrap writes onto the cluster secret as dfe_namespace."
+  type        = string
+
+  validation {
+    condition     = length(var.engine_namespace) > 0
+    error_message = "engine_namespace names where dfe-engine runs; an empty one associates the role with no pod."
+  }
 }
 
 variable "pod_identity_trust_policy_json" {

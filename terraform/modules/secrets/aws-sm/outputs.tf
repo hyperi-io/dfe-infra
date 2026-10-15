@@ -15,6 +15,16 @@ output "store_config" {
 }
 
 output "eso_role_arn" {
-  description = "The role ESO assumes. Read-only, and fenced to this deployment's path plus decrypt on its key."
+  description = "The role ESO assumes. Read-only, fenced to this deployment's path less engine/, plus decrypt on its key."
   value       = aws_iam_role.eso.arn
+}
+
+output "engine_role_arn" {
+  description = "The role dfe-engine's service account assumes. Writes under engine_name_prefix and nowhere else, with the key used only through Secrets Manager."
+  value       = aws_iam_role.engine.arn
+}
+
+output "engine_name_prefix" {
+  description = "<path>/engine: every secret dfe-engine mints is named under it, and no seed is."
+  value       = local.engine_name_prefix
 }

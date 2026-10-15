@@ -140,6 +140,9 @@ variables {
     period_seconds           = 300
     evaluation_periods       = 3
   }
+
+  // What the aws root sends from versions.yaml's lambda-runtimes.
+  broker_scaler_runtime = "python3.14"
 }
 
 run "msk_contract_outputs" {
@@ -638,14 +641,52 @@ run "msk_autoscaler_lambda_is_increase_only" {
   }
 
   assert {
-    condition     = aws_lambda_function.broker_scaler[0].runtime == "python3.13" && aws_lambda_function.broker_scaler[0].architectures[0] == "arm64"
-    error_message = "the scaler Lambda must run python3.13 on arm64"
+    condition     = aws_lambda_function.broker_scaler[0].runtime == var.broker_scaler_runtime && aws_lambda_function.broker_scaler[0].architectures[0] == "arm64"
+    error_message = "the scaler Lambda must run var.broker_scaler_runtime, the pin versions.yaml's lambda-runtimes renders, on arm64"
   }
 
   assert {
     condition     = aws_cloudwatch_log_group.broker_scaler[0].retention_in_days == var.telemetry.forced_retention_days
     error_message = "the scaler's Lambda log group must keep telemetry.forced_retention_days, never the Lambda default of never expire"
   }
+}
+
+// The runtime arrives in tfvars and the module guesses none: an empty pin, which
+// the root sends when lambda_runtimes lacks the function, is refused at plan.
+run "msk_scaler_runtime_must_be_a_python_runtime" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    broker_scaler_runtime = ""
+  }
+
+  expect_failures = [var.broker_scaler_runtime]
+}
+
+run "msk_scaler_runtime_is_checked_with_autoscaling_off" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    autoscaling = {
+      enabled                  = false
+      max_brokers              = 6
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+      period_seconds           = 300
+      evaluation_periods       = 3
+    }
+    broker_scaler_runtime = ""
+  }
+
+  expect_failures = [var.broker_scaler_runtime]
 }
 
 // otel is the default: DFE's monitoring goes to its own OTel feed and

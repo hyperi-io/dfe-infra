@@ -3,7 +3,8 @@
 #  Purpose:      What each row of the edge suite decides: the receiver's public
 #                door and when it is open, the allow-listed send, the row in
 #                main, the send from the cluster's own egress that must be
-#                refused, and the search HyperDX runs for the marker.
+#                refused, the search HyperDX runs for the marker, and where
+#                dfe-engine keeps the secrets it mints.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -74,6 +75,14 @@ PROBE_SCRIPT = (
 )
 _READING = re.compile(r"^(control|target) (\d+) (\d{3})$")
 _PLAIN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# The cluster secret bootstrap writes, whose annotations carry the aws root's facts.
+CLUSTER_SECRET_NAMESPACE = "argocd"
+CLUSTER_SECRET = "dfe-cluster"
+FACT = "dfe.hyperi.io/"
+# What every engine mints on its first boot; each organisation adds a ch/orgs/<org>.
+MINTED = ("jwt/signing-key", "ch/service/query_reader")
+ORG_PASSWORDS = "ch/orgs/"
+AWS_TIMEOUT = 60
 
 
 def row(results: list[wizard.StepResult], slug: str, status: str, detail: str) -> None:
@@ -682,3 +691,124 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
             time.sleep(POLL_INTERVAL)
     except (urllib.error.URLError, OSError, ValueError) as exc:
         row(results, "hyperdx", "failed", f"HyperDX at {base} could not be searched: {exc}")
+
+
+# --- dfe-engine's minted secrets ---------------------------------------------------------
+
+
+def cluster_facts(kube: list[str]) -> tuple[dict[str, str] | None, str]:
+    """The cluster secret's annotations, read without its data; None and why when unreadable."""
+    rc, out, err = kubectl(
+        kube, "-n", CLUSTER_SECRET_NAMESPACE, "get", "secret", CLUSTER_SECRET,
+        "-o", "jsonpath={.metadata.annotations}",
+    )
+    if rc != 0:
+        return None, f"could not read secret/{CLUSTER_SECRET} in {CLUSTER_SECRET_NAMESPACE}: {_first_line(err)}"
+    try:
+        found = json.loads(out or "{}")
+    except json.JSONDecodeError as exc:
+        return None, f"secret/{CLUSTER_SECRET}'s annotations are not JSON: {exc}"
+    return {str(key): str(value) for key, value in found.items()}, ""
+
+
+def list_engine_secrets(prefix: str, region: str) -> tuple[list[dict] | None, str]:
+    """ListSecrets under ``prefix``/: names, keys and tags, never a value; None and why on failure.
+
+    The name filter is a case-insensitive prefix match, so each entry is checked again here.
+    """
+    cmd = [
+        "aws", "secretsmanager", "list-secrets", "--region", region,
+        "--filters", f"Key=name,Values={prefix}/", "--output", "json",
+    ]
+    try:
+        done = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=False, timeout=AWS_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"aws secretsmanager list-secrets did not run: {exc}"
+    if done.returncode != 0:
+        return None, f"aws secretsmanager list-secrets failed: {_first_line(done.stderr)}"
+    try:
+        listed = json.loads(done.stdout or "{}").get("SecretList") or []
+    except json.JSONDecodeError as exc:
+        return None, f"aws secretsmanager list-secrets printed no JSON: {exc}"
+    return [entry for entry in listed if str(entry.get("Name", "")).startswith(f"{prefix}/")], ""
+
+
+def _key_id(key: str) -> str:
+    """A KMS key's id, whether it is written as its ARN or bare."""
+    return key.rsplit("/", 1)[-1]
+
+
+def minted_outcome(listed: list[dict], prefix: str, kms_key: str, tags: Mapping[str, str]) -> tuple[str, str]:
+    """The step result for where the engine keeps what it mints.
+
+    Args:
+        listed: The ListSecrets entries under ``prefix``.
+        prefix: The cluster secret's engine_secrets_prefix.
+        kms_key: The cluster secret's kms_key_arn.
+        tags: What each secret must carry: the run's tags, or the deployment's off a run.
+
+    Returns:
+        The status and detail for the row.
+    """
+    by_name = {str(entry.get("Name")): entry for entry in listed}
+    wanted = [f"{prefix}/{path}" for path in MINTED]
+    orgs = sorted(name for name in by_name if name.startswith(f"{prefix}/{ORG_PASSWORDS}"))
+    absent = [name for name in wanted if name not in by_name]
+    if not orgs:
+        absent.append(f"{prefix}/{ORG_PASSWORDS}<org>")
+    if absent:
+        return "failed", f"Secrets Manager holds no {', '.join(absent)}"
+    problems = []
+    for name in [*wanted, *orgs]:
+        entry = by_name[name]
+        key = str(entry.get("KmsKeyId") or "")
+        if not key or _key_id(key) != _key_id(kms_key):
+            problems.append(f"{name} is encrypted with {key or 'the AWS managed key'}, not {kms_key}")
+        carried = {str(tag.get("Key")): str(tag.get("Value")) for tag in entry.get("Tags") or []}
+        lacking = sorted(k for k, v in tags.items() if carried.get(k) != v)
+        if lacking:
+            problems.append(f"{name} does not carry {', '.join(lacking)}")
+    if problems:
+        return "failed", "; ".join(problems)
+    names = ", ".join(name.removeprefix(f"{prefix}/") for name in [*wanted, *orgs])
+    return "done", (
+        f"{names} under {prefix}/, each on {kms_key} "
+        f"and carrying {', '.join(sorted(tags)) or 'no tag the cluster secret names'}"
+    )
+
+
+def record_minted_secrets(results: list[wizard.StepResult], kube: list[str]) -> None:
+    """Where dfe-engine keeps what it mints: each secret in Secrets Manager, on the deployment key.
+
+    Off AWS the cluster secret names no engine_secrets_prefix and the engine keeps
+    its files on its own volume, so the row is skipped rather than failed.
+    """
+    slug = "minted-secrets-in-store"
+    facts, why = cluster_facts(kube)
+    if facts is None:
+        row(results, slug, "failed", why)
+        return
+    prefix = facts.get(f"{FACT}engine_secrets_prefix", "")
+    if not prefix:
+        row(results, slug, "skipped", (
+            "the cluster secret names no engine_secrets_prefix, so the engine keeps its secrets on its "
+            "own volume (every cloud but AWS)"
+        ))
+        return
+    # A run's own tags tell its secrets from another run's; off a run, the deployment's.
+    try:
+        tags = json.loads(facts.get(f"{FACT}run_tags") or facts.get(f"{FACT}resource_tags") or "{}")
+    except json.JSONDecodeError as exc:
+        row(results, slug, "failed", f"the cluster secret's tags are not JSON: {exc}")
+        return
+    listed, why = list_engine_secrets(prefix, facts.get(f"{FACT}region", ""))
+    if listed is None:
+        row(results, slug, "failed", why)
+        return
+    status, detail = minted_outcome(
+        listed, prefix, facts.get(f"{FACT}kms_key_arn", ""), {str(key): str(value) for key, value in tags.items()},
+    )
+    row(results, slug, status, detail)
