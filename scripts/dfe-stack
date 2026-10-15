@@ -1530,6 +1530,29 @@ def _set_stack_field(block: list[str], key: str, value: str | None, keep_note: b
             return
 
 
+def previous_without(declared: list[str], gone: str, inherited: list[str], name: str) -> list[str]:
+    """A block's `stack.previous` with a withdrawn stack replaced by its own predecessors.
+
+    Args:
+        declared: The versions the block names, in order.
+        gone: The withdrawn stack's version.
+        inherited: The withdrawn stack's own `stack.previous`.
+        name: The block's own version, which never names itself.
+
+    Returns:
+        The new list, each version once.
+    """
+    merged: list[str] = []
+    seen = {_norm_version(name)}
+    for p in declared:
+        replacement = inherited if _norm_version(p) == _norm_version(gone) else [p]
+        for q in replacement:
+            if _norm_version(q) not in seen:
+                seen.add(_norm_version(q))
+                merged.append(q)
+    return merged
+
+
 def _drop_withdrawn(
     lines: list[str], root: dict, gone: str
 ) -> tuple[list[tuple[str, str, str]], Path | None]:
@@ -1557,14 +1580,7 @@ def _drop_withdrawn(
         declared = stack_previous(stacks[name])
         if name == gone or all(_norm_version(p) != _norm_version(gone) for p in declared):
             continue
-        merged: list[str] = []
-        seen = {_norm_version(name)}
-        for p in declared:
-            replacement = inherited if _norm_version(p) == _norm_version(gone) else [p]
-            for q in replacement:
-                if _norm_version(q) not in seen:
-                    seen.add(_norm_version(q))
-                    merged.append(q)
+        merged = previous_without(declared, gone, inherited, name)
         start, end = _block_span(lines, name)
         block = lines[start:end]
         if not _rewrite_scalar(block, "stack", "previous", ", ".join(merged)):

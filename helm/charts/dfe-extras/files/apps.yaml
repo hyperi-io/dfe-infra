@@ -474,9 +474,11 @@ apps:
     # there.
     profiles: [slim, single, scale, mesh, docker-single]
     # On the Kubernetes tiers one instance per fetcher source, written by the
-    # engine when the source is written, so no tier seeds one. Compose holds one
-    # service per app, so docker-single starts that single fetcher idle and the
-    # source it is later given fills it.
+    # engine when the source is written, so no tier seeds one. docker-single
+    # starts one fetcher idle, and the engine accepts a source there only where
+    # it renders app config (DFE_DEPLOYMENT_APP_CONFIG_DIR). The instance
+    # ceiling is 0 without that and unbounded with it: dfe-engine
+    # appmgmt/scaling.py, instance_ceiling.
     default_in: [docker-single]
     # Anything that can produce a record is work; the ingest listener defaults
     # off, so an instance that wants it sets config.ingest.enabled true.

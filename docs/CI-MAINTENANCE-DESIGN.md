@@ -85,6 +85,9 @@ branch push, re-resolves the digests, runs `check_versions_drift.py --fix` to
 write every mirror, gates on the drift check and pushes back only when it
 passes, so the PR arrives green rather than red-with-homework. Renovate ignores
 the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch.
+`refresh-digests` refuses a stack whose git tag exists, because a released stack
+is frozen: the digest or app move goes into the next cut
+(`docs/CUTTING-A-STACK.md`).
 
 Prefer deriving over mirroring. The otel collector held a second copy of the
 ClickHouse endpoint and crashlooped on the profile it was not written for; the
