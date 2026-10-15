@@ -34,6 +34,7 @@ Re-capture with `python3 scripts/resolve_sizing.py capture --region us-west-2
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -1388,6 +1389,99 @@ def test_an_msk_family_with_no_price_fails_the_selection(catalogue) -> None:
             ROOT_VOLUME_DEMAND_MIB_S,
             ROOT_VOLUME_DEMAND_IOPS,
         )
+
+
+MSK_NEWEST = {"family": "m", "generation_policy": "newest", "generation_pin": "", "size": "large", "volumes": {}}
+
+
+def _msk_catalogue(
+    catalogue: resolve_sizing.Catalogue,
+    generation: int,
+    sizes: tuple[str, ...],
+    *,
+    express: bool = True,
+    suffix: str = "g",
+) -> resolve_sizing.Catalogue:
+    """`catalogue` with MSK also offering `m<generation><suffix>` at `sizes`.
+
+    The EC2 type of the same name is added too, cloned from m7g, since that is where
+    a size's vCPU and memory come from. `express=False` adds the provisioned broker
+    type, which the Pricing API lists with no `express.` prefix.
+    """
+    types = dict(catalogue.types)
+    prices = dict(catalogue.msk_prices)
+    for size in sizes:
+        name = f"m{generation}{suffix}.{size}"
+        types[name] = dataclasses.replace(
+            catalogue.types[f"m7g.{size}"], name=name, generation=generation
+        )
+        prices[f"express.{name}" if express else name] = catalogue.msk_prices[f"express.m7g.{size}"]
+    return dataclasses.replace(
+        catalogue, types=types, msk_prices=prices, msk_families=tuple(sorted(prices))
+    )
+
+
+def _select_msk(
+    catalogue: resolve_sizing.Catalogue, entry: dict[str, object], vcpu: int = 2
+) -> resolve_sizing.Choice:
+    demand = resolve_sizing.Node("msk-broker", 3, vcpu, 8, 0, 0, 0, "test")
+    return resolve_sizing.select_msk_shape(
+        "msk-broker", entry, demand, catalogue, ROOT_VOLUME_DEMAND_MIB_S, ROOT_VOLUME_DEMAND_IOPS
+    )
+
+
+def test_newest_resolves_the_msk_broker_to_the_generation_the_pricing_api_lists(catalogue) -> None:
+    """The captured catalogue prices Express at m7g only, as the live Pricing API does in every region."""
+    chosen = _select_msk(catalogue, MSK_NEWEST)
+    assert (chosen.instance_type, chosen.generation) == ("express.m7g.large", 7)
+    assert chosen.generation_policy == "newest"
+
+
+def test_newest_takes_an_express_generation_the_day_msk_prices_it(catalogue) -> None:
+    both = _msk_catalogue(catalogue, 8, ("large", "xlarge", "2xlarge", "4xlarge"))
+    chosen = _select_msk(both, MSK_NEWEST)
+    assert (chosen.instance_type, chosen.generation) == ("express.m8g.large", 8)
+    assert chosen.fallbacks == ["express.m8g.xlarge", "express.m8g.2xlarge"]
+
+
+def test_newest_does_not_mistake_a_provisioned_generation_for_an_express_one(catalogue) -> None:
+    """MSK Provisioned lists m8g.large with no `express.` prefix, and builds a Standard cluster."""
+    provisioned = _msk_catalogue(catalogue, 8, ("large",), express=False)
+    assert _select_msk(provisioned, MSK_NEWEST).instance_type == "express.m7g.large"
+
+
+def test_newest_skips_an_express_generation_that_is_not_graviton(catalogue) -> None:
+    x86 = _msk_catalogue(catalogue, 8, ("large",), suffix="i")
+    assert "express.m8i.large" in x86.msk_prices
+    assert _select_msk(x86, MSK_NEWEST).instance_type == "express.m7g.large"
+
+
+def test_newest_does_not_undersize_a_demand_the_new_generation_cannot_yet_carry(catalogue) -> None:
+    """A generation priced for its small sizes first would otherwise cap a 16 vCPU broker at its largest."""
+    partial = _msk_catalogue(catalogue, 8, ("large", "xlarge"))
+    assert _select_msk(partial, MSK_NEWEST, vcpu=2).instance_type == "express.m8g.large"
+    assert _select_msk(partial, MSK_NEWEST, vcpu=16).instance_type == "express.m7g.4xlarge"
+
+
+def test_a_pinned_msk_shape_stays_on_its_generation_when_a_newer_one_is_priced(catalogue) -> None:
+    both = _msk_catalogue(catalogue, 8, ("large",))
+    pinned = {**MSK_NEWEST, "generation_policy": "pinned", "generation_pin": "7"}
+    assert _select_msk(both, pinned).instance_type == "express.m7g.large"
+
+
+def test_an_msk_shape_names_the_pin_it_cannot_find_and_refuses_a_policy_it_cannot_apply(catalogue) -> None:
+    with pytest.raises(resolve_sizing.ResolveError, match=r"lists no express\.m9g"):
+        _select_msk(catalogue, {**MSK_NEWEST, "generation_policy": "pinned", "generation_pin": "9"})
+    with pytest.raises(resolve_sizing.ResolveError, match="newest or pinned"):
+        _select_msk(catalogue, {**MSK_NEWEST, "generation_policy": "newest-with-modifiers"})
+
+
+def test_the_shipped_msk_broker_follows_the_newest_generation_in_every_cloud() -> None:
+    """A generation written into the data file goes stale the day MSK sells the next one."""
+    shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
+    for cloud in ("aws", "gcp", "azure", "onprem"):
+        entry = resolve_sizing._at(shapes, "clouds", cloud, "use_cases", "msk-broker")
+        assert (entry["generation_policy"], str(entry["generation_pin"])) == ("newest", ""), cloud
 
 
 def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(tmp_path: Path) -> None:
