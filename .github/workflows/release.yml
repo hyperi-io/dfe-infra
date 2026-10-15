@@ -77,7 +77,7 @@ jobs:
             image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-
             image-arch-verdicts-
 
-      # Third-party images are public, so this needs no credential; the DFE
+      # Every image is public, so this needs no credential. The DFE
       # images are dfe-stack release-gate's, above.
       - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
         id: arch

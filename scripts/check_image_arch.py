@@ -25,8 +25,7 @@ The image classes checked:
 
 - DFE images: every `digests:` key, read by its pinned digest, from the list
   `dfe-stack images` prints. An app with no digest is NOT YET PUBLISHED and is
-  reported, not failed. A private package needs a GHCR credential in the
-  docker credential store.
+  reported, not failed. The packages are public, so the read needs no login.
 - Third-party images a pin tags, each pinned tag@sha256 across that pin and the
   same key under `services-digests:`: the `services:` keys in the
   key-to-repository table `dfe-stack` renders the docker path from, plus the
@@ -778,7 +777,7 @@ def image_refs(
     if third_party_only:
         skipped.append(
             f"{len(dfe)} DFE image(s) under digests: (--third-party-only; "
-            "`dfe-stack platforms` reads them with a GHCR credential)"
+            "`dfe-stack platforms` reads them)"
         )
     else:
         refs += [(f"digests.{name}", ref) for name, ref in sorted(dfe.items())]
@@ -946,7 +945,7 @@ def main() -> int:
     parser.add_argument(
         "--third-party-only",
         action="store_true",
-        help="skip the DFE images under digests:, which need a GHCR credential; every other image is public",
+        help="skip the DFE images under digests:, which dfe-stack release-gate checks",
     )
     parser.add_argument("--image", action="append", help="check only these image references, ignoring versions.yaml")
     parser.add_argument(
