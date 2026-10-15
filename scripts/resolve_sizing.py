@@ -287,6 +287,11 @@ TYPE_NAME = re.compile(
 )
 MAX_UNPARSED_FRACTION = 0.05
 
+# A fallback list holds at most the two newest generations a policy admits. EKS
+# launches any listed type and Karpenter admits any listed family, so a third
+# generation is one the pool can land on.
+FALLBACK_GENERATIONS = 2
+
 # The Pricing API's physicalProcessor is the ONLY field that names the Graviton
 # generation; EC2's ProcessorInfo does not carry it. The parsed name is what
 # ranks, and this cross-checks it.
@@ -1696,7 +1701,7 @@ def select_shape(
     # capacity, silently halving the node the step-up just bought.
     fallbacks = [
         t.name
-        for t in ladder
+        for t in ladder[:FALLBACK_GENERATIONS]
         if t.name != chosen.name
         and t.vcpu >= chosen.vcpu
         and t.memory_gib >= chosen.memory_gib

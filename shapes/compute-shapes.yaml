@@ -38,6 +38,10 @@
 ##   volumes            one entry per volume, with its own size-derived ceilings
 ##   instance_*_ceiling the ceilings the ATTACHED INSTANCE imposes
 ##
+## Whatever the generation policy, the instance_types list the resolver writes
+## holds at most the two newest generations the policy admits: the cloud launches
+## any type on it, so a third generation is one a pool can land on.
+##
 ## A volume may carry `throughput_policy: instance-baseline`, which means the
 ## resolver DERIVES its throughput from the instance's sustained baseline less
 ## what the other volumes take, floored at gp3's own 125 MiB/s minimum. The

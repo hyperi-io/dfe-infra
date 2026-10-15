@@ -2731,6 +2731,52 @@ def test_fallbacks_never_undercut_the_volume_step_up(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# A fallback list stops one generation back from the newest
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("family", "modifiers", "policy", "pin", "generations"),
+    [
+        ("m", "", "newest", "", {9, 8}),
+        ("r", "d", "newest-with-modifiers", "6", {9, 8}),
+        ("m", "", "pinned", "8", {8}),
+    ],
+)
+def test_a_fallback_list_holds_the_newest_generation_and_one_step_back(
+    catalogue, family, modifiers, policy, pin, generations
+) -> None:
+    """EKS lands on any type in instance_types, so a generation two back would be one it can launch."""
+    entry = {
+        "family": family,
+        "modifiers": modifiers,
+        "generation_policy": policy,
+        "generation_pin": pin,
+        "price_policy": "newest",
+        "price_step_max_pct": "",
+        "price_generations": "",
+        "size": "large",
+        "volumes": {
+            "root": {
+                "type": "gp3",
+                "size_gib": "40",
+                "size_formula": "fixed",
+                "iops": "3000",
+                "throughput_mib_s": "125",
+                "throughput_policy": "instance-baseline",
+            },
+        },
+    }
+    demand = resolve_sizing.Node("eks-system", 3, 2, 8, 40, 0, 0, "test")
+    choice = resolve_sizing.select_shape(
+        "eks-system", entry, demand, catalogue, "newest", [],
+        ROOT_VOLUME_DEMAND_MIB_S, ROOT_VOLUME_DEMAND_IOPS,
+    )
+    listed = {catalogue.types[name].generation for name in (choice.instance_type, *choice.fallbacks)}
+    assert listed == generations, [choice.instance_type, *choice.fallbacks]
+
+
+# ---------------------------------------------------------------------------
 # P2-5 -- --migrate accepts the locked diff, never the caps
 # ---------------------------------------------------------------------------
 
