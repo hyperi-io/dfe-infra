@@ -48,7 +48,7 @@ toolbox:
     ttlSeconds: ""
   enabled: "false"
   aws:
-    instance_type: t4g.small
+    shape_ref: toolbox
     operator_role_arn: ""
   ttl_minutes: 60
   session:
@@ -65,7 +65,7 @@ def test_set_toolbox_field_flips_enabled_and_leaves_everything_else() -> None:
     updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "enabled", "true")
     assert '  enabled: "true"' in updated
     # Every sibling field, and the block AFTER toolbox:, survive verbatim.
-    assert "instance_type: t4g.small" in updated
+    assert "shape_ref: toolbox" in updated
     assert "ttl_minutes: 60" in updated
     assert "provider: strimzi" in updated
 

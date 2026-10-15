@@ -4,15 +4,20 @@
 // EC2NodeClass encrypts the root volume with the same key) take it too, so a
 // customer has one key to audit, one to rotate and one to revoke.
 
+locals {
+  // KMS's own floor (it has no zero) for an ephemeral deployment, the vendor's 30-day default for any other.
+  kms_deletion_window_days = var.tags.lifecycle == "ephemeral" ? 7 : 30
+}
+
 resource "aws_kms_key" "this" {
   description         = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"
   enable_key_rotation = true
 
-  // KMS's own floor is 7 days; there is no zero. An ephemeral deployment
-  // (tags.lifecycle) gets that floor so a rebuild under the same name is not
-  // gated on a manual wait; anything else keeps the vendor's own 30-day
-  // default so destroying a real deployment needs a deliberate confirmation.
-  deletion_window_in_days = var.tags.lifecycle == "ephemeral" ? 7 : 30
+  // An ephemeral deployment (tags.lifecycle) gets the floor so a rebuild under
+  // the same name is not gated on a manual wait; anything else keeps the
+  // vendor default so destroying a real deployment needs a deliberate
+  // confirmation.
+  deletion_window_in_days = local.kms_deletion_window_days
 }
 
 resource "aws_kms_alias" "this" {

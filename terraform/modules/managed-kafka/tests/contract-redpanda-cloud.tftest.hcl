@@ -81,6 +81,9 @@ variables {
 
   scram_password = "contract-only-not-a-real-credential"
 
+  // No module default: render_dial.py sends serverless unless the dial names another.
+  tier = "serverless"
+
   // No module default: the same numbers a customer dial carries, so a
   // contract run proves what render_dial.py actually sends.
   num_partitions    = 12

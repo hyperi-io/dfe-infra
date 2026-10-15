@@ -30,12 +30,25 @@ variable "network" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type -- toolbox.aws.instance_type in the dial, t4g.small by default. Validated as a Graviton (arm64) family to match the AL2023 arm64 AMI this module always launches and shapes/compute-shapes.yaml's toolbox use case (family t, arch arm64)."
+  description = "EC2 instance type, auto-selected by the shape resolver, newest arm64 generation in the region: the root reads it off the resolved shape the dial's toolbox.aws.shape_ref names (shapes/compute-shapes.yaml's toolbox use case by default). Validated as a Graviton (arm64) family to match the AL2023 arm64 AMI this module always launches."
   type        = string
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.instance_type))
     error_message = "instance_type must name a Graviton (arm64) family -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${var.instance_type}."
+  }
+}
+
+variable "root_volume" {
+  description = "The root disk's type and size in GiB, auto-selected with the instance type: the resolved shape's root_volume, from that shape's root profile in shapes/compute-shapes.yaml."
+  type = object({
+    type     = string
+    size_gib = number
+  })
+
+  validation {
+    condition     = var.root_volume.size_gib >= 1
+    error_message = "root_volume.size_gib must be at least 1."
   }
 }
 
@@ -94,9 +107,8 @@ variable "session" {
 }
 
 variable "session_log_retention_days" {
-  description = "S3 lifecycle expiry on the session-log bucket. Deliberately its OWN field, never telemetry.retention_days: a session log is evidence of human access to a customer's private data plane, not service telemetry, and Q48's 2-7 day telemetry window is far too short for it."
+  description = "S3 lifecycle expiry on the session-log bucket, from tfvars (the dial's toolbox.session_log_retention_days). Deliberately its OWN field, never telemetry.retention_days: a session log is evidence of human access to a customer's private data plane, not service telemetry, and the telemetry window is far too short for it."
   type        = number
-  default     = 90
 
   validation {
     condition     = var.session_log_retention_days >= 1

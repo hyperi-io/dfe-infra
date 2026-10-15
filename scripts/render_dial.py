@@ -477,12 +477,13 @@ PKI_MODES = ("local", "external")
 # byo is an address the deployer already has in front of the tunnel; forwarder
 # is the tier-2 instance that holds one, and arrives with terraform/modules/edge.
 ADDRESS_MODES = ("byo", "forwarder")
-# The forwarder moves every tunnel byte and does nothing else, so it is sized by
-# baseline network bandwidth rather than by anything else: this is the shape
-# shapes/compute-shapes.yaml already names for a small always-on AWS box (use
-# case `toolbox` -- family t, arch arm64, generation newest, size small), and
-# within one burstable family the baseline rises with the size.
-TUNNEL_FORWARDER_TYPE = "t4g.small"
+# The resolved shape the forwarder launches on when the dial names none: the
+# toolbox use case, the small arm64 burstable the shape resolver keeps newest.
+TUNNEL_FORWARDER_SHAPE = "toolbox"
+# The range every appliance's tunnel address is issued out of, when the dial
+# names none: dfe-extras' culvert default vpn.clientCIDR, which
+# scripts/tests/test_tunnel_forwarder_facts.py holds this in step with.
+TUNNEL_CLIENT_CIDR = "100.64.0.0/10"
 # The nodePort argocd/values/apps/culvert/values.yaml `defaultListeners` pins for
 # each exposed listener. Pinned rather than allocated, because whatever stands in
 # front of a NodePort has to be told the number before the Service exists.
@@ -853,6 +854,35 @@ def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
         )
 
 
+def _no_instance_type(dial: dict[str, object], at: tuple[str, ...], use_case: str) -> None:
+    """Refuse an instance type written into the dial where a shape_ref now names one.
+
+    The shape resolver picks the newest arm64 type the region offers, so a
+    literal here would be read by nothing; a deployer who needs a fixed type
+    pins it as a resolver override instead.
+
+    Raises:
+        DialError: The dial sets `<at>.instance_type`.
+    """
+    written = _scalar(dial, (*at, "instance_type"))
+    if written is not None:
+        raise DialError(
+            f"{'.'.join((*at, 'instance_type'))} is {written!r}, and nothing reads it -- the type "
+            f"comes off the resolved shape {'.'.join((*at, 'shape_ref'))} names. To pin one, set "
+            f"sizing.overrides.{use_case}.instance_type and re-run scripts/resolve_sizing.py."
+        )
+
+
+def _cidr(dial: dict[str, object], path: tuple[str, ...], default: str) -> str:
+    """One CIDR from the dial, or `default` when it names none, refused by name when malformed."""
+    value = _text(dial, path, default)
+    try:
+        ipaddress.ip_network(value, strict=True)
+    except ValueError as err:
+        raise DialError(f"{'.'.join(path)} must be a CIDR range, got {value!r}") from err
+    return value
+
+
 def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     """The tunnel's cloud-side address, the one part of the tunnel tofu builds.
 
@@ -860,15 +890,20 @@ def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
     ports are the exception that has to travel: they are pinned in the culvert
     chart's own listeners list because a forwarder has to be told the number,
     and Kubernetes would otherwise allocate one nothing could know in advance.
+    The client range travels too, because the toolbox's reach-back egress is
+    aimed at it.
     """
     at = ("edge", "ingest", "tunnel")
     _admin_peer_inert(dial, (*at, "admin_peer"))
+    shape_ref = _text(dial, (*at, "address", "shape_ref"), TUNNEL_FORWARDER_SHAPE)
+    _no_instance_type(dial, (*at, "address"), shape_ref)
     return {
         "address": {
             "mode": _tunnel_address_mode(dial),
-            "instance_type": _text(dial, (*at, "address", "instance_type"), TUNNEL_FORWARDER_TYPE),
+            "shape_ref": shape_ref,
             "zone": _text(dial, (*at, "address", "zone")),
         },
+        "client_cidr": _cidr(dial, (*at, "client_cidr"), TUNNEL_CLIENT_CIDR),
         "openvpn": _edge_bool(dial, (*at, "openvpn")),
         "source_ranges": _edge_cidrs(dial, (*at, "loadBalancerSourceRanges")),
         "node_ports": {
@@ -959,6 +994,22 @@ def _az_count(dial: dict[str, object]) -> int:
     return value
 
 
+# Bits each subnet adds to the VPC CIDR when the dial names none: sixteen equal
+# blocks, a /20 per subnet in a /16.
+SUBNET_NEWBITS = 4
+
+
+def _subnet_newbits(dial: dict[str, object], az_count: int) -> int:
+    """How many bits each subnet adds to the VPC CIDR, holding a subnet per zone on each side of the midpoint."""
+    value = _optional_number(dial, ("network", "subnet_newbits"), SUBNET_NEWBITS)
+    if 2 ** (value - 1) < az_count:
+        raise DialError(
+            f"network.subnet_newbits is {value}, which cuts {2**value} blocks: too few for "
+            f"{az_count} private and {az_count} public subnets, one per zone each side of the midpoint"
+        )
+    return value
+
+
 def _platform_version(cloud: str) -> str | None:
     """The control-plane FLOOR versions.yaml states for this cloud, if any.
 
@@ -1025,6 +1076,13 @@ KAFKA_CONNECTIVITY = ("private", "public")
 
 # The Confluent cluster types the confluent-cloud body offers; Standard and Dedicated are not among them.
 CONFLUENT_TIERS = ("freight", "enterprise", "basic")
+# The tier sent when the dial names none: eCKU autoscaling, private networking only.
+CONFLUENT_DEFAULT_TIER = "freight"
+
+# The Redpanda Cloud products the redpanda-cloud body accepts; it builds serverless and refuses the rest at plan.
+REDPANDA_TIERS = ("serverless", "dedicated", "byoc")
+# The tier sent when the dial names none, and the only one the body can build.
+REDPANDA_DEFAULT_TIER = "serverless"
 
 # Confluent Cloud's ceiling on a topic's max.message.bytes on a Basic cluster
 # (docs.confluent.io/cloud/current/topics/manage.html). The aws root's kafka
@@ -1088,30 +1146,43 @@ def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
     return built
 
 
+# The broker scaler's sizing when the dial names none: the broker ceiling, the
+# per-broker MB/s the alarm threshold scales with, the margin above full
+# utilisation it fires at, and the alarm window -- three 300s periods in breach,
+# the 15-minute stabilisation the scaler's missing cooldown relies on.
+MSK_AUTOSCALING_DEFAULTS: dict[str, int | float] = {
+    "max_brokers": 6,
+    "per_broker_capacity_mb_s": 50,
+    "headroom": 1.3,
+    "period_seconds": 300,
+    "evaluation_periods": 3,
+}
+
+
 def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
     """kafka.msk.autoscaling -- MSK's broker-count scaler, `var.autoscaling` for
     the msk module (terraform/modules/managed-kafka/msk/variables.tf).
 
-    Every field the root declares is already `optional(..., default)` with the
-    SAME default this reads from the dial's own comment, so a field the dial
-    leaves blank is OMITTED here rather than guessed at twice -- the root's own
-    default applies, and only a value an operator actually set overrides it.
-    `step` has no root-level default at all (the module derives it from the
-    subnet count when unset), so it is never invented here either.
+    The ceiling, the per-broker capacity, the headroom and the alarm window are
+    always sent, from the dial or MSK_AUTOSCALING_DEFAULTS, because the root
+    declares none of them a default. `enabled` is sent only when the dial sets it, and `step` too: the
+    module derives it from the subnet count when unset, so it is never invented
+    here.
     """
     at = ("kafka", "msk", "autoscaling")
     out: dict[str, object] = {}
     enabled = _scalar(dial, (*at, "enabled"))
     if enabled is not None:
         out["enabled"] = _flag(dial, (*at, "enabled"))
-    for field_name in ("max_brokers", "step", "per_broker_capacity_mb_s"):
-        raw = _scalar(dial, (*at, field_name))
-        if raw is None:
-            continue
-        if not raw.isdigit():
-            raise DialError(f"kafka.msk.autoscaling.{field_name} must be a whole number, got {raw!r}")
-        out[field_name] = int(raw)
+    step = _scalar(dial, (*at, "step"))
+    if step is not None:
+        if not step.isdigit():
+            raise DialError(f"kafka.msk.autoscaling.step must be a whole number, got {step!r}")
+        out["step"] = int(step)
+    for field_name in ("max_brokers", "per_broker_capacity_mb_s", "period_seconds", "evaluation_periods"):
+        out[field_name] = _optional_number(dial, (*at, field_name), int(MSK_AUTOSCALING_DEFAULTS[field_name]))
     headroom = _scalar(dial, (*at, "headroom"))
+    out["headroom"] = MSK_AUTOSCALING_DEFAULTS["headroom"]
     if headroom is not None:
         try:
             out["headroom"] = float(headroom)
@@ -1191,18 +1262,49 @@ def _toolbox_tool_versions() -> dict[str, str]:
     return versions
 
 
+def _eks_addon_versions() -> dict[str, str]:
+    """The EKS add-on pins in versions.yaml's eks-addons stage, keyed by add-on name.
+
+    Returns whatever the current stack pins, possibly empty: the cluster module's
+    own preconditions refuse a plan that leaves an add-on unpinned, the same way
+    _toolbox_tool_versions leaves a missing tool to the toolbox module.
+    """
+    if not VERSIONS_FILE.is_file():
+        return {}
+    try:
+        tree = _parse_yaml_subset(
+            VERSIONS_FILE.read_text(encoding="utf-8", errors="replace"),
+            source=str(VERSIONS_FILE),
+        )
+    except YamlSubsetError:
+        return {}
+    current = _scalar(tree, ("current",))
+    if current is None:
+        return {}
+    pins = _node(tree, ("stacks", current, "eks-addons"))
+    return {name: value.strip() for name, value in pins.items() if isinstance(value, str) and value.strip()}
+
+
+# The resolved shape the toolbox instance launches on when the dial names none.
+TOOLBOX_SHAPE = "toolbox"
+
+
 def _toolbox(dial: dict[str, object]) -> dict[str, object]:
     """toolbox.* -- the on-demand SSM-managed troubleshooting instance
     (terraform/modules/toolbox/aws/CONTRACT.md). `enabled` is the
-    `dfe-ops bastion up`/`down` toggle. `tool_versions` is NEVER read from
+    `dfe-ops bastion up`/`down` toggle. `aws.shape_ref` names the resolved
+    shape the instance takes its type and root volume from, and an instance
+    type written into the dial is refused. `tool_versions` is NEVER read from
     the dial -- it is assembled from versions.yaml here, so a deployer
     cannot pin a stale tool by hand independent of the SSoT everything else
     in this repo pins through.
     """
+    shape_ref = _text(dial, ("toolbox", "aws", "shape_ref"), TOOLBOX_SHAPE)
+    _no_instance_type(dial, ("toolbox", "aws"), shape_ref)
     return {
         "enabled": _flag(dial, ("toolbox", "enabled")),
         "aws": {
-            "instance_type": _text(dial, ("toolbox", "aws", "instance_type"), "t4g.small"),
+            "shape_ref": shape_ref,
             "operator_role_arn": _text(dial, ("toolbox", "aws", "operator_role_arn")),
         },
         "ttl_minutes": _optional_number(dial, ("toolbox", "ttl_minutes"), 60),
@@ -1226,10 +1328,12 @@ def _saas_kafka_settings(
 ) -> dict[str, str]:
     """A SaaS body's own keys: its reach, and where and on what tier the cluster lands.
 
-    A key the dial leaves blank is omitted, so the root's own default applies --
-    private connectivity, the freight tier, and an environment or resource group
-    the body creates for itself. Confluent's tier and environment are read for
-    confluent-cloud only, Redpanda's resource group for redpanda-cloud only.
+    Each vendor's tier is always sent, CONFLUENT_DEFAULT_TIER or
+    REDPANDA_DEFAULT_TIER when the dial names none. Any other key the dial
+    leaves blank is omitted, so the root's own default applies -- private
+    connectivity, and an environment or resource group the body creates for
+    itself. Confluent's tier and environment are read for confluent-cloud only,
+    Redpanda's tier and resource group for redpanda-cloud only.
 
     Args:
         dial: The parsed dial.
@@ -1253,13 +1357,12 @@ def _saas_kafka_settings(
         settings["connectivity"] = connectivity
 
     if provider == "confluent-cloud":
-        tier = _scalar(dial, ("kafka", "confluent_tier"))
-        if tier is not None:
-            if tier not in CONFLUENT_TIERS:
-                raise DialError(
-                    f"kafka.confluent_tier must be one of {', '.join(CONFLUENT_TIERS)}, got {tier!r}"
-                )
-            settings["confluent_tier"] = tier
+        tier = _text(dial, ("kafka", "confluent_tier"), CONFLUENT_DEFAULT_TIER)
+        if tier not in CONFLUENT_TIERS:
+            raise DialError(
+                f"kafka.confluent_tier must be one of {', '.join(CONFLUENT_TIERS)}, got {tier!r}"
+            )
+        settings["confluent_tier"] = tier
         if tier == "basic" and message_max_bytes > CONFLUENT_BASIC_MAX_MESSAGE_BYTES:
             raise DialError(
                 f"kafka.msk.message_max_bytes is {message_max_bytes}, above the "
@@ -1279,6 +1382,12 @@ def _saas_kafka_settings(
             settings["confluent_environment_id"] = environment
 
     if provider == "redpanda-cloud":
+        redpanda_tier = _text(dial, ("kafka", "redpanda_tier"), REDPANDA_DEFAULT_TIER)
+        if redpanda_tier not in REDPANDA_TIERS:
+            raise DialError(
+                f"kafka.redpanda_tier must be one of {', '.join(REDPANDA_TIERS)}, got {redpanda_tier!r}"
+            )
+        settings["redpanda_tier"] = redpanda_tier
         group = _scalar(dial, ("kafka", "redpanda_resource_group_id"))
         if group is not None:
             if not _REDPANDA_RESOURCE_GROUP_ID.match(group):
@@ -1348,6 +1457,17 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
+# CloudWatch Logs' own retention floor, which a log group AWS forces into
+# existence under the otel sink keeps when the dial names none.
+TELEMETRY_FORCED_RETENTION_DAYS = 1
+
+# The retention periods CloudWatch Logs accepts, and refuses anything else.
+CLOUDWATCH_RETENTION_DAYS = (
+    1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557,
+    2922, 3288, 3653,
+)
+
+
 def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     """The telemetry dial for this cloud, defaulted to DFE's own policy.
 
@@ -1356,8 +1476,11 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     retention_days defaults to 2 under otel (bounding an S3 lifecycle for the
     touchpoints AWS forces into CloudWatch anyway) and 7 under cloudwatch (an
     AWS-native compliance path, kept short rather than left at a service
-    default). Read from telemetry.<cloud> so a future gcp or azure root carries
-    its own block rather than sharing one.
+    default). forced_retention_days is the CloudWatch log group AWS forces into
+    existence whatever the sink (the EKS audit log under otel, the MSK broker
+    scaler's Lambda log), defaulting to CloudWatch's floor. Read from
+    telemetry.<cloud> so a future gcp or azure root carries its own block
+    rather than sharing one.
     """
     sink = _text(dial, ("telemetry", cloud, "sink"), "otel")
     if sink not in ("otel", "cloudwatch"):
@@ -1372,7 +1495,14 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     else:
         raise DialError(f"telemetry.{cloud}.retention_days must be a whole number, got {retention_raw!r}")
 
-    return {"sink": sink, "retention_days": retention_days}
+    forced = _optional_number(dial, ("telemetry", cloud, "forced_retention_days"), TELEMETRY_FORCED_RETENTION_DAYS)
+    if forced not in CLOUDWATCH_RETENTION_DAYS:
+        raise DialError(
+            f"telemetry.{cloud}.forced_retention_days is {forced}, which CloudWatch Logs refuses -- "
+            f"one of {', '.join(str(days) for days in CLOUDWATCH_RETENTION_DAYS)}"
+        )
+
+    return {"sink": sink, "retention_days": retention_days, "forced_retention_days": forced}
 
 
 CLICKHOUSE_MODES = ("in_cluster", "external")
@@ -1532,6 +1662,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
 
     kafka = _kafka(dial)
     clickhouse = _clickhouse(dial)
+    az_count = _az_count(dial)
     return cloud, {
         "provision": {
             "cloud": cloud,
@@ -1543,7 +1674,12 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "env": _required(dial, ("k8s", "env")),
         "profile": _required(dial, ("profile",)),
         "kubernetes_version": _kubernetes_version(dial, cloud),
-        "network": {"nat": _required(dial, ("network", "nat")), "az_count": _az_count(dial)},
+        **({"eks_addon_versions": _eks_addon_versions()} if cloud == "aws" else {}),
+        "network": {
+            "nat": _required(dial, ("network", "nat")),
+            "az_count": az_count,
+            "subnet_newbits": _subnet_newbits(dial, az_count),
+        },
         "endpoint": {"public": public, "allowed_cidrs": allowed},
         "dns": {
             "private_zone": _required(dial, ("dns", "private_zone")),

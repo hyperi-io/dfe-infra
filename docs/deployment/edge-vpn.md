@@ -74,10 +74,12 @@ network's first), and both that zone and the Elastic IP are carried onto the
 cluster secret -- the zone becomes culvert's own `nodeSelector` so the hop from
 the forwarder to the pod stays inside one zone, and the address is what
 external-dns publishes `vpn.serverCN` at.
-`edge.ingest.tunnel.address.instance_type` sizes the instance by baseline
-network bandwidth, since it moves every tunnel byte and does nothing else; the
-default is the small arm64 shape `shapes/compute-shapes.yaml` already names,
-and the family has to be Graviton to match the AMI the module resolves.
+`edge.ingest.tunnel.address.shape_ref` names the resolved shape the instance
+launches on, `toolbox` by default: the newest arm64 generation the shape
+resolver picks from `shapes/compute-shapes.yaml`, with its root volume. A
+larger type for more tunnel bandwidth goes in
+`sizing.overrides.<shape>.instance_type`, and the dial refuses an instance type
+of its own. The family has to be Graviton to match the AMI the module resolves.
 
 ## Client addressing
 

@@ -40,9 +40,8 @@ variable "connectivity" {
 }
 
 variable "tier" {
-  description = "Which Redpanda Cloud product carries the cluster. Serverless is the only one this organisation can create; Dedicated and BYOC are Request-access and priced by quote, so they are accepted here and refused at plan rather than silently building the wrong thing."
+  description = "Which Redpanda Cloud product carries the cluster, pinned in tfvars (the dial's kafka.redpanda_tier, serverless when it names none) because Redpanda publishes no generation to resolve. Serverless is the only one this module can create; Dedicated and BYOC are Request-access and priced by quote, so they are accepted here and refused at plan rather than silently building the wrong thing."
   type        = string
-  default     = "serverless"
 
   validation {
     condition     = contains(["serverless", "dedicated", "byoc"], var.tier)
@@ -210,7 +209,7 @@ variable "resolved_shapes" {
 variable "broker_count" {
   description = "NOT APPLIED. Serverless has no broker count to set -- the vendor scales it to the 100 MB/s write ceiling and bills realised usage."
   type        = number
-  default     = 3
+  default     = null
 }
 
 variable "kafka_version" {

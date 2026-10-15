@@ -55,12 +55,12 @@ variable "network" {
 }
 
 variable "broker_shape_ref" {
-  description = "Indexes resolved_shapes, exactly as a node pool does. MSK's broker namespace is its own and runs generations behind EC2, so the resolver answers it separately."
+  description = "Indexes resolved_shapes, exactly as a node pool does. MSK's broker namespace is its own and runs generations behind EC2, so the resolver answers it from MSK's compute-family names, under the generation policy shapes/compute-shapes.yaml's msk-broker entry sets."
   type        = string
 }
 
 variable "resolved_shapes" {
-  description = "The shape resolver's answer, keyed by shape_ref. instance_types is ordered best-first; MSK takes ONE type for the whole cluster, so this body uses the first and the rest are the resolver's fallbacks."
+  description = "Auto-selected by the shape resolver (scripts/resolve_sizing.py), keyed by shape_ref. instance_types is ordered best-first; MSK takes ONE type for the whole cluster, so this body uses the first and the rest are the resolver's fallbacks."
   type = map(object({
     instance_types = list(string)
     arch           = string
@@ -91,9 +91,8 @@ variable "resolved_shapes" {
 }
 
 variable "broker_count" {
-  description = "Total brokers in the cluster. Three is the floor -- one per availability zone -- and MSK requires a multiple of the client subnet count so the zones stay evenly loaded."
+  description = "Total brokers in the cluster, from tfvars (the dial's kafka.msk.broker_count). Three is the floor -- one per availability zone -- and MSK requires a multiple of the client subnet count so the zones stay evenly loaded."
   type        = number
-  default     = 3
 
   validation {
     condition     = var.broker_count >= 3
@@ -107,7 +106,7 @@ variable "broker_count" {
 }
 
 variable "kafka_version" {
-  description = "MSK's own spelling of the broker version, e.g. 4.2.x.kraft. No default: the newest ACTIVE version is read from the MSK API at build time, because a default here would rot silently into a deprecated line."
+  description = "MSK's own spelling of the broker version, e.g. 4.2.x.kraft, pinned in tfvars (the dial's kafka.msk.broker_version) because nothing resolves it: `aws kafka list-kafka-versions` prints the ACTIVE ones and the newest is the one to take. No default, because a default here would rot silently into a deprecated line."
   type        = string
 
   validation {
@@ -167,26 +166,23 @@ variable "message_max_bytes" {
 
 variable "telemetry" {
   description = <<-DESCRIPTION
-    Where the broker logs land. DFE's monitoring goes to its own OTel feed and
-    HyperDX, never CloudWatch, so sink = otel (the default) delivers broker
-    logs to an S3 bucket this module creates -- the fetcher's object-store
-    source reads it into the same feed everything else lands in, and the
-    bucket's own lifecycle bounds what it costs. sink = cloudwatch is the
-    opt-in AWS-native path for a compliance need CloudWatch itself satisfies;
-    kept minimal and short-retention, never the default. open_monitoring
-    (Prometheus JMX + node exporter) stays on under both -- it is scraped
-    in-cluster, not delivered through either sink.
+    Where the broker logs land, from tfvars (the dial's telemetry block). DFE's
+    monitoring goes to its own OTel feed and HyperDX, never CloudWatch, so sink
+    = otel delivers broker logs to an S3 bucket this module creates -- the
+    fetcher's object-store source reads it into the same feed everything else
+    lands in, and the bucket's own lifecycle bounds what it costs. sink =
+    cloudwatch is the opt-in AWS-native path for a compliance need CloudWatch
+    itself satisfies. open_monitoring (Prometheus JMX + node exporter) stays on
+    under both -- it is scraped in-cluster, not delivered through either sink.
+    forced_retention_days is the broker scaler's Lambda log group, which
+    CloudWatch holds whatever the sink.
   DESCRIPTION
 
   type = object({
-    sink           = string
-    retention_days = number
+    sink                  = string
+    retention_days        = number
+    forced_retention_days = number
   })
-
-  default = {
-    sink           = "otel"
-    retention_days = 2
-  }
 
   validation {
     condition     = contains(["otel", "cloudwatch"], var.telemetry.sink)
@@ -207,6 +203,15 @@ variable "telemetry" {
       var.telemetry.retention_days
     )
     error_message = "telemetry.retention_days must be one of the retention periods CloudWatch Logs accepts when sink is cloudwatch."
+  }
+
+  // The scaler's Lambda log group is CloudWatch under either sink.
+  validation {
+    condition = contains(
+      [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653],
+      var.telemetry.forced_retention_days
+    )
+    error_message = "telemetry.forced_retention_days must be one of the retention periods CloudWatch Logs accepts."
   }
 }
 
@@ -239,9 +244,8 @@ variable "scram_password" {
 }
 
 variable "secret_recovery_window_days" {
-  description = "Secrets Manager's deletion delay. Defaults to the vendor's own 30 days -- a persistent deployment's default -- and the caller sets 0 explicitly for a throwaway deployment torn down and rebuilt under the same name, where the 30-day window would make the second create fail on a name that still exists."
+  description = "Secrets Manager's deletion delay, set by the caller from tags.lifecycle: the vendor's own window for a persistent deployment, and 0 for an ephemeral one torn down and rebuilt under the same name, where a window would make the second create fail on a name that still exists."
   type        = number
-  default     = 30
 }
 
 variable "eks_cluster_name" {
@@ -269,11 +273,12 @@ variable "pod_identity_trust_policy_json" {
 
 variable "autoscaling" {
   description = <<-DESCRIPTION
-    Broker-count scaling for the Express cluster. AWS gives MSK Express no
-    native equivalent -- UpdateBrokerCount is a manual API with no scaling
-    policy -- so this is a CloudWatch alarm on cluster-wide BytesInPerSec
-    driving a Lambda that calls it. enabled defaults true; every other field
-    is the caller's, because none of them has a value that is safe to guess:
+    Broker-count scaling for the Express cluster, from tfvars (the dial's
+    kafka.msk.autoscaling). AWS gives MSK Express no native equivalent --
+    UpdateBrokerCount is a manual API with no scaling policy -- so this is a
+    CloudWatch alarm on cluster-wide BytesInPerSec driving a Lambda that calls
+    it. enabled defaults true; every other field is the caller's, because none
+    of them has a value that is safe to guess:
       - max_brokers: the ceiling. Must be >= broker_count and a multiple of
         the client subnet count, exactly like broker_count itself.
       - step: brokers added per scale-out. Defaults to the client subnet
@@ -286,6 +291,10 @@ variable "autoscaling" {
       - headroom: multiplies the raw capacity ceiling (broker_count x
         per_broker_capacity_mb_s) to get the alarm threshold. A margin ABOVE
         full utilisation, so it is always greater than 1.
+      - period_seconds and evaluation_periods: the alarm window. Every one of
+        evaluation_periods consecutive periods has to breach before the alarm
+        fires, and that window is the stabilisation the Lambda's missing
+        cooldown relies on.
   DESCRIPTION
 
   type = object({
@@ -294,6 +303,8 @@ variable "autoscaling" {
     step                     = optional(number)
     per_broker_capacity_mb_s = number
     headroom                 = number
+    period_seconds           = number
+    evaluation_periods       = number
   })
 
   validation {
@@ -322,6 +333,17 @@ variable "autoscaling" {
   validation {
     condition     = var.autoscaling.headroom > 1
     error_message = "autoscaling.headroom must be greater than 1 -- it is a margin ABOVE full utilisation, not a fraction of it."
+  }
+
+  validation {
+    // CloudWatch takes 10, 30 or a multiple of 60, and only the multiples of 60 hold a sample of a once-a-minute metric.
+    condition     = var.autoscaling.period_seconds >= 60 && var.autoscaling.period_seconds % 60 == 0
+    error_message = "autoscaling.period_seconds must be a whole number of minutes, 60 or more -- MSK publishes BytesInPerSec once a minute."
+  }
+
+  validation {
+    condition     = var.autoscaling.evaluation_periods >= 1 && floor(var.autoscaling.evaluation_periods) == var.autoscaling.evaluation_periods
+    error_message = "autoscaling.evaluation_periods must be a whole number, 1 or more."
   }
 }
 

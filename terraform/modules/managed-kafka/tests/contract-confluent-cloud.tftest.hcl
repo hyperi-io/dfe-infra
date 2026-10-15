@@ -153,6 +153,9 @@ variables {
   // size-ceiling runs at the end of this file move it.
   message_max_bytes = 8388608
 
+  // The tier render_dial.py sends when the dial names none.
+  tier = "freight"
+
   // Six distinct interfaces, which is Confluent's floor for an access point.
   // See the note above the mock_provider for why these are supplied here and
   // not created by the module.
@@ -241,8 +244,8 @@ run "confluent_cloud_contract_outputs" {
   }
 }
 
-// Freight is the default, and its private handshake is a Private Network
-// Interface, not PrivateLink: Confluent's brokers attach to ENIs in our VPC.
+// Freight's private handshake is a Private Network Interface, not PrivateLink:
+// Confluent's brokers attach to ENIs in our VPC.
 run "confluent_cloud_freight_private_network_interface" {
   command = plan
 
@@ -252,7 +255,7 @@ run "confluent_cloud_freight_private_network_interface" {
 
   assert {
     condition     = length(confluent_kafka_cluster.this.freight) == 1
-    error_message = "freight is the default tier"
+    error_message = "tier freight must render the freight block"
   }
 
   assert {
@@ -456,8 +459,8 @@ run "confluent_cloud_basic_public_proof" {
   }
 }
 
-// The chain's 16 MiB is inside Freight's 20 MiB ceiling, so the default tier
-// carries it to every topic with no warning at plan.
+// The chain's 16 MiB is inside Freight's 20 MiB ceiling, so freight carries it
+// to every topic with no warning at plan.
 run "confluent_cloud_freight_carries_16_mib" {
   command = plan
 

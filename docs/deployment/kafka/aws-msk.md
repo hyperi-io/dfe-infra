@@ -15,9 +15,10 @@ Copyright: HyperI / DFE contributors
 Operations (bootstrap Job, autoscaling, telemetry):
 [aws-msk-operations.md](aws-msk-operations.md).
 
-DFE does NOT auto-deploy MSK -- you stand it up, then point DFE at it with
-`kafka.mode=external`. MSK comes in two shapes DFE supports as distinct
-providers:
+The aws root builds MSK Provisioned itself under `kafka.provider: msk`
+(`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up
+yourself, then point DFE at with `kafka.mode=external`. MSK comes in two shapes
+DFE supports as distinct providers:
 
 - **MSK Provisioned** -- fixed broker-hour capacity, KRaft, full
   `server.properties` control. DFE provider `msk`, auth **SASL/SCRAM-SHA-512**
@@ -80,7 +81,9 @@ partitions per topic.
 
 This is the DFE `msk` provider path: a provisioned cluster with a custom
 configuration carrying the DFE broker defaults, SASL/SCRAM auth backed by Secrets
-Manager, and the SCRAM secret associated to the cluster.
+Manager, and the SCRAM secret associated to the cluster. The Kafka version,
+broker count, broker type and volume size are variables your tfvars set, never
+literals in the `.tf`.
 
 ```hcl
 terraform {
@@ -94,7 +97,7 @@ terraform {
 
 # --- Custom broker configuration: the DFE opinionated defaults ---
 resource "aws_msk_configuration" "dfe" {
-  kafka_versions = ["3.9.x"] # MSK's latest KRaft line; verify the exact version MSK offers.
+  kafka_versions = [var.kafka_version] # aws kafka list-kafka-versions prints the ACTIVE ones
   name           = "dfe-kafka"
 
   server_properties = <<-PROPERTIES
@@ -129,15 +132,15 @@ resource "aws_secretsmanager_secret_version" "dfe_kafka_user" {
 # --- The provisioned cluster ---
 resource "aws_msk_cluster" "dfe" {
   cluster_name           = "dfe-kafka"
-  kafka_version          = "3.9.x" # match aws_msk_configuration.kafka_versions
-  number_of_broker_nodes = 3       # one per AZ -> RF3 across AZs
+  kafka_version          = var.kafka_version
+  number_of_broker_nodes = var.broker_count # a multiple of the subnet count, RF3 across AZs
 
   broker_node_group_info {
-    instance_type   = "kafka.m5.large"
+    instance_type   = var.broker_instance_type
     client_subnets  = var.private_subnet_ids # 3 subnets in 3 AZs
     security_groups = [aws_security_group.msk.id]
     storage_info {
-      ebs_storage_info { volume_size = 100 }
+      ebs_storage_info { volume_size = var.broker_volume_gib }
     }
   }
 
@@ -292,10 +295,8 @@ own `.sha256` asset and a hand-computed sum of the downloaded jar.
 NOT verified (no live AWS account in this workstream, cannot deploy): that the
 bootstrap Job authenticates end to end -- the Pod Identity credential reaching the
 IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, have not been
-run against a real cluster. Also the exact
-`kafka_version` string MSK offers today (shown as `3.9.x` -- confirm against
-`aws kafka list-kafka-versions`), the precise `instance_type` / storage sizing
-for your throughput, and that every `server.properties` key above is permitted
+run against a real cluster. Also the
+`broker_instance_type` / `broker_volume_gib` sizing for your throughput, and that every `server.properties` key above is permitted
 on the specific Kafka version you pick (the allowed set varies by version --
 check the AWS "Custom MSK configurations" page). Treat the snippets as templates
 to `tofu validate` and plan against your account before apply.

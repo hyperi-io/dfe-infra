@@ -1,6 +1,7 @@
-// Confluent Cloud, reached over Confluent's own private networking. Freight by
-// default: it autoscales on eCKUs, is the cheapest option at the top band, and
-// has no public endpoint at all, so it is egress-safe by construction.
+// Confluent Cloud, reached over Confluent's own private networking. Freight
+// unless the dial names another tier: it autoscales on eCKUs, is the cheapest
+// option at the top band, and has no public endpoint at all, so it is
+// egress-safe by construction.
 //
 // Confluent is SASL_SSL with PLAIN over an API key and secret. It does NOT do
 // SCRAM on any tier -- scalo derives the mechanism from the provider name, so

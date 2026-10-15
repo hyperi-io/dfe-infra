@@ -114,6 +114,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "clickhouse_object
 // design -- the bucket is what has to survive a failed multipart PUT, not the
 // upload itself, so ClickHouse retrying an insert cannot leave the bucket
 // silently growing with parts nothing will ever complete.
+locals {
+  // A part this old belongs to an insert ClickHouse has long since retried or abandoned, never to data it keeps.
+  multipart_abort_days = 7
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "clickhouse_object_store" {
   bucket = aws_s3_bucket.clickhouse_object_store.id
 
@@ -124,7 +129,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "clickhouse_object_store" {
     filter {}
 
     abort_incomplete_multipart_upload {
-      days_after_initiation = 7
+      days_after_initiation = local.multipart_abort_days
     }
   }
 }

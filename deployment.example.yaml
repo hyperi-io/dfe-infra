@@ -87,6 +87,7 @@ kubernetes_version: "1.36"
 network:
   nat: single                # per-az | single
   az_count: 3                # 2-6; empty takes 3, enough for a quorum without a fourth zone's cross-zone charge
+  subnet_newbits: 4          # bits each subnet adds to the VPC cidr; empty takes 4, a /20 per zone in a /16. Every pod takes an address from its node's subnet
 
 ## The Kubernetes API endpoint. The private one is always on; public adds the
 ## public one for operators outside the VPC, and the root refuses 0.0.0.0/0.
@@ -341,19 +342,23 @@ edge:
       node_ports:
         wireguard: 31820
         openvpn: 31194
+      ## The range every appliance's tunnel address is issued out of -- the
+      ## culvert chart's vpn.clientCIDR, which the toolbox's reach-back egress
+      ## is aimed at. Change it only alongside that value.
+      client_cidr: 100.64.0.0/10
       ## How the tunnel gets an address clients can dial. `byo` is an address
       ## the deployer already has in front of it. `forwarder` is tier 2 -- one
       ## small instance holding one static address, both billed hourly, bucket
       ## XS -- built by terraform/modules/edge/aws.
       address:
         mode: byo              # byo | forwarder
-        ## Sized by BANDWIDTH: the forwarder moves every tunnel byte and does
-        ## nothing else, and within a burstable family the baseline network
-        ## bandwidth rises with the size. This is the shape
-        ## shapes/compute-shapes.yaml already names for a small always-on AWS
-        ## box (use case `toolbox`), and the family must be Graviton to match
-        ## the arm64 AMI the module resolves.
-        instance_type: t4g.small
+        ## The resolved shape the forwarder launches on: its instance type and
+        ## root volume are auto-selected by scripts/resolve_sizing.py, newest
+        ## arm64 generation in the region. Sized by BANDWIDTH, since the
+        ## forwarder moves every tunnel byte and does nothing else. An instance
+        ## type is never written here: pin one as
+        ## sizing.overrides.<shape>.instance_type instead.
+        shape_ref: toolbox
         ## The availability zone the forwarder pins to -- a hop from it to a
         ## node in another zone crosses a boundary billed per GB, so the zone
         ## is carried onto the cluster secret and becomes culvert's own
@@ -475,9 +480,11 @@ toolbox:
   ## same file.
   enabled: "false"
   aws:
-    ## Smallest Graviton burstable size -- shapes/compute-shapes.yaml's own
-    ## `toolbox` use case resolves to the same family for the node-pool path.
-    instance_type: t4g.small
+    ## The resolved shape the instance launches on: its type and root volume
+    ## are auto-selected by scripts/resolve_sizing.py, newest arm64 generation
+    ## in the region (shapes/compute-shapes.yaml's `toolbox` use case). Pin a
+    ## type as sizing.overrides.toolbox.instance_type, never here.
+    shape_ref: toolbox
     ## The IAM role EKS grants a read-only (AmazonEKSViewPolicy) access entry
     ## to when enabled is true -- required then. The toolbox INSTANCE itself
     ## gets no EKS access entry at all: a forward's kubectl identity is the
@@ -530,6 +537,10 @@ telemetry:
     ## literal 2 here fails the plan the moment sink flips to cloudwatch and
     ## nothing else changes.
     retention_days: ""
+    ## The CloudWatch log groups AWS creates whatever the sink -- the EKS audit
+    ## log under otel, the MSK broker scaler's Lambda log. Empty takes 1, the
+    ## CloudWatch floor; it must be a period CloudWatch accepts.
+    forced_retention_days: ""
 
 ## SIZING -- `python3 scripts/resolve_sizing.py` turns these into node counts,
 ## CPU, memory, disk, IOPS, partitions and retention. Scale tier only.
@@ -612,12 +623,13 @@ kafka:
   ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
   ## refuses the move without --migrate.
   controller_pool: combined
-  ## The two SaaS bodies read these four. Leave one out and the aws root's own
-  ## default applies; a value outside its list, or an id in the wrong vendor's
-  ## shape, is refused at render (scripts/render_dial.py).
+  ## The two SaaS bodies read these five. Leave one out and render_dial.py or the
+  ## aws root's own default applies; a value outside its list, or an id in the
+  ## wrong vendor's shape, is refused at render (scripts/render_dial.py).
   # connectivity: private     # private | public -- how the cluster is reached; both SaaS bodies
   # confluent_tier: freight   # freight | enterprise | basic; basic caps a topic at 8388608
   #                           # bytes, so msk.message_max_bytes must be that or less
+  # redpanda_tier: serverless # serverless | dedicated | byoc; the body builds serverless only
   # confluent_environment_id: env-abc123   # an existing Confluent environment; absent, the body creates one
   # redpanda_resource_group_id: 00000000-0000-0000-0000-000000000000  # an existing resource group (a UUID); absent, the body creates one
   msk:
@@ -646,15 +658,17 @@ kafka:
     ## The broker-count scaler: a CloudWatch alarm on cluster-wide BytesInPerSec
     ## driving a Lambda that raises the broker count (MSK Express has no native
     ## equivalent -- UpdateBrokerCount is a manual API with no scaling policy of
-    ## its own). Every field is optional; a value left blank takes the module's
-    ## own default (terraform/modules/managed-kafka/msk/variables.tf), so an
-    ## operator only ever states what they want to CHANGE.
+    ## its own). Every field is optional: a value left blank takes the one
+    ## render_dial.py documents here, and step left blank takes the zone count,
+    ## so an operator only ever states what they want to CHANGE.
     autoscaling:
       enabled: "true"          # the off switch, never an on switch
       max_brokers: 6           # the ceiling; must be >= broker_count and a multiple of the zone count
       step: ""                 # brokers added per scale-out; empty takes the zone count
       per_broker_capacity_mb_s: 50  # the resolved broker shape's published network throughput
       headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
+      period_seconds: 300      # the alarm's period; a multiple of 60, since MSK publishes BytesInPerSec once a minute
+      evaluation_periods: 3    # periods in breach before a scale-out; with the period, the stabilisation window
   ## Topics tofu pre-creates when a managed body is provisioned
   ## (confluent-cloud, redpanda-cloud), before DFE is deployed onto it at all.
   ## The DFE bootstrap topic set is NOT this list -- dfe-schemas declares it and

@@ -37,6 +37,9 @@ locals {
     instance-state-change = { source = "aws.ec2", detail_type = "EC2 Instance State-change Notification" }
     health                = { source = "aws.health", detail_type = "AWS Health Event" }
   }
+
+  // Karpenter's published queue retention: a notice older than five minutes names an instance already gone.
+  karpenter_interruption_retention_seconds = 300
 }
 
 // ---------------------------------------------------------------------------
@@ -60,10 +63,10 @@ resource "aws_ec2_tag" "karpenter_cluster_security_group" {
 resource "aws_sqs_queue" "karpenter" {
   name = var.name
 
-  // An interruption notice is worthless once the instance is gone, so a message
-  // older than five minutes is deleted rather than replayed at a controller
-  // that has just restarted.
-  message_retention_seconds = 300
+  // An interruption notice is worthless once the instance is gone, so an old
+  // message is deleted rather than replayed at a controller that has just
+  // restarted.
+  message_retention_seconds = local.karpenter_interruption_retention_seconds
 
   // SQS-managed encryption rather than the deployment CMK: the messages are
   // instance ids and event types, and a CMK here would need an EventBridge

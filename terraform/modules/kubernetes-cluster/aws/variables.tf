@@ -24,8 +24,8 @@ variable "provision" {
   }
 
   validation {
-    condition     = can(cidrsubnet(var.provision.cidr, 4, 0))
-    error_message = "provision.cidr must be a CIDR block with room for at least 16 subnets (a /20 or larger)."
+    condition     = can(cidrsubnet(var.provision.cidr, var.network.subnet_newbits, pow(2, var.network.subnet_newbits) - 1))
+    error_message = "provision.cidr must be a CIDR block with room for 2^network.subnet_newbits subnets."
   }
 
   validation {
@@ -45,7 +45,7 @@ variable "env" {
 }
 
 variable "kubernetes_version" {
-  description = "EKS control-plane minor version, e.g. 1.36."
+  description = "EKS control-plane minor version, e.g. 1.36, pinned in tfvars because the add-on pins in addon_versions are built for one minor."
   type        = string
 
   validation {
@@ -55,17 +55,9 @@ variable "kubernetes_version" {
 }
 
 variable "addon_versions" {
-  description = "The EKS add-on versions, keyed by add-on name, one for every add-on eks.tf installs. Each is built for one Kubernetes minor, so the default is the set for the minor versions.yaml's eks-addons were chosen for, and check_versions_drift.py holds it to them. A cluster on another minor sets all five to what `aws eks describe-addon-versions --kubernetes-version <minor>` lists, and the plan refuses a kube-proxy built for any minor but kubernetes_version. Null takes the default."
+  description = "The EKS add-on versions, keyed by add-on name, one for every add-on eks.tf installs. Pinned in tfvars: render_dial.py renders versions.yaml's eks-addons, because a version EKS publishes after review must not reach a deploy. Each is built for one Kubernetes minor, so a cluster on another minor sets all five to what `aws eks describe-addon-versions --kubernetes-version <minor>` lists, and the plan refuses a kube-proxy built for any minor but kubernetes_version."
   type        = map(string)
   nullable    = false
-
-  default = {
-    "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
-    "coredns"                = "v1.14.7-eksbuild.11"
-    "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
-    "kube-proxy"             = "v1.36.0-eksbuild.45"
-    "vpc-cni"                = "v1.23.2-eksbuild.1"
-  }
 
   validation {
     condition     = alltrue([for v in values(var.addon_versions) : can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$", v))])
@@ -74,7 +66,7 @@ variable "addon_versions" {
 }
 
 variable "node_pools" {
-  description = "Managed node groups, keyed by pool name. shape_ref indexes resolved_shapes -- an instance type is never written here."
+  description = "Managed node groups, keyed by pool name, from tfvars: the dial's own pools plus the ones the shape resolver derives. shape_ref indexes resolved_shapes, which supplies the instance types and the root volume type -- neither is ever written here."
   type = map(object({
     shape_ref     = string
     min_size      = number
@@ -114,13 +106,22 @@ variable "node_pools" {
     condition     = alltrue([for p in var.node_pools : contains(keys(var.resolved_shapes), p.shape_ref)])
     error_message = "Every node pool's shape_ref must have an entry in resolved_shapes."
   }
+
+  validation {
+    condition     = alltrue([for p in var.node_pools : try(var.resolved_shapes[p.shape_ref].root_volume != null, false)])
+    error_message = "Every node pool's shape must carry a root_volume in resolved_shapes -- re-run scripts/resolve_sizing.py, which writes one for every shape with a root disk."
+  }
 }
 
 variable "resolved_shapes" {
-  description = "The shape resolver's answer, keyed by shape_ref. instance_types is ordered best-first so EKS can fall back when the first is short of capacity."
+  description = "Auto-selected by the shape resolver (scripts/resolve_sizing.py), newest arm64 generation in the region, keyed by shape_ref. instance_types is ordered best-first so EKS can fall back when the first is short of capacity; root_volume is the shape's root disk type and size from shapes/compute-shapes.yaml."
   type = map(object({
     instance_types = list(string)
     arch           = string
+    root_volume = optional(object({
+      type     = string
+      size_gib = number
+    }))
   }))
 
   validation {
@@ -135,10 +136,11 @@ variable "resolved_shapes" {
 }
 
 variable "network" {
-  description = "nat = per-az puts one NAT gateway in each availability zone, so a zone failure and cross-zone data charges both stay contained. nat = single puts one in the first, which is cheaper and is the tyre-kick default. az_count is how many zones the VPC spans -- 3 (the default here, for a caller that predates the dial field) is enough for a quorum without paying cross-zone transfer on a fourth; 2 trades that redundancy for cost, more spreads further where the region allows it."
+  description = "From tfvars (the dial's network block). nat = per-az puts one NAT gateway in each availability zone, so a zone failure and cross-zone data charges both stay contained. nat = single puts one in the first, which is cheaper. az_count is how many zones the VPC spans, 2-6. subnet_newbits is how many bits each subnet adds to provision.cidr: the VPC splits into 2^subnet_newbits equal blocks, private subnets from the first and public from the midpoint, and every pod takes an address from its node's private subnet under the VPC CNI."
   type = object({
-    nat      = string
-    az_count = optional(number, 3)
+    nat            = string
+    az_count       = number
+    subnet_newbits = number
   })
 
   validation {
@@ -149,6 +151,12 @@ variable "network" {
   validation {
     condition     = var.network.az_count >= 2 && var.network.az_count <= 6
     error_message = "network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak of, and no AWS region offers more than 6."
+  }
+
+  // The public half starts at the midpoint, so each half needs a block per zone.
+  validation {
+    condition     = var.network.subnet_newbits == floor(var.network.subnet_newbits) && pow(2, var.network.subnet_newbits - 1) >= var.network.az_count
+    error_message = "network.subnet_newbits must be a whole number with 2^(subnet_newbits - 1) at least network.az_count, so the private and public halves each hold a subnet per zone."
   }
 }
 
@@ -184,26 +192,23 @@ variable "dns" {
 
 variable "telemetry" {
   description = <<-DESCRIPTION
-    Where a CloudWatch-only touchpoint lands, and for how long. EKS delivers
-    control-plane logs to CloudWatch and nowhere else -- there is no S3 or OTel
-    export for them -- so this module always enables the audit stream (the one
-    that matters for compliance) and always writes it to CloudWatch under both
-    sinks. sink = otel (the default, DFE's monitoring goes to its own OTel feed
-    and HyperDX everywhere else) pins retention to the 1-day floor, since this
-    log group is an unavoidable exception rather than a chosen destination.
-    sink = cloudwatch, the opt-in AWS-native path, keeps it at retention_days
-    like every other CloudWatch touchpoint under that sink.
+    Where a CloudWatch-only touchpoint lands, and for how long, from tfvars (the
+    dial's telemetry block). EKS delivers control-plane logs to CloudWatch and
+    nowhere else -- there is no S3 or OTel export for them -- so this module
+    always enables the audit stream (the one that matters for compliance) and
+    always writes it to CloudWatch under both sinks. sink = otel (DFE's
+    monitoring goes to its own OTel feed and HyperDX everywhere else) keeps it
+    at forced_retention_days, since this log group is an unavoidable exception
+    rather than a chosen destination. sink = cloudwatch, the opt-in AWS-native
+    path, keeps it at retention_days like every other CloudWatch touchpoint
+    under that sink.
   DESCRIPTION
 
   type = object({
-    sink           = string
-    retention_days = number
+    sink                  = string
+    retention_days        = number
+    forced_retention_days = number
   })
-
-  default = {
-    sink           = "otel"
-    retention_days = 2
-  }
 
   validation {
     condition     = contains(["otel", "cloudwatch"], var.telemetry.sink)
@@ -223,6 +228,15 @@ variable "telemetry" {
       var.telemetry.retention_days
     )
     error_message = "telemetry.retention_days must be one of the retention periods CloudWatch Logs accepts when sink is cloudwatch."
+  }
+
+  // The audit log group is CloudWatch under either sink, so its retention is always one CloudWatch accepts.
+  validation {
+    condition = contains(
+      [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653],
+      var.telemetry.forced_retention_days
+    )
+    error_message = "telemetry.forced_retention_days must be one of the retention periods CloudWatch Logs accepts."
   }
 }
 

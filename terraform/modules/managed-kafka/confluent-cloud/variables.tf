@@ -29,9 +29,8 @@ variable "cloud" {
 }
 
 variable "tier" {
-  description = "Which Confluent Cloud cluster type carries the deployment. Freight is the default -- it autoscales on eCKUs, is the cheapest at the top band, and is private-networking-only. Enterprise is the answer where Freight's unpublished end-to-end latency rules it out. Basic exists for a cheap public proof and carries no private networking."
+  description = "Which Confluent Cloud cluster type carries the deployment, pinned in tfvars (the dial's kafka.confluent_tier, freight when it names none) because Confluent publishes no generation to resolve. Freight autoscales on eCKUs, is the cheapest at the top band, and is private-networking-only. Enterprise is the answer where Freight's unpublished end-to-end latency rules it out. Basic exists for a cheap public proof and carries no private networking."
   type        = string
-  default     = "freight"
 
   validation {
     condition     = contains(["freight", "enterprise", "basic"], var.tier)
@@ -234,7 +233,7 @@ variable "resolved_shapes" {
 variable "broker_count" {
   description = "NOT APPLIED. The elastic tiers have no broker count to set -- Confluent scales eCKUs and bills throughput."
   type        = number
-  default     = 3
+  default     = null
 }
 
 variable "kafka_version" {

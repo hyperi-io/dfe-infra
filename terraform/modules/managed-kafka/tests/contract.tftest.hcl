@@ -115,6 +115,10 @@ variables {
   log_retention_ms  = 259200000
   message_max_bytes = 16777216
 
+  // What the aws root sends: the dial's telemetry block, and the persistent window for a non-ephemeral deployment.
+  telemetry                   = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
+  secret_recovery_window_days = 30
+
   kms_key_arn      = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
   eks_cluster_name = "dfe-contract"
 
@@ -133,6 +137,8 @@ variables {
     max_brokers              = 6
     per_broker_capacity_mb_s = 50
     headroom                 = 1.3
+    period_seconds           = 300
+    evaluation_periods       = 3
   }
 }
 
@@ -408,6 +414,8 @@ run "msk_autoscaling_refuses_more_brokers_than_one_alarm_can_name" {
       max_brokers              = 12
       per_broker_capacity_mb_s = 50
       headroom                 = 1.3
+      period_seconds           = 300
+      evaluation_periods       = 3
     }
   }
 
@@ -432,6 +440,8 @@ run "msk_a_large_cluster_plans_cleanly_with_autoscaling_off" {
       max_brokers              = 12
       per_broker_capacity_mb_s = 50
       headroom                 = 1.3
+      period_seconds           = 300
+      evaluation_periods       = 3
     }
   }
 
@@ -472,8 +482,8 @@ run "msk_autoscaler_threshold_arithmetic" {
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == 3 && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == 3
-    error_message = "the alarm must require 3 of 3 datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
+    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == var.autoscaling.evaluation_periods && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == var.autoscaling.evaluation_periods
+    error_message = "the alarm must require every one of autoscaling.evaluation_periods datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
   }
 
   // CloudWatch rejects SEARCH on a metric alarm with ValidationError: SEARCH
@@ -518,9 +528,9 @@ run "msk_autoscaler_threshold_arithmetic" {
   assert {
     condition = alltrue([
       for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-      mq.metric[0].period == 300 if startswith(mq.id, "broker_")
+      mq.metric[0].period == var.autoscaling.period_seconds if startswith(mq.id, "broker_")
     ])
-    error_message = "every per-broker metric_query must carry period = 300, the window the threshold is sized against"
+    error_message = "every per-broker metric_query must carry autoscaling.period_seconds, the window the threshold is sized against"
   }
 
   // Exactly one query returns data, and it is the sum the threshold compares.
@@ -551,6 +561,58 @@ run "msk_autoscaler_threshold_arithmetic" {
   }
 }
 
+// The alarm window is the caller's: a value other than the dial's default reaches the alarm unchanged.
+run "msk_autoscaler_takes_the_callers_alarm_window" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    autoscaling = {
+      max_brokers              = 6
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+      period_seconds           = 120
+      evaluation_periods       = 5
+    }
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == 5 && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == 5
+    error_message = "autoscaling.evaluation_periods must set both evaluation_periods and datapoints_to_alarm"
+  }
+
+  assert {
+    condition = alltrue([
+      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
+      mq.metric[0].period == 120 if startswith(mq.id, "broker_")
+    ])
+    error_message = "autoscaling.period_seconds must reach every per-broker metric_query"
+  }
+}
+
+run "msk_autoscaler_refuses_a_period_that_is_not_whole_minutes" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    autoscaling = {
+      max_brokers              = 6
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+      period_seconds           = 90
+      evaluation_periods       = 3
+    }
+  }
+
+  expect_failures = [var.autoscaling]
+}
+
 // S2: the Lambda's env carries only what an increase can act on -- no
 // min_brokers, no scale-in knob of any kind.
 run "msk_autoscaler_lambda_is_increase_only" {
@@ -578,6 +640,11 @@ run "msk_autoscaler_lambda_is_increase_only" {
   assert {
     condition     = aws_lambda_function.broker_scaler[0].runtime == "python3.13" && aws_lambda_function.broker_scaler[0].architectures[0] == "arm64"
     error_message = "the scaler Lambda must run python3.13 on arm64"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_group.broker_scaler[0].retention_in_days == var.telemetry.forced_retention_days
+    error_message = "the scaler's Lambda log group must keep telemetry.forced_retention_days, never the Lambda default of never expire"
   }
 }
 
@@ -635,8 +702,8 @@ run "msk_telemetry_otel_ships_broker_logs_to_s3" {
     // provider's deprecated rule.prefix attribute along for the ride and
     // trip OpenTofu's "value derived from a deprecated source" warning
     // even though this module never sets prefix.
-    condition     = one(aws_s3_bucket_lifecycle_configuration.broker_logs[0].rule[0].expiration).days == 2
-    error_message = "the lifecycle expiry must match telemetry.retention_days -- 2 is the otel default"
+    condition     = one(aws_s3_bucket_lifecycle_configuration.broker_logs[0].rule[0].expiration).days == var.telemetry.retention_days
+    error_message = "the lifecycle expiry must match telemetry.retention_days"
   }
 
   assert {
@@ -655,8 +722,9 @@ run "msk_telemetry_cloudwatch_keeps_the_aws_native_path" {
 
   variables {
     telemetry = {
-      sink           = "cloudwatch"
-      retention_days = 7
+      sink                  = "cloudwatch"
+      retention_days        = 7
+      forced_retention_days = 1
     }
   }
 
@@ -700,6 +768,8 @@ run "msk_autoscaler_disabled_renders_nothing" {
       max_brokers              = 6
       per_broker_capacity_mb_s = 50
       headroom                 = 1.3
+      period_seconds           = 300
+      evaluation_periods       = 3
     }
   }
 

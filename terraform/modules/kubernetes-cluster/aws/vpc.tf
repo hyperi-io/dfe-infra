@@ -9,17 +9,16 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  // var.network.az_count zones (3 by default): enough for a quorum (etcd,
-  // Keeper, Kafka controllers) without paying cross-zone transfer on a
-  // fourth, unless the dial asks for a different spread.
+  // The first var.network.az_count zones the region offers.
   azs = slice(data.aws_availability_zones.available.names, 0, var.network.az_count)
 
-  // Sixteen /20s in a /16. The private half takes the first az_count blocks,
-  // the public half az_count starting at the midpoint (index 8), so the two
-  // never collide whatever the caller sizes provision.cidr or az_count to --
-  // az_count's own 2-6 range never reaches the midpoint from the low end.
-  private_cidrs = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, 4, i) }
-  public_cidrs  = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, 4, i + 8) }
+  // 2^subnet_newbits equal blocks in provision.cidr. The private half takes
+  // the first az_count blocks and the public half az_count from the midpoint,
+  // so the two never collide: the network validation holds az_count to half
+  // the block count.
+  public_subnet_offset = pow(2, var.network.subnet_newbits - 1)
+  private_cidrs        = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, var.network.subnet_newbits, i) }
+  public_cidrs         = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, var.network.subnet_newbits, i + local.public_subnet_offset) }
 
   // per-az survives a zone failure and keeps egress traffic in its own zone;
   // single is one gateway every zone routes to.
