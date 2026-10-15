@@ -69,6 +69,15 @@ rules:
     reason: "Envoy Gateway v1.9.2 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy; helm/edge/gateway pins distroless-v1.39.2 explicitly over it for BoringSSL CVE-2026-35189, one patch ahead on the same Envoy minor. The gateway and proxy pins move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
     source: "https://github.com/envoyproxy/gateway/blob/v1.9.2/api/v1alpha1/shared_types.go"
 
+  cert-manager-gateway-api-pairing:
+    severity: "error"
+    when-key: "bootstrap.cert-manager"
+    when-equals: "v1.21.2"
+    require-key: "operators.envoy-gateway"
+    require-equals: "v1.9.2"
+    reason: "bootstrap.sh starts cert-manager with Gateway API support over the Gateway API CRDs it lays from Envoy Gateway's own chart at operators.envoy-gateway, before cert-manager installs. cert-manager v1.21.2 builds against gateway-api v1.6.0, and Envoy Gateway v1.9.2 ships Gateway API v1.6.1 on the experimental channel. Error severity: a cert-manager bump leaves this guard dead and a gateway bump fails the requirement, so either one fails --strict until the pairing is re-checked."
+    source: "https://github.com/cert-manager/cert-manager/blob/v1.21.2/go.mod and oci://registry-1.docker.io/envoyproxy/gateway-helm:v1.9.2 charts/crds/crds/gatewayapi-crds.yaml"
+
   ferretdb2-requires-documentdb:
     severity: "error"
     when-key: "services.ferretdb"

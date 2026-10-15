@@ -243,7 +243,12 @@ EXTERNAL_SECRETS_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_a
 ARGOCD_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.argocd)
 LOCAL_PATH_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.local-path-provisioner)
 METALLB_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" "${version_args[@]}" bootstrap.metallb)
-echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION}"
+# The operator app pins current's release whatever DFE_STACK_VERSION names, and [1d/7] lays its CRDs.
+ENVOY_GATEWAY_VERSION=$(python3 "${SCRIPT_DIR}/read_versions.py" --file "${REPO_ROOT}/versions.yaml" operators.envoy-gateway)
+# The chart argocd/bootstrap/envoy-gateway-app.yaml installs.
+ENVOY_GATEWAY_OCI_REPO="registry-1.docker.io/envoyproxy"
+ENVOY_GATEWAY_CHART="gateway-helm"
+echo "Versions (from versions.yaml): cert-manager=${CERT_MANAGER_VERSION} eso=${EXTERNAL_SECRETS_VERSION} argocd=${ARGOCD_VERSION} local-path=${LOCAL_PATH_VERSION} metallb=${METALLB_VERSION} envoy-gateway=${ENVOY_GATEWAY_VERSION}"
 
 # Each operator below states its own Kubernetes window, so an under-floor cluster
 # fails inside one of them naming that operator rather than the cluster.
@@ -896,6 +901,25 @@ else
   echo "  Node labelling skipped (DFE_LABEL_WORKLOAD_NODES=false) -- soft/no placement"
 fi
 
+echo "==> [1d/7] Gateway API CRDs (detect-or-install, before cert-manager)"
+# cert-manager runs with Gateway API support and exits at start without these, and the operator app ships them only at [7/7].
+if [[ "${DFE_FORCE_INSTALL:-false}" != "true" ]] && dfe_have_crd gateways.gateway.networking.k8s.io; then
+  echo "  [gateway-api] CRD gateways.gateway.networking.k8s.io present -> ADOPT, skip install"
+else
+  echo "  [gateway-api] INSTALL the CRDs ${ENVOY_GATEWAY_CHART} ${ENVOY_GATEWAY_VERSION} ships, the release the operator app installs"
+  # Applied as Argo's own field manager, so the operator app's sync owns every field and a later chart can drop one.
+  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
+    echo "[DRY-RUN] helm show crds oci://${ENVOY_GATEWAY_OCI_REPO}/${ENVOY_GATEWAY_CHART} --version ${ENVOY_GATEWAY_VERSION} | kubectl apply --server-side --field-manager=argocd-controller --force-conflicts -f -"
+  else
+    helm show crds "oci://${ENVOY_GATEWAY_OCI_REPO}/${ENVOY_GATEWAY_CHART}" --version "${ENVOY_GATEWAY_VERSION}" \
+      | kubectl apply --server-side --field-manager=argocd-controller --force-conflicts -f -
+  fi
+  run kubectl wait --for condition=Established --timeout=120s \
+    crd/gatewayclasses.gateway.networking.k8s.io \
+    crd/gateways.gateway.networking.k8s.io \
+    crd/httproutes.gateway.networking.k8s.io
+fi
+
 echo "==> [2/7] cert-manager (detect-or-install)"
 if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager; then
   dfe_release_values cert-manager
@@ -1356,19 +1380,19 @@ fi
 echo "==> [7/7] Applying ArgoCD AppProjects + bootstrap ApplicationSet"
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yaml"
 # Envoy Gateway operator: anonymous OCI Helm repo cred, then the operator app.
-# The config app below needs the Gateway API CRDs the operator installs, so
-# wait for them to establish before applying it (its sync retry budget is
-# finite -- exhausting it on missing CRDs wedges the app until a manual
-# refresh).
+# The config app below needs the Gateway API CRDs, laid at [1d/7] or adopted
+# and then synced by the operator app, so wait for them to establish before
+# applying it (its sync retry budget is finite -- exhausting it on missing
+# CRDs wedges the app until a manual refresh).
 kubectl -n argocd create secret generic repo-envoyproxy-oci \
   --from-literal=type=helm \
   --from-literal=name=envoyproxy \
-  --from-literal=url=registry-1.docker.io/envoyproxy \
+  --from-literal=url="${ENVOY_GATEWAY_OCI_REPO}" \
   --from-literal=enableOCI="true" \
   --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
 run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/envoy-gateway-app.yaml"
 if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
-  echo "  waiting for the Gateway API CRDs (installed by the operator app)..."
+  echo "  waiting for the Gateway API CRDs..."
   for _ in $(seq 1 60); do
     kubectl get crd httproutes.gateway.networking.k8s.io >/dev/null 2>&1 && break
     sleep 5
