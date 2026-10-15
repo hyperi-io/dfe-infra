@@ -20,6 +20,7 @@ scenario and logs every call; `sleep` and `timeout` are stubs so no case waits.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -251,7 +252,15 @@ def test_the_token_checkout_and_advance_run_only_for_a_release_maturity_cut() ->
 
 def test_the_app_token_is_scoped_to_this_repository_and_what_the_advance_does() -> None:
     mint = _step("Mint a dfe-infra token for the `latest` pull request")
-    assert mint["uses"] == "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+    # SHA-pinned, and the one pin every App-token step carries, so a bump moves them together.
+    assert re.fullmatch(r"actions/create-github-app-token@[0-9a-f]{40}", mint["uses"])
+    pin = re.compile(r"actions/create-github-app-token@\S+")
+    pins = {
+        found.group(0)
+        for workflow in WORKFLOW.parent.glob("*.yml")
+        for found in pin.finditer(workflow.read_text(encoding="utf-8"))
+    }
+    assert pins == {mint["uses"]}
     assert mint["with"] == {
         "client-id": "${{ vars.GH_APP_CLIENT_ID }}",
         "private-key": "${{ secrets.GH_APP_PRIVATE_KEY }}",
