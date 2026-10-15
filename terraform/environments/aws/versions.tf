@@ -10,6 +10,7 @@ terraform {
   required_version = ">= 1.11"
 
   required_providers {
+    // The lock holds 6.68.0: 6.69.0 fails decoding a large API response ("bufio.Scanner: token too long", terraform-provider-aws#50474, #50480, #50481).
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.64"
@@ -21,6 +22,7 @@ terraform {
     // Only configured when kafka.provider selects the matching SaaS body
     // (managed-kafka/confluent-cloud, managed-kafka/redpanda-cloud); a provider
     // block with no resource against it costs nothing at plan or apply.
+    // The lock holds 2.90.0: no Confluent cycle has completed on 2.91.0, published 2026-10-14.
     confluent = {
       source  = "confluentinc/confluent"
       version = "~> 2.86"

@@ -2,6 +2,7 @@ terraform {
   required_version = ">= 1.10"
 
   required_providers {
+    // The lock holds 6.68.0: 6.69.0 fails decoding a large API response ("bufio.Scanner: token too long", terraform-provider-aws#50474, #50480, #50481).
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.64"
