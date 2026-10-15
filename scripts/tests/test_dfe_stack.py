@@ -2259,6 +2259,38 @@ def test_a_proxy_bump_without_its_gateway_fails_strict() -> None:
     expect("naming the proxy pin it rejects", "FAIL" in out and "distroless-v1.39.3" in out, out)
 
 
+def _cert_manager_pins(cert_manager: str, gateway: str) -> str:
+    return (
+        f'    bootstrap:\n      cert-manager: "{cert_manager}"\n'
+        f'    operators:\n      envoy-gateway: "{gateway}"\n'
+    )
+
+
+def test_a_cert_manager_bump_rechecks_the_gateway_api_crds_it_starts_on() -> None:
+    """bootstrap.sh starts cert-manager over the Gateway API CRDs Envoy Gateway
+    ships, so a cert-manager lift must not ship until that pairing is re-checked."""
+    rule = _committed_rule("cert-manager-gateway-api-pairing")
+    rc, out = _compat_check_over(rule, _cert_manager_pins("v1.22.0", "v1.9.2"), strict=True)
+    expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect("because the pairing's guard went dead", "DEAD" in out, out)
+
+
+def test_a_gateway_bump_rechecks_the_crds_cert_manager_starts_on() -> None:
+    rule = _committed_rule("cert-manager-gateway-api-pairing")
+    rc, out = _compat_check_over(rule, _cert_manager_pins("v1.21.2", "v1.10.0"), strict=True)
+    expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
+    expect("naming the gateway pin it rejects", "FAIL" in out and "v1.10.0" in out, out)
+
+
+def test_the_committed_cert_manager_and_gateway_pins_pair() -> None:
+    rule = _committed_rule("cert-manager-gateway-api-pairing")
+    _, pins = stack.stack_pins(stack.load_root(), None)
+    flat = stack.flatten_pins(pins)
+    committed = _cert_manager_pins(flat["bootstrap.cert-manager"], flat["operators.envoy-gateway"])
+    rc, out = _compat_check_over(rule, committed, strict=True)
+    expect("strict passes on the stack as committed", rc == 0, f"exit {rc}\n{out}")
+
+
 def _clickhouse_pins(server: str, keeper: str) -> str:
     return (
         f'    services:\n      clickhouse-version: "{server}"\n'

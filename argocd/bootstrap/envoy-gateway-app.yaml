@@ -6,6 +6,7 @@
 # versions.yaml operators.envoy-gateway (drift-checked). Anonymous OCI pull:
 # bootstrap registers the envoyproxy registry as a Helm repository with
 # enableOCI.
+# bootstrap.sh [1d/7] lays this chart's CRDs first, under Argo's own field manager, so ServerSideApply here takes them over with no conflict and no co-owner.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
