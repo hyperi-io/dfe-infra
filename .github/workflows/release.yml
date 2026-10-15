@@ -66,10 +66,30 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # The verdicts helm-lint.yml's arch job proved on main, so a digest-pinned image it
+      # already read is not read again here.
+      - name: Restore the proven image verdicts
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/image-arch-verdicts.json
+          key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-
+            image-arch-verdicts-
+
       # Third-party images are public, so this needs no credential; the DFE
       # images are dfe-stack release-gate's, above.
       - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
-        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
+        id: arch
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json"
+
+      # Saved on a failed gate too: the file holds only the verdicts that passed.
+      - name: Save the proven image verdicts
+        if: ${{ !cancelled() && steps.arch.outcome != 'skipped' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/image-arch-verdicts.json
+          key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Every DFE image and thin chart is public, so verify reads each tag's digest
       # anonymously through docker buildx imagetools; one an outsider cannot pull fails here.

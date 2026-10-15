@@ -244,6 +244,36 @@ CHECKS: list[Check] = [
     Check(label, key, Path(f), appset_chart_pattern(chart)) for label, key, f, chart in _APPSET_PINS
 ]
 
+
+def appset_element_pattern(chart: str, field: str) -> str:
+    """`chart: <chart>` then the nearest following `<field>: "X"` in the same list element."""
+    anchor = r"chart:\s*" + re.escape(chart) + r"\b[\s\S]{0,300}?"
+    return anchor + re.escape(field) + r':\s*"([^"]*)"'
+
+
+# The digest halves layer1-addons.yaml deploys karpenter's chart and the load balancer
+# controller's image by. Each is empty until a stack pins it (PENDING_MIRRORS).
+CHECKS += [
+    Check(
+        "karpenter chart digest (layer1-addons)",
+        "services-digests.karpenter",
+        Path("argocd/appsets/layer1-addons.yaml"),
+        appset_element_pattern("karpenter", "chartDigest"),
+    ),
+    Check(
+        "aws-load-balancer-controller image tag (layer1-addons)",
+        "services.aws-load-balancer-controller-image",
+        Path("argocd/appsets/layer1-addons.yaml"),
+        appset_element_pattern("aws-load-balancer-controller", "imageTag"),
+    ),
+    Check(
+        "aws-load-balancer-controller image digest (layer1-addons)",
+        "services-digests.aws-load-balancer-controller-image",
+        Path("argocd/appsets/layer1-addons.yaml"),
+        appset_element_pattern("aws-load-balancer-controller", "imageDigest"),
+    ),
+]
+
 # Pins with a one-off shape, each needing its own anchor.
 CHECKS += [
     # opt-in redpanda operator: source.chart/targetRevision, not a list element
@@ -1031,6 +1061,9 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.valkey": "pinned starting the 2.2.0-rc.14 block; a stack that predates rc.14 has no value to compare",
     "eks-addons.*": "pinned starting the 2.2.1 block; a stack that predates it resolved each add-on at plan time and has no value to compare",
     "lambda-runtimes.*": "pinned starting the 2.2.1-rc.13 block; a stack that predates it carried the runtime as a literal in the msk module and has no value to compare",
+    "services-digests.karpenter": "pinned starting the 2.2.1-rc.14 block; a stack that predates it deploys the chart by version",
+    "services.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
+    "services-digests.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
 }
 
 
