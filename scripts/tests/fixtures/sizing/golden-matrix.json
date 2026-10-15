@@ -18,7 +18,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -265,7 +266,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -512,7 +514,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -758,7 +761,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -1005,7 +1009,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -1252,7 +1257,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -1496,7 +1502,8 @@
       "clickhouse": "r9gd.2xlarge",
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -1690,7 +1697,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.8xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -1931,7 +1939,8 @@
       "clickhouse": "r9gd.2xlarge",
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -2125,7 +2134,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -2371,7 +2381,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 0,
     "values": [
@@ -2618,7 +2629,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 1,
     "values": [
@@ -2866,7 +2878,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 1,
     "values": [
@@ -3113,7 +3126,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.4xlarge",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 1,
     "values": [
@@ -3359,7 +3373,8 @@
       "eks-system": "m9g.large",
       "general": "m9g.xlarge",
       "kafka-broker": "m9g.large",
-      "keeper": "m9g.large"
+      "keeper": "m9g.large",
+      "toolbox": "t4g.small"
     },
     "status": 1,
     "values": [
