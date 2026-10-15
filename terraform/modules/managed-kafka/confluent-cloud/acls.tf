@@ -102,7 +102,8 @@ resource "confluent_api_key" "dfe" {
   display_name = "${var.name}-${var.service_account_name}-kafka-api-key"
   description  = "SASL PLAIN credential for the DFE fleet on ${var.name}"
 
-  disable_wait_for_ready = local.private
+  // Tofu never signs in with this key, and the provider's wait needs a 200 from the REST endpoint and fails the apply on the first transport error.
+  disable_wait_for_ready = true
 
   owner {
     id          = confluent_service_account.dfe.id

@@ -280,6 +280,12 @@ run "confluent_cloud_freight_private_network_interface" {
     condition     = length(confluent_kafka_topic.landing) == 2
     error_message = "every landing topic must be pre-created"
   }
+
+  // A private cluster answers no readiness probe from outside its network.
+  assert {
+    condition     = confluent_api_key.manager.disable_wait_for_ready == true && confluent_api_key.dfe.disable_wait_for_ready == true
+    error_message = "neither key is waited for on a private cluster"
+  }
 }
 
 // Enterprise is the PrivateLink shape, and its private DNS is ours to run
@@ -432,6 +438,18 @@ run "confluent_cloud_basic_public_proof" {
   assert {
     condition     = output.auth_type == "plain"
     error_message = "auth_type is plain on every Confluent tier"
+  }
+
+  // Tofu writes the topics and ACLs with the manager key, so on a public endpoint its wait is the
+  // readiness check that matters, and the DFE key, which tofu never uses, is not waited for.
+  assert {
+    condition     = confluent_api_key.manager.disable_wait_for_ready == false
+    error_message = "the manager key is waited for on a public endpoint, where the topics and ACLs are written with it next"
+  }
+
+  assert {
+    condition     = confluent_api_key.dfe.disable_wait_for_ready == true
+    error_message = "the DFE key is never waited for: tofu does not use it, and the wait fails the apply on one transport error"
   }
 }
 
