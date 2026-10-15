@@ -112,7 +112,11 @@ spec:
         - name: KAFKA_CONSUMER_PROTOCOL
           value: classic
         - name: KAFKA_SASL_MECHANISM
-          value: SCRAM-SHA-512
+          valueFrom:
+            secretKeyRef:
+              key: sasl.mechanism
+              name: dfe-kafka-user
+              optional: true
         - name: KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
         - name: OTEL_EXPORTER_OTLP_ENDPOINT

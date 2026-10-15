@@ -389,6 +389,7 @@ apps:
       config.kafka.tls.enabled: DFE_LOADER_KAFKA_SECURITY_PROTOCOL
       config.kafka.sasl.username: DFE_LOADER__KAFKA__SASL__USERNAME
       config.kafka.sasl.password: DFE_LOADER__KAFKA__SASL__PASSWORD
+      config.kafka.sasl.mechanism: DFE_LOADER_KAFKA_SASL_MECHANISM
       config.clickhouse.hosts: DFE_LOADER_CLICKHOUSE_HOSTS
       config.clickhouse.database: DFE_LOADER_CLICKHOUSE_DATABASE
       config.clickhouse.username: DFE_LOADER_CLICKHOUSE_USERNAME

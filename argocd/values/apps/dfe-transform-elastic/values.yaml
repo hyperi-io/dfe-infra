@@ -61,7 +61,6 @@ waitForEngine:
 # The transform's own keys, read in the profile files through tpl.
 kafka:
   saslSecretName: dfe-kafka-user
-  saslMechanism: SCRAM-SHA-512
   # One consumer-group protocol for every DFE consumer: a broker refuses a
   # KIP-848 member into a classic group.
   consumerProtocol: classic

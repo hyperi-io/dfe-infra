@@ -3,7 +3,15 @@ extraEnv:
   KAFKA_BOOTSTRAP_SERVERS: '{{ .Values.kafka.bootstrapServers }}'
   KAFKA_CONSUMER_PROTOCOL: '{{ .Values.kafka.consumerProtocol }}'
   KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
-  KAFKA_SASL_MECHANISM: '{{ .Values.kafka.saslMechanism }}'
+  # From the Secret holding the credential, where the kafka chart derives it from
+  # the broker's provider. With secrets.kafka off it names an optional key the
+  # app's own config ConfigMap never carries, so it stays unset.
+  KAFKA_SASL_MECHANISM:
+    valueFrom:
+      '{{ if eq (toString (dig "kafka" "enabled" true .Values.secrets)) "false" }}configMapKeyRef{{ else }}secretKeyRef{{ end }}':
+        name: '{{ if eq (toString (dig "kafka" "enabled" true .Values.secrets)) "false" }}{{ include "scalo-service.fullname" . }}-config{{ else }}{{ .Values.kafka.saslSecretName }}{{ end }}'
+        key: sasl.mechanism
+        optional: true
   # The source's broker list, applied after the file is read.
   DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
 
