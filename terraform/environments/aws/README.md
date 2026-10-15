@@ -160,8 +160,8 @@ the store entry carries the API key's ID instead of a generated secret.
 
 Neither vendor's API credential is a tfvars field. Both providers read theirs
 from the deployer's own shell, the same way an AWS credential already has to
-be, via `versions.tf`'s deliberately empty `provider "confluent" {}` /
-`provider "redpanda" {}` blocks:
+be, via `versions.tf`'s credential-free `provider "confluent"` /
+`provider "redpanda"` blocks:
 
 | Provider | Environment variables | Authenticates |
 |----------|------------------------|-------------------------|
