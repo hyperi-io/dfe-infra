@@ -33,7 +33,7 @@ jobs:
   propagate:
     name: propagate versions.yaml to the pin mirrors
     # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Only Renovate's own pushes -- a human pushing a renovate/** branch keeps
     # their commit unaltered.
     if: github.actor == 'renovate[bot]'
