@@ -37,6 +37,7 @@ NS_CNPG="${DFE_CNPG_NS:-cnpg}"
 NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 NS_OTEL="${DFE_OTEL_NS:-otel}"
+NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
 
 # slim and single run the datastores as plain StatefulSets from the charts; the
 # scale tiers hand them to their operators, so only those carry CRs and operator
@@ -50,6 +51,10 @@ PROFILE="${DFE_PROFILE:-}"
 # cluster_fact() -- one annotation off the dfe-cluster Secret, shared with the other bootstrap scripts.
 # shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/cluster-facts.sh"
+
+# engine_ch_query() -- an external server queried from the engine's own container, shared with the other smoke tests.
+# shellcheck source-path=SCRIPTDIR source=scripts/engine-clickhouse.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/engine-clickhouse.sh"
 
 running_pods() {  # ns, label-selector -- at least one Running pod matches
     kubectl -n "${1}" get pods -l "${2}" --field-selector=status.phase=Running \
@@ -97,10 +102,17 @@ fi
 
 echo ""
 echo "--- ClickHouse ---"
-# Both layouts: the chart's StatefulSet labels pods dfe-clickhouse, the operator
-# labels them clickhouse-server. Matching one makes the other a false negative.
-check "ClickHouse pods running" \
-  "running_pods ${NS_CH} 'app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)'"
+# An external server (ClickHouse Cloud) runs no pod in the cluster, so it is asked a query from the engine instead.
+# The mode comes from the deploy's own env, else the cluster secret, as smoke-test-integration.sh reads it.
+if [ "${DFE_CLICKHOUSE_MODE:-$(cluster_fact clickhouse_mode)}" = external ]; then
+    check "external ClickHouse answers a query from deploy/${DFE_ENGINE_DEPLOY:-dfe-engine} in ns/${NS_APP}" \
+      "engine_ch_query ${NS_APP} 'SELECT 1' | grep -qx 1"
+else
+    # Both layouts: the chart's StatefulSet labels pods dfe-clickhouse, the operator
+    # labels them clickhouse-server. Matching one makes the other a false negative.
+    check "ClickHouse pods running" \
+      "running_pods ${NS_CH} 'app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)'"
+fi
 
 echo ""
 echo "--- FerretDB ---"

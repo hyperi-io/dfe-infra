@@ -140,18 +140,9 @@ ch_nodes() {
   if [ "$CH_MODE" = external ]; then echo external; else ch_pods; fi
 }
 
-# Run by the engine container's own shell, so its host, port, scheme and credential never leave the pod.
-# The credential reaches curl as an escaped config line on stdin, and the query on fd 3, so no argv carries it.
-# shellcheck disable=SC2016  # Expanded inside the engine container, not here.
-ENGINE_CH_QUERY='scheme=http; insecure=
-[ "${DFE_CLICKHOUSE_SECURE:-}" = true ] && scheme=https
-[ "${DFE_CLICKHOUSE_VERIFY:-}" = false ] && insecure=--insecure
-exec 3<&0
-{
-  printf "user = \""
-  printf "%s:%s" "${DFE_CLICKHOUSE_USERNAME:-default}" "${DFE_CLICKHOUSE_PASSWORD:-}" | sed "s/[\\\\\"]/\\\\&/g"
-  printf "\"\n"
-} | curl -fsS --max-time 30 $insecure ${DFE_CLICKHOUSE_CA_CERT:+--cacert "$DFE_CLICKHOUSE_CA_CERT"} -K - --data-binary @/dev/fd/3 "$scheme://$DFE_CLICKHOUSE_HOST:$DFE_CLICKHOUSE_PORT/"'
+# engine_ch_query() -- an external server queried from the engine's own container, shared with the other smoke tests.
+# shellcheck source-path=SCRIPTDIR source=scripts/engine-clickhouse.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/engine-clickhouse.sh"
 
 # Run by the ClickHouse pod's shell: a password line on stdin becomes clickhouse-client's CLICKHOUSE_PASSWORD, so no argv carries it.
 # shellcheck disable=SC2016  # Expanded inside the ClickHouse pod, not here.
@@ -221,7 +212,7 @@ resolve_ch_auth() {
 chq_on() {
   local pod="$1" q="$2"
   if [ "$CH_MODE" = external ]; then
-    printf '%s' "$q" | kubectl -n "$NS_APP" exec -i deploy/dfe-engine -c dfe-engine -- sh -c "$ENGINE_CH_QUERY" 2>/dev/null
+    engine_ch_query "$NS_APP" "$q"
     return
   fi
   resolve_ch_auth

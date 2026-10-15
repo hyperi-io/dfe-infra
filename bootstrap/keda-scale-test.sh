@@ -17,6 +17,9 @@
 # pressure takes the shipped Deployment above its own floor, zeros bring it back. It SKIPS
 # where that app has no ScaledObject or no shim trigger, so a slim tier still passes.
 #
+# An external ClickHouse (ClickHouse Cloud) has no pod to exec into, so the rows go in
+# through the engine's own container, to the server the shim reads.
+#
 # Both phases are self-cleaning. Every wait is BOUNDED and never waits forever, and the
 # scale-out bound is DERIVED from the ScaledObject's own polling interval plus the HPA
 # sync period rather than fixed, so a busy cluster does not fail the proof on the clock.
@@ -85,8 +88,24 @@ done
 
 log() { echo "  [scale-test] $*"; }
 
+# cluster_fact() -- one annotation off the dfe-cluster Secret, shared with the other bootstrap scripts.
+# shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/cluster-facts.sh"
+
+# engine_ch_query() -- an external server queried from the engine's own container, shared with the other smoke tests.
+# shellcheck source-path=SCRIPTDIR source=scripts/engine-clickhouse.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/engine-clickhouse.sh"
+
+# The deploy's own env first, else the cluster secret, as smoke-test-integration.sh reads it.
+CH_MODE="${DFE_CLICKHOUSE_MODE:-$(cluster_fact clickhouse_mode)}"
+
 ch_query() {
-    # Run a ClickHouse query via the CH pod (HTTP :8123 plaintext, in-cluster).
+    # The shim reads the engine's server, so an external one (ClickHouse Cloud, no pod here) is written through the engine.
+    if [ "${CH_MODE}" = external ]; then
+        engine_ch_query "${NS}" "$1"
+        return
+    fi
+    # In-cluster: clickhouse-client in a ClickHouse pod.
     local pod
     # One name from kubectl itself: piping a multi-pod listing into head closes
     # the pipe early, and SIGPIPE under pipefail aborts the run with no output.
