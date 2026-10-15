@@ -62,7 +62,7 @@ import random
 import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import oci_registry
 
@@ -103,10 +103,13 @@ class RetryBudget:
         seconds: Backoff left to spend across every read of the run.
         waits: Seconds waited before each retry of one read, before jitter. One
             more attempt is made than there are waits.
+        reads: Registry commands the run has started, by registry host, retries
+            included, so a run can say what it asked of each registry.
     """
 
     seconds: float
     waits: tuple[float, ...] = PATIENT_WAITS
+    reads: dict[str, int] = field(default_factory=dict)
 
     def spend(self, wait: float) -> bool:
         """Take ``wait`` seconds from the budget, or report that it holds fewer.
@@ -245,6 +248,8 @@ def run_with_retry(
     waits = _QUICK_WAITS if budget is None else budget.waits
     attempts = 0
     while True:
+        if budget is not None:
+            budget.reads[registry] = budget.reads.get(registry, 0) + 1
         proc = subprocess.run(
             cmd,
             capture_output=True,
