@@ -3,9 +3,10 @@
 #  File:         test_dfe_ops_failure_evidence.py
 #  Purpose:      Guard `dfe-ops failure-evidence` and the cycle hook that runs it:
 #                the kubectl calls it makes, that one failing capture never stops
-#                the rest, that every capture is bounded, that no call reads a
-#                Secret or describes a pod, that no env value reaches a file, and
-#                that a failed stage writes evidence before destroy.
+#                the rest, that every capture is bounded, that no call reads the
+#                data of a Secret or describes a pod, that no env value reaches a
+#                file, that an ESO re-mint leaves evidence, and that a failed
+#                stage writes evidence before destroy.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -159,6 +160,98 @@ DISK_EVENTS = [
     {"reason": "BackOff", "involvedObject": {"kind": "Pod", "name": "coredns-1"}},
 ]
 
+SENTINEL = "SENTINEL-NOT-EVIDENCE"
+EXTERNAL_SECRETS_READ = "get externalsecrets.external-secrets.io -A -o json"
+ESO_SELECTOR = "app.kubernetes.io/name=external-secrets"
+ESO_PODS_READ = f"get pods -A -l {ESO_SELECTOR} -o json"
+SECRET_COLUMNS = (
+    "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,"
+    "CREATED:.metadata.creationTimestamp,RESOURCEVERSION:.metadata.resourceVersion,"
+    "IMMUTABLE:.immutable"
+)
+# The fields a Secret may be read through: its identity and three facts about its metadata.
+SECRET_FIELDS = {
+    ".metadata.namespace",
+    ".metadata.name",
+    ".metadata.creationTimestamp",
+    ".metadata.resourceVersion",
+    ".immutable",
+}
+
+
+def _external_secret(
+    namespace: str,
+    name: str,
+    *,
+    generator: str = "",
+    target: str = "",
+    immutable: bool = False,
+    message: str = "secret synced",
+) -> dict:
+    """An ExternalSecret as the API returns it, with fields the evidence has to leave out."""
+    if generator:
+        source = {"generatorRef": {"kind": "Password", "name": generator}}
+    else:
+        source = {"storeRef": {"name": "vault", "kind": "ClusterSecretStore"}}
+    written = {"immutable": immutable, "template": {"data": {"key": f"{SENTINEL}-template"}}}
+    if target:
+        written["name"] = target
+    return {
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "creationTimestamp": "2026-10-14T01:00:00Z",
+            "generation": 2,
+            "annotations": {"kubectl.kubernetes.io/last-applied-configuration": SENTINEL},
+        },
+        "spec": {
+            "refreshPolicy": "CreatedOnce",
+            "refreshInterval": "0",
+            "target": written,
+            "dataFrom": [{"sourceRef": source}],
+        },
+        "status": {
+            "syncedResourceVersion": "2-5d41402a",
+            "refreshTime": "2026-10-14T01:00:05Z",
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "True",
+                    "reason": "SecretSynced",
+                    "message": message,
+                    "lastTransitionTime": "2026-10-14T01:00:05Z",
+                }
+            ],
+        },
+    }
+
+
+EXTERNAL_SECRET_ITEMS = [
+    _external_secret("kafka", "dfe-kafka-user", generator="dfe-kafka-user-gen", immutable=True),
+    _external_secret("dfe", "dfe-kafka-user"),
+    _external_secret("dfe", "engine-jwt", generator="engine-jwt-gen", target="dfe-engine-jwt"),
+    _external_secret(
+        "clickhouse", "clickhouse-admin-password", generator="clickhouse-admin-gen", immutable=True
+    ),
+]
+
+
+def _eso_pod(name: str, *, restarts: int = 0) -> dict:
+    labels = {"app.kubernetes.io/name": "external-secrets"}
+    return {
+        "metadata": {"name": name, "namespace": "external-secrets", "labels": labels},
+        "spec": {"nodeName": "node-a", "containers": [{"name": "external-secrets"}]},
+        "status": {
+            "phase": "Running",
+            "containerStatuses": [
+                {"name": "external-secrets", "ready": True, "restartCount": restarts}
+            ],
+        },
+    }
+
+
+ESO_PODS = [_eso_pod("external-secrets-b2"), _eso_pod("external-secrets-a1", restarts=1)]
+
 
 def _waiting_pod(
     namespace: str,
@@ -213,9 +306,6 @@ ALL_PODS = [
 ]
 
 
-SENTINEL = "SENTINEL-NOT-EVIDENCE"
-
-
 def _with_private_fields(pod: dict) -> dict:
     """A copy of `pod` whose env, envFrom, args, command, volumes and annotations hold SENTINEL."""
     copy = json.loads(json.dumps(pod))
@@ -254,6 +344,10 @@ def _answer(args: list[str]) -> fe.Outcome:
         return _items(DISK_EVENTS)
     if joined == WEBHOOK_READ:
         return _items(WEBHOOK_CONFIGS)
+    if joined == EXTERNAL_SECRETS_READ:
+        return _items(EXTERNAL_SECRET_ITEMS)
+    if joined == ESO_PODS_READ:
+        return _items(ESO_PODS)
     return fe.Outcome(output=f"output of {joined}\n".encode(), returncode=0)
 
 
@@ -500,10 +594,11 @@ def test_only_a_restarted_or_crashlooping_container_has_its_previous_run_read(
 ) -> None:
     calls, _out = _run(monkeypatch, tmp_path)
     previous = sorted(" ".join(c) for c in calls if "--previous" in c)
-    assert len(previous) == 3
+    assert len(previous) == 4
     assert previous[0].startswith("-n dfe logs dfe-loader-1 -c main ")
-    assert previous[1].startswith("-n kube-system logs aws-node-a1 -c aws-node ")
-    assert previous[2].startswith("-n kube-system logs lbc-a -c aws-load-balancer-controller ")
+    assert previous[1].startswith("-n external-secrets logs external-secrets-a1 -c external-secrets ")
+    assert previous[2].startswith("-n kube-system logs aws-node-a1 -c aws-node ")
+    assert previous[3].startswith("-n kube-system logs lbc-a -c aws-load-balancer-controller ")
 
 
 def test_the_container_is_asked_for_a_cni_log_only_when_the_kubelet_did_not_serve_it(
@@ -734,17 +829,74 @@ def test_a_spent_budget_runs_nothing_more_and_says_so(monkeypatch: pytest.Monkey
     )
 
 
-def test_no_call_reads_a_secret_or_a_pods_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _secret_read_problems(call: list[str]) -> list[str]:
+    """Why `call` could print a Secret's data; empty when it reads one only through SECRET_FIELDS."""
+    words = [w.lower() for w in call]
+    problems = [f"names Secret data: {w}" for w in words if "stringdata" in w or ".data" in w]
+    resources = {part for w in words for part in w.replace("/", ",").split(",")}
+    if not resources & {"secret", "secrets"}:
+        return problems
+    at = words.index("get") if "get" in words else None
+    if at is None or words[at + 1 : at + 2] != ["secret"]:
+        problems.append("names a Secret other than as `get secret NAME`")
+    elif at + 2 >= len(words) or words[at + 2].startswith("-"):
+        problems.append("`get secret` names no single Secret")
+    if {"-a", "--all-namespaces", "-l", "--selector"} & set(words):
+        problems.append("lists Secrets instead of naming one")
+    outputs = [call[i + 1] for i, w in enumerate(words[:-1]) if w in ("-o", "--output")]
+    if len(outputs) != 1 or not outputs[0].startswith("custom-columns="):
+        problems.append(f"prints a Secret as {outputs}, not as custom-columns")
+        return problems
+    paths = {column.split(":", 1)[-1] for column in outputs[0].split("=", 1)[1].split(",")}
+    if not paths <= SECRET_FIELDS:
+        problems.append(f"prints {sorted(paths - SECRET_FIELDS)}, which is not an allowed field")
+    return problems
+
+
+def test_no_call_reads_the_data_of_a_secret_or_a_pods_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls, _out = _run(monkeypatch, tmp_path, fail=("proxy/logs",))
+    secret_reads = [call for call in calls if "secret" in call]
+    assert len(secret_reads) == 3, secret_reads
     for call in calls:
         words = [w.lower() for w in call]
-        assert not any("secret" in w for w in words), call
+        assert _secret_read_problems(call) == [], call
         assert "yaml" not in words, call
         assert "describe" not in words, call
         if "exec" in words:
             command = words[words.index("--") + 1 :]
             assert command[0] == "cat", call
             assert command[1].startswith(fe.CNI_LOG_MOUNT + "/"), call
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        ["-n", "a", "get", "secret", "x", "-o", "yaml"],
+        ["-n", "a", "get", "secret", "x", "-o", "json"],
+        ["-n", "a", "get", "secret", "x"],
+        ["-n", "a", "get", "secret", "x", "-o", "jsonpath={.data.password}"],
+        ["-n", "a", "get", "secret", "x", "-o", "custom-columns=P:.data.password"],
+        ["-n", "a", "get", "secret", "x", "-o", "custom-columns=S:.stringData"],
+        ["-n", "a", "get", "secret", "x", "-o", "custom-columns=A:.metadata.annotations"],
+        ["-n", "a", "get", "secret", "x", "-o", "custom-columns=T:.type"],
+        ["-n", "a", "get", "secrets", "-o", "custom-columns=N:.metadata.name"],
+        ["get", "secret", "-A", "-o", "custom-columns=N:.metadata.name"],
+        ["-n", "a", "get", "secret", "-l", "k=v", "-o", "custom-columns=N:.metadata.name"],
+        ["-n", "a", "get", "secret/x", "-o", "custom-columns=N:.metadata.name"],
+        ["-n", "a", "get", "cm,secret", "x", "-o", "custom-columns=N:.metadata.name"],
+    ],
+)
+def test_the_secret_guard_flags_a_call_that_could_print_secret_data(call: list[str]) -> None:
+    assert _secret_read_problems(call), call
+
+
+def test_the_secret_guard_passes_the_reads_the_collector_makes() -> None:
+    events = "get events -A --field-selector involvedObject.kind=ExternalSecret,type=Normal"
+    assert _secret_read_problems(["-n", "a", "get", "secret", "x", "-o", SECRET_COLUMNS]) == []
+    assert _secret_read_problems(EXTERNAL_SECRETS_READ.split()) == []
+    assert _secret_read_problems(events.split()) == []
 
 
 @pytest.mark.parametrize(
@@ -1484,6 +1636,239 @@ def test_a_cluster_without_the_controller_says_so_and_reads_no_log(
         f"no webhook configuration carries {selector}, nothing written" in index
     )
     assert f"aws-load-balancer-controller/: not run: no kube-system pod carries {selector}" in index
+
+
+# --- ExternalSecrets, the Secrets generators write, and the ESO controller ------------
+
+
+def test_an_external_secret_is_generator_backed_only_through_a_data_from_generator() -> None:
+    kafka, store_copy, jwt, clickhouse = EXTERNAL_SECRET_ITEMS
+    assert fe.generator_backed(kafka)
+    assert fe.generator_backed(jwt)
+    assert fe.generator_backed(clickhouse)
+    assert not fe.generator_backed(store_copy)
+    inline = {"spec": {"dataFrom": [{"sourceRef": {"generator": {"kind": "Password"}}}]}}
+    assert fe.generator_backed(inline)
+    from_data = {"spec": {"data": [{"sourceRef": {"generatorRef": {"kind": "Password"}}}]}}
+    assert not fe.generator_backed(from_data)
+    assert not fe.generator_backed({})
+    assert not fe.generator_backed({"spec": {"dataFrom": [None, {}]}})
+
+
+def test_the_secrets_a_generator_writes_are_named_by_target_once_each() -> None:
+    assert fe.generated_secrets(EXTERNAL_SECRET_ITEMS) == [
+        ("clickhouse", "clickhouse-admin-password"),
+        ("dfe", "dfe-engine-jwt"),
+        ("kafka", "dfe-kafka-user"),
+    ]
+    twice = [*EXTERNAL_SECRET_ITEMS, EXTERNAL_SECRET_ITEMS[0]]
+    assert fe.generated_secrets(twice) == fe.generated_secrets(EXTERNAL_SECRET_ITEMS)
+    assert fe.target_secret(EXTERNAL_SECRET_ITEMS[1]) == ("dfe", "dfe-kafka-user")
+    assert fe.generated_secrets([]) == []
+    assert fe.generated_secrets([{"spec": EXTERNAL_SECRET_ITEMS[0]["spec"]}]) == []
+
+
+def test_the_status_lines_carry_target_policy_sync_and_conditions() -> None:
+    lines = fe.external_secret_lines(EXTERNAL_SECRET_ITEMS)
+    created = "created 2026-10-14T01:00:00Z generation 2"
+    assert lines[:4] == [
+        f"externalsecret clickhouse/clickhouse-admin-password {created}",
+        "  writes Secret clickhouse-admin-password, refreshPolicy CreatedOnce, refreshInterval 0, "
+        "immutable true, generator yes",
+        "  syncedResourceVersion 2-5d41402a refreshTime 2026-10-14T01:00:05Z",
+        "  condition Ready=True SecretSynced: secret synced (since 2026-10-14T01:00:05Z)",
+    ]
+    assert f"externalsecret dfe/engine-jwt {created}" in lines
+    assert (
+        "  writes Secret dfe-engine-jwt, refreshPolicy CreatedOnce, refreshInterval 0, "
+        "immutable false, generator yes" in lines
+    )
+    copy = lines.index(f"externalsecret dfe/dfe-kafka-user {created}")
+    assert lines[copy + 1].endswith("immutable false, generator no")
+    never_synced = {"metadata": {"name": "x", "namespace": "dfe"}, "spec": {}}
+    assert fe.external_secret_lines([never_synced]) == [
+        "externalsecret dfe/x created - generation -",
+        "  writes Secret x, refreshPolicy -, refreshInterval -, immutable false, generator no",
+        "  syncedResourceVersion - refreshTime -",
+    ]
+
+
+def test_every_external_secret_capture_is_issued_and_lands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path)
+    issued = [" ".join(c) for c in calls]
+    assert EXTERNAL_SECRETS_READ in issued
+    for namespace, secret in (
+        ("clickhouse", "clickhouse-admin-password"),
+        ("dfe", "dfe-engine-jwt"),
+        ("kafka", "dfe-kafka-user"),
+    ):
+        assert f"-n {namespace} get secret {secret} -o {SECRET_COLUMNS}" in issued
+        assert (out / "generated-secrets" / f"{namespace}.{secret}.txt").is_file()
+    assert sum(1 for c in issued if " get secret " in f" {c} ") == 3
+    assert (
+        "get events -A --field-selector involvedObject.kind=ExternalSecret,type=Normal "
+        "--sort-by=.metadata.creationTimestamp -o wide" in issued
+    )
+    assert ESO_PODS_READ in issued
+    bounds = f"--tail={fe.LOG_TAIL} --limit-bytes={fe.TEXT_BYTES} --timestamps"
+    for pod in ("external-secrets-a1", "external-secrets-b2"):
+        assert f"-n external-secrets logs {pod} -c external-secrets {bounds}" in issued
+        assert (out / "external-secrets" / f"{pod}.external-secrets.log").is_file()
+    previous = [c for c in issued if "--previous" in c and "external-secrets" in c]
+    restarted = f"-n external-secrets logs external-secrets-a1 -c external-secrets {bounds}"
+    assert previous == [f"{restarted} --previous"]
+    assert (out / "external-secrets" / "normal-events.txt").is_file()
+    status = _read(out, "external-secrets/status.txt")
+    assert status.splitlines() == fe.external_secret_lines(EXTERNAL_SECRET_ITEMS)
+    index = _read(out, fe.INDEX)
+    assert (
+        f"generated-secrets/kafka.dfe-kafka-user.txt: ok\n    kubectl -n kafka get secret "
+        f"dfe-kafka-user -o {SECRET_COLUMNS}\n" in index
+    )
+    assert f"external-secrets/status.txt: ok\n    kubectl {EXTERNAL_SECRETS_READ}\n" in index
+
+
+def test_the_externalsecret_events_keep_their_newest_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    tails: dict[str, bool] = {}
+
+    def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+        tails[" ".join(argv[1:])] = tail
+        return _answer(argv[1:])
+
+    monkeypatch.setattr(fe, "run_bounded", fake)
+    out = tmp_path / "evidence"
+    out.mkdir()
+    fe.collect(fe.Evidence(out, [], 60.0, time.monotonic() + 60.0))
+    events = [call for call in tails if "involvedObject.kind=ExternalSecret" in call]
+    assert len(events) == 1
+    assert tails[events[0]] is True
+
+
+def test_what_an_external_secret_template_and_annotations_hold_reaches_no_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _calls, out = _run(monkeypatch, tmp_path)
+    written = sorted(path for path in out.rglob("*") if path.is_file())
+    assert out / "external-secrets" / "status.txt" in written
+    for path in written:
+        assert SENTINEL not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+def test_a_credential_in_an_external_secret_condition_is_masked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    leaky = _external_secret("dfe", "x", message=f"provider said password={FAKE} and stopped")
+
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items([leaky]) if " ".join(args) == EXTERNAL_SECRETS_READ else _answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    status = _read(out, "external-secrets/status.txt")
+    assert FAKE not in status
+    assert "provider said password=***REDACTED*** and stopped" in status
+
+
+def test_an_unreadable_external_secret_list_is_named_and_the_rest_still_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path, fail=("get externalsecrets",))
+    issued = [" ".join(c) for c in calls]
+    assert not any(" get secret " in f" {c} " for c in issued)
+    assert ESO_PODS_READ in issued
+    assert any("involvedObject.kind=ExternalSecret" in c for c in issued)
+    assert (out / "external-secrets" / "external-secrets-a1.external-secrets.log").is_file()
+    index = _read(out, fe.INDEX)
+    assert "external-secrets/status.txt: exit 1: Error from server (InternalError): boom" in index
+    assert "generated-secrets/: not run: the ExternalSecrets were not read" in index
+    assert not (out / "external-secrets" / "status.txt").exists()
+
+
+def test_no_generator_backed_external_secret_is_a_named_skip_and_reads_no_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def answer(args: list[str]) -> fe.Outcome:
+        copies = [EXTERNAL_SECRET_ITEMS[1]]
+        return _items(copies) if " ".join(args) == EXTERNAL_SECRETS_READ else _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not any("secret" in call for call in calls)
+    index = _read(out, fe.INDEX)
+    assert "generated-secrets/: not run: no ExternalSecret takes its values from a generator" in index
+    assert "externalsecret dfe/dfe-kafka-user " in _read(out, "external-secrets/status.txt")
+
+
+def test_no_externalsecret_at_all_writes_no_status_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items([]) if " ".join(args) == EXTERNAL_SECRETS_READ else _answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not (out / "external-secrets" / "status.txt").exists()
+    index = _read(out, fe.INDEX)
+    assert "external-secrets/status.txt: no ExternalSecret exists, nothing written" in index
+    assert "generated-secrets/: not run: no ExternalSecret takes its values from a generator" in index
+
+
+def test_a_secret_that_cannot_be_read_is_recorded_and_the_others_still_are(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path, fail=("get secret dfe-engine-jwt",))
+    index = _read(out, fe.INDEX)
+    assert (
+        "generated-secrets/dfe.dfe-engine-jwt.txt: exit 1: Error from server (InternalError): boom"
+        in index
+    )
+    assert not (out / "generated-secrets" / "dfe.dfe-engine-jwt.txt").exists()
+    assert (out / "generated-secrets" / "kafka.dfe-kafka-user.txt").is_file()
+    assert (out / "generated-secrets" / "clickhouse.clickhouse-admin-password.txt").is_file()
+    assert sum(1 for c in calls if "secret" in c) == 3
+
+
+def test_generated_secrets_past_the_cap_are_named_and_not_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    many = [
+        _external_secret("dfe", f"gen-{i:03d}", generator=f"gen-{i:03d}")
+        for i in range(fe.MAX_GENERATED + 12)
+    ]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items(many) if " ".join(args) == EXTERNAL_SECRETS_READ else _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert sum(1 for c in calls if "secret" in c) == fe.MAX_GENERATED
+    index = _read(out, fe.INDEX)
+    first_left = f"dfe/gen-{fe.MAX_GENERATED:03d}"
+    assert f"generated-secrets/: +12 more, not read: {first_left}, " in index
+    assert ", and 2 more\n" in index
+
+
+def test_a_cluster_without_the_controller_says_so_and_reads_no_eso_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def answer(args: list[str]) -> fe.Outcome:
+        return _items([]) if " ".join(args) == ESO_PODS_READ else _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert not any("external-secrets-" in " ".join(c) for c in calls if "logs" in c)
+    assert not any(path.name.startswith("external-secrets-") for path in out.rglob("*"))
+    index = _read(out, fe.INDEX)
+    assert f"external-secrets/: not run: no pod carries {ESO_SELECTOR}" in index
+
+
+def test_an_unreadable_controller_pod_list_is_named_and_reads_no_eso_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, out = _run(monkeypatch, tmp_path, fail=(ESO_SELECTOR,))
+    assert not any("logs external-secrets-" in " ".join(c) for c in calls)
+    index = _read(out, fe.INDEX)
+    assert "external-secrets/: not run: the external-secrets controller pods were not read" in index
+    assert (out / "external-secrets" / "status.txt").is_file()
 
 
 # --- the bounded runner, against real child processes --------------------------------

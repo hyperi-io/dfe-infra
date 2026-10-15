@@ -48,6 +48,20 @@ evidence outlives the cluster. Each capture is one file under DIR:
   aws-node/<node>.<file>     the CNI's own ipamd.log and plugin.log and the network policy
                              agent's network-policy-agent.log, newest bytes, through the
                              kubelet's /logs endpoint, else from the aws-node container
+  external-secrets/status.txt
+                             every ExternalSecret's target Secret, policy and sync status
+                             (conditions, syncedResourceVersion, refreshTime), and whether
+                             a generator feeds it
+  external-secrets/normal-events.txt
+                             the Normal events of ExternalSecrets (Created, Updated), oldest
+                             first, the newest kept when they pass the byte cap
+  external-secrets/<pod>.<container>.log
+                             each external-secrets controller container's newest lines, plus
+                             the previous run of any that restarted
+  generated-secrets/<namespace>.<secret>.txt
+                             the creation time, resourceVersion and immutable flag of each
+                             Secret a generator-backed ExternalSecret writes (IMMUTABLE reads
+                             `<none>` while the flag is unset)
   index.txt                  every capture, the command behind it and how it ended; a
                              capture that answered with no bytes is `empty (0 bytes)` and
                              has no file
@@ -71,9 +85,14 @@ key blocks and common provider token shapes become `***REDACTED***`. A container
 its newest POD_LOG_TAIL lines within POD_LOG_BYTES, and all pod logs of a run stop at
 POD_LOG_TOTAL bytes.
 
+A Secret that a generator-backed ExternalSecret writes is read through the
+SECRET_COLUMNS fields alone, one jsonpath per field, so its data, stringData and
+annotations are never named. The ExternalSecret list is parsed in memory and only
+the fields `external_secret_lines` names reach a file.
+
 Every capture is bounded in time and bytes, and the run as a whole in time. One
 that fails is recorded in index.txt and the rest still run. It reads and never
-writes to the cluster, it never reads a Secret, and it exits 0 whatever it finds.
+writes to the cluster, it never reads a Secret's data, and it exits 0 whatever it finds.
 """
 
 import argparse
@@ -127,11 +146,28 @@ INJECT_CA = "cert-manager.io/inject-ca-from"
 # Named in full: Istio serves a `gateways` resource too, and a bare name resolves to one group.
 GATEWAYS = "gateways.gateway.networking.k8s.io"
 CERTIFICATES = "certificates.cert-manager.io"
+EXTERNAL_SECRETS = "externalsecrets.external-secrets.io"
+ESO_DIR = "external-secrets"
+# The chart labels its controller pods with this, not its webhook or cert-controller pods.
+ESO_LABEL = ("app.kubernetes.io/name", "external-secrets")
+GENERATED_DIR = "generated-secrets"
+MAX_GENERATED = 40  # generator-backed Secrets whose metadata is read
+# One explicit field per column. A Secret's data, stringData and annotations are never named,
+# and nothing here asks for the object whole.
+SECRET_COLUMNS = (
+    ("NAMESPACE", ".metadata.namespace"),
+    ("NAME", ".metadata.name"),
+    ("CREATED", ".metadata.creationTimestamp"),
+    ("RESOURCEVERSION", ".metadata.resourceVersion"),
+    ("IMMUTABLE", ".immutable"),
+)
 # A container waiting on one of these never starts by itself, and its events carry the reason.
 STUCK_REASONS = frozenset(
     {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"}
 )
 WARNINGS = "type=Warning"
+# ESO records a refresh that wrote its Secret as a Normal event (Created, Updated).
+EXTERNAL_SECRET_EVENTS = "involvedObject.kind=ExternalSecret,type=Normal"
 # creationTimestamp is set on every event, where lastTimestamp can be empty.
 OLDEST_FIRST = "--sort-by=.metadata.creationTimestamp"
 INDEX = "index.txt"
@@ -640,6 +676,62 @@ def pod_summary_lines(namespace: str, pod: dict) -> list[str]:
     return [*lines, *container_lines(pod)]
 
 
+# --- ExternalSecrets and the Secrets they write -------------------------------------------
+# Each function reads the named keys below and nothing else. An ExternalSecret's template,
+# annotations and managed fields are not among them, so none can reach a file.
+
+
+def generator_backed(external_secret: dict) -> bool:
+    """True when a dataFrom entry takes its values from a generator, so ESO mints them."""
+    entries = (external_secret.get("spec") or {}).get("dataFrom") or []
+    sources = [(entry or {}).get("sourceRef") or {} for entry in entries]
+    return any(source.get("generatorRef") or source.get("generator") for source in sources)
+
+
+def target_secret(external_secret: dict) -> tuple[str, str]:
+    """(namespace, name) of the Secret an ExternalSecret writes: its target name, else its own."""
+    meta = external_secret.get("metadata") or {}
+    target = (external_secret.get("spec") or {}).get("target") or {}
+    return meta.get("namespace") or "", target.get("name") or meta.get("name") or ""
+
+
+def generated_secrets(external_secrets: list[dict]) -> list[tuple[str, str]]:
+    """(namespace, name) of every Secret a generator-backed ExternalSecret writes, once each."""
+    found = {target_secret(item) for item in external_secrets if generator_backed(item)}
+    return sorted(key for key in found if all(key))
+
+
+def external_secret_lines(external_secrets: list[dict]) -> list[str]:
+    """Each ExternalSecret's target, policy and sync status, as text that holds no value."""
+    lines: list[str] = []
+    for item in sorted(external_secrets, key=_identity):
+        meta, spec = item.get("metadata") or {}, item.get("spec") or {}
+        status, target = item.get("status") or {}, spec.get("target") or {}
+        namespace, name = _identity(item)
+        lines.append(
+            f"externalsecret {namespace}/{name} created {meta.get('creationTimestamp') or '-'} "
+            f"generation {meta.get('generation') or '-'}"
+        )
+        lines.append(
+            f"  writes Secret {target_secret(item)[1]}, "
+            f"refreshPolicy {_text(spec.get('refreshPolicy') or '-')}, "
+            f"refreshInterval {_text(spec.get('refreshInterval') or '-')}, "
+            f"immutable {'true' if target.get('immutable') else 'false'}, "
+            f"generator {'yes' if generator_backed(item) else 'no'}"
+        )
+        lines.append(
+            f"  syncedResourceVersion {_text(status.get('syncedResourceVersion') or '-')} "
+            f"refreshTime {_text(status.get('refreshTime') or '-')}"
+        )
+        for cond in status.get("conditions") or []:
+            why = ": ".join(_text(p) for p in (cond.get("reason"), cond.get("message")) if p)
+            lines.append(
+                f"  condition {cond.get('type')}={cond.get('status')} {why} "
+                f"(since {cond.get('lastTransitionTime')})"
+            )
+    return lines
+
+
 # --- the run ------------------------------------------------------------------------
 
 
@@ -807,14 +899,16 @@ class Evidence:
         self.write(name, "\n".join(sections).encode("utf-8"))
 
 
-def _capture_logs(evidence: Evidence, directory: str, targets: list[dict]) -> None:
-    """Each kube-system container's newest lines, and its previous run if it restarted."""
+def _capture_logs(
+    evidence: Evidence, directory: str, targets: list[dict], namespace: str = "kube-system"
+) -> None:
+    """Each container's newest lines in `namespace`, and its previous run if it restarted."""
     bounds = [f"--tail={LOG_TAIL}", f"--limit-bytes={TEXT_BYTES}", "--timestamps"]
     for pod in targets:
         name = (pod.get("metadata") or {}).get("name") or ""
         for container, restarts in containers_of(pod):
             stem = f"{directory}/{safe_name(name)}.{safe_name(container)}"
-            logs = ["-n", "kube-system", "logs", name, "-c", container, *bounds]
+            logs = ["-n", namespace, "logs", name, "-c", container, *bounds]
             evidence.capture(f"{stem}.log", logs, log=True)
             if restarts:
                 evidence.capture(f"{stem}.previous.log", [*logs, "--previous"], log=True)
@@ -908,6 +1002,68 @@ def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
         )
 
 
+def _capture_generated_secrets(evidence: Evidence, external_secrets: list[dict] | None) -> None:
+    """The creation time, resourceVersion and immutable flag of each Secret a generator writes.
+
+    Each call names the SECRET_COLUMNS fields and no others.
+    """
+    if external_secrets is None:
+        evidence.note(f"{GENERATED_DIR}/", "not run: the ExternalSecrets were not read")
+        return
+    targets = generated_secrets(external_secrets)
+    if not targets:
+        evidence.note(
+            f"{GENERATED_DIR}/", "not run: no ExternalSecret takes its values from a generator"
+        )
+        return
+    columns = ",".join(f"{label}:{path}" for label, path in SECRET_COLUMNS)
+    for namespace, name in targets[:MAX_GENERATED]:
+        evidence.capture(
+            f"{GENERATED_DIR}/{safe_name(namespace)}.{safe_name(name)}.txt",
+            ["-n", namespace, "get", "secret", name, "-o", f"custom-columns={columns}"],
+        )
+    skipped = targets[MAX_GENERATED:]
+    if skipped:
+        shown = ", ".join(f"{ns}/{name}" for ns, name in skipped[:10])
+        more = f", and {len(skipped) - 10} more" if len(skipped) > 10 else ""
+        evidence.note(f"{GENERATED_DIR}/", f"+{len(skipped)} more, not read: {shown}{more}")
+
+
+def _capture_external_secrets(evidence: Evidence) -> None:
+    """ExternalSecret status and events, generated-Secret metadata and the ESO controller's log."""
+    status_file = f"{ESO_DIR}/status.txt"
+    items = evidence.read(status_file, ["get", EXTERNAL_SECRETS, "-A"])
+    if items:
+        text = redact("\n".join(external_secret_lines(items)) + "\n")
+        evidence.write(status_file, text.encode("utf-8"))
+    elif items is not None:
+        evidence.note(status_file, "no ExternalSecret exists, nothing written")
+    _capture_generated_secrets(evidence, items)
+    # The newest events are the failed stage's own, so a list past the byte cap keeps its end.
+    events = ["get", "events", "-A", "--field-selector", EXTERNAL_SECRET_EVENTS]
+    evidence.capture(
+        f"{ESO_DIR}/normal-events.txt", [*events, OLDEST_FIRST, "-o", "wide"], tail=True
+    )
+    key, value = ESO_LABEL
+    selector = f"{key}={value}"
+    pods = evidence.read(
+        f"{ESO_DIR}/(the external-secrets controller pods the logs below are read from)",
+        ["get", "pods", "-A", "-l", selector],
+    )
+    if pods is None:
+        evidence.note(f"{ESO_DIR}/", "not run: the external-secrets controller pods were not read")
+        return
+    chosen = [pod for pod in sorted(pods, key=_identity) if all(_identity(pod))]
+    if not chosen:
+        evidence.note(f"{ESO_DIR}/", f"not run: no pod carries {selector}")
+        return
+    by_namespace: dict[str, list[dict]] = {}
+    for pod in chosen[:MAX_CONTROLLER_PODS]:
+        by_namespace.setdefault(_identity(pod)[0], []).append(pod)
+    for namespace, targets in by_namespace.items():
+        _capture_logs(evidence, ESO_DIR, targets, namespace)
+
+
 def collect(evidence: Evidence) -> None:
     """Every capture, cluster-wide ones first, so a spent budget costs only the bulkiest."""
     wide = evidence.capture("nodes-wide.txt", ["get", "nodes", "-o", "wide"])
@@ -940,6 +1096,7 @@ def collect(evidence: Evidence) -> None:
     evidence.capture(
         "kube-system-certificates.txt", ["-n", "kube-system", "get", CERTIFICATES, "-o", "wide"]
     )
+    _capture_external_secrets(evidence)
 
     unready_file = "kube-system-not-ready.txt"
     if pods is None:
@@ -1003,8 +1160,9 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "failure-evidence",
         help="READ-ONLY: write node conditions, every pod, Services and Gateways, Warning events, "
         "stuck pods and unready pods with their container logs, kube-system events, the load "
-        "balancer controller's webhook CA digests and logs, and the aws-node and CNI logs to "
-        "files, for after a cycle stage fails and before the destroy",
+        "balancer controller's webhook CA digests and logs, the ExternalSecrets' status, events "
+        "and controller log with the metadata of the Secrets generators write, and the aws-node "
+        "and CNI logs to files, for after a cycle stage fails and before the destroy",
         description="Reads the cluster and writes one file per capture under --out: nodes -o "
         "wide, each node's conditions and allocatable, pods -A -o wide, every namespace's "
         "Warning events oldest first, kube-system events oldest first, services and Gateways -A "
@@ -1018,12 +1176,15 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "webhook configurations with each caBundle as a digest and its containers' newest log "
         "lines, the events of each node reporting "
         "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd, "
-        "plugin and network policy agent logs. A pod summary leaves out every container's env, args and command, the "
+        "plugin and network policy agent logs, every ExternalSecret's sync status, the Normal "
+        "events of ExternalSecrets, the external-secrets controller's newest log lines, and for "
+        "each Secret a generator-backed ExternalSecret writes its creation time, resourceVersion "
+        "and immutable flag. A pod summary leaves out every container's env, args and command, the "
         "pod's volumes and its annotations. Every log is redacted before it is written: values "
         "under credential-named keys, URL userinfo, bearer tokens, private key blocks and common "
         "token shapes become ***REDACTED***. Every capture is bounded in time and bytes, one that "
-        "fails is recorded in index.txt and the rest still run, and nothing reads a Secret. "
-        "Writes nothing to the cluster; exits 0.",
+        "fails is recorded in index.txt and the rest still run, and nothing reads a Secret's "
+        "data. Writes nothing to the cluster; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     fe.add_argument("--out", required=True, help="directory the captures and index.txt go to")
