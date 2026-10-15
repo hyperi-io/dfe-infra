@@ -119,6 +119,17 @@ data "aws_iam_policy_document" "eso" {
     resources = ["${local.secret_arn_prefix}/*"]
   }
 
+  // A secret whose name a service fixes outside the path, such as MSK's AmazonMSK_ one, read where it lives.
+  dynamic "statement" {
+    for_each = length(var.read_secret_arns) > 0 ? [1] : []
+
+    content {
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      resources = var.read_secret_arns
+    }
+  }
+
   // The gateway chart's PushSecret creates the internal CA root under pki/, tagged managed-by, and nothing else in the store is writable.
   statement {
     effect = "Allow"

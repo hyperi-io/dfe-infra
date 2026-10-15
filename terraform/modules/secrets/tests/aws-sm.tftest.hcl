@@ -204,6 +204,51 @@ run "the_internal_ca_write_grant_follows_the_store_prefix" {
   }
 }
 
+// MSK fixes its secret's name outside the path, so the root hands its ARN in and
+// ESO reads it there, read-only.
+run "a_secret_named_outside_the_path_is_read_and_never_written" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    read_secret_arns = ["arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-contract-AbCdEf"]
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      s.actions == toset(["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"])
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-contract-AbCdEf"])
+    ])
+    error_message = "ESO must be able to read the AmazonMSK_ secret by its ARN"
+  }
+
+  assert {
+    condition = alltrue([
+      for s in data.aws_iam_policy_document.eso.statement :
+      !contains(s.resources, "arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_dfe-contract-AbCdEf")
+      || length(setintersection(s.actions, ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:TagResource"])) == 0
+    ])
+    error_message = "the broker's own secret is read, never written, by ESO"
+  }
+}
+
+run "no_secret_outside_the_path_reads_nothing_more" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition     = length(data.aws_iam_policy_document.eso.statement) == 3
+    error_message = "with no read_secret_arns the policy keeps its three statements: path read, pki write, key decrypt"
+  }
+}
+
 // Confluent's API key IS the username, and Confluent mints it, so the caller
 // hands both halves in and neither is generated here.
 run "a_confluent_seed_takes_the_callers_key_and_secret" {

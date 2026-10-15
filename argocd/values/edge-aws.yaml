@@ -57,7 +57,8 @@ envoyGateway:
 # with neither, dfe-wildcard-tls is never issued, Envoy Gateway drops the https
 # listener, and the load balancer has no 443 at all. The deployment's names sit
 # in a private hosted zone public ACME cannot validate, so the internal CA issues
-# them; set tls.acme.* or tls.vault.* in the deploy repo for a browser-trusted leaf.
+# them; set tls.acme.* in the deploy repo for a browser-trusted leaf. tls.vault.*
+# is refused here: an AWS deployment runs no OpenBao.
 tls:
   issuerName: dfe-internal-ca
 

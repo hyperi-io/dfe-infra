@@ -162,6 +162,7 @@ spec:
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $bootstrapIam := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam" }}
               {{- $kafkaProvider := index .metadata.annotations "dfe.hyperi.io/kafka_provider" }}
+              {{- $credentialRef := index .metadata.annotations "dfe.hyperi.io/kafka_credential_ref" | default "" }}
               {{- $managed := and $kafkaMode (eq $kafkaMode "external") }}
               {{- if or $kafkaMode $bootstrapIam }}
               # kafka.mode, the broker endpoint and the MSK bootstrap Job's own
@@ -194,9 +195,16 @@ spec:
                   {{- if and $managed $kafkaBootstrap }}
                   bootstrap: {{ $kafkaBootstrap | quote }}
                   {{- end }}
-                  {{- if $bootstrapIam }}
+                  {{- if or $bootstrapIam (and $managed $credentialRef) }}
                   msk:
+                    {{- if $bootstrapIam }}
                     bootstrapIam: {{ $bootstrapIam | quote }}
+                    {{- end }}
+                    {{- if and $managed $credentialRef }}
+                    # The one copy of the SCRAM credential, MSK's own secret, which
+                    # the apps' dfe-kafka-user is read from.
+                    credentialRef: {{ $credentialRef | quote }}
+                    {{- end }}
                   {{- end }}
                 {{- end }}
               {{- end }}

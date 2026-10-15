@@ -46,3 +46,23 @@ spec:
       service: SecretsManager
       region: "${DFE_SECRETS_REGION}"
       prefix: "${DFE_SECRETS_PREFIX_PATH}"
+---
+# The same Secrets Manager with no prefix, for a secret whose name a service
+# fixes outside the deployment's path: MSK's AmazonMSK_<name> SCRAM secret, the
+# one copy of the Kafka credential, which the kafka chart's dfe-kafka-user copy
+# reads by ARN. The IAM policy grants that ARN alone beyond the path, and the
+# conditions are the namespaces that copy lands in (appNamespace and the kafka
+# chart's user.password.extraAppNamespaces); add one here when that list grows.
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: dfe-secret-store-unprefixed
+spec:
+  conditions:
+    - namespaces:
+        - "${DFE_NAMESPACE}"
+        - otel
+  provider:
+    aws:
+      service: SecretsManager
+      region: "${DFE_SECRETS_REGION}"

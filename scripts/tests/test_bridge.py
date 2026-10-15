@@ -210,20 +210,23 @@ def test_aws_sm_backend_demands_the_store_region_bootstrap_demands() -> None:
            missing == {"DFE_SECRETS_REGION"}, f"{missing}")
 
 
-def test_an_empty_backend_output_defaults_to_openbao() -> None:
+def test_an_empty_backend_output_takes_bootstrap_defaults() -> None:
     """A tofu root that emits DFE_SECRETS_BACKEND as an empty string means the
-    default, exactly as bootstrap.sh's ${DFE_SECRETS_BACKEND:-openbao} reads it
-    -- reading it as aws-sm would drop the AppRole checks AND the region one."""
-    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": ""}
-    missing = bridge._required_vars(env_vars) - set(env_vars.keys())
-    expect("the AppRole pair is still demanded",
+    default bootstrap.sh resolves: Secrets Manager on aws, openbao on any other
+    cloud. Reading it as neither would drop every store check."""
+    on_aws = {**_BASE_ENV, "DFE_SECRETS_BACKEND": ""}
+    missing = bridge._required_vars(on_aws) - set(on_aws.keys())
+    expect("aws demands the store region", missing == {"DFE_SECRETS_REGION"}, f"{missing}")
+    on_gcp = {**_BASE_ENV, "DFE_CLOUD": "gcp", "DFE_SECRETS_BACKEND": ""}
+    missing = bridge._required_vars(on_gcp) - set(on_gcp.keys())
+    expect("another cloud demands the AppRole pair",
            missing == {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}, f"{missing}")
 
 
 def test_openbao_backend_with_no_vault_vars_still_fails_naming_both_keys() -> None:
-    """openbao is the default backend, and without the AppRole address/role_id
+    """openbao is the default off aws, and without the AppRole address/role_id
     ESO can never authenticate."""
-    env_vars = dict(_BASE_ENV)
+    env_vars = {**_BASE_ENV, "DFE_CLOUD": "gcp"}
     missing = bridge._required_vars(env_vars) - set(env_vars.keys())
     expect("DFE_VAULT_ADDR is named as missing", "DFE_VAULT_ADDR" in missing, f"{missing}")
     expect("DFE_VAULT_ROLE_ID is named as missing", "DFE_VAULT_ROLE_ID" in missing, f"{missing}")

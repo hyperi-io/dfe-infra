@@ -84,7 +84,8 @@ def test_msk_turns_the_broker_into_msk_and_renders_for_the_root(tmp_path: Path) 
         "namespace": "strimzi",
         "service_account": "dfe-kafka-bootstrap",
     }
-    assert variables["seeds"] == {"kafka/msk": {"password": ""}, "ui/nextauth": {"secret": ""}}
+    # No kafka seed: MSK's own AmazonMSK_ secret is the one copy of the credential.
+    assert variables["seeds"] == {"ui/nextauth": {"secret": ""}}
 
 
 def test_the_merge_keeps_every_key_the_overlay_does_not_name(tmp_path: Path) -> None:

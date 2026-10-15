@@ -407,9 +407,11 @@ module "secrets" {
   // The same credential the broker authenticates, so the store and Kafka cannot
   // disagree: the key and secret Confluent minted, otherwise the password a
   // managed broker was created with. An in-cluster broker reads it from the
-  // store too, through the ExternalSecret the kafka chart renders.
-  kafka_username = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_key) : null
-  kafka_password = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_secret) : random_password.kafka_scram.result
+  // store too, through the ExternalSecret the kafka chart renders. MSK has no
+  // kafka seed: its AmazonMSK_ secret is the one copy, and ESO reads it there.
+  kafka_username   = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_key) : null
+  kafka_password   = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_secret) : random_password.kafka_scram.result
+  read_secret_arns = module.kafka[*].credential_ref
 
   // The external server's own password, which the clickhouse/external seed carries in external mode only.
   clickhouse_password = var.clickhouse_external_password

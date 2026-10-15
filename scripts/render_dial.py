@@ -204,15 +204,16 @@ def _seeds(kafka_provider: str, clickhouse_mode: str = "in_cluster") -> dict[str
     Confluent Cloud's seed carries a username too: its API key is the username,
     the chart reads both, and the root fills both from the key Confluent minted.
     An external ClickHouse's password is never generated either: the root fills
-    it from TF_VAR_clickhouse_external_password.
+    it from TF_VAR_clickhouse_external_password. MSK takes no kafka seed: its own
+    AmazonMSK_ secret is the one copy, and the apps read it through ESO.
     """
     kafka_fields = {"password": ""}
     if kafka_provider == "confluent-cloud":
         kafka_fields = {"username": "", "password": ""}
-    seeds = {
-        f"kafka/{kafka_provider}": kafka_fields,
-        "ui/nextauth": {"secret": ""},
-    }
+    seeds: dict[str, dict[str, str]] = {}
+    if kafka_provider != "msk":
+        seeds[f"kafka/{kafka_provider}"] = kafka_fields
+    seeds["ui/nextauth"] = {"secret": ""}
     if clickhouse_mode == "external":
         seeds["clickhouse/external"] = {"password": ""}
     return seeds
