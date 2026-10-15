@@ -6,7 +6,7 @@
 
 - An instance type, a node or broker count, a volume type, size, IOPS or throughput, a retention period, a CIDR, a region or zone list, and an engine or Kubernetes version never appear as a literal in a resource, a module call, a local or a variable default.
 - An instance type is auto-selected by the shape resolver (`scripts/resolve_sizing.py`), newest arm64 generation in the region, and reaches tofu as `resolved_shapes` in `sizing.auto.tfvars.json`.
-- A type with no dependable resolver is pinned in tfvars, or in the shapes data that feeds them, with a one-line reason.
+- A type with no dependable resolver, or whose newest generation is known to break, is pinned in tfvars, or in the shapes data that feeds them, with a one-line reason naming what lifts the pin.
 - Every other value arrives from tfvars, rendered from the deployment dial by `scripts/render_dial.py` or written into a hand-kept tfvars file.
 - Each such variable's `description` says which of the two its value comes from.
 - A literal the cloud's own API fixes -- a managed policy name, a protocol port, a service principal, an image family -- stays in the `.tf` as a named local with a one-line comment saying why.

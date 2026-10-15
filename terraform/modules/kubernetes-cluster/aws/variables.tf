@@ -114,7 +114,7 @@ variable "node_pools" {
 }
 
 variable "resolved_shapes" {
-  description = "Auto-selected by the shape resolver (scripts/resolve_sizing.py), newest arm64 generation in the region, keyed by shape_ref. instance_types is ordered best-first so EKS can fall back when the first is short of capacity; root_volume is the shape's root disk type and size from shapes/compute-shapes.yaml."
+  description = "Auto-selected by the shape resolver (scripts/resolve_sizing.py) under each shape's generation policy in shapes/compute-shapes.yaml, keyed by shape_ref: the newest arm64 generation in the region, or the generation the shape pins. The node shapes are pinned to Graviton4 (generation 8) while aws-network-policy-agent #686 leaves pod traffic timing out on Graviton5 nodes, and compute-shapes.yaml names the unpin trigger beside each pin. instance_types is ordered best-first so EKS can fall back when the first is short of capacity, and a pinned shape holds one generation, so its list can be a single type. root_volume is the shape's root disk type and size from shapes/compute-shapes.yaml."
   type = map(object({
     instance_types = list(string)
     arch           = string

@@ -1947,6 +1947,34 @@ def test_karpenter_a_pinned_policy_emits_generation_in_not_generation_gt() -> No
     assert "generationGt" not in pool
 
 
+def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin() -> None:
+    """The chart refuses a family outside generationIn, so the pin alone would leave the pool unrenderable."""
+    choice = _choice(
+        use_case="kafka-broker",
+        instance_type="m9g.8xlarge",
+        fallbacks=[],
+        generation=9,
+        generation_policy="pinned",
+    )
+    cloud_entry = {
+        "use_cases": {"kafka-broker": {"generation_policy": "pinned", "generation_pin": "8", "arch": "arm64"}}
+    }
+    pool = resolve_sizing.build_karpenter_pools({"kafka-broker": choice}, cloud_entry)["kafka-broker"]
+    assert pool["families"] == ["m9g"]
+    assert pool["generationIn"] == ["9"]
+
+
+def test_the_tofu_descriptions_name_the_graviton4_pin_only_while_the_shapes_carry_it() -> None:
+    """The resolved_shapes descriptions state the pin's reason, so lifting it must lift them too."""
+    reason = "aws-network-policy-agent #686"
+    pinned = reason in resolve_sizing.SHAPES_FILE.read_text(encoding="utf-8")
+    for path in (
+        REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf",
+        REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "variables.tf",
+    ):
+        assert (reason in path.read_text(encoding="utf-8")) == pinned, path
+
+
 def test_karpenter_root_volume_carries_raid0_only_where_the_shape_asks_for_it() -> None:
     choice = _choice(
         use_case="clickhouse",
@@ -2454,16 +2482,16 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     so the physical xlarge floor is gone and every use case falls through to
     its OWN real floor:
 
-    - kafka-broker and eks-system land on `m9g.large` (2 vCPU / 8 GiB) --
+    - kafka-broker and eks-system land on `m8g.large` (2 vCPU / 8 GiB) --
       sizing.yaml's own kafka_broker_vcpu/_ram_gib floor, unreachable before
       because root's inflated demand always forced xlarge first.
-    - kraft-controller lands on `m9g.medium` (1 vCPU / 4 GiB) --
+    - kraft-controller lands on `m8g.medium` (1 vCPU / 4 GiB) --
       kraft_controller.vcpu_floor/ram_gib_floor, its true floor since it is
       sized by PARTITION COUNT, never throughput, and root is now the only
       demand it carries.
-    - clickhouse lands on `r9gd.large` (2 vCPU / 16 GiB) for the same reason
+    - clickhouse lands on `r8gd.large` (2 vCPU / 16 GiB) for the same reason
       as kafka-broker.
-    - keeper now lands on `m9g.large` too: its IOPS demand tracks the
+    - keeper now lands on `m8g.large` too: its IOPS demand tracks the
       resolved ingest instead of a flat target independent of it -- parts a
       second (ingest over the loader's flush size) times the measured
       appends a part (sizing.yaml's keeper.raft_appends_per_part), floored
@@ -2477,7 +2505,7 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
 
     Verified against the fixture catalogue: total compute S, the shape table
     reading eks-system XS, general S, kafka-broker S, kraft-controller S,
-    keeper S, clickhouse M and ci-burst M. Both earlier gates cut this floor on
+    keeper S, clickhouse M and ci-burst L. Both earlier gates cut this floor on
     the same counting error one level up: a figure standing in for a demand
     that was never actually tied to what the deployment carries. The dial asks
     for a separate controller pool because the controller line is one of the
@@ -2500,20 +2528,20 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
         "kraft-controller": "S",
         "clickhouse": "M",
         "keeper": "S",
-        "ci-burst": "M",
+        "ci-burst": "L",
     }, report
 
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}
-    assert shapes["kafka-broker"] == "m9g.large", shapes
-    assert shapes["kraft-controller"] == "m9g.medium", shapes
-    assert shapes["clickhouse"] == "r9gd.large", shapes
+    assert shapes["kafka-broker"] == "m8g.large", shapes
+    assert shapes["kraft-controller"] == "m8g.medium", shapes
+    assert shapes["clickhouse"] == "r8gd.large", shapes
     # Keeper's IOPS demand now scales with ingest: at the floor that is the
-    # idle floor (100) plus root's 300, comfortably under m9g.large's 3,600
+    # idle floor (100) plus root's 300, comfortably under m8g.large's 3,600
     # baseline, so nothing forces a step past compute-shapes.yaml's own
     # keeper floor size (large -- 2 vCPU / 8 GiB, above the 1 vCPU / 3 GiB
     # sizing.yaml itself would ask for).
-    assert shapes["keeper"] == "m9g.large", shapes
+    assert shapes["keeper"] == "m8g.large", shapes
 
 
 # ---------------------------------------------------------------------------

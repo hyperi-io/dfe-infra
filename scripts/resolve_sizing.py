@@ -2772,7 +2772,8 @@ def build_karpenter_pools(
         if taints:
             pool["taints"] = taints
         if policy == "pinned" and pin:
-            pool["generationIn"] = [pin]
+            # The admitted families' own generations, as an instance_type override can sit off the pin.
+            pool["generationIn"] = [str(g) for g in sorted(set(generations))]
         else:
             pool["generationGt"] = str(min(generations) - 1)
         node_class = _karpenter_node_class(entry, choice)

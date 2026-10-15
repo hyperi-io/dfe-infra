@@ -491,7 +491,7 @@ def test_every_capture_the_brief_names_is_issued(monkeypatch: pytest.MonkeyPatch
         for container in ("aws-vpc-cni-init", "aws-node", "aws-eks-nodeagent"):
             assert f"-n kube-system logs {pod} -c {container} {bounds}" in issued
     for node in ("node-a", "node-b"):
-        for log in ("ipamd.log", "plugin.log"):
+        for log in ("ipamd.log", "plugin.log", "network-policy-agent.log"):
             assert f"get --raw /api/v1/nodes/{node}/proxy/logs/aws-routed-eni/{log}" in issued
 
 
@@ -518,6 +518,40 @@ def test_the_container_is_asked_for_a_cni_log_only_when_the_kubelet_did_not_serv
     assert (out / "aws-node" / "node-b.ipamd.log").read_bytes().startswith(b"output of -n kube-system exec")
 
 
+def test_the_network_policy_agent_log_falls_back_to_the_container_like_the_cni_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    unserved = "nodes/node-a/proxy/logs/aws-routed-eni/network-policy-agent.log"
+    calls, out = _run(monkeypatch, tmp_path, fail=(unserved,))
+    execs = [" ".join(c) for c in calls if "exec" in c]
+    assert execs == [
+        f"-n kube-system exec aws-node-a1 -c aws-node -- cat {fe.CNI_LOG_MOUNT}/network-policy-agent.log"
+    ]
+    landed = out / "aws-node" / "node-a.network-policy-agent.log"
+    assert landed.read_bytes().startswith(b"output of -n kube-system exec")
+
+
+def test_an_empty_answer_writes_no_file_and_the_index_says_empty_not_ok(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An aws-eks-nodeagent container can answer its log read with no bytes at all."""
+    silent = "logs aws-node-a1 -c aws-eks-nodeagent"
+
+    def answer(args: list[str]) -> fe.Outcome:
+        if silent in " ".join(args):
+            return fe.Outcome(output=b"", returncode=0)
+        return _answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    name = "aws-node/aws-node-a1.aws-eks-nodeagent.log"
+    assert not (out / name).exists()
+    index = (out / fe.INDEX).read_text(encoding="utf-8")
+    assert f"{name}: empty (0 bytes), no file written\n" in index
+    assert f"{name}: ok\n" not in index
+    assert "aws-node/aws-node-b2.aws-eks-nodeagent.log: ok\n" in index
+    assert (out / "aws-node" / "aws-node-b2.aws-eks-nodeagent.log").is_file()
+
+
 def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _calls, out = _run(monkeypatch, tmp_path)
     for name in (
@@ -536,6 +570,7 @@ def test_the_files_land_where_the_index_says(monkeypatch: pytest.MonkeyPatch, tm
         "aws-node/aws-node-a1.aws-vpc-cni-init.log",
         "aws-node/node-a.ipamd.log",
         "aws-node/node-b.plugin.log",
+        "aws-node/node-b.network-policy-agent.log",
     ):
         assert (out / name).is_file(), name
     assert "condition Ready=False" in (out / "node-conditions.txt").read_text(encoding="utf-8")
