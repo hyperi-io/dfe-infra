@@ -23,6 +23,11 @@ variable "cloud" {
   type        = string
 }
 
+variable "region" {
+  description = "Region tag for tf-naming, from the caller: the on-prem root passes 'local'."
+  type        = string
+}
+
 variable "services" {
   description = "List of DFE service names that need workload identity"
   type        = list(string)

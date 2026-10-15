@@ -7,6 +7,7 @@ variables {
   project  = "dfe"
   env      = "local"
   cloud    = "local"
+  region   = "local"
   services = ["loader", "receiver"]
 }
 

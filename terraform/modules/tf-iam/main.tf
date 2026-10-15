@@ -9,6 +9,7 @@ module "naming" {
   component = each.key
   env       = var.env
   cloud     = var.cloud
+  region    = var.region
 }
 
 resource "vault_policy" "service" {
