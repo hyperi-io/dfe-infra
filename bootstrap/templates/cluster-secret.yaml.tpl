@@ -52,6 +52,11 @@ metadata:
     # managed node groups keep the hop limit at 1. Blank on non-EKS clouds,
     # same as the cluster_name annotation above.
     ${DFE_VPC_ID_ANNOTATION}
+    # The pod and Service ranges the cloud root built the cluster with, which
+    # layer2-platform.yaml turns into network-policies' networkModel. Blank where
+    # the root names none and common.yaml's ranges stand.
+    ${DFE_POD_CIDR_ANNOTATION}
+    ${DFE_SERVICE_CIDR_ANNOTATION}
     # The ClickHouse object-store bucket URL, for layer2-data.yaml's
     # clickhouse.objectStore.endpoint parameter -- the fact that activates the
     # cached-object storage model (docs/deployment/storage.md). Blank on every

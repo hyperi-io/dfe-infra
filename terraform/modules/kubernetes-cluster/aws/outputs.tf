@@ -45,6 +45,12 @@ output "network" {
   }
 }
 
+output "service_cidr" {
+  description = "The range EKS hands Service addresses out of. EKS picks it at create when none is given, so it is read back rather than restated."
+  // one(), not [0]: a mock provider cannot fill this optional block.
+  value = one(aws_eks_cluster.this.kubernetes_network_config[*].service_ipv4_cidr)
+}
+
 output "nat_public_ips" {
   description = "Every NAT gateway's Elastic IP, one per gateway. A pod reaching a public address leaves the VPC from one of these, so a fence on a public load balancer the cluster's own callers also use has to admit them."
   value       = [for az in local.nat_azs : aws_eip.nat[az].public_ip]

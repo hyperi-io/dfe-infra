@@ -30,6 +30,12 @@ clickhouse:
   objectStore:
     usePodIdentity: true
 
+# Pods take VPC addresses from the private subnets MSK brokers and PrivateLink
+# endpoints share (kubernetes-cluster/aws/vpc.tf), so carving the pod range
+# would cut every in-VPC backend off its clients.
+networkModel:
+  carveOut: [serviceCIDR, linkLocalCIDR]
+
 # THE RECEIVER'S FRONT DOOR is exposure.groups.ingest (common.yaml): its own
 # NLB, which renders only once the deploy repo's infra/common.yaml names the
 # senders in exposure.groups.ingest.allow. The NLB's controller annotations are

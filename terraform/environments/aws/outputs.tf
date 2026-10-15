@@ -180,6 +180,16 @@ output "DFE_RECEIVER_SUBNETS" {
   value       = join("", module.edge[*].receiver_subnets)
 }
 
+output "DFE_POD_CIDR" {
+  description = "The range pod addresses come from: the VPC, whose private subnets the VPC CNI hands pods addresses out of. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/pod_cidr annotation, which layer2-platform.yaml turns into network-policies' networkModel.podCIDR."
+  value       = module.cluster.network.cidr
+}
+
+output "DFE_SERVICE_CIDR" {
+  description = "The range EKS hands Service addresses out of. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/service_cidr annotation, which layer2-platform.yaml turns into network-policies' networkModel.serviceCIDR."
+  value       = module.cluster.service_cidr
+}
+
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
   description = "Empty on this cloud. EKS Pod Identity binds a role to a service account from OUTSIDE the cluster, so no service account carries an annotation -- unlike IRSA, Workload Identity Federation and Entra Workload ID, which all need one."
   value       = "{}"

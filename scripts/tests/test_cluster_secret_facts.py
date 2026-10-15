@@ -40,6 +40,10 @@ APPSETS = REPO_ROOT / "argocd" / "appsets"
 CONDITIONAL_FACTS = (
     ("DFE_KUBE_CLUSTER_NAME", "dfe.hyperi.io/cluster_name", "layer1-addons.yaml", "clusterName"),
     ("DFE_VPC_ID", "dfe.hyperi.io/vpc_id", "layer1-addons.yaml", "vpcId"),
+    # test_network_model_facts.py renders the appset to prove each lands on
+    # network-policies' networkModel and beats a deploy-repo overlay.
+    ("DFE_POD_CIDR", "dfe.hyperi.io/pod_cidr", "layer2-platform.yaml", "podCIDR"),
+    ("DFE_SERVICE_CIDR", "dfe.hyperi.io/service_cidr", "layer2-platform.yaml", "serviceCIDR"),
     (
         "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT",
         "dfe.hyperi.io/clickhouse_object_store_endpoint",
