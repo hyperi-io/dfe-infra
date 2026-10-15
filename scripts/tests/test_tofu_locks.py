@@ -32,6 +32,14 @@ TF_VALIDATE = REPO_ROOT / ".github" / "workflows" / "tf-validate.yml"
 
 PROVIDER_BLOCK = re.compile(r'(?ms)^provider "(?P<source>[^"]+)" \{\n(?P<body>.*?)^\}')
 
+# Provider releases no lock may pin, with the failure each one causes.
+KNOWN_BAD = {
+    (f"{REGISTRY}/hashicorp/aws", "6.69.0"): (
+        'it fails decoding a large API response with "bufio.Scanner: token too long" '
+        "(terraform-provider-aws#50474, #50480, #50481)"
+    ),
+}
+
 
 def _roots() -> list[Path]:
     """Every directory under terraform/environments that holds .tf files."""
@@ -84,6 +92,15 @@ def test_a_lock_pins_every_provider_to_one_version_with_hashes_for_each_platform
         # linux_amd64, linux_arm64 and darwin_arm64 each carry an h1 hash, and zh is the registry's own checksum.
         assert len(re.findall(r'"h1:', body)) >= 3, f"{source} has fewer than three platform hashes"
         assert '"zh:' in body, f"{source} has no registry checksum"
+
+
+@pytest.mark.parametrize("root", _roots(), ids=lambda root: root.name)
+def test_no_lock_pins_a_release_known_to_break_a_run(root: Path) -> None:
+    for source, body in _providers(root).items():
+        version = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', body)
+        assert version, f"{source} names no version"
+        why = KNOWN_BAD.get((source, version[1]))
+        assert why is None, f"{root.name} pins {source} {version[1]}, and {why}"
 
 
 def test_no_run_refreshes_the_providers() -> None:
