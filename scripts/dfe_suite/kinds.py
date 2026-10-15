@@ -33,9 +33,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 import manifest_deps
+import stack_freeze
 
 from dfe_suite.proc import FleetError, run
 from dfe_suite.repos import find_repo
+from dfe_suite.sweep import read_versions, stack_name
 
 # What the caller does next. A short token, so the acting walk can branch on it
 # without reading prose; the human-readable half is always in the detail.
@@ -47,6 +49,7 @@ ACTION_CONTRACT_TEST = "run-contract-test"
 ACTION_REVENDOR = "re-vendor"
 ACTION_HUMAN_READ = "human-read"
 ACTION_BUMP_APP = "bump-app"
+ACTION_CUT_STACK = "cut-stack"
 ACTION_MOVE_PIN = "move-pin"
 
 
@@ -658,6 +661,19 @@ def check_mirrored_logic(
     )
 
 
+def _released_current(consumer_repo: Path) -> str | None:
+    """The consumer's `current` stack when its git tag exists, else None.
+
+    A checkout whose versions.yaml cannot be read answers None, which leaves the
+    caller's hint as it was: `dfe-stack bump-app` itself refuses a released stack.
+    """
+    try:
+        current = stack_name(read_versions(consumer_repo / "versions.yaml"), "current")
+    except FleetError:
+        return None
+    return current if stack_freeze.is_tagged(current, consumer_repo) else None
+
+
 def check_image_pin(
     edge: dict,
     *,
@@ -666,9 +682,26 @@ def check_image_pin(
     package: str | None = None,
     dry_run: bool = True,
 ) -> CheckResult:
-    """The tag and its thin chart's digest move together, in dfe-infra, not here."""
+    """The tag and its thin chart's digest move together, in dfe-infra, not here.
+
+    A released `current` stack is frozen, so the move goes into the next cut.
+    """
     ref = _first(edge)
     app = str(edge.get("from") or "the app")
+    released = _released_current(consumer_repo)
+    if released is not None:
+        return CheckResult(
+            True,
+            _with_note(
+                edge,
+                f"{ref.describe()} pins the image, but stack {released} is released (its git "
+                f"tag exists), so `dfe-stack bump-app` refuses it. Cut the next stack with "
+                f"`dfe-stack cut <version>`, which moves {app} to its newest published release "
+                f"and repins the thin chart; check_versions_drift.py --fix carries both into "
+                f"every copy.",
+            ),
+            ACTION_CUT_STACK,
+        )
     return CheckResult(
         True,
         _with_note(
@@ -766,8 +799,9 @@ KIND_SUMMARY: dict[str, str] = {
         "a person to read"
     ),
     "image-pin": (
-        "hands back the `dfe-stack bump-app` command; the tag and the thin chart's "
-        "digest move in dfe-infra, not here"
+        "hands back the `dfe-stack bump-app` command, or `dfe-stack cut` when the "
+        "current stack is released; the tag and the thin chart's digest move in "
+        "dfe-infra, not here"
     ),
     "version-pin": "hands back the pin to move and the validation to re-run",
     "derived-pins": "nothing can drift, so the walk goes past it",

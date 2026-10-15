@@ -63,6 +63,10 @@ never shipped to GHCR and a cut must not stall on them. A registry failure that
 is not a missing package DOES stop the cut, so auth or network trouble never
 reads as "unpublished".
 
+## A released stack is frozen
+
+Once a stack's git tag exists, its block in `versions.yaml` and its `constraints/<version>.yaml` are the record of what shipped. `dfe-stack refresh-digests`, `dfe-stack bump-app` and `resolve_pins.py --write` refuse to write to it, and `scripts/tests/test_stack_freeze.py` fails on any other edit. A digest or app move goes into the next cut.
+
 ## Withdrawn stacks
 
 A `support: withdrawn` stack was pulled after its tag was cut. Environments may still run it, so it stays an upgrade source, but nothing upgrades onto it.
@@ -79,7 +83,9 @@ Before the normal cut it:
 - rewrites every `stack.previous` that names it to the withdrawn stack's own predecessors. Otherwise the candidate cut from the withdrawn block and the new release each name the other as predecessor, a cycle in the upgrade graph;
 - removes the withdrawn stack's constraints file, so the new one is cloned from `--from` rather than kept.
 
-`--dry-run` prints each of these and writes nothing. The cut never moves `latest:` -- the release workflow does that on a release tag -- and never touches the withdrawn stack's git tag. That workflow publishes nothing for a version whose tag already exists, so the withdrawn tag has to be deleted before the re-cut reaches `main`.
+The freeze test allows that `stack.previous` rewrite in a tagged block and no other edit, and only for a stack the `versions.yaml` at that block's tag records as withdrawn.
+
+`--dry-run` prints each of these and writes nothing. The cut never moves `latest:` -- the release workflow does that on a release tag -- and never touches the withdrawn stack's git tag. That workflow publishes nothing for a version whose tag already exists, so the withdrawn tag has to be deleted before the re-cut reaches `main`. The repo's tag ruleset blocks deleting any tag and has no bypass actors, so an org admin has to allow the deletion first.
 
 ## After the cut
 

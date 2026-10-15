@@ -17,6 +17,12 @@ block in versions.yaml and its constraints/<stack>.yaml must equal their bytes
 at the tag. The block is compared as text, not parsed data, because the parser
 drops comments and a comment edit changes what the record says.
 
+One edit is allowed: the `stack.previous` line of a block that names a withdrawn
+stack, once `dfe-stack cut --replace-withdrawn` has cut that stack again. The cut
+swaps it for its own predecessors (dfe-stack previous_without, the one definition
+the writer and this test share), and a stack counts as withdrawn only if the
+versions.yaml at the block's tag says so.
+
 The checkout needs the stack tags (CI: fetch-depth 0). A checkout with none
 fails here rather than comparing nothing.
 """
@@ -25,6 +31,7 @@ import argparse
 import functools
 import importlib.machinery
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -92,14 +99,87 @@ def _released() -> list[str]:
     return [stack for stack in _stacks() if stack_freeze.is_tagged(stack, REPO_ROOT)]
 
 
+_PREVIOUS = re.compile(r'^(\s+previous:\s*)"([^"]*)"(.*)$')
+
+
+def _recut_rewrites(declared: list[str], stack: str, then: dict, now: dict) -> set[str]:
+    """Every `previous` value a re-cut of withdrawn stacks can leave in `stack`'s block.
+
+    Args:
+        declared: The versions the block names at its tag, in order.
+        stack: The block's own version.
+        then: versions.yaml parsed as it stood at the block's tag, which records which
+            stacks were withdrawn and what each one named as its predecessors.
+        now: The working tree's versions.yaml, parsed. A stack still withdrawn here was
+            not re-cut, so naming it is not a rewrite.
+
+    Returns:
+        The `previous` strings reachable by replacing one withdrawn stack after another.
+    """
+    stacks_then = then.get("stacks", {})
+    stacks_now = now.get("stacks", {})
+    reached = {tuple(declared)}
+    todo = [declared]
+    while todo:
+        names = todo.pop()
+        for gone in names:
+            record = stacks_then.get(gone)
+            recut = stacks_now.get(gone)
+            if record is None or not dfe.is_withdrawn(record):
+                continue
+            if recut is None or dfe.is_withdrawn(recut):
+                continue
+            after = tuple(dfe.previous_without(names, gone, dfe.stack_previous(record), stack))
+            if after not in reached:
+                reached.add(after)
+                todo.append(list(after))
+    reached.discard(tuple(declared))
+    return {", ".join(names) for names in reached}
+
+
+def _equals_tag_bar_recut(stack: str, at_tag: str, now: str) -> bool:
+    """Whether a stack's block equals its block at the tag, bar a re-cut's `previous` edit.
+
+    Args:
+        stack: The stack whose block is compared.
+        at_tag: versions.yaml as it stood at the stack's tag.
+        now: The working tree's versions.yaml.
+
+    Returns:
+        True when the block is byte-equal, or differs only on its `stack.previous` line,
+        by a withdrawn stack swapped for its predecessors and nothing else.
+    """
+    tagged_block = _block(at_tag, stack)
+    now_block = _block(now, stack)
+    if tagged_block is None or now_block is None:
+        return False
+    if tagged_block == now_block:
+        return True
+    then_lines = tagged_block.splitlines(keepends=True)
+    now_lines = now_block.splitlines(keepends=True)
+    index = dfe._scalar_line(then_lines, "stack", "previous")
+    if index is None or len(then_lines) != len(now_lines):
+        return False
+    if then_lines[:index] != now_lines[:index] or then_lines[index + 1 :] != now_lines[index + 1 :]:
+        return False
+    old = _PREVIOUS.match(then_lines[index])
+    new = _PREVIOUS.match(now_lines[index])
+    if old is None or new is None or (old[1], old[3]) != (new[1], new[3]):
+        return False
+    declared = [version.strip() for version in old[2].split(",") if version.strip()]
+    allowed = _recut_rewrites(
+        declared, stack, dfe.parse_simple_yaml(at_tag), dfe.parse_simple_yaml(now)
+    )
+    return new[2] in allowed
+
+
 @functools.cache
 def _edits_since_tag(stack: str) -> tuple[str, ...]:
     """Which of a released stack's two records differ from their bytes at its tag."""
     differs = []
     now = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     at_tag = _git_show(f"{stack}:versions.yaml")
-    tagged_block = None if at_tag is None else _block(at_tag.decode("utf-8", "replace"), stack)
-    if tagged_block is None or tagged_block != _block(now, stack):
+    if at_tag is None or not _equals_tag_bar_recut(stack, at_tag.decode("utf-8", "replace"), now):
         differs.append("block")
     constraints = REPO_ROOT / "constraints" / f"{stack}.yaml"
     current = constraints.read_bytes() if constraints.exists() else None
@@ -138,6 +218,150 @@ def test_a_legacy_exemption_is_still_needed():
         f"{cleared} equal their tag again. Delete them from LEGACY_EDITED, or a later edit "
         f"to them goes unnoticed."
     )
+
+
+# --- the one edit a tagged block may take -----------------------------------------
+
+_RELEASED = "9.9.0-rc.2"
+_WITHDRAWN = "9.9.0"
+
+# 9.9.0-rc.2 was cut from 9.9.0, so it names it. {rc1} and {support} are the support
+# lines of 9.9.0-rc.1 and 9.9.0.
+_FIXTURE = """\
+current: "9.9.0-rc.2"
+stacks:
+  9.9.0-rc.0:
+    maturity: rc
+    support: standard
+    stack:
+      previous: ""
+  9.9.0-rc.1:
+    maturity: rc
+    support: {rc1}
+    stack:
+      previous: "9.9.0-rc.0"
+  9.9.0:
+    maturity: release
+    support: {support}
+    stack:
+      previous: "9.9.0-rc.1"
+  9.9.0-rc.2:
+    maturity: rc
+    support: standard
+    apps:
+      dfe-engine: "v1.0.0"
+    stack:
+      # The release an environment upgrades to this one from.
+      previous: "{previous}"   # cut from the withdrawn release
+      upgrade-order: "dfe-engine"
+"""
+
+# The stanza the re-cut adds under the withdrawn name once the old block is spliced out.
+_RECUT = """\
+  9.9.0:
+    maturity: release
+    support: standard
+    stack:
+      previous: "9.9.0-rc.2"
+"""
+
+
+def _versions(previous: str, support: str = "withdrawn", rc1: str = "standard") -> str:
+    """The fixture file: 9.9.0-rc.2 naming `previous`, with 9.9.0 and 9.9.0-rc.1 at their support."""
+    return _FIXTURE.format(previous=previous, support=support, rc1=rc1)
+
+
+def _after_recut(text: str, gone: str) -> str:
+    """`text` as dfe-stack's own `_drop_withdrawn` leaves it, with `gone` cut again as standard."""
+    lines = text.splitlines(keepends=True)
+    dfe._drop_withdrawn(lines, dfe.parse_simple_yaml(text), gone)
+    return "".join(lines) + _RECUT.replace("9.9.0:", f"{gone}:", 1)
+
+
+@pytest.mark.parametrize("previous", ["9.9.0, 9.9.0-rc.1", "9.9.0", "9.9.0-rc.0, 9.9.0"])
+def test_the_re_cut_writers_own_output_passes(previous):
+    tagged = _versions(previous)
+    recut = _after_recut(tagged, _WITHDRAWN)
+    assert _block(recut, _RELEASED) != _block(tagged, _RELEASED), "the writer left the line alone"
+    assert _equals_tag_bar_recut(_RELEASED, tagged, recut)
+
+
+def test_a_re_cut_of_two_withdrawn_stacks_passes():
+    # 9.9.0-rc.1 and 9.9.0 are both withdrawn at the tag, and each is cut again in turn.
+    tagged = _versions("9.9.0, 9.9.0-rc.1", rc1="withdrawn")
+    first = _after_recut(tagged, _WITHDRAWN)
+    second = _after_recut(first, "9.9.0-rc.1")
+    assert _equals_tag_bar_recut(_RELEASED, tagged, first)
+    assert _equals_tag_bar_recut(_RELEASED, tagged, second)
+
+
+def test_an_untouched_block_passes_whatever_happens_to_the_withdrawn_stack():
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    assert _equals_tag_bar_recut(_RELEASED, tagged, tagged)
+    assert _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0, 9.9.0-rc.1", "standard"))
+
+
+@pytest.mark.parametrize(
+    "previous",
+    [
+        "9.9.0",  # drops 9.9.0-rc.1, which was never withdrawn
+        "9.9.0-rc.1, 9.9.0-rc.0",  # adds a version nothing replaced
+        "9.9.0, 9.9.0-rc.1, 9.9.0-rc.0",  # adds one and keeps the withdrawn stack
+        "9.9.0-rc.1, 9.9.0",  # reorders
+        "9.9.0-rc.1,9.9.0",  # respaces
+        "",  # empties the line
+    ],
+)
+def test_any_other_change_to_previous_fails(previous):
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    assert not _equals_tag_bar_recut(_RELEASED, tagged, _versions(previous, "standard"))
+
+
+def test_a_withdrawn_stack_left_in_place_is_not_a_re_cut():
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    assert not _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0-rc.1", "withdrawn"))
+
+
+def test_a_stack_that_was_not_withdrawn_at_the_tag_is_not_removable():
+    tagged = _versions("9.9.0, 9.9.0-rc.1", "standard")
+    assert not _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0-rc.1", "standard"))
+
+
+def test_a_withdrawn_stack_deleted_instead_of_cut_again_fails():
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    withdrawn_block = """\
+  9.9.0:
+    maturity: release
+    support: withdrawn
+    stack:
+      previous: "9.9.0-rc.1"
+"""
+    deleted = _versions("9.9.0-rc.1").replace(withdrawn_block, "")
+    assert deleted != _versions("9.9.0-rc.1")
+    assert not _equals_tag_bar_recut(_RELEASED, tagged, deleted)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        ('dfe-engine: "v1.0.0"', 'dfe-engine: "v1.0.1"'),  # a pin moves
+        ("# The release an environment", "# The stack an environment"),  # a comment moves
+        ('upgrade-order: "dfe-engine"\n', 'upgrade-order: "dfe-engine"\n      extra: "x"\n'),
+        ("   # cut from the withdrawn release", "   # re-cut"),  # the previous line's own note
+        ("    maturity: rc\n    support: standard\n    apps:", "    maturity: beta\n    support: standard\n    apps:"),
+    ],
+)
+@pytest.mark.parametrize("previous", ["9.9.0, 9.9.0-rc.1", "9.9.0-rc.1"])
+def test_a_change_elsewhere_in_the_block_fails(previous, edit):
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    now = _versions(previous, "standard")
+    assert edit[0] in now
+    assert not _equals_tag_bar_recut(_RELEASED, tagged, now.replace(*edit, 1))
+
+
+def test_a_file_with_no_such_block_fails():
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    assert not _equals_tag_bar_recut("9.9.9", tagged, tagged)
 
 
 # --- the writers -------------------------------------------------------------------

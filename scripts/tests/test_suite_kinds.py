@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from dfe_suite.kinds import (
     ACTION_BUMP_APP,
     ACTION_CONTRACT_TEST,
+    ACTION_CUT_STACK,
     ACTION_HUMAN_READ,
     ACTION_MOVE_PIN,
     ACTION_REBUILD_PYTHON,
@@ -28,6 +29,7 @@ from dfe_suite.kinds import (
     ACTION_WIDEN_RANGE,
     CHECKS,
     KIND_SUMMARY,
+    CheckResult,
     check_cargo_dep,
     check_contract_guard,
     check_derived_pins,
@@ -547,6 +549,44 @@ class PinTests(unittest.TestCase):
         assert result.action == ACTION_BUMP_APP
         assert "dfe-stack bump-app dfe-engine 2.5.0" in result.detail
         assert "repins the thin chart" in result.detail
+
+    def _seed_stack(self, tag: bool) -> None:
+        """Make the consumer a git repository whose `current` stack is tagged or not."""
+        (self.repo / "versions.yaml").write_text(
+            'current: "9.9.0-rc.1"\nstacks:\n  9.9.0-rc.1:\n    maturity: rc\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        _git(self.repo, "init", "-q")
+        _git(self.repo, "add", "versions.yaml")
+        _git(self.repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed")
+        if tag:
+            _git(self.repo, "-c", "tag.gpgsign=false", "tag", "9.9.0-rc.1")
+
+    def _image_pin(self) -> CheckResult:
+        edge = {
+            "from": "dfe-engine",
+            "to": "dfe-infra",
+            "kind": "image-pin",
+            "type": "lockstep",
+            "evidence": "dfe-infra/versions.yaml",
+        }
+        return check_image_pin(edge, producer_version="2.5.0", consumer_repo=self.repo)
+
+    def test_an_image_pin_in_a_released_stack_points_at_the_next_cut(self) -> None:
+        self._seed_stack(tag=True)
+        result = self._image_pin()
+        assert result.moved
+        assert result.action == ACTION_CUT_STACK
+        assert "stack 9.9.0-rc.1 is released" in result.detail
+        assert "`dfe-stack cut <version>`" in result.detail
+        assert "dfe-stack bump-app dfe-engine" not in result.detail
+
+    def test_an_image_pin_in_an_unreleased_stack_still_hands_back_bump_app(self) -> None:
+        self._seed_stack(tag=False)
+        result = self._image_pin()
+        assert result.action == ACTION_BUMP_APP
+        assert "dfe-stack bump-app dfe-engine 2.5.0" in result.detail
 
     def test_a_version_pin_hands_back_the_pin_to_move(self) -> None:
         edge = {
