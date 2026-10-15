@@ -133,6 +133,10 @@ Subcommands:
                time and bytes. A pod summary leaves out env, args, command,
                volumes and annotations, and every log is redacted.
                The cycle runs it once when a stage fails, before the destroy.
+  redact       Reads stdin and writes it to stdout a line at a time with every
+               credential masked (the failure-evidence redactor), so a long-running
+               command's output can be piped through it. Prints no banner of its
+               own, ignores SIGINT/SIGTERM/SIGHUP and ends at end of input.
   init         Prompt-driven wizard over deployment.example.yaml's own fields:
                target, tier/ingest/focus, Kafka provider, the derived
                ClickHouse storage model, public UIs + OIDC, telemetry,
@@ -200,6 +204,10 @@ this file is committed publicly, so substitute your own node):
 
     # Where does each login come from on this cluster?
     python3 scripts/dfe-ops creds --kubeconfig .tmp/dfe.kubeconfig
+
+    # Keep a provider error from printing a credential into a CI log. pipefail makes
+    # the pipeline report tofu's exit status instead of redact's:
+    set -o pipefail; tofu apply ... 2>&1 | python3 scripts/dfe-ops redact
 
     # Trust this deployment's edge certificate on a developer box:
     python3 scripts/dfe-ops ca --kubeconfig .tmp/dfe.kubeconfig
@@ -309,6 +317,7 @@ from dfe_ops_failure_evidence import add_failure_evidence_subparser, safe_name  
 from dfe_ops_init import add_init_subparser  # noqa: E402
 from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_readiness_report import add_readiness_report_subparser  # noqa: E402
+from dfe_ops_redact import add_redact_subparser  # noqa: E402
 from dfe_ops_upgrade import STRIMZI_CRDS, add_upgrade_subparser, stale_strimzi_crds  # noqa: E402
 from profiles import DEFAULT_MODE, MODES  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
@@ -5007,6 +5016,10 @@ def build_parser() -> argparse.ArgumentParser:
     # dfe_ops_failure_evidence.
     add_failure_evidence_subparser(sub)
 
+    # redact -- stdin to stdout with credentials masked, so a command's output can be piped
+    # through the failure-evidence redactor. Registered from dfe_ops_redact.
+    add_redact_subparser(sub)
+
     # init -- the prompt-driven deployment-dial wizard. Registered from
     # dfe_ops_init.
     add_init_subparser(sub)
@@ -5146,7 +5159,7 @@ def _ephemeral_notice() -> str | None:
 def main(argv: list[str] | None = None) -> int:
     ap = build_parser()
     args = ap.parse_args(argv)
-    notice = _ephemeral_notice()
+    notice = _ephemeral_notice() if getattr(args, "banner", True) else None
     if notice:
         print(notice, file=sys.stderr)
     try:

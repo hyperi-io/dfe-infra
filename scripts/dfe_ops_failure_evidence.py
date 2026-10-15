@@ -188,10 +188,11 @@ _SHAPES = re.compile(
     )
 )
 # A tail read can cut a block, leaving an END with no BEGIN or the reverse, and the body goes.
-_PEM = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL
-)
-_PEM_ORPHAN_END = re.compile(r"\A.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)
+# The two markers are public so a line-by-line reader finds a block's edges with the same text.
+PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+PEM_END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+_PEM = re.compile(rf"{PEM_BEGIN.pattern}.*?(?:{PEM_END.pattern}|\Z)", re.DOTALL)
+_PEM_ORPHAN_END = re.compile(rf"\A.*?{PEM_END.pattern}", re.DOTALL)
 # A flag with its value as the next word: `--password hunter2`.
 _FLAG = re.compile(rf"(?<!\S)(--[A-Za-z0-9-]*{_KEY}[ \t]+)(?!-)\S+", re.IGNORECASE)
 

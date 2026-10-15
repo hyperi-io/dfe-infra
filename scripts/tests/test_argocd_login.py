@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from _bootstrap import function_lines
 from _charts import chart_dir
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -347,14 +348,6 @@ OUR_RELEASE = {
 }
 
 
-def _function(lines: list[str], name: str) -> list[str]:
-    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"{name}() {{"))
-    if lines[start].rstrip().endswith("}"):
-        return [lines[start]]
-    end = next(i for i in range(start, len(lines)) if lines[i] == "}")
-    return lines[start:end + 1]
-
-
 def _between(lines: list[str], start: str, end: str) -> list[str]:
     first = next(i for i, ln in enumerate(lines) if ln.startswith(start))
     last = next(i for i in range(first, len(lines)) if lines[i].startswith(end))
@@ -371,7 +364,7 @@ type BootstrapRun = tuple[subprocess.CompletedProcess, list[str], list[dict]]
 def step_script() -> str:
     """bootstrap.sh's helpers, step [6/7] and the login re-read after readiness."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    helpers = [line for name in HELPERS for line in _function(lines, name)]
+    helpers = [line for name in HELPERS for line in function_lines(lines, name)]
     step, reread = _between(lines, *STEP), _between(lines, *REREAD)
     return "\n".join(["set -euo pipefail", *helpers, *step, "switch_cluster", *reread]) + "\n"
 
