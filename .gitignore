@@ -1,6 +1,8 @@
 # Terraform / OpenTofu
 **/.terraform/
+# A module's lock file is a by-product of validating it alone; only a root's is committed.
 **/.terraform.lock.hcl
+!terraform/environments/*/.terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
 *.tfplan

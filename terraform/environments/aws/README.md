@@ -89,6 +89,22 @@ tofu apply deployment.tfplan
 `tofu init` reads `state.bucket`, `state.key` and `state.region` out of the
 tfvars file, so there is no `-backend-config` to keep in step with it.
 
+## Provider lock
+
+`.terraform.lock.hcl` pins every provider to one version and its hashes for
+linux_amd64, linux_arm64 and darwin_arm64, so `tofu init` installs what the
+deployment was tested with, not the newest release the `~>` constraint allows.
+Never run `tofu init -upgrade` against a deployment. To move a provider, change
+its constraint, then from this directory:
+
+```bash
+tofu init -backend=false -upgrade
+tofu providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64
+```
+
+and commit the lock file with the constraint. `aws-state` and `local` carry
+their own.
+
 ## After the apply
 
 ```bash
