@@ -101,6 +101,7 @@ import composition  # noqa: E402
 import envfile  # noqa: E402
 import profiles  # noqa: E402
 import registry_pins  # noqa: E402
+import stack_freeze  # noqa: E402
 import suite_graph  # noqa: E402
 import version_range  # noqa: E402
 from stack_images import annotated_images  # noqa: E402
@@ -1126,6 +1127,9 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
             print(f"\n{len(changes)} digest(s) STALE (--check: nothing written)")
         stalled += [key for key, _ in changes]
     elif changes:
+        # Only a digest that would move is refused: a tagged stack whose pins all
+        # match the registries is left alone, so unrelated Renovate pushes still pass.
+        stack_freeze.refuse_if_tagged(name, REPO_ROOT, "refresh-digests")
         text, written, refused = rewrite_digests(text, name, changes)
         if written:
             path.write_text(text, encoding="utf-8", newline="\n")
@@ -1245,6 +1249,7 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     registry at the new version before anything is written. The image digest is
     resolve_pins.py's to set.
 
+    Refuses a stack whose git tag exists, since a released block is a shipped record.
     Idempotent -- re-running with the same version is a no-op that still reports.
     """
     version = args.version
@@ -1259,6 +1264,7 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     stack = args.stack or load_root().get("current")
     if not stack:
         raise SystemExit("error: no --stack given and no `current:` pointer to fall back on")
+    stack_freeze.refuse_if_tagged(stack, REPO_ROOT, "bump-app")
     block_start, block_end = _block_span(lines, stack)
     # Narrow again to `apps:`. A stack repeats every app name under `digests:`
     # too, so the whole block still holds two lines per app.
@@ -1824,7 +1830,10 @@ def main() -> int:
         "refresh-digests",
         help="re-resolve services-digests from the registries and rewrite them",
     )
-    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument(
+        "--stack",
+        help="stack version (default: `current`). Refused when its git tag exists and a digest would move.",
+    )
     p.add_argument(
         "--check",
         action="store_true",
@@ -1856,7 +1865,7 @@ def main() -> int:
     p.add_argument("version", help='image version, e.g. v1.10.6')
     p.add_argument(
         "--stack",
-        help="stack to bump in (default: the `current` pointer). Older stacks are shipped records.",
+        help="stack to bump in (default: the `current` pointer). Refused when its git tag exists: a released stack is a shipped record.",
     )
     p.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
     p.set_defaults(func=cmd_bump_app)

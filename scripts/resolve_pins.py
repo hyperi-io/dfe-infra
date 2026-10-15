@@ -28,6 +28,8 @@ digest -- the published set):
               tag is missing from the registry. The "are my pins fresh" gate.
   --write     rewrite `digests:` for the current stack in place for every stale
               pin, preserving all formatting and comments (ruamel round-trip).
+              Refused for a stack whose git tag exists: a released block is a
+              shipped record.
 
 Ad-hoc resolution (the dfe-deploy path -- resolve one arbitrary tag, no file):
 
@@ -65,6 +67,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import envfile
+import stack_freeze
 from registry_pins import (
     RegistryError,
     Resolved,
@@ -307,6 +310,9 @@ def cmd_pin(args: argparse.Namespace) -> int:
         print(f"\n{len(errors)} app(s) failed to resolve (gh/API error).", file=sys.stderr)
         return 1
 
+    if args.write and stale:
+        stack_freeze.refuse_if_tagged(name, VERSIONS.parent, "resolve_pins --write")
+
     if args.write:
         written, held = apply_writes(
             yaml, data, stack_map, rows, args.cooldown_days, args.allow_fresh
@@ -390,7 +396,7 @@ def add_pin_subparser(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--write",
         action="store_true",
-        help="rewrite digests: in place for stale pins (cooldown-gated)",
+        help="rewrite digests: in place for stale pins (cooldown-gated). Refused when the stack's git tag exists.",
     )
     p.add_argument(
         "--cooldown-days",

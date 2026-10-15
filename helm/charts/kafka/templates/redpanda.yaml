@@ -26,7 +26,8 @@ spec:
   clusterSpec:
     # DFE broker/topic defaults mapped to Redpanda cluster properties (Kafka's
     # server.properties names differ on Redpanda). NOT yet live-validated: verify
-    # the config.cluster path against the pinned operator (26.2.3) on first deploy.
+    # the config.cluster path against the operator pinned at operators.redpanda-operator
+    # in versions.yaml on first deploy.
     # compression is intentionally omitted -- Redpanda topics default compression to
     # `producer`, matching the Strimzi default (the client sizing profile owns the
     # codec). min.insync.replicas has no direct cluster property: Redpanda's Raft
