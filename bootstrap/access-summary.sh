@@ -12,11 +12,13 @@ set -euo pipefail
 if [ -n "${1:-}" ]; then export KUBECONFIG="$1"; fi
 OUT="${2:-dfe-access.md}"
 
-ann() { kubectl -n argocd get secret dfe-cluster -o jsonpath="{.metadata.annotations.dfe\.hyperi\.io/$1}" 2>/dev/null || true; }
+# cluster_fact() -- one annotation off the dfe-cluster Secret, shared with the smoke tests.
+# shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/cluster-facts.sh"
 
-DOMAIN="$(ann domain)"
-NS="$(ann dfe_namespace)"
-PROFILE="$(ann profile)"
+DOMAIN="$(cluster_fact domain)"
+NS="$(cluster_fact dfe_namespace)"
+PROFILE="$(cluster_fact profile)"
 : "${DOMAIN:=<your-domain>}"
 : "${NS:=dfe}"
 

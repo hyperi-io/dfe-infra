@@ -115,10 +115,9 @@ check() {
 }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
-# One dfe.hyperi.io/* annotation off the cluster secret every appset renders from, empty when unreadable.
-cluster_fact() {
-  kubectl -n argocd get secret dfe-cluster -o "jsonpath={.metadata.annotations.dfe\.hyperi\.io/$1}" 2>/dev/null
-}
+# cluster_fact() -- one annotation off the cluster secret every appset renders from, shared with the other bootstrap scripts.
+# shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/cluster-facts.sh"
 
 # Where ClickHouse and the brokers run: the deploy's own env first, else the cluster secret.
 CH_MODE="${DFE_CLICKHOUSE_MODE:-$(cluster_fact clickhouse_mode)}"
