@@ -84,6 +84,11 @@ def serve(monkeypatch: pytest.MonkeyPatch, registry: FakeRegistry) -> FakeRegist
     return registry
 
 
+def gate_budget() -> pins.RetryBudget:
+    """The budget check_image_arch.main gives a run: patient waits, capped in total."""
+    return pins.RetryBudget(arch.RETRY_BUDGET_SECONDS)
+
+
 def test_an_image_read_waits_out_two_429s_and_then_answers(monkeypatch, slept) -> None:
     registry = serve(
         monkeypatch,
@@ -96,7 +101,7 @@ def test_an_image_read_waits_out_two_429s_and_then_answers(monkeypatch, slept) -
         ),
     )
 
-    found, err = pins.ref_platforms(ECR_IMAGE)
+    found, err = pins.ref_platforms(ECR_IMAGE, gate_budget())
 
     assert (found, err) == ({"linux/amd64", "linux/arm64"}, "")
     assert len(registry.calls) == 3
@@ -115,7 +120,7 @@ def test_a_chart_lookup_waits_out_two_429s_and_then_answers(monkeypatch, slept) 
         ),
     )
 
-    assert arch.chart_app_version(KARPENTER, None, "1.14.1") == "1.14.1"
+    assert arch.chart_app_version(KARPENTER, None, "1.14.1", gate_budget()) == "1.14.1"
     assert len(registry.calls) == 3
     assert slept == [4.0, 8.0]
 
@@ -132,7 +137,7 @@ def test_a_chart_pull_waits_out_a_429_and_then_unpacks(monkeypatch, slept, tmp_p
 
     monkeypatch.setattr(subprocess, "run", helm_pull)
 
-    chart = arch.pull_chart(KARPENTER, None, "1.14.1", tmp_path)
+    chart = arch.pull_chart(KARPENTER, None, "1.14.1", tmp_path, gate_budget())
 
     assert chart == tmp_path / "karpenter"
     assert len(attempts) == 2
@@ -144,7 +149,7 @@ def test_a_registry_that_keeps_refusing_fails_the_image_read_naming_it(
 ) -> None:
     registry = serve(monkeypatch, FakeRegistry(docker=[(1, "", ECR_429_DOCKER)] * 5))
 
-    found, err = pins.ref_platforms(ECR_IMAGE)
+    found, err = pins.ref_platforms(ECR_IMAGE, gate_budget())
 
     assert found is None
     assert "public.ecr.aws rate limited this read and gave up after 5 attempts" in err
@@ -159,7 +164,7 @@ def test_a_registry_that_keeps_refusing_fails_the_chart_lookup_naming_it(
     registry = serve(monkeypatch, FakeRegistry(helm=[(1, "", ECR_429_HELM)] * 5))
 
     with pytest.raises(RuntimeError) as failure:
-        arch.chart_app_version(KARPENTER, None, "1.14.1")
+        arch.chart_app_version(KARPENTER, None, "1.14.1", gate_budget())
 
     assert "public.ecr.aws rate limited this read and gave up after 5 attempts" in str(
         failure.value
@@ -173,7 +178,9 @@ def test_the_failure_reaches_the_gate_as_a_named_error_not_a_pass(
     serve(monkeypatch, FakeRegistry(helm=[(1, "", ECR_429_HELM)] * 5))
     pinned = {"operators": {"karpenter": "1.14.1"}}
 
-    refs, _skipped, broken = arch.image_refs(pinned, resolve_charts=True, third_party_only=True)
+    refs, _skipped, broken = arch.image_refs(
+        pinned, resolve_charts=True, third_party_only=True, budget=gate_budget()
+    )
 
     assert not [label for label, _ref in refs if "karpenter" in label]
     assert len(broken) == 1
@@ -184,7 +191,7 @@ def test_the_failure_reaches_the_gate_as_a_named_error_not_a_pass(
 def test_a_server_error_that_never_clears_is_not_called_a_rate_limit(monkeypatch, slept) -> None:
     serve(monkeypatch, FakeRegistry(docker=[(1, "", "ERROR: 503 Service Unavailable")] * 5))
 
-    _found, err = pins.ref_platforms("quay.io/strimzi/operator:1.2.0")
+    _found, err = pins.ref_platforms("quay.io/strimzi/operator:1.2.0", gate_budget())
 
     assert "quay.io kept failing and gave up after 5 attempts" in err
     assert "rate limited" not in err
@@ -202,12 +209,12 @@ def test_an_absence_or_an_auth_error_is_not_retried(monkeypatch, slept, tool, st
     registry = serve(monkeypatch, FakeRegistry(**{tool: [(1, "", stderr)]}))
 
     if tool == "docker":
-        found, err = pins.ref_platforms(ECR_IMAGE)
+        found, err = pins.ref_platforms(ECR_IMAGE, gate_budget())
         assert found is None
         assert err == stderr
     else:
         with pytest.raises(RuntimeError):
-            arch.chart_app_version(KARPENTER, None, "9.9.9")
+            arch.chart_app_version(KARPENTER, None, "9.9.9", gate_budget())
 
     assert len(registry.calls) == 1
     assert slept == []
@@ -235,6 +242,40 @@ def test_one_budget_is_shared_by_every_read_of_a_run(monkeypatch, slept) -> None
 
     assert len(registry.calls) == 3
     assert slept == []
+
+
+def test_a_read_with_no_budget_keeps_the_quick_schedule(monkeypatch, slept) -> None:
+    """dfe-stack's reads cap nothing in total, so they stay at three short attempts."""
+    registry = serve(monkeypatch, FakeRegistry(docker=[(1, "", ECR_429_DOCKER)] * 3))
+
+    _found, err = pins.ref_platforms(ECR_IMAGE)
+
+    assert "public.ecr.aws rate limited this read and gave up after 3 attempts" in err
+    assert len(registry.calls) == 3
+    assert slept == [1.0, 2.0]
+
+
+def test_the_gate_gives_every_read_of_its_run_the_patient_schedule(
+    monkeypatch, slept, capsys
+) -> None:
+    registry = serve(
+        monkeypatch,
+        FakeRegistry(
+            docker=[
+                (1, "", ECR_429_DOCKER),
+                (1, "", ECR_429_DOCKER),
+                (0, INDEX, ""),
+            ]
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["check_image_arch.py", "--image", ECR_IMAGE])
+
+    status = arch.main()
+
+    assert status == 0
+    assert f"  ok     {ECR_IMAGE} {ECR_IMAGE}" in capsys.readouterr().out
+    assert len(registry.calls) == 3
+    assert slept == [4.0, 8.0]
 
 
 def test_a_missing_helm_is_reported_and_not_retried(monkeypatch, slept) -> None:

@@ -87,9 +87,11 @@ _TRANSIENT = re.compile(
 # The subset of _TRANSIENT where the registry is refusing the caller's rate, not failing.
 _RATE_LIMITED = re.compile(r"\b429\b|toomanyrequests", re.IGNORECASE)
 
-# Attempts per read, and the seconds waited before each retry (before jitter).
-_MAX_ATTEMPTS = 5
-_BACKOFF_BASE_SECONDS = (4.0, 8.0, 16.0, 32.0)
+# Seconds waited before each retry of one read, before jitter. A read with no
+# RetryBudget keeps the quick schedule, so a caller that caps nothing cannot stall
+# on a registry that stays down. PATIENT_WAITS is for a run that passes a budget.
+_QUICK_WAITS = (1.0, 2.0)
+PATIENT_WAITS = (4.0, 8.0, 16.0, 32.0)
 
 # Module attributes so tests replace them with instant, deterministic stand-ins.
 _sleep = time.sleep
@@ -98,16 +100,19 @@ _random = random.random
 
 @dataclass(slots=True)
 class RetryBudget:
-    """Backoff a whole run may still spend across all its registry reads.
+    """How patiently a run's registry reads retry, and the backoff it has left.
 
     Without a shared cap, a registry that stays rate limited costs every read its
     full backoff in turn, so a gate reading forty images waits forty times over.
 
     Attributes:
-        seconds: Backoff left to spend.
+        seconds: Backoff left to spend across every read of the run.
+        waits: Seconds waited before each retry of one read, before jitter. One
+            more attempt is made than there are waits.
     """
 
     seconds: float
+    waits: tuple[float, ...] = PATIENT_WAITS
 
     def spend(self, wait: float) -> bool:
         """Take ``wait`` seconds from the budget, or report that it holds fewer.
@@ -273,15 +278,17 @@ def run_with_retry(
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run a registry-reading command, retrying a transient failure with backoff.
 
-    A failure matching _TRANSIENT (a 429, a 5xx, a timeout) is retried up to
-    _MAX_ATTEMPTS times with jittered exponential backoff. Success, an absence, an
-    auth error and any other failure return on the first attempt.
+    A failure matching _TRANSIENT (a 429, a 5xx, a timeout) is retried with jittered
+    exponential backoff, three attempts by default and one more than the budget's
+    waits when a budget is given. Success, an absence, an auth error and any other
+    failure return on the first attempt.
 
     Args:
         cmd: The command and its arguments.
         registry: The host the command reads, named in the message when the retries run out.
-        budget: Backoff the whole run may still spend, or None to apply the per-read
-            bound alone. A wait the budget cannot cover ends the retries early.
+        budget: The run's shared RetryBudget, which sets the schedule and caps the
+            total backoff, or None for the quick schedule alone. A wait the budget
+            cannot cover ends the retries early.
 
     Returns:
         The last attempt's result, and a message naming the registry and whether it
@@ -290,6 +297,7 @@ def run_with_retry(
     Raises:
         OSError: The command could not be started. It is never retried.
     """
+    waits = _QUICK_WAITS if budget is None else budget.waits
     attempts = 0
     while True:
         proc = subprocess.run(
@@ -304,9 +312,9 @@ def run_with_retry(
         absent = is_absent(_last_line(proc.stderr, ""))
         if proc.returncode == 0 or absent or not _TRANSIENT.search(proc.stderr):
             return proc, ""
-        if attempts == _MAX_ATTEMPTS:
+        if attempts > len(waits):
             return proc, _gave_up(registry, proc.stderr, attempts, budget_spent=False)
-        wait = _BACKOFF_BASE_SECONDS[attempts - 1] * (0.5 + _random())
+        wait = waits[attempts - 1] * (0.5 + _random())
         if budget is not None and not budget.spend(wait):
             return proc, _gave_up(registry, proc.stderr, attempts, budget_spent=True)
         _sleep(wait)
