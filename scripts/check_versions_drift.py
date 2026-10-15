@@ -604,15 +604,15 @@ CHECKS += [
     for f in files
 ]
 
-# The EKS add-on pins, mirrored into the cluster module's addon_versions default:
-# what a deploy installs when the root passes no override.
+# The EKS add-on pins, mirrored into the aws root's example tfvars: render_dial.py
+# renders the same pins into a deployment's own eks_addon_versions.
 _EKS_ADDONS = ("aws-ebs-csi-driver", "coredns", "eks-pod-identity-agent", "kube-proxy", "vpc-cni")
 CHECKS += [
     Check(
-        f"EKS add-on {addon} (kubernetes-cluster/aws addon_versions)",
+        f"EKS add-on {addon} (aws example.tfvars.json eks_addon_versions)",
         f"eks-addons.{addon}",
-        Path("terraform/modules/kubernetes-cluster/aws/variables.tf"),
-        r'"' + re.escape(addon) + r'"\s*=\s*"([^"]+)"',
+        Path("terraform/environments/aws/example.tfvars.json"),
+        r'"' + re.escape(addon) + r'"\s*:\s*"([^"]+)"',
     )
     for addon in _EKS_ADDONS
 ]

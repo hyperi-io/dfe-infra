@@ -210,16 +210,31 @@ variables {
     eks-system = {
       instance_types = ["m7g.large"]
       arch           = "arm64"
+      root_volume    = { type = "gp3", size_gib = 40 }
+    }
+    toolbox = {
+      instance_types = ["t4g.small"]
+      arch           = "arm64"
+      root_volume    = { type = "gp3", size_gib = 20 }
     }
   }
 
-  network  = { nat = "single" }
-  endpoint = { public = false, allowed_cidrs = [] }
-  dns      = { private_zone = "dfe-example.internal", public_zone = "" }
+  eks_addon_versions = {
+    "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+    "coredns"                = "v1.14.7-eksbuild.11"
+    "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+    "kube-proxy"             = "v1.36.0-eksbuild.45"
+    "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
+  endpoint  = { public = false, allowed_cidrs = [] }
+  dns       = { private_zone = "dfe-example.internal", public_zone = "" }
+  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
 
   storage_class = "gp3"
 
-  edge       = { enabled = false }
+  edge       = { enabled = false, tunnel = { client_cidr = "100.64.0.0/10" } }
   cloudtrail = { enabled = false }
 
   kafka = {
@@ -233,10 +248,11 @@ variables {
   }
 
   toolbox = {
-    enabled     = false
-    aws         = { instance_type = "t4g.small" }
-    ttl_minutes = 60
-    session     = { idle_timeout_minutes = 15, max_duration_minutes = 240 }
+    enabled                    = false
+    aws                        = { shape_ref = "toolbox" }
+    ttl_minutes                = 60
+    session                    = { idle_timeout_minutes = 15, max_duration_minutes = 240 }
+    session_log_retention_days = 90
   }
 
   secrets = { backend = "aws-sm", ref = "" }
@@ -356,6 +372,7 @@ run "redpanda_public_reaches_the_body" {
       provider                   = "redpanda-cloud"
       connectivity               = "public"
       confluent_tier             = "basic"
+      redpanda_tier              = "serverless"
       redpanda_resource_group_id = "11111111-2222-3333-4444-555555555555"
       num_partitions             = 12
       log_retention_ms           = 259200000
@@ -413,6 +430,12 @@ run "msk_keeps_one_copy_of_the_credential" {
       eks-system = {
         instance_types = ["m7g.large"]
         arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 40 }
+      }
+      toolbox = {
+        instance_types = ["t4g.small"]
+        arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 20 }
       }
       msk-broker = {
         instance_types = ["express.m7g.large"]
@@ -431,6 +454,13 @@ run "msk_keeps_one_copy_of_the_credential" {
         message_max_bytes = 16777216
         scram_username    = "dfe-kafka-user"
         bootstrap_job     = { namespace = "strimzi", service_account = "dfe-kafka-bootstrap" }
+        autoscaling = {
+          max_brokers              = 6
+          per_broker_capacity_mb_s = 50
+          headroom                 = 1.3
+          period_seconds           = 300
+          evaluation_periods       = 3
+        }
       }
     }
 
@@ -457,6 +487,7 @@ run "an_unstated_connectivity_stays_private" {
   variables {
     kafka = {
       provider          = "redpanda-cloud"
+      redpanda_tier     = "serverless"
       num_partitions    = 12
       log_retention_ms  = 259200000
       message_max_bytes = 16777216

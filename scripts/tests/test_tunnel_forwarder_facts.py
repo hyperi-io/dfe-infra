@@ -156,13 +156,15 @@ def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class(
     assert "adminCIDRs:" in appset
 
 
-def test_the_root_and_the_chart_agree_on_the_reserved_client_range() -> None:
+def test_the_renderer_and_the_chart_agree_on_the_reserved_client_range() -> None:
     """The toolbox's reach-back egress is aimed at the range appliances are
-    issued out of, and no tofu input carries it."""
+    issued out of, which the dial renders into the root's edge.tunnel.client_cidr."""
     values = _culvert_values()
-    match = re.search(r"^\s*tunnel_client_cidr\s*=\s*\"([^\"]+)\"", AWS_ROOT_MAIN.read_text(encoding="utf-8"), re.M)
-    assert match is not None, "the aws root declares no tunnel_client_cidr local"
+    match = re.search(r'^TUNNEL_CLIENT_CIDR = "([^"]+)"', RENDER_DIAL.read_text(encoding="utf-8"), re.M)
+    assert match is not None, "render_dial.py declares no TUNNEL_CLIENT_CIDR"
     assert match.group(1) == values["vpn"]["clientCIDR"]
+    main = AWS_ROOT_MAIN.read_text(encoding="utf-8")
+    assert "var.edge.tunnel.client_cidr" in main, "the aws root must aim the reach-back at the rendered client range"
 
 
 def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:

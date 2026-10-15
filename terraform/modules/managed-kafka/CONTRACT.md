@@ -49,21 +49,22 @@ using the second.
 |-------|------|---------|
 | `implementation` | `string` | `msk`, `redpanda-cloud`, `confluent-cloud`, or `strimzi`. Selects the body; each body asserts it is the one named. |
 | `connectivity` | `string` | `private` (the default, and the only one a product deploy should use) or `public`. |
+| `tier` | `string` | `confluent-cloud` and `redpanda-cloud` only: the vendor's cluster type, pinned in tfvars because neither vendor publishes a generation to resolve. `render_dial.py` sends `freight` and `serverless` when the dial names none. |
 | `name` | `string` | Name prefix for every resource the body creates, and the cluster's own name. |
 | `env` | `string` | Deployment environment, for the names and descriptions that have to distinguish two deployments in one account. |
 | `network` | the cluster module's `network` output | `{ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids }`. Where the brokers attach, or what the private link reaches. |
 | `broker_shape_ref` | `string` | Indexes the resolver's shapes, exactly as node pools do. MSK's broker namespace is its own (`express.m7g.large`) and runs generations behind EC2, so the resolver answers it separately. |
-| `resolved_shapes` | `map(object({ instance_types, arch }))` | The resolver's answer, keyed by `shape_ref`. An instance type is never written by hand. |
-| `broker_count` | `number` | Three at the floor, and a multiple of the availability-zone count. Replication factor and minimum in-sync replicas are the profile's, not this module's. |
-| `kafka_version` | `string` | The broker version, in the provider's own spelling. No default: the newest supported version is read from the vendor at build time, because a default rots into a deprecated line silently. |
+| `resolved_shapes` | `map(object({ instance_types, arch, root_volume }))` | Auto-selected by the shape resolver, keyed by `shape_ref`: MSK's broker type comes from MSK's own compute-family names under the generation policy `shapes/compute-shapes.yaml` sets for `msk-broker`. An instance type is never written by hand. |
+| `broker_count` | `number` | From tfvars. Three at the floor, and a multiple of the availability-zone count. Replication factor and minimum in-sync replicas are the profile's, not this module's. |
+| `kafka_version` | `string` | The broker version, in the provider's own spelling, pinned in tfvars: nothing resolves it, so the dial names the newest the vendor lists as active. No default, because a default rots into a deprecated line silently. |
 | `client_cidrs` | `list(string)` | Who may reach the brokers. Empty means the whole VPC the cluster module built. |
 | the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses; it does not decide what is applicable. No default in any body: the root's dial states every one, so a value cannot drift between the three copies silently. |
 | `landing_topics` | `map(object({ partitions, retention_ms }))` | Read by `confluent-cloud` and `redpanda-cloud` only, keyed by topic name, and REQUIRED (at least one entry) for either -- the root's own variable validation refuses a plan with an empty map on a SaaS provider. Neither has a bootstrap Job of its own -- msk's landing topics are that Job's, from the chart's own values -- so tofu creates these itself, or dfe-loader crash-loops on a bare deploy (a missing `*_land` topic is fatal to it). A null `partitions` or `retention_ms` takes the tuning settings above. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Encrypts the data at rest and the credential. |
 | `eks_cluster_name`, `pod_identity`, `pod_identity_trust_policy_json` | | The workload identity the bootstrap Job runs as, for a body whose provider needs one. |
-| `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom })` | `msk`-only: broker-count scaling, since AWS gives Express no native equivalent. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
-| `telemetry` | `object({ sink, retention_days })` | `msk`-only: where the broker logs land. `otel` (the default) ships them to an S3 bucket this body creates, for DFE's own OTel feed; `cloudwatch` is the opt-in AWS-native path. Neither SaaS body emits a CloudWatch-shaped broker log, so neither takes this input. |
-| `secret_recovery_window_days` | `number` | `msk`-only. Secrets Manager's deletion delay for the SCRAM credential. Defaults to the vendor's own 30 days; the root passes 0 for a `tags.lifecycle: ephemeral` deployment torn down and rebuilt under the same name, where the 30-day window would fail the second create on a name that still exists. |
+| `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom, period_seconds, evaluation_periods })` | `msk`-only, from tfvars: broker-count scaling, since AWS gives Express no native equivalent. `period_seconds` and `evaluation_periods` are the alarm window. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
+| `telemetry` | `object({ sink, retention_days, forced_retention_days })` | `msk`-only, from tfvars: where the broker logs land. `otel` ships them to an S3 bucket this body creates, for DFE's own OTel feed; `cloudwatch` is the opt-in AWS-native path. `forced_retention_days` is the broker scaler's Lambda log group, CloudWatch under either sink. Neither SaaS body emits a CloudWatch-shaped broker log, so neither takes this input. |
+| `secret_recovery_window_days` | `number` | `msk`-only. Secrets Manager's deletion delay for the SCRAM credential, set by the root from `tags.lifecycle`: the vendor's own window for a persistent deployment, 0 for an ephemeral one torn down and rebuilt under the same name, where a window would fail the second create on a name that still exists. |
 | `region` | `string` | `confluent-cloud`-only, and read only on `connectivity = public`: on `private` the region is discovered from the VPC's own provider configuration, because a private attachment has to sit in the same region as the network it attaches to. `basic` tier has no VPC to discover it from, so this is that path's only source. The aws root passes the deployment's own region. |
 | `environment_id` | `string` | `confluent-cloud`-only. A standing Confluent environment (`env-` id) to create the cluster in; empty creates one named `<name>-<env>`. |
 | `resource_group_id` | `string` | `redpanda-cloud`-only. A standing Redpanda resource group (a UUID) to create the cluster and its private link in; empty creates one named after the deployment. |
@@ -103,9 +104,12 @@ one would be describing a cluster we do not build.
   is reported, not silently dropped.
 - **No provider block.** A body declares `required_providers` and nothing else;
   the root configures the provider.
-- **Nothing hardcoded.** The only literals allowed are ones the vendor's own API
-  defines: managed policy names, service principals, and the port numbers the
-  protocol fixes. Each carries a one-line comment saying why it is structural.
+- **Nothing hardcoded.** A broker type comes from the shape resolver and every
+  count, tier, retention and tuning value from tfvars. The only literals allowed
+  are ones the vendor's own API defines: managed policy names, service
+  principals, and the port numbers the protocol fixes. Each carries a one-line
+  comment saying why it is structural. The rule is stated once in
+  `terraform/README.md`.
 
 ## What `msk/` builds
 
@@ -147,7 +151,7 @@ Enabling it forecloses Cruise Control on the same cluster -- one rebalancer per
 cluster, and on MSK it is MSK's.
 
 **Broker logs follow `telemetry.sink`**, never both destinations at once.
-`otel` (the default) delivers them to an S3 bucket this body creates --
+`otel` delivers them to an S3 bucket this body creates --
 lifecycle-expired at `telemetry.retention_days`, SSE-KMS on the deployment's own
 key, public access blocked, `force_destroy` true unconditionally because it is
 log spill and not data DFE keeps (unlike the CloudTrail bucket in

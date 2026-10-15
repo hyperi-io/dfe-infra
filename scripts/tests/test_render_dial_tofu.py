@@ -157,15 +157,7 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     }
     # A credential the root reads from TF_VAR_*, which the dial never carries.
     environment_only = {"clickhouse_external_password"}
-    # Defaults to the cluster module's pins; an operator on another Kubernetes minor sets it.
-    operator_override = {"eks_addon_versions"}
-    expected = (
-        declared
-        - {"node_pools", "resolved_shapes"}
-        - guarded_run_only
-        - environment_only
-        - operator_override
-    )
+    expected = declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only
     assert set(render()) == expected
 
 
@@ -213,6 +205,44 @@ def test_an_out_of_range_az_count_is_refused_by_name() -> None:
         render(replace=("nat: single", "nat: single\n  az_count: 7"))
 
 
+def test_subnet_newbits_defaults_to_sixteen_blocks() -> None:
+    assert render()["network"]["subnet_newbits"] == render_dial.SUBNET_NEWBITS == 4
+
+
+def test_subnet_newbits_takes_the_dials_own_value() -> None:
+    network = render(replace=("nat: single", "nat: single\n  subnet_newbits: 6"))["network"]
+    assert network == {"nat": "single", "az_count": 3, "subnet_newbits": 6}
+
+
+def test_subnet_newbits_too_small_for_the_zone_count_is_refused_by_name() -> None:
+    """Three bits make eight blocks, and six zones need six on each side of the midpoint."""
+    with pytest.raises(render_dial.DialError, match=r"network\.subnet_newbits"):
+        render(replace=("nat: single", "nat: single\n  az_count: 6\n  subnet_newbits: 3"))
+
+
+def test_the_eks_add_ons_are_the_versions_yaml_pins() -> None:
+    """The cluster module pins nothing of its own, so the render carries the stack's eks-addons."""
+    import check_versions_drift as drift
+
+    pins = {
+        key.split(".", 1)[1]: value
+        for key, value in drift.load_versions().items()
+        if key.startswith("eks-addons.")
+    }
+    assert pins, "versions.yaml's current stack pins no eks-addons"
+    assert render()["eks_addon_versions"] == pins
+
+
+def test_a_versions_file_with_no_eks_add_ons_renders_an_empty_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cluster module's preconditions refuse the plan, rather than this render guessing pins."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n', encoding="utf-8")
+    monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
+    assert render()["eks_addon_versions"] == {}
+
+
 def test_the_seventh_tag_names_the_root_that_created_the_resource() -> None:
     tags = render()["tags"]
     assert tags["iac-source"] == "dfe-infra/terraform/environments/aws"
@@ -251,11 +281,10 @@ def test_an_in_cluster_broker_renders_no_msk_block() -> None:
 _AFTER_BOOTSTRAP_JOB = "      service_account: dfe-kafka-bootstrap\n  landing_topics:"
 
 
-def test_msk_autoscaling_is_omitted_when_the_dial_sets_nothing() -> None:
-    """Every field already has a root-level default (variables.tf); a dial that
-    names no autoscaling block should not restate them -- the root's own
-    `optional(object({...}), {})` takes an empty object exactly this way."""
-    assert render()["kafka"]["msk"]["autoscaling"] == {}
+def test_msk_autoscaling_sends_its_sizing_when_the_dial_sets_nothing() -> None:
+    """The root declares no default for the ceiling, the capacity or the headroom,
+    so the render sends its own documented values; step stays the module's."""
+    assert render()["kafka"]["msk"]["autoscaling"] == render_dial.MSK_AUTOSCALING_DEFAULTS
 
 
 def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
@@ -269,6 +298,8 @@ def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
             "      step: 3\n"
             "      per_broker_capacity_mb_s: 75\n"
             "      headroom: 1.5\n"
+            "      period_seconds: 120\n"
+            "      evaluation_periods: 5\n"
             "  landing_topics:",
         )
     )["kafka"]["msk"]["autoscaling"]
@@ -278,6 +309,8 @@ def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
         "step": 3,
         "per_broker_capacity_mb_s": 75,
         "headroom": 1.5,
+        "period_seconds": 120,
+        "evaluation_periods": 5,
     }
 
 
@@ -408,6 +441,11 @@ def test_the_confluent_tier_and_environment_reach_the_root() -> None:
     assert kafka["message_max_bytes"] == 8388608
 
 
+def test_a_confluent_dial_with_no_tier_is_sent_freight() -> None:
+    """The root declares the tier no default, so the render always names one."""
+    assert saas_kafka("confluent-cloud")["confluent_tier"] == render_dial.CONFLUENT_DEFAULT_TIER == "freight"
+
+
 def test_an_unknown_confluent_tier_is_refused_by_name() -> None:
     """Standard is a real Confluent tier, but the module offers freight, enterprise and basic only."""
     with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_tier"):
@@ -453,14 +491,42 @@ def test_a_malformed_redpanda_resource_group_is_refused_by_name() -> None:
         saas_kafka("redpanda-cloud", f"redpanda_resource_group_id: {CONFLUENT_ENVIRONMENT}")
 
 
+def test_a_redpanda_dial_with_no_tier_is_sent_serverless() -> None:
+    """The body declares the tier no default, so the render always names one."""
+    assert saas_kafka("redpanda-cloud")["redpanda_tier"] == render_dial.REDPANDA_DEFAULT_TIER == "serverless"
+
+
+def test_the_redpanda_tier_reaches_the_root() -> None:
+    """dedicated reaches the root, whose body then refuses it at plan."""
+    assert saas_kafka("redpanda-cloud", "redpanda_tier: dedicated")["redpanda_tier"] == "dedicated"
+
+
+def test_an_unknown_redpanda_tier_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.redpanda_tier"):
+        saas_kafka("redpanda-cloud", "redpanda_tier: freight")
+
+
+def test_the_redpanda_tiers_are_the_ones_the_body_validates() -> None:
+    """The render's list and the body's validation name the same three products."""
+    body = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "redpanda-cloud" / "variables.tf").read_text(
+        encoding="utf-8"
+    )
+    assert f"contains({json.dumps(list(render_dial.REDPANDA_TIERS))}, var.tier)" in body
+
+
 def test_each_vendors_keys_are_read_for_that_vendor_only() -> None:
     """A Confluent tier left on a Redpanda dial neither caps its size nor reaches the root."""
     redpanda = saas_kafka("redpanda-cloud", "confluent_tier: basic", f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}")
     assert "confluent_tier" not in redpanda
     assert "confluent_environment_id" not in redpanda
     assert redpanda["message_max_bytes"] == 16777216
-    confluent = saas_kafka("confluent-cloud", f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}")
+    confluent = saas_kafka(
+        "confluent-cloud",
+        "redpanda_tier: serverless",
+        f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}",
+    )
     assert "redpanda_resource_group_id" not in confluent
+    assert "redpanda_tier" not in confluent
 
 
 def test_the_basic_ceiling_is_the_one_the_root_and_the_module_refuse_above() -> None:
@@ -511,7 +577,7 @@ def test_a_missing_broker_field_is_named() -> None:
 
 def test_the_dial_supplies_the_telemetry_sink_and_retention() -> None:
     """The fixture sets cloudwatch explicitly, to prove non-default values thread through."""
-    assert render()["telemetry"] == {"sink": "cloudwatch", "retention_days": 5}
+    assert render()["telemetry"] == {"sink": "cloudwatch", "retention_days": 5, "forced_retention_days": 1}
 
 
 def test_telemetry_defaults_to_otel_with_a_two_day_retention() -> None:
@@ -522,13 +588,28 @@ def test_telemetry_defaults_to_otel_with_a_two_day_retention() -> None:
         if line.strip() not in ("telemetry:", "aws:", "sink: cloudwatch", "retention_days: 5")
     )
     _, variables = render_dial._tofu_vars(parse_dial(without_telemetry, source="test-dial"))
-    assert variables["telemetry"] == {"sink": "otel", "retention_days": 2}
+    assert variables["telemetry"] == {"sink": "otel", "retention_days": 2, "forced_retention_days": 1}
 
 
 def test_telemetry_retention_defaults_to_seven_days_under_cloudwatch() -> None:
     """cloudwatch is the opt-in AWS-native path, and it defaults short too."""
     cloudwatch_no_retention = render(drop="retention_days: 5")
-    assert cloudwatch_no_retention["telemetry"] == {"sink": "cloudwatch", "retention_days": 7}
+    assert cloudwatch_no_retention["telemetry"] == {
+        "sink": "cloudwatch",
+        "retention_days": 7,
+        "forced_retention_days": 1,
+    }
+
+
+def test_the_forced_retention_takes_the_dials_own_value() -> None:
+    forced = render(replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 3"))
+    assert forced["telemetry"]["forced_retention_days"] == 3
+
+
+def test_a_forced_retention_cloudwatch_refuses_is_refused_by_name() -> None:
+    """The forced log groups are CloudWatch under either sink, so 2 is never a period they take."""
+    with pytest.raises(render_dial.DialError, match=r"telemetry\.aws\.forced_retention_days"):
+        render(replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 2"))
 
 
 def test_an_unknown_telemetry_sink_is_refused() -> None:
@@ -614,11 +695,12 @@ def test_the_tunnel_brings_its_own_address_unless_a_forwarder_is_asked_for() -> 
     assert tunnel["source_ranges"] == []
 
 
-def test_the_forwarders_default_type_is_the_catalogues_small_arm_shape() -> None:
-    """Sized by bandwidth, never by anything else -- the forwarder moves every
-    tunnel byte and does nothing else."""
-    assert render_dial.TUNNEL_FORWARDER_TYPE == "t4g.small"
-    assert render()["edge"]["tunnel"]["address"]["instance_type"] == "t4g.small"
+def test_the_forwarder_launches_on_the_resolved_toolbox_shape_by_default() -> None:
+    """The shape resolver picks the newest small arm64 burstable for the toolbox
+    use case, and the forwarder borrows it: never an instance type in the dial."""
+    assert render_dial.TUNNEL_FORWARDER_SHAPE == "toolbox"
+    assert render()["edge"]["tunnel"]["address"]["shape_ref"] == "toolbox"
+    assert "instance_type" not in render()["edge"]["tunnel"]["address"]
 
 
 def test_the_forwarder_dial_reaches_the_tofu_variables() -> None:
@@ -632,13 +714,38 @@ def test_the_forwarder_dial_reaches_the_tofu_variables() -> None:
         "      loadBalancerSourceRanges: 203.0.113.0/24, 198.51.100.0/24\n"
         "      address:\n"
         "        mode: forwarder\n"
-        "        instance_type: m8g.large\n"
+        "        shape_ref: general\n"
         "        zone: us-west-2c\n",
     )
     tunnel = render(replace=asked)["edge"]["tunnel"]
-    assert tunnel["address"] == {"mode": "forwarder", "instance_type": "m8g.large", "zone": "us-west-2c"}
+    assert tunnel["address"] == {"mode": "forwarder", "shape_ref": "general", "zone": "us-west-2c"}
     assert tunnel["openvpn"] is False
     assert tunnel["source_ranges"] == ["203.0.113.0/24", "198.51.100.0/24"]
+
+
+def test_expected_fail_a_forwarder_instance_type_in_the_dial_is_refused() -> None:
+    """A literal type would be read by nothing, so it is refused with the override that pins one."""
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      address:\n        instance_type: t4g.small\n",
+    )
+    with pytest.raises(render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"):
+        render(replace=asked)
+
+
+def test_the_tunnel_client_range_defaults_to_culverts_own() -> None:
+    assert render()["edge"]["tunnel"]["client_cidr"] == render_dial.TUNNEL_CLIENT_CIDR
+
+
+def test_the_tunnel_client_range_takes_the_dials_own_value() -> None:
+    asked = ("profile: scale", "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.96.0.0/12\n")
+    assert render(replace=asked)["edge"]["tunnel"]["client_cidr"] == "100.96.0.0/12"
+
+
+def test_a_tunnel_client_range_that_is_not_a_cidr_is_refused_by_name() -> None:
+    asked = ("profile: scale", "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.64.0.1/10\n")
+    with pytest.raises(render_dial.DialError, match=r"edge\.ingest\.tunnel\.client_cidr"):
+        render(replace=asked)
 
 
 def test_an_inline_allow_list_loses_its_brackets_like_every_other_dial_list() -> None:

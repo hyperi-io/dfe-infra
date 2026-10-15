@@ -126,6 +126,7 @@ variables {
     eks-system = {
       instance_types = ["m9g.large", "m8g.large"]
       arch           = "arm64"
+      root_volume    = { type = "gp3", size_gib = 40 }
     }
   }
 
@@ -142,9 +143,19 @@ variables {
     }
   }
 
-  network  = { nat = "single" }
-  endpoint = { public = true, allowed_cidrs = ["198.51.100.10/32"] }
-  dns      = { private_zone = "contract.internal" }
+  // What render_dial.py renders from versions.yaml's eks-addons, for the minor above.
+  addon_versions = {
+    "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+    "coredns"                = "v1.14.7-eksbuild.11"
+    "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+    "kube-proxy"             = "v1.36.0-eksbuild.45"
+    "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
+  endpoint  = { public = true, allowed_cidrs = ["198.51.100.10/32"] }
+  dns       = { private_zone = "contract.internal" }
+  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
 
   tags = {
     "service-name"      = "dfe"
@@ -371,7 +382,7 @@ run "aws_network_az_count_two" {
   }
 
   variables {
-    network = { nat = "single", az_count = 2 }
+    network = { nat = "single", az_count = 2, subnet_newbits = 4 }
   }
 
   assert {
@@ -383,6 +394,49 @@ run "aws_network_az_count_two" {
     condition     = length(output.network.private_subnet_ids) == 2
     error_message = "network.private_subnet_ids must carry one subnet per zone at az_count = 2"
   }
+}
+
+// The subnet size is the deployment's, and the public half follows it to the midpoint.
+run "aws_subnets_take_the_dials_newbits" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    network = { nat = "single", az_count = 3, subnet_newbits = 5 }
+  }
+
+  assert {
+    condition     = alltrue([for s in concat(values(aws_subnet.private), values(aws_subnet.public)) : endswith(s.cidr_block, "/21")])
+    error_message = "subnet_newbits = 5 must cut /21 subnets out of the /16"
+  }
+
+  assert {
+    condition     = toset([for s in aws_subnet.private : s.cidr_block]) == toset(["10.90.0.0/21", "10.90.8.0/21", "10.90.16.0/21"])
+    error_message = "the private half must take the first az_count blocks"
+  }
+
+  assert {
+    condition     = toset([for s in aws_subnet.public : s.cidr_block]) == toset(["10.90.128.0/21", "10.90.136.0/21", "10.90.144.0/21"])
+    error_message = "the public half must start at the midpoint, block 16 of 32"
+  }
+}
+
+// Three bits make eight blocks, and six zones need six on each side of the midpoint.
+run "aws_rejects_newbits_too_small_for_the_zone_count" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    network = { nat = "single", az_count = 6, subnet_newbits = 3 }
+  }
+
+  expect_failures = [var.network]
 }
 
 run "aws_dns_zones" {
@@ -562,7 +616,7 @@ run "aws_nat_per_az" {
   }
 
   variables {
-    network = { nat = "per-az" }
+    network = { nat = "per-az", az_count = 3, subnet_newbits = 4 }
   }
 
   assert {
@@ -863,12 +917,36 @@ run "aws_rejects_x86_shape" {
       eks-system = {
         instance_types = ["m7i.large"]
         arch           = "amd64"
+        root_volume    = { type = "gp3", size_gib = 40 }
       }
     }
   }
 
   expect_failures = [
     var.resolved_shapes,
+  ]
+}
+
+// A pool's launch template takes its root volume type from the shape, so a
+// shape without the root volume the resolver writes is refused at plan.
+run "aws_rejects_a_pool_shape_with_no_root_volume" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    resolved_shapes = {
+      eks-system = {
+        instance_types = ["m9g.large"]
+        arch           = "arm64"
+      }
+    }
+  }
+
+  expect_failures = [
+    var.node_pools,
   ]
 }
 
@@ -910,8 +988,8 @@ run "aws_rejects_incomplete_tags" {
 }
 
 // EKS has no S3 or OTel export for control-plane logs, so audit stays in
-// CloudWatch under BOTH sinks -- otel just pins its retention to the 1-day
-// floor since it is an unavoidable exception, not a chosen destination.
+// CloudWatch under BOTH sinks -- otel keeps it at the forced retention since it
+// is an unavoidable exception, not a chosen destination.
 run "aws_audit_log_is_the_only_stream_enabled" {
   command = plan
 
@@ -927,8 +1005,8 @@ run "aws_audit_log_is_the_only_stream_enabled" {
   }
 
   assert {
-    condition     = aws_cloudwatch_log_group.cluster.retention_in_days == 1
-    error_message = "the otel default must pin the audit log group to the 1-day floor"
+    condition     = aws_cloudwatch_log_group.cluster.retention_in_days == var.telemetry.forced_retention_days
+    error_message = "the otel sink must keep the audit log group at telemetry.forced_retention_days"
   }
 
   assert {
@@ -948,15 +1026,31 @@ run "aws_audit_log_follows_cloudwatch_retention" {
 
   variables {
     telemetry = {
-      sink           = "cloudwatch"
-      retention_days = 7
+      sink                  = "cloudwatch"
+      retention_days        = 7
+      forced_retention_days = 1
     }
   }
 
   assert {
     condition     = aws_cloudwatch_log_group.cluster.retention_in_days == 7
-    error_message = "the cloudwatch sink must carry telemetry.retention_days, not the otel floor"
+    error_message = "the cloudwatch sink must carry telemetry.retention_days, not the forced retention"
   }
+}
+
+// The audit log group is CloudWatch under either sink, so a period CloudWatch refuses fails at plan.
+run "aws_rejects_a_forced_retention_cloudwatch_refuses" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 2 }
+  }
+
+  expect_failures = [var.telemetry]
 }
 
 // With no configuration_values at all, network-policies' whole chart is
@@ -1452,8 +1546,9 @@ run "aws_addons_install_the_pinned_versions" {
   }
 }
 
-// A null from the root takes the module's pins rather than leaving every add-on unpinned.
-run "aws_addons_take_the_pins_when_the_caller_passes_null" {
+// The pins arrive in tfvars, so a versions.yaml with no eks-addons stage renders
+// an empty map, and the plan stops on it rather than installing unpinned add-ons.
+run "aws_addons_refuse_an_empty_pin_set" {
   command = plan
 
   module {
@@ -1461,13 +1556,10 @@ run "aws_addons_take_the_pins_when_the_caller_passes_null" {
   }
 
   variables {
-    addon_versions = null
+    addon_versions = {}
   }
 
-  assert {
-    condition     = aws_eks_addon.vpc_cni.addon_version != null && can(regex("-eksbuild\\.[0-9]+$", aws_eks_addon.vpc_cni.addon_version))
-    error_message = "a null addon_versions must fall back to the pinned default"
-  }
+  expect_failures = [aws_eks_addon.vpc_cni]
 }
 
 // A Kubernetes bump with the add-on pins left behind would install a kube-proxy
@@ -1629,6 +1721,11 @@ run "aws_run_tags_reach_node_group_instances_and_volumes" {
   assert {
     condition     = aws_launch_template.nodes["system"].block_device_mappings[0].device_name == "/dev/xvda" && aws_launch_template.nodes["system"].block_device_mappings[0].ebs[0].volume_size == 40
     error_message = "the launch template must size the AL2023 root device from disk_gb, since EKS refuses disk_size beside it"
+  }
+
+  assert {
+    condition     = aws_launch_template.nodes["system"].block_device_mappings[0].ebs[0].volume_type == var.resolved_shapes["eks-system"].root_volume.type
+    error_message = "the launch template must take the root volume type from the pool's resolved shape"
   }
 
   assert {

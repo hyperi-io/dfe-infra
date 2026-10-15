@@ -19,8 +19,8 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 - MSK's own broker-count scaler is a CloudWatch alarm on `BytesInPerSec`
   driving a Lambda, wired from `kafka.msk.autoscaling`. The alarm reads the
   metric with the `Average` statistic, not `Sum` -- `BytesInPerSec` is
-  already a per-second rate, so summing the five one-minute samples a 300s
-  period holds would inflate the reading roughly fivefold against the
+  already a per-second rate, so summing the five one-minute samples the
+  default 300s period (`kafka.msk.autoscaling.period_seconds`) holds would inflate the reading roughly fivefold against the
   bytes-per-second threshold it is compared to. The telemetry dial
   (`telemetry.aws.sink`, default `otel`) governs the rest: broker logs land
   in an S3 bucket the fetcher reads, and only the opt-in `cloudwatch` sink

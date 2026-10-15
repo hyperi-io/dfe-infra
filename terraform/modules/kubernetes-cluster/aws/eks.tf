@@ -68,7 +68,7 @@ resource "aws_iam_role_policy_attachment" "cluster" {
 // would be pure CloudWatch cost with nothing downstream to read them.
 resource "aws_cloudwatch_log_group" "cluster" {
   name              = "/aws/eks/${var.name}/cluster"
-  retention_in_days = var.telemetry.sink == "otel" ? 1 : var.telemetry.retention_days
+  retention_in_days = var.telemetry.sink == "otel" ? var.telemetry.forced_retention_days : var.telemetry.retention_days
 }
 
 resource "aws_eks_cluster" "this" {
@@ -199,6 +199,9 @@ locals {
   // instances and volumes it launches, so a launch template is the only way they
   // carry them. Outside a run there is no template and no node group changes.
   node_launch_template = length(var.controller_tags) > 0
+
+  // EKS's own name for the arm64 Amazon Linux 2023 image, fixed by the arm64 policy the precondition below asserts per shape.
+  node_ami_type = "AL2023_ARM_64_STANDARD"
 }
 
 resource "aws_launch_template" "nodes" {
@@ -214,7 +217,7 @@ resource "aws_launch_template" "nodes" {
 
     ebs {
       volume_size           = each.value.disk_gb
-      volume_type           = "gp3"
+      volume_type           = var.resolved_shapes[each.value.shape_ref].root_volume.type
       delete_on_termination = true
     }
   }
@@ -249,10 +252,9 @@ resource "aws_eks_node_group" "this" {
   // NAT gateways.
   subnet_ids = [for s in aws_subnet.private : s.id]
 
-  // ARM everywhere in the cloud. AL2023_ARM_64_STANDARD is the EKS API's own
-  // name for the arm64 Amazon Linux 2023 image; the arch itself is asserted
-  // against the resolved shape below rather than assumed from this string.
-  ami_type = "AL2023_ARM_64_STANDARD"
+  // ARM everywhere in the cloud; the arch itself is asserted against the
+  // resolved shape below rather than assumed from the image name.
+  ami_type = local.node_ami_type
 
   instance_types = var.resolved_shapes[each.value.shape_ref].instance_types
   capacity_type  = each.value.capacity_type
@@ -299,7 +301,7 @@ resource "aws_eks_node_group" "this" {
   lifecycle {
     precondition {
       condition     = var.resolved_shapes[each.value.shape_ref].arch == "arm64"
-      error_message = "Node pool '${each.key}' resolves to ${var.resolved_shapes[each.value.shape_ref].arch}, but the AL2023_ARM_64_STANDARD image this module launches is arm64 only."
+      error_message = "Node pool '${each.key}' resolves to ${var.resolved_shapes[each.value.shape_ref].arch}, but the ${local.node_ami_type} image this module launches is arm64 only."
     }
   }
 }

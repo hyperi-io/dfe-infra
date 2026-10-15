@@ -10,7 +10,7 @@
 // that alarm belongs to a Standard cluster with its own EBS volumes.
 //
 // Hysteresis is the alarm's own OK/ALARM cycle, nothing more. datapoints_to_alarm
-// = evaluation_periods = 3 at a 300s period is the 15-minute stabilisation
+// = evaluation_periods over var.autoscaling.period_seconds is the stabilisation
 // window; the alarm will not raise SNS again until BytesInPerSec drops back
 // under threshold and climbs past it a second time, so the Lambda never needs
 // its own cooldown or re-arm logic.
@@ -41,10 +41,13 @@ locals {
 
   autoscaling_enabled = var.autoscaling.enabled
 
-  // The alarm's granularity, written once: every per-broker metric_query has to
-  // carry the same period, and a threshold sized for one window compared
-  // against a reading taken over another fires at the wrong load.
-  autoscaling_period_seconds = 300
+  // Every per-broker metric_query carries this one period: a threshold sized for one window compared against a reading taken over another fires at the wrong load.
+  autoscaling_period_seconds = var.autoscaling.period_seconds
+
+  autoscaling_alarm_periods = var.autoscaling.evaluation_periods
+
+  // The runtime the inline handler below is written for, whose bundled boto3 it imports.
+  broker_scaler_runtime = "python3.13"
 
   // MSK numbers brokers from 1 up to the node count, the same ids that appear
   // in the b-1..b-N bootstrap broker hostnames.
@@ -64,11 +67,11 @@ resource "aws_cloudwatch_metric_alarm" "broker_scale_out" {
   count = local.autoscaling_enabled ? 1 : 0
 
   alarm_name        = "${var.name}-msk-broker-scale-out"
-  alarm_description = "Cluster-wide BytesInPerSec on ${var.name} has stayed above ${local.autoscaling_threshold_bytes_per_sec} B/s for 3 of 3 five-minute periods -- add ${local.autoscaling_step} broker(s), up to ${var.autoscaling.max_brokers}."
+  alarm_description = "Cluster-wide BytesInPerSec on ${var.name} has stayed above ${local.autoscaling_threshold_bytes_per_sec} B/s for ${local.autoscaling_alarm_periods} of ${local.autoscaling_alarm_periods} ${local.autoscaling_period_seconds}s periods -- add ${local.autoscaling_step} broker(s), up to ${var.autoscaling.max_brokers}."
 
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 3
+  evaluation_periods  = local.autoscaling_alarm_periods
+  datapoints_to_alarm = local.autoscaling_alarm_periods
   threshold           = local.autoscaling_threshold_bytes_per_sec
   // A missing datapoint means the cluster is idle or CloudWatch has not
   // caught up, neither of which is a reason to scale out.
@@ -142,7 +145,7 @@ resource "aws_cloudwatch_log_group" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
 
   name              = "/aws/lambda/${var.name}-msk-broker-scaler"
-  retention_in_days = 1
+  retention_in_days = var.telemetry.forced_retention_days
 }
 
 data "aws_iam_policy_document" "broker_scaler_assume" {
@@ -197,7 +200,7 @@ resource "aws_iam_role_policy" "broker_scaler" {
   policy = data.aws_iam_policy_document.broker_scaler[0].json
 }
 
-// Stdlib + boto3 only (both ship in the python3.13 runtime), so the code
+// Stdlib + boto3 only (both ship in local.broker_scaler_runtime), so the code
 // lives inline here rather than as a file the repo has to track and package
 // separately.
 data "archive_file" "broker_scaler" {
@@ -285,7 +288,7 @@ resource "aws_lambda_function" "broker_scaler" {
   source_code_hash = data.archive_file.broker_scaler[0].output_base64sha256
 
   handler       = "handler.handler"
-  runtime       = "python3.13"
+  runtime       = local.broker_scaler_runtime
   architectures = ["arm64"]
   timeout       = 60
 

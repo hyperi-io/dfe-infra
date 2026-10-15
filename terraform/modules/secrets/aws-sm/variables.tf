@@ -78,9 +78,8 @@ variable "read_secret_arns" {
 }
 
 variable "recovery_window_days" {
-  description = "Secrets Manager's deletion delay. Defaults to the vendor's own 30 days; the caller sets this from the dial's tags.lifecycle, passing 0 explicitly for an ephemeral deployment torn down and rebuilt under the same names, where the 30-day default would make the second create fail on a name that still exists."
+  description = "Secrets Manager's deletion delay, set by the caller from the dial's tags.lifecycle: the vendor's own window for a persistent deployment, and 0 for an ephemeral one torn down and rebuilt under the same names, where a window would make the second create fail on a name that still exists."
   type        = number
-  default     = 30
 
   validation {
     condition     = var.recovery_window_days == 0 || (var.recovery_window_days >= 7 && var.recovery_window_days <= 30)

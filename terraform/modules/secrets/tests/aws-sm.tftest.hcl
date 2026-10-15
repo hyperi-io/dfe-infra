@@ -49,19 +49,9 @@ variables {
   kms_key_arn                    = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
   cluster_name                   = "dfe-contract"
   pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
-}
 
-run "default_recovery_window_is_the_persistent_answer" {
-  command = plan
-
-  module {
-    source = "./aws-sm"
-  }
-
-  assert {
-    condition     = aws_secretsmanager_secret.seed["kafka/msk"].recovery_window_in_days == 30
-    error_message = "recovery_window_days defaults to 30 -- the vendor default a persistent deployment keeps -- when the caller sets nothing; an ephemeral deployment passes 0 explicitly"
-  }
+  // No module default: the aws root always sets it from tags.lifecycle.
+  recovery_window_days = 30
 }
 
 run "the_caller_sets_the_ephemeral_window" {

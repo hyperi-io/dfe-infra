@@ -173,6 +173,11 @@ module "cluster" {
 // maps one instance to one instance.
 // ---------------------------------------------------------------------------
 
+locals {
+  // The resolved shape the forwarder launches on, read only on mode forwarder.
+  forwarder_shape = var.edge.tunnel.address.mode == "forwarder" ? var.resolved_shapes[var.edge.tunnel.address.shape_ref] : null
+}
+
 module "edge" {
   count = var.edge.enabled ? 1 : 0
 
@@ -201,8 +206,20 @@ module "edge" {
   kms_key_arn                    = module.cluster.kms_key_arn
 
   dns      = { public_zone = var.dns.public_zone }
-  tunnel   = var.edge.tunnel
   receiver = var.edge.receiver
+
+  // The dial's tunnel, with the forwarder's type and root volume read off its resolved shape.
+  tunnel = {
+    address = {
+      mode          = var.edge.tunnel.address.mode
+      zone          = var.edge.tunnel.address.zone
+      instance_type = local.forwarder_shape == null ? null : local.forwarder_shape.instance_types[0]
+      root_volume   = local.forwarder_shape == null ? null : local.forwarder_shape.root_volume
+    }
+    openvpn       = var.edge.tunnel.openvpn
+    source_ranges = var.edge.tunnel.source_ranges
+    node_ports    = var.edge.tunnel.node_ports
+  }
 
   extra_self_ranges           = var.edge_self_ranges
   gateway_trusted_proxy_cidrs = var.edge_trusted_proxy_cidrs
@@ -337,6 +354,7 @@ module "redpanda" {
   // Redpanda's token for aws, from the offering rather than the dial.
   cloud = module.managed_backends.kafka.vendor_cloud
 
+  tier              = var.kafka.redpanda_tier
   connectivity      = var.kafka.connectivity
   resource_group_id = var.kafka.redpanda_resource_group_id
 
@@ -475,6 +493,8 @@ locals {
   // version -- the instance's distribution publishes no kcat package, which
   // toolbox/aws/CONTRACT.md and docs/deployment/toolbox.md both record.
   managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
+  // MSK fixes its SASL/IAM listener on this port; the msk module opens it beside SCRAM's.
+  msk_iam_listener_port = 9098
   // MSK's brokers are ENIs in this VPC; Confluent Cloud and Redpanda Cloud
   // publish a vendor-hosted bootstrap the instance reaches over NAT, so their
   // egress rule has to leave the VPC or the forward hangs.
@@ -497,7 +517,7 @@ locals {
     var.kafka.provider == "msk" ? {
       kafka-iam = {
         host  = split(":", split(",", local.managed_kafka.bootstrap_iam)[0])[0]
-        port  = 9098
+        port  = local.msk_iam_listener_port
         scope = "vpc"
       }
     } : {},
@@ -558,10 +578,8 @@ locals {
     local.toolbox_clickhouse_target,
   )
 
-  // The reserved range every appliance's tunnel address is issued out of --
-  // dfe-extras' culvert default vpn.clientCIDR, which no tofu input carries.
-  // scripts/tests/test_tunnel_forwarder_facts.py holds the two in step.
-  tunnel_client_cidr = "100.64.0.0/10"
+  // The resolved shape the toolbox launches on; the module is always instantiated, so it is read either way.
+  toolbox_shape = var.resolved_shapes[var.toolbox.aws.shape_ref]
 }
 
 module "toolbox" {
@@ -578,7 +596,8 @@ module "toolbox" {
     private_subnet_ids = module.cluster.network.private_subnet_ids
   }
 
-  instance_type = var.toolbox.aws.instance_type
+  instance_type = local.toolbox_shape.instance_types[0]
+  root_volume   = local.toolbox_shape.root_volume
   ttl_minutes   = var.toolbox.ttl_minutes
   tool_versions = var.toolbox.tool_versions
 
@@ -602,7 +621,7 @@ module "toolbox" {
   tunnel = {
     address     = join("", module.edge[*].tunnel_address)
     ports       = flatten(module.edge[*].tunnel_listener_ports)
-    client_cidr = var.edge.tunnel.admin_peer.enabled ? local.tunnel_client_cidr : ""
+    client_cidr = var.edge.tunnel.admin_peer.enabled ? var.edge.tunnel.client_cidr : ""
     reach       = var.edge.tunnel.admin_peer.reach
   }
 

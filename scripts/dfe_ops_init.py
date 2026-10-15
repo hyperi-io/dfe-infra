@@ -789,7 +789,7 @@ def build_dial_text(a: Answers) -> str:
         '    ttlSeconds: ""\n'
         f'  enabled: "{_bool(a.toolbox_aws_enabled)}"\n'
         "  aws:\n"
-        "    instance_type: t4g.small\n"
+        "    shape_ref: toolbox\n"
         f'    operator_role_arn: "{a.toolbox_operator_role_arn}"\n'
         "  ttl_minutes: 60\n"
         "  session:\n"

@@ -41,18 +41,17 @@ variable "profile" {
 // ---------------------------------------------------------------------------
 
 variable "kubernetes_version" {
-  description = "EKS control-plane minor version."
+  description = "EKS control-plane minor version, pinned in tfvars (the dial's kubernetes_version) because the add-on pins in eks_addon_versions are built for one minor."
   type        = string
 }
 
 variable "eks_addon_versions" {
-  description = "The EKS add-on versions, keyed by add-on name. Null (the default) takes the cluster module's pins, which are for the Kubernetes minor versions.yaml's eks-addons name. A kubernetes_version on any other minor sets all five, and the plan refuses a kube-proxy built for another minor."
+  description = "The EKS add-on versions, keyed by add-on name. Pinned in tfvars: render_dial.py renders versions.yaml's eks-addons, because a version EKS publishes after review must not reach a deploy. A kubernetes_version on another minor overrides all five in a later-loading tfvars file, and the plan refuses a kube-proxy built for another minor."
   type        = map(string)
-  default     = null
 }
 
 variable "node_pools" {
-  description = "Managed node groups, keyed by pool name. shape_ref indexes resolved_shapes; an instance type is never written here."
+  description = "Managed node groups, keyed by pool name, written by scripts/resolve_sizing.py: the dial's own pools plus the ones it derives. shape_ref indexes resolved_shapes; an instance type is never written here."
   type = map(object({
     shape_ref     = string
     min_size      = number
@@ -70,18 +69,23 @@ variable "node_pools" {
 }
 
 variable "resolved_shapes" {
-  description = "The shape resolver's committed answer for this cloud AND region, read from shapes/resolved/aws-<region>.json and diffed on every change. One region's instance-generation availability is never another's."
+  description = "Auto-selected by the shape resolver, newest arm64 generation in the region: scripts/resolve_sizing.py reads the region's live EC2 and Pricing APIs against shapes/compute-shapes.yaml and writes this into sizing.auto.tfvars.json. Every node pool, the MSK broker, the toolbox and the tunnel forwarder take their instance type from here, and every shape with a root disk carries its root_volume type and size. One region's instance-generation availability is never another's."
   type = map(object({
     instance_types = list(string)
     arch           = string
+    root_volume = optional(object({
+      type     = string
+      size_gib = number
+    }))
   }))
 }
 
 variable "network" {
-  description = "nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans -- 2 for cost, 3 (the default) for the usual spread, up to the region's own ceiling."
+  description = "From tfvars (the dial's network block). nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans, 2-6, up to the region's own ceiling. subnet_newbits is how many bits each subnet adds to provision.cidr, which sets how many addresses each zone's subnets carry for nodes and pods."
   type = object({
-    nat      = string
-    az_count = optional(number, 3)
+    nat            = string
+    az_count       = number
+    subnet_newbits = number
   })
 
   validation {
@@ -111,15 +115,16 @@ variable "dns" {
 // ---------------------------------------------------------------------------
 
 variable "edge" {
-  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. tunnel.admin_peer is the operator's reach-back to one appliance, and only its two fields travel here because they are a security-group rule on the toolbox -- the rest of the class is a chart value. receiver.eips is the dial's edge.aws.receiver_eips: one Elastic IP per public subnet for the receiver's NLB, on by default. Every field is described in the module's own variables.tf."
+  description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. address.shape_ref names the resolved shape the forwarder takes its instance type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. tunnel.admin_peer is the operator's reach-back to one appliance, and only its two fields travel here because they are a security-group rule on the toolbox -- the rest of the class is a chart value. client_cidr is the range appliances are issued out of, the culvert chart's vpn.clientCIDR, which that reach-back egress is aimed at. receiver.eips is the dial's edge.aws.receiver_eips: one Elastic IP per public subnet for the receiver's NLB, on by default. Every field is described in the module's own variables.tf."
   type = object({
     enabled = optional(bool, true)
     tunnel = optional(object({
       address = optional(object({
-        mode          = optional(string, "byo")
-        instance_type = optional(string, "t4g.small")
-        zone          = optional(string, "")
+        mode      = optional(string, "byo")
+        shape_ref = optional(string)
+        zone      = optional(string, "")
       }), {})
+      client_cidr   = optional(string)
       openvpn       = optional(bool, true)
       source_ranges = optional(list(string), [])
       node_ports = optional(object({
@@ -137,6 +142,18 @@ variable "edge" {
   })
 
   default = {}
+
+  // The forwarder's type and root volume come off a resolved shape, so mode forwarder needs one the resolver wrote.
+  validation {
+    condition     = var.edge.tunnel.address.mode != "forwarder" || try(var.resolved_shapes[var.edge.tunnel.address.shape_ref].root_volume != null, false)
+    error_message = "edge.tunnel.address.mode is forwarder, so edge.tunnel.address.shape_ref must name a shape with a root volume in resolved_shapes -- render_dial.py sends the toolbox shape unless the dial names another, and scripts/resolve_sizing.py resolves it."
+  }
+
+  // The toolbox's reach-back egress is aimed at the range appliances are issued out of.
+  validation {
+    condition     = !var.edge.tunnel.admin_peer.enabled || can(cidrnetmask(var.edge.tunnel.client_cidr))
+    error_message = "edge.tunnel.admin_peer is enabled, so edge.tunnel.client_cidr must be the tunnel's client range as a CIDR -- render_dial.py sends the culvert chart's own vpn.clientCIDR unless the dial names another."
+  }
 }
 
 variable "edge_self_ranges" {
@@ -153,27 +170,24 @@ variable "edge_trusted_proxy_cidrs" {
 
 variable "telemetry" {
   description = <<-DESCRIPTION
-    DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --
-    sink = otel (the default) is that policy. Where a managed AWS service
-    forces a CloudWatch-shaped touchpoint anyway (MSK's broker logs, EKS's
-    control-plane audit log), it is kept minimal and short-retention rather
-    than removed, because there is nowhere else for AWS to put it.
-    sink = cloudwatch is the OPT-IN AWS-native path for a compliance need
-    CloudWatch itself satisfies, and keeps every touchpoint at retention_days
-    instead. Passed unchanged to the cluster module (the EKS audit log) and to
-    the msk module (the broker logs) -- confluent-cloud and redpanda-cloud take
-    no telemetry input, since neither emits a CloudWatch-shaped broker log.
+    From tfvars (the dial's telemetry block). DFE's monitoring goes to its own
+    OTel feed and HyperDX, never CloudWatch -- sink = otel is that policy.
+    Where a managed AWS service forces a CloudWatch log group anyway (EKS's
+    control-plane audit log, the MSK broker scaler's Lambda log), it is kept
+    at forced_retention_days rather than removed, because there is nowhere
+    else for AWS to put it. sink = cloudwatch is the OPT-IN AWS-native path
+    for a compliance need CloudWatch itself satisfies, and keeps every
+    touchpoint at retention_days instead. Passed unchanged to the cluster
+    module (the EKS audit log) and to the msk module (the broker logs) --
+    confluent-cloud and redpanda-cloud take no telemetry input, since neither
+    emits a CloudWatch-shaped broker log.
   DESCRIPTION
 
   type = object({
-    sink           = string
-    retention_days = number
+    sink                  = string
+    retention_days        = number
+    forced_retention_days = number
   })
-
-  default = {
-    sink           = "otel"
-    retention_days = 2
-  }
 
   validation {
     condition     = contains(["otel", "cloudwatch"], var.telemetry.sink)
@@ -196,7 +210,7 @@ variable "storage_class" {
 // ---------------------------------------------------------------------------
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region and an optional standing environment, and redpanda-cloud an optional standing resource group. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region and an optional standing environment, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
   type = object({
     provider = string
     msk = optional(object({
@@ -211,16 +225,18 @@ variable "kafka" {
         namespace       = string
         service_account = string
       })
-      // Every attribute here is optional with a module-level default, so a
-      // dial that names no autoscaling block still gets one -- the msk module
-      // itself demands the object, but nothing demands the dial mention it.
-      autoscaling = optional(object({
+      // render_dial.py always sends the ceiling, the per-broker capacity, the
+      // headroom and the alarm window, from the dial or its own documented
+      // values; step left null takes the zone count in the module.
+      autoscaling = object({
         enabled                  = optional(bool, true)
-        max_brokers              = optional(number, 6)
+        max_brokers              = number
         step                     = optional(number)
-        per_broker_capacity_mb_s = optional(number, 50)
-        headroom                 = optional(number, 1.3)
-      }), {})
+        per_broker_capacity_mb_s = number
+        headroom                 = number
+        period_seconds           = number
+        evaluation_periods       = number
+      })
     }))
     // Read only when provider is confluent-cloud or redpanda-cloud -- msk's
     // equivalents live inside msk above, and its landing topics are its own
@@ -236,12 +252,13 @@ variable "kafka" {
     // Read only for the two SaaS bodies. Private connectivity has the topics and
     // ACLs written from inside the VPC, so a run from outside it asks for public.
     connectivity = optional(string, "private")
-    // Read only when provider is confluent-cloud. An empty environment id has the
-    // body create one of its own.
-    confluent_tier           = optional(string, "freight")
+    // Read only when provider is confluent-cloud, which render_dial.py always
+    // sends a tier for. An empty environment id has the body create one of its own.
+    confluent_tier           = optional(string)
     confluent_environment_id = optional(string, "")
-    // Read only when provider is redpanda-cloud. An empty id has the body create
-    // a resource group of its own.
+    // Read only when provider is redpanda-cloud, which render_dial.py always
+    // sends a tier for. An empty id has the body create a resource group of its own.
+    redpanda_tier              = optional(string)
     redpanda_resource_group_id = optional(string, "")
   })
 
@@ -271,14 +288,24 @@ variable "kafka" {
   }
 
   validation {
+    condition     = var.kafka.provider != "confluent-cloud" || var.kafka.confluent_tier != null
+    error_message = "kafka.provider is confluent-cloud, so kafka.confluent_tier must name the cluster type -- render_dial.py sends freight unless the dial names another."
+  }
+
+  validation {
+    condition     = var.kafka.provider != "redpanda-cloud" || var.kafka.redpanda_tier != null
+    error_message = "kafka.provider is redpanda-cloud, so kafka.redpanda_tier must name the product -- render_dial.py sends serverless unless the dial names another."
+  }
+
+  validation {
     // Confluent caps a topic's max.message.bytes at 8388608 on Basic and Standard,
     // and refuses a larger topic at apply, after the cluster has been created.
     condition = !(
       var.kafka.provider == "confluent-cloud"
-      && contains(["basic", "standard"], var.kafka.confluent_tier)
+      && contains(["basic", "standard"], var.kafka.confluent_tier == null ? "" : var.kafka.confluent_tier)
       && coalesce(var.kafka.message_max_bytes, 0) > 8388608
     )
-    error_message = "kafka.message_max_bytes is ${coalesce(var.kafka.message_max_bytes, 0)}, above the 8388608 a Confluent ${var.kafka.confluent_tier} cluster accepts for a topic. Lower the dial's kafka.msk.message_max_bytes to 8388608 or less, or set kafka.confluent_tier to freight or enterprise, which carry 20971520."
+    error_message = "kafka.message_max_bytes is ${coalesce(var.kafka.message_max_bytes, 0)}, above the 8388608 a Confluent ${var.kafka.confluent_tier == null ? "" : var.kafka.confluent_tier} cluster accepts for a topic. Lower the dial's kafka.msk.message_max_bytes to 8388608 or less, or set kafka.confluent_tier to freight or enterprise, which carry 20971520."
   }
 }
 
@@ -287,11 +314,11 @@ variable "kafka" {
 // ---------------------------------------------------------------------------
 
 variable "toolbox" {
-  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop); the session-log bucket is not gated by it (CONTRACT.md). aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
+  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop); the session-log bucket is not gated by it (CONTRACT.md). aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
   type = object({
     enabled = bool
     aws = object({
-      instance_type     = string
+      shape_ref         = string
       operator_role_arn = optional(string, "")
     })
     ttl_minutes = number
@@ -299,13 +326,19 @@ variable "toolbox" {
       idle_timeout_minutes = number
       max_duration_minutes = number
     })
-    session_log_retention_days = optional(number, 90)
+    session_log_retention_days = number
     tool_versions              = optional(map(string), {})
   })
 
   validation {
     condition     = !var.toolbox.enabled || var.toolbox.aws.operator_role_arn != ""
     error_message = "toolbox.enabled is true, so toolbox.aws.operator_role_arn must name the IAM role the EKS read-only access entry binds to."
+  }
+
+  // The module is always instantiated, so its type and root volume are read whether or not it is enabled.
+  validation {
+    condition     = contains(keys(var.resolved_shapes), var.toolbox.aws.shape_ref) && try(var.resolved_shapes[var.toolbox.aws.shape_ref].root_volume != null, false)
+    error_message = "toolbox.aws.shape_ref must name a shape with a root volume in resolved_shapes -- re-run scripts/resolve_sizing.py, which resolves the toolbox shape on every populated cloud."
   }
 }
 

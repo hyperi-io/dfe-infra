@@ -128,25 +128,41 @@ variables {
     eks-system = {
       instance_types = ["m7g.large"]
       arch           = "arm64"
+      root_volume    = { type = "gp3", size_gib = 40 }
+    }
+    toolbox = {
+      instance_types = ["t4g.small"]
+      arch           = "arm64"
+      root_volume    = { type = "gp3", size_gib = 20 }
     }
   }
 
-  network  = { nat = "single" }
-  endpoint = { public = false, allowed_cidrs = [] }
-  dns      = { private_zone = "dfe-example.internal", public_zone = "" }
+  eks_addon_versions = {
+    "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
+    "coredns"                = "v1.14.7-eksbuild.11"
+    "eks-pod-identity-agent" = "v1.4.0-eksbuild.3"
+    "kube-proxy"             = "v1.36.0-eksbuild.45"
+    "vpc-cni"                = "v1.23.2-eksbuild.1"
+  }
+
+  network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
+  endpoint  = { public = false, allowed_cidrs = [] }
+  dns       = { private_zone = "dfe-example.internal", public_zone = "" }
+  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
 
   storage_class = "gp3"
 
-  edge       = { enabled = false }
+  edge       = { enabled = false, tunnel = { client_cidr = "100.64.0.0/10" } }
   cloudtrail = { enabled = false }
 
   kafka = { provider = "strimzi" }
 
   toolbox = {
-    enabled     = false
-    aws         = { instance_type = "t4g.small" }
-    ttl_minutes = 60
-    session     = { idle_timeout_minutes = 15, max_duration_minutes = 240 }
+    enabled                    = false
+    aws                        = { shape_ref = "toolbox" }
+    ttl_minutes                = 60
+    session                    = { idle_timeout_minutes = 15, max_duration_minutes = 240 }
+    session_log_retention_days = 90
   }
 
   secrets = { backend = "aws-sm", ref = "" }

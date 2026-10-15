@@ -151,6 +151,7 @@ def test_redpanda_cloud_is_public_serverless_in_the_standing_group(tmp_path: Pat
         "message_max_bytes": 16777216,
         "landing_topics": {"main_land": {}},
         "connectivity": "public",
+        "redpanda_tier": "serverless",
         "redpanda_resource_group_id": "00000000-0000-4000-8000-000000000000",
     }
     assert variables["seeds"]["kafka/redpanda-cloud"] == {"password": ""}

@@ -26,13 +26,13 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `name` | `string` | Name prefix for every resource the body creates. |
 | `env` | `string` | Deployment environment, for names a body has to disambiguate. |
 | `kubernetes_version` | `string` | Control-plane minor version, e.g. `1.36`. |
-| `addon_versions` | `map(string)`, defaults to versions.yaml's `eks-addons` | AWS-only today. The managed add-on versions, keyed by add-on name, one for every add-on the body installs. Each is built for one Kubernetes minor, and the default is the set for the minor `eks-addons` names. A cluster on another minor sets every entry, and the plan refuses a kube-proxy built for any minor but `kubernetes_version`. Null takes the default. |
+| `addon_versions` | `map(string)` | AWS-only today. The managed add-on versions, keyed by add-on name, one for every add-on the body installs: pinned in tfvars, rendered from versions.yaml's `eks-addons`. Each is built for one Kubernetes minor, so a cluster on another minor sets every entry, and the plan refuses a kube-proxy built for any minor but `kubernetes_version`. |
 | `node_pools` | `map(object(...))` | Keyed by pool name. Each pool: `shape_ref`, `min_size`, `max_size`, `desired_size`, `capacity_type`, `disk_gb`, `labels`, `taints`. |
-| `resolved_shapes` | `map(object({ instance_types, arch }))` | Keyed by `shape_ref`. The resolver's answer, never an instance type written by hand. `instance_types` is ordered best-first so the cloud can fall back when the first is unavailable. |
-| `network` | `object({ nat, az_count })` | `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans -- 3 by default, 2-6, from the dial's `network.az_count`. |
+| `resolved_shapes` | `map(object({ instance_types, arch, root_volume }))` | Keyed by `shape_ref`. Auto-selected by the shape resolver, newest arm64 generation in the region, never an instance type written by hand. `instance_types` is ordered best-first so the cloud can fall back when the first is unavailable; `root_volume` is the shape's root disk `type` and `size_gib`, and every node pool's shape carries one. |
+| `network` | `object({ nat, az_count, subnet_newbits })` | From tfvars. `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans, 2-6. `subnet_newbits` is how many bits each subnet adds to `provision.cidr`, which sets the addresses each zone's nodes and pods draw from. |
 | `endpoint` | `object({ public, allowed_cidrs })` | The private API endpoint is always on. `public` adds the public one, restricted to `allowed_cidrs`. |
 | `dns` | `object({ private_zone })` | The private zone always exists. No public zone here -- it and the identities that write it are the edge module's. |
-| `telemetry` | `object({ sink, retention_days })` | Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` (the default) pins its retention to a 1-day floor since it is an unavoidable exception, not a chosen destination; `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
+| `telemetry` | `object({ sink, retention_days, forced_retention_days })` | From tfvars. Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` keeps it at `forced_retention_days` since it is an unavoidable exception, not a chosen destination; `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
 | `tags` | `map(string)` | The six required governance tags plus `iac-source`. The body VALIDATES them; the root APPLIES them through the provider's default-tag mechanism, so a body never tags a resource with this map itself. |
 | `key_policy_grants` | `list(object({ sid, principals, actions, conditions }))`, default `[]` | AWS-only today. Extra KMS key policy statements for a service principal (`cloudtrail.amazonaws.com`, `delivery.logs.amazonaws.com`), which cannot be granted through an IAM role policy. This body is the key's ONE policy owner (`aws_kms_key_policy` replaces the whole policy), so a sibling module hands its statement in here rather than writing a second `aws_kms_key_policy` against the same key, which would silently replace this one's. The root computes the list. |
 
@@ -80,8 +80,10 @@ map(object({
   in private subnets. Public subnets carry load balancers and egress only.
 - **No provider block.** A body declares `required_providers` and nothing else;
   the root configures the provider.
-- **Nothing hardcoded.** The only literals allowed are ones the cloud's own API
-  defines: managed policy names, add-on names, the machine-image family,
-  Kubernetes label keys and service principals. Each carries a one-line comment
-  saying why it is structural. A version pin is the one exception, and only as
-  a variable default `scripts/check_versions_drift.py` holds to `versions.yaml`.
+- **Nothing hardcoded.** An instance type, a size, a volume type, a count, a
+  retention, a CIDR or a version arrives as an input with no default: an instance
+  type and a root volume from the shape resolver, everything else from tfvars.
+  The only literals allowed are ones the cloud's own API defines: managed policy
+  names, add-on names, the machine-image family, Kubernetes label keys and
+  service principals. Each carries a one-line comment saying why it is
+  structural. The rule is stated once in `terraform/README.md`.

@@ -76,7 +76,7 @@ Fill in, at minimum:
 | `kafka.msk.broker_version` | Defaulted nowhere. `aws kafka list-kafka-versions --region <region>` prints the ACTIVE ones -- take the newest, in MSK's `N.N.x.kraft` spelling. |
 | `kafka.landing_topics` | Required -- at least one topic -- when `kafka.provider` is `confluent-cloud` or `redpanda-cloud`. Neither runs a bootstrap Job of its own, so this root creates the topics tofu can reach; an empty map ships a cluster dfe-loader crash-loops against on a missing `*_land` topic. Ignored for `msk`, whose in-cluster Job creates the same topics from the chart's own values. |
 | `secrets.ref` | Optional. Empty puts the deployment's secrets at `<project>/<env>`, which is what a store holding one deployment wants. |
-| `eks_addon_versions` | Optional. Unset installs the pinned EKS add-ons, built for the minor `versions.yaml` `eks-addons` names. On another `kubernetes_version`, set all five from `aws eks describe-addon-versions --kubernetes-version <minor>`. |
+| `eks_addon_versions` | Pinned in tfvars: `render_dial.py` writes the current stack's `eks-addons` from `versions.yaml`, built for the minor it names. On another `kubernetes_version`, set all five from `aws eks describe-addon-versions --kubernetes-version <minor>`. |
 
 Then:
 
@@ -133,8 +133,10 @@ alone, with no cluster contact.
 
 ## Nodes are arm64
 
-Cloud node pools run Graviton. `resolved_shapes` carries the instance types and
-the plan refuses a shape whose `arch` is not `arm64`, because the machine image
+Cloud node pools run Graviton. `scripts/resolve_sizing.py` writes
+`resolved_shapes` into `sizing.auto.tfvars.json`: the instance types and root
+volume of every node pool, the toolbox and the tunnel forwarder. The plan
+refuses a shape whose `arch` is not `arm64`, because the machine image
 this root launches is arm64-only. Every image in the stack ships a multi-arch
 manifest, so nothing else changes.
 

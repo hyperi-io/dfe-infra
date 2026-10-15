@@ -43,8 +43,10 @@ never SSH.
 `terraform/modules/toolbox/aws` is the module; `dfe-ops bastion` is the
 operator surface; `CONTRACT.md` there holds the exhaustive detail.
 
-`t4g.small` (Graviton) by default, AL2023, private subnet, no public IP, no
-inbound security-group rule at all. User-data installs the same tool list the
+The shape resolver's `toolbox` shape (the newest Graviton generation in the
+region), AL2023, private subnet, no public IP, no inbound security-group rule at
+all. A different type goes in `sizing.overrides.toolbox.instance_type`, never in
+the dial. User-data installs the same tool list the
 image carries, at the same pins. The instance is created on `bastion up` and
 TERMINATED (never stopped) on `bastion down`; a systemd timer on the instance
 counts active SSM sessions and self-terminates after `toolbox.ttl_minutes`
@@ -54,7 +56,7 @@ counts active SSM sessions and self-terminates after `toolbox.ttl_minutes`
 toolbox:
   enabled: "false"          # dfe-ops bastion up/down flips this
   aws:
-    instance_type: t4g.small
+    shape_ref: toolbox      # a resolved shape, never an instance type
     operator_role_arn: ""   # required once enabled -- read-only EKS access
   ttl_minutes: 60
 ```
@@ -116,8 +118,8 @@ is the operator's own role, authenticated at the laptop end of the tunnel.
 cluster-admin. Starting a session at all is IAM you provide, not IAM this
 module creates -- `CONTRACT.md` gives the exact policy JSON needed.
 
-XS on the scale in [aws.md](aws.md#how-costs-are-described): one `t4g.small`
-billed hourly plus its root volume, on the cluster VPC's existing NAT for its
+XS on the scale in [aws.md](aws.md#how-costs-are-described): one small Graviton
+instance billed hourly plus its root volume, on the cluster VPC's existing NAT for its
 443 egress. Zero cost while
 `toolbox.enabled` is false, apart from the session-log bucket, which persists
 across an up/down cycle by design.
@@ -168,7 +170,7 @@ by hand.
 
 A bastion shell session (`bastion shell`) is logged to the deployment's own
 session-log prefix, encrypted with the deployment's key, kept for
-`toolbox.session_log_retention_days` (default 90) -- independent of the
+`toolbox.session_log_retention_days` (90 when the dial is silent) -- independent of the
 telemetry dial's 2-7 day window, because a session log is evidence of human
 access to a customer's private data plane, not service telemetry.
 

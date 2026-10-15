@@ -97,7 +97,7 @@ _TOOLBOX_BLOCK = """
 toolbox:
   enabled: "true"
   aws:
-    instance_type: t4g.small
+    shape_ref: general
     operator_role_arn: arn:aws:iam::000000000000:role/dfe-toolbox-operator
   ttl_minutes: 45
   session:
@@ -143,8 +143,7 @@ def render(text: str = BASE_DIAL) -> dict[str, object]:
 def test_toolbox_defaults_to_disabled_with_no_toolbox_block() -> None:
     toolbox = render()["toolbox"]
     assert toolbox["enabled"] is False
-    assert toolbox["aws"]["instance_type"] == "t4g.small"
-    assert toolbox["aws"]["operator_role_arn"] == ""
+    assert toolbox["aws"] == {"shape_ref": render_dial.TOOLBOX_SHAPE, "operator_role_arn": ""}
     assert toolbox["ttl_minutes"] == 60
     assert toolbox["session"] == {"idle_timeout_minutes": 15, "max_duration_minutes": 240}
     assert toolbox["session_log_retention_days"] == 90
@@ -153,11 +152,18 @@ def test_toolbox_defaults_to_disabled_with_no_toolbox_block() -> None:
 def test_toolbox_block_values_thread_through() -> None:
     toolbox = render(BASE_DIAL + _TOOLBOX_BLOCK)["toolbox"]
     assert toolbox["enabled"] is True
-    assert toolbox["aws"]["instance_type"] == "t4g.small"
+    assert toolbox["aws"]["shape_ref"] == "general"
     assert toolbox["aws"]["operator_role_arn"] == "arn:aws:iam::000000000000:role/dfe-toolbox-operator"
     assert toolbox["ttl_minutes"] == 45
     assert toolbox["session"] == {"idle_timeout_minutes": 10, "max_duration_minutes": 120}
     assert toolbox["session_log_retention_days"] == 30
+
+
+def test_expected_fail_a_toolbox_instance_type_in_the_dial_is_refused() -> None:
+    """The type comes off the resolved shape, so a literal one is refused with the override that pins it."""
+    pinned = BASE_DIAL + _TOOLBOX_BLOCK.replace("shape_ref: general", "instance_type: t4g.small")
+    with pytest.raises(render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"):
+        render(pinned)
 
 
 def test_tool_versions_is_never_read_from_the_dial() -> None:

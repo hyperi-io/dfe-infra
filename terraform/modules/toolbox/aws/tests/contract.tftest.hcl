@@ -57,6 +57,7 @@ variables {
   }
 
   instance_type = "t4g.small"
+  root_volume   = { type = "gp3", size_gib = 20 }
   ttl_minutes   = 60
 
   tool_versions = {
@@ -186,6 +187,11 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
   assert {
     condition     = aws_instance.this[0].root_block_device[0].encrypted == true && aws_instance.this[0].root_block_device[0].kms_key_id == var.kms_key_arn
     error_message = "the root volume must be encrypted with the deployment CMK"
+  }
+
+  assert {
+    condition     = aws_instance.this[0].root_block_device[0].volume_type == var.root_volume.type && aws_instance.this[0].root_block_device[0].volume_size == var.root_volume.size_gib
+    error_message = "the root volume's type and size must be the ones the resolved shape hands in"
   }
 
   assert {

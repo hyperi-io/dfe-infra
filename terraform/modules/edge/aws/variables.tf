@@ -67,11 +67,13 @@ variable "tunnel" {
     on a small instance that DNATs to the cluster's nodes. The tier-2 opt-in is
     one instance and one static address, both billed hourly.
 
-    address.instance_type is sized by BANDWIDTH: the forwarder moves every
-    tunnel byte and does nothing else, and within a burstable family the
-    baseline network bandwidth rises with the size. The default is the shape
-    shapes/compute-shapes.yaml already names for a small always-on AWS box (use
-    case `toolbox`: family t, arch arm64, generation newest, size small).
+    address.instance_type and address.root_volume are auto-selected by the
+    shape resolver, newest arm64 generation in the region: the root reads them
+    from the resolved shape the dial's edge.ingest.tunnel.address.shape_ref
+    names, the `toolbox` use case by default. Both are read on mode forwarder
+    alone. The forwarder is sized by BANDWIDTH, since it moves every tunnel
+    byte and does nothing else, and within a burstable family the baseline
+    network bandwidth rises with the size.
 
     address.zone pins the instance to one availability zone, because a hop to a
     node in another zone crosses a boundary billed per GB. Empty takes the
@@ -93,8 +95,12 @@ variable "tunnel" {
   type = object({
     address = optional(object({
       mode          = optional(string, "byo")
-      instance_type = optional(string, "t4g.small")
-      zone          = optional(string, "")
+      instance_type = optional(string)
+      root_volume = optional(object({
+        type     = string
+        size_gib = number
+      }))
+      zone = optional(string, "")
     }), {})
     openvpn       = optional(bool, true)
     source_ranges = optional(list(string), [])
@@ -112,8 +118,13 @@ variable "tunnel" {
   }
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.tunnel.address.instance_type))
-    error_message = "tunnel.address.instance_type must name a Graviton (arm64) family -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${var.tunnel.address.instance_type}."
+    condition     = var.tunnel.address.mode != "forwarder" || can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.tunnel.address.instance_type))
+    error_message = "tunnel.address.instance_type must name a Graviton (arm64) family on mode forwarder -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${coalesce(var.tunnel.address.instance_type, "nothing")}."
+  }
+
+  validation {
+    condition     = var.tunnel.address.mode != "forwarder" || var.tunnel.address.root_volume != null
+    error_message = "tunnel.address.root_volume must carry the forwarder's root disk type and size on mode forwarder -- the root reads both from the resolved shape."
   }
 
   validation {

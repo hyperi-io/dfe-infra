@@ -273,8 +273,8 @@ resource "aws_instance" "forwarder" {
   }
 
   root_block_device {
-    volume_type           = "gp3"
-    volume_size           = 20
+    volume_type           = var.tunnel.address.root_volume.type
+    volume_size           = var.tunnel.address.root_volume.size_gib
     encrypted             = true
     kms_key_id            = var.kms_key_arn
     delete_on_termination = true
