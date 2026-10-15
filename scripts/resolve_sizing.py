@@ -1726,6 +1726,32 @@ def select_shape(
     )
 
 
+# An Express broker type as the Pricing API's computeFamily spells it, express.m7g.large. The
+# `g` closing the processor is Graviton, so a name without it is not arm64 and is not read.
+# A provisioned broker type has no `express.` prefix and never matches.
+MSK_EXPRESS_TYPE = re.compile(
+    r"^express\.(?P<family>[a-z]+)(?P<generation>\d+)g\.(?P<size>[a-z0-9-]+)$"
+)
+
+
+def _msk_ladders(family: str, catalogue: Catalogue) -> dict[int, list[tuple[int, str, float]]]:
+    """Each Express generation of `family` the Pricing API prices, as (vCPU, size, price) smallest first.
+
+    A size counts when EC2 also describes the same-named Graviton type, which is where
+    its vCPU and memory come from: express.m7g.large is the m7g.large shape.
+    """
+    ladders: dict[int, list[tuple[int, str, float]]] = {}
+    for name, price in catalogue.msk_prices.items():
+        parsed = MSK_EXPRESS_TYPE.match(name)
+        if not parsed or parsed["family"] != family:
+            continue
+        generation, size = int(parsed["generation"]), parsed["size"]
+        reference = catalogue.types.get(f"{family}{generation}g.{size}")
+        if reference is not None:
+            ladders.setdefault(generation, []).append((reference.vcpu, size, price))
+    return {generation: sorted(ladder) for generation, ladder in ladders.items()}
+
+
 def select_msk_shape(
     use_case: str,
     entry: dict[str, object],
@@ -1736,48 +1762,60 @@ def select_msk_shape(
 ) -> Choice:
     """Pick the MSK broker type, which lives in MSK's own compute-family namespace.
 
-    `express.m7g.large` is not an EC2 type: it is two generations behind the EC2
-    family of the same name, it has its own price line, and storage and memory
-    are the provider's. So the smallest size that carries the demanded vCPU is
-    chosen from the Pricing API's computeFamily list rather than from EC2.
+    `express.m7g.large` is not an EC2 type: it lags the EC2 family of the same
+    letters, it has its own price line, and storage and memory are the provider's.
+    So the smallest size that carries the demanded vCPU is chosen from the Pricing
+    API's computeFamily list rather than from EC2.
+
+    `newest` takes the newest Express generation of the family that has a size
+    carrying the demand, so a generation MSK starts selling is picked up with no
+    edit, and a new generation priced for only its small sizes does not undersize
+    a large demand. `pinned` stays on `generation_pin`.
     """
     family = str(entry.get("family", "m"))
+    policy = str(entry.get("generation_policy", "pinned"))
     pin = str(entry.get("generation_pin", "")).strip()
     floor_size = str(entry.get("size", "large"))
-    prefix = f"express.{family}{pin}g."
-    offered = {
-        name.removeprefix(prefix): price
-        for name, price in catalogue.msk_prices.items()
-        if name.startswith(prefix)
-    }
-    if not offered:
+    if policy not in ("newest", "pinned"):
         raise ResolveError(
-            f"{use_case}: the Pricing API lists no {prefix}* compute family -- MSK's broker "
+            f"{use_case}: an msk-computefamily shape takes generation_policy newest or pinned, "
+            f"not {policy}"
+        )
+    ladders = _msk_ladders(family, catalogue)
+    if policy == "newest":
+        generations = sorted(ladders, reverse=True)
+        wanted = f"express.{family}<generation>g."
+    else:
+        generations = [int(pin)] if pin.isdigit() and int(pin) in ladders else []
+        wanted = f"express.{family}{pin}g."
+    if not generations:
+        raise ResolveError(
+            f"{use_case}: the Pricing API lists no {wanted}* compute family -- MSK's broker "
             f"namespace is its own, and an unpriced broker type is not a candidate"
         )
-    # EC2 sizes the vCPU count for us: express.m7g.large is the m7g.large shape.
-    sizes = sorted(
-        (
-            (catalogue.types[f"{family}{pin}g.{size}"].vcpu, size, price)
-            for size, price in offered.items()
-            if f"{family}{pin}g.{size}" in catalogue.types
-        )
-    )
-    floor_vcpu = next(
-        (vcpu for vcpu, size, _ in sizes if size == floor_size), sizes[0][0] if sizes else 0
-    )
-    want = max(demand.vcpu, floor_vcpu)
-    fit = [(vcpu, size, price) for vcpu, size, price in sizes if vcpu >= want] or sizes[-1:]
+    chosen = generations[0]
+    fit: list[tuple[int, str, float]] = []
+    for generation in generations:
+        ladder = ladders[generation]
+        floor_vcpu = next((vcpu for vcpu, size, _ in ladder if size == floor_size), ladder[0][0])
+        want = max(demand.vcpu, floor_vcpu)
+        fit = [rung for rung in ladder if rung[0] >= want]
+        if fit:
+            chosen = generation
+            break
+    else:
+        fit = ladders[chosen][-1:]
+    prefix = f"express.{family}{chosen}g."
     vcpu, size, price = fit[0]
-    reference = catalogue.types[f"{family}{pin}g.{size}"]
+    reference = catalogue.types[f"{family}{chosen}g.{size}"]
     return Choice(
         use_case=use_case,
         instance_type=f"{prefix}{size}",
         fallbacks=[f"{prefix}{other}" for _, other, _ in fit[1:3]],
         vcpu=vcpu,
         memory_gib=reference.memory_gib,
-        generation=int(pin) if pin else 0,
-        generation_policy=str(entry.get("generation_policy", "pinned")),
+        generation=chosen,
+        generation_policy=policy,
         price_policy=str(entry.get("price_policy", "newest")),
         price_usd_hour=price,
         physical_processor=reference.physical_processor,

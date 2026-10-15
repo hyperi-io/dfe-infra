@@ -380,16 +380,16 @@ clouds:
             size_derived_iops_ceiling: ""
             size_derived_throughput_mib_s_ceiling: ""
 
-      ## MSK's namespace, not EC2's: `express.m7g.large` is two generations
-      ## behind the EC2 family of the same name, and the Pricing API's
-      ## computeFamily is where the types come from. Storage is managed and
-      ## grows on its own.
+      ## MSK's namespace, not EC2's: an Express type lags the EC2 family of the
+      ## same letters, and the Pricing API's computeFamily is where the types
+      ## come from. The newest Express generation it prices is taken. Storage is
+      ## managed and grows on its own.
       msk-broker:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: pinned
-        generation_pin: 7
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest
         price_step_max_pct: ""
         price_generations: ""
@@ -619,8 +619,8 @@ clouds:
         family: ""
         modifiers: ""
         arch: arm64
-        generation_policy: pinned
-        generation_pin: 0
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest
         price_step_max_pct: ""
         price_generations: ""
@@ -841,8 +841,8 @@ clouds:
         family: ""
         modifiers: ""
         arch: arm64
-        generation_policy: pinned
-        generation_pin: 0
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest
         price_step_max_pct: ""
         price_generations: ""
@@ -1066,8 +1066,8 @@ clouds:
         family: ""
         modifiers: ""
         arch: amd64
-        generation_policy: pinned
-        generation_pin: 0
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest
         price_step_max_pct: ""
         price_generations: ""

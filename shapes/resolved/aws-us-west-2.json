@@ -332,7 +332,7 @@
     ],
     "arch": "arm64",
     "generation": 7,
-    "generation_policy": "pinned",
+    "generation_policy": "newest",
     "price_policy": "newest",
     "physical_processor": "AWS Graviton3 Processor",
     "vcpu": 2,
