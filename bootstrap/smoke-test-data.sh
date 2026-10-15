@@ -47,6 +47,11 @@ PROFILE="${DFE_PROFILE:-}"
 # shellcheck source-path=SCRIPTDIR source=scripts/profiles.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/profiles.sh"
 
+# One dfe.hyperi.io/* annotation off the dfe-cluster Secret's metadata, never its data; empty when unreadable.
+cluster_fact() {
+    kubectl -n argocd get secret dfe-cluster -o "jsonpath={.metadata.annotations.dfe\.hyperi\.io/${1}}" 2>/dev/null
+}
+
 running_pods() {  # ns, label-selector -- at least one Running pod matches
     kubectl -n "${1}" get pods -l "${2}" --field-selector=status.phase=Running \
         -o name 2>/dev/null | grep -qc .
@@ -73,8 +78,13 @@ check "documentdb statefulset ready" \
 
 echo ""
 echo "--- Kafka ---"
+# A managed broker (kafka mode external) runs no pod in the cluster, so a pod check can never pass.
+# The mode comes from the deploy's own env, else the cluster secret, as smoke-test-integration.sh reads it.
 if ! profile_has_kafka; then
     skip "kafka broker -- not deployed on profile ${PROFILE:-unknown}"
+elif [ "${DFE_KAFKA_MODE:-$(cluster_fact kafka_mode)}" = external ]; then
+    KAFKA_PROVIDER="${DFE_KAFKA_PROVIDER:-$(cluster_fact kafka_provider)}"
+    skip "kafka brokers -- managed broker (${KAFKA_PROVIDER:-unknown}), nothing runs in the cluster"
 elif kubectl -n "${NS_KAFKA}" get kafka dfe-kafka >/dev/null 2>&1; then
     check "Kafka CR ready" \
       "kubectl -n ${NS_KAFKA} get kafka dfe-kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
