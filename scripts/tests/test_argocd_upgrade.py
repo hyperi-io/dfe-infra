@@ -32,6 +32,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from _bootstrap import function_lines
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BOOTSTRAP_DIR = REPO_ROOT / "bootstrap"
 BOOTSTRAP = BOOTSTRAP_DIR / "bootstrap.sh"
@@ -185,20 +187,12 @@ if "deploy" in args:
 """
 
 
-def _function(lines: list[str], name: str) -> list[str]:
-    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"{name}() {{"))
-    if lines[start].rstrip().endswith("}"):
-        return [lines[start]]
-    end = next(i for i in range(start, len(lines)) if lines[i] == "}")
-    return lines[start:end + 1]
-
-
 def step_script() -> str:
     """bootstrap.sh's own helpers and step [6/7], as it ships."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith(STEP_START))
     end = next(i for i in range(start, len(lines)) if lines[i].startswith(STEP_END))
-    helpers = [line for name in HELPERS for line in _function(lines, name)]
+    helpers = [line for name in HELPERS for line in function_lines(lines, name)]
     return "\n".join(["set -euo pipefail", *helpers, *lines[start:end]]) + "\n"
 
 

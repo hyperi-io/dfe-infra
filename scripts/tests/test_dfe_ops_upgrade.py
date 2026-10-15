@@ -41,6 +41,8 @@ from test_clickhouse_replica_spread import keeper_pod_labels as ch_keeper_labels
 from test_clickhouse_replica_spread import render as ch_render
 from test_clickhouse_replica_spread import server_pod_labels as ch_server_labels
 
+from _bootstrap import function_lines
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 BOOTSTRAP_DIR = REPO_ROOT / "bootstrap"
@@ -2899,12 +2901,6 @@ def test_every_bootstrap_release_matches_the_install_bootstrap_sh_runs() -> None
 SPLICE = '${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"}'
 
 
-def _function(lines: list[str], name: str) -> list[str]:
-    start = next(i for i, ln in enumerate(lines) if ln.startswith(f"{name}() {{"))
-    end = next(i for i in range(start, len(lines)) if lines[i] == "}")
-    return lines[start:end + 1]
-
-
 def _install(release: u.helm_releases.HelmRelease) -> tuple[str, str]:
     """(the dfe_release_values call bootstrap.sh makes for `release`, the helm install it feeds)."""
     script = BOOTSTRAP_SH.read_text(encoding="utf-8")
@@ -2920,7 +2916,7 @@ def _bootstrap_values(release: u.helm_releases.HelmRelease) -> list[str]:
     lines = BOOTSTRAP_SH.read_text(encoding="utf-8").splitlines()
     call, _install_text = _install(release)
     script = "\n".join([
-        "set -euo pipefail", *_function(lines, "dfe_release_values"), call, f'printf "%s\\n" {SPLICE}',
+        "set -euo pipefail", *function_lines(lines, "dfe_release_values"), call, f'printf "%s\\n" {SPLICE}',
     ])
     env = {**os.environ, "SCRIPT_DIR": str(BOOTSTRAP_DIR), "DFE_DOMAIN": DOMAIN, "VALKEY_SVC": "valkey"}
     out = subprocess.run(
