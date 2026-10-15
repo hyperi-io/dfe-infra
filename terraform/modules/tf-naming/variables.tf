@@ -56,7 +56,6 @@ variable "cloud" {
 }
 
 variable "region" {
-  description = "Cloud region identifier (e.g. 'us-east-1', 'europe-west1'). Use 'local' for on-prem Rancher deployments."
+  description = "Cloud region identifier (e.g. 'us-east-1', 'europe-west1'), from the caller: a cloud root passes its provision.region from tfvars, and the on-prem root passes 'local'."
   type        = string
-  default     = "local"
 }

@@ -18,7 +18,8 @@ locals {
   project = "dfe"
   env     = "local"
   cloud   = "local"
-  region  = "local"
+  // On-prem has no cloud region, so the region tag carries the cloud token.
+  region = "local"
 }
 
 module "naming" {
@@ -46,6 +47,7 @@ module "iam" {
   project                    = local.project
   env                        = local.env
   cloud                      = local.cloud
+  region                     = local.region
   vault_approle_backend_path = "approle"
   kv_mount_path              = module.secrets.kv_mount_path
 
