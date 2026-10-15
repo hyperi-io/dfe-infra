@@ -47,10 +47,9 @@ PROFILE="${DFE_PROFILE:-}"
 # shellcheck source-path=SCRIPTDIR source=scripts/profiles.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/profiles.sh"
 
-# One dfe.hyperi.io/* annotation off the dfe-cluster Secret's metadata, never its data; empty when unreadable.
-cluster_fact() {
-    kubectl -n argocd get secret dfe-cluster -o "jsonpath={.metadata.annotations.dfe\.hyperi\.io/${1}}" 2>/dev/null
-}
+# cluster_fact() -- one annotation off the dfe-cluster Secret, shared with the other bootstrap scripts.
+# shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/cluster-facts.sh"
 
 running_pods() {  # ns, label-selector -- at least one Running pod matches
     kubectl -n "${1}" get pods -l "${2}" --field-selector=status.phase=Running \
@@ -90,7 +89,10 @@ elif kubectl -n "${NS_KAFKA}" get kafka dfe-kafka >/dev/null 2>&1; then
       "kubectl -n ${NS_KAFKA} get kafka dfe-kafka -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
     check "Kafka brokers running" "running_pods ${NS_KAFKA} strimzi.io/name=dfe-kafka-kafka"
 else
-    check "Kafka brokers running" "running_pods ${NS_KAFKA} app.kubernetes.io/name=dfe-kafka"
+    # No Strimzi CR, so a broker is the Redpanda operator's (cluster.redpanda.com/broker) or the single-tier
+    # StatefulSet's (the name label alone, which Cruise Control's UI shares, hence the component exclusion).
+    check "Kafka brokers running" \
+      "running_pods ${NS_KAFKA} cluster.redpanda.com/broker=true || running_pods ${NS_KAFKA} 'app.kubernetes.io/name=dfe-kafka,!app.kubernetes.io/component'"
 fi
 
 echo ""

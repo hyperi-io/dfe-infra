@@ -8,9 +8,17 @@
 #   annotation-<key>          the dfe-cluster annotation dfe.hyperi.io/<key>
 #   cluster-secret-unreadable the dfe-cluster read fails, as on a missing Secret
 #   kafka-cr                  the Strimzi Kafka CR dfe-kafka exists in ns/strimzi
-#   running-pods              the label selectors that match a Running pod in ns/strimzi,
-#                             one a line
+#   pods                      the Running pods in ns/strimzi, one a line: <name> <k=v,k=v labels>.
+#                             A -l selector of k=v and !k terms is matched against them for real.
 # kubectl.log records every call, so a test can see which ones were never made.
+# The pod labels below are what helm template renders: the kafka chart's single-tier
+# StatefulSet, and the redpanda chart 26.2.4 the Redpanda operator 26.2.4 reconciles
+# from the Redpanda CR (release dfe-kafka). Cruise Control's UI shares the single
+# tier's name label, which is why a bare name match is not a broker.
+STRIMZI_BROKER='strimzi.io/cluster=dfe-kafka,strimzi.io/name=dfe-kafka-kafka,strimzi.io/broker-role=true'
+REDPANDA_BROKER='app.kubernetes.io/name=redpanda,app.kubernetes.io/instance=dfe-kafka,app.kubernetes.io/component=redpanda-statefulset,cluster.redpanda.com/broker=true'
+SINGLE_BROKER='app.kubernetes.io/name=dfe-kafka,app.kubernetes.io/instance=kafka'
+CRUISE_CONTROL_UI='app.kubernetes.io/name=dfe-kafka,app.kubernetes.io/component=cruise-control-ui'
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
@@ -18,13 +26,27 @@ setup() {
     STUB_DIR="${BATS_TEST_TMPDIR}/stub"
     mkdir -p "${STUB_DIR}/bin"
     : > "${STUB_DIR}/kubectl.log"
-    : > "${STUB_DIR}/running-pods"
+    : > "${STUB_DIR}/pods"
 
     cat > "${STUB_DIR}/bin/kubectl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_DIR}/kubectl.log"
 args=("$@")
 last="${args[${#args[@]} - 1]}"
+
+# Whether a pod's labels (k=v,k=v) satisfy a selector of k=v and !k terms.
+pod_matches() {
+    local labels=",${1}," term
+    local IFS=,
+    for term in ${2}; do
+        case "${term}" in
+            !*) [[ "${labels}" != *",${term#!}="* ]] || return 1 ;;
+            *=*) [[ "${labels}" == *",${term},"* ]] || return 1 ;;
+            *) return 1 ;;
+        esac
+    done
+}
+
 case "$*" in
     "-n argocd get secret dfe-cluster -o jsonpath="*)
         [[ -f "${STUB_DIR}/cluster-secret-unreadable" ]] && exit 1
@@ -34,7 +56,9 @@ case "$*" in
     "-n strimzi get kafka dfe-kafka -o jsonpath="*) echo True; exit 0 ;;
     "-n strimzi get kafka dfe-kafka") [[ -f "${STUB_DIR}/kafka-cr" ]]; exit $? ;;
     "-n strimzi get pods -l "*)
-        if grep -qxF -- "${args[5]}" "${STUB_DIR}/running-pods"; then echo pod/dfe-kafka-0; fi
+        while read -r name labels; do
+            if [[ -n "${name}" ]] && pod_matches "${labels}" "${args[5]}"; then echo "pod/${name}"; fi
+        done < "${STUB_DIR}/pods"
         exit 0 ;;
     "-n clickhouse get pods "*) echo pod/dfe-clickhouse-0; exit 0 ;;
     *"jsonpath="*) echo 1; exit 0 ;;
@@ -55,6 +79,11 @@ cluster_secret() {
     case "${1}" in
         msk | confluent-cloud | redpanda-cloud) printf external > "${STUB_DIR}/annotation-kafka_mode" ;;
     esac
+}
+
+# A Running pod ${1} in ns/strimzi carrying the labels ${2}.
+add_pod() {
+    printf '%s %s\n' "${1}" "${2}" >> "${STUB_DIR}/pods"
 }
 
 @test "a managed broker skips the in-cluster broker checks, naming its provider" {
@@ -95,7 +124,7 @@ cluster_secret() {
 @test "a Strimzi broker is still checked: CR ready and brokers running" {
     cluster_secret strimzi
     touch "${STUB_DIR}/kafka-cr"
-    echo strimzi.io/name=dfe-kafka-kafka > "${STUB_DIR}/running-pods"
+    add_pod dfe-kafka-dfe-kafka-pool-0 "${STRIMZI_BROKER}"
     run bash "${SMOKE}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"[PASS] Kafka CR ready"* ]]
@@ -112,9 +141,9 @@ cluster_secret() {
     [[ "${output}" != *"[SKIP] kafka brokers"* ]]
 }
 
-@test "an in-cluster Redpanda broker is still checked" {
+@test "an in-cluster Redpanda broker is found by the operator's broker label" {
     cluster_secret redpanda
-    echo app.kubernetes.io/name=dfe-kafka > "${STUB_DIR}/running-pods"
+    add_pod dfe-kafka-0 "${REDPANDA_BROKER}"
     run bash "${SMOKE}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"[PASS] Kafka brokers running"* ]]
@@ -127,6 +156,21 @@ cluster_secret() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"[FAIL] Kafka brokers running"* ]]
     [[ "${output}" != *"[SKIP] kafka brokers"* ]]
+}
+
+@test "a single-tier broker is found by its name label" {
+    export DFE_PROFILE=single
+    add_pod dfe-kafka-0 "${SINGLE_BROKER}"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[PASS] Kafka brokers running"* ]]
+}
+
+@test "expected failure: a pod that only shares the single tier's name label is not a broker" {
+    add_pod dfe-kafka-cruise-control-ui-c564c4844-kbg6h "${CRUISE_CONTROL_UI}"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] Kafka brokers running"* ]]
 }
 
 @test "expected failure: an unreadable cluster secret leaves the in-cluster check in force" {
