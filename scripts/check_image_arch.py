@@ -56,6 +56,11 @@ DFE images.
 
 Network-dependent by design, so it is NOT part of the offline drift check.
 
+A read a registry rate limits (429) or fails with a 5xx is retried with jittered
+backoff by registry_pins.run_with_retry, at most five attempts a read and
+RETRY_BUDGET_SECONDS of backoff across the run. A registry that still refuses then
+fails that read with a message naming the registry and the rate limit.
+
 Usage:
     python3 scripts/check_image_arch.py [--stack VER] [--require linux/amd64,linux/arm64]
                                         [--resolve-charts] [--third-party-only]
@@ -66,15 +71,19 @@ Requires `docker` with the buildx plugin on PATH.
 import argparse
 import importlib.machinery
 import importlib.util
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registry_pins
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Backoff the whole run may spend on retried registry reads, so a registry that
+# stays rate limited fails the gate in minutes rather than once per image.
+RETRY_BUDGET_SECONDS = 240.0
 
 # Images the k8s path pulls tag@sha256 that dfe-stack's docker table does not
 # name: versions.yaml section.key holding the tag -> image repository. The digest
@@ -219,31 +228,53 @@ def _load_dfe_stack():
 dfe_stack = _load_dfe_stack()
 
 
-def chart_app_version(chart_ref: str, repo_url: str | None, chart_version: str) -> str:
+def chart_registry(chart_ref: str, repo_url: str | None) -> str:
+    """The host a chart is fetched from: its repo's, or an OCI reference's own."""
+    return urlsplit(repo_url or chart_ref).hostname or chart_ref
+
+
+def chart_app_version(
+    chart_ref: str,
+    repo_url: str | None,
+    chart_version: str,
+    budget: registry_pins.RetryBudget | None = None,
+) -> str:
     """appVersion of a chart at a version, from `helm show chart`.
 
     A classic chart repo is passed with --repo so nothing has to be added to
-    the local helm state; an OCI reference needs no repo.
+    the local helm state; an OCI reference needs no repo. A rate limited or
+    failing registry is retried with backoff, drawing on ``budget`` when given.
     """
     cmd = ["helm", "show", "chart", chart_ref, "--version", chart_version]
     if repo_url:
         cmd += ["--repo", repo_url]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        result, gave_up = registry_pins.run_with_retry(
+            cmd, chart_registry(chart_ref, repo_url), budget
         )
     except OSError as exc:
         raise RuntimeError(f"cannot run helm: {exc}") from exc
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"helm show chart {chart_ref} failed")
+        raise RuntimeError(
+            gave_up or result.stderr.strip() or f"helm show chart {chart_ref} failed"
+        )
     for line in result.stdout.splitlines():
         if line.startswith("appVersion:"):
             return line.split(":", 1)[1].strip().strip("'\"")
     raise RuntimeError(f"{chart_ref} {chart_version}: no appVersion in the chart")
 
 
-def pull_chart(chart_ref: str, repo_url: str | None, chart_version: str, into: Path) -> Path:
+def pull_chart(
+    chart_ref: str,
+    repo_url: str | None,
+    chart_version: str,
+    into: Path,
+    budget: registry_pins.RetryBudget | None = None,
+) -> Path:
     """Untar one chart version into an empty directory and return the chart's own.
+
+    A rate limited or failing registry is retried with backoff, drawing on
+    ``budget`` when given.
 
     Raises:
         RuntimeError: helm is missing, the pull failed, or it left anything but
@@ -254,13 +285,13 @@ def pull_chart(chart_ref: str, repo_url: str | None, chart_version: str, into: P
     if repo_url:
         cmd += ["--repo", repo_url]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        result, gave_up = registry_pins.run_with_retry(
+            cmd, chart_registry(chart_ref, repo_url), budget
         )
     except OSError as exc:
         raise RuntimeError(f"cannot run helm: {exc}") from exc
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"helm pull {chart_ref} failed")
+        raise RuntimeError(gave_up or result.stderr.strip() or f"helm pull {chart_ref} failed")
     charts = [path for path in into.iterdir() if path.is_dir()]
     if len(charts) != 1:
         raise RuntimeError(f"helm pull {chart_ref} left {len(charts)} directories, expected 1")
@@ -368,6 +399,7 @@ def chart_default_refs(
     repo_url: str | None,
     chart_version: str,
     images: list[tuple[str, str, tuple[str, ...], bool]],
+    budget: registry_pins.RetryBudget | None = None,
 ) -> list[str]:
     """chart_dir_refs over a chart version pulled into a scratch directory.
 
@@ -378,7 +410,8 @@ def chart_default_refs(
         RuntimeError: The pull failed, or chart_dir_refs did.
     """
     with tempfile.TemporaryDirectory(prefix="check-image-arch-") as scratch:
-        return chart_dir_refs(pull_chart(chart_ref, repo_url, chart_version, Path(scratch)), images)
+        chart = pull_chart(chart_ref, repo_url, chart_version, Path(scratch), budget)
+        return chart_dir_refs(chart, images)
 
 
 def _section(stack_map: object, name: str) -> dict[str, str]:
@@ -403,11 +436,14 @@ def _chart_pin(pins: dict[str, str], key: str) -> tuple[str, str]:
 
 
 def image_refs(
-    stack_map: dict, resolve_charts: bool, third_party_only: bool = False
+    stack_map: dict,
+    resolve_charts: bool,
+    third_party_only: bool = False,
+    budget: registry_pins.RetryBudget | None = None,
 ) -> tuple[list[tuple[str, str]], list[str], list[str]]:
     """(label, reference) pairs to read, notes on what was skipped, and pins that
     cannot be read at all -- the last fail the run, because an unread image is
-    not a multi-arch one."""
+    not a multi-arch one. Chart lookups retry within ``budget`` when given."""
     refs: list[tuple[str, str]] = []
     skipped: list[str] = []
     broken: list[str] = []
@@ -468,7 +504,7 @@ def image_refs(
             )
             continue
         try:
-            app_version = chart_app_version(chart_ref, repo_url, chart_version)
+            app_version = chart_app_version(chart_ref, repo_url, chart_version, budget)
         except RuntimeError as err:
             broken.append(f"{label}: chart {chart_version} did not resolve ({err})")
             continue
@@ -488,7 +524,7 @@ def image_refs(
             continue
         chart_ref, repo_url, _repos, _prefix = OPERATOR_VIA_CHART[key]
         try:
-            defaults = chart_default_refs(chart_ref, repo_url, chart_version, images)
+            defaults = chart_default_refs(chart_ref, repo_url, chart_version, images, budget)
         except RuntimeError as err:
             broken.append(f"{label}: chart {chart_version} images {names} did not resolve ({err})")
             continue
@@ -531,6 +567,7 @@ def main() -> int:
     args = parser.parse_args()
 
     required = {item.strip() for item in args.require.split(",") if item.strip()}
+    budget = registry_pins.RetryBudget(RETRY_BUDGET_SECONDS)
     if args.image:
         refs = [(ref, ref) for ref in args.image]
         skipped: list[str] = []
@@ -538,14 +575,14 @@ def main() -> int:
         stack = "(explicit)"
     else:
         stack, body = dfe_stack.stack_pins(dfe_stack.load_root(), args.stack)
-        refs, skipped, broken = image_refs(body, args.resolve_charts, args.third_party_only)
+        refs, skipped, broken = image_refs(body, args.resolve_charts, args.third_party_only, budget)
     print(f"checking stack {stack} for {sorted(required)}")
 
     failures = list(broken)
     for note in broken:
         print(f"  ERROR  {note}")
     for label, ref in refs:
-        found, err = registry_pins.ref_platforms(ref)
+        found, err = registry_pins.ref_platforms(ref, budget)
         status, detail = verdict(found, err, required)
         if status == "ok":
             print(f"  ok     {label} {ref}")
