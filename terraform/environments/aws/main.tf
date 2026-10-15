@@ -162,6 +162,45 @@ module "cluster" {
   // is required-when-enabled (deployment.example.yaml), and the module
   // itself treats an empty string as "create no access entry".
   toolbox_operator_role_arn = var.toolbox.enabled ? var.toolbox.aws.operator_role_arn : ""
+
+  // The registry cache's containerd mirrors, on every managed node; Karpenter's take it through DFE_NODE_USER_DATA.
+  node_user_data = local.node_user_data
+}
+
+// ---------------------------------------------------------------------------
+// Registry cache -- ECR pull-through rules every node pulls its images
+// through, so an upstream's rate limit cannot fail a deploy.
+// ---------------------------------------------------------------------------
+
+module "registry_cache" {
+  count = var.registry_cache.enabled && length(var.registry_cache.upstreams) > 0 ? 1 : 0
+
+  source = "../../modules/registry-cache/aws"
+
+  provision = {
+    account = var.provision.account
+    region  = var.provision.region
+  }
+
+  name             = var.name
+  namespace        = var.registry_cache.namespace != "" ? var.registry_cache.namespace : var.name
+  upstreams        = var.registry_cache.upstreams
+  pull_expiry_days = var.registry_cache.pull_expiry_days
+  kms_key_arn      = module.cluster.kms_key_arn
+
+  node_role_arns = {
+    managed   = module.cluster.node_role_arn
+    karpenter = module.cluster.karpenter.node_role_arn
+  }
+
+  tags = local.tags
+
+  permissions_boundary = var.permissions_boundary
+  iam_path             = var.iam_path
+}
+
+locals {
+  node_user_data = join("", module.registry_cache[*].node_user_data)
 }
 
 // ---------------------------------------------------------------------------

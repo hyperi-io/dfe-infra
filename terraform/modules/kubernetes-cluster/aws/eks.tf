@@ -195,20 +195,37 @@ resource "aws_iam_role_policy_attachment" "nodes" {
 }
 
 locals {
-  // A test run's tags, when there are any. EKS copies no node group tag onto the
-  // instances and volumes it launches, so a launch template is the only way they
-  // carry them. Outside a run there is no template and no node group changes.
-  node_launch_template = length(var.controller_tags) > 0
+  // A launch template is the only way a node group's instances carry a test
+  // run's tags (EKS copies no node group tag onto them) or run a script before
+  // kubelet. With neither there is no template and no node group changes.
+  node_launch_template = length(var.controller_tags) > 0 || var.node_user_data != ""
 
   // EKS's own name for the arm64 Amazon Linux 2023 image, fixed by the arm64 policy the precondition below asserts per shape.
   node_ami_type = "AL2023_ARM_64_STANDARD"
+
+  // EKS merges a managed group's user data with its own NodeConfig only in MIME multi-part form.
+  node_user_data_boundary = "==DFE-NODE=="
+  node_user_data_mime = var.node_user_data == "" ? null : join("\n", [
+    "MIME-Version: 1.0",
+    "Content-Type: multipart/mixed; boundary=\"${local.node_user_data_boundary}\"",
+    "",
+    "--${local.node_user_data_boundary}",
+    "Content-Type: text/x-shellscript; charset=\"us-ascii\"",
+    "",
+    chomp(var.node_user_data),
+    "",
+    "--${local.node_user_data_boundary}--",
+    "",
+  ])
 }
 
 resource "aws_launch_template" "nodes" {
   for_each = local.node_launch_template ? var.node_pools : {}
 
   name_prefix = "${var.name}-${each.key}-"
-  description = "Tags node group ${each.key}'s instances and root volumes with the run's tags."
+  description = "Node group ${each.key}'s root volume, metadata options, run tags and node script."
+
+  user_data = local.node_user_data_mime == null ? null : base64encode(local.node_user_data_mime)
 
   // EKS refuses a node group's disk_size beside a launch template, so the root
   // volume is sized here. /dev/xvda is the root device AL2023 exposes.
@@ -230,14 +247,13 @@ resource "aws_launch_template" "nodes" {
     http_put_response_hop_limit = 1
   }
 
-  tag_specifications {
-    resource_type = "instance"
-    tags          = var.controller_tags
-  }
+  dynamic "tag_specifications" {
+    for_each = length(var.controller_tags) > 0 ? ["instance", "volume"] : []
 
-  tag_specifications {
-    resource_type = "volume"
-    tags          = var.controller_tags
+    content {
+      resource_type = tag_specifications.value
+      tags          = var.controller_tags
+    }
   }
 }
 
@@ -261,8 +277,9 @@ resource "aws_eks_node_group" "this" {
   disk_size      = local.node_launch_template ? null : each.value.disk_gb
   labels         = each.value.labels
 
-  // Only during a test run. Adding a launch template to a node group that has
-  // none replaces it, which is why every other deployment gets no block at all.
+  // Only with run tags or a node script. Adding a launch template to a node
+  // group that has none replaces it, which is why a deployment with neither
+  // gets no block at all.
   dynamic "launch_template" {
     for_each = local.node_launch_template ? [aws_launch_template.nodes[each.key]] : []
 

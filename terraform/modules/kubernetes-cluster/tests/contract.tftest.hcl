@@ -1742,4 +1742,53 @@ run "aws_run_tags_reach_node_group_instances_and_volumes" {
     condition     = aws_eks_node_group.this["system"].launch_template[0].version == tostring(aws_launch_template.nodes["system"].latest_version)
     error_message = "the node group must follow the template's latest version"
   }
+
+  assert {
+    condition     = aws_launch_template.nodes["system"].user_data == null
+    error_message = "a run with no node script must put no user data on the template"
+  }
+}
+
+// The registry-cache mirror script reaches every managed node through the one
+// form EKS merges with its own NodeConfig, outside a test run as well.
+run "aws_node_script_rides_a_mime_launch_template" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_user_data = "#!/bin/bash\necho mirrors\n"
+  }
+
+  assert {
+    condition     = length(aws_launch_template.nodes) == length(var.node_pools)
+    error_message = "a node script needs a launch template on every node pool"
+  }
+
+  assert {
+    condition     = startswith(base64decode(aws_launch_template.nodes["system"].user_data), "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"==DFE-NODE==\"\n")
+    error_message = "EKS merges a managed group's user data only in MIME multi-part form"
+  }
+
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.nodes["system"].user_data), "--==DFE-NODE==\nContent-Type: text/x-shellscript; charset=\"us-ascii\"\n\n#!/bin/bash\necho mirrors\n\n--==DFE-NODE==--\n")
+    error_message = "the script must ride one text/x-shellscript part, closed by the final boundary"
+  }
+
+  assert {
+    condition     = length(aws_launch_template.nodes["system"].tag_specifications) == 0
+    error_message = "outside a run the template carries no run tags"
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["system"].launch_template[0].id == aws_launch_template.nodes["system"].id
+    error_message = "the node group must launch through the template that carries the script"
+  }
+
+  assert {
+    condition     = aws_launch_template.nodes["system"].metadata_options[0].http_put_response_hop_limit == 1
+    error_message = "a template added for the script must keep IMDSv2 at hop limit 1, not EKS's template default of 2"
+  }
 }

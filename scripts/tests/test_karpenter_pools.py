@@ -21,9 +21,12 @@ Karpenter's own bin-packing looks at. minVcpu/minMemoryGib close that gap.
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
+import base64
 import json
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -154,18 +157,80 @@ def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
     expect("the pool map parses back at that indent", parsed["karpenter"]["pools"] == pools, parsed)
 
 
-def render_nodeclass(tags: dict[str, str] | None) -> dict:
-    """The rendered EC2NodeClass for one pool, with karpenter.tags set when given."""
+def nodeclass_run(tags: dict[str, str] | None, user_data: str | None = None) -> subprocess.CompletedProcess:
+    """helm template of the EC2NodeClass for one pool, with karpenter.tags and the node script when given."""
     cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/ec2nodeclass.yaml"]
     for s in BASE_SETS:
         cmd += ["--set", s]
     cmd += ["--set-json", f"karpenter.pools={json.dumps({'clickhouse': BASE_POOL})}"]
     if tags is not None:
         cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if user_data is not None:
+        cmd += ["--set-string", f"karpenter.cluster.userData={user_data}"]
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+
+def render_nodeclass(tags: dict[str, str] | None, user_data: str | None = None) -> dict:
+    """The rendered EC2NodeClass for one pool."""
+    out = nodeclass_run(tags, user_data)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed:\n{out.stderr}")
     return yaml.safe_load(out.stdout)
+
+
+NODE_SCRIPT = "#!/bin/bash\nset -euo pipefail\necho mirrors\n"
+
+
+def test_the_registry_cache_script_reaches_every_node_class_decoded() -> None:
+    """Karpenter takes a plain shell script in userData and merges its own NodeConfig after it."""
+    encoded = base64.b64encode(NODE_SCRIPT.encode()).decode()
+    spec = render_nodeclass(None, encoded)["spec"]
+    expect("the node class carries the script as plain text", spec.get("userData") == NODE_SCRIPT, spec.get("userData"))
+
+
+def test_no_registry_cache_renders_no_user_data() -> None:
+    spec = render_nodeclass(None)["spec"]
+    expect("an empty karpenter.cluster.userData renders no userData", "userData" not in spec, spec.get("userData"))
+
+
+def appset_cluster_facts(annotations: dict[str, str]) -> dict:
+    """karpenter.cluster as layer2-platform.yaml's values block renders it for one cluster secret.
+
+    The block reads cluster facts at .metadata and .app, which a chart template reaches under .Values.
+    """
+    appset = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
+    block = yaml.safe_load(appset.read_text(encoding="utf-8"))["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    text = re.sub(r"(?<![\w$)\]])\.(metadata|app)\b", r".Values.\1", block)
+    with tempfile.TemporaryDirectory() as tmp:
+        chart = Path(tmp) / "block"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text("apiVersion: v2\nname: block\nversion: 0.1.0\n", encoding="utf-8")
+        (chart / "templates" / "values.yaml").write_text(text, encoding="utf-8")
+        context = Path(tmp) / "context.yaml"
+        context.write_text(
+            yaml.safe_dump({"metadata": {"annotations": annotations}, "app": "karpenter-pools"}), encoding="utf-8"
+        )
+        out = subprocess.run(
+            ["helm", "template", "t", str(chart), "-f", str(context)], capture_output=True, text=True, check=False
+        )
+    if out.returncode != 0:
+        raise SystemExit(f"the values block does not render:\n{out.stderr}")
+    return yaml.safe_load(out.stdout)["karpenter"]["cluster"]
+
+
+def test_the_appset_hands_the_node_script_to_the_chart_unchanged() -> None:
+    encoded = base64.b64encode(NODE_SCRIPT.encode()).decode()
+    facts = appset_cluster_facts({"dfe.hyperi.io/node_user_data": encoded})
+    expect("the annotation lands on karpenter.cluster.userData", facts.get("userData") == encoded, facts)
+    facts = appset_cluster_facts({})
+    expect("an older cluster secret renders an empty userData", facts.get("userData") == "", facts)
+
+
+def test_expected_fail_a_script_that_is_not_base64_is_refused() -> None:
+    """sprig's b64dec renders its own error text in place of a script it cannot decode."""
+    out = nodeclass_run(None, "#!/bin/bash")
+    expect("helm refuses the render", out.returncode != 0, out.stdout)
+    expect("and names the value", "karpenter.cluster.userData is not base64" in out.stderr, out.stderr)
 
 
 def test_run_tags_reach_every_instance_karpenter_launches() -> None:
@@ -223,6 +288,10 @@ def main() -> int:
         test_the_appset_carries_the_pools_through_from_the_cluster_secret()
         test_run_tags_reach_every_instance_karpenter_launches()
         test_no_run_tags_render_no_tags_field()
+        test_the_registry_cache_script_reaches_every_node_class_decoded()
+        test_no_registry_cache_renders_no_user_data()
+        test_the_appset_hands_the_node_script_to_the_chart_unchanged()
+        test_expected_fail_a_script_that_is_not_base64_is_refused()
         test_a_test_run_holds_every_pool_to_the_run_sizes()
         test_expected_fail_no_run_tags_bound_no_size()
         test_a_deployment_overrides_the_run_sizes_or_turns_them_off()

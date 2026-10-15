@@ -348,6 +348,32 @@ variable "toolbox" {
 }
 
 // ---------------------------------------------------------------------------
+// Registry cache
+// ---------------------------------------------------------------------------
+
+variable "registry_cache" {
+  description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams, the registries the stack pulls from, with the credential ARNs the dial names; an upstream ECR refuses without a credential is skipped until it has one. namespace prefixes every rule and cached repository, and empty takes name. pull_expiry_days is how long a cached image outlives its last pull. enabled turns the whole cache off; on with no upstreams creates nothing."
+  type = object({
+    enabled          = optional(bool, true)
+    namespace        = optional(string, "")
+    pull_expiry_days = optional(number)
+    upstreams = optional(map(object({
+      upstream_url        = string
+      host                = string
+      requires_credential = bool
+      credential_arn      = optional(string, "")
+    })), {})
+  })
+  default  = {}
+  nullable = false
+
+  validation {
+    condition     = !var.registry_cache.enabled || length(var.registry_cache.upstreams) == 0 || var.registry_cache.pull_expiry_days != null
+    error_message = "registry_cache names upstreams, so pull_expiry_days must say how long a cached image outlives its last pull -- render_dial.py sends one."
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Secrets
 // ---------------------------------------------------------------------------
 

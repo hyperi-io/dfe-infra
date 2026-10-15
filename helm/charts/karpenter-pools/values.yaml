@@ -23,6 +23,10 @@ karpenter:
     # The deployment's customer-managed key, which every node root volume is
     # encrypted with.
     kmsKeyId: ""
+    # The registry cache's node script, base64, from the cloud root's
+    # DFE_NODE_USER_DATA. Every node runs it before kubelet starts; empty
+    # renders no userData.
+    userData: ""
 
   # Extra tags on every instance, volume and launch template Karpenter creates,
   # on top of its own. A test run's id and expiry arrive here from the cluster

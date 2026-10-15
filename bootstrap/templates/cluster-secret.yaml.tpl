@@ -71,6 +71,9 @@ metadata:
     # set. Both blank on every cloud but AWS.
     ${DFE_ENGINE_SECRETS_PREFIX_ANNOTATION}
     ${DFE_KMS_KEY_ARN_ANNOTATION}
+    # The registry cache's node script, base64, which layer2-platform.yaml
+    # hands every EC2NodeClass. Blank when the cloud root caches nothing.
+    ${DFE_NODE_USER_DATA_ANNOTATION}
     # The pools themselves, as one line of JSON -- layer2-platform.yaml inlines
     # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
     # renders no NodePool at all, so a pending workload stays pending.

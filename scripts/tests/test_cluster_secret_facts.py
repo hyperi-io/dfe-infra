@@ -68,6 +68,7 @@ CONDITIONAL_FACTS = (
         "layer2-platform.yaml",
         "kmsKeyId",
     ),
+    ("DFE_NODE_USER_DATA", "dfe.hyperi.io/node_user_data", "layer2-platform.yaml", "userData"),
     (
         "DFE_KARPENTER_POOLS",
         "dfe.hyperi.io/karpenter_pools",

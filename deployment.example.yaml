@@ -510,6 +510,22 @@ toolbox:
   ## service telemetry.
   session_log_retention_days: 90
 
+## REGISTRY CACHE -- every node pulls its images through an ECR pull-through
+## cache in the deployment's own account, so Docker Hub, GHCR, Quay or ECR
+## Public rate limits cannot fail a deploy (terraform/modules/registry-cache).
+## aws only. Quay, registry.k8s.io and ECR Public need no credential. Docker
+## Hub and GHCR are cached only once credentials names a Secrets Manager
+## secret under ecr-pullthroughcache/ holding {"username", "accessToken"},
+## encrypted with the default aws/secretsmanager key (ECR reads no other);
+## until then those images come straight from upstream.
+registry_cache:
+  enabled: "true"            # true | false
+  namespace: ""              # prefix of every cached repository; empty takes metadata.name. <= 19 characters
+  pull_expiry_days: ""       # days a cached image outlives its last pull; empty takes 90
+  credentials:
+    docker-hub: ""           # secret ARN: a Docker Hub username and personal access token
+    ghcr: ""                 # secret ARN: a GitHub username and a classic token with read:packages
+
 ## The system node pool -- what the cluster runs before any DFE workload lands.
 ## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never
 ## named here, because the shape resolver owns that answer.

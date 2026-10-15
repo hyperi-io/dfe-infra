@@ -32,6 +32,13 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 {{- end -}}
 {{- end -}}
 
+{{- /* sprig's b64dec renders its own error text in place of a script it cannot decode. */ -}}
+{{- with $k.cluster.userData -}}
+{{- if not (regexMatch "^[A-Za-z0-9+/]+={0,2}$" .) -}}
+{{- fail "karpenter.cluster.userData is not base64 -- it is the cloud root's DFE_NODE_USER_DATA output, carried unchanged" -}}
+{{- end -}}
+{{- end -}}
+
 {{- $policies := list "WhenEmpty" "WhenEmptyOrUnderutilized" "Balanced" -}}
 {{- range $name, $pool := $k.pools -}}
 
