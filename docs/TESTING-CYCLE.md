@@ -76,6 +76,12 @@ A missing or `/0` allow address is refused before it costs a cluster. `dfe-ops c
 | `redpanda-cloud` | a Redpanda Cloud Serverless cluster per run, public endpoint, in a standing resource group | `DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID` |
 | `clickhouse-cloud` | the standing ClickHouse Cloud service, beside the dial's own broker | `DFE_CYCLE_CH_HOST`, `DFE_CYCLE_CH_USER` |
 
+Every backend a run names is its AWS instance, and the plan refuses one on another cloud ([deployment/managed-backends.md](deployment/managed-backends.md)).
+
+### MSK runs last, and rarely
+
+An MSK cluster is the slowest thing a run builds: one took 41m14s to create on 2026-10-14, and the EKS cluster sat built and idle for about 27 minutes of that wait. Brokers bill by the broker-hour and the cluster, nodes and NAT gateways bill by the hour through all of it, for no test value. So iterate on `confluent-cloud` or `redpanda-cloud`, and run `msk` once, after the shared external-Kafka changes have already passed on one of them.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

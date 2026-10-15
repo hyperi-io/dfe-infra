@@ -98,8 +98,9 @@ resource "redpanda_serverless_private_link" "this" {
   resource_group_id = local.resource_group_id
   serverless_region = local.region
 
-  // The vendor's own token for the cloud this body's second provider talks to.
-  cloud_provider = "aws"
+  // The vendor's own token for the deployment's cloud, from the managed-backends
+  // offering; var.cloud refuses all but the aws half this body builds.
+  cloud_provider = var.cloud
 
   aws_config = {
     allowed_principals = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]

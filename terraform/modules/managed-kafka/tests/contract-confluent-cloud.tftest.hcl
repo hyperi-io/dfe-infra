@@ -128,6 +128,9 @@ variables {
   name = "dfe-kafka-contract"
   env  = "test"
 
+  // What terraform/modules/managed-backends hands the body on an aws deployment.
+  cloud = "AWS"
+
   network = {
     vpc_id             = "vpc-00000000000000000"
     cidr               = "10.90.0.0/16"
@@ -566,6 +569,24 @@ run "confluent_cloud_rejects_a_malformed_environment" {
 
   expect_failures = [
     var.environment_id,
+  ]
+}
+
+// The body builds Confluent's AWS instance alone, so a cluster on another cloud
+// is refused before any half of its handshake is planned.
+run "confluent_cloud_rejects_another_cloud" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    cloud = "GCP"
+  }
+
+  expect_failures = [
+    var.cloud,
   ]
 }
 

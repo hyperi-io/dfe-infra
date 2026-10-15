@@ -113,6 +113,20 @@ module "run_tags" {
   run = var.run
 }
 
+// No resources: refuses at plan a managed backend aws does not offer, a tier the
+// vendor does not run on aws, and a ClickHouse Cloud service on another cloud
+// (docs/deployment/managed-backends.md). Its outputs carry the vendor's token
+// for aws to the SaaS bodies and their ports to the toolbox's egress.
+module "managed_backends" {
+  source = "../../modules/managed-backends"
+
+  cloud           = local.cloud
+  kafka_provider  = var.kafka.provider
+  kafka_tier      = var.kafka.provider == "confluent-cloud" ? var.kafka.confluent_tier : null
+  clickhouse_mode = var.clickhouse.mode
+  clickhouse_host = var.endpoints.clickhouse_host
+}
+
 module "cluster" {
   source = "../../modules/kubernetes-cluster/aws"
 
@@ -286,6 +300,9 @@ module "confluent" {
   env     = var.env
   network = module.cluster.network
 
+  // Confluent's token for aws, from the offering rather than the dial.
+  cloud = module.managed_backends.kafka.vendor_cloud
+
   // The body reads region on public connectivity only, where there is no VPC
   // attachment to discover it from; it is the deployment's own region either way.
   tier           = var.kafka.confluent_tier
@@ -316,6 +333,9 @@ module "redpanda" {
   name    = var.name
   env     = var.env
   network = module.cluster.network
+
+  // Redpanda's token for aws, from the offering rather than the dial.
+  cloud = module.managed_backends.kafka.vendor_cloud
 
   connectivity      = var.kafka.connectivity
   resource_group_id = var.kafka.redpanda_resource_group_id
@@ -487,8 +507,8 @@ locals {
   // in-cluster ClickHouse is reached over the eks-api target instead, with
   // `kubectl port-forward` from the toolbox shell. A ClickHouse the deployer
   // brought (ClickHouse Cloud, a VM in the VPC) has a real address and keeps
-  // its target. 9440 is the native protocol over TLS (helm/charts/
-  // network-policies' own values.yaml documents this port for the same reason).
+  // its target, on the native port the dial names (9440, native over TLS,
+  // unless it says otherwise).
   // A dotless host counts too: `dfe-clickhouse` is a Service short name that
   // only resolves through a pod's search domains, and the instance has none.
   clickhouse_host_is_in_cluster = (
@@ -504,10 +524,28 @@ locals {
   toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" && !local.clickhouse_host_is_in_cluster ? {
     clickhouse = {
       host  = var.endpoints.clickhouse_host
-      port  = 9440
+      port  = var.clickhouse.native_port
       scope = local.clickhouse_scope
     }
   } : {}
+
+  // Every port a client run on the instance dials on the managed backends, past
+  // the one each target forwards to: a Kafka client follows the brokers'
+  // metadata to every broker port, and a ClickHouse client may take either of
+  // the service's two. The ports are the vendor's, from managed-backends; an
+  // external ClickHouse no vendor runs is dialled on the dial's own two.
+  toolbox_clickhouse_ports = (
+    module.managed_backends.clickhouse.service != "" ? module.managed_backends.clickhouse.client_ports :
+    var.clickhouse.mode == "external" ? [var.clickhouse.port, var.clickhouse.native_port] :
+    []
+  )
+  toolbox_backend_egress = concat(
+    [
+      for port in concat(module.managed_backends.kafka.client_ports, module.managed_backends.kafka.bootstrap_ports) :
+      { port = port, scope = local.toolbox_kafka_scope }
+    ],
+    [for port in local.toolbox_clickhouse_ports : { port = port, scope = local.clickhouse_scope }],
+  )
 
   // No Keeper target: no root output or dial field names a Keeper address
   // today, and inventing a Service DNS name that might not match the actual
@@ -545,8 +583,9 @@ module "toolbox" {
   session                    = var.toolbox.session
   session_log_retention_days = var.toolbox.session_log_retention_days
 
-  kms_key_arn = module.cluster.kms_key_arn
-  targets     = local.toolbox_targets
+  kms_key_arn    = module.cluster.kms_key_arn
+  targets        = local.toolbox_targets
+  backend_egress = local.toolbox_backend_egress
 
   // The fleet tunnel's address and listeners, so `dfe-ops bastion join` can
   // dial the hub as an admin peer. Both empty unless the edge module built a

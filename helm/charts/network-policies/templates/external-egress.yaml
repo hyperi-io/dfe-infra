@@ -26,9 +26,18 @@
       "otel"          (or (eq ($telemetry.mode | default "" | toString) "external")
                           (ne ($otel.endpoint | default "" | toString) ""))
 }}
+{{- /* The provider a purpose's declaration names, which picks its entry under
+       `providers` when it has one. */}}
+{{- $provider := dict "kafka" ($kafka.provider | default "" | toString) }}
 {{- /* Fixed order so a re-render diffs cleanly. */}}
 {{- range $purpose := list "clickhouse" "kafka" "oidc" "secrets" "elasticsearch" "otel" }}
 {{- $block := index $ext $purpose | default dict }}
+{{- /* A named provider's entry replaces the purpose's own ports, appPorts and
+       extraNamespaceApps whole, so a provider opens what its brokers serve and
+       nothing the generic range would have added. */}}
+{{- with index ($block.providers | default dict) (index $provider $purpose | default "") }}
+{{- $block = merge (deepCopy .) (omit $block "providers" "ports" "appPorts" "extraNamespaceApps") }}
+{{- end }}
 {{- if and (index $declared $purpose) $block.apps $block.ports }}
 {{- /* Kubernetes rejects an `except` entry outside its own `cidr`, so pinning a
        purpose to a known endpoint drops the shared cluster-range carve-out --
@@ -53,6 +62,8 @@
 {{- end }}
 {{- range $ns, $apps := $nsApps }}
 {{- range $app := $apps }}
+{{- /* An app with its own entry under appPorts dials those ports and not the purpose's. */}}
+{{- $ports := index ($block.appPorts | default dict) $app | default $block.ports }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -80,7 +91,7 @@ spec:
               {{- toYaml . | nindent 14 }}
             {{- end }}
       ports:
-        {{- range $block.ports }}
+        {{- range $ports }}
         - port: {{ .port }}
           protocol: {{ .protocol | default "TCP" }}
         {{- end }}

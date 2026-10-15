@@ -54,19 +54,21 @@ managed endpoint.
 | External DNS | external-dns provider / estate record | estate CoreDNS record | Route53 | Azure DNS | Cloud DNS |
 | Secrets | ESO ClusterSecretStore | OpenBao | Secrets Manager | Key Vault | Secret Manager |
 | Private CA / TLS | cert-manager ClusterIssuer (+ external issuer) | OpenBao PKI | ACME or AWS PCA | ACME or Key Vault | ACME or Google CAS |
-| Kafka | chart mode + `kafka.bootstrapServers` | Strimzi / Redpanda* | MSK | Event Hubs / Confluent | Confluent / Redpanda Cloud |
+| Kafka | chart mode + `kafka.bootstrapServers` | Strimzi / Redpanda* | MSK / Confluent Cloud / Redpanda Cloud, each on AWS** | Confluent Cloud on Azure** | Confluent Cloud / Redpanda Cloud, each on GCP** |
 | ClickHouse | `clickhouse.mode` + `.host` | in-k8s operator | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s | CH Cloud (pref) / in-k8s |
 | Edge LoadBalancer | `envoyGateway.service` type=LoadBalancer | MetalLB | NLB | Azure LB | GCP LB |
 | Object store | S3-compatible endpoint + creds | MinIO / Ceph RGW | S3 | Blob (S3 API) | GCS (S3 API) |
 | Container registry | `global.registry` + pull secret | Harbor | ECR | ACR | GAR |
 | StorageClass / CSI | `storageClass` (empty -> cluster default) | local-path / Longhorn | EBS | Azure Disk | PD |
-| Workload identity | ServiceAccount annotations | static creds (OpenBao) | IRSA | Azure Workload Identity | GKE Workload Identity |
+| Workload identity | ServiceAccount annotations | static creds (OpenBao) | EKS Pod Identity (no annotation) | Azure Workload Identity | GKE Workload Identity |
 | etcd-at-rest KMS | cluster EncryptionConfiguration provider | secretbox / aescbc | KMS | Key Vault KMS | Cloud KMS |
 | Document store PG | ferretdb chart (always in-cluster) | documentdb StatefulSet | " | " | " |
 | Identity authority | dfe-engine account store (always in-cluster) | dfe-engine | dfe-engine | dfe-engine | dfe-engine |
 | Federated login | `oidc.providers` external OIDC (opt-in) | any OIDC IdP | Entra / Okta / ... | Entra | Google / ... |
 
 \* Redpanda on-prem is behind a licence gate.
+
+\** A managed backend is offered only as its instance on the deployment's own cloud, and the plan refuses any other: [managed-backends.md](managed-backends.md).
 
 ## Notes that matter
 

@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "network-policies"
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
 
-CH_PORTS = {8443, 9440, 443}
+CH_PORTS = {8443, 9440}
 KAFKA_PORTS = {9092, 9093, 9094, 9095, 9096, 9098}
 CH_APPS = {
     "dfe-loader",
@@ -154,6 +154,47 @@ def test_kafka_external_on() -> None:
         namespaces_of(policies) == {"dfe-local", "strimzi"},
         f"got {sorted(namespaces_of(policies))}",
     )
+
+
+def ports_by_app(policies: list[dict]) -> dict[str, set[int]]:
+    found: dict[str, set[int]] = {}
+    for p in policies:
+        app = p["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/name"]
+        found.setdefault(app, set()).update(
+            port["port"] for rule in p["spec"]["egress"] for port in rule.get("ports", [])
+        )
+    return found
+
+
+def test_msk_opens_scram_to_the_apps_and_iam_to_the_bootstrap_job_alone() -> None:
+    policies = external(render("kafka.mode=external", "kafka.provider=msk"), "kafka")
+    by_app = ports_by_app(policies)
+    expect("every app gets SCRAM alone",
+           all(ports == {9096} for app, ports in by_app.items() if app != "dfe-kafka"),
+           f"got {by_app}")
+    expect("the bootstrap Job gets IAM alone", by_app.get("dfe-kafka") == {9098}, f"got {by_app}")
+    expect("the clients are the generic list's", set(by_app) == KAFKA_APPS, f"got {sorted(by_app)}")
+
+
+def test_confluent_opens_9092_and_reaches_no_bootstrap_job() -> None:
+    policies = external(render("kafka.mode=external", "kafka.provider=confluent-cloud"), "kafka")
+    expect("Confluent's one Kafka port", ports_of(policies) == {9092}, f"got {sorted(ports_of(policies))}")
+    expect("no policy lands in strimzi, where no Job dials Confluent",
+           namespaces_of(policies) == {"dfe-local"}, f"got {sorted(namespaces_of(policies))}")
+
+
+def test_redpanda_opens_its_seed_and_broker_ports() -> None:
+    policies = external(render("kafka.mode=external", "kafka.provider=redpanda-cloud"), "kafka")
+    expect("Redpanda's seed and broker ports", ports_of(policies) == {9092, 9093, 9094, 9095},
+           f"got {sorted(ports_of(policies))}")
+    expect("no policy lands in strimzi", namespaces_of(policies) == {"dfe-local"},
+           f"got {sorted(namespaces_of(policies))}")
+
+
+def test_an_in_cluster_provider_keeps_the_generic_range() -> None:
+    """A provider with no entry is a broker the deployer brought, so the range stays."""
+    policies = external(render("kafka.mode=external", "kafka.provider=strimzi"), "kafka")
+    expect("the generic range", ports_of(policies) == KAFKA_PORTS, f"got {sorted(ports_of(policies))}")
 
 
 def test_kafka_external_does_not_open_clickhouse() -> None:
@@ -291,6 +332,10 @@ def main() -> int:
         test_clickhouse_external_excludes_the_internet_egress_apps()
         test_clickhouse_internal_modes_open_nothing()
         test_kafka_external_on()
+        test_msk_opens_scram_to_the_apps_and_iam_to_the_bootstrap_job_alone()
+        test_confluent_opens_9092_and_reaches_no_bootstrap_job()
+        test_redpanda_opens_its_seed_and_broker_ports()
+        test_an_in_cluster_provider_keeps_the_generic_range()
         test_kafka_external_does_not_open_clickhouse()
         test_kafka_internal_modes_open_nothing()
         test_oidc_is_engine_only_on_443()
