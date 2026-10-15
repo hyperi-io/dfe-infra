@@ -84,18 +84,21 @@ karpenter:
   # One entry per workload class, keyed by pool name. Each pool renders one
   # NodePool and one EC2NodeClass of the same name.
   #
-  #   families             instance families, auto-selected by the shape resolver:
-  #                        the newest arm64 generation it picked, alone, or under
-  #                        a cheapest-of policy the generations that policy
-  #                        compared. Karpenter launches the cheapest family the
-  #                        list allows, so an older family listed as a fallback is
-  #                        the one it launches. A capacity shortfall falls back to
-  #                        another size of the same family.
+  #   families             instance families, auto-selected by the shape resolver
+  #                        under the shape's generation policy (the newest arm64
+  #                        generation, or the one a shape pins): the family it
+  #                        picked, alone, or under a cheapest-of policy the
+  #                        generations that policy compared. Karpenter launches
+  #                        the cheapest family the list allows, so an older
+  #                        family listed as a fallback is the one it launches.
+  #                        A capacity shortfall falls back to another size of
+  #                        the same family.
   #   generationGt         the floor, as Karpenter's Gt operand -- one BELOW the
   #                        oldest generation the family list names. Karpenter ANDs
   #                        the requirements, so a floor above a listed family
   #                        deletes that family, and the guard below refuses it.
-  #   generationIn         the pinned override. When set it REPLACES generationGt.
+  #   generationIn         a pinned shape's generation, read off the families
+  #                        listed. When set it REPLACES generationGt.
   #   minVcpu              optional floor on karpenter.k8s.aws/instance-cpu.
   #                        families + generation bound WHICH instance line, never
   #                        which SIZE on it -- a workload sized up for its

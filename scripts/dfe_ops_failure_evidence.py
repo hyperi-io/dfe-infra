@@ -45,9 +45,12 @@ evidence outlives the cluster. Each capture is one file under DIR:
   aws-node/<pod>.<container>.log
                              each aws-node container's newest lines, the init container
                              included, plus the previous run of any that restarted
-  aws-node/<node>.<file>     the CNI's own ipamd.log and plugin.log, newest bytes, through
-                             the kubelet's /logs endpoint, else from the aws-node container
-  index.txt                  every capture, the command behind it and how it ended
+  aws-node/<node>.<file>     the CNI's own ipamd.log and plugin.log and the network policy
+                             agent's network-policy-agent.log, newest bytes, through the
+                             kubelet's /logs endpoint, else from the aws-node container
+  index.txt                  every capture, the command behind it and how it ended; a
+                             capture that answered with no bytes is `empty (0 bytes)` and
+                             has no file
 
 A pod summary is built from the pod list already read, and names each field it
 keeps: the node, phase, conditions, and for every init and main container its
@@ -114,7 +117,7 @@ AWS_NODE_LABEL = ("k8s-app", "aws-node")
 CNI_CONTAINER = "aws-node"
 # The aws-node container mounts the node's /var/log/aws-routed-eni here.
 CNI_LOG_MOUNT = "/host/var/log/aws-routed-eni"
-CNI_LOGS = ("ipamd.log", "plugin.log")
+CNI_LOGS = ("ipamd.log", "plugin.log", "network-policy-agent.log")
 DISK_REASON = "InvalidDiskCapacity"
 # The AWS Load Balancer Controller chart labels its pods and its webhook configurations with this.
 CONTROLLER_DIR = "aws-load-balancer-controller"
@@ -688,15 +691,19 @@ class Evidence:
     ) -> Outcome | None:
         """`kubectl <args>` into the file `name`; what it kept is written even when it failed.
 
-        A `log` capture is free text, so it is redacted before it is written.
+        A `log` capture is free text, so it is redacted before it is written. An answer with
+        no bytes writes no file, and the index says so rather than `ok`.
         """
         outcome = self._kubectl(args, limit=TEXT_BYTES, tail=tail)
         self.runs += 1
         if outcome and outcome.output:
             self.write(name, redact_bytes(outcome.output) if log else outcome.output)
+        how = verdict(outcome, self.budget)
         if outcome and outcome.ok:
             self.answered += 1
-        self.note(name, verdict(outcome, self.budget), args)
+            if not outcome.output:
+                how = "empty (0 bytes), no file written"
+        self.note(name, how, args)
         return outcome
 
     def read(self, name: str, args: list[str]) -> list[dict] | None:
@@ -1010,8 +1017,8 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "ready), the AWS Load Balancer Controller's "
         "webhook configurations with each caBundle as a digest and its containers' newest log "
         "lines, the events of each node reporting "
-        "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd "
-        "and plugin logs. A pod summary leaves out every container's env, args and command, the "
+        "InvalidDiskCapacity, every aws-node container's newest log lines, and the CNI's ipamd, "
+        "plugin and network policy agent logs. A pod summary leaves out every container's env, args and command, the "
         "pod's volumes and its annotations. Every log is redacted before it is written: values "
         "under credential-named keys, URL userinfo, bearer tokens, private key blocks and common "
         "token shapes become ***REDACTED***. Every capture is bounded in time and bytes, one that "

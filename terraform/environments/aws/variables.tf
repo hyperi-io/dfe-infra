@@ -69,7 +69,7 @@ variable "node_pools" {
 }
 
 variable "resolved_shapes" {
-  description = "Auto-selected by the shape resolver, newest arm64 generation in the region: scripts/resolve_sizing.py reads the region's live EC2 and Pricing APIs against shapes/compute-shapes.yaml and writes this into sizing.auto.tfvars.json. Every node pool, the MSK broker, the toolbox and the tunnel forwarder take their instance type from here, and every shape with a root disk carries its root_volume type and size. One region's instance-generation availability is never another's."
+  description = "Auto-selected by the shape resolver under each shape's generation policy in shapes/compute-shapes.yaml: the newest arm64 generation in the region, or the generation the shape pins. Every node pool shape is pinned to Graviton4 (generation 8) while aws-network-policy-agent #686 leaves pod traffic timing out on Graviton5 nodes, and compute-shapes.yaml names the unpin trigger beside each pin. scripts/resolve_sizing.py reads the region's live EC2 and Pricing APIs against shapes/compute-shapes.yaml and writes this into sizing.auto.tfvars.json. Every node pool, the MSK broker, the toolbox and the tunnel forwarder take their instance type from here, and every shape with a root disk carries its root_volume type and size. One region's instance-generation availability is never another's."
   type = map(object({
     instance_types = list(string)
     arch           = string

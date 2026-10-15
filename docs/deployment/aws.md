@@ -92,20 +92,20 @@ priced on this scale in [edge.md](edge.md).
   out-of-memory kill, with whatever throughput it happens to carry reported
   rather than targeted. On AWS economy focus with `kafka.provider: msk` the
   resolver's own live run resolves that floor at the smallest shapes the
-  resolver accepts, M, with the managed brokers the largest single line:
-  `m9g.large` for eks-system, `m9g.xlarge` for general, `r9gd.large` for
-  clickhouse, `m9g.large` for keeper, three `express.m7g.large` for
+  resolver accepts, S, with the managed brokers the largest single line:
+  `m8g.large` for eks-system, `m8g.xlarge` for general, `r8gd.large` for
+  clickhouse, `m8g.large` for keeper, three `express.m7g.large` for
   msk-broker, and `c8gd.4xlarge` for ci-burst. With Kafka running in-cluster
-  (`kafka.provider: strimzi`) the same floor loses that line and stays M:
-  kafka-broker and eks-system both sit on `m9g.large` -- clickhouse, keeper,
+  (`kafka.provider: strimzi`) the same floor loses that line and stays S:
+  kafka-broker and eks-system both sit on `m8g.large` -- clickhouse, keeper,
   general and ci-burst are unchanged. That is
   the default combined quorum, which sizes no controller node at all;
-  `kafka.controller_pool: separate` adds three `m9g.medium` controllers on
+  `kafka.controller_pool: separate` adds three `m8g.medium` controllers on
   top of it. Both buckets come from on-demand Linux pricing in the AWS Pricing
   API, read 2026-09-13 -- rates drift, and the resolver's own
   `sizing/<profile>.report.md` (written under `--out`) is the current answer,
   not this paragraph. At the floor the resolver's A4 check WARNS rather than
-  fails: `r9gd.large` and `m9g.large` sustain only 3,600 IOPS / 95 MiB/s on
+  fails: `r8gd.large` and `m8g.large` sustain only 3,600 IOPS / 79 MiB/s on
   their EBS baseline and can burst above it for 30 minutes a day, while
   ClickHouse and Keeper write continuously. The floor is the smallest shape
   that runs, not a throughput target -- set `sizing.ingest_gb_per_day` once

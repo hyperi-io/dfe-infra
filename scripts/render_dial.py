@@ -857,7 +857,7 @@ def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
 def _no_instance_type(dial: dict[str, object], at: tuple[str, ...], use_case: str) -> None:
     """Refuse an instance type written into the dial where a shape_ref now names one.
 
-    The shape resolver picks the newest arm64 type the region offers, so a
+    The shape resolver picks the type under the shape's generation policy, so a
     literal here would be read by nothing; a deployer who needs a fixed type
     pins it as a resolver override instead.
 

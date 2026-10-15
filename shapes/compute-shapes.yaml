@@ -13,7 +13,7 @@
 ## emits the concrete type, its price and its storage profile into
 ## shapes/resolved/<cloud>.json, which is committed so an API change is a
 ## reviewed diff. Karpenter NodePool constraints render from the same entries,
-## so a new generation arrives by drift with no plan change.
+## so a new generation reaches the pools with the next resolve.
 ##
 ## Nothing here names an instance type. `m9g.2xlarge` is an ANSWER, and answers
 ## go stale: Graviton 9 shipped while every model's training data stopped at 8.
@@ -109,8 +109,9 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: newest
-        generation_pin: ""
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
+        generation_policy: pinned
+        generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -134,8 +135,9 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: newest
-        generation_pin: ""
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
+        generation_policy: pinned
+        generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -169,8 +171,8 @@ clouds:
       ## kraft-controller below: sizing.yaml's own kafka_broker_vcpu (2) /
       ## kafka_broker_ram_gib (8) floor is what actually sets the tyre-kick
       ## minimum (select_shape takes the larger of the two), and that floor
-      ## IS m9g.large -- so a bigger `size` here only pins the minimum above
-      ## what the workload ever asks for. It read `2xlarge` from this file's
+      ## IS the family's `large` -- so a bigger `size` here only pins the
+      ## minimum above what the workload ever asks for. It read `2xlarge` from this file's
       ## first commit with no stated reason, which happened to go unnoticed
       ## because a since-fixed resolver bug (see resolve_sizing.py's A3) sized
       ## every no-estimate deployment past 2xlarge anyway.
@@ -178,8 +180,9 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: newest
-        generation_pin: ""
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
+        generation_policy: pinned
+        generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -216,8 +219,9 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: newest
-        generation_pin: ""
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
+        generation_policy: pinned
+        generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -248,25 +252,23 @@ clouds:
             size_derived_iops_ceiling: ""
             size_derived_throughput_mib_s_ceiling: ""
 
-      ## The cache wants local NVMe, so the newest generation taken here must
-      ## still offer the `d` modifier; the pin is the floor it falls back to
-      ## rather than dropping the modifier. `r9gd` now exists in us-west-2
-      ## (Graviton5, 474 GB of NVMe at 2xlarge), so the policy resolves to
-      ## generation 9 and the pin no longer binds -- which is the policy working,
-      ## not a reason to raise the pin.
+      ## The cache wants local NVMe, so the generation taken here must offer the
+      ## `d` modifier; under newest-with-modifiers the pin is the floor it falls
+      ## back to rather than dropping the modifier.
       ##
-      ## `size` names the smallest r9gd member, same reasoning as
+      ## `size` names the smallest member, same reasoning as
       ## kafka-broker above: sizing.yaml's own clickhouse_vcpu (2) /
       ## clickhouse_ram_gib (8) floor is what actually sets the tyre-kick
       ## minimum, and `medium` (1 vCPU) is below it on vCPU alone, so
-      ## select_shape's own max-with-the-workload-floor lands on r9gd.large --
+      ## select_shape's own max-with-the-workload-floor lands on `large` --
       ## the true smallest r-class that clears the memory floor, not
       ## `2xlarge` pinning it three sizes higher for no stated reason.
       clickhouse:
         family: r
         modifiers: d
         arch: arm64
-        generation_policy: newest-with-modifiers
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest-with-modifiers.
+        generation_policy: pinned
         generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
@@ -320,8 +322,9 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        generation_policy: newest
-        generation_pin: ""
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
+        generation_policy: pinned
+        generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -356,7 +359,8 @@ clouds:
         family: c
         modifiers: d
         arch: arm64
-        generation_policy: newest-with-modifiers
+        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest-with-modifiers.
+        generation_policy: pinned
         generation_pin: 8
         price_policy: cheapest-of
         price_step_max_pct: ""
