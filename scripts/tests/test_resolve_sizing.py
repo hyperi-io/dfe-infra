@@ -1771,15 +1771,50 @@ def test_an_unrecognised_target_states_there_is_no_matrix(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_karpenter_generation_floor_is_one_below_the_oldest_named_family() -> None:
+def test_karpenter_admits_only_the_chosen_family_not_the_older_fallbacks() -> None:
+    """Karpenter launches the cheapest family a pool allows, and the oldest is
+    the cheapest, so a fallback on the list is the family it launches."""
     choice = _choice(
         use_case="general",
         instance_type="m9g.8xlarge",
         fallbacks=["m8g.8xlarge", "m7g.8xlarge", "m6g.8xlarge"],
     )
     pools = resolve_sizing.build_karpenter_pools({"general": choice}, {})
-    assert pools["general"]["families"] == ["m9g", "m8g", "m7g", "m6g"]
-    assert pools["general"]["generationGt"] == "5"
+    assert pools["general"]["families"] == ["m9g"]
+    assert pools["general"]["generationGt"] == "8"
+
+
+def test_karpenter_admits_the_older_family_newest_within_chose() -> None:
+    """A price step too steep has the resolver take the older generation, and the pool follows it."""
+    choice = _choice(
+        use_case="general",
+        instance_type="m8g.large",
+        fallbacks=["m9g.large", "m7g.large"],
+        price_policy="newest-within",
+    )
+    pools = resolve_sizing.build_karpenter_pools({"general": choice}, {})
+    assert pools["general"]["families"] == ["m8g"]
+    assert pools["general"]["generationGt"] == "7"
+
+
+def test_karpenter_admits_the_window_cheapest_of_compared() -> None:
+    """cheapest-of already compares that many generations on price, which is Karpenter's own choice."""
+    choice = _choice(
+        use_case="ci-burst",
+        instance_type="c8gd.4xlarge",
+        fallbacks=["c9gd.4xlarge", "c7gd.4xlarge"],
+        price_policy="cheapest-of",
+    )
+    cloud_entry = {"use_cases": {"ci-burst": {"price_policy": "cheapest-of", "price_generations": 2}}}
+    pool = resolve_sizing.build_karpenter_pools({"ci-burst": choice}, cloud_entry)["ci-burst"]
+    assert pool["families"] == ["c8gd", "c9gd"]
+    assert pool["generationGt"] == "7"
+
+
+def test_expected_fail_a_family_with_no_generation_digit_is_refused() -> None:
+    choice = _choice(use_case="general", instance_type="mac.large", fallbacks=[])
+    with pytest.raises(resolve_sizing.ResolveError, match="no generation digit"):
+        resolve_sizing.build_karpenter_pools({"general": choice}, {})
 
 
 def test_karpenter_generation_floor_with_one_family_is_its_own_generation_minus_one() -> None:

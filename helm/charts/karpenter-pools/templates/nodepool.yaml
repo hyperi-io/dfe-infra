@@ -47,8 +47,7 @@ spec:
             {{- range $pool.capacityTypes }}
             - {{ . | quote }}
             {{- end }}
-        # A list, so an InsufficientCapacityError on the first family falls
-        # through to the next rather than leaving the pod pending.
+        # The resolver's family alone: Karpenter launches the cheapest family listed, so an older one here is the one it picks.
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
