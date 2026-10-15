@@ -5442,7 +5442,7 @@ stacks:
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
-      culvert: "v2.1.22"            # 2026-10-14, amd64 and arm64. The image thin chart 2.1.22 pins. scalo-py 2.31.10. Revoking a client removes everything it was issued, prefixed client names keep separate files, stale issued configurations are reported, a client name ending in -proxy is refused, and openvpn-auth-oauth2 is 2.2.3 (culvert#75 #84 #85 #86 #88).
+      culvert: "v2.1.23"            # 2026-10-15, amd64 and arm64. The image thin chart 2.1.23 pins. scalo-py 2.31.15, which drops the us-east-1 fallback, and watchtower 1.23.1 (culvert#90 #91).
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
@@ -5457,7 +5457,7 @@ stacks:
       dfe-transform-vector: "sha256:604ffb17378c5b61aa6d9ca006857a1ac727fc77bcf15ef7e564ebe6ddc43f96"
       dfe-transform-elastic: "sha256:4325bcb2b7846fc2646c61b5fca408a39084124f08185cbfd28abb7d31076648"
       dfe-hyperdx: "sha256:7dc98f7dbb21cec7239ad9398e00f8b87f63629f748da2d5616d2825ae38d3d9"
-      culvert: "sha256:ff5b651cb0340e3d022a7feb1b31c2d9cfa591efac99e811a63d6ccaf5e2c3c5"
+      culvert: "sha256:a0e2b9e87a6f87cbdd8cda488b2e228a9025cb76375f5e50adb806f9c22db941"
       # Tagged by toolbox.dfe-toolbox.
       dfe-toolbox-base: "sha256:a08e64b708d201e1e26823ba3ffc8d4a8e54a669713c4047d40715a6ea3522e5"
 
@@ -5467,7 +5467,7 @@ stacks:
     # not published yet. The chart version is the app tag without its v, so it has no key here.
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
-      culvert: "sha256:706f0c7f88c6e8eab86cd70112d4603d340e5f1c4cbfd7cb99d2d70117994b3e"                # 2.1.22
+      culvert: "sha256:3742cbd1727a4ee9c567b70d3bc3159edaaef6962eeec1049456f3d014e7df40"                # 2.1.23
       dfe-archiver: "sha256:178bc132ed212cbc1f8773ce670aa4431eccd96c0c8a381b39e03175897ba7c4"           # 1.7.35
       dfe-engine: "sha256:d0d5e520bf648eb4ca6ef89a60adeef52cd0a4f0662732a170650074f2ad3e82"             # 1.22.44
       dfe-fetcher: "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"            # 1.4.39

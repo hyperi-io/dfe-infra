@@ -26,6 +26,7 @@ render pulls the scalo-service library (_weave.library).
 """
 
 import ipaddress
+import json
 import re
 import subprocess
 import sys
@@ -36,6 +37,9 @@ import pytest
 import yaml
 
 from _weave import REPO_ROOT, helm, render_app, render_extras, weave
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import cloud_run
 
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
@@ -56,6 +60,7 @@ AWS_FACTS = {
 }
 # The same cluster before this fact existed: every cloud but AWS, and an older AWS secret.
 NO_STORE = {k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/engine_secrets_prefix"}
+NO_KEY = {k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/kms_key_arn"}
 
 POD_IDENTITY = ipaddress.ip_address("169.254.170.23")
 ENGINE_LABELS = {"app.kubernetes.io/name": "dfe-engine"}
@@ -139,6 +144,46 @@ def test_the_engine_writes_secrets_manager_under_its_prefix_region_key_and_tags(
     }
 
 
+def _resource_tags_annotation(tags: str) -> str:
+    """bootstrap.sh's own annotation lines, then the cluster secret, as Argo reads it back."""
+    lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
+    start = lines.index('export DFE_RESOURCE_TAGS="${DFE_RESOURCE_TAGS:-}"')
+    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_RESOURCE_TAGS_ANNOTATION="))
+    script = "\n".join(lines[start : end + 1]) + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"'
+    annotation = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script], env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS": tags},
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    ).stdout.strip()
+    rendered = subprocess.run(
+        [sys.executable, str(RENDER_ENV)],
+        input=CLUSTER_SECRET.read_text(encoding="utf-8"),
+        env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS_ANNOTATION": annotation},
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+    ).stdout
+    return yaml.safe_load(rendered)["metadata"]["annotations"]["dfe.hyperi.io/resource_tags"]
+
+
+def test_a_cycles_run_tags_reach_every_secret_the_engine_creates() -> None:
+    """A test account's boundary refuses CreateSecret without both run tags, and the engine sends these as Tags.
+
+    cloud_run.run_tags is the pair the cycle's tofu run renders (test_cloud_run
+    holds the two halves equal), and the aws root merges it into DFE_RESOURCE_TAGS.
+    """
+    run = cloud_run.run_tags("r20261008t000000z-0a1b2c", 1791460800)
+    resource_tags = json.dumps({"service-name": "dfe", **run}, separators=(",", ":"))
+    facts = {**AWS_FACTS, "dfe.hyperi.io/resource_tags": _resource_tags_annotation(resource_tags)}
+    tags = json.loads(engine_env(render_extras("dfe-engine", "scale", "aws", annotations=facts))["DFE_SECRETS_TAGS"])
+    assert tags["dfe-e2e"] == "r20261008t000000z-0a1b2c"
+    assert tags["expires-at"] == "2026-10-08T12:00:00Z"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", tags["expires-at"])
+
+
+def test_expected_fail_a_store_without_the_deployment_key_fails_the_render() -> None:
+    """An empty key id would encrypt under the account's aws/secretsmanager key instead."""
+    with pytest.raises(RenderError, match=re.escape("dfe.hyperi.io/kms_key_arn annotation")):
+        render_extras("dfe-engine", "scale", "aws", annotations=NO_KEY)
+
+
 def test_without_the_prefix_the_engine_keeps_its_files() -> None:
     env = engine_env(render_extras("dfe-engine", "scale", "aws", annotations=NO_STORE))
     assert env["DFE_SECRETS_PATH"] == "/config/.secrets"
@@ -158,11 +203,12 @@ def test_no_other_app_moves_with_the_engines_store(service: str) -> None:
     [
         ({"provider": "aws", "region": "", "namePrefix": PREFIX}, "secrets.region is empty"),
         ({"provider": "aws", "region": "us-west-2", "namePrefix": ""}, "secrets.namePrefix is empty"),
-        ({"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX, "recoveryWindowDays": 3},
+        ({"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX}, "secrets.kmsKeyId is empty"),
+        ({"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX, "kmsKeyId": KEY, "recoveryWindowDays": 3},
          "takes 0 (no window) or 7-30"),
         ({"provider": "openbao"}, 'secrets.provider is "openbao"'),
     ],
-    ids=["no-region", "no-prefix", "window-out-of-range", "unwired-provider"],
+    ids=["no-region", "no-prefix", "no-key", "window-out-of-range", "unwired-provider"],
 )
 def test_expected_fail_a_store_the_engine_cannot_start_on_fails_the_render(store: dict, said: str) -> None:
     with pytest.raises(RenderError, match=re.escape(said)):
@@ -187,7 +233,8 @@ def test_on_aws_the_runner_and_the_shim_run_as_accounts_of_their_own() -> None:
     assert service_account(docs, "dfe-keda-shim") == "dfe-keda-shim"
     accounts = keyed(docs)
     for name in ("dfe-hunt-runner", "dfe-keda-shim"):
-        assert ("ServiceAccount", name) in accounts
+        assert accounts[("ServiceAccount", name)]["automountServiceAccountToken"] is False
+        assert "automountServiceAccountToken" not in accounts[("Deployment", name)]["spec"]["template"]["spec"]
     # The engine's own account is the thin chart's; dfe-extras renders none by that name.
     assert ("ServiceAccount", "dfe-engine") not in accounts
 

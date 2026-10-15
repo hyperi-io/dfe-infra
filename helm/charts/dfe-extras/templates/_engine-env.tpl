@@ -267,8 +267,9 @@ thin chart's env.
               value: {{ required "secrets.region is empty: with secrets.provider aws the engine refuses to start without the store's region" $store.region | quote }}
             - name: DFE_SECRETS_NAME_PREFIX
               value: {{ required "secrets.namePrefix is empty: with secrets.provider aws the engine refuses to start without the prefix its role writes under" $store.namePrefix | quote }}
+            # Empty would fall back to the account's aws/secretsmanager key, outside the deployment's.
             - name: DFE_SECRETS_KMS_KEY_ID
-              value: {{ $store.kmsKeyId | default "" | quote }}
+              value: {{ required "secrets.kmsKeyId is empty: with secrets.provider aws the engine needs the deployment's key, the cluster secret's dfe.hyperi.io/kms_key_arn annotation" $store.kmsKeyId | quote }}
             - name: DFE_SECRETS_RECOVERY_WINDOW_DAYS
               value: {{ $window | quote }}
             - name: DFE_SECRETS_TAGS

@@ -71,7 +71,7 @@ MSK takes no kafka seed at all. MSK requires its SCRAM secret to be named `Amazo
 |--------|------|---------|
 | `store_config` | `object` | Everything a ClusterSecretStore needs and nothing a caller has to interpret: `provider`, `service`, `region`, `auth`, `prefix`. Each body fills the fields its provider block reads. `prefix` is the `prefix` input alone, never the full path: every chart's remoteRef key already starts with `<project>/<env>`. |
 | `eso_role_arn` | `string` | The identity ESO assumes. Empty for a backend that authenticates some other way. |
-| `engine_role_arn` | `string` | AWS-only (`aws-sm/`). The identity dfe-engine assumes: write under `engine_name_prefix`, and the deployment key used through Secrets Manager alone. |
+| `engine_role_arn` | `string` | AWS-only (`aws-sm/`). The identity dfe-engine assumes: write under `engine_name_prefix`, and the deployment key used through Secrets Manager alone, for secrets under that prefix. |
 | `engine_name_prefix` | `string` | AWS-only (`aws-sm/`). `<path>/engine`, which the root hands bootstrap as `DFE_ENGINE_SECRETS_PREFIX`. |
 
 ## Rules every body follows

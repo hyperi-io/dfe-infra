@@ -196,6 +196,8 @@ metadata:
     app.kubernetes.io/component: {{ .component }}
     dfe.hyperi.io/env: {{ .ctx.Values.env | quote }}
     dfe.hyperi.io/cloud: {{ .ctx.Values.cloud | quote }}
+# Neither workload calls the Kubernetes API.
+automountServiceAccountToken: false
 ---
 {{- end }}
 {{- end -}}

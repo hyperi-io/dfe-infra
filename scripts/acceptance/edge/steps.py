@@ -79,9 +79,6 @@ _PLAIN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CLUSTER_SECRET_NAMESPACE = "argocd"
 CLUSTER_SECRET = "dfe-cluster"
 FACT = "dfe.hyperi.io/"
-ENGINE_DEPLOYMENT = "dfe-engine"
-# The engine's file store, which holds nothing once its store is Secrets Manager.
-ENGINE_FILE_STORE = "/config/.secrets"
 # What every engine mints on its first boot; each organisation adds a ch/orgs/<org>.
 MINTED = ("jwt/signing-key", "ch/service/query_reader")
 ORG_PASSWORDS = "ch/orgs/"
@@ -714,20 +711,6 @@ def cluster_facts(kube: list[str]) -> tuple[dict[str, str] | None, str]:
     return {str(key): str(value) for key, value in found.items()}, ""
 
 
-def store_files(kube: list[str], namespace: str) -> tuple[list[str] | None, str]:
-    """Every file under the engine's file store, by name; None and why when the pod cannot be asked."""
-    rc, out, err = kubectl(
-        kube, "-n", namespace, "exec", f"deployment/{ENGINE_DEPLOYMENT}", "--",
-        "find", ENGINE_FILE_STORE, "-type", "f",
-    )
-    if rc != 0:
-        # A store the engine never created holds nothing.
-        if "No such file or directory" in err:
-            return [], ""
-        return None, f"could not list {ENGINE_FILE_STORE} in deployment/{ENGINE_DEPLOYMENT}: {_first_line(err)}"
-    return [line.strip() for line in out.splitlines() if line.strip()], ""
-
-
 def list_engine_secrets(prefix: str, region: str) -> tuple[list[dict] | None, str]:
     """ListSecrets under ``prefix``/: names, keys and tags, never a value; None and why on failure.
 
@@ -758,12 +741,10 @@ def _key_id(key: str) -> str:
     return key.rsplit("/", 1)[-1]
 
 
-def minted_outcome(files: list[str], listed: list[dict], prefix: str, kms_key: str,
-                   tags: Mapping[str, str]) -> tuple[str, str]:
+def minted_outcome(listed: list[dict], prefix: str, kms_key: str, tags: Mapping[str, str]) -> tuple[str, str]:
     """The step result for where the engine keeps what it mints.
 
     Args:
-        files: Each file under the engine's file store.
         listed: The ListSecrets entries under ``prefix``.
         prefix: The cluster secret's engine_secrets_prefix.
         kms_key: The cluster secret's kms_key_arn.
@@ -772,9 +753,6 @@ def minted_outcome(files: list[str], listed: list[dict], prefix: str, kms_key: s
     Returns:
         The status and detail for the row.
     """
-    if files:
-        shown = ", ".join(sorted(files)[:5])
-        return "failed", f"{len(files)} file(s) under {ENGINE_FILE_STORE} on the engine's volume: {shown}"
     by_name = {str(entry.get("Name")): entry for entry in listed}
     wanted = [f"{prefix}/{path}" for path in MINTED]
     orgs = sorted(name for name in by_name if name.startswith(f"{prefix}/{ORG_PASSWORDS}"))
@@ -797,13 +775,13 @@ def minted_outcome(files: list[str], listed: list[dict], prefix: str, kms_key: s
         return "failed", "; ".join(problems)
     names = ", ".join(name.removeprefix(f"{prefix}/") for name in [*wanted, *orgs])
     return "done", (
-        f"nothing under {ENGINE_FILE_STORE}; {names} under {prefix}/, each on {kms_key} "
+        f"{names} under {prefix}/, each on {kms_key} "
         f"and carrying {', '.join(sorted(tags)) or 'no tag the cluster secret names'}"
     )
 
 
-def record_minted_secrets(results: list[wizard.StepResult], kube: list[str], namespace: str) -> None:
-    """Where dfe-engine keeps what it mints: nothing on its volume, each secret in Secrets Manager.
+def record_minted_secrets(results: list[wizard.StepResult], kube: list[str]) -> None:
+    """Where dfe-engine keeps what it mints: each secret in Secrets Manager, on the deployment key.
 
     Off AWS the cluster secret names no engine_secrets_prefix and the engine keeps
     its files on its own volume, so the row is skipped rather than failed.
@@ -826,16 +804,11 @@ def record_minted_secrets(results: list[wizard.StepResult], kube: list[str], nam
     except json.JSONDecodeError as exc:
         row(results, slug, "failed", f"the cluster secret's tags are not JSON: {exc}")
         return
-    files, why = store_files(kube, namespace)
-    if files is None:
-        row(results, slug, "failed", why)
-        return
     listed, why = list_engine_secrets(prefix, facts.get(f"{FACT}region", ""))
     if listed is None:
         row(results, slug, "failed", why)
         return
     status, detail = minted_outcome(
-        files, listed, prefix, facts.get(f"{FACT}kms_key_arn", ""),
-        {str(key): str(value) for key, value in tags.items()},
+        listed, prefix, facts.get(f"{FACT}kms_key_arn", ""), {str(key): str(value) for key, value in tags.items()},
     )
     row(results, slug, status, detail)

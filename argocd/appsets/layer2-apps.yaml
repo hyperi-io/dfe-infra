@@ -101,7 +101,7 @@ spec:
           # Application on its current spec.
           targetRevision: |-
             {{- $pins := dict
-                "culvert" "sha256:706f0c7f88c6e8eab86cd70112d4603d340e5f1c4cbfd7cb99d2d70117994b3e"
+                "culvert" "sha256:3742cbd1727a4ee9c567b70d3bc3159edaaef6962eeec1049456f3d014e7df40"
                 "dfe-archiver" "sha256:178bc132ed212cbc1f8773ce670aa4431eccd96c0c8a381b39e03175897ba7c4"
                 "dfe-engine" "sha256:d0d5e520bf648eb4ca6ef89a60adeef52cd0a4f0662732a170650074f2ad3e82"
                 "dfe-fetcher" "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"

@@ -473,3 +473,26 @@ run "the_engine_store_reaches_bootstrap" {
     error_message = "the prefix bootstrap writes is the one the engine's role is fenced to"
   }
 }
+
+// A test account's boundary refuses CreateSecret without both run tags, and the
+// engine tags what it creates from this output, through the resource_tags annotation.
+run "a_runs_tags_reach_the_engine_store" {
+  command = plan
+
+  variables {
+    run = {
+      id         = "r20261008t000000z-0a1b2c"
+      expires_at = 1791460800
+    }
+  }
+
+  assert {
+    condition     = jsondecode(output.DFE_RESOURCE_TAGS)["dfe-e2e"] == "r20261008t000000z-0a1b2c"
+    error_message = "DFE_RESOURCE_TAGS must carry the run id under dfe-e2e"
+  }
+
+  assert {
+    condition     = jsondecode(output.DFE_RESOURCE_TAGS)["expires-at"] == "2026-10-08T12:00:00Z"
+    error_message = "DFE_RESOURCE_TAGS must carry the run's expiry under expires-at, as YYYY-MM-DDTHH:MM:SSZ"
+  }
+}

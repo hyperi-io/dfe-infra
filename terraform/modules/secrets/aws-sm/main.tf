@@ -204,14 +204,13 @@ data "aws_iam_policy_document" "engine" {
       "secretsmanager:CreateSecret",
       "secretsmanager:UpdateSecret",
       "secretsmanager:GetSecretValue",
-      "secretsmanager:DescribeSecret",
       "secretsmanager:DeleteSecret",
       "secretsmanager:TagResource",
     ]
     resources = ["${local.engine_arn_prefix}/*"]
   }
 
-  // The same key wraps EKS Secrets and MSK, so it is used only through Secrets Manager.
+  // The same key wraps EKS Secrets and MSK, so it is used only through Secrets Manager, and only for its own prefix.
   statement {
     effect    = "Allow"
     actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
@@ -221,6 +220,13 @@ data "aws_iam_policy_document" "engine" {
       test     = "StringEquals"
       variable = "kms:ViaService"
       values   = ["secretsmanager.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"]
+    }
+
+    // Secrets Manager puts the secret's full ARN in the encryption context.
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = ["${local.engine_arn_prefix}/*"]
     }
   }
 }

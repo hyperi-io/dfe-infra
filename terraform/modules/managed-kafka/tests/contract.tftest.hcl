@@ -667,6 +667,28 @@ run "msk_scaler_runtime_must_be_a_python_runtime" {
   expect_failures = [var.broker_scaler_runtime]
 }
 
+run "msk_scaler_runtime_is_checked_with_autoscaling_off" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  variables {
+    autoscaling = {
+      enabled                  = false
+      max_brokers              = 6
+      per_broker_capacity_mb_s = 50
+      headroom                 = 1.3
+      period_seconds           = 300
+      evaluation_periods       = 3
+    }
+    broker_scaler_runtime = ""
+  }
+
+  expect_failures = [var.broker_scaler_runtime]
+}
+
 // otel is the default: DFE's monitoring goes to its own OTel feed and
 // HyperDX, never CloudWatch, so broker logs land in a bucket this body creates
 // instead of a log group.

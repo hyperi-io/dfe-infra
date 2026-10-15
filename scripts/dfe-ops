@@ -66,7 +66,7 @@ Subcommands:
                bearer token every sender presents. The readiness gate and the
                access summary print it.
   teardown     Tear the deployment down (wraps bootstrap/destroy.sh); optionally
-               also destroy terraform state, after force-deleting the secrets
+               also destroy terraform state, then force-delete the secrets
                dfe-engine minted in Secrets Manager outside it.
   verify       Run the full smoke-test suite (wraps bootstrap/run-all-smoke-tests.sh),
                or just the readiness gate.
@@ -709,12 +709,39 @@ def _teardown_facts(tf_dir: str) -> dict[str, str]:
     return facts
 
 
+def list_engine_secrets(prefix: str, region: str) -> list[str]:
+    """Every secret name under ``prefix``, sorted; values are never read.
+
+    The name filter is a case-insensitive prefix match, so each name is checked
+    again here, case-sensitively.
+
+    Args:
+        prefix: The root's DFE_ENGINE_SECRETS_PREFIX, ``<path>/engine``.
+        region: The region the store is in.
+
+    Returns:
+        The names, in order.
+
+    Raises:
+        cloud_sweep.CloudSweepError: The list call failed.
+    """
+    under = f"{prefix}/"
+    listed = cloud_sweep.run_aws(
+        ["secretsmanager", "list-secrets", "--include-planned-deletion", "--filters", f"Key=name,Values={under}"],
+        region,
+    )
+    return sorted(
+        str(item.get("Name") or "")
+        for item in listed.get("SecretList") or []
+        if str(item.get("Name") or "").startswith(under)
+    )
+
+
 def purge_engine_secrets(prefix: str, region: str) -> list[str]:
     """Force-delete every secret dfe-engine minted under ``prefix``; the names deleted.
 
     The engine creates them itself, so they sit outside tofu state and a destroy
-    leaves them behind. The name filter is a case-insensitive prefix match, so
-    each name is checked again here, case-sensitively, before it is deleted.
+    leaves them behind.
 
     Args:
         prefix: The root's DFE_ENGINE_SECRETS_PREFIX, ``<path>/engine``.
@@ -726,16 +753,7 @@ def purge_engine_secrets(prefix: str, region: str) -> list[str]:
     Raises:
         cloud_sweep.CloudSweepError: A list or delete call failed.
     """
-    under = f"{prefix}/"
-    listed = cloud_sweep.run_aws(
-        ["secretsmanager", "list-secrets", "--include-planned-deletion", "--filters", f"Key=name,Values={under}"],
-        region,
-    )
-    names = sorted(
-        str(item.get("Name") or "")
-        for item in listed.get("SecretList") or []
-        if str(item.get("Name") or "").startswith(under)
-    )
+    names = list_engine_secrets(prefix, region)
     for name in names:
         cloud_sweep.run_aws(
             ["secretsmanager", "delete-secret", "--secret-id", name, "--force-delete-without-recovery"], region
@@ -743,39 +761,54 @@ def purge_engine_secrets(prefix: str, region: str) -> list[str]:
     return names
 
 
-def _purge_engine_store(tf_dir: str, *, dry_run: bool) -> int:
-    """Clear dfe-engine's own secrets before `tofu destroy`; 0 when nothing is left behind.
+def _engine_store(tf_dir: str) -> tuple[str, str] | None:
+    """The root's engine prefix and region, read before the destroy empties its state.
 
-    A root that names no engine prefix (every cloud but AWS) has nothing to clear.
+    Returns ("", region) for a root that names no prefix (every cloud but AWS),
+    and None when the outputs cannot be read.
     """
     try:
         outputs = terraform_settings(tf_dir)
     except _bridge().TerraformOutputError as exc:
         print(f"  WARN: could not read the outputs of {tf_dir} ({exc}), so dfe-engine's secrets "
-              "were not cleared", file=sys.stderr)
-        return 1
-    prefix = outputs.get("DFE_ENGINE_SECRETS_PREFIX", "")
+              "will not be cleared", file=sys.stderr)
+        return None
     # The provider's region, which the engine's role is fenced to and the engine writes in.
-    region = outputs.get("DFE_REGION", "")
-    if not prefix:
-        return 0
-    # Messages name the output, not its value, so nothing read under a secrets key is printed.
-    if dry_run:
-        print(f"[dry-run] would force-delete every secret under DFE_ENGINE_SECRETS_PREFIX in {region}",
-              file=sys.stderr)
-        return 0
+    return outputs.get("DFE_ENGINE_SECRETS_PREFIX", ""), outputs.get("DFE_REGION", "")
+
+
+# Messages below name the output, not its value, so nothing read under a secrets key is printed.
+
+
+def _purge_engine_store(prefix: str, region: str) -> int:
+    """Clear dfe-engine's own secrets after a successful destroy; 0 when nothing is left behind."""
     try:
         names = purge_engine_secrets(prefix, region)
     except cloud_sweep.CloudSweepError as exc:
         print(
             f"ERROR: could not clear dfe-engine's secrets in {region}: {exc}\n"
-            f"       The prefix is `tofu -chdir={tf_dir} output -raw DFE_ENGINE_SECRETS_PREFIX`: list "
-            "what sits under it and delete each with --force-delete-without-recovery",
+            "       The destroy succeeded, so the prefix is no longer a tofu output: list what sits "
+            "under <project>/<env>/engine/ and delete each with --force-delete-without-recovery",
             file=sys.stderr,
         )
         return 1
     print(f"  cleared {len(names)} dfe-engine secret(s) in {region}", file=sys.stderr)
     return 0
+
+
+def _report_engine_store_kept(prefix: str, region: str, tf_dir: str) -> None:
+    """Say what a destroy that did not succeed left in the engine's store."""
+    try:
+        left = len(list_engine_secrets(prefix, region))
+    except cloud_sweep.CloudSweepError as exc:
+        print(f"  WARN: could not list dfe-engine's secrets in {region}: {exc}", file=sys.stderr)
+        return
+    print(
+        f"  kept {left} dfe-engine secret(s) under DFE_ENGINE_SECRETS_PREFIX in {region}: the destroy did "
+        f"not succeed, so a redeploy still reads them. `tofu -chdir={tf_dir} output -raw "
+        "DFE_ENGINE_SECRETS_PREFIX` names the prefix; the next teardown that destroys clears it",
+        file=sys.stderr,
+    )
 
 
 def cmd_teardown(args: argparse.Namespace) -> int:
@@ -796,15 +829,25 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     # Optionally also destroy terraform state (OpenBao KV mounts + AppRoles).
     tf_dir = args.tf_dir or str(REPO_ROOT / "terraform" / "environments" / args.cloud)
     tf_cmd = [args.tf_bin, f"-chdir={tf_dir}", "destroy"]
-    # The engine's secrets go first: its workloads are gone, so nothing mints another.
-    purged = _purge_engine_store(tf_dir, dry_run=args.dry_run)
+    store = _engine_store(tf_dir)
+    prefix, region = store or ("", "")
     if args.dry_run:
         print(f"[dry-run] would run: {' '.join(tf_cmd)}", file=sys.stderr)
+        if prefix:
+            print(f"[dry-run] would then force-delete every secret under DFE_ENGINE_SECRETS_PREFIX in {region}",
+                  file=sys.stderr)
         return rc
     if args.force:
         tf_cmd.append("-auto-approve")  # non-interactive teardown when --force
-    # A store that could not be cleared still lets the infrastructure go, and fails the teardown.
-    return _run_streaming(tf_cmd, env=env) or purged
+    destroyed = _run_streaming(tf_cmd, env=env)
+    # A refused or failed destroy leaves the deployment up, and its engine needs these secrets.
+    if destroyed != 0:
+        if prefix:
+            _report_engine_store_kept(prefix, region, tf_dir)
+        return destroyed
+    if store is None:
+        return 1
+    return _purge_engine_store(prefix, region) if prefix else 0
 
 
 def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = True) -> dict[str, str]:
@@ -4755,8 +4798,8 @@ def build_parser() -> argparse.ArgumentParser:
     td.add_argument(
         "--with-terraform",
         action="store_true",
-        help="also destroy terraform state, first force-deleting the secrets dfe-engine minted "
-        "outside it (the root's DFE_ENGINE_SECRETS_PREFIX, AWS only)",
+        help="also destroy terraform state and, once that succeeds, force-delete the secrets "
+        "dfe-engine minted outside it (the root's DFE_ENGINE_SECRETS_PREFIX, AWS only)",
     )
     td.add_argument("--cloud", default="local", help="terraform env for --with-terraform")
     td.add_argument("--tf-dir", default=None, help="terraform env dir for --with-terraform (default: auto from --cloud)")

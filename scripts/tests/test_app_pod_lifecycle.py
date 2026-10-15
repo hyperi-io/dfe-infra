@@ -24,7 +24,9 @@ arrives from the downward API instead. Its version check derives the instance
 id from ca.crt and namespace in the same directory, so those two files are
 projected there on their own, and a pod start does not read as a new install.
 dfe-engine is the control plane, not a data-plane app, and keeps its token, as
-do the hunt runner and keda shim dfe-extras renders beside it.
+do the hunt runner and keda shim dfe-extras renders beside it on the engine's
+account. Where the engine keeps its secrets in Secrets Manager they run as
+accounts of their own, which mount none.
 
 The defaults are read from the goldens under fixtures/thin-renders, which
 test_thin_renders.py holds equal to what Argo deploys. The dials render live
@@ -223,13 +225,18 @@ def test_the_token_dial_turns_the_token_back_on_for_that_app() -> None:
 
 
 def test_the_engine_keeps_its_token() -> None:
-    """Every engine workload mounts the kubelet's token, with nothing else at its path."""
+    """The engine mounts the kubelet's token, and so does a sidecar on the engine's account.
+
+    A sidecar on an account of its own (the engine's secrets in Secrets Manager)
+    mounts none. Nothing else sits at the token's path either way.
+    """
     for where, docs in goldens(CONTROL_PLANE):
-        accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
+        accounts = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ServiceAccount"}
+        engine_account = accounts.get(CONTROL_PLANE, {})
         expect(
-            f"{CONTROL_PLANE} on {label(where)} renders one ServiceAccount that mounts its token",
-            len(accounts) == 1 and accounts[0].get("automountServiceAccountToken", True) is True,
-            f"got {accounts!r}",
+            f"{CONTROL_PLANE} on {label(where)} renders its own ServiceAccount, which mounts its token",
+            bool(engine_account) and engine_account.get("automountServiceAccountToken", True) is True,
+            f"got {sorted(accounts)}",
         )
         workloads = [d for d in docs if d.get("kind") == "Deployment"]
         names = sorted(w["metadata"]["name"] for w in workloads)
@@ -240,11 +247,23 @@ def test_the_engine_keeps_its_token() -> None:
         )
         for workload in workloads:
             pod = workload["spec"]["template"]["spec"]
-            at = f"{workload['metadata']['name']} on {label(where)}"
+            name = workload["metadata"]["name"]
+            at = f"{name} on {label(where)}"
+            account = pod.get("serviceAccountName", "default")
+            # The pod's own setting wins; unset, the account's decides, and Kubernetes defaults it on.
+            mounted = pod.get("automountServiceAccountToken")
+            if mounted is None:
+                mounted = accounts.get(account, {}).get("automountServiceAccountToken", True)
+            on_engine_account = account == CONTROL_PLANE
             expect(
-                f"{at} pod mounts its token",
-                pod.get("automountServiceAccountToken", True) is True,
-                f"got {pod.get('automountServiceAccountToken')!r}",
+                f"{at} runs as {CONTROL_PLANE} or as its own account",
+                on_engine_account or (account == name and name != CONTROL_PLANE),
+                f"got {account!r}",
+            )
+            expect(
+                f"{at} pod {'mounts its' if on_engine_account else 'mounts no'} token",
+                mounted is on_engine_account,
+                f"account {account!r}, got {mounted!r}",
             )
             for container in pod["containers"]:
                 files, _ = files_at(pod, container, SERVICE_ACCOUNT_DIR)

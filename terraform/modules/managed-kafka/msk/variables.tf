@@ -348,7 +348,7 @@ variable "autoscaling" {
 }
 
 variable "broker_scaler_runtime" {
-  description = "The Lambda runtime the broker scaler's inline handler runs on, whose bundled boto3 it imports. From tfvars: render_dial.py renders versions.yaml's lambda-runtimes, so the root passes lambda_runtimes[\"msk-broker-scaler\"]. Read only when autoscaling.enabled."
+  description = "The Lambda runtime the broker scaler's inline handler runs on, whose bundled boto3 it imports. From tfvars: render_dial.py renders versions.yaml's lambda-runtimes, so the root passes lambda_runtimes[\"msk-broker-scaler\"]. Checked at plan whether or not autoscaling.enabled, so a dial without the pin fails before the scaler is ever turned on."
   type        = string
 
   validation {

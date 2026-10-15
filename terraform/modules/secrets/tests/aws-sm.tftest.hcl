@@ -393,13 +393,12 @@ run "the_engine_writes_its_own_prefix_and_nothing_else" {
         "secretsmanager:CreateSecret",
         "secretsmanager:UpdateSecret",
         "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret",
         "secretsmanager:DeleteSecret",
         "secretsmanager:TagResource",
       ])
       && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*"])
     ])
-    error_message = "the engine role must create, update, read, describe, delete and tag under <path>/engine/ -- the six calls the engine's store makes"
+    error_message = "the engine role must create, update, read, delete and tag under <path>/engine/ -- the calls the engine's store makes, tags riding on CreateSecret"
   }
 
   assert {
@@ -466,6 +465,19 @@ run "the_engine_uses_the_key_through_secrets_manager_alone" {
       if length([for a in s.actions : a if startswith(a, "kms:")]) > 0
     ])
     error_message = "the engine's KMS grant must be GenerateDataKey and Decrypt on the deployment key, conditioned on kms:ViaService secretsmanager.<region>"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.engine.statement :
+      anytrue([
+        for c in s.condition :
+        c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN"
+        && length(c.values) == 1 && contains(c.values, "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*")
+      ])
+      if contains(s.actions, "kms:Decrypt")
+    ])
+    error_message = "the engine's KMS grant must be held to secrets under its own prefix by kms:EncryptionContext:SecretARN"
   }
 }
 
