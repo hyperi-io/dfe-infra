@@ -18,6 +18,7 @@ The S3 calls go to a fake `aws_cli.run_aws` and `tofu` to a fake `run_tofu`.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -450,6 +451,244 @@ def test_a_run_holding_no_saas_broker_still_configures_the_redpanda_provider(
     assert all(env["REDPANDA_CLIENT_ID"] and env["REDPANDA_CLIENT_SECRET"] for env in seen)
     assert all("CONFLUENT_CLOUD_API_KEY" not in env for env in seen)
     assert bucket.deleted == ["dfe-e2e-runs/run-msk/run.json"]
+
+
+# --- a record older than the root it is destroyed with ----------------------------------
+
+AWS_VARIABLES = REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf"
+_VARIABLE_BLOCK = re.compile(r'^variable\s+"([a-z_]+)"\s*\{(.*?)^\}', re.MULTILINE | re.DOTALL)
+PRE_SWEEP_RUN = "r20261014t230516z-0a0a0a"
+
+
+def _required_variables() -> set[str]:
+    """Every variable the aws root declares with no default, so a tfvars file must set it."""
+    blocks = _VARIABLE_BLOCK.findall(AWS_VARIABLES.read_text(encoding="utf-8"))
+    return {name for name, body in blocks if not re.search(r"^  default\s*=", body, re.MULTILINE)}
+
+
+def _pre_sweep_record(run_id: str = PRE_SWEEP_RUN, **tfvars_overrides: object) -> dict:
+    """An expired redpanda-cloud run recorded before the aws root required its sizing inputs.
+
+    The key set is a real record's from that time; the values are the reserved example
+    domain, RFC 5737 addresses and the zero account.
+    """
+    expires_at = NOW - 60
+    state = {"bucket": "example-state", "region": "us-west-2", "key": cloud_run.state_key("dfe-e2e-runs", run_id)}
+    pool = {"min_size": 1, "max_size": 1, "desired_size": 1, "capacity_type": "ON_DEMAND", "disk_gb": 40}
+    tfvars: dict[str, object] = {
+        "provision": {"cloud": "aws", "account": "000000000000", "region": "us-west-2", "cidr": "10.90.0.0/16"},
+        "name": "dfe-example",
+        "env": "test",
+        "profile": "scale",
+        "kubernetes_version": "1.36",
+        "network": {"nat": "single", "az_count": 3},
+        "endpoint": {"public": True, "allowed_cidrs": ["198.51.100.10/32"]},
+        "dns": {"private_zone": "dfe-example.internal", "public_zone": ""},
+        "telemetry": {"sink": "otel", "retention_days": 2},
+        "storage_class": "gp3",
+        "kafka": {
+            "provider": "redpanda-cloud",
+            "num_partitions": 12,
+            "log_retention_ms": 259200000,
+            "message_max_bytes": 16777216,
+            "landing_topics": {"main_land": {}},
+            "connectivity": "public",
+            "redpanda_resource_group_id": "00000000-0000-4000-8000-000000000000",
+        },
+        "secrets": {"backend": "aws-sm", "ref": ""},
+        "clickhouse": {"mode": "in_cluster"},
+        "seeds": {"kafka/redpanda-cloud": {"password": ""}, "ui/nextauth": {"secret": ""}},
+        "endpoints": {
+            "clickhouse_host": "dfe-clickhouse.clickhouse.svc.cluster.local",
+            "kafka_bootstrap": "",
+            "otel_endpoint": "otel-collector-gateway.otel.svc.cluster.local:4317",
+        },
+        "repo_url": "https://github.com/example/dfe-infra.git",
+        "target_revision": "main",
+        "state": state,
+        "tags": {
+            "service-name": "dfe",
+            "service-namespace": "example",
+            "environment": "test",
+            "owner": "owner@example.com",
+            "cost-center": "experiments",
+            "lifecycle": "ephemeral",
+            "iac-source": "dfe-infra/terraform/environments/aws",
+        },
+        "toolbox": {
+            "enabled": False,
+            "aws": {"instance_type": "t4g.small", "operator_role_arn": ""},
+            "ttl_minutes": 60,
+            "session": {"idle_timeout_minutes": 15, "max_duration_minutes": 240},
+            "session_log_retention_days": 90,
+            "tool_versions": {"kubectl": "1.36.0"},
+        },
+        "edge": {
+            "enabled": True,
+            "tunnel": {
+                "address": {"mode": "byo", "instance_type": "t4g.small", "zone": ""},
+                "openvpn": True,
+                "source_ranges": [],
+                "node_ports": {"wireguard": 31820, "openvpn": 31194},
+                "admin_peer": {"enabled": True, "reach": [22, 443]},
+            },
+            "receiver": {"eips": True},
+        },
+        "edge_trusted_proxy_cidrs": [],
+        "node_pools": {
+            "system": {"shape_ref": "eks-system", **pool, "labels": {}, "taints": []},
+            "clickhouse": {
+                "shape_ref": "clickhouse", **pool, "labels": {"dfe.hyperi.io/workload": "clickhouse"},
+                "taints": [{"key": "dfe.hyperi.io/workload", "value": "clickhouse", "effect": "NO_SCHEDULE"}],
+            },
+        },
+        "resolved_shapes": {
+            "eks-system": {"instance_types": ["m8g.large", "m7g.large"], "arch": "arm64"},
+            "clickhouse": {"instance_types": ["r8gd.xlarge"], "arch": "arm64"},
+            "ci-burst": {"instance_types": ["c8g.large"], "arch": "arm64"},
+        },
+        "run": cloud_run.run_tfvar(run_id, expires_at),
+        "cloudtrail": {"enabled": False},
+        "permissions_boundary": "arn:aws:iam::000000000000:policy/dfe-e2e-boundary",
+        "iam_path": "/dfe-e2e/",
+        "s3_bucket_prefix": "dfe-e2e-",
+        "edge_self_ranges": ["198.51.100.20/32"],
+        **tfvars_overrides,
+    }
+    return cloud_run.build_record(
+        run_id=run_id, expires_at=expires_at, keys=cloud_run.RunTagKeys(),
+        tf_root="terraform/environments/aws", state=state, tfvars=tfvars,
+    )
+
+
+def _leaves(node: object, path: tuple[str, ...] = ()) -> dict[tuple[str, ...], object]:
+    """Every leaf of a tfvars tree by its path; an empty map is a leaf of its own."""
+    if not isinstance(node, dict) or not node:
+        return {path: node}
+    found: dict[tuple[str, ...], object] = {}
+    for key, value in node.items():
+        found |= _leaves(value, (*path, key))
+    return found
+
+
+def _overlay_destroyed_with(monkeypatch: pytest.MonkeyPatch, record: dict) -> dict:
+    """Reap one expired record and return the overlay its `tofu init` ran beside."""
+    for name in VENDOR_ENV:
+        monkeypatch.setenv(name, "example-credential")
+    run_id = str(record["run_id"])
+    bucket = FakeBucket({run_id: record}, {cloud_run.state_key("dfe-e2e-runs", run_id)})
+    problems, destroyed = _reap(monkeypatch, bucket)
+    assert problems == []
+    assert destroyed[0][0][0] == "init"
+    return destroyed[0][2]
+
+
+def test_a_record_older_than_the_root_gets_every_variable_the_root_now_requires(monkeypatch: pytest.MonkeyPatch) -> None:
+    overlay = _overlay_destroyed_with(monkeypatch, _pre_sweep_record())
+    missing = _required_variables() - set(overlay)
+    assert not missing, f"the destroy overlay leaves required variables unset: {sorted(missing)}"
+    assert overlay["eks_addon_versions"]
+    assert isinstance(overlay["network"]["subnet_newbits"], int)
+    assert isinstance(overlay["telemetry"]["forced_retention_days"], int)
+    assert overlay["kafka"]["redpanda_tier"] == "serverless"
+    assert overlay["edge"]["tunnel"]["client_cidr"]
+    assert overlay["toolbox"]["session_log_retention_days"] == 90
+
+
+def test_every_shape_the_root_reads_carries_a_root_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cluster module refuses a node pool, and the root a toolbox, whose shape has none."""
+    overlay = _overlay_destroyed_with(monkeypatch, _pre_sweep_record())
+    shapes = overlay["resolved_shapes"]
+    named = {pool["shape_ref"] for pool in overlay["node_pools"].values()} | {overlay["toolbox"]["aws"]["shape_ref"]}
+    for name in named:
+        assert shapes[name]["root_volume"]["size_gib"] > 0, name
+        assert shapes[name]["instance_types"], name
+
+
+def test_a_shape_named_by_a_legacy_instance_type_takes_the_records_own_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    overlay = _overlay_destroyed_with(monkeypatch, _pre_sweep_record())
+    toolbox = overlay["resolved_shapes"][overlay["toolbox"]["aws"]["shape_ref"]]
+    assert toolbox["instance_types"] == ["t4g.small"]
+    assert toolbox["arch"] == "arm64"
+
+
+def test_expected_fail_no_shape_is_invented_where_the_record_names_no_instance_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no type of the run's own to carry, the shape stays missing and the destroy refuses by name."""
+    record = _pre_sweep_record()
+    del record["tfvars"]["toolbox"]["aws"]["instance_type"]
+    del record["tfvars"]["edge"]["tunnel"]["address"]["instance_type"]
+    overlay = _overlay_destroyed_with(monkeypatch, record)
+    assert overlay["toolbox"]["aws"]["shape_ref"] not in overlay["resolved_shapes"]
+
+
+def test_the_overlay_never_changes_a_value_the_record_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+    record = _pre_sweep_record()
+    overlay = _overlay_destroyed_with(monkeypatch, record)
+    filled = _leaves(overlay)
+    changed = [path for path, value in _leaves(record["tfvars"]).items() if filled.get(path, object()) != value]
+    assert changed == []
+    for identity in ("name", "env", "provision", "state", "run", "tags", "s3_bucket_prefix", "iam_path"):
+        assert overlay[identity] == record["tfvars"][identity], identity
+    assert overlay["kafka"]["provider"] == "redpanda-cloud"
+    assert overlay["toolbox"]["aws"]["instance_type"] == "t4g.small"
+
+
+def test_an_msk_record_keeps_its_broker_and_gains_the_scaler_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    msk = {
+        "shape_ref": "msk-broker", "broker_count": 3, "broker_version": "3.9.x.kraft", "num_partitions": 6,
+        "log_retention_ms": 86400000, "message_max_bytes": 8388608, "scram_username": "dfe-kafka-user",
+        "bootstrap_job": {"namespace": "strimzi", "service_account": "dfe-kafka-bootstrap"},
+    }
+    record = _pre_sweep_record(kafka={"provider": "msk", "msk": msk}, seeds={"ui/nextauth": {"secret": ""}})
+    overlay = _overlay_destroyed_with(monkeypatch, record)
+    filled = overlay["kafka"]["msk"]
+    assert {key: filled[key] for key in msk} == msk
+    assert {"max_brokers", "per_broker_capacity_mb_s", "headroom", "period_seconds", "evaluation_periods"} <= set(
+        filled["autoscaling"]
+    )
+    assert "redpanda_tier" not in overlay["kafka"]
+
+
+def test_an_external_clickhouse_record_is_filled_for_its_own_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    record = _pre_sweep_record(
+        clickhouse={"mode": "external", "port": 8443, "native_port": 9440, "secure": True, "user": "default"},
+        endpoints={"clickhouse_host": "ch.example.com", "kafka_bootstrap": "", "otel_endpoint": ""},
+    )
+    overlay = _overlay_destroyed_with(monkeypatch, record)
+    assert overlay["endpoints"]["clickhouse_host"] == "ch.example.com"
+    assert overlay["eks_addon_versions"]
+
+
+def test_a_record_the_renderer_refuses_goes_to_the_destroy_as_stored(capsys: pytest.CaptureFixture) -> None:
+    record = _record("run-bare", NOW - 60)
+    assert cloud_reaper.destroy_tfvars(record) == record["tfvars"]
+    assert "go as stored" in capsys.readouterr().err
+
+
+def test_merge_under_lets_every_stored_value_win_and_fills_only_what_is_absent() -> None:
+    defaults = {"a": {"b": 1, "c": 2}, "list": [1, 2], "map": {"x": 1}, "only_default": 3}
+    stored = {"a": {"b": 9}, "list": [7], "map": None, "only_stored": 4}
+    assert cloud_reaper.merge_under(defaults, stored) == {
+        "a": {"b": 9, "c": 2}, "list": [7], "map": None, "only_default": 3, "only_stored": 4,
+    }
+    assert cloud_reaper.merge_under({}, stored) == stored
+    assert cloud_reaper.merge_under(defaults, {}) == defaults
+
+
+def test_a_catalogue_shape_carries_a_root_volume_only_where_the_catalogue_fixes_one() -> None:
+    catalogue = {"clouds": {"aws": {"use_cases": {
+        "toolbox": {"arch": "arm64", "volumes": {"root": {"type": "gp3", "size_gib": "20"}}},
+        "msk-broker": {"arch": "arm64", "volumes": {"data": {"type": "managed", "size_gib": ""}}},
+        "unsized": {"arch": "arm64", "volumes": {"root": {"type": "gp3", "size_gib": ""}}},
+    }}}}
+    toolbox = cloud_reaper._catalogue_shape(catalogue, "aws", "toolbox")
+    assert toolbox == {"arch": "arm64", "root_volume": {"type": "gp3", "size_gib": 20}}
+    assert cloud_reaper._catalogue_shape(catalogue, "aws", "msk-broker") == {"arch": "arm64"}
+    assert cloud_reaper._catalogue_shape(catalogue, "aws", "unsized") == {"arch": "arm64"}
+    assert cloud_reaper._catalogue_shape(catalogue, "aws", "no-such-use-case") == {}
+    assert cloud_reaper._catalogue_shape(catalogue, "gcp", "toolbox") == {}
 
 
 def test_an_expired_run_with_no_state_only_loses_its_record(monkeypatch: pytest.MonkeyPatch) -> None:

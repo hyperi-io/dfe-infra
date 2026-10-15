@@ -51,7 +51,9 @@ under the prefix: one that fails `cloud_run.record_problems` is reported and
 left alone, an unexpired one is left alone, an expired one holding a SaaS broker
 whose vendor credential is unset is reported and kept for the next schedule, and
 any other expired one gets `tofu destroy` against its own per-run state, from a copy of this checkout's
-terraform/ tree so no run sees another's overlay. A secret Secrets Manager no
+terraform/ tree so no run sees another's overlay. That overlay is the record's stored
+tfvars with anything today's root requires and the record predates filled in beneath
+them (`destroy_tfvars`). A secret Secrets Manager no
 longer holds is dropped from that state first, since the reaper's tag-scoped
 read cannot refresh it. A successful destroy removes the record, and so does a
 failed one after which a refresh finds nothing of the run left, since the sweep
@@ -74,10 +76,30 @@ from pathlib import Path
 import clickhouse_cloud_access
 import cloud_run
 import cloud_sweep
+import render_dial
+import yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TERRAFORM = REPO_ROOT / "terraform"
 OVERLAY_NAME = "zz-dfe-run.auto.tfvars.json"
+SHAPES_FILE = REPO_ROOT / "shapes" / "compute-shapes.yaml"
+# Run facts the example dial leaves blank or that pick the render's shape: (tfvars path, dial path).
+RUN_FACTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("provision", "account"), ("target", "provision", "account")),
+    (("provision", "region"), ("target", "provision", "region")),
+    (("provision", "cidr"), ("target", "provision", "cidr")),
+    (("state", "bucket"), ("state", "bucket")),
+    (("state", "region"), ("state", "region")),
+    (("repo_url",), ("k8s", "repo_url")),
+    (("network", "az_count"), ("network", "az_count")),
+    (("kafka", "provider"), ("kafka", "provider")),
+    (("clickhouse", "mode"), ("clickhouse", "mode")),
+)
+# Where the root names a resolved shape, and where an older record keeps the instance type it now carries.
+LEGACY_SHAPE_TYPES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("toolbox", "aws", "shape_ref"), ("toolbox", "aws", "instance_type")),
+    (("edge", "tunnel", "address", "shape_ref"), ("edge", "tunnel", "address", "instance_type")),
+)
 NOTICE_UNCONFIGURED = (
     "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
 )
@@ -284,6 +306,120 @@ def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
     return env
 
 
+# --- the destroy's tfvars ----------------------------------------------------------
+
+
+def merge_under(defaults: Mapping[str, object], stored: Mapping[str, object]) -> dict[str, object]:
+    """`stored`, with each key it lacks taken from `defaults` at every depth; a stored value always wins."""
+    merged = dict(defaults)
+    for key, value in stored.items():
+        below = defaults.get(key)
+        if isinstance(below, Mapping) and isinstance(value, Mapping):
+            merged[key] = merge_under(below, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _set_fact(dial: dict[str, object], path: tuple[str, ...], value: object) -> None:
+    """Write one run fact into the parsed dial as the scalar string the dial holds; a blank fact is skipped."""
+    if isinstance(value, bool) or not isinstance(value, str | int) or str(value) == "":
+        return
+    node = dial
+    for key in path[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            node[key] = child
+        node = child
+    node[path[-1]] = str(value)
+
+
+def run_dial(tfvars: Mapping[str, object], cloud: str) -> dict[str, object]:
+    """The committed example dial, provisioning `cloud` with the run's own account, state, broker and datastore.
+
+    Raises:
+        yaml_subset.YamlSubsetError: The example dial is outside the subset.
+    """
+    template = render_dial.DIAL_TEMPLATE
+    dial = yaml_subset.parse(template.read_text(encoding="utf-8"), source=str(template))
+    _set_fact(dial, ("target", "provision", "cloud"), cloud)
+    for source, target in RUN_FACTS:
+        _set_fact(dial, target, yaml_subset.at(tfvars, source))
+    # An external server travels on endpoints.clickhouse_host, and the render refuses the mode without it.
+    if yaml_subset.at(tfvars, ("clickhouse", "mode")) == "external":
+        _set_fact(dial, ("clickhouse", "host"), yaml_subset.at(tfvars, ("endpoints", "clickhouse_host")))
+    return dial
+
+
+def _catalogue_shape(catalogue: Mapping[str, object], cloud: str, name: str) -> dict[str, object]:
+    """The arch and fixed root volume shapes/compute-shapes.yaml gives one use case, as resolved_shapes holds them."""
+    entry = yaml_subset.at(catalogue, ("clouds", cloud, "use_cases", name))
+    if not isinstance(entry, dict):
+        return {}
+    shape: dict[str, object] = {}
+    if entry.get("arch"):
+        shape["arch"] = entry["arch"]
+    root = yaml_subset.at(entry, ("volumes", "root"))
+    size = str(root.get("size_gib", "")) if isinstance(root, dict) else ""
+    if isinstance(root, dict) and root.get("type") and size.isdigit() and int(size) > 0:
+        shape["root_volume"] = {"type": root["type"], "size_gib": int(size)}
+    return shape
+
+
+def shape_defaults(
+    catalogue: Mapping[str, object], cloud: str, tfvars: Mapping[str, object], stored: Mapping[str, object]
+) -> dict[str, object]:
+    """Catalogue entries for every shape the stored record resolved, plus any shape it names by a legacy instance type.
+
+    resolve_sizing.py writes resolved_shapes from live EC2 answers, so a destroy takes the
+    record's own instance types and only the arch and root volume the catalogue fixes.
+    """
+    resolved = stored.get("resolved_shapes")
+    names = list(resolved) if isinstance(resolved, Mapping) else []
+    defaults: dict[str, object] = {name: _catalogue_shape(catalogue, cloud, name) for name in names}
+    for ref_path, legacy_path in LEGACY_SHAPE_TYPES:
+        name = yaml_subset.at(tfvars, ref_path)
+        legacy = yaml_subset.at(stored, legacy_path)
+        if isinstance(name, str) and name not in defaults and isinstance(legacy, str) and legacy:
+            defaults[name] = {"instance_types": [legacy], **_catalogue_shape(catalogue, cloud, name)}
+    return defaults
+
+
+def destroy_tfvars(record: Mapping[str, object]) -> dict[str, object]:
+    """The record's stored tfvars, with whatever today's root needs and the record predates filled in under them.
+
+    The fill is today's renderer answering for the run's own cloud, account, state, broker
+    and datastore on the committed example dial, plus the shape catalogue's root volumes.
+    Every value the record holds is kept as stored, so the names, region, state and run id
+    a destroy acts on are the run's own. A render that refuses leaves the record unfilled.
+
+    Raises:
+        TypeError: The record's tfvars is not an object, which record_problems refuses first.
+    """
+    stored = record["tfvars"]
+    if not isinstance(stored, Mapping):
+        raise TypeError(f"run {record['run_id']}: tfvars is not an object")
+    cloud = str(yaml_subset.at(stored, ("provision", "cloud")) or Path(str(record["tf_root"])).name)
+    try:
+        _cloud, rendered = render_dial._tofu_vars(run_dial(stored, cloud))
+        catalogue = yaml_subset.parse(SHAPES_FILE.read_text(encoding="utf-8"), source=str(SHAPES_FILE))
+    except (render_dial.DialError, yaml_subset.YamlSubsetError, KeyError, OSError) as exc:
+        print(f"run {record['run_id']}: today's renderer cannot fill its tfvars, so they go as stored: {exc}",
+              file=sys.stderr)
+        return dict(stored)
+    filled = merge_under(rendered, stored)
+    shapes = shape_defaults(catalogue, cloud, filled, stored)
+    if shapes:
+        resolved = stored.get("resolved_shapes")
+        filled["resolved_shapes"] = merge_under(shapes, resolved if isinstance(resolved, Mapping) else {})
+    added = sorted(key for key in filled if filled[key] != stored.get(key))
+    if added:
+        print(f"run {record['run_id']}: filled what today's root needs under its stored tfvars: {', '.join(added)}",
+              file=sys.stderr)
+    return filled
+
+
 def destroy_run(record: Mapping[str, object]) -> int:
     """`tofu destroy` one run against its own state, from a private copy of terraform/."""
     tf_root = str(record["tf_root"])
@@ -299,7 +435,7 @@ def destroy_run(record: Mapping[str, object]) -> int:
         if not root.is_dir():
             print(f"run {record['run_id']}: {tf_root} is not a root in this checkout", file=sys.stderr)
             return 1
-        (root / OVERLAY_NAME).write_text(json.dumps(record["tfvars"]), encoding="utf-8", newline="\n")
+        (root / OVERLAY_NAME).write_text(json.dumps(destroy_tfvars(record)), encoding="utf-8", newline="\n")
         returncode = run_tofu(["init", "-input=false", "-reconfigure"], root, env)
         if returncode == 0:
             try:
