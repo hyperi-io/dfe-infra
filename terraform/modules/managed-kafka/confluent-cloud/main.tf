@@ -147,3 +147,45 @@ resource "confluent_kafka_cluster" "this" {
   // the access point has to exist before the cluster is placed against it.
   depends_on = [confluent_access_point.pni]
 }
+
+// ---------------------------------------------------------------------------
+// The REST endpoint's route
+// ---------------------------------------------------------------------------
+
+locals {
+  // In a row, because DNS spreads attempts over the shared ingress load balancers and a new route reaches each one separately.
+  rest_ready_handshakes = 3
+
+  // The wait's ceiling, after which the apply fails naming the host.
+  rest_ready_timeout_seconds = 900
+
+  // Seconds between handshakes, so each one is a fresh connection on a fresh DNS answer.
+  rest_ready_interval_seconds = 5
+}
+
+// Confluent's public REST endpoints share one ingress that resets TLS for any
+// cluster it holds no route for, and a new cluster has none until the route
+// reaches every load balancer. The manager key's readiness wait and every ACL
+// and topic write fail the apply on their first transport error, so all of
+// them wait here for handshakes in a row.
+//
+// Public only: the deployer cannot reach a private cluster's endpoint, which is
+// why its keys skip the provider's wait as well.
+resource "terraform_data" "rest_ready" {
+  count = local.private ? 0 : 1
+
+  // A new cluster is the only change that needs a new route.
+  triggers_replace = [confluent_kafka_cluster.this.id]
+
+  // The cluster's own v3 path, one level above the topic list the provider's key wait reads.
+  input = {
+    url = "${confluent_kafka_cluster.this.rest_endpoint}/kafka/v3/clusters/${confluent_kafka_cluster.this.id}"
+  }
+
+  // Run through bash so a checkout that dropped the mode bit still works.
+  provisioner "local-exec" {
+    command = <<-EOT
+      bash "${path.module}/scripts/wait-rest-ready.sh" "${self.output.url}" ${local.rest_ready_handshakes} ${local.rest_ready_timeout_seconds} ${local.rest_ready_interval_seconds}
+    EOT
+  }
+}
