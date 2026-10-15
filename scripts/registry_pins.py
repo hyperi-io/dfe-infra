@@ -24,6 +24,9 @@ Everything here is decoupled from any pin FILE. The public surface is:
   ref_digest(ref)              -> (index digest, error) for a full image ref
   ref_raw(ref)                 -> (raw index or manifest JSON, error) for a full image ref
   ref_platforms(ref)           -> (os/arch set, error) for a full image ref
+  run_with_retry(cmd, registry)-> (result, gave-up message) for any registry-reading command
+  RetryBudget(seconds)         -> backoff a whole run may spend, shared across its reads
+  registry_host(ref)           -> the registry host an image ref names
   is_absent(error)             -> whether a read error means the tag does not exist
   tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
   package_versions(org, app)   -> the raw GHCR version records (paginated)
@@ -81,12 +84,49 @@ _TRANSIENT = re.compile(
     re.IGNORECASE,
 )
 
-_MAX_ATTEMPTS = 3
-_BACKOFF_BASE_SECONDS = (1.0, 2.0)
+# The subset of _TRANSIENT where the registry is refusing the caller's rate, not failing.
+_RATE_LIMITED = re.compile(r"\b429\b|toomanyrequests", re.IGNORECASE)
+
+# Seconds waited before each retry of one read, before jitter. A read with no
+# RetryBudget keeps the quick schedule, so a caller that caps nothing cannot stall
+# on a registry that stays down. PATIENT_WAITS is for a run that passes a budget.
+_QUICK_WAITS = (1.0, 2.0)
+PATIENT_WAITS = (4.0, 8.0, 16.0, 32.0)
 
 # Module attributes so tests replace them with instant, deterministic stand-ins.
 _sleep = time.sleep
 _random = random.random
+
+
+@dataclass(slots=True)
+class RetryBudget:
+    """How patiently a run's registry reads retry, and the backoff it has left.
+
+    Without a shared cap, a registry that stays rate limited costs every read its
+    full backoff in turn, so a gate reading forty images waits forty times over.
+
+    Attributes:
+        seconds: Backoff left to spend across every read of the run.
+        waits: Seconds waited before each retry of one read, before jitter. One
+            more attempt is made than there are waits.
+    """
+
+    seconds: float
+    waits: tuple[float, ...] = PATIENT_WAITS
+
+    def spend(self, wait: float) -> bool:
+        """Take ``wait`` seconds from the budget, or report that it holds fewer.
+
+        Args:
+            wait: Seconds the caller is about to sleep.
+
+        Returns:
+            True when the wait was taken, False when the budget cannot cover it.
+        """
+        if wait > self.seconds:
+            return False
+        self.seconds -= wait
+        return True
 
 
 @dataclass(frozen=True)
@@ -203,44 +243,108 @@ def resolve_digest(org: str, app: str, tag: str) -> str | None:
     return found.digest if found else None
 
 
-def _imagetools(ref: str, *flags: str) -> tuple[str | None, str]:
+def registry_host(ref: str) -> str:
+    """The registry host an image reference names, docker.io when it names none.
+
+    Args:
+        ref: An image reference such as ``public.ecr.aws/eks/app:v1`` or ``valkey/valkey:8``.
+
+    Returns:
+        The host. A first path segment is a host only when it holds a dot or a
+        port colon, or is ``localhost``, which is how docker reads a reference.
+    """
+    first, slash, _rest = ref.partition("/")
+    if slash and ("." in first or ":" in first or first == "localhost"):
+        return first
+    return "docker.io"
+
+
+def _last_line(stderr: str, default: str) -> str:
+    lines = stderr.strip().splitlines()
+    return lines[-1] if lines else default
+
+
+def _gave_up(registry: str, stderr: str, attempts: int, budget_spent: bool) -> str:
+    """The message for a read that stayed transient: which registry, and whether it rate limited."""
+    verdict = "rate limited this read" if _RATE_LIMITED.search(stderr) else "kept failing"
+    spent = " (the run's retry budget is spent)" if budget_spent else ""
+    noun = "attempt" if attempts == 1 else "attempts"
+    last = _last_line(stderr, "no output")
+    return f"{registry} {verdict} and gave up after {attempts} {noun}{spent}: {last}"
+
+
+def run_with_retry(
+    cmd: list[str], registry: str, budget: RetryBudget | None = None
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run a registry-reading command, retrying a transient failure with backoff.
+
+    A failure matching _TRANSIENT (a 429, a 5xx, a timeout) is retried with jittered
+    exponential backoff, three attempts by default and one more than the budget's
+    waits when a budget is given. Success, an absence, an auth error and any other
+    failure return on the first attempt.
+
+    Args:
+        cmd: The command and its arguments.
+        registry: The host the command reads, named in the message when the retries run out.
+        budget: The run's shared RetryBudget, which sets the schedule and caps the
+            total backoff, or None for the quick schedule alone. A wait the budget
+            cannot cover ends the retries early.
+
+    Returns:
+        The last attempt's result, and a message naming the registry and whether it
+        rate limited when the retries ran out ("" otherwise).
+
+    Raises:
+        OSError: The command could not be started. It is never retried.
+    """
+    waits = _QUICK_WAITS if budget is None else budget.waits
+    attempts = 0
+    while True:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        attempts += 1
+        absent = is_absent(_last_line(proc.stderr, ""))
+        if proc.returncode == 0 or absent or not _TRANSIENT.search(proc.stderr):
+            return proc, ""
+        if attempts > len(waits):
+            return proc, _gave_up(registry, proc.stderr, attempts, budget_spent=False)
+        wait = waits[attempts - 1] * (0.5 + _random())
+        if budget is not None and not budget.spend(wait):
+            return proc, _gave_up(registry, proc.stderr, attempts, budget_spent=True)
+        _sleep(wait)
+
+
+def _imagetools(
+    ref: str, *flags: str, budget: RetryBudget | None = None
+) -> tuple[str | None, str]:
     """(stdout, error) of `docker buildx imagetools inspect <ref> <flags>`.
 
     Reads the registry through the docker credential store, so it needs no
-    read:packages scope, and reads a public package unauthenticated. A
-    transient failure (_TRANSIENT) is retried up to _MAX_ATTEMPTS times with
-    jittered backoff; an absent tag or a missing docker binary returns on the
-    first try.
+    read:packages scope, and reads a public package unauthenticated. A transient
+    failure is retried by run_with_retry; an absent tag or a missing docker binary
+    returns on the first try.
     """
-    error = ""
-    for attempt in range(_MAX_ATTEMPTS):
-        try:
-            proc = subprocess.run(
-                ["docker", "buildx", "imagetools", "inspect", ref, *flags],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except OSError as exc:
-            # Worded so it cannot match _ABSENT: no docker is a missing tool, not a
-            # missing image.
-            return None, f"cannot run docker buildx: {exc}"
-        if proc.returncode == 0:
-            return proc.stdout, ""
-        stderr = proc.stderr.strip()
-        error = stderr.splitlines()[-1] if stderr else "docker buildx imagetools failed"
-        if is_absent(error) or not _TRANSIENT.search(stderr):
-            return None, error
-        if attempt < _MAX_ATTEMPTS - 1:
-            _sleep(_BACKOFF_BASE_SECONDS[attempt] * (0.5 + _random()))
-    return None, f"{error} (after {_MAX_ATTEMPTS} attempts)"
+    cmd = ["docker", "buildx", "imagetools", "inspect", ref, *flags]
+    try:
+        proc, gave_up = run_with_retry(cmd, registry_host(ref), budget)
+    except OSError as exc:
+        # Worded so it cannot match _ABSENT: no docker is a missing tool, not a
+        # missing image.
+        return None, f"cannot run docker buildx: {exc}"
+    if proc.returncode == 0:
+        return proc.stdout, ""
+    return None, gave_up or _last_line(proc.stderr, "docker buildx imagetools failed")
 
 
-def ref_raw(ref: str) -> tuple[str | None, str]:
+def ref_raw(ref: str, budget: RetryBudget | None = None) -> tuple[str | None, str]:
     """(raw index or manifest JSON, error) for a full image ref, read with `docker buildx imagetools`."""
-    return _imagetools(ref, "--raw")
+    return _imagetools(ref, "--raw", budget=budget)
 
 
 def is_absent(err: str) -> bool:
@@ -291,14 +395,14 @@ def config_platform(doc: object) -> str | None:
     return f"{os_name}/{arch}" if os_name and arch else None
 
 
-def ref_platforms(ref: str) -> tuple[set[str] | None, str]:
+def ref_platforms(ref: str, budget: RetryBudget | None = None) -> tuple[set[str] | None, str]:
     """(os/arch set, error) for a full image ref, read with `docker buildx imagetools`.
 
     The same registry path and credentials as ref_digest. An index lists its
     platforms; a single-manifest image lists none, so its config is read for the
-    one platform it was built for.
+    one platform it was built for. ``budget`` caps the backoff a whole run spends.
     """
-    raw, err = ref_raw(ref)
+    raw, err = ref_raw(ref, budget)
     if raw is None:
         return None, err
     try:
@@ -307,7 +411,7 @@ def ref_platforms(ref: str) -> tuple[set[str] | None, str]:
         return None, f"unreadable manifest: {exc}"
     if found is not None:
         return found, ""
-    config, err = _imagetools(ref, "--format", "{{json .Image}}")
+    config, err = _imagetools(ref, "--format", "{{json .Image}}", budget=budget)
     if config is None:
         return None, err
     try:

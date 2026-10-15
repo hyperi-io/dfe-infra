@@ -332,18 +332,12 @@ def test_imagetools_gives_up_after_three_502s(monkeypatch):
     monkeypatch.setattr(
         registry_pins.subprocess,
         "run",
-        _fake_run(
-            docker=[
-                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
-                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
-                _FakeProc(returncode=1, stderr="502 Bad Gateway"),
-            ]
-        ),
+        _fake_run(docker=[_FakeProc(returncode=1, stderr="502 Bad Gateway")] * 3),
     )
     out, err = registry_pins._imagetools("ghcr.io/hyperi-io/dfe-engine:v1.15.1")
     assert out is None
     assert "502 Bad Gateway" in err
-    assert "3 attempts" in err
+    assert "ghcr.io kept failing and gave up after 3 attempts" in err
 
 
 def test_imagetools_does_not_retry_manifest_unknown(monkeypatch):

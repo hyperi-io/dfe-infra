@@ -198,7 +198,7 @@ def test_a_single_manifest_image_reads_its_config_platform() -> None:
 
     calls: list[tuple[str, ...]] = []
 
-    def _imagetools(ref: str, *flags: str) -> tuple[str, str]:
+    def _imagetools(ref: str, *flags: str, budget: object = None) -> tuple[str, str]:
         calls.append(flags)
         if flags == ("--raw",):
             return json.dumps({"schemaVersion": 2, "config": {}, "layers": []}), ""
