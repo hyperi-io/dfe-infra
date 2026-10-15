@@ -748,9 +748,8 @@ steps:
   smoke: "true"
 
 ## SECRETS -- REFERENCES only, never values. The backend + base path; the thin
-## caller resolves the real values from here and injects the registry pull creds
-## and the OpenBao AppRole id into the rendered env. `render_dial.py` never reads
-## or writes a secret.
+## caller resolves the real values from here and injects the OpenBao AppRole id
+## into the rendered env. `render_dial.py` never reads or writes a secret.
 ## backend also reaches bootstrap.sh as DFE_SECRETS_BACKEND: on openbao it
 ## requires DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and seeds an AppRole SecretID, on
 ## aws-sm it requires neither and the store authenticates by the pod's own

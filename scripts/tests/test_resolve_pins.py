@@ -2,31 +2,29 @@
 #  Project:      dfe-infra
 #  File:         test_resolve_pins.py
 #  Purpose:      Prove the tag -> digest resolver + writer: the registry lookup
-#                (mocked, never the network), that a registry nobody could reach
-#                raises instead of reading as absent, the fresh/stale/missing
-#                verdict, the cooldown hold, and that --write rewrites ONLY the
-#                current stack's digests: while preserving comments and
-#                formatting.
+#                (a loopback registry, never the network), that a registry nobody
+#                could reach raises instead of reading as absent, the
+#                fresh/stale/missing verdict, the cooldown hold, and that --write
+#                rewrites ONLY the current stack's digests: while preserving
+#                comments and formatting.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/registry_pins.py + scripts/resolve_pins.py (dfe-infra#116).
 
-Both registry reads -- `docker buildx imagetools` and the GH packages API -- are
-mocked in every test, so the suite is hermetic and runs on a bare CI image. Runs
-under pytest, and standalone via the main() runner at the bottom (matching the
+The registry reads run against a loopback OCI registry (_oci.FakeRegistry) that
+answers the way ghcr.io answers an anonymous caller, and `docker buildx imagetools`
+is stubbed at subprocess.run, so the suite is hermetic and runs on a bare CI image.
+Runs under pytest, and standalone via the main() runner at the bottom (matching the
 other tests in this dir).
 
     python3 -m pytest scripts/tests/test_resolve_pins.py
     python3 scripts/tests/test_resolve_pins.py
 """
 
-from __future__ import annotations
-
 import datetime
 import importlib.util
-import json
 import os
 import sys
 from pathlib import Path
@@ -34,6 +32,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+
+from _oci import MANIFEST, FakeRegistry  # noqa: E402
 
 
 def _load(name: str):
@@ -47,37 +47,32 @@ def _load(name: str):
 registry_pins = _load("registry_pins")
 resolve_pins = _load("resolve_pins")
 
+ORG = "hyperi-io"
+TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN", "GHCR_TOKEN")
 
-# --- fixtures (in-memory GH records + a synthetic versions.yaml) --------------
+
+# --- fixtures (published images + a synthetic versions.yaml) ------------------
 def _iso(days_ago: float) -> str:
     when = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
     return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _record(digest: str, tags: list[str], days_ago: float) -> dict:
-    return {
-        "name": digest,
-        "created_at": _iso(days_ago),
-        "metadata": {"container": {"tags": tags}},
-    }
-
-
-# app -> its GH version records. dfe-engine is fresh (2d) and its recorded pin is
-# STALE; dfe-loader is old (30d) and FRESH; dfe-ui is fresh (1d) and STALE (the
-# cooldown target); dfe-fetcher's pinned tag is absent from the registry.
+# app -> (digest, tags, days since the image was built). dfe-engine is fresh (2d)
+# and its recorded pin is STALE; dfe-loader is old (30d) and FRESH; dfe-ui is fresh
+# (1d) and STALE (the cooldown target); dfe-fetcher's pinned tag is absent.
 FAKE_PACKAGES = {
     "dfe-engine": [
-        _record("sha256:" + "a" * 64, ["v1.15.1"], 2.0),
-        _record("sha256:" + "0" * 64, ["v1.15.0"], 40.0),
+        ("sha256:" + "a" * 64, ["v1.15.1"], 2.0),
+        ("sha256:" + "0" * 64, ["v1.15.0"], 40.0),
     ],
     "dfe-loader": [
-        _record("sha256:" + "b" * 64, ["v1.18.21"], 30.0),
+        ("sha256:" + "b" * 64, ["v1.18.21"], 30.0),
     ],
     "dfe-ui": [
-        _record("sha256:" + "c" * 64, ["v1.3.7"], 1.0),
+        ("sha256:" + "c" * 64, ["v1.3.7"], 1.0),
     ],
     "dfe-fetcher": [
-        _record("sha256:" + "d" * 64, ["v1.4.99"], 10.0),  # not the pinned tag
+        ("sha256:" + "d" * 64, ["v1.4.99"], 10.0),  # not the pinned tag
     ],
 }
 
@@ -111,70 +106,153 @@ stacks:
 """
 
 
+def _published() -> FakeRegistry:
+    """A registry carrying every image FAKE_PACKAGES describes."""
+    registry = FakeRegistry()
+    for app, versions in FAKE_PACKAGES.items():
+        for digest, tags, days_ago in versions:
+            for tag in tags:
+                registry.add(f"{ORG}/{app}", tag, digest, created=_iso(days_ago))
+    return registry
+
+
+def _fake_resolve(org, app, tag, registry=registry_pins.GHCR):
+    for digest, tags, days_ago in FAKE_PACKAGES.get(app, []):
+        if tag in tags:
+            published = datetime.datetime.fromisoformat(_iso(days_ago))
+            return registry_pins.Resolved(digest=digest, published=published)
+    return None
+
+
 def _install(monkeypatch, tmp_path):
-    """Point resolve_pins at a temp versions.yaml and mock the registry."""
+    """Point resolve_pins at a temp versions.yaml and an in-memory registry."""
     vfile = tmp_path / "versions.yaml"
     vfile.write_text(SYNTHETIC_VERSIONS, encoding="utf-8")
     monkeypatch.setattr(resolve_pins, "VERSIONS", vfile)
-
-    def fake_versions(org, app):
-        return tuple(FAKE_PACKAGES.get(app, []))
-
-    monkeypatch.setattr(registry_pins, "package_versions", fake_versions)
+    monkeypatch.setattr(resolve_pins, "resolve", _fake_resolve)
     return vfile
 
 
-# --- registry_pins core -------------------------------------------------------
-def test_resolve_returns_digest_and_publish_date(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
-    found = registry_pins.resolve("hyperi-io", "dfe-engine", "v1.15.1")
+def _without_tokens():
+    """Drop every GitHub token from this process, returning the values to restore."""
+    return {name: os.environ.pop(name) for name in TOKEN_VARIABLES if name in os.environ}
+
+
+def _restore_tokens(saved: dict[str, str]) -> None:
+    os.environ.update(saved)
+
+
+# --- registry_pins core, over the OCI API -------------------------------------
+def test_resolve_returns_digest_and_build_time(monkeypatch):
+    registry = _published()
+    with registry.serving(monkeypatch):
+        found = registry_pins.resolve(ORG, "dfe-engine", "v1.15.1")
     assert found is not None
     assert found.digest == "sha256:" + "a" * 64
-    assert found.published is not None
+    age = datetime.datetime.now(datetime.UTC) - found.published
+    assert datetime.timedelta(days=1.9) < age < datetime.timedelta(days=2.1)
 
 
-def test_resolve_digest_is_none_for_absent_tag(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
-    assert registry_pins.resolve_digest("hyperi-io", "dfe-engine", "v9.9.9") is None
+def test_resolve_reads_the_build_time_from_the_image_config(monkeypatch):
+    """An index with no created annotation is dated by its platform image's config,
+    a blob served from another host that refuses a request carrying the token."""
+    registry = FakeRegistry()
+    registry.add(f"{ORG}/dfe-loader", "v1.18.19", "sha256:" + "e" * 64, built="2026-08-18T04:19:10.6Z")
+    with registry.serving(monkeypatch):
+        found = registry_pins.resolve(ORG, "dfe-loader", "v1.18.19")
+    assert found is not None
+    assert found.published == datetime.datetime(2026, 8, 18, 4, 19, 10, 600000, tzinfo=datetime.UTC)
+    stored = [r for r in registry.requests if r.path.startswith("/sha256:")]
+    assert stored, "the config blob was never read from the store"
+    assert all(r.authorization == "" for r in stored), "the token followed the redirect"
 
 
-def test_package_tags_maps_every_tag(monkeypatch):
-    monkeypatch.setattr(registry_pins, "package_versions", lambda o, a: tuple(FAKE_PACKAGES[a]))
-    tags = registry_pins.package_tags("hyperi-io", "dfe-engine")
-    assert tags["v1.15.1"] == "sha256:" + "a" * 64
-    assert tags["v1.15.0"] == "sha256:" + "0" * 64
+def test_resolve_is_none_for_an_absent_tag(monkeypatch):
+    with _published().serving(monkeypatch):
+        assert registry_pins.resolve(ORG, "dfe-engine", "v9.9.9") is None
+        assert registry_pins.resolve_digest(ORG, "dfe-engine", "v9.9.9") is None
+
+
+def test_package_tags_reads_every_page(monkeypatch):
+    registry = FakeRegistry(page_size=2)
+    for patch in range(5):
+        registry.add(f"{ORG}/dfe-engine", f"v1.15.{patch}", "sha256:" + str(patch) * 64)
+    with registry.serving(monkeypatch):
+        tags = registry_pins.package_tags(ORG, "dfe-engine")
+    assert sorted(tags) == [f"v1.15.{patch}" for patch in range(5)]
+    pages = [r for r in registry.requests if "/tags/list" in r.path and r.authorization]
+    assert len(pages) == 3
+
+
+def test_an_unpublished_package_has_no_tags_and_no_digest(monkeypatch):
+    """The registry grants no anonymous token for a repository it does not hold."""
+    with _published().serving(monkeypatch):
+        assert registry_pins.package_tags(ORG, "dfe-transform-wasm") == []
+        assert registry_pins.resolve_digest(ORG, "dfe-transform-wasm", "2.2.0") is None
+
+
+def test_every_read_is_anonymous(monkeypatch):
+    """No GitHub token in the process, none sent: the only bearer is the one the
+    registry issued for the pull."""
+    registry = _published()
+    saved = _without_tokens()
+    try:
+        with registry.serving(monkeypatch):
+            assert registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21") == "sha256:" + "b" * 64
+            assert "v1.15.0" in registry_pins.package_tags(ORG, "dfe-engine")
+    finally:
+        _restore_tokens(saved)
+    assert registry.token_requests(), "the registry was never asked for a token"
+    assert all(r.authorization == "" for r in registry.token_requests())
+    sent = {r.authorization for r in registry.requests} - {""}
+    assert sent == {f"Bearer anon-{ORG}/dfe-loader", f"Bearer anon-{ORG}/dfe-engine"}, sent
+
+
+def test_a_nested_chart_is_read_at_its_repository_path(monkeypatch):
+    """A thin chart is the package charts/<chart>, which the registry reads as written."""
+    chart_digest = "sha256:" + "e" * 64
+    registry = FakeRegistry()
+    registry.add(f"{ORG}/charts/dfe-engine", "1.22.16", chart_digest, kind=MANIFEST)
+    with registry.serving(monkeypatch):
+        assert registry_pins.resolve_digest(ORG, "charts/dfe-engine", "1.22.16") == chart_digest
+    read = [r.path for r in registry.requests if r.authorization]
+    assert read == [f"/v2/{ORG}/charts/dfe-engine/manifests/1.22.16"]
+
+
+def test_a_registry_asking_for_credentials_is_an_error(monkeypatch):
+    """A Basic challenge is a private registry, never an absent tag."""
+    registry = _published()
+    registry.basic = True
+    raised = ""
+    with registry.serving(monkeypatch):
+        try:
+            registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21")
+        except registry_pins.RegistryError as exc:
+            raised = str(exc)
+    assert "Basic credentials" in raised
+
+
+def test_a_busy_registry_is_retried(monkeypatch):
+    registry = _published()
+    registry.fail = [503, 429]
+    with registry.serving(monkeypatch):
+        assert registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21") == "sha256:" + "b" * 64
+
+
+def test_a_registry_that_stays_busy_raises(monkeypatch):
+    registry = _published()
+    registry.fail = [503, 503, 503]
+    raised = ""
+    with registry.serving(monkeypatch):
+        try:
+            registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21")
+        except registry_pins.RegistryError as exc:
+            raised = str(exc)
+    assert "HTTP 503" in raised
 
 
 def test_version_key_orders_numerically():
     assert registry_pins.version_key("v1.18.19") > registry_pins.version_key("v1.18.9")
-
-
-def test_gh_api_parses_concatenated_pages(monkeypatch):
-    """--paginate concatenates one JSON array per page with no separator."""
-
-    class FakeProc:
-        returncode = 0
-        stdout = '[{"name":"x"}]\n[{"name":"y"}]'
-        stderr = ""
-
-    monkeypatch.setattr(registry_pins.subprocess, "run", lambda *a, **k: FakeProc())
-    records = registry_pins._gh_api("/whatever")
-    assert [r["name"] for r in records] == ["x", "y"]
-
-
-def test_gh_api_raises_on_failure(monkeypatch):
-    class FakeProc:
-        returncode = 1
-        stdout = ""
-        stderr = "gh: not authenticated"
-
-    monkeypatch.setattr(registry_pins.subprocess, "run", lambda *a, **k: FakeProc())
-    raised = False
-    try:
-        registry_pins._gh_api("/whatever")
-    except registry_pins.RegistryError as exc:
-        raised = "not authenticated" in str(exc)
-    assert raised
 
 
 # --- registry_pins digest resolution ------------------------------------------
@@ -186,31 +264,34 @@ class _FakeProc:
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
 
-def _fake_run(docker=None, gh=None):
-    """A subprocess.run stub routing on argv[0]; an Exception value is raised.
+def _fake_run(docker=None):
+    """A subprocess.run stub for `docker`; an Exception value is raised.
 
-    `docker`/`gh` is either one value returned on every call, or a list
-    consumed one entry per call -- popping past the end raises, which proves
-    a caller did not make more calls than the list scripts.
+    `docker` is either one value returned on every call, or a list consumed one
+    entry per call -- popping past the end raises, which proves a caller did not
+    make more calls than the list scripts.
     """
-    calls = {"docker": docker, "gh": gh}
 
     def run(cmd, *a, **k):
-        key = "docker" if cmd[0] == "docker" else "gh"
-        value = calls[key]
-        if isinstance(value, list):
-            if not value:
-                raise AssertionError(f"{cmd[0]} called more times than scripted")
-            proc = value.pop(0)
+        if cmd[0] != "docker":
+            raise AssertionError(f"{cmd[0]} must not be called")
+        if isinstance(docker, list):
+            if not docker:
+                raise AssertionError("docker called more times than scripted")
+            proc = docker.pop(0)
         else:
-            proc = value
+            proc = docker
         if isinstance(proc, Exception):
             raise proc
         if proc is None:
-            raise AssertionError(f"{cmd[0]} must not be called")
+            raise AssertionError("docker must not be called")
         return proc
 
     return run
+
+
+def _no_registry(host):
+    raise AssertionError(f"the OCI API must not be read for {host}")
 
 
 def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
@@ -237,72 +318,49 @@ def test_tag_digest_prefers_imagetools_and_leaves_the_api_alone(monkeypatch):
     monkeypatch.setattr(
         registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX))
     )
-    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == _INDEX
+    monkeypatch.setattr(registry_pins.oci_registry, "base_url", _no_registry)
+    assert registry_pins.tag_digest(ORG, "dfe-engine", "v1.15.1") == _INDEX
 
 
-def test_tag_digest_falls_back_to_the_api_without_docker(monkeypatch):
-    registry_pins.package_versions.cache_clear()
+def test_tag_digest_falls_back_to_the_oci_api_without_docker(monkeypatch):
     monkeypatch.setattr(
-        registry_pins.subprocess,
-        "run",
-        _fake_run(
-            docker=FileNotFoundError("docker"),
-            gh=_FakeProc(stdout=json.dumps(FAKE_PACKAGES["dfe-engine"])),
-        ),
+        registry_pins.subprocess, "run", _fake_run(docker=FileNotFoundError("docker"))
     )
-    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
-
-
-def test_the_api_reads_a_nested_package_as_one_path_segment(monkeypatch):
-    """A thin chart is the package charts/<chart>, and the API answers 404 to a raw slash."""
-    registry_pins.package_versions.cache_clear()
-    chart_digest = "sha256:" + "e" * 64
-    asked: list[list[str]] = []
-
-    def run(cmd, *a, **k):
-        asked.append(cmd)
-        if cmd[0] == "docker":
-            raise FileNotFoundError("docker")
-        return _FakeProc(stdout=json.dumps([_record(chart_digest, ["1.22.16"], 1.0)]))
-
-    monkeypatch.setattr(registry_pins.subprocess, "run", run)
-    assert registry_pins.tag_digest("hyperi-io", "charts/dfe-engine", "1.22.16") == chart_digest
-    gh_paths = [cmd[-1] for cmd in asked if cmd[0] == "gh"]
-    want = "/orgs/hyperi-io/packages/container/charts%2Fdfe-engine/versions?per_page=100"
-    assert gh_paths == [want]
-    registry_pins.package_versions.cache_clear()
+    with _published().serving(monkeypatch):
+        assert registry_pins.tag_digest(ORG, "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
 
 
 def test_tag_digest_is_none_only_when_the_registry_says_not_found(monkeypatch):
-    registry_pins.package_versions.cache_clear()
     monkeypatch.setattr(
         registry_pins.subprocess,
         "run",
-        _fake_run(
-            docker=_FakeProc(returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found"),
-            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
-        ),
+        _fake_run(docker=_FakeProc(returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found")),
     )
-    assert registry_pins.tag_digest("hyperi-io", "dfe-engine", "v9.9.9") is None
+    registry = _published()
+    registry.fail = [500, 500, 500]
+    with registry.serving(monkeypatch):
+        assert registry_pins.tag_digest(ORG, "dfe-engine", "v9.9.9") is None
 
 
 def test_tag_digest_raises_when_neither_read_could_answer(monkeypatch):
     """An unreachable registry must not read as an absent tag, let alone a match."""
-    registry_pins.package_versions.cache_clear()
     monkeypatch.setattr(
         registry_pins.subprocess,
         "run",
         _fake_run(
-            docker=_FakeProc(returncode=1, stderr="failed to do request: dial tcp: no such host"),
-            gh=_FakeProc(returncode=1, stderr="gh: You need at least read:packages scope"),
+            docker=_FakeProc(returncode=1, stderr="failed to do request: dial tcp: no such host")
         ),
     )
-    raised = False
-    try:
-        registry_pins.tag_digest("hyperi-io", "dfe-engine", "v1.15.1")
-    except registry_pins.RegistryError as exc:
-        raised = "no such host" in str(exc)
-    assert raised
+    registry = _published()
+    registry.fail = [502, 502, 502]
+    raised = ""
+    with registry.serving(monkeypatch):
+        try:
+            registry_pins.tag_digest(ORG, "dfe-engine", "v1.15.1")
+        except registry_pins.RegistryError as exc:
+            raised = str(exc)
+    assert "no such host" in raised
+    assert "HTTP 502" in raised
 
 
 # --- registry_pins retry -------------------------------------------------------
@@ -391,7 +449,7 @@ def test_rows_classify_fresh_stale_missing(monkeypatch, tmp_path):
     _install(monkeypatch, tmp_path)
     _, _, _, stack_map = resolve_pins.load_stack(None)
     apps = resolve_pins._selected_apps(stack_map, [])
-    rows = {r.app: r for r in resolve_pins.resolve_rows(stack_map, "hyperi-io", apps, None)}
+    rows = {r.app: r for r in resolve_pins.resolve_rows(stack_map, ORG, apps, None)}
     assert rows["dfe-loader"].outcome == resolve_pins.Outcome.FRESH
     assert rows["dfe-engine"].outcome == resolve_pins.Outcome.STALE
     assert rows["dfe-ui"].outcome == resolve_pins.Outcome.STALE
@@ -477,47 +535,25 @@ def test_ad_hoc_write_refuses_tag_mismatch(monkeypatch, tmp_path):
     assert rc == 1  # refused -> use bump-app first
 
 
-# --- registry token from an env file ------------------------------------------
-_FILE_TOKEN = "ghp_fromtheenvfile"
-
-
-def test_pin_takes_repeatable_env_files():
-    import argparse
-
-    ap = argparse.ArgumentParser()
-    resolve_pins.add_pin_subparser(ap.add_subparsers(dest="command"))
-    args = ap.parse_args(["pin", "--env-file", "a.env", "--env-file", "b.env"])
-    assert args.env_file == ["a.env", "b.env"]
-
-
-def test_the_env_file_token_reaches_the_registry_and_is_never_printed(
-    monkeypatch, tmp_path, capsys
-):
-    """gh without read:packages gets a 403 from ghcr; the scoped token lives in a file."""
-    _install(monkeypatch, tmp_path)
-    token_file = tmp_path / "ghcr.env"
-    token_file.write_text(f"GHCR_TOKEN={_FILE_TOKEN}\n", encoding="utf-8", newline="\n")
-    seen_tokens: list[str | None] = []
-
-    def reading_versions(org, app):
-        seen_tokens.append(os.environ.get("GH_TOKEN"))
-        return tuple(FAKE_PACKAGES.get(app, []))
-
-    monkeypatch.setattr(registry_pins, "package_versions", reading_versions)
-    previous = os.environ.pop("GH_TOKEN", None)
+# --- the whole command against a registry, with no token ----------------------
+def test_check_reads_the_registry_with_no_token(monkeypatch, tmp_path, capsys):
+    """The pin check an outsider runs: a published registry, no GitHub token."""
+    vfile = tmp_path / "versions.yaml"
+    vfile.write_text(SYNTHETIC_VERSIONS, encoding="utf-8")
+    monkeypatch.setattr(resolve_pins, "VERSIONS", vfile)
+    registry = _published()
+    saved = _without_tokens()
     try:
-        rc = resolve_pins.cmd_pin(_args(check=True, env_file=[str(token_file)]))
+        with registry.serving(monkeypatch):
+            rc = resolve_pins.cmd_pin(_args(check=True))
     finally:
-        os.environ.pop("GH_TOKEN", None)
-        if previous is not None:
-            os.environ["GH_TOKEN"] = previous
-
-    out = capsys.readouterr()
-    assert rc == 1  # the synthetic stack carries stale pins; the read itself ran
-    assert seen_tokens
-    assert all(token == _FILE_TOKEN for token in seen_tokens)
-    assert _FILE_TOKEN not in out.out
-    assert _FILE_TOKEN not in out.err
+        _restore_tokens(saved)
+    out = capsys.readouterr().out
+    assert rc == 1  # the synthetic stack carries stale pins; the reads themselves ran
+    assert "ok    dfe-loader v1.18.21" in out
+    assert "STALE dfe-engine v1.15.1" in out
+    assert "MISS  dfe-fetcher v1.4.10" in out
+    assert all(r.authorization == "" for r in registry.token_requests())
 
 
 # --- arg helper ---------------------------------------------------------------
@@ -528,13 +564,12 @@ def _args(**over):
         app=[],
         version=None,
         stack=None,
-        org="hyperi-io",
+        org=ORG,
         registry="ghcr.io/hyperi-io",
         check=False,
         write=False,
         cooldown_days=7,
         allow_fresh=False,
-        env_file=[],
         func=None,
     )
     for k, v in over.items():

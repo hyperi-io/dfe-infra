@@ -46,7 +46,7 @@ Kafka on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
 
-### Secrets store and pull secret
+### Secrets store
 
 | Tier | Reads the secrets store | What to set |
 |---|---|---|
@@ -61,10 +61,7 @@ too, unseen before the deploy. On AWS the backend is `aws-sm` and `openbao` is
 refused; elsewhere an unnamed backend is `openbao`, as is any OpenBao value
 ([managed-backends.md](managed-backends.md)).
 
-The published images pull anonymously, so no pod names a pull secret unless
-`DFE_PULL_SECRET_TOKEN` is set for a private registry. bootstrap then creates
-`ghcr-pull-secret` per DFE namespace and records it on the cluster secret
-(`dfe.hyperi.io/image_pull_secret`), and every appset hands it to its charts.
+Every DFE image and thin chart pulls anonymously from `DFE_REGISTRY`, so no pod names a pull secret.
 
 Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
 [composition.md](composition.md) has the table and the derivation.
@@ -166,6 +163,10 @@ versionCheck:
   sendInstanceId: false # keep the check, strip the install id
   apiUrl: ""            # point the check at a mirror
 ```
+
+## Optional: your own private mirror
+
+For a mirror that needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SECRET_TOKEN`, with `DFE_PULL_SECRET_USER` (default `token`) and `DFE_PULL_SECRET_SERVER` (default `DFE_REGISTRY`'s host). bootstrap creates `ghcr-pull-secret` in every DFE namespace, records it on the cluster secret (`dfe.hyperi.io/image_pull_secret`) for the appsets to hand their charts, and registers the token as Argo CD's read credential for each thin chart.
 
 ## Related
 

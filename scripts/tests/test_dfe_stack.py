@@ -13,14 +13,13 @@ refresh-digests reads the image ref out of a comment above each pin rather than
 carrying its own table. That regex is the whole map, so a silent mis-parse would
 resolve the wrong image and write a confident, wrong digest.
 
-Runs offline -- the registry calls are not exercised here.
+Runs offline: the registry reads it exercises go to a loopback registry
+(_oci.FakeRegistry).
 
     python3 scripts/tests/test_dfe_stack.py
 
 No third-party deps and no test runner, matching the tool it tests.
 """
-
-from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
@@ -2074,82 +2073,45 @@ def test_refresh_writes_the_healthy_pins_when_one_cannot_resolve() -> None:
         )
 
 
-# --- --env-file -> GH_TOKEN (authenticating gh for the registry reads) --------
-_FAKE_TOKEN = "ghp_scopedtokenvalue"
+# --- cut's newest published build, read from the registry with no token --------
+def _published_engine():
+    """A loopback registry carrying dfe-engine at three releases and two build tags."""
+    from _oci import FakeRegistry
+
+    registry = FakeRegistry(page_size=2)
+    for tag, digest in (("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b")):
+        registry.add("hyperi-io/dfe-engine", tag, "sha256:" + digest * 64)
+    registry.add("hyperi-io/dfe-engine", "sha-1a2b3c4", "sha256:" + "d" * 64)
+    return registry
 
 
-def _run_stack_main(argv: list[str]) -> tuple[int, str, str]:
-    """dfe-stack main() with argv replaced, capturing both streams."""
-    import contextlib
-    import io
-
-    out, err = io.StringIO(), io.StringIO()
-    original_argv = sys.argv
-    sys.argv = argv
-    try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = stack.main()
-    finally:
-        sys.argv = original_argv
-    return rc, out.getvalue(), err.getvalue()
+def test_cut_takes_the_highest_release_and_its_own_digest() -> None:
+    registry = _published_engine()
+    with registry.serving():
+        found = stack._latest_published("hyperi-io", "dfe-engine")
+    expect("v1.10.0 outranks v1.9.9 and the build tags", found == ("v1.10.0", "sha256:" + "b" * 64),
+           f"{found}")
+    expect("no token request carried a credential",
+           all(r.authorization == "" for r in registry.token_requests()), "a token was sent")
 
 
-def _with_env_file(body: str, ambient: str | None) -> tuple[int, str, str, str | None]:
-    """Run `dfe-stack --env-file <body> current`, returning the resulting GH_TOKEN."""
-    import os
-    import tempfile
-
-    previous = os.environ.pop("GH_TOKEN", None)
-    if ambient is not None:
-        os.environ["GH_TOKEN"] = ambient
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "creds.env"
-            path.write_text(body, encoding="utf-8", newline="\n")
-            rc, out, err = _run_stack_main(["dfe-stack", "--env-file", str(path), "current"])
-        return rc, out, err, os.environ.get("GH_TOKEN")
-    finally:
-        os.environ.pop("GH_TOKEN", None)
-        if previous is not None:
-            os.environ["GH_TOKEN"] = previous
+def test_cut_holds_an_app_that_never_shipped() -> None:
+    with _published_engine().serving():
+        found = stack._latest_published("hyperi-io", "dfe-transform-wasm")
+    expect("an unpublished package holds its pin", found is None, f"{found}")
 
 
-def test_env_file_ghcr_token_authenticates_gh() -> None:
-    """The scoped token lives in a git-ignored env file, not in `gh login`."""
-    rc, out, err, token = _with_env_file(f'GHCR_TOKEN="{_FAKE_TOKEN}"\n', None)
-    expect("the subcommand still runs", rc == 0, f"exit {rc}")
-    expect("GHCR_TOKEN becomes GH_TOKEN", token == _FAKE_TOKEN, f"{token!r}")
-    expect("the token is never printed", _FAKE_TOKEN not in out + err, out + err)
-
-
-def test_env_file_gh_token_is_used_directly() -> None:
-    rc, _, _, token = _with_env_file(f"GH_TOKEN={_FAKE_TOKEN}\n", None)
-    expect("GH_TOKEN in the file is used as-is", token == _FAKE_TOKEN, f"{token!r}")
-    expect("the subcommand still runs", rc == 0, f"exit {rc}")
-
-
-def test_ambient_gh_token_is_not_overwritten() -> None:
-    """The file is the fallback for a host missing read:packages, not an override."""
-    _, _, _, token = _with_env_file(f'GHCR_TOKEN="{_FAKE_TOKEN}"\n', "ghp_ambient")
-    expect("an ambient GH_TOKEN wins", token == "ghp_ambient", f"{token!r}")
-
-
-def test_env_file_without_a_token_sets_nothing() -> None:
-    _, _, _, token = _with_env_file("DFE_NAMESPACE=dfe\n", None)
-    expect("a token-free env file leaves GH_TOKEN unset", token is None, f"{token!r}")
-
-
-def test_no_env_file_leaves_the_environment_alone() -> None:
-    import os
-
-    previous = os.environ.pop("GH_TOKEN", None)
-    try:
-        rc, _, _ = _run_stack_main(["dfe-stack", "current"])
-        expect("the subcommand still runs without --env-file", rc == 0, f"exit {rc}")
-        expect("nothing is set", "GH_TOKEN" not in os.environ, "GH_TOKEN was set")
-    finally:
-        if previous is not None:
-            os.environ["GH_TOKEN"] = previous
+def test_cut_stops_on_a_registry_that_does_not_answer() -> None:
+    registry = _published_engine()
+    registry.fail = [503, 503, 503]
+    stopped = ""
+    with registry.serving():
+        try:
+            stack._latest_published("hyperi-io", "dfe-engine")
+        except SystemExit as exc:
+            stopped = str(exc)
+    expect("a registry that never answered is not an unpublished app",
+           "cannot read hyperi-io/dfe-engine" in stopped, stopped or "no SystemExit")
 
 
 def _compat_check_over(rules: str, pins: str, strict: bool) -> tuple[int, str]:

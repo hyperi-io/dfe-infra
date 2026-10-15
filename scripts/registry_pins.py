@@ -12,7 +12,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Registry pin resolution over the GitHub Packages (GHCR) container API.
+"""Registry pin resolution, read anonymously from the OCI registry.
 
 The pain this kills: pinning a version means looking up its sha by hand and
 pasting it in, in two repos. This is the shared core both the checker and the
@@ -29,23 +29,18 @@ Everything here is decoupled from any pin FILE. The public surface is:
   registry_host(ref)           -> the registry host an image ref names
   is_absent(error)             -> whether a read error means the tag does not exist
   tag_digest(org, app, tag)    -> the digest a tag resolves to, or None if absent
-  package_versions(org, app)   -> the raw GHCR version records (paginated)
-  package_tags(org, app)       -> {tag: digest} for every tagged version
+  package_tags(org, app)       -> every tag the package carries
   resolve(org, app, tag)       -> a Resolved(digest, published) or None
   resolve_digest(org, app, tag)-> just the digest string, or None
   version_key(tag)             -> numeric sort key for vX.Y.Z tags
   head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
   commit_summary(org, repo, sha) -> (subject line, commit date) of that commit
 
-Two ways to reach a registry, because they need different credentials.
-`docker buildx imagetools` authenticates from the docker credential store and
-reads a public package with no credential at all; the GH packages API needs a
-token carrying `read:packages`, which a developer's own `gh login` usually lacks.
-So tag_digest tries imagetools first and the API second, and a checker that only
-needs a digest keeps working on a plain `gh auth login`.
-
-The API is still the only way to LIST a package's tags or to read a version's
-publish time, so package_versions/package_tags/resolve stay on it.
+Every DFE image and chart is public, so no read here takes a credential. Tags,
+digests and build times come from the registry's own OCI API through
+oci_registry, anonymously. tag_digest tries `docker buildx imagetools` first, which
+also reads a private mirror the docker credential store is logged in to, and the
+OCI API where docker is absent.
 
 A content repo that ships no container still has to be pinned immutably, so
 head_commit is the same job as resolve_digest for a repo rather than a package:
@@ -68,7 +63,8 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from functools import cache
+
+import oci_registry
 
 GHCR = "ghcr.io"
 
@@ -134,8 +130,9 @@ class RetryBudget:
 class Resolved:
     """A tag's registry state: the immutable digest and when it was published.
 
-    `published` is the package version's created_at (UTC). It is what the
-    supply-chain cooldown reads -- a digest whose image is younger than the
+    `published` is when the image was built (UTC), from its
+    org.opencontainers.image.created annotation or its config's `created`. It is
+    what the supply-chain cooldown reads -- a digest whose image is younger than the
     cooldown window is not adopted without an explicit override.
     """
 
@@ -144,104 +141,54 @@ class Resolved:
 
 
 class RegistryError(RuntimeError):
-    """A gh/API failure resolving a package -- carries the underlying stderr."""
+    """A registry or gh read that did not answer -- carries the underlying error."""
 
 
-def _gh_api(path: str) -> list[dict]:
-    """Call `gh api --paginate <path>` and return the concatenated records.
+def package_tags(org: str, app: str, registry: str = GHCR) -> list[str]:
+    """Every tag the org's package carries, empty when it is not published.
 
-    --paginate concatenates one JSON array per page with no separator, so the
-    pages are decoded one raw array at a time rather than json.loads on the whole
-    (which only ever sees the first page).
+    A nested package such as charts/dfe-engine is the repository path as written.
+
+    Raises:
+        RegistryError: The registry did not answer, so an empty list always means
+            nothing is published rather than nothing could be read.
     """
-    proc = subprocess.run(
-        ["gh", "api", "--paginate", path],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RegistryError(proc.stderr.strip() or "gh api failed")
-
-    records: list[dict] = []
-    decoder = json.JSONDecoder()
-    text = proc.stdout.strip()
-    idx = 0
-    while idx < len(text):
-        chunk, end = decoder.raw_decode(text, idx)
-        records.extend(chunk)
-        idx = end
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-    return records
-
-
-@cache
-def package_versions(org: str, app: str) -> tuple[dict, ...]:
-    """Every version record for an org's container package (cached per process).
-
-    Cached because a run resolves many apps but often re-reads the same one
-    across the check and the write path -- one API sweep per package, not per
-    lookup. Returns a tuple so the lru_cache value stays immutable.
-
-    A nested package such as charts/dfe-engine is one path segment to the API,
-    so its slash is sent as %2F.
-    """
-    package = app.replace("/", "%2F")
-    return tuple(_gh_api(f"/orgs/{org}/packages/container/{package}/versions?per_page=100"))
-
-
-def _parse_ts(value: str) -> datetime.datetime | None:
-    """Parse a GH ISO-8601 timestamp ('...Z') to an aware UTC datetime, or None."""
-    if not value:
-        return None
     try:
-        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+        return oci_registry.Repository(registry, f"{org}/{app}").tags()
+    except oci_registry.RegistryReadError as exc:
+        raise RegistryError(str(exc)) from exc
 
 
-def package_tags(org: str, app: str) -> dict[str, str]:
-    """Map tag -> digest for every tagged version of the container package.
-
-    The check path's workhorse: a stable name -> what image the tag points at.
-    """
-    tags: dict[str, str] = {}
-    for version in package_versions(org, app):
-        digest = version.get("name", "")
-        for tag in version.get("metadata", {}).get("container", {}).get("tags", []):
-            tags[tag] = digest
-    return tags
-
-
-def resolve(org: str, app: str, tag: str) -> Resolved | None:
-    """Resolve one (org, app, tag) to its digest + publish time, or None.
+def resolve(org: str, app: str, tag: str, registry: str = GHCR) -> Resolved | None:
+    """Resolve one (org, app, tag) to its digest + build time, or None.
 
     None means the tag is not present on the package -- a release tag whose
     container job never pushed (hyperi-ci#102), which the caller reports rather
     than silently pinning a phantom image.
     """
-    for version in package_versions(org, app):
-        container_tags = version.get("metadata", {}).get("container", {}).get("tags", [])
-        if tag in container_tags:
-            return Resolved(
-                digest=version.get("name", ""),
-                published=_parse_ts(version.get("created_at", "")),
-            )
-    return None
+    repo = oci_registry.Repository(registry, f"{org}/{app}")
+    try:
+        found = repo.manifest(tag)
+        if found is None:
+            return None
+        digest, document = found
+        return Resolved(digest=digest, published=repo.created(document))
+    except oci_registry.RegistryReadError as exc:
+        raise RegistryError(str(exc)) from exc
 
 
-def resolve_digest(org: str, app: str, tag: str) -> str | None:
+def resolve_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
     """Just the digest for (org, app, tag), or None if the tag is absent.
 
     The one-line entry point for a consumer that only wants the sha (dfe-deploy
-    resolving an overlay's image.tag). Raises RegistryError on an API failure so
-    a network/auth problem is never mistaken for "tag absent".
+    resolving an overlay's image.tag). Raises RegistryError when the registry does
+    not answer, so a network problem is never mistaken for "tag absent".
     """
-    found = resolve(org, app, tag)
-    return found.digest if found else None
+    try:
+        found = oci_registry.Repository(registry, f"{org}/{app}").manifest(tag)
+    except oci_registry.RegistryReadError as exc:
+        raise RegistryError(str(exc)) from exc
+    return found[0] if found else None
 
 
 def registry_host(ref: str) -> str:
@@ -429,22 +376,21 @@ def ref_platforms(ref: str, budget: RetryBudget | None = None) -> tuple[set[str]
 def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
     """The digest (org, app, tag) resolves to right now, or None if the tag is absent.
 
-    imagetools first, the packages API second: between them one works on a plain
-    `gh auth login` and the other works where docker is absent. Raises
-    RegistryError when NEITHER could answer, so a registry nobody reached never
-    reads as a verified pin.
+    imagetools first, the registry's OCI API second, so a machine without docker
+    still resolves. Raises RegistryError when NEITHER could answer, so a registry
+    nobody reached never reads as a verified pin.
     """
     digest, err = ref_digest(f"{registry}/{org}/{app}:{tag}")
     if digest:
         return digest
     try:
-        return resolve_digest(org, app, tag)
+        return resolve_digest(org, app, tag, registry)
     except RegistryError as api_exc:
         if is_absent(err):
             return None
         raise RegistryError(
             f"{registry}/{org}/{app}:{tag} did not resolve -- "
-            f"imagetools: {err}; gh api: {api_exc}"
+            f"imagetools: {err}; OCI API: {api_exc}"
         ) from api_exc
 
 

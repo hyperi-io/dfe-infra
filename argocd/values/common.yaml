@@ -102,9 +102,8 @@ operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
 
-# Image pull secrets -- none by default, so a public-image pod pulls anonymously.
-# When bootstrap.sh creates one (DFE_PULL_SECRET_TOKEN), it records the name on
-# the cluster secret and every appset hands it to the charts from there.
+# Image pull secrets -- none, so every pod pulls anonymously. A private mirror's
+# secret, when bootstrap.sh creates one, reaches the charts through the appsets.
 imagePullSecrets: []
 
 # Node scheduling -- empty by default (no constraints).

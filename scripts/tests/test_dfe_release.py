@@ -11,7 +11,8 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/dfe-release.py's ship chain.
 
-Every gh call is answered by a recorder standing in for subprocess.run -- no
+Every gh call is answered by a recorder standing in for subprocess.run, and the
+digest is read from a loopback registry (_oci.FakeRegistry) with no token -- no
 network, and nothing here can merge, dispatch or publish anything.
 
 The guard is the test that matters. The publish workflow's concurrency group is
@@ -25,9 +26,8 @@ Runs offline. Under pytest, and standalone via the main() runner at the bottom
     python3 scripts/tests/test_dfe_release.py
 """
 
-from __future__ import annotations
-
 import argparse
+import contextlib
 import importlib.util
 import json
 import subprocess
@@ -38,6 +38,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import oci_registry  # noqa: E402
+
+from _oci import FakeRegistry  # noqa: E402
+
 
 def _load(name: str, filename: str | None = None):
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / (filename or f"{name}.py"))
@@ -47,7 +51,6 @@ def _load(name: str, filename: str | None = None):
     return mod
 
 
-registry_pins = _load("registry_pins")
 release = _load("dfe_release", "dfe-release.py")
 
 REPO = "dfe-loader"
@@ -117,22 +120,35 @@ class FakeGh:
             path = next((c for c in cmd if c.startswith("/")), "")
             if path.endswith("/releases/latest"):
                 return _completed(0, TAG + "\n")
-            if "/packages/container/" in path:
-                return _completed(0, json.dumps([{
-                    "name": DIGEST,
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "metadata": {"container": {"tags": [TAG]}},
-                }]))
 
         return _completed(0, "")
 
 
+def _offline(host: str) -> str:
+    raise AssertionError(f"a test outside published() read {host}")
+
+
 def _install(monkeypatch, fake: FakeGh) -> FakeGh:
-    """Route every gh call in the driver and in registry_pins at the recorder."""
-    registry_pins.package_versions.cache_clear()
+    """Route every gh call at the recorder, and every registry read nowhere."""
     monkeypatch.setattr(release.subprocess, "run", fake)
     monkeypatch.setattr(release.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(oci_registry, "base_url", _offline)
     return fake
+
+
+@contextlib.contextmanager
+def published(monkeypatch):
+    """A registry carrying REPO at TAG, which every registry read in the block reaches."""
+    registry = FakeRegistry()
+    registry.add(f"{release.ORG}/{REPO}", TAG, DIGEST, created="2026-01-01T00:00:00Z")
+    with registry.serving(monkeypatch):
+        yield registry
+
+
+def _digest_read(registry: FakeRegistry) -> bool:
+    """Whether the registry served TAG's manifest to a caller holding its anonymous token."""
+    path = f"/v2/{release.ORG}/{REPO}/manifests/{TAG}"
+    return any(r.path == path and r.authorization for r in registry.requests)
 
 
 def _ship_args(**over) -> argparse.Namespace:
@@ -162,8 +178,6 @@ def _steps(calls: list[list[str]]) -> list[str]:
             labels.append("wait")
         elif c[:2] == ["gh", "api"] and any(x.endswith("/releases/latest") for x in c):
             labels.append("latest")
-        elif c[:2] == ["gh", "api"] and any("/packages/container/" in x for x in c):
-            labels.append("digest")
     return labels
 
 
@@ -182,14 +196,18 @@ def test_ship_chains_the_five_verbs_and_prints_one_line(monkeypatch, capsys, tmp
     body.write_text("why it lands\n", encoding="utf-8", newline="\n")
     fake = _install(monkeypatch, FakeGh())
 
-    rc = release.cmd_ship(_ship_args(body_file=str(body)))
+    with published(monkeypatch) as registry:
+        rc = release.cmd_ship(_ship_args(body_file=str(body)))
     captured = capsys.readouterr()
 
     assert rc == 0
     assert captured.out == f"SHIPPED {REPO} {TAG} {DIGEST}\n"
-    assert _in_order(_steps(fake.calls), ["open", "merge", "wait", "latest", "digest"]), (
+    assert _in_order(_steps(fake.calls), ["open", "merge", "wait", "latest"]), (
         _steps(fake.calls)
     )
+    # The digest read names the tag `latest` returned, so it ran after it.
+    assert _digest_read(registry)
+    assert not any("/packages/" in arg for call in fake.calls for arg in call)
 
 
 def test_ship_squashes_with_the_release_trailer(monkeypatch, capsys, tmp_path):
@@ -198,7 +216,8 @@ def test_ship_squashes_with_the_release_trailer(monkeypatch, capsys, tmp_path):
     body.write_text("why it lands\n", encoding="utf-8", newline="\n")
     fake = _install(monkeypatch, FakeGh())
 
-    release.cmd_ship(_ship_args(body_file=str(body)))
+    with published(monkeypatch):
+        release.cmd_ship(_ship_args(body_file=str(body)))
     capsys.readouterr()
 
     merge = next(c for c in fake.calls if c[:3] == ["gh", "pr", "merge"])
@@ -213,7 +232,8 @@ def test_ship_waits_for_the_run_the_merge_triggered(monkeypatch, capsys, tmp_pat
     body.write_text("why it lands\n", encoding="utf-8", newline="\n")
     fake = _install(monkeypatch, FakeGh())
 
-    release.cmd_ship(_ship_args(body_file=str(body)))
+    with published(monkeypatch):
+        release.cmd_ship(_ship_args(body_file=str(body)))
     capsys.readouterr()
 
     waits = [
@@ -231,7 +251,8 @@ def test_ship_reuses_an_already_open_pr(monkeypatch, capsys):
     fake.pr_created = True  # the branch already has an open PR
     _install(monkeypatch, fake)
 
-    rc = release.cmd_ship(_ship_args(body_file=None))
+    with published(monkeypatch):
+        rc = release.cmd_ship(_ship_args(body_file=None))
     captured = capsys.readouterr()
 
     assert rc == 0
@@ -338,13 +359,26 @@ def test_wait_still_reports_the_latest_run_when_given_no_after_id(monkeypatch, c
     assert captured.out.startswith(f"{release.DEFAULT_WORKFLOW} success (")
 
 
-def test_digest_resolves_a_tag_through_the_paginating_reader(monkeypatch, capsys):
-    _install(monkeypatch, FakeGh())
-    rc = release.cmd_digest(argparse.Namespace(repo=REPO, version=TAG))
+def test_digest_reads_the_registry_with_no_gh_call(monkeypatch, capsys):
+    fake = _install(monkeypatch, FakeGh())
+    with published(monkeypatch) as registry:
+        rc = release.cmd_digest(argparse.Namespace(repo=REPO, version=TAG))
     captured = capsys.readouterr()
 
     assert rc == 0
     assert captured.out.strip() == DIGEST
+    assert fake.calls == []
+    assert all(r.authorization == "" for r in registry.token_requests())
+
+
+def test_digest_of_an_unpublished_tag_is_an_error(monkeypatch, capsys):
+    _install(monkeypatch, FakeGh())
+    with published(monkeypatch):
+        rc = release.cmd_digest(argparse.Namespace(repo=REPO, version="v0.0.1"))
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "version tag not found in GHCR: v0.0.1" in captured.err
 
 
 # --- standalone runner (mirrors the other tests in this dir) ------------------
