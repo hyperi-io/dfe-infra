@@ -5035,7 +5035,7 @@ stacks:
       ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0
       documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0
       envoy-proxy: "sha256:460f8c329f24b2e1c7c5af64cb314a6f351ad1c262ba77b135ac46b35ebd5f85"         # envoyproxy/envoy:v1.39.2
-      nginx-unprivileged: "sha256:884e0b7f42f303641b0f4e78755aea647521dca0b89ca3be7992ad78b5c07434"   # nginxinc/nginx-unprivileged:1.31.6-alpine
+      nginx-unprivileged: "sha256:b9241c6e7b8e9a862f129d8d4199ab64b10390949a78bdd5603379b32c844083"   # nginxinc/nginx-unprivileged:1.31.6-alpine
       otel-collector: "sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6"       # otel/opentelemetry-collector-contrib:0.162.0
       git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
@@ -5078,11 +5078,10 @@ stacks:
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
 
-    # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, which
-    # render_dial.py renders into the aws root's eks_addon_versions tfvar. Each is built for one
-    # Kubernetes minor, and kube-proxy's version IS that minor: the module refuses a plan whose
-    # kube-proxy minor is not kubernetes_version, and scripts/tests/test_eks_addon_pins.py holds it
-    # to the minor deployment.example.yaml runs.
+    # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, mirrored into its
+    # addon_versions default. Each is built for one Kubernetes minor, and kube-proxy's version IS
+    # that minor: the module refuses a plan whose kube-proxy minor is not kubernetes_version, and
+    # scripts/tests/test_eks_addon_pins.py holds it to the minor deployment.example.yaml runs.
     # These are what EKS resolved for 1.36 on 2026-10-13. EKS publishes the build suffix only
     # through `aws eks describe-addon-versions --kubernetes-version <minor>`.
     eks-addons:
