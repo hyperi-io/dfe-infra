@@ -153,8 +153,8 @@ resource "confluent_kafka_cluster" "this" {
 // ---------------------------------------------------------------------------
 
 locals {
-  // In a row, because DNS spreads attempts over the shared ingress load balancers and a new route reaches each one separately.
-  rest_ready_handshakes = 3
+  // In a row, because a new route reaches each shared ingress load balancer separately: one unrouted balancer of four passes 12 random landings about 3% of the time.
+  rest_ready_handshakes = 12
 
   // The wait's ceiling, after which the apply fails naming the host.
   rest_ready_timeout_seconds = 900
