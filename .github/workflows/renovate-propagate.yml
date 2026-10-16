@@ -18,11 +18,10 @@ on:
     branches:
       - 'renovate/**'
 
-# Read packages so ghcr digests resolve, and write the commit status. The push
-# uses the App token, which these scopes do not govern.
+# Write the commit status. The push uses the App token, which these scopes do
+# not govern, and registry reads are anonymous.
 permissions:
   contents: read
-  packages: read
   statuses: write
 
 concurrency:
@@ -55,15 +54,6 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
-
-      # Anonymous ghcr pulls are rate-limited and can fail outright; the token
-      # this job already holds removes that as a failure mode.
-      - name: Log in to ghcr
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Before the propagation: refresh-digests writes versions.yaml only, so a
       # digest it moves reaches the chart copies that read it only through --fix.

@@ -2,8 +2,8 @@
 #  Project:      dfe-infra
 #  File:         envfile.py
 #  Purpose:      Shared KEY=VALUE env-file reader for the repo's tools, so
-#                dfe-ops, dfe-stack and dfe-release parse an operator's env file
-#                the same way instead of each carrying its own copy.
+#                dfe-ops and its subcommands parse an operator's env file the
+#                same way instead of each carrying its own copy.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -25,24 +25,18 @@ The shape it accepts (matching bootstrap/local.env.example):
     import envfile
 
     envfile.parse_env_file(Path("bootstrap/.env"))
-    # {'DFE_NAMESPACE': 'dfe', 'GHCR_TOKEN': '...'}
+    # {'DFE_NAMESPACE': 'dfe', 'DFE_PROFILE': 'single'}
 
     # Several files, later wins:
     envfile.load_env_files(["bootstrap/.env", "local.env"])
 
-    # Authenticate `gh` for the registry reads from those files:
-    envfile.apply_gh_token(["bootstrap/.env"])
-
 A missing file raises FileNotFoundError -- a tool told to read an env file that
 is not there has been mis-invoked, and silently returning {} would show up much
-later as a confusing auth failure.
+later as a confusing failure.
 
 stdlib only.
 """
 
-from __future__ import annotations
-
-import os
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -96,25 +90,3 @@ def load_env_files(
     for path in paths:
         merged.update(parse_env_file(Path(path)))
     return merged
-
-
-def apply_gh_token(paths: Iterable[str | Path] | None) -> None:
-    """Set GH_TOKEN in this process from an env file, for the tools that call gh.
-
-    The registry reads need the `read:packages` scope, which a developer's own
-    `gh login` usually lacks, so the scoped token lives in a git-ignored env file
-    instead. An ambient GH_TOKEN always wins -- the file is the fallback, not an
-    override. The value is never printed, logged, or quoted back in an error.
-
-    Args:
-        paths: Env files in precedence order (last wins). None or empty is a
-            no-op.
-    """
-    if not paths:
-        return
-    loaded = load_env_files(paths)
-    if "GH_TOKEN" in os.environ:
-        return
-    token = loaded.get("GH_TOKEN") or loaded.get("GHCR_TOKEN")
-    if token:
-        os.environ["GH_TOKEN"] = token

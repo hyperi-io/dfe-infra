@@ -80,12 +80,6 @@
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
 #
 # Optional:
-#   DFE_PULL_SECRET_TOKEN    token for the ghcr-pull-secret every pod then names.
-#                            Unset, pods name no pull secret and pull anonymously,
-#                            which is all a public registry needs.
-#                            DFE_PULL_SECRET_SERVER (default: the host part of
-#                            DFE_REGISTRY) and DFE_PULL_SECRET_USER (default
-#                            token) go with it.
 #   DFE_SECRETS_BACKEND      which body the ESO ClusterSecretStore gets: openbao
 #                            (needs DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and an
 #                            AppRole SecretID), aws-sm (needs none of them --
@@ -218,6 +212,14 @@
 #                            a live HyperDX JSON test bed, scoped to the run marker.
 #   DFE_POST_FIXTURE=<path>  NDJSON sample-event fixture posted by CORE 2
 #                            (default bootstrap/fixtures/post-hitchhiker.ndjson).
+#
+# Optional: your own private mirror. The published images and thin charts pull
+# anonymously; these are only for a DFE_REGISTRY that needs a login.
+#   DFE_PULL_SECRET_TOKEN    token for the ghcr-pull-secret every pod then names,
+#                            and for Argo's read of the mirror's thin charts.
+#   DFE_PULL_SECRET_SERVER   the registry host the token is for (default: the
+#                            host part of DFE_REGISTRY).
+#   DFE_PULL_SECRET_USER     the account it belongs to (default: token).
 
 set -euo pipefail
 
@@ -793,8 +795,8 @@ else
   echo "  DFE_CLOUD=${DFE_CLOUD} creates its own nodes -- nothing to check, skipping"
 fi
 
-# The pull secret every pod names, empty when step [4b/7] creates none, so the
-# appsets that read it back never name a secret that does not exist.
+# A private mirror's pull secret, which every pod names; empty when step [4b/7]
+# creates none, so the appsets that read it back never name a missing secret.
 export DFE_IMAGE_PULL_SECRET="${DFE_PULL_SECRET_TOKEN:+ghcr-pull-secret}"
 # The credential is for the registry the dfe-* images come from, so its server
 # defaults to DFE_REGISTRY's host rather than to one fixed registry.
@@ -1154,16 +1156,11 @@ else
   fi
 fi
 
-echo "==> [4b/7] Creating imagePullSecrets"
-# An imagePullSecret is namespace-scoped, so it goes in EVERY namespace that can
-# pull a private DFE image -- not just the app namespace. The schema Job runs in
-# `clickhouse` (where the admin credential lives) and pulls the engine image, so
-# without this it only worked when an app deployment had already cached that tag
-# on the node.
+echo "==> [4b/7] Creating the DFE namespaces"
+# A private mirror's pull secret is namespace-scoped, so it goes in every
+# namespace a DFE image runs in, the schema Job's `clickhouse` included.
 for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   kubectl create namespace "$ns" --dry-run=client -o yaml | run kubectl apply -f -
-  # Private registry pull secret (GHCR, ECR, GCR, etc.)
-  # Set DFE_PULL_SECRET_TOKEN, and DFE_PULL_SECRET_SERVER / _USER where the defaults miss.
   if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
     kubectl -n "$ns" create secret docker-registry "${DFE_IMAGE_PULL_SECRET}" \
       --docker-server="${DFE_PULL_SECRET_SERVER}" \
@@ -1173,11 +1170,9 @@ for ns in argocd "${DFE_NAMESPACE}" strimzi clickhouse otel hyperdx forgejo; do
   fi
 done
 if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
-  echo "  Pull secret ${DFE_IMAGE_PULL_SECRET} for ${DFE_PULL_SECRET_SERVER} created/updated in every DFE namespace, and every DFE pod names it"
+  echo "  Private mirror: pull secret ${DFE_IMAGE_PULL_SECRET} for ${DFE_PULL_SECRET_SERVER} created/updated in every DFE namespace, and every DFE pod names it"
 else
-  echo "  No pull secret (DFE_PULL_SECRET_TOKEN unset): pods name none and pull ${DFE_REGISTRY}"
-  echo "  anonymously, which is all a public registry needs. Only a PRIVATE registry needs"
-  echo "  DFE_PULL_SECRET_TOKEN, and a pod there fails with ImagePullBackOff without it."
+  echo "  Images pull anonymously from ${DFE_REGISTRY}"
 fi
 
 # [4c/7] Deploy-repo credentials -- two paths by provider mode.
@@ -1384,10 +1379,11 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   fi
 fi
 
-# Argo CD's read credential for each thin chart the layer 2 appsets pull from
-# oci://${DFE_REGISTRY}/charts/<chart>, from the token the image pull secret uses.
-# One repository per chart, because Argo matches a credential on the whole URL;
-# scripts/tests/test_appset_oci_sources.py holds the list to the appsets' charts.
+# A private mirror's Argo CD read credential for each thin chart the layer 2
+# appsets pull from oci://${DFE_REGISTRY}/charts/<chart>, from the token the image
+# pull secret uses. One repository per chart, because Argo matches a credential on
+# the whole URL; scripts/tests/test_appset_oci_sources.py holds the list to the
+# appsets' charts.
 DFE_THIN_CHARTS="culvert dfe-archiver dfe-engine dfe-fetcher dfe-hyperdx dfe-loader dfe-receiver dfe-transform-elastic dfe-transform-vector dfe-transform-vrl dfe-ui"
 if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
   if [[ -n "${DFE_PULL_SECRET_TOKEN:-}" ]]; then
@@ -1400,9 +1396,9 @@ if [[ "${DFE_DRY_RUN:-false}" != "true" ]]; then
         --from-literal=password="${DFE_PULL_SECRET_TOKEN}" \
         --dry-run=client -o yaml | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | dfe_apply_secret
     done
-    echo "  [thin charts] Argo OCI credential registered for each chart under oci://${DFE_REGISTRY}/charts"
+    echo "  [thin charts] private mirror: Argo OCI credential registered for each chart under oci://${DFE_REGISTRY}/charts"
   else
-    echo "  [thin charts] no DFE_PULL_SECRET_TOKEN -- assuming oci://${DFE_REGISTRY}/charts is PUBLIC"
+    echo "  [thin charts] pulled anonymously from oci://${DFE_REGISTRY}/charts"
   fi
 fi
 

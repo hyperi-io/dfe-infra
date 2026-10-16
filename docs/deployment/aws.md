@@ -238,9 +238,8 @@ priced on this scale in [edge.md](edge.md).
   `openbao`. `k8s.repo_url` is the dfe-infra chart repo Argo reads. A private
   copy needs `DFE_REPO_TOKEN` (an HTTPS token with read access; `bootstrap.sh`
   turns it into the Argo repository credential), without which every Layer 2
-  Application stays `Unknown` with "authentication required". The published
-  dfe-* images pull anonymously, so `DFE_PULL_SECRET_TOKEN` is for a private
-  registry only. Export either, or carry it in an `--env-file`.
+  Application stays `Unknown` with "authentication required". Export it, or
+  carry it in an `--env-file`. The dfe-* images and thin charts pull anonymously.
 - When `k8s.storage_class` names no class the cluster already has,
   `bootstrap.sh` creates it -- provisioner `ebs.csi.aws.com`, gp3 baseline
   3,000 IOPS / 125 MiB/s, encrypted with the account's default EBS key,

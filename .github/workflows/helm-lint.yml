@@ -96,8 +96,8 @@ jobs:
             scripts/dfe-stack
             scripts/check_suite_drift.py
             scripts/composition.py
-            scripts/envfile.py
             scripts/manifest_deps.py
+            scripts/oci_registry.py
             scripts/profiles.py
             scripts/registry_pins.py
             scripts/stack_freeze.py
@@ -439,9 +439,8 @@ jobs:
       - name: Shellcheck bootstrap/tests
         run: shellcheck -S warning -s bash bootstrap/tests/*.bats
 
-  # Third-party images are public, so the registry reads here need no secret.
-  # The private DFE images are dfe-stack release-gate's, which reads them with
-  # a GHCR credential; --third-party-only keeps them out of this job. A change
+  # Registry reads here need no secret, since every image is public.
+  # The DFE images are dfe-stack release-gate's, and --third-party-only keeps them out of this job. A change
   # touching nothing the check reads skips it, as the `images` filter above says,
   # and release.yml runs the same check before it tags a stack.
   third-party-arch:
@@ -477,8 +476,28 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # A digest-pinned image cannot change, so its verdict from an earlier run is not read
+      # again. Each run saves under its own key and restores the newest one for the same pins.
+      - name: Restore the proven image verdicts
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/image-arch-verdicts.json
+          key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-
+            image-arch-verdicts-
+
       - name: Every pinned third-party image ships linux/amd64 and linux/arm64
-        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts
+        id: gate
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json"
+
+      # Saved on a failed gate too: the file holds only the verdicts that passed.
+      - name: Save the proven image verdicts
+        if: ${{ !cancelled() && steps.gate.outcome != 'skipped' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/image-arch-verdicts.json
+          key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   # Drift guard (#22): the dfe-deploy template's governance actions dial chart
   # values by dot-path; a chart renaming a dial var would orphan an action

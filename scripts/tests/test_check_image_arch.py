@@ -382,8 +382,8 @@ def test_chart_dir_refs_read_a_vendored_subchart() -> None:
             "  frr:\n    image:\n      repository: quay.io/frrouting/frr\n      tag: 10.4.3\n",
         )
         images = [
-            ("frr-k8s", "frr-k8s", ("frrk8s", "image"), True),
-            ("frr", "frr-k8s", ("frrk8s", "frr", "image"), True),
+            ("frr-k8s", "frr-k8s", ("frrk8s", "image"), True, False),
+            ("frr", "frr-k8s", ("frrk8s", "frr", "image"), True, False),
         ]
         refs = arch.chart_dir_refs(chart, images)
         expect(
@@ -392,7 +392,7 @@ def test_chart_dir_refs_read_a_vendored_subchart() -> None:
             f"{refs}",
         )
         try:
-            arch.chart_dir_refs(chart, [("x", "absent", ("a", "image"), True)])
+            arch.chart_dir_refs(chart, [("x", "absent", ("a", "image"), True, False)])
             raised = ""
         except RuntimeError as err:
             raised = str(err)
@@ -400,7 +400,7 @@ def test_chart_dir_refs_read_a_vendored_subchart() -> None:
 
 
 def test_every_chart_default_image_names_a_chart_the_checker_resolves() -> None:
-    for name, (key, _sub, _path, _fallback) in arch.CHART_DEFAULT_IMAGES.items():
+    for name, (key, _sub, _path, _fallback, _digest) in arch.CHART_DEFAULT_IMAGES.items():
         expect(f"{name}'s chart is in OPERATOR_VIA_CHART", key in arch.OPERATOR_VIA_CHART)
 
 

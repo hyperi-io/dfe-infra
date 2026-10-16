@@ -33,11 +33,14 @@ spec:
                 # owns them (see header). Adding them here re-introduces the dup.
                 # chartValues is merged into helm.valuesObject below. goTemplate
                 # runs with missingkey=error, so every element must carry the key.
+                # chartDigest is empty unless versions.yaml pins the chart's OCI
+                # digest under services-digests.
                 # external-dns is absent too, and gated below on the cluster's
                 # declared DNS provider.
                 - chart: keda
                   repo: https://kedacore.github.io/charts
                   version: "2.21.0"
+                  chartDigest: ""
                   namespace: keda
                   wave: "3"
                   appProject: infra
@@ -63,6 +66,7 @@ spec:
                 - chart: metrics-server
                   repo: https://kubernetes-sigs.github.io/metrics-server/
                   version: "3.14.0"
+                  chartDigest: ""
                   namespace: kube-system
                   wave: "3"
                   appProject: infra
@@ -70,6 +74,7 @@ spec:
                 - chart: reloader
                   repo: https://stakater.github.io/stakater-charts
                   version: "2.2.18"
+                  chartDigest: ""
                   namespace: reloader
                   wave: "3"
                   appProject: infra
@@ -102,6 +107,7 @@ spec:
                 - chart: external-dns
                   repo: https://kubernetes-sigs.github.io/external-dns/
                   version: "1.23.0"
+                  chartDigest: ""
                   namespace: external-dns
                   wave: "2"
                   appProject: infra
@@ -136,9 +142,15 @@ spec:
                     values: ["aws"]
           - list:
               elements:
+                # imageTag and imageDigest are versions.yaml's
+                # services.aws-load-balancer-controller-image pin, empty until a
+                # stack pins it; the chart's own tag runs while they are.
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
                   version: "3.6.0"
+                  chartDigest: ""
+                  imageTag: ""
+                  imageDigest: ""
                   namespace: kube-system
                   wave: "1"
                   appProject: infra
@@ -147,10 +159,12 @@ spec:
                 # the clickhouse-operator entry in layer-scale.yaml uses. The
                 # chart carries its own crds/ directory, which Argo renders and
                 # applies with the release, so a CRD field added by an upgrade
-                # arrives with the controller that reads it.
+                # arrives with the controller that reads it. Its values pin the
+                # controller image by digest, so a chart digest pins both.
                 - chart: karpenter
                   repo: public.ecr.aws/karpenter
                   version: "1.14.1"
+                  chartDigest: ""
                   namespace: kube-system
                   wave: "1"
                   appProject: infra
@@ -163,10 +177,23 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
+      # A chartDigest switches the element to Argo's OCI source at that digest, the shape
+      # layer2-apps.yaml deploys the thin charts with. Without one the chart comes from its
+      # repository by version, and the empty chart and path below are dropped as unset.
       source:
-        repoURL: '{{ .repo }}'
-        chart: '{{ .chart }}'
-        targetRevision: '{{ .version }}'
+        repoURL: '{{ if .chartDigest }}oci://{{ .repo }}/{{ .chart }}{{ else }}{{ .repo }}{{ end }}'
+        chart: '{{ if not .chartDigest }}{{ .chart }}{{ end }}'
+        path: '{{ if .chartDigest }}.{{ end }}'
+        targetRevision: |-
+          {{- if not .chartDigest -}}
+          {{- .version -}}
+          {{- else if hasPrefix "http" .repo -}}
+          {{- fail (printf "%s comes from a classic chart repository, which serves no digest" .chart) -}}
+          {{- else if not (regexMatch "^sha256:[0-9a-f]{64}$" .chartDigest) -}}
+          {{- fail (printf "the chart digest pinned for %s is %q, not a sha256 digest" .chart .chartDigest) -}}
+          {{- else -}}
+          {{- .chartDigest -}}
+          {{- end -}}
         helm:
           # `values` (a YAML string) rather than `valuesObject`: the ApplicationSet
           # template is parsed as YAML before it is Go-templated, so a structured
@@ -258,6 +285,12 @@ spec:
             # ISO expiry a quoted string rather than a YAML timestamp.
             {{- with index .metadata.annotations "dfe.hyperi.io/run_tags" }}
             defaultTags: {{ . | fromJson | toJson }}
+            {{- end }}
+            {{- if .imageDigest }}
+            {{- if not .imageTag }}{{ fail "imageDigest is set for aws-load-balancer-controller with no imageTag" }}{{ end }}
+            # The chart renders repository:tag, so the tag carries the digest the stack pins.
+            image:
+              tag: '{{ .imageTag }}@{{ .imageDigest }}'
             {{- end }}
             {{- end }}
             {{- if eq .chart "karpenter" }}

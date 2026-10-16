@@ -33,11 +33,11 @@ to a container network, so there the services are reached with port-forwards,
 which `dfe-ops acceptance` opens itself. `dfe-ops ui` drives the console through
 its gateway hostname, so it needs that name to resolve from the host.
 
-Credentials come from `--env-file`, exactly as for `stack-deploy`: the registry
-pull secret (DFE_PULL_SECRET_*), the chart-repo read credential (DFE_REPO_TOKEN
-or DFE_REPO_SSH_KEY) and the secrets-backend facts. The single, slim and mesh
-tiers from public images and a public chart repo need none of them, so no env
-file at all. Nothing is read from this shell's environment: every DFE_* variable
+Credentials come from `--env-file`, exactly as for `stack-deploy`: the chart-repo
+read credential (DFE_REPO_TOKEN or DFE_REPO_SSH_KEY) and the secrets-backend
+facts. The single, slim and mesh tiers from the published images and a public
+chart repo need none of them, so no env file at all. Nothing is read from this
+shell's environment: every DFE_* variable
 is stripped before the deploy runs, so an estate value exported in the
 operator's shell cannot reach a kind cluster.
 
@@ -1011,8 +1011,8 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         action="append",
         default=[],
         metavar="PATH",
-        help="DFE_* env file: registry pull, chart-repo and secrets-backend credentials, "
-        "none of which a store-less tier from public images needs (repeatable; later wins)",
+        help="DFE_* env file: chart-repo and secrets-backend credentials, neither of "
+        "which a store-less tier from the published images needs (repeatable; later wins)",
     )
     up.add_argument(
         "--registry", default=None, help="image registry prefix, passed to stack-deploy"

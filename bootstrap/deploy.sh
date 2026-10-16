@@ -78,12 +78,8 @@ else
     echo "==> Step 1: OpenTofu (skipped)"
 fi
 
-# Step 1b: Pull secret credentials
-# Only a private registry needs a pull secret: set DFE_PULL_SECRET_TOKEN (and
-# DFE_PULL_SECRET_SERVER / DFE_PULL_SECRET_USER where the defaults miss) and
-# bootstrap.sh creates it. Unset, every image pulls anonymously.
-#
-# If a .env file exists in the terraform environment dir, source it.
+# Step 1b: an operator .env in the OpenTofu environment dir sets any DFE_* input
+# bootstrap.sh reads.
 if [[ -f "${TF_DIR}/.env" ]]; then
   set -a
   # shellcheck source=/dev/null # the operator's own file, absent from the repo
