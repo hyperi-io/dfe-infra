@@ -146,7 +146,7 @@ serving 1.1.1 to anyone pinning a stable version.
 
 Both ladders end at `release`, and the shared vocabulary is deliberate -- the
 only word that differs between the layers is `rc`. hyperi-ci's side of this is
-`docs/versioning-and-the-suite.md` in that repo.
+`docs/versioning-and-the-suite.md` in that repo. <!-- doc-paths: ignore -->
 
 Related: `docs/CI-MAINTENANCE-DESIGN.md` for how shared facts stay current, and
 `docs/TESTING-CYCLE.md` for proving a cut on a real cluster.

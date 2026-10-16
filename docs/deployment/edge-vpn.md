@@ -166,7 +166,7 @@ rather than by opening anything on the appliance's network.
 mechanism, the four `dfe-ops bastion` verbs, what the appliance has to accept,
 and the isolation regression to run on every change to `peers.classes`.
 
-```
+```bash
 dfe-ops bastion hub <peer>      # route the client range at the pod, then shell
 dfe-ops bastion peers           # name, tunnel address and last handshake
 dfe-ops bastion join            # refused until hyperi-io/culvert#40 lands
@@ -238,7 +238,7 @@ admission rejects it unless its namespace is labelled
 The VPN is an app like any other, so enabling it is a values file appearing in
 the deploy repo. Through the engine's app-management API:
 
-```
+```text
 POST /api/v1/apps/culvert/instances
 { "instance": "default",
   "values": { "vpn.serverCN": "vpn.example.com",

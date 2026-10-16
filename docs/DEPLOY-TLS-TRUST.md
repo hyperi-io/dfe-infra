@@ -4,7 +4,9 @@ Which CA signed the gateway's `*.<domain>` certificate is a per-deployment
 choice, and the two modes ask different things of a developer box. One command
 says which is live, and the readiness gate and access summary print it too:
 
-    python3 scripts/dfe-ops ca --status --kubeconfig .tmp/dfe.kubeconfig
+```bash
+python3 scripts/dfe-ops ca --status --kubeconfig .tmp/dfe.kubeconfig
+```
 
 Release and deploy helpers around this one live in
 [DEPLOY-HELPERS.md](DEPLOY-HELPERS.md).
@@ -17,8 +19,10 @@ DNS-01, no external credential, and it works on a split-horizon name public ACME
 cannot validate. The cost is trust: a browser warns, and the HyperDX iframe
 fails outright because it cannot show the interstitial. Trust the root once:
 
-    python3 scripts/dfe-ops ca             # the PEM plus the install lines
-    python3 scripts/dfe-ops ca --install   # writes the file, does the non-root half
+```bash
+python3 scripts/dfe-ops ca             # the PEM plus the install lines
+python3 scripts/dfe-ops ca --install   # writes the file, does the non-root half
+```
 
 `--install` writes `.tmp/dfe-internal-ca.crt` and branches on
 `platform.system()`. On Linux it adds the certificate to the Chromium-family NSS

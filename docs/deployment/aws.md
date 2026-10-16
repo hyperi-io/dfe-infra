@@ -166,7 +166,7 @@ priced on this scale in [edge.md](edge.md).
   `partition_count`, `storage_model`, `kafka_provider` (recorded from the
   dial's `kafka.provider`), `controller_mode` (combined against separate KRaft
   controllers, `kafka.controller_pool`), `cloud_token` and `az_count`. The
-  resolver records each in `sizing/resolved.yaml` (`az_count` only when it
+  resolver records each in `sizing/resolved.yaml` (`az_count` only when it <!-- doc-paths: ignore -->
   resolved against a cloud catalogue), so a re-resolve given
   `--previous <deploy>/sizing/resolved.yaml` that moves any of them refuses
   and exits 3 unless you also pass `--migrate`.
@@ -189,7 +189,7 @@ priced on this scale in [edge.md](edge.md).
 ### Applying the plan
 
 - Render the tofu inputs with `python3 scripts/render_dial.py --tofu`, which
-  writes `terraform/environments/aws/dial.auto.tfvars.json` from the dial's
+  writes `terraform/environments/aws/dial.auto.tfvars.json` from the dial's <!-- doc-paths: ignore -->
   `target.provision` block. Then, from that directory:
   `tofu init`, `tofu plan -out=deployment.tfplan`,
   `tofu apply deployment.tfplan`. `init` reads the state bucket, key and

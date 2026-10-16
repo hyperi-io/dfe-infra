@@ -23,7 +23,7 @@ flowchart TB
 The cluster secret's `dfe.hyperi.io/profile` label selects the tier;
 values merge in this order (later wins):
 
-```
+```text
 <chart>/values.yaml                  chart defaults (helm/charts/, or the app's thin chart)
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides

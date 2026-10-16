@@ -133,7 +133,7 @@ tier, by which dial key. What is AWS's own:
   deployment tears down cleanly and anything else keeps the vendor's normal
   deletion protection, without a per-resource flag to remember. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
-  resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket,
+  resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
   never a rate -- plus how long the cluster has been up, from the root's
   `cluster_created_at` output. Nothing in the tree
   dates a deployment -- a local state file's mtime dates the last apply, and

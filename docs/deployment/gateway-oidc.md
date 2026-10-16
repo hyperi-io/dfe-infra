@@ -34,7 +34,7 @@ An IdP the deployment hosts for itself is the common shape, because the gateway
 chart issues the whole wildcard from `dfe-internal-ca`. Point a SecurityPolicy
 at one with `provider.issuer` alone and it is rejected at admission:
 
-```
+```text
 OIDC: Get "https://auth.example.com/.well-known/openid-configuration":
 tls: failed to verify certificate: x509: certificate signed by unknown authority
 ```
