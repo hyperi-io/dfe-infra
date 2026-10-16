@@ -18,6 +18,7 @@ zones and the state location all arrive in a tfvars file.
   `provision.account`, and the plan refuses if it does not.
 - A public DNS zone you control, IF you want public hostnames. This root creates
   the Route 53 zone; delegating to it from the parent is yours to do.
+- `bash` and `curl` on PATH, IF the deployment uses Confluent Cloud on public connectivity: the apply probes the new cluster's REST endpoint with them before it writes keys, ACLs or topics.
 
 ## Once per account: the state bucket
 

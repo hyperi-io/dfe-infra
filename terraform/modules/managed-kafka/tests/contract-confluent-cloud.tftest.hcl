@@ -292,6 +292,11 @@ run "confluent_cloud_freight_private_network_interface" {
     condition     = confluent_api_key.manager.disable_wait_for_ready == true && confluent_api_key.dfe.disable_wait_for_ready == true
     error_message = "neither key is waited for on a private cluster"
   }
+
+  assert {
+    condition     = length(terraform_data.rest_ready) == 0
+    error_message = "a private cluster's REST endpoint is not reachable from the deployer, so no route probe is planned"
+  }
 }
 
 // Enterprise is the PrivateLink shape, and its private DNS is ours to run
@@ -325,6 +330,11 @@ run "confluent_cloud_enterprise_privatelink" {
   assert {
     condition     = length(aws_network_interface.pni) == 0
     error_message = "Enterprise uses no Private Network Interfaces -- that is Freight's shape"
+  }
+
+  assert {
+    condition     = length(terraform_data.rest_ready) == 0
+    error_message = "a private cluster's REST endpoint is not reachable from the deployer, so no route probe is planned"
   }
 }
 
@@ -456,6 +466,22 @@ run "confluent_cloud_basic_public_proof" {
   assert {
     condition     = confluent_api_key.dfe.disable_wait_for_ready == true
     error_message = "the DFE key is never waited for: tofu does not use it, and the wait fails the apply on one transport error"
+  }
+
+  // A new public cluster's route is probed before anything is written over it.
+  assert {
+    condition     = length(terraform_data.rest_ready) == 1
+    error_message = "a public cluster's REST endpoint must be probed before the keys, ACLs and topics reach it"
+  }
+
+  assert {
+    condition     = terraform_data.rest_ready[0].input.url == "https://pkc-00000.us-west-2.aws.confluent.cloud:443/kafka/v3/clusters/lkc-000000"
+    error_message = "the probe must reach the cluster's own REST endpoint, at its v3 cluster path"
+  }
+
+  assert {
+    condition     = terraform_data.rest_ready[0].triggers_replace[0] == confluent_kafka_cluster.this.id
+    error_message = "the probe must re-run for a new cluster, the one change that needs a new route"
   }
 }
 
