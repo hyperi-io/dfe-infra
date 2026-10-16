@@ -893,9 +893,9 @@ def test_a_nonsense_address_mode_is_refused_by_name() -> None:
         render(replace=bad)
 
 
-def test_the_registry_cache_is_off_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> None:
+def test_the_registry_cache_is_on_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> None:
     cache = render()["registry_cache"]
-    assert cache["enabled"] is False
+    assert cache["enabled"] is True
     assert cache["namespace"] == ""
     assert cache["pull_expiry_days"] == render_dial.REGISTRY_CACHE_PULL_EXPIRY_DAYS
     assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
@@ -931,6 +931,19 @@ def test_the_dials_registry_cache_reaches_the_root() -> None:
     assert cache["enabled"] is True
     assert cache["namespace"] == "dfe-blue"
     assert cache["pull_expiry_days"] == 30
+
+
+def test_a_dial_that_turns_the_registry_cache_off_renders_it_off_with_its_upstreams() -> None:
+    block = ("profile: scale", "profile: scale\nregistry_cache:\n  enabled: \"false\"\n")
+    cache = render(replace=block)["registry_cache"]
+    assert cache["enabled"] is False
+    assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
+
+
+def test_the_example_dial_leaves_the_registry_cache_on() -> None:
+    text = (REPO_ROOT / "deployment.example.yaml").read_text(encoding="utf-8")
+    example = parse_dial(text, source="deployment.example.yaml")
+    assert example["registry_cache"]["enabled"] == "true"
 
 
 def test_a_registry_cache_flag_that_is_not_a_boolean_is_refused_by_name() -> None:

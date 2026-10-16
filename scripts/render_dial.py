@@ -1364,7 +1364,7 @@ REGISTRY_CACHE_PULL_EXPIRY_DAYS = 90
 
 
 def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
-    """registry_cache.* -- the pull-through cache, off unless the dial turns it on.
+    """registry_cache.* -- the pull-through cache, on unless the dial turns it off.
 
     The upstreams that need no credential are always rendered. A credentialed upstream is
     rendered only when registry_cache.credentials names its secret, so with none its images
@@ -1397,7 +1397,7 @@ def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
                 "credential_arn": credential_arn,
             }
     return {
-        "enabled": _flag(dial, ("registry_cache", "enabled"), default=False),
+        "enabled": _flag(dial, ("registry_cache", "enabled"), default=True),
         "namespace": _text(dial, ("registry_cache", "namespace")),
         "pull_expiry_days": _optional_number(
             dial, ("registry_cache", "pull_expiry_days"), REGISTRY_CACHE_PULL_EXPIRY_DAYS

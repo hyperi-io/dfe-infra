@@ -10,7 +10,7 @@ REFERENCE. A pull-through cache inside the deployment's own cloud account that e
 
 Every body takes the inputs below and produces the outputs below. The caller is the per-cloud root, which hands `node_user_data` to the kubernetes-cluster module and to the Karpenter node class.
 
-The aws root's dial (`registry_cache`, off by default) sends the upstreams ECR caches with no credential: quay.io, registry.k8s.io and public.ecr.aws. It sends docker.io or ghcr.io only where the dial names a Secrets Manager credential for it, an opt-in off the default deploy path (`docs/deployment/aws-operations.md`). Without one their images pull straight from upstream, anonymously.
+The aws root's dial (`registry_cache`, on by default) sends the upstreams ECR caches with no credential: quay.io, registry.k8s.io and public.ecr.aws. It sends docker.io or ghcr.io only where the dial names a Secrets Manager credential for it, an opt-in off the default deploy path (`docs/deployment/aws-operations.md`). Without one their images pull straight from upstream, anonymously.
 
 ## How nodes use it
 
