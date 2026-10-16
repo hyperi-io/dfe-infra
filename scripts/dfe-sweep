@@ -53,24 +53,40 @@ workflow's own runs list, one call each; a disabled workflow is skipped. A tool 
 (403, 404), or a gh call that runs past ``gh_timeout_seconds``, is listed as not readable for
 that repo, never as zero; a workflow whose runs cannot be read is named in the reason.
 
-WORK ITEMS, listed and summarised per member but never severity-ranked: the active issues and
-the backlog. The backlog follows hyperi-ai's ``pm backlog`` model: the org project titled
-exactly as the repo, read with one GraphQL query joining its Status to the Priority and Effort
-issue fields, grouped by Status, highest priority first. A repo with no project is "no
-project"; a token that cannot list projects (it needs ``read:project``) is unreadable. An open
-issue is on the backlog when it carries the ``backlog.label`` label or sits at the backlog
-Status, the first of ``backlog.statuses``. The label wins: a labelled issue is backlog whatever
-its project Status. Every other open issue is active, so one at Next or In progress without the
-label is active. The backlog lists every project item at the backlog Status or carrying the
-label, and each labelled issue the project does not hold. Label drift is a real conflict and
-nothing less: an item at the backlog Status without the label, or a labelled item the project
-holds at another Status. A labelled issue the project does not hold, a repo with no project and
-an item with no Status set have nothing to contradict the label and are not drift.
+WORK ITEMS, listed and summarised per member but never severity-ranked: the active issues, the
+scheduled issues, the issues to triage and the backlog. The backlog follows hyperi-ai's
+``pm backlog`` model: the org project titled exactly as the repo, read with one GraphQL query
+joining its Status to the Priority and Effort issue fields, grouped by Status, highest priority
+first. A repo with no project is "no project"; a token that cannot list projects (it needs
+``read:project``) is unreadable. An open issue is on the backlog when it carries the
+``backlog.label`` label or sits at the backlog Status, the first of ``backlog.statuses``. The
+label wins: a labelled issue is backlog whatever its project Status, and the release-blocker
+label keeps an issue off the backlog whatever its Status. Every other open issue is sorted by
+its labels (GATING below), so one at Next or In progress without the label is not on the
+backlog. The backlog lists every project item at the backlog Status or carrying the label, and
+each labelled issue the project does not hold. Label drift is a real conflict and nothing less:
+an item at the backlog Status without the label, or a labelled item the project holds at
+another Status. A labelled issue the project does not hold, a repo with no project and an item
+with no Status set have nothing to contradict the label and are not drift.
 
-GATING. Findings and active issues gate a release. The backlog and label drift never do. A tool
-that could not be read gates as well, since zero cannot be claimed over a read that did not
-happen, except the backlog: its read only ever moves issues out of the gating count, so losing
-it over-counts what gates and never hides any of it.
+GATING. Findings and active issues gate a release. The backlog, the scheduled issues, the issues
+to triage and label drift never do. An open issue off the backlog is sorted by the org issue
+label standard, whose gate labels hyperi-ci's manifest names. The command in ``labels.command``
+prints that manifest and runs once per sweep, and its ``gate`` list must name ``labels.blocker``:
+
+- carrying the blocker label (release-blocker): active, so it gates.
+- carrying any other gate label (next-patch, next-minor): scheduled, so it does not gate.
+- carrying no gate label: active when the issue's ``author_association`` is OWNER, MEMBER or
+  COLLABORATOR, or its author is a bot (a login in ``bot_logins``, or a user of type Bot), and
+  otherwise on the triage list, which does not gate.
+
+The backlog label is a gate label too, and an issue carrying it is on the backlog before any of
+this applies. The needs-decision label is a waiting label and changes none of it. A tool that
+could not be read gates as well, since zero cannot be claimed over a read that did not happen,
+except the backlog: its read only ever moves issues out of the gating count, so losing it
+over-counts what gates and never hides any of it. A manifest that could not be read is reported
+as the issues tool not readable on every member, which gates, and every issue off the backlog
+counts as active meanwhile, which can only over-count.
 
 ``--check-bridge`` also reads the org's open Dependabot, code-scanning and secret-scanning
 alerts, the steady state of what the org webhook alert bridge forwards, and fails if one on a
@@ -92,13 +108,14 @@ thread reply. ``summary`` is at most 8 lines: the headline, the gating line, the
 scanning, critical and high security findings, failing main CI, the medium and low counts, what
 was not readable and the bridge check, each only when there is something to say. ``detail``
 holds one reply or more per non-empty group (secret scanning, code scanning, Dependabot,
-security advisories, CI on main, bot PRs and Renovate, active issues, not readable, backlog
-items, backlog drift), each under 3,500 characters, so every group that gates is posted before
-the two that never do. A group that runs over continues under a ``(cont.)``
-header for at most ``slack.group_replies`` replies (2 by default), so a long group cannot crowd
-a later one out, and its last reply says how many of its lines were left out, pointing at
-``--report-url`` when one is given; the thread is capped at 20 replies the same way. Every
-string that came from GitHub is escaped, so no title can mention a channel or inject a link.
+security advisories, CI on main, bot PRs and Renovate, active issues, not readable, issues to
+triage, scheduled issues, backlog items, backlog drift), each under 3,500 characters, so every
+group that gates is posted before the ones that never do. A group that runs over continues
+under a ``(cont.)`` header for at most ``slack.group_replies`` replies (2 by default), so a long
+group cannot crowd a later one out, and its last reply says how many of its lines were left out,
+pointing at ``--report-url`` when one is given; the thread is capped at 20 replies the same way.
+Every string that came from GitHub is escaped, so no title can mention a channel or inject a
+link.
 
 HEADLINE. ``summary`` opens ``*<title>*: stack <stack>, <n> members, <time>``. The title is the
 ``slack.title`` setting (``--slack-title``), "DFE suite sweep" by default. The time is when the
@@ -110,8 +127,9 @@ A zone the host's tz database does not know is a run error naming the setting, f
 
 The gating line follows it, the gating count first and what does not gate after it:
 ``*Gating: 14* -- 11 findings, 3 active issues. Not gating: backlog 5 (P0 1, unprioritised 4),
-2 label drift``. A not-readable count is added on whichever side its tools fall. A sweep with
-nothing open at all says ``All clear: nothing open on any member.`` instead.
+2 scheduled, 1 to triage, 2 label drift``. A not-readable count is added on whichever side its
+tools fall. A sweep with nothing open at all says ``All clear: nothing open on any member.``
+instead.
 
 AGES. Each item line in ``detail`` ends with how long ago its row was raised, counted from the
 row's ``created_at`` to the report's generation time: ``(<1h)`` under an hour, ``(5h)`` under a
@@ -134,13 +152,16 @@ cut from ``detail``. ``group`` is the group's name in ``detail``, and ``line`` i
 exactly as ``detail`` renders it, escaped, clipped and ending in its age, so it changes as the
 row ages while its key does not. ``gates`` is true for a row that counts toward ``gating``:
 every finding, every active issue and each not-readable tool but the backlog. It is false for a
-backlog item, label drift and a backlog that was not readable, so the gating count is zero
-exactly when no entry has ``gates`` true. A key appears once per output, for the first row that
-has it, and stays the same from run to run while the finding does:
+scheduled issue, an issue to triage, a backlog item, label drift and a backlog that was not
+readable, so the gating count is zero exactly when no entry has ``gates`` true. A key appears
+once per output, for the first row that has it, and stays the same from run to run while the
+finding does:
 
 - an alert, a repository advisory, an active issue or a bot PR: its html_url.
-- a backlog item ``<repo>:backlog:<issue url>`` and label drift ``<repo>:drift:<issue url>``,
-  so a backlog issue that also drifts is keyed in each group it is listed in.
+- a scheduled issue ``<repo>:scheduled:<issue url>``, an issue to triage
+  ``<repo>:triage:<issue url>``, a backlog item ``<repo>:backlog:<issue url>`` and label drift
+  ``<repo>:drift:<issue url>``, so an issue is keyed afresh when its labels move it between
+  groups, and a backlog issue that also drifts is keyed in each group it is listed in.
 - a failed main run ``<repo>:<workflow file>::<hash>`` of its conclusion, and a CI annotation
   ``<repo>:<workflow file>:<jobs>:<hash>`` of its level, file, title and message. Never the run
   or job URL, which changes every run.
@@ -234,6 +255,9 @@ class Options:
         derive_suite: False takes members only from infra, topics and include.
         output: ``text``, ``json`` or ``slack``.
         project_limit: Most org projects listed when finding each repo's backlog project.
+        labels_command: The argv that prints hyperi-ci's label manifest as JSON.
+        labels_blocker: The gate label that holds a release cut.
+        labels_timeout: Seconds the manifest command may take.
         report_url: Where the full report is published, for the Slack cut-off line, or empty.
         report_file: Where the text report is also written, or None for nowhere.
         group_replies: The most Slack thread replies one group may take.
@@ -254,6 +278,9 @@ class Options:
     derive_suite: bool
     output: str
     project_limit: int
+    labels_command: tuple[str, ...]
+    labels_blocker: str
+    labels_timeout: int
     group_replies: int
     slack_title: str
     slack_zone: tzinfo
@@ -283,6 +310,16 @@ def _names(value: object, key: str) -> tuple[str, ...]:
     if not isinstance(value, list | tuple):
         raise _fail(key, value, "a list")
     return tuple(sweep.split_names(value))
+
+
+def _argv(value: object, key: str) -> tuple[str, ...]:
+    """A command setting: a non-empty list of non-empty strings."""
+    wanted = "a non-empty list of non-empty strings"
+    if not isinstance(value, list | tuple) or not value:
+        raise _fail(key, value, wanted)
+    if not all(isinstance(part, str) and part.strip() for part in value):
+        raise _fail(key, value, wanted)
+    return tuple(value)
 
 
 def _count(value: object, key: str) -> int:
@@ -368,6 +405,7 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
     if not bots:
         raise _fail("bot_logins", settings.get("bot_logins"), "a non-empty list of logins")
     backlog = _section(settings, "backlog")
+    labels = _section(settings, "labels")
     slack = _section(settings, "slack")
     statuses = _names(backlog.get("statuses"), "backlog.statuses")
     if not statuses:
@@ -402,6 +440,9 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         derive_suite=_flag(settings.get("derive_suite", True), "derive_suite"),
         output=output,
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
+        labels_command=_argv(labels.get("command"), "labels.command"),
+        labels_blocker=_text(labels, "blocker", "labels.blocker"),
+        labels_timeout=_count(labels.get("timeout_seconds"), "labels.timeout_seconds"),
         report_url=_report_url(pick(args.report_url, "report_url")),
         report_file=_report_file(pick(args.report_file, "report_file")),
         group_replies=_count(slack.get("group_replies"), "slack.group_replies"),
@@ -591,8 +632,24 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
                 f"listed {len(projects.numbers)} projects, the backlog.project_limit; a repo "
                 f"whose project is past it reads as no project"
             )
+    labels = None
+    if "issues" in options.config.tools:
+        labels = sweep.read_issue_labels(
+            options.labels_command, options.labels_blocker, timeout=options.labels_timeout
+        )
+        if labels.error:
+            warning(
+                f"issue label standard not readable, so every issue off the backlog gates: "
+                f"{labels.error}"
+            )
     results = sweep.sweep(
-        members, api, options.config, progress=info, graphql=graphql, projects=projects
+        members,
+        api,
+        options.config,
+        progress=info,
+        graphql=graphql,
+        projects=projects,
+        labels=labels,
     )
 
     bridge = None
