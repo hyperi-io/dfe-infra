@@ -310,6 +310,28 @@ run "an_upstream_needing_a_credential_without_one_is_pulled_directly" {
   }
 }
 
+// scripts/cloud_sweep.py selects a test run's cached repositories by these two tags.
+run "a_test_runs_cached_repositories_carry_its_run_tags" {
+  command = plan
+
+  variables {
+    run = {
+      id         = "r20261008t000000z-0a1b2c"
+      expires_at = 1791460800
+    }
+  }
+
+  assert {
+    condition     = toset(keys(module.registry_cache[0].repository_tags)) == toset(["ecr-public", "k8s", "quay"])
+    error_message = "every cached upstream must have a creation template"
+  }
+
+  assert {
+    condition     = alltrue([for tags in values(module.registry_cache[0].repository_tags) : lookup(tags, "dfe-e2e", "") == "r20261008t000000z-0a1b2c" && lookup(tags, "expires-at", "") == "2026-10-08T12:00:00Z"])
+    error_message = "every template must stamp the run's dfe-e2e and expires-at tags on the repositories ECR creates"
+  }
+}
+
 run "a_namespace_from_the_dial_wins" {
   command = plan
 

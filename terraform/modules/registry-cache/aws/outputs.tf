@@ -21,6 +21,11 @@ output "mirrors" {
   value       = { for mirror in local.mirrors : mirror.host => mirror.endpoint }
 }
 
+output "repository_tags" {
+  description = "Each cached upstream key to the tags ECR puts on every repository it creates for it, read off its creation template. scripts/cloud_sweep.py selects a test run's repositories by the run tags among them."
+  value       = { for key, template in aws_ecr_repository_creation_template.this : key => template.resource_tags }
+}
+
 output "uncached" {
   description = "Upstream keys ECR would cache only with a credential, which none was given for. Their images are pulled from the upstream directly."
   value       = sort([for prefix in keys(var.upstreams) : prefix if !contains(keys(local.active), prefix)])

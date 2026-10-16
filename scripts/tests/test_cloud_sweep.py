@@ -393,6 +393,7 @@ def test_the_tagging_api_carries_each_resources_own_tags(monkeypatch: pytest.Mon
 def test_collect_drops_a_tagging_api_hit_already_found_by_a_dedicated_lister(monkeypatch: pytest.MonkeyPatch) -> None:
     resource = cloud_sweep.Resource(kind="ec2-instance", id="i-dupe", name="i-dupe", created=None, tagged=True)
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [lambda region, tf: [resource]])
+    monkeypatch.setattr(cloud_sweep, "LISTED_ONLY", {})
     monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(
         cloud_sweep,
@@ -407,6 +408,7 @@ def test_collect_drops_a_tagging_api_hit_already_found_by_a_dedicated_lister(mon
 
 def test_collect_keeps_a_tagging_api_hit_no_lister_covers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
+    monkeypatch.setattr(cloud_sweep, "LISTED_ONLY", {})
     monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(
         cloud_sweep,
@@ -420,6 +422,7 @@ def test_collect_keeps_a_tagging_api_hit_no_lister_covers(monkeypatch: pytest.Mo
 def test_collect_asks_the_tagging_api_for_the_route1_filter_when_given(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[dict] = []
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
+    monkeypatch.setattr(cloud_sweep, "LISTED_ONLY", {})
     monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(cloud_sweep, "list_tagged", lambda region, sf, tf: seen.append(sf) or [])
     cloud_sweep.collect(REGION, TAG_FILTER, None)
@@ -434,6 +437,7 @@ def _tagging_only(
 ) -> None:
     """A region where only the tagging API finds anything; a describe call is answered by the id it names."""
     monkeypatch.setattr(cloud_sweep, "PER_SERVICE_COLLECTORS", [])
+    monkeypatch.setattr(cloud_sweep, "LISTED_ONLY", {})
     monkeypatch.setattr(cloud_sweep, "list_s3_buckets", lambda region, tf, bucket, **_: [])
     monkeypatch.setattr(cloud_sweep, "list_tagged", lambda region, sf, tf: hits)
 
@@ -1905,7 +1909,254 @@ def test_each_lister_reports_the_kind_it_is_listed_under(monkeypatch: pytest.Mon
         "clusters": ["dfe-run"],
         "cluster": {"tags": {}},
         "ClusterInfoList": [{"ClusterArn": "arn:msk", "ClusterName": "dfe-run", "State": "ACTIVE"}],
+        "repositories": [{"repositoryArn": "arn:ecr", "repositoryName": "dfe-run/quay/example"}],
     }
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", lambda args, **_kwargs: _ok(body))
     found = cloud_sweep.collect(REGION, TAG_FILTER, None, kinds=[kind])
     assert {r.kind for r in found} == {kind}
+
+
+# ---------------------------------------------------------------------------
+# ECR: the repositories a pull-through cache creates, and the rule and template beside them
+# ---------------------------------------------------------------------------
+
+ECR_PREFIX = "dfe-example/quay"
+ECR_MINE = f"{ECR_PREFIX}/prometheus/node-exporter"
+ECR_OTHER_RUN = f"{ECR_PREFIX}/jetstack/cert-manager-controller"
+ECR_UNTAGGED = "ci/builder"
+# 9999999999 is in 2286, so run-2 is live against the real clock a --delete sweep reads.
+LIVE_RUN_REAL_TIME = {"dfe-e2e": "run-2", "expires-at": "9999999999"}
+
+
+def _repository_arn(name: str) -> str:
+    return f"arn:aws:ecr:{REGION}:{ACCOUNT_ID}:repository/{name}"
+
+
+def _key_values(tags: dict[str, str]) -> list[dict[str, str]]:
+    return [{"Key": key, "Value": value} for key, value in tags.items()]
+
+
+def _repository_not_found(operation: str, name: str) -> subprocess.CompletedProcess:
+    return _fail(
+        f"An error occurred (RepositoryNotFoundException) when calling the {operation} operation: "
+        f"The repository with name '{name}' does not exist in the registry with id '{ACCOUNT_ID}'"
+    )
+
+
+class EcrRegion:
+    """The aws CLI for one region holding three ECR repositories, one cache rule and its template.
+
+    The tagging API goes on listing a run-tagged repository after its delete, and every
+    other lister finds an empty region.
+    """
+
+    def __init__(self) -> None:
+        self.repositories = {ECR_MINE: EXPIRED_RUN, ECR_OTHER_RUN: LIVE_RUN_REAL_TIME, ECR_UNTAGGED: {}}
+        self.listed_by_tagging_api = {name: tags for name, tags in self.repositories.items() if tags}
+        self.calls: list[list[str]] = []
+
+    def _repository(self, name: str) -> dict[str, str]:
+        return {
+            "repositoryArn": _repository_arn(name),
+            "repositoryName": name,
+            "createdAt": "2026-10-08T01:14:30.123000+00:00",
+        }
+
+    def _tagged(self, args: list[str]) -> list[dict[str, object]]:
+        """The tagging API's answer to every --tag-filters `Key=k` or `Key=k,Values=v` in args."""
+        wanted = []
+        for i, arg in enumerate(args):
+            if arg == "--tag-filters":
+                key, _, value = args[i + 1].removeprefix("Key=").partition(",Values=")
+                wanted.append((key, value or None))
+        return [
+            {"ResourceARN": _repository_arn(name), "Tags": _key_values(tags)}
+            for name, tags in self.listed_by_tagging_api.items()
+            if all(key in tags and value in (None, tags[key]) for key, value in wanted)
+        ]
+
+    def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        self.calls.append(args)
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return _ok({"Account": ACCOUNT_ID})
+        if args[:2] == ["resourcegroupstaggingapi", "get-resources"]:
+            return _ok({"ResourceTagMappingList": self._tagged(args)})
+        if args[:2] == ["ecr", "describe-repositories"]:
+            if "--repository-names" not in args:
+                return _ok({"repositories": [self._repository(name) for name in self.repositories]})
+            name = args[args.index("--repository-names") + 1]
+            if name not in self.repositories:
+                return _repository_not_found("DescribeRepositories", name)
+            return _ok({"repositories": [self._repository(name)]})
+        if args[:2] == ["ecr", "list-tags-for-resource"]:
+            name = args[args.index("--resource-arn") + 1].split(":repository/", 1)[1]
+            if name not in self.repositories:
+                return _repository_not_found("ListTagsForResource", name)
+            return _ok({"tags": _key_values(self.repositories[name])})
+        if args[:2] == ["ecr", "delete-repository"]:
+            name = args[args.index("--repository-name") + 1]
+            assert "--force" in args, "a cached repository holds images, which only --force deletes"
+            if name not in self.repositories:
+                return _repository_not_found("DeleteRepository", name)
+            del self.repositories[name]
+            return _ok({"repository": self._repository(name)})
+        if args[:2] == ["ecr", "describe-pull-through-cache-rules"]:
+            return _ok({"pullThroughCacheRules": [{"ecrRepositoryPrefix": ECR_PREFIX, "upstreamRegistryUrl": "quay.io"}]})
+        if args[:2] == ["ecr", "describe-repository-creation-templates"]:
+            # The run's tags ride resourceTags, what ECR stamps on each repository, never the template itself.
+            template = {"prefix": ECR_PREFIX, "resourceTags": _key_values(EXPIRED_RUN)}
+            return _ok({"repositoryCreationTemplates": [template]})
+        return _ok({})
+
+    def deletes(self) -> list[list[str]]:
+        return [call for call in self.calls if call[1].startswith("delete-")]
+
+
+def _ecr_sweep(monkeypatch: pytest.MonkeyPatch, region: EcrRegion, *argv: str) -> int:
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", region)
+    monkeypatch.setattr(cloud_sweep.time, "sleep", lambda _seconds: None)
+    return cloud_sweep.main(["--region", REGION, *argv])
+
+
+def test_a_runs_tag_sweep_deletes_its_cached_repository_and_keeps_every_other(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The teardown's sweep after a destroy: this run's repository goes, with its images, and nothing else."""
+    region = EcrRegion()
+    argv = ["--tag-filter", "dfe-e2e=run-1", "--delete", "--account", ACCOUNT_ID, "--yes"]
+    assert _ecr_sweep(monkeypatch, region, *argv) == 0
+    assert set(region.repositories) == {ECR_OTHER_RUN, ECR_UNTAGGED}
+    (delete,) = region.deletes()
+    assert delete[:2] == ["ecr", "delete-repository"]
+    assert delete[delete.index("--repository-name") + 1] == ECR_MINE
+    out = capsys.readouterr().out
+    assert f"deleted ecr-repository {ECR_MINE}" in out
+    # The tagging API still lists the deleted repository, and the re-listing judges it gone.
+    assert "sweep clean: nothing left to delete" in out
+
+
+def test_a_listing_without_delete_names_the_runs_repository_and_deletes_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    region = EcrRegion()
+    assert _ecr_sweep(monkeypatch, region, "--tag-filter", "dfe-e2e=run-1") == 1
+    assert region.deletes() == []
+    assert set(region.repositories) == {ECR_MINE, ECR_OTHER_RUN, ECR_UNTAGGED}
+    eligible = capsys.readouterr().out.split("eligible for --delete:", 1)[1]
+    assert eligible.split() == ["ecr-repository", ECR_MINE]
+
+
+def test_the_reapers_expired_sweep_deletes_an_expired_runs_repository_and_keeps_a_live_runs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A run killed before its teardown: its expired repository goes, the live run's and the untagged one stay."""
+    region = EcrRegion()
+    argv = ["--expired", "--grace", "0", "--delete", "--account", ACCOUNT_ID, "--yes"]
+    assert _ecr_sweep(monkeypatch, region, *argv) == 0
+    assert set(region.repositories) == {ECR_OTHER_RUN, ECR_UNTAGGED}
+    assert [call[:2] for call in region.deletes()] == [["ecr", "delete-repository"]]
+    assert "sweep clean: no expired run resources left" in capsys.readouterr().out
+
+
+def test_the_preflights_listing_finds_a_cached_repository_once_under_a_kind_the_sweep_deletes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard's (c) and (d) read this listing, and (c) sends the operator to a sweep that must delete what it found."""
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", EcrRegion())
+    found = cloud_sweep.AwsProvider(REGION).collect({}, None, run_key="dfe-e2e")
+    run_tagged = [r for r in found if r.tags.get("dfe-e2e")]
+    assert sorted((r.kind, r.name) for r in run_tagged) == [
+        ("ecr-repository", ECR_OTHER_RUN),
+        ("ecr-repository", ECR_MINE),
+    ]
+    assert all(r.kind in cloud_sweep.DELETE_FNS for r in run_tagged)
+
+
+def test_expected_fail_a_cache_rule_and_its_template_are_listed_and_never_selected(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Neither takes a tag, and the prefix names the deployment, so not even --include-untagged selects them."""
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", EcrRegion())
+    found = cloud_sweep.collect(REGION, {"dfe-e2e": "run-1"}, None)
+    wide = cloud_sweep.filter_for_delete(found, include_untagged=True, exclude_bucket=None)
+    assert sorted(r.name for r in wide) == sorted([ECR_MINE, ECR_OTHER_RUN, ECR_UNTAGGED])
+    assert {r.kind for r in wide} == {"ecr-repository"}
+    # The template's resourceTags name run-1, and still it is no run's resource.
+    expired = cloud_sweep.filter_expired(found, expiry=_expiry(), exclude_bucket=None)
+    assert [(r.kind, r.name) for r in expired] == [("ecr-repository", ECR_MINE)]
+    cloud_sweep.print_report(found)
+    listed = [line.split() for line in capsys.readouterr().out.splitlines()]
+    assert sorted((words[0], words[1], words[-1]) for words in listed if words[0] != "ecr-repository") == [
+        ("ecr-cache-rule", ECR_PREFIX, "listed-only"),
+        ("ecr-template", ECR_PREFIX, "listed-only"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "gone"),
+    [
+        pytest.param(_repository_not_found("DescribeRepositories", ECR_MINE), True, id="not-found"),
+        pytest.param(_ok({"repositories": []}), True, id="no-longer-returned"),
+        pytest.param(_ok({"repositories": [{"repositoryName": ECR_MINE}]}), False, id="still-there"),
+    ],
+)
+def test_an_ecr_tagging_hit_is_gone_once_ecr_no_longer_has_the_repository(
+    monkeypatch: pytest.MonkeyPatch, answer: subprocess.CompletedProcess, gone: bool
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return answer
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    hit = _tagging_hit(_repository_arn(ECR_MINE), "tagged:ecr")
+    assert cloud_sweep.tagging_hit_gone(hit, REGION) is gone
+    (call,) = calls
+    assert call[call.index("--repository-names") + 1] == ECR_MINE, "the whole name, slashes and all"
+
+
+def test_an_ecr_tagging_hit_whose_state_cannot_be_read_raises_rather_than_reading_as_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(monkeypatch, _fail("An error occurred (AccessDeniedException) when calling the DescribeRepositories operation"))
+    with pytest.raises(cloud_sweep.CloudSweepError, match="AccessDeniedException"):
+        cloud_sweep.tagging_hit_gone(_tagging_hit(_repository_arn(ECR_MINE), "tagged:ecr"), REGION)
+
+
+def test_a_repository_deleted_between_its_listing_and_its_tag_read_is_not_listed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _ok({"repositories": [{"repositoryArn": _repository_arn(ECR_MINE), "repositoryName": ECR_MINE}]}),
+        _repository_not_found("ListTagsForResource", ECR_MINE),
+    )
+    assert cloud_sweep.list_ecr_repositories(REGION, {"dfe-e2e": "run-1"}) == []
+
+
+def test_expected_fail_a_tag_read_that_fails_for_any_other_reason_fails_the_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repository whose tags cannot be read could be a run's, so it is never listed as untagged."""
+    _mock_run(
+        monkeypatch,
+        _ok({"repositories": [{"repositoryArn": _repository_arn(ECR_MINE), "repositoryName": ECR_MINE}]}),
+        _fail("An error occurred (AccessDeniedException) when calling the ListTagsForResource operation"),
+    )
+    with pytest.raises(cloud_sweep.CloudSweepError, match="AccessDeniedException"):
+        cloud_sweep.list_ecr_repositories(REGION, {"dfe-e2e": "run-1"})
+
+
+def test_a_repository_gone_before_its_delete_is_reported_already_gone(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    region = EcrRegion()
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", region)
+    del region.repositories[ECR_MINE]
+    repository = cloud_sweep.Resource(
+        kind="ecr-repository", id=_repository_arn(ECR_MINE), name=ECR_MINE, created=None, tagged=True
+    )
+    failures = cloud_sweep.delete_resources([repository], REGION)
+    assert failures == []
+    assert capsys.readouterr().out.splitlines() == [f"already gone ecr-repository {ECR_MINE}"]

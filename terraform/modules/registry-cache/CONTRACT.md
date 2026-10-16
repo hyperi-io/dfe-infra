@@ -41,6 +41,7 @@ Rewriting image repositories in chart values was rejected: every third-party cha
 | `node_user_data` | `string` | The shell script a node runs before kubelet starts. Empty when nothing is cached. |
 | `registry` | `string` | The registry host the cache is served from. |
 | `mirrors` | `map(string)` | Cached registry host to the path containerd reads it from. |
+| `repository_tags` | `map(map(string))` | Cached upstream key to the tags every repository the cloud creates for it carries: `tags`, run tags included. |
 | `uncached` | `list(string)` | Upstream keys skipped for want of a credential. |
 
 ## Rules every body follows
