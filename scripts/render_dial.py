@@ -1089,6 +1089,13 @@ REDPANDA_DEFAULT_TIER = "serverless"
 # validation and the body's own check carry the same number.
 CONFLUENT_BASIC_MAX_MESSAGE_BYTES = 8388608
 
+# The REST endpoint wait when the dial names none: one ingress load balancer of four without the route passes 12 in a row about 3% of the time.
+CONFLUENT_REST_READY_DEFAULTS: dict[str, int] = {
+    "successes": 12,
+    "timeout_seconds": 900,
+    "interval_seconds": 5,
+}
+
 # Confluent's environment ids and Redpanda's resource group ids, so one cannot stand in for the other.
 _CONFLUENT_ENVIRONMENT_ID = re.compile(r"^env-[a-zA-Z0-9]+$")
 _REDPANDA_RESOURCE_GROUP_ID = re.compile(
@@ -1201,6 +1208,20 @@ def _optional_number(dial: dict[str, object], path: tuple[str, ...], default: in
     if not raw.isdigit():
         raise DialError(f"{'.'.join(path)} must be a whole number, got {raw!r}")
     return int(raw)
+
+
+def _confluent_rest_ready(dial: dict[str, object]) -> dict[str, int]:
+    """kafka.confluent_rest_ready -- `var.rest_ready` for the confluent-cloud body.
+
+    Every field is always sent, from the dial or CONFLUENT_REST_READY_DEFAULTS,
+    because neither the root nor the body declares a default. The body's own
+    validation refuses a wait that cannot pass inside its ceiling, at plan.
+    """
+    at = ("kafka", "confluent_rest_ready")
+    return {
+        name: _optional_number(dial, (*at, name), default)
+        for name, default in CONFLUENT_REST_READY_DEFAULTS.items()
+    }
 
 
 # Tool names toolbox/aws's user-data installs at a versions.yaml-pinned
@@ -1387,15 +1408,16 @@ def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
 
 def _saas_kafka_settings(
     dial: dict[str, object], provider: str, message_max_bytes: int
-) -> dict[str, str]:
+) -> dict[str, object]:
     """A SaaS body's own keys: its reach, and where and on what tier the cluster lands.
 
     Each vendor's tier is always sent, CONFLUENT_DEFAULT_TIER or
-    REDPANDA_DEFAULT_TIER when the dial names none. Any other key the dial
-    leaves blank is omitted, so the root's own default applies -- private
-    connectivity, and an environment or resource group the body creates for
-    itself. Confluent's tier and environment are read for confluent-cloud only,
-    Redpanda's tier and resource group for redpanda-cloud only.
+    REDPANDA_DEFAULT_TIER when the dial names none, and so is Confluent's REST
+    endpoint wait. Any other key the dial leaves blank is omitted, so the root's
+    own default applies -- private connectivity, and an environment or resource
+    group the body creates for itself. Confluent's tier, environment and wait are
+    read for confluent-cloud only, Redpanda's tier and resource group for
+    redpanda-cloud only.
 
     Args:
         dial: The parsed dial.
@@ -1409,7 +1431,7 @@ def _saas_kafka_settings(
         DialError: A value outside the body's vocabulary, an id in the wrong
             vendor's shape, or a message size above a Basic cluster's ceiling.
     """
-    settings: dict[str, str] = {}
+    settings: dict[str, object] = {}
     connectivity = _scalar(dial, ("kafka", "connectivity"))
     if connectivity is not None:
         if connectivity not in KAFKA_CONNECTIVITY:
@@ -1442,6 +1464,7 @@ def _saas_kafka_settings(
                     "env- followed by letters and digits"
                 )
             settings["confluent_environment_id"] = environment
+        settings["confluent_rest_ready"] = _confluent_rest_ready(dial)
 
     if provider == "redpanda-cloud":
         redpanda_tier = _text(dial, ("kafka", "redpanda_tier"), REDPANDA_DEFAULT_TIER)

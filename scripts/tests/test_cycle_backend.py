@@ -136,6 +136,7 @@ def test_confluent_cloud_is_public_basic_in_the_standing_environment(tmp_path: P
         "connectivity": "public",
         "confluent_tier": "basic",
         "confluent_environment_id": "env-example1",
+        "confluent_rest_ready": {"successes": 12, "timeout_seconds": 900, "interval_seconds": 5},
     }
     assert variables["seeds"]["kafka/confluent-cloud"] == {"username": "", "password": ""}
     assert variables["clickhouse"] == {"mode": "in_cluster"}

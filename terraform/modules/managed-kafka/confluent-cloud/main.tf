@@ -149,43 +149,40 @@ resource "confluent_kafka_cluster" "this" {
 }
 
 // ---------------------------------------------------------------------------
-// The REST endpoint's route
+// The REST endpoint, ready for the manager key
 // ---------------------------------------------------------------------------
 
-locals {
-  // In a row, because a new route reaches each shared ingress load balancer separately: one unrouted balancer of four passes 12 random landings about 3% of the time.
-  rest_ready_handshakes = 12
-
-  // The wait's ceiling, after which the apply fails naming the host.
-  rest_ready_timeout_seconds = 900
-
-  // Seconds between handshakes, so each one is a fresh connection on a fresh DNS answer.
-  rest_ready_interval_seconds = 5
-}
-
 // Confluent's public REST endpoints share one ingress that resets TLS for any
-// cluster it holds no route for, and a new cluster has none until the route
-// reaches every load balancer. The manager key's readiness wait and every ACL
-// and topic write fail the apply on their first transport error, so all of
-// them wait here for handshakes in a row.
+// cluster it holds no route for, and a new cluster's route reaches each load
+// balancer separately. An ACL or topic write fails the apply on a reset its
+// retries do not outlast, and on the 401 an unsynced key gets, so they wait
+// here for the manager key to list the topics with HTTP 200
+// var.rest_ready.successes times in a row.
 //
-// Public only: the deployer cannot reach a private cluster's endpoint, which is
-// why its keys skip the provider's wait as well.
+// Public only: the deployer cannot reach a private cluster's endpoint.
 resource "terraform_data" "rest_ready" {
   count = local.private ? 0 : 1
 
-  // A new cluster is the only change that needs a new route.
-  triggers_replace = [confluent_kafka_cluster.this.id]
+  // A new cluster needs a new route, and a new key has to sync.
+  triggers_replace = [confluent_kafka_cluster.this.id, confluent_api_key.manager.id]
 
-  // The cluster's own v3 path, one level above the topic list the provider's key wait reads.
+  // The topic list the provider's own key wait reads.
   input = {
-    url = "${confluent_kafka_cluster.this.rest_endpoint}/kafka/v3/clusters/${confluent_kafka_cluster.this.id}"
+    url = "${confluent_kafka_cluster.this.rest_endpoint}/kafka/v3/clusters/${confluent_kafka_cluster.this.id}/topics"
   }
 
-  // Run through bash so a checkout that dropped the mode bit still works.
+  // Run through bash so a checkout that dropped the mode bit still works. The
+  // secret marks this block sensitive, so tofu prints none of the probe's lines
+  // while it runs, and a failure still carries the last of them.
   provisioner "local-exec" {
     command = <<-EOT
-      bash "${path.module}/scripts/wait-rest-ready.sh" "${self.output.url}" ${local.rest_ready_handshakes} ${local.rest_ready_timeout_seconds} ${local.rest_ready_interval_seconds}
+      bash "${path.module}/scripts/wait-rest-ready.sh" "${self.output.url}" ${var.rest_ready.successes} ${var.rest_ready.timeout_seconds} ${var.rest_ready.interval_seconds}
     EOT
+
+    // The environment, never the command line, so no process listing shows the key.
+    environment = {
+      CONFLUENT_REST_KEY    = confluent_api_key.manager.id
+      CONFLUENT_REST_SECRET = confluent_api_key.manager.secret
+    }
   }
 }

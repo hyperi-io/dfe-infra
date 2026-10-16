@@ -258,13 +258,14 @@ variables {
   cloudtrail = { enabled = false }
 
   kafka = {
-    provider          = "confluent-cloud"
-    connectivity      = "public"
-    confluent_tier    = "basic"
-    num_partitions    = 12
-    log_retention_ms  = 259200000
-    message_max_bytes = 8388608
-    landing_topics    = { main_land = {} }
+    provider             = "confluent-cloud"
+    connectivity         = "public"
+    confluent_tier       = "basic"
+    num_partitions       = 12
+    log_retention_ms     = 259200000
+    message_max_bytes    = 8388608
+    landing_topics       = { main_land = {} }
+    confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
   }
 
   toolbox = {
@@ -345,12 +346,35 @@ run "confluent_basic_refuses_a_message_size_above_8_mib" {
 
   variables {
     kafka = {
+      provider             = "confluent-cloud"
+      connectivity         = "public"
+      confluent_tier       = "basic"
+      num_partitions       = 12
+      log_retention_ms     = 259200000
+      message_max_bytes    = 16777216
+      landing_topics       = { main_land = {} }
+      confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
+    }
+  }
+
+  expect_failures = [
+    var.kafka,
+  ]
+}
+
+// The body defaults no part of its REST endpoint wait, so the root refuses a
+// confluent-cloud deployment that arrives without one.
+run "confluent_refuses_a_deployment_with_no_rest_wait" {
+  command = plan
+
+  variables {
+    kafka = {
       provider          = "confluent-cloud"
       connectivity      = "public"
       confluent_tier    = "basic"
       num_partitions    = 12
       log_retention_ms  = 259200000
-      message_max_bytes = 16777216
+      message_max_bytes = 8388608
       landing_topics    = { main_land = {} }
     }
   }
@@ -366,13 +390,14 @@ run "confluent_enterprise_keeps_16_mib" {
 
   variables {
     kafka = {
-      provider          = "confluent-cloud"
-      connectivity      = "public"
-      confluent_tier    = "enterprise"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
-      message_max_bytes = 16777216
-      landing_topics    = { main_land = {} }
+      provider             = "confluent-cloud"
+      connectivity         = "public"
+      confluent_tier       = "enterprise"
+      num_partitions       = 12
+      log_retention_ms     = 259200000
+      message_max_bytes    = 16777216
+      landing_topics       = { main_land = {} }
+      confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
   }
 
