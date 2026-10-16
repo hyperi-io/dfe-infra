@@ -51,6 +51,16 @@ sweep:
     priorities: [P0, P1, P2, P3]
     # Most org projects listed when looking a repo's project up by title.
     project_limit: 500
+  # The org issue label standard. The command prints hyperi-ci's label manifest, whose gate
+  # labels the sweep reads once per run, and its release pins the standard the sweep trusts.
+  # Only the blocker label holds a release cut, and it must be one of the manifest's gate labels.
+  # An issue with another gate label is scheduled, and one with none gates only when a member or
+  # bot filed it.
+  labels:
+    command: ["uvx", "--from", "hyperi-ci==2.14.15", "hyperi-ci", "labels", "--json"]
+    blocker: release-blocker
+    # A first run downloads hyperi-ci, so this is longer than a gh call.
+    timeout_seconds: 300
   # Pull request authors counted as bot PRs.
   bot_logins:
     - renovate[bot]

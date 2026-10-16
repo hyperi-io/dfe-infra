@@ -21,7 +21,9 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from importlib.machinery import SourceFileLoader
@@ -316,6 +318,11 @@ SETTINGS = {
         "priorities": ["P0", "P1", "P2", "P3"],
         "project_limit": 500,
     },
+    "labels": {
+        "command": ["uvx", "--from", "hyperi-ci==2.14.15", "hyperi-ci", "labels", "--json"],
+        "blocker": "release-blocker",
+        "timeout_seconds": 300,
+    },
     "slack": {"group_replies": 2, "title": "DFE suite sweep", "timezone": "UTC"},
 }
 
@@ -365,6 +372,16 @@ def test_the_backlog_label_is_a_setting() -> None:
     assert options.project_limit == 500
 
 
+def test_the_label_standard_is_a_setting() -> None:
+    options = _options([])
+    assert options.labels_command == tuple(SETTINGS["labels"]["command"])
+    assert (options.labels_blocker, options.labels_timeout) == ("release-blocker", 300)
+    labels = {"command": ["labels-for-test", "--json"], "blocker": "stop", "timeout_seconds": 9}
+    options = _options([], labels=labels)
+    assert options.labels_command == ("labels-for-test", "--json")
+    assert (options.labels_blocker, options.labels_timeout) == ("stop", 9)
+
+
 @pytest.mark.parametrize(
     ("argv", "overrides", "message"),
     [
@@ -380,6 +397,13 @@ def test_the_backlog_label_is_a_setting() -> None:
         ([], {"backlog": {**SETTINGS["backlog"], "statuses": []}}, "backlog.statuses"),
         ([], {"backlog": {**SETTINGS["backlog"], "project_limit": 0}}, "backlog.project_limit"),
         ([], {"gh_timeout_seconds": 0}, "gh_timeout_seconds"),
+        ([], {"labels": None}, "labels"),
+        ([], {"labels": {**SETTINGS["labels"], "command": []}}, "labels.command"),
+        ([], {"labels": {**SETTINGS["labels"], "command": "uvx labels"}}, "labels.command"),
+        ([], {"labels": {**SETTINGS["labels"], "command": ["uvx", " "]}}, "labels.command"),
+        ([], {"labels": {**SETTINGS["labels"], "command": ["uvx", 7]}}, "labels.command"),
+        ([], {"labels": {**SETTINGS["labels"], "blocker": ""}}, "labels.blocker"),
+        ([], {"labels": {**SETTINGS["labels"], "timeout_seconds": 0}}, "labels.timeout_seconds"),
     ],
 )
 def test_a_bad_setting_is_a_run_error_naming_it(argv, overrides, message) -> None:
@@ -400,6 +424,8 @@ CONFIG = sweep.SweepConfig(
 )
 HEAD = "a" * 40
 PROJECTS = sweep.ProjectIndex(numbers={"dfe-engine": 7, "dfe-ui": 8})
+GATE_LABELS = ("release-blocker", "next-patch", "next-minor", "backlog")
+STANDARD = sweep.IssueLabels("release-blocker", frozenset(GATE_LABELS))
 
 
 def _issue_node(number: int, status: str, *, labels=(), priority="", effort="", state="OPEN",
@@ -450,9 +476,11 @@ def _graphql(nodes: list | Exception = PROJECT_NODES):
     return graphql, calls
 
 
-def _collect(api, *, projects=PROJECTS, nodes=PROJECT_NODES, config=CONFIG):
+def _collect(api, *, projects=PROJECTS, nodes=PROJECT_NODES, config=CONFIG, labels=STANDARD):
     graphql, _ = _graphql(nodes)
-    return sweep.collect_repo(MEMBER, api, config, graphql=graphql, projects=projects)
+    return sweep.collect_repo(
+        MEMBER, api, config, graphql=graphql, projects=projects, labels=labels
+    )
 
 DASHBOARD_BODY = """\
 This issue lists Renovate updates and detected dependencies.
@@ -525,19 +553,21 @@ def _answers(overrides: dict | None = None):
             {"number": 30, "title": "Dependency Dashboard", "user": "renovate[bot]",
              "html_url": "https://example.com/i/30", "is_pr": False, "body": DASHBOARD_BODY},
             {"number": 31, "title": "a real bug", "user": "someone", "is_pr": False,
-             "labels": ["bug"], "type": "Bug", "html_url": "https://example.com/i/31",
-             "created_at": "2026-10-02"},
+             "association": "MEMBER", "labels": ["bug"], "type": "Bug",
+             "html_url": "https://example.com/i/31", "created_at": "2026-10-02"},
             {"number": 32, "title": "labelled, promoted", "user": "someone", "is_pr": False,
-             "labels": ["backlog"], "created_at": "2026-10-03"},
+             "association": "MEMBER", "labels": ["backlog"], "created_at": "2026-10-03"},
             {"number": 33, "title": "labelled, in the backlog", "user": "someone",
-             "is_pr": False, "labels": ["backlog"], "created_at": "2026-10-03"},
+             "association": "MEMBER", "is_pr": False, "labels": ["backlog"],
+             "created_at": "2026-10-03"},
             {"number": 34, "title": "labelled, on no project", "user": "someone",
-             "is_pr": False, "labels": ["backlog", "bug"], "created_at": "2026-10-03"},
+             "association": "MEMBER", "is_pr": False, "labels": ["backlog", "bug"],
+             "created_at": "2026-10-03"},
             {"number": 35, "title": "unlabelled, on no project", "user": "someone",
-             "is_pr": False, "labels": [], "html_url": "https://example.com/i/35",
-             "created_at": "2026-10-04"},
+             "association": "MEMBER", "is_pr": False, "labels": [],
+             "html_url": "https://example.com/i/35", "created_at": "2026-10-04"},
             {"number": 36, "title": "unlabelled, in progress", "user": "someone",
-             "is_pr": False, "labels": ["bug"], "type": "Bug",
+             "association": "MEMBER", "is_pr": False, "labels": ["bug"], "type": "Bug",
              "html_url": "https://example.com/i/36", "created_at": "2026-10-05"},
             {"number": 20, "title": "chore(deps): bump", "user": "renovate[bot]",
              "is_pr": True},
@@ -630,10 +660,12 @@ def test_issues_and_backlog_are_work_items_not_findings() -> None:
     assert report["issues"][1] == {
         "repo": "example-org/dfe-engine", "number": 36, "title": "unlabelled, in progress",
         "labels": ["bug"], "type": "Bug", "url": "https://example.com/i/36",
-        "created_at": "2026-10-05",
+        "created_at": "2026-10-05", "author": "someone", "ours": True,
     }
     assert all(set(row) == set(sweep.BACKLOG_FIELDS) for row in report["backlog"])
-    assert report["totals"]["work_items"] == {"issues": 2, "backlog": 5, "backlog_drift": 2}
+    assert report["totals"]["work_items"] == {
+        "issues": 2, "scheduled": 0, "triage": 0, "backlog": 5, "backlog_drift": 2,
+    }
     assert report["members"][0]["project"] == 7
     json.dumps(report)
 
@@ -844,7 +876,9 @@ def test_the_sweep_keeps_member_order() -> None:
     api, _ = _answers({"repos/example-org/dfe-ui": sweep.GhError("x", 404, "Not Found")})
     other = sweep.Member("dfe-ui", "example-org/dfe-ui", ("stack apps",))
     graphql, _ = _graphql()
-    results = sweep.sweep([other, MEMBER], api, CONFIG, graphql=graphql, projects=PROJECTS)
+    results = sweep.sweep(
+        [other, MEMBER], api, CONFIG, graphql=graphql, projects=PROJECTS, labels=STANDARD
+    )
     assert [r.member.name for r in results] == ["dfe-ui", "dfe-engine"]
     assert results[0].unreadable
     assert not results[0].findings
@@ -1014,9 +1048,13 @@ def test_the_summary_counts_by_status_and_priority() -> None:
     assert "    backlog  Backlog      P0   #33 item 33" in summary
     assert "    backlog  -            -    #34 labelled, on no project" in summary
     assert text.index("SUMMARY") < text.index("CRITICAL")
-    assert "work items: 2 active issue(s), 5 backlog item(s), 2 label drift" in text
     assert (
-        "  gating: 14 (12 finding(s), 2 active issue(s), 0 not readable), the backlog never gates"
+        "work items: 2 active issue(s), 0 scheduled, 0 to triage, 5 backlog item(s), "
+        "2 label drift"
+    ) in text
+    assert (
+        "  gating: 14 (12 finding(s), 2 active issue(s), 0 not readable), the backlog, "
+        "scheduled and triage issues never gate"
     ) in text
 
 
@@ -1028,7 +1066,7 @@ def test_a_repo_with_no_project_says_so_in_the_summary() -> None:
         "3 active issue(s); backlog, no project: 3 item(s), status no status 3; priority "
         "unprioritised 3\n"
     ) in sweep.render_text(report), "no project, so no label drift is counted"
-    empty = {"issues": [], "backlog": [], "drift": []}
+    empty = {"issues": [], "scheduled": [], "triage": [], "backlog": [], "drift": []}
     model = sweep.BacklogModel()
     assert sweep._work_counts(sweep.NO_PROJECT, empty, model) == (
         "0 active issue(s); backlog: no project"
@@ -1995,6 +2033,407 @@ def test_the_split_keeps_every_key_a_poster_has_stored() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Gating issues by label
+# ---------------------------------------------------------------------------
+
+
+def _issue(number: int, labels=(), *, ours: bool = False, author: str = "someone") -> dict:
+    """An issue as issue_items returns it."""
+    return {"repo": "example-org/dfe-engine", "number": number, "title": f"issue {number}",
+            "labels": list(labels), "type": "", "url": f"https://example.com/i/{number}",
+            "created_at": RAISED, "author": author, "ours": ours}
+
+
+def _row(number: int, labels=(), *, association: str = "NONE", bot: bool = False,
+         user: str = "someone") -> dict:
+    """An issue as ISSUES_JQ projects it."""
+    return {"number": number, "title": f"issue {number}", "user": user, "is_pr": False,
+            "association": association, "bot": bot, "labels": list(labels),
+            "html_url": f"https://example.com/i/{number}", "created_at": "2026-10-02"}
+
+
+def _prints(text: str, *, code: int = 0, err: str = "") -> list[str]:
+    """A command that writes text and err, then exits with code."""
+    script = f"import sys; sys.stdout.write({text!r}); sys.stderr.write({err!r}); sys.exit({code})"
+    return [sys.executable, "-c", script]
+
+
+def _manifest(names=GATE_LABELS, schema: int = 1) -> str:
+    return json.dumps({"schema": schema, "gate": [{"name": name} for name in names]})
+
+
+def test_the_gate_labels_are_read_from_the_manifest_and_not_listed() -> None:
+    manifest = {"schema": 1, "gate": [{"name": "stop"}, {"name": "later"}],
+                "waiting": [{"name": "needs-decision"}]}
+    assert sweep.gate_names(manifest) == ("stop", "later")
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        None,
+        [],
+        {},
+        {"schema": 2, "gate": [{"name": "release-blocker"}]},
+        {"schema": 1},
+        {"schema": 1, "gate": []},
+        {"schema": 1, "gate": "release-blocker"},
+        {"schema": 1, "gate": [{"colour": "red"}]},
+    ],
+)
+def test_a_manifest_that_is_not_schema_one_with_gate_labels_is_refused(manifest) -> None:
+    with pytest.raises(ValueError, match="manifest"):
+        sweep.gate_names(manifest)
+
+
+def test_the_manifest_command_gives_the_gate_labels() -> None:
+    labels = sweep.read_issue_labels(_prints(_manifest()), "release-blocker")
+    assert labels == STANDARD
+
+
+@pytest.mark.parametrize(
+    ("command", "reason"),
+    [
+        (_prints("", code=3, err="error: no route to pypi\n"), "no route to pypi"),
+        (_prints("", code=3), "exited 3"),
+        (_prints("not json"), "Expecting value"),
+        (_prints(_manifest(schema=2)), "schema 1"),
+        (_prints(_manifest(["next-patch"])), "not among the gate labels: next-patch"),
+        (["/nonexistent/uvx"], "cannot run /nonexistent/uvx"),
+    ],
+)
+def test_a_manifest_that_cannot_be_read_is_kept_as_the_reason(command, reason) -> None:
+    labels = sweep.read_issue_labels(command, "release-blocker")
+    assert reason in labels.error
+    assert (labels.blocker, labels.gate) == ("release-blocker", frozenset())
+
+
+def test_a_hung_manifest_command_is_a_reason_not_a_wait() -> None:
+    hung = [sys.executable, "-c", "import time; time.sleep(5)"]
+    labels = sweep.read_issue_labels(hung, "release-blocker", timeout=0.3)
+    assert "timed out after 0.3s" in labels.error
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed")
+def test_the_issue_projection_keeps_the_association_and_the_user_type() -> None:
+    def project(login: str, kind: str, association: str) -> dict:
+        item = {"number": 5, "title": "t", "html_url": "u", "created_at": "c", "type": None,
+                "user": {"login": login, "type": kind}, "author_association": association,
+                "labels": [{"name": "next-patch"}], "body": "text"}
+        proc = subprocess.run(
+            ["jq", "-r", sweep.ISSUES_JQ], input=json.dumps([item]), capture_output=True,
+            text=True, encoding="utf-8", errors="replace", check=True,
+        )
+        return json.loads(proc.stdout)
+
+    person = project("octo", "User", "MEMBER")
+    assert (person["user"], person["association"], person["bot"]) == ("octo", "MEMBER", False)
+    assert person["labels"] == ["next-patch"]
+    assert person["body"] is None, "only a bot's body is fetched"
+    robot = project("helper[bot]", "Bot", "NONE")
+    assert (robot["bot"], robot["body"]) == (True, "text")
+
+
+@pytest.mark.parametrize(
+    ("row", "ours"),
+    [
+        ({"association": "OWNER"}, True),
+        ({"association": "MEMBER"}, True),
+        ({"association": "COLLABORATOR"}, True),
+        ({"association": "CONTRIBUTOR"}, False),
+        ({"association": "FIRST_TIME_CONTRIBUTOR"}, False),
+        ({"association": "NONE"}, False),
+        ({}, False),
+        ({"association": "NONE", "bot": True}, True),
+        ({"association": "NONE", "user": "renovate[bot]"}, True),
+        ({"association": "NONE", "user": "renovate"}, False),
+    ],
+)
+def test_an_issue_is_ours_when_a_member_or_a_bot_filed_it(row, ours) -> None:
+    assert sweep.filed_by_us(row, CONFIG.bot_logins) is ours
+
+
+def test_an_issue_item_carries_its_author_and_whether_it_is_ours() -> None:
+    rows = [_row(1, association="MEMBER", user="kaz"), _row(2, user="stranger")]
+    items = sweep.issue_items("example-org/dfe-engine", rows, CONFIG.bot_logins)
+    assert [(i["author"], i["ours"]) for i in items] == [("kaz", True), ("stranger", False)]
+
+
+@pytest.mark.parametrize(
+    ("labels", "ours", "gate"),
+    [
+        (["release-blocker"], False, sweep.IssueGate.BLOCKER),
+        (["release-blocker"], True, sweep.IssueGate.BLOCKER),
+        (["release-blocker", "next-patch"], False, sweep.IssueGate.BLOCKER),
+        (["release-blocker", "backlog"], False, sweep.IssueGate.BLOCKER),
+        (["next-patch"], False, sweep.IssueGate.SCHEDULED),
+        (["next-minor"], True, sweep.IssueGate.SCHEDULED),
+        (["backlog"], True, sweep.IssueGate.SCHEDULED),
+        (["bug", "next-patch"], False, sweep.IssueGate.SCHEDULED),
+        ([], True, sweep.IssueGate.UNTRIAGED),
+        (["bug"], True, sweep.IssueGate.UNTRIAGED),
+        ([], False, sweep.IssueGate.TRIAGE),
+        (["bug"], False, sweep.IssueGate.TRIAGE),
+        (["needs-decision"], True, sweep.IssueGate.UNTRIAGED),
+        (["needs-decision"], False, sweep.IssueGate.TRIAGE),
+        (["needs-decision", "next-patch"], False, sweep.IssueGate.SCHEDULED),
+        (["needs-decision", "release-blocker"], False, sweep.IssueGate.BLOCKER),
+    ],
+)
+def test_a_gate_label_decides_before_the_author_does(labels, ours, gate) -> None:
+    assert sweep.issue_gate(_issue(1, labels, ours=ours), STANDARD) == gate
+
+
+def test_the_blocker_is_whatever_the_settings_name() -> None:
+    standard = sweep.IssueLabels("stop", frozenset({"stop", "later"}))
+    assert sweep.issue_gate(_issue(1, ["stop"]), standard) == sweep.IssueGate.BLOCKER
+    assert sweep.issue_gate(_issue(2, ["later"]), standard) == sweep.IssueGate.SCHEDULED
+    assert sweep.issue_gate(_issue(3, ["release-blocker"]), standard) == sweep.IssueGate.TRIAGE
+
+
+def test_issues_off_the_backlog_split_by_gate_in_issue_order() -> None:
+    issues = [
+        _issue(1, ["next-patch"], ours=True),
+        _issue(2),
+        _issue(3, ours=True),
+        _issue(4, ["release-blocker"]),
+        _issue(5, ["next-minor", "needs-decision"]),
+        _issue(6, ["bug"]),
+    ]
+    active, scheduled, triage = sweep.gate_split(issues, STANDARD)
+    assert [i["number"] for i in active] == [3, 4]
+    assert [i["number"] for i in scheduled] == [1, 5]
+    assert [i["number"] for i in triage] == [2, 6]
+
+
+@pytest.mark.parametrize("labels", [None, sweep.IssueLabels("release-blocker", error="down")])
+def test_without_a_readable_standard_every_issue_is_active(labels) -> None:
+    issues = [_issue(1, ["next-patch"]), _issue(2)]
+    assert sweep.gate_split(issues, labels) == (issues, [], [])
+
+
+def _blocker_case() -> tuple[list[dict], list[dict]]:
+    """Five issues and the project rows holding four of them, all at the backlog Status."""
+    repo = "example-org/dfe-engine"
+    issues = [
+        _issue(1, ["release-blocker"]),
+        _issue(2, ["release-blocker", "backlog"]),
+        _issue(3, ["release-blocker", "backlog"]),
+        _issue(4, ["backlog"]),
+        _issue(5),
+    ]
+    nodes = [
+        _issue_node(1, "Backlog", labels=("release-blocker",)),
+        _issue_node(2, "Backlog", labels=("release-blocker", "backlog")),
+        _issue_node(4, "Backlog", labels=("backlog",)),
+        _issue_node(5, "Backlog"),
+    ]
+    return issues, sweep.backlog_rows(repo, 7, nodes)
+
+
+def test_the_blocker_label_keeps_an_issue_off_the_backlog() -> None:
+    issues, rows = _blocker_case()
+    repo, model = "example-org/dfe-engine", sweep.BacklogModel()
+    active, backlog = sweep.backlog_split(repo, issues, rows, model, "release-blocker")
+    parked = {row["number"] for row in backlog}
+    assert [issue["number"] for issue in active] == [1, 2, 3]
+    assert parked == {4, 5}
+    assert not {issue["number"] for issue in active} & parked
+    assert {i["number"] for i in active} | parked == {i["number"] for i in issues}
+
+
+def test_with_no_blocker_named_the_backlog_split_is_as_it_was() -> None:
+    issues, rows = _blocker_case()
+    active, backlog = sweep.backlog_split(
+        "example-org/dfe-engine", issues, rows, sweep.BacklogModel()
+    )
+    assert active == []
+    assert {row["number"] for row in backlog} == {1, 2, 3, 4, 5}
+
+
+GATE_ROWS = [
+    _row(1, ["release-blocker"]),
+    _row(2, ["next-patch"], association="MEMBER"),
+    _row(3, [], association="OWNER"),
+    _row(4, [], association="NONE"),
+    _row(5, [], association="NONE", bot=True, user="helper[bot]"),
+    _row(6, ["needs-decision"], association="NONE"),
+    _row(7, ["needs-decision"], association="COLLABORATOR"),
+    _row(8, ["backlog"], association="NONE"),
+    _row(9, ["release-blocker", "backlog"], association="NONE"),
+    _row(10, ["release-blocker"], association="MEMBER"),
+    _row(11, ["next-minor", "bug"], association="NONE"),
+    _row(12, [], association="CONTRIBUTOR"),
+]
+GATE_NODES = [
+    _issue_node(8, "Backlog", labels=("backlog",)),
+    _issue_node(9, "Backlog", labels=("backlog", "release-blocker")),
+    _issue_node(10, "Backlog", labels=("release-blocker",)),
+]
+
+
+def _gate_collect(**kwargs):
+    api, _ = _answers({"repos/example-org/dfe-engine/issues": GATE_ROWS})
+    return _collect(api, nodes=GATE_NODES, **kwargs)
+
+
+def test_the_collector_sorts_every_open_issue_by_label_then_author() -> None:
+    result = _gate_collect()
+    assert result.unreadable == []
+    assert [i["number"] for i in result.issues] == [1, 3, 5, 7, 9, 10]
+    assert [i["number"] for i in result.scheduled] == [2, 11]
+    assert [i["number"] for i in result.triage] == [4, 6, 12]
+    assert [r["number"] for r in result.backlog] == [8]
+    everything = [result.issues, result.scheduled, result.triage, result.backlog]
+    seen = [row["number"] for rows in everything for row in rows]
+    assert sorted(seen) == [row["number"] for row in GATE_ROWS], "each issue is in one list"
+
+
+def test_a_blocker_at_the_backlog_status_gates_and_shows_as_drift() -> None:
+    result = _gate_collect()
+    assert 10 in {issue["number"] for issue in result.issues}
+    assert 10 not in {row["number"] for row in result.backlog}
+    assert [d["number"] for d in result.drift] == [10]
+
+
+def test_only_active_issues_gate_the_release() -> None:
+    config = dataclasses.replace(CONFIG, tools=frozenset({"issues", "backlog"}))
+    result = _gate_collect(config=config)
+    report = sweep.build_report("2.2.0", [result], config.tools, generated_at=NOW)
+    assert report["totals"]["gating"] == {"total": 6, "findings": 0, "issues": 6, "unreadable": 0}
+    assert report["totals"]["work_items"] == {
+        "issues": 6, "scheduled": 2, "triage": 3, "backlog": 1, "backlog_drift": 1,
+    }
+    assert [row["author"] for row in report["triage"]] == ["someone"] * 3
+
+
+ISSUES_ONLY = dataclasses.replace(CONFIG, tools=frozenset({"issues"}))
+UNREAD_ROWS = [_row(1, ["next-patch"], association="MEMBER"), _row(2), _row(3, ["backlog"])]
+
+
+@pytest.mark.parametrize(
+    ("labels", "reason"),
+    [
+        (sweep.IssueLabels("release-blocker", error="uvx exited 2"),
+         "issue label standard not readable: uvx exited 2"),
+        (None, "issue label standard not read"),
+    ],
+)
+def test_an_unreadable_standard_gates_and_leaves_every_issue_active(labels, reason) -> None:
+    api, _ = _answers({"repos/example-org/dfe-engine/issues": UNREAD_ROWS})
+    result = _collect(api, config=ISSUES_ONLY, labels=labels)
+    assert [(u.tool, u.reason) for u in result.unreadable] == [("issues", reason)]
+    assert [i["number"] for i in result.issues] == [1, 2], "3 is on the backlog by its label"
+    assert (result.scheduled, result.triage) == ([], [])
+    report = sweep.build_report("2.2.0", [result], ISSUES_ONLY.tools, generated_at=NOW)
+    assert report["totals"]["gating"] == {"total": 3, "findings": 0, "issues": 2, "unreadable": 1}
+
+
+def test_a_readable_standard_adds_no_unreadable_entry() -> None:
+    api, _ = _answers({"repos/example-org/dfe-engine/issues": UNREAD_ROWS})
+    result = _collect(api, config=ISSUES_ONLY)
+    assert result.unreadable == []
+    assert [i["number"] for i in result.issues] == []
+    assert [i["number"] for i in result.scheduled] == [1]
+    assert [i["number"] for i in result.triage] == [2]
+
+
+def test_an_unreadable_issue_list_is_not_also_blamed_on_the_standard() -> None:
+    api, _ = _answers({
+        "repos/example-org/dfe-engine/issues": sweep.GhError("x", 403, "Forbidden (HTTP 403)"),
+    })
+    down = sweep.IssueLabels("release-blocker", error="down")
+    result = _collect(api, config=ISSUES_ONLY, labels=down)
+    assert [(u.tool, u.reason) for u in result.unreadable] == [("issues", "Forbidden (HTTP 403)")]
+
+
+def test_no_issues_tool_means_no_standard_is_needed() -> None:
+    api, _ = _answers()
+    config = dataclasses.replace(CONFIG, tools=frozenset({"dependabot", "backlog"}))
+    result = _collect(api, config=config, labels=None)
+    assert result.unreadable == []
+    assert (result.issues, result.scheduled, result.triage) == ([], [], [])
+
+
+def _issue_report(**lists) -> dict:
+    """One member holding only the named issue lists, built as the collector builds them."""
+    result = sweep.RepoResult(MEMBER, "main", HEAD, False, [], [], project=sweep.NO_PROJECT,
+                              **lists)
+    return sweep.build_report("2.2.0", [result], sweep.TOOLS, generated_at=NOW)
+
+
+def _every_gate() -> dict:
+    return _issue_report(
+        issues=[_issue(1, ["release-blocker"], ours=True)],
+        scheduled=[_issue(2, ["next-patch"], ours=True)],
+        triage=[_issue(3, author="stranger"), _issue(4, ["bug"], author="other")],
+    )
+
+
+def test_the_text_report_lists_scheduled_and_triage_issues_apart_from_the_active_ones() -> None:
+    text = sweep.render_text(_every_gate())
+    assert "example-org/dfe-engine: 1 active issue(s), 1 scheduled, 2 to triage;" in text
+    assert "    issue    #1 [release-blocker] issue 1  https://example.com/i/1\n" in text
+    assert "    scheduled #2 [next-patch] issue 2  https://example.com/i/2\n" in text
+    assert "    triage   #3 issue 3  https://example.com/i/3  by stranger\n" in text
+    assert "    triage   #4 [bug] issue 4  https://example.com/i/4  by other\n" in text
+    assert "  gating: 1 (0 finding(s), 1 active issue(s), 0 not readable)" in text
+    assert "work items: 1 active issue(s), 1 scheduled, 2 to triage, 0 backlog" in text
+
+
+def test_scheduled_and_triage_issues_never_gate_in_the_report_or_in_slack() -> None:
+    report = _every_gate()
+    assert report["totals"]["gating"] == {"total": 1, "findings": 0, "issues": 1,
+                                          "unreadable": 0}
+    slack = sweep.render_slack(report)
+    assert slack["stats"]["gating"] == slack["stats"]["issues"] == 1
+    assert slack["summary"].splitlines()[1] == (
+        "*Gating: 1* -- 0 findings, 1 active issues. Not gating: 1 scheduled, 2 to triage"
+    )
+    groups = {entry["key"]: (entry["group"], entry["gates"]) for entry in slack["keys"]}
+    assert groups == {
+        "https://example.com/i/1": ("Active issues", True),
+        "example-org/dfe-engine:triage:https://example.com/i/3": ("Issues to triage", False),
+        "example-org/dfe-engine:triage:https://example.com/i/4": ("Issues to triage", False),
+        "example-org/dfe-engine:scheduled:https://example.com/i/2": ("Scheduled issues", False),
+    }
+    assert sum(entry["gates"] for entry in slack["keys"]) == slack["stats"]["gating"]
+    assert [reply["group"] for reply in slack["detail"]] == [
+        "Active issues", "Issues to triage", "Scheduled issues"
+    ]
+
+
+def test_a_triage_line_names_the_author_and_escapes_it() -> None:
+    report = _issue_report(triage=[_issue(3, ["bug"], author="a<b")])
+    (reply,) = sweep.render_slack(report)["detail"]
+    assert reply["text"].splitlines()[-1] == (
+        "- <https://example.com/i/3|#3> issue 3 [bug] by a&lt;b (13d)"
+    )
+
+
+def test_a_sweep_with_only_a_triage_list_is_not_all_clear_and_gates_nothing() -> None:
+    slack = sweep.render_slack(_issue_report(triage=[_issue(3)]))
+    assert slack["summary"].splitlines()[1:] == [
+        "*Gating: 0* -- 0 findings, 0 active issues. Not gating: 1 to triage"
+    ]
+    assert slack["stats"]["gating"] == 0
+    assert not any(entry["gates"] for entry in slack["keys"])
+
+
+def test_an_issue_moving_between_groups_is_keyed_afresh() -> None:
+    def key_of(**lists) -> str:
+        (entry,) = sweep.render_slack(_issue_report(**lists))["keys"]
+        return entry["key"]
+
+    keys = {
+        key_of(issues=[_issue(3)]),
+        key_of(triage=[_issue(3)]),
+        key_of(scheduled=[_issue(3)]),
+    }
+    assert len(keys) == 3, "a poster announces an issue that has become active"
+
+
+# ---------------------------------------------------------------------------
 # The bridge subset check
 # ---------------------------------------------------------------------------
 
@@ -2306,7 +2745,8 @@ BRIDGE_ARGV = ["--check-bridge", "--tools", "dependabot,code_scanning,secret_sca
 
 
 def _run_cli(
-    tmp_path: Path, monkeypatch, capsys, argv: list[str], gap: str = ""
+    tmp_path: Path, monkeypatch, capsys, argv: list[str], gap: str = "",
+    overrides: dict | None = None,
 ) -> tuple[int, str]:
     _fake_gh(tmp_path, monkeypatch, FAKE_GH, shebang="#!/usr/bin/env python3")
     if gap:
@@ -2314,7 +2754,7 @@ def _run_cli(
     versions = tmp_path / "versions.yaml"
     versions.write_text(VERSIONS, encoding="utf-8")
     settings = {**SETTINGS, "versions_file": str(versions), "suite_dir": str(REPO_ROOT),
-                "include": [], "workers": 8}
+                "include": [], "workers": 8, **(overrides or {})}
     logged: list[str] = []
     code = cli.main(argv, load=lambda: (settings, logged.append, logged.append))
     return code, capsys.readouterr().out
@@ -2377,3 +2817,50 @@ def test_the_slack_headline_takes_its_title_and_zone_from_the_flags(
     headline = json.loads(out)["summary"].splitlines()[0]
     pattern = rf"\*DFE daily summary\*: stack 2\.2\.0, \d+ members, {shown} (AEDT|AEST)"
     assert re.fullmatch(pattern, headline)
+
+
+def _counting_manifest(tmp_path: Path) -> tuple[dict, Path]:
+    """Settings whose manifest command appends one byte to a file each time it runs."""
+    counter = tmp_path / "manifest-runs"
+    script = tmp_path / "manifest.py"
+    script.write_text(
+        "import sys\n"
+        f"open({str(counter)!r}, 'a').write('x')\n"
+        f"sys.stdout.write({_manifest()!r})\n",
+        encoding="utf-8",
+    )
+    return {"labels": {**SETTINGS["labels"], "command": [sys.executable, str(script)]}}, counter
+
+
+def test_the_label_manifest_is_read_once_per_run_and_only_when_issues_are(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    overrides, counter = _counting_manifest(tmp_path)
+    argv = ["--format", "json", "--tools", "issues"]
+    code, out = _run_cli(tmp_path, monkeypatch, capsys, argv, overrides=overrides)
+    report = json.loads(out)
+    assert code == cli.EXIT_OK
+    assert len(report["members"]) > 1
+    assert counter.read_text(encoding="utf-8") == "x", "one read, however many members"
+    assert report["unreadable"] == []
+    counter.write_text("", encoding="utf-8")
+    argv = ["--format", "json", "--tools", "dependabot"]
+    _run_cli(tmp_path, monkeypatch, capsys, argv, overrides=overrides)
+    assert counter.read_text(encoding="utf-8") == "", "no issues tool, no manifest read"
+
+
+def test_an_unreadable_manifest_gates_every_member_and_says_why(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    command = _prints("", code=1, err="error: no route to the index\n")
+    overrides = {"labels": {**SETTINGS["labels"], "command": command}}
+    argv = ["--format", "json", "--tools", "issues"]
+    code, out = _run_cli(tmp_path, monkeypatch, capsys, argv, overrides=overrides)
+    report = json.loads(out)
+    assert code == cli.EXIT_OK
+    assert {(u["tool"], u["reason"]) for u in report["unreadable"]} == {
+        ("issues", "issue label standard not readable: no route to the index")
+    }
+    members = len(report["members"])
+    assert report["totals"]["gating"]["unreadable"] == members
+    assert report["totals"]["gating"]["total"] == members
