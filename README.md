@@ -122,7 +122,7 @@ Design and the repo-by-repo map: [docs/architecture.md](docs/architecture.md).
 
 ### Commands that prove a change
 
-```
+```bash
 python3 scripts/dfe-stack suite --cycles        # the build graph and its gates
 python3 scripts/dfe-stack render                # the stack manifest
 bash scripts/validate-charts.sh                 # chart lint and render

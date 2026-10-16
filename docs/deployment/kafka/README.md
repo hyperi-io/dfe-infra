@@ -66,7 +66,7 @@ not a knob per topic. Rationale below each; sources at the end.
 record batch AFTER compression. It must line up across four layers or you get
 producer rejects or consumer stalls:
 
-```
+```text
 producer max.request.size / batch.size   (scalo throughput: batch 128 KiB)
   <=  broker  message.max.bytes           (~1 MiB default)
   ==  topic   max.message.bytes           (inherits the broker default)

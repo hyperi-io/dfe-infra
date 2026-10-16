@@ -134,7 +134,7 @@ never sizes.
 
 The two refusals share one guard in `dfe-clickhouse.validateStorageModel`:
 
-```
+```text
 clickhouse.storageModel=cached-object is meaningless with mode=external --
 the supplied ClickHouse owns its own storage
 ```

@@ -120,5 +120,5 @@ built as part of this workstream.
 ## Status
 
 DESIGN ARTIFACT for review (2026-08-18). The de-hardcoding CODE AUDIT across charts
-+ bootstrap, and the actual EKS/AKS/GKE overlays, are the deferred follow-up -- to
+\+ bootstrap, and the actual EKS/AKS/GKE overlays, are the deferred follow-up -- to
 be sequenced after this matrix is signed off.

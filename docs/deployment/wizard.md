@@ -7,7 +7,7 @@ every non-trivial answer is validated by calling `render_dial.py`'s or
 `resolve_sizing.py`'s own functions -- there is no second copy of their
 rules to drift out of step.
 
-```
+```bash
 python3 scripts/dfe-ops init                          # interactive
 python3 scripts/dfe-ops init --answers answers.env     # non-interactive (CI)
 python3 scripts/dfe-ops init --dry-run                 # print the dial, write nothing

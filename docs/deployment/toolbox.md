@@ -61,7 +61,7 @@ toolbox:
   ttl_minutes: 60
 ```
 
-```
+```bash
 dfe-ops bastion up [--ttl MIN]      # apply, wait for Online
 dfe-ops bastion join [--ttl MIN]    # REFUSED until hyperi-io/culvert#40 lands
 dfe-ops bastion peers               # the hub's peers and their last handshake

@@ -159,12 +159,14 @@ column you use **dot sub-column access** (`json.path`, `json.^path`,
   `Map(String,String)`. Size the hint for high-cardinality path sets.
 - **Indexing / ORDER BY on sub-columns is supported** - a JSON sub-column can go
   in a data-skipping index or (via a typed hint) a primary/partition key:
+
   ```sql
   CREATE TABLE sensor_data (
       data JSON(sensor_id UInt32),
       INDEX idx_sensor data.sensor_id TYPE minmax GRANULARITY 1
   ) ENGINE = MergeTree ORDER BY tuple();
   ```
+
   Also index by structure with `INDEX idx JSONAllPaths(data) TYPE bloom_filter`.
 - **Perf trade-offs the docs call out:** slower INSERTs (path splitting + type
   inference), slower when reading *entire* objects vs a plain `String`, storage

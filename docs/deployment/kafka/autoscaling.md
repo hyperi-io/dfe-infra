@@ -68,7 +68,7 @@ back to Cruise Control's untouched default.
 
 **Argo.** KEDA owns the `KafkaNodePool`'s `spec.replicas` once scaling, so
 Argo's `selfHeal` must not revert it as drift -- the same `ignoreDifferences`
-+ `RespectIgnoreDifferences=true` pattern `dfe-layer2-apps` uses for
+\+ `RespectIgnoreDifferences=true` pattern `dfe-layer2-apps` uses for
 Deployment replicas. The kafka chart's Application lives in
 `argocd/appsets/layer2-data.yaml` (`dfe-layer2-data`), not `layer-scale.yaml`
 (Strimzi operator only), and carries that `ignoreDifferences` entry on
