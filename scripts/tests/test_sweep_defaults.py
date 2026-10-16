@@ -6,17 +6,18 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Tests for config/defaults.yaml's `sweep.slack` block.
+"""Tests for config/defaults.yaml's `sweep.slack` and `sweep.labels` blocks.
 
-dfe-sweep refuses to run when `slack.title` or `slack.timezone` resolves to nothing
-usable, and the committed defaults are the layer every run falls back to. The file is
-read here as YAML, the way scalo's cascade reads it, and each value goes through the
-validator the CLI applies to it.
+dfe-sweep refuses to run when `slack.title`, `slack.timezone` or the `labels` command
+resolves to nothing usable, and the committed defaults are the layer every run falls back
+to. The file is read here as YAML, the way scalo's cascade reads it, and each value goes
+through the validator the CLI applies to it.
 
     python3 -m pytest scripts/tests/test_sweep_defaults.py -q
 """
 
 import importlib.util
+import re
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -55,6 +56,17 @@ def test_the_defaults_name_a_slack_timezone_the_cli_accepts() -> None:
     assert isinstance(zone, str), zone
     assert zone.strip(), zone
     assert cli._slack_zone(zone) is not None
+
+
+def test_the_defaults_name_a_pinned_label_standard_the_cli_accepts() -> None:
+    """The whole committed section passes the CLI's own checks, the label command included."""
+    settings = yaml.safe_load(DEFAULTS.read_text(encoding="utf-8"))[cli.SECTION]
+    options = cli.effective(settings, cli.build_parser().parse_args([]))
+    assert options.labels_command[0] == "uvx"
+    pins = [p for p in options.labels_command if re.fullmatch(r"hyperi-ci==\d+\.\d+\.\d+", p)]
+    assert len(pins) == 1, options.labels_command
+    assert options.labels_blocker == "release-blocker"
+    assert options.labels_timeout >= 60, "a first run downloads hyperi-ci"
 
 
 def test_the_defaults_sweep_the_tools_topic_the_cli_accepts() -> None:
