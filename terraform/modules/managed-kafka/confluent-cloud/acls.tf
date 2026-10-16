@@ -61,16 +61,14 @@ resource "confluent_role_binding" "manager" {
 
 resource "confluent_api_key" "manager" {
   // The role binding has to land before this key writes anything, which also
-  // orders every topic and ACL below behind it. The endpoint has to route
-  // before the provider's wait lists topics with the key.
-  depends_on = [confluent_role_binding.manager, terraform_data.rest_ready]
+  // orders every topic and ACL below behind it.
+  depends_on = [confluent_role_binding.manager]
 
   display_name = "${var.name}-manager-kafka-api-key"
   description  = "Kafka API key for the ${var.name} manager service account"
 
-  // A private cluster answers no readiness probe from outside its network, so
-  // the provider's wait would time out on a cluster that is in fact fine.
-  disable_wait_for_ready = local.private
+  // The provider's wait fails the apply on the first reset its retries do not outlast, so terraform_data.rest_ready waits for this key instead wherever the deployer can reach the endpoint.
+  disable_wait_for_ready = true
 
   owner {
     id          = confluent_service_account.manager.id
@@ -99,9 +97,6 @@ resource "confluent_service_account" "dfe" {
 }
 
 resource "confluent_api_key" "dfe" {
-  // No credential is minted for a cluster whose endpoint never routes.
-  depends_on = [terraform_data.rest_ready]
-
   display_name = "${var.name}-${var.service_account_name}-kafka-api-key"
   description  = "SASL PLAIN credential for the DFE fleet on ${var.name}"
 
@@ -132,7 +127,7 @@ resource "confluent_api_key" "dfe" {
 resource "confluent_kafka_acl" "dfe" {
   for_each = local.acls
 
-  // An ACL write fails the apply on its first transport error, so it waits for the route too.
+  // An ACL write fails the apply on a reset or a 401, so it waits for the manager key to answer.
   depends_on = [terraform_data.rest_ready]
 
   kafka_cluster {
@@ -163,7 +158,7 @@ resource "confluent_kafka_acl" "dfe" {
 resource "confluent_kafka_topic" "landing" {
   for_each = var.landing_topics
 
-  // A topic create fails the apply on its first transport error, so it waits for the route too.
+  // A topic create fails the apply on a reset or a 401, so it waits for the manager key to answer.
   depends_on = [terraform_data.rest_ready]
 
   kafka_cluster {

@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_confluent_rest_ready.py
-#  Purpose:      Prove the confluent-cloud body holds its keys, ACLs and topics
-#                behind a probe of the cluster's REST route, and that the probe
-#                counts only handshakes in a row as ready.
+#  Purpose:      Prove the confluent-cloud body holds its ACLs and topics behind
+#                a probe that lists the topics with the manager key, and that
+#                the probe counts only HTTP 200s in a row as ready.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The REST route probe in front of a public Confluent cluster.
+"""The REST endpoint probe in front of a public Confluent cluster's writes.
 
-Confluent's shared ingress resets TLS for a cluster it holds no route for, and
-every write over the REST endpoint fails the apply on its first reset, so
-main.tf runs scripts/wait-rest-ready.sh before any of them.
+Confluent's shared ingress resets TLS for a cluster it holds no route for, a key
+the endpoint has not synced gets a 401, and an ACL or topic write fails the apply
+on either, so main.tf runs scripts/wait-rest-ready.sh with the manager key before
+any of them.
 
 contract-confluent-cloud.tftest.hcl proves the probe is planned on public
 connectivity only, and what it targets. Neither a depends_on edge nor a
 provisioner is a resource attribute, so the wiring is read here as HCL. The
 script itself runs against stand-in endpoints on 127.0.0.1 -- one that resets
-connections, one that answers 401 over TLS, and a closed port -- so nothing
-here needs the network.
+connections, one that answers over TLS, and a closed port -- so nothing here
+needs the network.
 
     python3 -m pytest scripts/tests/test_confluent_rest_ready.py -q
 """
 
+import base64
 import contextlib
 import os
 import shutil
@@ -45,16 +47,20 @@ SCRIPT = BODY / "scripts" / "wait-rest-ready.sh"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import check_tofu_literals  # noqa: E402
+import render_dial  # noqa: E402
 
-# Every resource that writes over the REST endpoint, or mints a credential for it.
+# Every resource that writes over the REST endpoint.
 REST_WRITERS = (
-    ("confluent_api_key", "manager"),
-    ("confluent_api_key", "dfe"),
     ("confluent_kafka_acl", "dfe"),
     ("confluent_kafka_topic", "landing"),
 )
 
-# What the endpoint answers a request carrying no credential.
+# A stand-in credential, in the shape Confluent issues one.
+KEY = "TESTKEY0000000AB"
+SECRET = "stand-in+secret/for+the+probe/only00000000000000000000000000000"
+WRONG_SECRET = "not-the-stand-in-secret"
+
+OK = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
 UNAUTHORISED = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 
 
@@ -84,22 +90,11 @@ def _expression(block: check_tofu_literals.Block, name: str) -> str:
 
 
 def _depends_on(kind: str, name: str) -> list[str]:
-    """The addresses a resource's depends_on names."""
-    return _expression(_resource(kind, name), "depends_on").strip("[]").split(",")
-
-
-def _local_number(name: str) -> int:
-    """The literal number a named local of the body holds."""
-    for block in _blocks():
-        if block.kind != "locals":
-            continue
-        for attribute in block.attributes:
-            if attribute.name == name:
-                value = [token for token in attribute.tokens if token.kind != "newline"]
-                if len(value) != 1 or value[0].kind != "number":
-                    raise ValueError(f"local.{name} is not a literal number")
-                return int(value[0].text)
-    raise LookupError(f"local.{name} is set in no locals block of {BODY}")
+    """The addresses a resource's depends_on names, or none when it sets no depends_on."""
+    block = _resource(kind, name)
+    if not any(attribute.name == "depends_on" for attribute in block.attributes):
+        return []
+    return _expression(block, "depends_on").strip("[]").split(",")
 
 
 def _provisioner() -> check_tofu_literals.Block:
@@ -121,7 +116,23 @@ def test_every_write_over_the_rest_endpoint_waits_for_the_probe() -> None:
         for kind, name in REST_WRITERS
         if "terraform_data.rest_ready" not in _depends_on(kind, name)
     ]
-    assert missing == [], f"{missing} can reach the REST endpoint before its route exists"
+    assert missing == [], f"{missing} can reach the REST endpoint before it answers the manager key"
+
+
+def test_no_key_waits_for_the_probe() -> None:
+    """The probe signs in with the manager key, so the keys come first."""
+    waiting = [
+        name
+        for name in ("manager", "dfe")
+        if "terraform_data.rest_ready" in _depends_on("confluent_api_key", name)
+    ]
+    assert waiting == [], f"confluent_api_key {waiting} waits on a probe that needs a key to run"
+
+
+def test_neither_key_takes_the_providers_wait() -> None:
+    """The provider's wait fails the apply on one reset its retries do not outlast."""
+    for name in ("manager", "dfe"):
+        assert _expression(_resource("confluent_api_key", name), "disable_wait_for_ready") == "true"
 
 
 def test_the_manager_key_still_waits_for_its_role_binding() -> None:
@@ -139,21 +150,27 @@ def test_the_probe_hands_the_script_its_arguments_in_order() -> None:
     assert "scripts/wait-rest-ready.sh" in command
     arguments = (
         '"${self.output.url}"'
-        "${local.rest_ready_handshakes}"
-        "${local.rest_ready_timeout_seconds}"
-        "${local.rest_ready_interval_seconds}"
+        "${var.rest_ready.successes}"
+        "${var.rest_ready.timeout_seconds}"
+        "${var.rest_ready.interval_seconds}"
     )
     # Compared without spaces: the order is what the script reads, not the spacing.
     assert arguments in command.replace(" ", ""), command
 
 
-def test_the_probe_constants_can_succeed_inside_their_own_bound() -> None:
-    handshakes = _local_number("rest_ready_handshakes")
-    timeout = _local_number("rest_ready_timeout_seconds")
-    interval = _local_number("rest_ready_interval_seconds")
-    assert handshakes > 1, "one handshake proves one load balancer has the route, not all of them"
-    assert interval > 0, "back-to-back attempts can land on the same load balancer"
-    assert handshakes * interval < timeout
+def test_the_manager_key_reaches_the_probe_through_the_environment_alone() -> None:
+    command = _expression(_provisioner(), "command")
+    assert "confluent_api_key" not in command, "a credential on the command line shows in a process listing"
+    environment = _expression(_provisioner(), "environment")
+    assert "CONFLUENT_REST_KEY=confluent_api_key.manager.id" in environment, environment
+    assert "CONFLUENT_REST_SECRET=confluent_api_key.manager.secret" in environment, environment
+
+
+def test_the_rendered_wait_can_succeed_inside_its_own_bound() -> None:
+    wait = render_dial.CONFLUENT_REST_READY_DEFAULTS
+    assert wait["successes"] > 1, "one answer proves one load balancer has the route, not all of them"
+    assert wait["interval_seconds"] > 0, "back-to-back attempts can land on the same load balancer"
+    assert wait["successes"] * wait["interval_seconds"] < wait["timeout_seconds"]
 
 
 @pytest.fixture(scope="module")
@@ -189,8 +206,18 @@ def _reset(conn: socket.socket) -> None:
     conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
 
 
-def _answer(conn: socket.socket, context: ssl.SSLContext) -> None:
-    """Complete the handshake and answer 401, as the endpoint answers a request with no credential."""
+def _authorised(request: bytes) -> bool:
+    """Whether the request carries the stand-in key as HTTP basic auth."""
+    expected = base64.b64encode(f"{KEY}:{SECRET}".encode()).decode()
+    for line in request.decode("latin-1").split("\r\n")[1:]:
+        name, _, value = line.partition(":")
+        if name.strip().lower() == "authorization":
+            return value.strip() == f"Basic {expected}"
+    return False
+
+
+def _answer(conn: socket.socket, context: ssl.SSLContext, synced: bool) -> None:
+    """Complete the handshake and answer 200 to the stand-in key, or 401 while it is not synced."""
     # A client that refuses the certificate ends the handshake, and that is its whole answer.
     with contextlib.suppress(OSError), context.wrap_socket(conn, server_side=True) as stream:
         request = b""
@@ -199,15 +226,16 @@ def _answer(conn: socket.socket, context: ssl.SSLContext) -> None:
             if not chunk:
                 return
             request += chunk
-        stream.sendall(UNAUTHORISED)
+        stream.sendall(OK if synced and _authorised(request) else UNAUTHORISED)
 
 
 @contextlib.contextmanager
 def endpoint(context: ssl.SSLContext, plan: list[str]) -> Iterator[tuple[int, list[str]]]:
-    """A stand-in REST endpoint that resets or answers each connection in `plan` order.
+    """A stand-in REST endpoint that resets, refuses or answers each connection in `plan` order.
 
-    Every connection past the end of `plan` is answered. Yields the port and the
-    list of what each connection got, in arrival order.
+    "reset" drops the connection, "unsynced" answers 401 whatever the request
+    carries, and "answer" checks the credential. Every connection past the end
+    of `plan` is answered. Yields the port and what each connection got.
     """
     listener = socket.create_server(("127.0.0.1", 0))
     listener.settimeout(0.1)
@@ -227,7 +255,7 @@ def endpoint(context: ssl.SSLContext, plan: list[str]) -> Iterator[tuple[int, li
                 if action == "reset":
                     _reset(conn)
                 else:
-                    _answer(conn, context)
+                    _answer(conn, context, synced=action == "answer")
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -239,10 +267,17 @@ def endpoint(context: ssl.SSLContext, plan: list[str]) -> Iterator[tuple[int, li
         listener.close()
 
 
-def _env(ca: Path | None = None, curl_home: Path | None = None) -> dict[str, str]:
-    """This process's environment, with curl's trust store and rc file set by the test alone."""
+def _env(
+    ca: Path | None = None,
+    curl_home: Path | None = None,
+    key: str | None = KEY,
+    secret: str | None = SECRET,
+    path: Path | None = None,
+) -> dict[str, str]:
+    """This process's environment, with curl's trust store, rc file and the credential set by the test alone."""
     env = dict(os.environ)
-    for name in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_HOME"):
+    for name in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_HOME",
+                 "CONFLUENT_REST_KEY", "CONFLUENT_REST_SECRET"):
         env.pop(name, None)
     # The stand-ins sit on 127.0.0.1, which no proxy the runner sets may intercept.
     env["NO_PROXY"] = env["no_proxy"] = "*"
@@ -250,11 +285,22 @@ def _env(ca: Path | None = None, curl_home: Path | None = None) -> dict[str, str
         env["CURL_CA_BUNDLE"] = str(ca)
     if curl_home is not None:
         env["CURL_HOME"] = str(curl_home)
+    if key is not None:
+        env["CONFLUENT_REST_KEY"] = key
+    if secret is not None:
+        env["CONFLUENT_REST_SECRET"] = secret
+    if path is not None:
+        env["PATH"] = f"{path}{os.pathsep}{env.get('PATH', '')}"
     return env
 
 
 def run_probe(
-    *args: str, ca: Path | None = None, curl_home: Path | None = None
+    *args: str,
+    ca: Path | None = None,
+    curl_home: Path | None = None,
+    key: str | None = KEY,
+    secret: str | None = SECRET,
+    path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """wait-rest-ready.sh with these arguments, bounded so a hang fails the test."""
     return subprocess.run(
@@ -263,23 +309,35 @@ def run_probe(
         text=True,
         encoding="utf-8",
         errors="replace",
-        env=_env(ca, curl_home),
+        env=_env(ca, curl_home, key, secret, path),
         timeout=60,
         check=False,
     )
 
 
 def _url(port: int) -> str:
-    return f"https://127.0.0.1:{port}/kafka/v3/clusters/lkc-000000"
+    return f"https://127.0.0.1:{port}/kafka/v3/clusters/lkc-000000/topics"
 
 
-def test_a_401_over_tls_is_a_routed_endpoint(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_a_200_for_the_key_is_a_ready_endpoint(tls: tuple[ssl.SSLContext, Path]) -> None:
     context, ca = tls
     with endpoint(context, []) as (port, served):
         out = run_probe(_url(port), "3", "30", "0", ca=ca)
     assert out.returncode == 0, out.stdout + out.stderr
-    assert served == ["answer"] * 3, "it stops at the third handshake in a row"
-    assert "HTTP 401 from 127.0.0.1 (3/3 in a row)" in out.stdout, out.stdout
+    assert served == ["answer"] * 3, "it stops at the third 200 in a row"
+    assert "HTTP 200 from 127.0.0.1 (3/3 in a row)" in out.stdout, out.stdout
+
+
+def test_a_401_is_not_ready_and_starts_the_count_again(tls: tuple[ssl.SSLContext, Path]) -> None:
+    """A routed endpoint that has not synced the key answers 401, which no write survives."""
+    context, ca = tls
+    with endpoint(context, ["answer", "unsynced", "answer"]) as (port, served):
+        out = run_probe(_url(port), "2", "30", "0", ca=ca)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert served == ["answer", "unsynced", "answer", "answer"], served
+    second = [line for line in out.stdout.splitlines() if " attempt 2: " in line]
+    assert second, out.stdout
+    assert second[0].endswith("HTTP 401 from 127.0.0.1 (0/2 in a row)"), out.stdout
 
 
 def test_a_reset_starts_the_count_again(tls: tuple[ssl.SSLContext, Path]) -> None:
@@ -305,8 +363,25 @@ def test_an_endpoint_that_keeps_resetting_fails_at_the_bound_and_names_the_host(
     assert out.returncode == 1, out.stdout + out.stderr
     assert len(served) >= 2, "it retries a reset rather than failing on the first one"
     assert "Connection reset by peer" in out.stdout, out.stdout
-    assert "127.0.0.1 did not answer 3 TLS handshakes in a row within 3s" in out.stderr, out.stderr
+    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 3s" in out.stderr, out.stderr
     assert elapsed < 20, f"a 3s bound took {elapsed:.0f}s"
+
+
+def test_a_key_that_never_syncs_fails_at_the_bound(tls: tuple[ssl.SSLContext, Path]) -> None:
+    context, ca = tls
+    with endpoint(context, ["unsynced"] * 50) as (port, _served):
+        out = run_probe(_url(port), "2", "3", "1", ca=ca)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "last: HTTP 401 from 127.0.0.1" in out.stderr, out.stderr
+
+
+def test_a_wrong_key_is_not_ready(tls: tuple[ssl.SSLContext, Path]) -> None:
+    """The stand-in answers 200 to the stand-in key alone, so a pass proves the key was sent."""
+    context, ca = tls
+    with endpoint(context, []) as (port, _served):
+        out = run_probe(_url(port), "1", "2", "1", ca=ca, secret=WRONG_SECRET)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "HTTP 401" in out.stdout, out.stdout
 
 
 def test_a_closed_port_fails_at_the_bound() -> None:
@@ -315,10 +390,10 @@ def test_a_closed_port_fails_at_the_bound() -> None:
     out = run_probe(_url(port), "3", "2", "1")
     assert out.returncode == 1, out.stdout + out.stderr
     assert "attempt 2: " in out.stdout, out.stdout
-    assert "127.0.0.1 did not answer 3 TLS handshakes in a row within 2s" in out.stderr, out.stderr
+    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 2s" in out.stderr, out.stderr
 
 
-def test_an_untrusted_certificate_is_not_a_handshake(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_an_untrusted_certificate_is_not_an_answer(tls: tuple[ssl.SSLContext, Path]) -> None:
     """The probe verifies the endpoint, so a certificate curl cannot trust is a failure."""
     context, _ = tls
     with endpoint(context, []) as (port, served):
@@ -328,11 +403,12 @@ def test_an_untrusted_certificate_is_not_a_handshake(tls: tuple[ssl.SSLContext, 
     assert "certificate" in out.stdout, out.stdout
 
 
-def test_a_curlrc_cannot_turn_the_401_into_a_failure(
-    tls: tuple[ssl.SSLContext, Path], tmp_path: Path
-) -> None:
+def test_a_curlrc_cannot_reach_the_probe(tls: tuple[ssl.SSLContext, Path], tmp_path: Path) -> None:
     context, ca = tls
-    (tmp_path / ".curlrc").write_text("--fail\n", encoding="utf-8", newline="\n")
+    # Every connection sent to a closed port, which the probe must never read.
+    (tmp_path / ".curlrc").write_text(
+        '--connect-to "::127.0.0.1:1"\n', encoding="utf-8", newline="\n"
+    )
     with endpoint(context, []) as (port, _served):
         bare = subprocess.run(
             ["curl", "--silent", "--output", "/dev/null", _url(port)],
@@ -341,8 +417,33 @@ def test_a_curlrc_cannot_turn_the_401_into_a_failure(
             check=False,
         )
         out = run_probe(_url(port), "1", "3", "1", ca=ca, curl_home=tmp_path)
-    assert bare.returncode == 22, "the rc file is read, so it fails a curl that does not skip it"
+    assert bare.returncode == 7, "the rc file is read, so it misroutes a curl that does not skip it"
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_the_secret_is_never_an_argument_and_never_printed(
+    tls: tuple[ssl.SSLContext, Path], tmp_path: Path
+) -> None:
+    """A curl on PATH ahead of the real one records every argument it is handed."""
+    context, ca = tls
+    real = shutil.which("curl")
+    assert real, "curl is on PATH"
+    argv = tmp_path / "argv"
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "curl").write_text(
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "$@" >> "{argv}"\nexec "{real}" "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    (shim / "curl").chmod(0o755)
+    with endpoint(context, ["unsynced", "reset"]) as (port, _served):
+        out = run_probe(_url(port), "2", "30", "0", ca=ca, path=shim)
+    assert out.returncode == 0, out.stdout + out.stderr
+    recorded = argv.read_text(encoding="utf-8")
+    assert "--config" in recorded, "the shim saw the probe's curl"
+    assert SECRET not in recorded, "the secret sat in curl's argument list"
+    assert SECRET not in out.stdout + out.stderr, "the secret reached the probe's output"
 
 
 @pytest.mark.parametrize(
@@ -360,3 +461,25 @@ def test_bad_arguments_are_refused_before_any_attempt(args: tuple[str, ...]) -> 
     assert out.returncode == 1, out.stdout + out.stderr
     assert out.stdout == "", "no attempt is made on arguments it cannot use"
     assert out.stderr.startswith("wait-rest-ready: "), out.stderr
+
+
+@pytest.mark.parametrize(
+    ("key", "secret"),
+    [
+        (None, SECRET),
+        (KEY, None),
+        (KEY, ""),
+        (KEY, 'with"quote'),
+        (KEY, "with\\backslash"),
+        (KEY, "with\nnewline"),
+    ],
+)
+def test_a_missing_or_unsafe_credential_is_refused_before_any_attempt(
+    key: str | None, secret: str | None
+) -> None:
+    out = run_probe("https://127.0.0.1:1/", "3", "900", "5", key=key, secret=secret)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert out.stdout == "", "no attempt is made with a credential it cannot send"
+    assert out.stderr.startswith("wait-rest-ready: "), out.stderr
+    if secret:
+        assert secret not in out.stderr, "the refusal names the problem, never the secret"

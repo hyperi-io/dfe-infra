@@ -368,6 +368,7 @@ module "confluent" {
   connectivity   = var.kafka.connectivity
   region         = var.provision.region
   environment_id = var.kafka.confluent_environment_id
+  rest_ready     = var.kafka.confluent_rest_ready
 
   // The same canonical tuning msk applies, and the same landing topics its
   // own bootstrap Job would create -- this body has none, so tofu creates
