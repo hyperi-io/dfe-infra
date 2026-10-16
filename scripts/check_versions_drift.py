@@ -577,6 +577,7 @@ _PROVIDER_MIRRORS = [
             "terraform/modules/secrets/aws-sm/versions.tf",
             "terraform/modules/toolbox/aws/versions.tf",
             "terraform/modules/edge/aws/versions.tf",
+            "terraform/modules/registry-cache/aws/versions.tf",
             "terraform/environments/aws/versions.tf",
             "terraform/environments/aws-state/versions.tf",
         ],

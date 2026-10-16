@@ -1324,6 +1324,67 @@ def _toolbox(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
+# Rule prefix -> (the URL ECR's CreatePullThroughCacheRule takes, the image host), for the
+# upstreams ECR caches with no credential.
+_REGISTRY_CACHE_UPSTREAMS: dict[str, tuple[str, str]] = {
+    "quay": ("quay.io", "quay.io"),
+    "k8s": ("registry.k8s.io", "registry.k8s.io"),
+    "ecr-public": ("public.ecr.aws", "public.ecr.aws"),
+}
+
+# The same, for the upstreams ECR caches only through a Secrets Manager credential the dial names.
+_REGISTRY_CACHE_CREDENTIALED: dict[str, tuple[str, str]] = {
+    "docker-hub": ("registry-1.docker.io", "docker.io"),
+    "ghcr": ("ghcr.io", "ghcr.io"),
+}
+
+# Days a cached image outlives its last pull when the dial names none.
+REGISTRY_CACHE_PULL_EXPIRY_DAYS = 90
+
+
+def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
+    """registry_cache.* -- the pull-through cache, off unless the dial turns it on.
+
+    The upstreams that need no credential are always rendered. A credentialed upstream is
+    rendered only when registry_cache.credentials names its secret, so with none its images
+    pull straight from the upstream.
+    """
+    credentials = _node(dial, ("registry_cache", "credentials"))
+    unknown = sorted(set(credentials) - set(_REGISTRY_CACHE_CREDENTIALED))
+    if unknown:
+        raise DialError(
+            f"registry_cache.credentials names {', '.join(unknown)}, which the cache takes no "
+            f"credential for -- the upstreams that take one are "
+            f"{', '.join(_REGISTRY_CACHE_CREDENTIALED)}"
+        )
+    upstreams: dict[str, dict[str, object]] = {
+        prefix: {
+            "upstream_url": url,
+            "host": host,
+            "requires_credential": False,
+            "credential_arn": "",
+        }
+        for prefix, (url, host) in _REGISTRY_CACHE_UPSTREAMS.items()
+    }
+    for prefix, (url, host) in _REGISTRY_CACHE_CREDENTIALED.items():
+        credential_arn = _text(dial, ("registry_cache", "credentials", prefix))
+        if credential_arn:
+            upstreams[prefix] = {
+                "upstream_url": url,
+                "host": host,
+                "requires_credential": True,
+                "credential_arn": credential_arn,
+            }
+    return {
+        "enabled": _flag(dial, ("registry_cache", "enabled"), default=False),
+        "namespace": _text(dial, ("registry_cache", "namespace")),
+        "pull_expiry_days": _optional_number(
+            dial, ("registry_cache", "pull_expiry_days"), REGISTRY_CACHE_PULL_EXPIRY_DAYS
+        ),
+        "upstreams": upstreams,
+    }
+
+
 def _saas_kafka_settings(
     dial: dict[str, object], provider: str, message_max_bytes: int
 ) -> dict[str, str]:
@@ -1710,6 +1771,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         },
         "tags": _tags(dial, cloud),
         "toolbox": _toolbox(dial),
+        **({"registry_cache": _registry_cache(dial)} if cloud == "aws" else {}),
         "edge": _edge(dial),
         # A variable of its own, beside the guarded run's edge_self_ranges, which
         # this render never writes because the dial carries no such fact.

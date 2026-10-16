@@ -304,6 +304,13 @@ variable "s3_bucket_prefix" {
   default     = ""
 }
 
+variable "node_user_data" {
+  description = "A shell script every managed node runs before kubelet starts, wrapped in the MIME part EKS merges ahead of its own NodeConfig: the root passes the registry-cache module's containerd mirror script. Empty (the default) adds none. A node group that gains its first launch template is replaced."
+  type        = string
+  default     = ""
+  nullable    = false
+}
+
 variable "controller_tags" {
   description = "Tags the EKS add-ons put on what they create themselves -- the EBS CSI driver's volumes and the VPC CNI's pod network interfaces -- which the provider's default_tags never sees. Empty (the default) leaves both add-ons' configuration exactly as it was. The aws root passes a test run's id and expiry here."
   type        = map(string)

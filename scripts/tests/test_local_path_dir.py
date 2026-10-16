@@ -152,7 +152,10 @@ HELPER_TEMPLATE = BOOTSTRAP / "templates" / "local-path-helper-pod.yaml"
 
 
 def test_the_helper_pod_template_is_upstreams_with_only_the_image_pinned():
-    """bootstrap.sh writes this over upstream's, so any other difference is a fork."""
+    """bootstrap.sh writes this over upstream's, so any other difference is a fork.
+
+    The image is upstream's Docker Official Image, read from its public.ecr.aws mirror.
+    """
     lines = [
         line for line in HELPER_TEMPLATE.read_text(encoding="utf-8").splitlines()
         if not line.startswith("#")
@@ -160,7 +163,7 @@ def test_the_helper_pod_template_is_upstreams_with_only_the_image_pinned():
     image = [i for i, line in enumerate(lines) if line.strip().startswith("image:")]
     assert len(image) == 1
     pinned = lines[image[0]].split("image:", 1)[1].strip()
-    assert pinned.startswith("docker.io/library/busybox:")
+    assert pinned.startswith("public.ecr.aws/docker/library/busybox:")
     assert "@sha256:" in pinned
     lines[image[0]] = "    image: docker.io/library/busybox"
     assert "\n".join(lines) == UPSTREAM_HELPER_POD

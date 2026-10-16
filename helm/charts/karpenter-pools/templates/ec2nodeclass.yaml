@@ -19,6 +19,11 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: {{ $k.cluster.instanceProfile | quote }}
+  {{- with $k.cluster.userData }}
+  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  userData: |
+    {{- b64dec . | nindent 4 }}
+  {{- end }}
   {{- with $k.tags }}
   tags:
     {{- toYaml . | nindent 4 }}

@@ -59,6 +59,7 @@ managed endpoint.
 | Edge LoadBalancer | `envoyGateway.service` type=LoadBalancer | MetalLB | NLB | Azure LB | GCP LB |
 | Object store | S3-compatible endpoint + creds | MinIO / Ceph RGW | S3 | Blob (S3 API) | GCS (S3 API) |
 | Container registry | `global.registry`, plus a pull secret for a private mirror | Harbor | ECR | ACR | GAR |
+| Image pull cache | containerd mirror per upstream | not built | ECR pull-through cache | ACR artifact cache (not built) | AR remote repos (not built) |
 | StorageClass / CSI | `storageClass` (empty -> cluster default) | local-path / Longhorn | EBS | Azure Disk | PD |
 | Workload identity | ServiceAccount annotations | static creds (OpenBao) | EKS Pod Identity (no annotation) | Azure Workload Identity | GKE Workload Identity |
 | etcd-at-rest KMS | cluster EncryptionConfiguration provider | secretbox / aescbc | KMS | Key Vault KMS | Cloud KMS |

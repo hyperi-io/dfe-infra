@@ -277,7 +277,8 @@ def test_a_digest_pinned_image_is_read_by_its_digest() -> None:
     refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
     expect(
         "the deployed tag@digest is what the registry is asked about",
-        ("services.busybox", f"docker.io/library/busybox:1.38.0@{_BUSYBOX_DIGEST}") in refs,
+        ("services.busybox", f"public.ecr.aws/docker/library/busybox:1.38.0@{_BUSYBOX_DIGEST}")
+        in refs,
         f"{refs}",
     )
     expect("and nothing is broken", broken == [], f"{broken}")

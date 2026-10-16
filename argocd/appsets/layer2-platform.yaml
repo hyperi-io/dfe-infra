@@ -253,6 +253,8 @@ spec:
                   discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
                   instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
                   kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
+                  # The registry cache's node script, base64; absent renders no userData.
+                  userData: {{ index .metadata.annotations "dfe.hyperi.io/node_user_data" | default "" | quote }}
                 {{- if $pools }}
                 # The pools the resolver sized, carried as one line of JSON on
                 # the cluster secret. Parsed rather than spliced, so an

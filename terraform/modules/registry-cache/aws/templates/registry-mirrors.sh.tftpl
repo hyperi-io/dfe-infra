@@ -1,0 +1,66 @@
+#!/bin/bash
+# Points containerd at the deployment's ECR pull-through cache, one mirror per
+# upstream registry, with the upstream itself as the fallback. Runs before
+# kubelet starts (nodeadm-run.service is After=cloud-final.service).
+set -euo pipefail
+
+cat > /usr/local/sbin/dfe-registry-mirrors <<'SCRIPT'
+#!/bin/bash
+# The Authorization header rides the mirror entry alone, so the upstream fallback stays anonymous.
+set -euo pipefail
+umask 077
+token="$(aws ecr get-login-password --region '${region}')"
+auth="$(printf 'AWS:%s' "$token" | base64 -w0)"
+
+mirror() {
+  dir="/etc/containerd/certs.d/$1"
+  mkdir -p "$dir"
+  tmp="$(mktemp "$dir/.hosts.toml.XXXXXX")"
+  cat > "$tmp" <<EOF
+server = "$2"
+
+[host."$3"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+
+[host."$3".header]
+  Authorization = "Basic $auth"
+EOF
+  mv -f "$tmp" "$dir/hosts.toml"
+}
+
+%{ for m in mirrors ~}
+mirror '${m.host}' '${m.server}' '${m.endpoint}'
+%{ endfor ~}
+SCRIPT
+chmod 0700 /usr/local/sbin/dfe-registry-mirrors
+
+cat > /etc/systemd/system/dfe-registry-mirrors.service <<'UNIT'
+[Unit]
+Description=Write containerd's ECR registry mirrors with a fresh token
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dfe-registry-mirrors
+UNIT
+
+# An ECR token lasts 12 hours, so it is refreshed at half that.
+cat > /etc/systemd/system/dfe-registry-mirrors.timer <<'UNIT'
+[Unit]
+Description=Refresh the ECR token on containerd's registry mirrors
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now dfe-registry-mirrors.timer
+
+# With no token the node keeps pulling from the upstream registries.
+/usr/local/sbin/dfe-registry-mirrors || echo "dfe-registry-mirrors: no ECR token yet, pulling from the upstream registries" >&2

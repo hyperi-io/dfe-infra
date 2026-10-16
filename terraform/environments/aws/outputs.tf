@@ -266,6 +266,20 @@ output "DFE_KARPENTER_KMS_KEY_ID" {
   value       = module.cluster.kms_key_arn
 }
 
+output "DFE_NODE_USER_DATA" {
+  description = "The registry cache's containerd mirror script, base64, which every managed node already runs. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/node_user_data annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.userData so Karpenter's nodes run it too. Empty when nothing is cached."
+  value       = local.node_user_data == "" ? "" : base64encode(local.node_user_data)
+}
+
+output "registry_cache" {
+  description = "Where the nodes pull their images through: the ECR registry, each cached registry host's path in it, and the upstreams pulled directly because no credential was named. Empty when the cache is off."
+  value = {
+    registry = join("", module.registry_cache[*].registry)
+    mirrors  = merge({}, module.registry_cache[*].mirrors...)
+    uncached = flatten(module.registry_cache[*].uncached)
+  }
+}
+
 output "cluster_endpoint" {
   value = module.cluster.cluster_endpoint
 }

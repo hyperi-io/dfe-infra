@@ -138,6 +138,9 @@
 #                            encrypted with, for
 #                            karpenter-pools' karpenter.cluster.kmsKeyId; empty
 #                            omits the annotation (non-AWS clouds)
+#   DFE_NODE_USER_DATA       the registry cache's containerd mirror script,
+#                            base64, for karpenter-pools' karpenter.cluster.userData;
+#                            empty omits the annotation (nothing cached)
 #   DFE_RUN_TAGS             a test run's id and expiry tags as one line of JSON,
 #                            for karpenter-pools' karpenter.tags and the load
 #                            balancer controller's defaultTags; empty omits the
@@ -573,6 +576,9 @@ export DFE_ENGINE_SECRETS_PREFIX="${DFE_ENGINE_SECRETS_PREFIX:-}"
 export DFE_ENGINE_SECRETS_PREFIX_ANNOTATION="${DFE_ENGINE_SECRETS_PREFIX:+dfe.hyperi.io/engine_secrets_prefix: \"${DFE_ENGINE_SECRETS_PREFIX}\"}"
 export DFE_KMS_KEY_ARN="${DFE_KMS_KEY_ARN:-}"
 export DFE_KMS_KEY_ARN_ANNOTATION="${DFE_KMS_KEY_ARN:+dfe.hyperi.io/kms_key_arn: \"${DFE_KMS_KEY_ARN}\"}"
+# The registry cache's node script, base64, rendered only when the cloud root caches anything.
+export DFE_NODE_USER_DATA="${DFE_NODE_USER_DATA:-}"
+export DFE_NODE_USER_DATA_ANNOTATION="${DFE_NODE_USER_DATA:+dfe.hyperi.io/node_user_data: \"${DFE_NODE_USER_DATA}\"}"
 # The in-cluster toolbox pod's dial facts (deployment.yaml's toolbox.pod.*,
 # render_dial.py's DFE_TOOLBOX_POD_* keys). Unlike the karpenter facts above,
 # these are not conditional on AWS -- the chart deploys on every cloud -- so

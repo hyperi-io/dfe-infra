@@ -71,6 +71,34 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 - Named in a chart render but never pulled, so not checked: Envoy Gateway's rate-limit image (the gateway uses only `rateLimit.local`), cert-manager's ACME HTTP-01 solver (every issuer here solves DNS-01), and Strimzi's Kafka Bridge, Kafka Connect build and other-version Kafka images (no chart renders a KafkaBridge or KafkaConnect, and the Kafka resource names only `services.kafka-version`).
 - The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
 
+## Registry cache
+
+An ECR pull-through cache in the deployment's own account, which every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through, so those registries' rate limits cannot fail a deploy. None of the three needs a credential. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
+
+- Off by default. `registry_cache.enabled: "true"` in the dial turns it on, and `tofu output registry_cache` lists what is cached.
+- docker.io and ghcr.io images pull straight from upstream, anonymously, since no image the stack pulls needs a credential to read. A Docker Official Image comes from its `public.ecr.aws/docker/library/` mirror instead of docker.io, so the cache covers it.
+- Image references never change: each node writes a containerd mirror per cached host with the upstream as fallback, so a cache that cannot answer costs a retry, never a failed pull. The mirror logs in with the node's own IAM role.
+- Turning it on gives each managed node group its first launch template, which replaces the group.
+- The deploying identity needs ECR's pull-through cache rule and repository creation template actions, `iam:PassRole` to `ecr.amazonaws.com`, and `iam:CreateServiceLinkedRole` for `pullthroughcache.ecr.amazonaws.com` the first time. A permissions boundary on the roles it creates must allow `ecr:BatchImportUpstreamImage`, `ecr:CreateRepository`, `ecr:TagResource` and `kms:RetireGrant`.
+- `code.forgejo.org` and `docker.redpanda.com` have no ECR rule type. Helm charts are fetched by Argo CD and bootstrap, not nodes, and stay on their own registries.
+- Destroy deletes every repository ECR created under the deployment's rules.
+
+### Optional: cache docker.io and ghcr.io too
+
+Not part of the default deploy. ECR caches docker.io and ghcr.io only through a Secrets Manager credential, an AWS rule that holds whether the image is public or not. Where their rate limits bite, name one secret per upstream:
+
+```yaml
+registry_cache:
+  enabled: "true"
+  credentials:
+    docker-hub: "<secret ARN>"   # a Docker Hub username and personal access token
+    ghcr: "<secret ARN>"         # a GitHub username and a classic token with read:packages
+```
+
+- Each secret is named under `ecr-pullthroughcache/`, holds `{"username", "accessToken"}`, and is encrypted with the default `aws/secretsmanager` key. ECR reads no other prefix and supports no customer managed key here.
+- Either key may be left out. An upstream with no secret gets no rule, and its images pull directly.
+- ECR alone reads the secret, when it fetches from the upstream. No node or pod is handed it.
+
 ## Admin UI exposure
 
 [edge.md](edge.md) owns which surface is exposed on which flavour, at which
@@ -140,7 +168,7 @@ tier, by which dial key. What is AWS's own:
   account defaults -- the default VPC and everything that comes with it,
   AWS-managed KMS aliases -- are never listed or touched.
 - `--expired` selects resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h), plus any non-default security group with no run tag inside a VPC so selected -- EKS creates its cluster security group untagged and outside tofu state, and the VPC cannot be deleted while it stands. Unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
-- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `karpenter.runInstanceSizes`. Outside a run there is no template, because adding one to an existing node group replaces the group.
+- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `karpenter.runInstanceSizes`. Outside a run there is a template only when the registry cache writes a node script, because adding one to an existing node group replaces the group.
 - Stack, re-size and platform upgrades follow
   [upgrades.md](upgrades.md); the operator order across charts is data,
   not judgement -- `upgrade-order.yaml` at the repo root.

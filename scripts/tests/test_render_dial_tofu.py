@@ -120,6 +120,8 @@ endpoints:
 
 ALLOWED_CIDRS_LINE = "allowed_cidrs: 198.51.100.10/32, 203.0.113.0/24"
 
+GHCR_CREDENTIAL = "arn:aws:secretsmanager:us-west-2:000000000000:secret:ecr-pullthroughcache/ghcr-AbCdEf"
+
 
 def dial(*, drop: str = "", replace: tuple[str, str] | None = None) -> dict[str, object]:
     """Parse the fixture dial, optionally with one line dropped or rewritten."""
@@ -642,8 +644,14 @@ def test_an_unknown_telemetry_sink_is_refused() -> None:
 
 def test_no_pull_secret_input_reaches_tofu() -> None:
     """The pull secret's inputs go from the deployer's environment straight to
-    bootstrap.sh, so a registry credential never lands in tofu state."""
-    assert [key for key in render() if key.startswith("registry")] == []
+    bootstrap.sh, so a registry credential never lands in tofu state. The
+    registry cache names its upstream credentials by Secrets Manager ARN only."""
+    variables = render(
+        replace=("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n")
+    )
+    assert [key for key in variables if key.startswith("registry") and key != "registry_cache"] == []
+    arns = [upstream["credential_arn"] for upstream in variables["registry_cache"]["upstreams"].values()]
+    assert all(arn == "" or arn.startswith("arn:") for arn in arns)
 
 
 def test_the_dials_kubernetes_version_wins_when_it_clears_the_platform_floor() -> None:
@@ -863,3 +871,66 @@ def test_a_nonsense_address_mode_is_refused_by_name() -> None:
     )
     with pytest.raises(render_dial.DialError, match=r"address\.mode"):
         render(replace=bad)
+
+
+def test_the_registry_cache_is_off_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> None:
+    cache = render()["registry_cache"]
+    assert cache["enabled"] is False
+    assert cache["namespace"] == ""
+    assert cache["pull_expiry_days"] == render_dial.REGISTRY_CACHE_PULL_EXPIRY_DAYS
+    assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
+    assert not any(upstream["requires_credential"] for upstream in cache["upstreams"].values())
+    assert all(upstream["credential_arn"] == "" for upstream in cache["upstreams"].values())
+
+
+def test_docker_hub_and_ghcr_are_cached_only_where_the_dial_names_a_credential() -> None:
+    """ECR refuses those two without one, so a dial that names none pulls them directly."""
+    block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n")
+    upstreams = render(replace=block)["registry_cache"]["upstreams"]
+    assert sorted(upstreams) == ["ecr-public", "ghcr", "k8s", "quay"]
+    assert upstreams["ghcr"] == {
+        "upstream_url": "ghcr.io",
+        "host": "ghcr.io",
+        "requires_credential": True,
+        "credential_arn": GHCR_CREDENTIAL,
+    }
+
+
+def test_a_blank_credential_caches_nothing_more() -> None:
+    block = ("profile: scale", "profile: scale\nregistry_cache:\n  credentials:\n    docker-hub: \"\"\n")
+    assert sorted(render(replace=block)["registry_cache"]["upstreams"]) == ["ecr-public", "k8s", "quay"]
+
+
+def test_the_dials_registry_cache_reaches_the_root() -> None:
+    block = (
+        "profile: scale",
+        "profile: scale\nregistry_cache:\n  enabled: \"true\"\n  namespace: dfe-blue\n"
+        "  pull_expiry_days: 30\n",
+    )
+    cache = render(replace=block)["registry_cache"]
+    assert cache["enabled"] is True
+    assert cache["namespace"] == "dfe-blue"
+    assert cache["pull_expiry_days"] == 30
+
+
+def test_a_registry_cache_flag_that_is_not_a_boolean_is_refused_by_name() -> None:
+    block = ("profile: scale", "profile: scale\nregistry_cache:\n  enabled: \"yes\"\n")
+    with pytest.raises(render_dial.DialError, match=r"registry_cache\.enabled"):
+        render(replace=block)
+
+
+def test_a_credential_for_an_upstream_that_takes_none_is_refused_by_name() -> None:
+    """quay.io needs no credential, and a name the cache does not know is a typo."""
+    for name in ("quay", "gitlab"):
+        block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    {name}: arn:aws:example\n")
+        with pytest.raises(render_dial.DialError, match=rf"registry_cache\.credentials names {name}"):
+            render(replace=block)
+
+
+def test_a_cloud_other_than_aws_renders_no_registry_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ECR is the aws body; another cloud's root declares no such variable."""
+    (tmp_path / "gcp").mkdir()
+    monkeypatch.setattr(render_dial, "TOFU_ROOTS", tmp_path)
+    monkeypatch.setattr(render_dial, "_kubernetes_version", lambda _dial, _cloud: "1.36")
+    _, variables = render_dial._tofu_vars(dial(replace=("cloud: aws", "cloud: gcp")))
+    assert "registry_cache" not in variables

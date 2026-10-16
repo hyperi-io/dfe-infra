@@ -115,7 +115,7 @@ DIGEST_PINNED = {
     # helm/charts/clickhouse-cluster's KeeperCluster.
     "services.clickhouse-keeper": "docker.io/clickhouse/clickhouse-keeper",
     # bootstrap/templates/local-path-helper-pod.yaml, written over upstream's untagged helper.
-    "services.busybox": "docker.io/library/busybox",
+    "services.busybox": "public.ecr.aws/docker/library/busybox",
     # The data-plane proxy both EnvoyProxy resources in helm/edge/gateway run.
     "services.envoy-gateway-proxy": "docker.io/envoyproxy/envoy",
     # The image bootstrap/templates/valkey.yaml runs.
