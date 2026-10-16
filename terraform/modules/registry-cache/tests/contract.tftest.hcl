@@ -49,6 +49,7 @@ variables {
     "service-name" = "dfe"
     "environment"  = "test"
     "dfe-e2e"      = "run-1"
+    "expires-at"   = "2026-10-08T12:00:00Z"
   }
 }
 
@@ -145,8 +146,13 @@ run "aws_templates_shape_every_cached_repository" {
   }
 
   assert {
-    condition     = alltrue([for template in aws_ecr_repository_creation_template.this : template.resource_tags["dfe-e2e"] == "run-1"])
-    error_message = "every cached repository must carry the caller's tags, which default_tags never reaches"
+    condition     = alltrue([for template in aws_ecr_repository_creation_template.this : template.resource_tags["dfe-e2e"] == "run-1" && template.resource_tags["expires-at"] == "2026-10-08T12:00:00Z"])
+    error_message = "every cached repository must carry the caller's tags, both run tags included, which default_tags never reaches"
+  }
+
+  assert {
+    condition     = output.repository_tags["quay"] == tomap(var.tags)
+    error_message = "repository_tags must report what the template stamps"
   }
 
   assert {

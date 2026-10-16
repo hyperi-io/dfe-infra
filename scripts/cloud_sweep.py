@@ -25,10 +25,15 @@ MSK clusters, EC2 instances, EBS volumes and snapshots, launch templates, NAT
 gateways and EIPs, load balancers (v2) and target groups, non-default security groups,
 ENIs, non-default VPCs and their subnets/route tables/internet gateways/
 endpoints, Route 53 hosted zones, CloudWatch log groups, Secrets Manager
-secrets (including ones already scheduled for deletion), KMS aliases, and S3
-buckets. AWS account defaults (the default VPC and everything that comes
+secrets (including ones already scheduled for deletion), KMS aliases, ECR
+repositories (a pull-through cache creates them on a first pull, outside tofu
+state), and S3 buckets. AWS account defaults (the default VPC and everything that comes
 with it, AWS-managed KMS aliases) are never listed or touched -- a proof did
 not create them and this sweep has no business reporting on them.
+
+ECR pull-through cache rules and repository creation templates are listed as
+`listed-only` and never deleted or counted, whatever the flags: neither takes a
+tag, and their prefix starts with the deployment's cache namespace or name, never the run id.
 
 A resource counts as "dfe's" when it carries every tag in --tag-filter
 (default service-name=dfe,environment=test). Everything found is printed
@@ -63,12 +68,12 @@ instead of `deleted` and is no failure, because this sweep did not remove it.
 
 --include-untagged is DANGEROUS with --delete. It drops the one filter that
 keeps this script's own deletions to what the tag-filter names, so --delete
---include-untagged removes EVERY resource the 22 listers found in --region,
+--include-untagged removes EVERY resource the 23 listers found in --region,
 tagged or not, in whatever account --account named -- EC2 instances, launch
 templates, EKS and MSK clusters, NAT gateways, security groups, non-default VPCs and their
 subnets, Route 53 zones, log groups, Secrets Manager secrets (with
---force-delete-without-recovery), KMS aliases and S3 buckets (with
---exclude-bucket the only exemption). Reach for it only when the sweep is
+--force-delete-without-recovery), KMS aliases, ECR repositories and every image in
+them, and S3 buckets (with --exclude-bucket the only exemption). Reach for it only when the sweep is
 meant to clear a region entirely, never as a way to speed up an ordinary
 cleanup. It is refused beside --expired. An empty --tag-filter matches every
 resource the same way, so --delete refuses one unless --include-untagged says so.
@@ -706,6 +711,70 @@ def list_msk_clusters(region: str, tag_filter: dict[str, str]) -> list[Resource]
     return out
 
 
+def list_ecr_repositories(region: str, tag_filter: dict[str, str]) -> list[Resource]:
+    """Every ECR repository, the ones a pull-through cache creates outside tofu state among them.
+
+    The id is the ARN, which the tagging API's hit for the same repository carries too.
+
+    Raises:
+        CloudSweepError: The listing, or a tag read for a repository still there, failed.
+    """
+    repositories = run_aws(["ecr", "describe-repositories"], region).get("repositories", [])
+    out = []
+    for repository in repositories:
+        arn = repository["repositoryArn"]
+        try:
+            tag_list = run_aws(["ecr", "list-tags-for-resource", "--resource-arn", arn], region).get("tags")
+        except CloudSweepError as exc:
+            if "RepositoryNotFoundException" in str(exc):
+                continue  # deleted since the listing, so not a leftover
+            raise
+        tags = _tags_from_list(tag_list)
+        out.append(
+            Resource(
+                kind="ecr-repository",
+                id=arn,
+                name=repository["repositoryName"],
+                created=repository.get("createdAt"),
+                tagged=_matches(tags, tag_filter),
+                tags=tags,
+            )
+        )
+    return out
+
+
+def list_ecr_cache_rules(region: str) -> list[Resource]:
+    """Every ECR pull-through cache rule, by its repository prefix."""
+    rules = run_aws(["ecr", "describe-pull-through-cache-rules"], region).get("pullThroughCacheRules", [])
+    return [
+        Resource(
+            kind="ecr-cache-rule",
+            id=rule["ecrRepositoryPrefix"],
+            name=rule["ecrRepositoryPrefix"],
+            created=rule.get("createdAt"),
+            tagged=False,
+        )
+        for rule in rules
+    ]
+
+
+def list_ecr_templates(region: str) -> list[Resource]:
+    """Every ECR repository creation template, by its prefix."""
+    templates = run_aws(["ecr", "describe-repository-creation-templates"], region).get(
+        "repositoryCreationTemplates", []
+    )
+    return [
+        Resource(
+            kind="ecr-template",
+            id=template["prefix"],
+            name=template["prefix"],
+            created=template.get("createdAt"),
+            tagged=False,
+        )
+        for template in templates
+    ]
+
+
 def list_s3_buckets(region: str, tag_filter: dict[str, str], exclude_bucket: str | None) -> list[Resource]:
     buckets = run_aws(["s3api", "list-buckets"], region).get("Buckets", [])
     out = []
@@ -755,9 +824,16 @@ LISTERS: dict[str, Callable[[str, dict], list[Resource]]] = {
     "kms-alias": list_kms_aliases,
     "eks-cluster": list_eks_clusters,
     "msk-cluster": list_msk_clusters,
+    "ecr-repository": list_ecr_repositories,
 }
 
 PER_SERVICE_COLLECTORS: list[Callable[[str, dict], list[Resource]]] = list(LISTERS.values())
+
+# Printed, never deleted or counted: neither takes a tag, and the prefix names the deployment.
+LISTED_ONLY: dict[str, Callable[[str], list[Resource]]] = {
+    "ecr-cache-rule": list_ecr_cache_rules,
+    "ecr-template": list_ecr_templates,
+}
 
 
 def collect(
@@ -785,6 +861,7 @@ def collect(
 
     `kinds` runs only the listers for those kinds and skips the tagging API, whose
     hits are labelled by service rather than kind and so could never be selected.
+    It skips the LISTED_ONLY kinds too, which nothing can select either.
     """
     resources: list[Resource] = []
     if kinds is None:
@@ -809,6 +886,8 @@ def collect(
             continue
         resources.append(tagged)
         known_ids.add(tagged.id)
+    for listed_only in LISTED_ONLY.values():
+        resources.extend(listed_only(region))
     return sorted(resources, key=lambda r: (r.kind, r.name))
 
 
@@ -824,6 +903,8 @@ def filter_for_delete(
     eligible = []
     for r in resources:
         if r.kind == "s3-bucket" and r.id == exclude_bucket:
+            continue
+        if r.kind in LISTED_ONLY:
             continue
         if not r.tagged and not include_untagged:
             continue
@@ -880,7 +961,10 @@ def print_report(resources: list[Resource], expiry: ExpirySelection | None = Non
         return
     expired_vpcs = _expired_vpc_ids(resources, expiry) if expiry is not None else set()
     for r in resources:
-        tag_state = "dfe-tagged" if r.tagged else "untagged"
+        if r.kind in LISTED_ONLY:
+            tag_state = "listed-only"
+        else:
+            tag_state = "dfe-tagged" if r.tagged else "untagged"
         line = f"{r.kind:16s} {r.name:44s} age={_age(r.created):8s} {tag_state}"
         if expiry is not None:
             run_id = r.tags.get(expiry.keys.run) or "-"
@@ -1035,6 +1119,19 @@ def _kms_key_gone(key_id: str, region: str) -> bool:
     return state in ("PendingDeletion", "PendingReplicaDeletion")
 
 
+def _ecr_repository_gone(name: str, region: str) -> bool:
+    """True once ECR answers RepositoryNotFoundException for the repository, or no longer lists it."""
+    try:
+        repositories = run_aws(["ecr", "describe-repositories", "--repository-names", name], region).get(
+            "repositories", []
+        )
+    except CloudSweepError as exc:
+        if "RepositoryNotFoundException" in str(exc):
+            return True
+        raise
+    return not repositories
+
+
 def secret_held(arn: str, region: str) -> bool:
     """True while Secrets Manager lists the secret, scheduled for deletion or not.
 
@@ -1143,20 +1240,21 @@ def _pod_identity_association_gone(cluster_and_id: str, region: str) -> bool:
 
 
 def tagging_hit_gone(resource: Resource, region: str) -> bool:
-    """True when a tagging-API hit names an EC2 object, KMS key, EKS association or secret now gone.
+    """True when a tagging-API hit names an EC2, KMS, EKS, Secrets Manager or ECR object now gone.
 
     The tagging API keeps listing NAT gateways, VPC endpoints, instances, network interfaces,
     volumes, the network classes in _EC2_DESCRIBE_BY_TYPE (security group rules included),
     instant EC2 fleets, spot requests, KMS keys, EKS pod identity associations and secrets
     after they go. One still deleting or shutting down is not gone, a KMS key scheduled for
     deletion is, a secret scheduled for deletion is not, and any other hit is not judged and
-    reads as present.
+    reads as present. An ECR repository reaches here only when its own listing missed it, and
+    is gone once ECR answers RepositoryNotFoundException.
 
     Raises:
         CloudSweepError: The describe or list call failed for any reason but NotFound.
     """
     parts = resource.id.split(":", 5)
-    judged = ("tagged:ec2", "tagged:kms", "tagged:eks", "tagged:secretsmanager")
+    judged = ("tagged:ec2", "tagged:kms", "tagged:eks", "tagged:secretsmanager", "tagged:ecr")
     if resource.kind not in judged or len(parts) < 6:
         return False
     if resource.kind == "tagged:secretsmanager":
@@ -1167,6 +1265,9 @@ def tagging_hit_gone(resource: Resource, region: str) -> bool:
         return resource_type == "key" and _kms_key_gone(bare_id, region)
     if resource.kind == "tagged:eks":
         return resource_type == "podidentityassociation" and _pod_identity_association_gone(bare_id, region)
+    if resource.kind == "tagged:ecr":
+        # A repository name may itself hold '/', so the whole remainder is the name.
+        return resource_type == "repository" and _ecr_repository_gone(bare_id, region)
     if resource_type in _EC2_DESCRIBE_BY_TYPE:
         return _ec2_object_gone(resource_type, bare_id, region)
     if resource_type == "volume":
@@ -1277,6 +1378,11 @@ def _delete_kms_alias(r: Resource, region: str) -> None:
     run_aws(["kms", "delete-alias", "--alias-name", r.id], region)
 
 
+def _delete_ecr_repository(r: Resource, region: str) -> None:
+    """--force takes the cached images with it, which a plain delete refuses to."""
+    run_aws(["ecr", "delete-repository", "--repository-name", r.name, "--force"], region)
+
+
 def _delete_s3_bucket(r: Resource, region: str) -> None:
     run_aws_text(["s3", "rm", f"s3://{r.id}", "--recursive"], region)
     run_aws(["s3api", "delete-bucket", "--bucket", r.id], region)
@@ -1304,6 +1410,7 @@ DELETE_ORDER: list[str] = [
     "ebs-volume",
     "ebs-snapshot",
     "launch-template",
+    "ecr-repository",
     "route53-zone",
     "log-group",
     "secret",
@@ -1329,6 +1436,7 @@ DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
     "ebs-volume": _delete_ebs_volume,
     "ebs-snapshot": _delete_ebs_snapshot,
     "launch-template": _delete_launch_template,
+    "ecr-repository": _delete_ecr_repository,
     "route53-zone": _delete_route53_zone,
     "log-group": _delete_log_group,
     "secret": _delete_secret,
