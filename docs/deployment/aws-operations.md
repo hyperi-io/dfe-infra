@@ -75,7 +75,7 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 
 An ECR pull-through cache in the deployment's own account, which every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through, so those registries' rate limits cannot fail a deploy. None of the three needs a credential. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
 
-- Off by default. `registry_cache.enabled: "true"` in the dial turns it on, and `tofu output registry_cache` lists what is cached.
+- On by default. `registry_cache.enabled: "false"` in the dial turns it off, and `tofu output registry_cache` lists what is cached.
 - docker.io and ghcr.io images pull straight from upstream, anonymously, since no image the stack pulls needs a credential to read. A Docker Official Image comes from its `public.ecr.aws/docker/library/` mirror instead of docker.io, so the cache covers it.
 - Image references never change: each node writes a containerd mirror per cached host with the upstream as fallback, so a cache that cannot answer costs a retry, never a failed pull. The mirror logs in with the node's own IAM role.
 - Turning it on gives each managed node group its first launch template, which replaces the group.

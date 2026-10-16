@@ -519,8 +519,9 @@ toolbox:
 ## (docs/deployment/aws-operations.md, "Registry cache"). Caching docker.io and
 ## ghcr.io as well needs Secrets Manager credentials and is off the default path:
 ## the same doc's "Optional: cache docker.io and ghcr.io too".
+## On by default, and "false" turns it off.
 registry_cache:
-  enabled: "false"           # true | false
+  enabled: "true"            # true | false
   namespace: ""              # prefix of every cached repository; empty takes metadata.name. <= 19 characters
   pull_expiry_days: ""       # days a cached image outlives its last pull; empty takes 90
 

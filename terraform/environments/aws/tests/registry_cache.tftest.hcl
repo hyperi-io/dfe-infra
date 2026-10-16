@@ -1,7 +1,7 @@
 // The aws root's registry cache, executable: the dial's upstreams reach the
 // registry-cache module, its node script reaches the managed node groups and
-// the DFE_NODE_USER_DATA hand-off to Karpenter, and the cache off, the default,
-// leaves both empty. Provider-free, like shapes.tftest.hcl beside it.
+// the DFE_NODE_USER_DATA hand-off to Karpenter, and the cache off leaves both
+// empty. Provider-free, like shapes.tftest.hcl beside it.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
@@ -260,8 +260,8 @@ run "the_dials_upstreams_reach_the_cache_and_the_nodes" {
   }
 }
 
-// What render_dial.py renders for an aws dial that says nothing about the cache.
-run "the_cache_is_off_by_default" {
+// A tfvars that leaves enabled out takes the variable's default, which is on.
+run "the_cache_is_on_by_default" {
   command = plan
 
   variables {
@@ -274,13 +274,32 @@ run "the_cache_is_off_by_default" {
   }
 
   assert {
+    condition     = length(module.registry_cache) == 1
+    error_message = "a tfvars that does not say enabled must build the cache"
+  }
+
+  assert {
+    condition     = output.DFE_NODE_USER_DATA != ""
+    error_message = "with the cache on by default the nodes must run the mirror script"
+  }
+}
+
+// On with no upstreams builds nothing, so a root handed an empty registry_cache stays bare.
+run "an_empty_registry_cache_builds_nothing" {
+  command = plan
+
+  variables {
+    registry_cache = {}
+  }
+
+  assert {
     condition     = length(module.registry_cache) == 0
-    error_message = "a dial that does not turn the cache on must build no cache"
+    error_message = "the default-on cache with no upstreams must build no cache"
   }
 
   assert {
     condition     = output.DFE_NODE_USER_DATA == ""
-    error_message = "with the cache off by default no node may run a mirror script"
+    error_message = "with no upstreams no node may run a mirror script"
   }
 }
 
