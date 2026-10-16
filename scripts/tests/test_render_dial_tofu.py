@@ -482,6 +482,25 @@ def test_a_malformed_confluent_environment_is_refused_by_name() -> None:
         saas_kafka("confluent-cloud", f"confluent_environment_id: {REDPANDA_RESOURCE_GROUP}")
 
 
+def test_a_confluent_dial_with_no_rest_wait_is_sent_the_documented_one() -> None:
+    """Neither the root nor the body defaults the wait, so the render always sends all of it."""
+    assert saas_kafka("confluent-cloud")["confluent_rest_ready"] == render_dial.CONFLUENT_REST_READY_DEFAULTS == {
+        "successes": 12,
+        "timeout_seconds": 900,
+        "interval_seconds": 5,
+    }
+
+
+def test_the_dials_rest_wait_reaches_the_root_field_by_field() -> None:
+    kafka = saas_kafka("confluent-cloud", "confluent_rest_ready:", "  timeout_seconds: 1200")
+    assert kafka["confluent_rest_ready"] == {"successes": 12, "timeout_seconds": 1200, "interval_seconds": 5}
+
+
+def test_a_rest_wait_that_is_not_a_whole_number_is_refused_by_name() -> None:
+    with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_rest_ready\.successes"):
+        saas_kafka("confluent-cloud", "confluent_rest_ready:", "  successes: twelve")
+
+
 def test_basic_refuses_a_message_size_above_its_ceiling() -> None:
     """Confluent caps a Basic topic at 8 MiB; the render refuses rather than let apply fail on it."""
     with pytest.raises(render_dial.DialError) as refused:
@@ -544,6 +563,7 @@ def test_each_vendors_keys_are_read_for_that_vendor_only() -> None:
     redpanda = saas_kafka("redpanda-cloud", "confluent_tier: basic", f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}")
     assert "confluent_tier" not in redpanda
     assert "confluent_environment_id" not in redpanda
+    assert "confluent_rest_ready" not in redpanda
     assert redpanda["message_max_bytes"] == 16777216
     confluent = saas_kafka(
         "confluent-cloud",

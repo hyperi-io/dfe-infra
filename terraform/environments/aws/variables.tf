@@ -215,7 +215,7 @@ variable "lambda_runtimes" {
 }
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region and an optional standing environment, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region, an optional standing environment and the REST endpoint wait, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
   type = object({
     provider = string
     msk = optional(object({
@@ -261,6 +261,13 @@ variable "kafka" {
     // sends a tier for. An empty environment id has the body create one of its own.
     confluent_tier           = optional(string)
     confluent_environment_id = optional(string, "")
+    // Read only when provider is confluent-cloud, which render_dial.py always
+    // sends the REST endpoint wait for.
+    confluent_rest_ready = optional(object({
+      successes        = number
+      timeout_seconds  = number
+      interval_seconds = number
+    }))
     // Read only when provider is redpanda-cloud, which render_dial.py always
     // sends a tier for. An empty id has the body create a resource group of its own.
     redpanda_tier              = optional(string)
@@ -295,6 +302,11 @@ variable "kafka" {
   validation {
     condition     = var.kafka.provider != "confluent-cloud" || var.kafka.confluent_tier != null
     error_message = "kafka.provider is confluent-cloud, so kafka.confluent_tier must name the cluster type -- render_dial.py sends freight unless the dial names another."
+  }
+
+  validation {
+    condition     = var.kafka.provider != "confluent-cloud" || var.kafka.confluent_rest_ready != null
+    error_message = "kafka.provider is confluent-cloud, so kafka.confluent_rest_ready must carry successes, timeout_seconds and interval_seconds for the REST endpoint wait -- render_dial.py sends its documented values unless the dial names others."
   }
 
   validation {

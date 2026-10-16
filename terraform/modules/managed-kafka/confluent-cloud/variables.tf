@@ -211,6 +211,31 @@ variable "stream_governance_package" {
   }
 }
 
+variable "rest_ready" {
+  description = "How the deployer waits, on a public cluster, for the REST endpoint to list the topics for the manager key before any ACL or topic is written: successes is the run of HTTP 200s in a row it needs, interval_seconds the wait between attempts, and timeout_seconds the ceiling after which the apply fails naming the host. A run in a row, because a new route reaches each of the shared ingress load balancers separately. Set in tfvars: render_dial.py sends its documented values when the dial names none. Unused on private connectivity, where the deployer cannot reach the endpoint."
+  type = object({
+    successes        = number
+    timeout_seconds  = number
+    interval_seconds = number
+  })
+  nullable = false
+
+  validation {
+    condition     = floor(var.rest_ready.successes) == var.rest_ready.successes && var.rest_ready.successes >= 2
+    error_message = "rest_ready.successes must be a whole number of at least 2: one answer proves one load balancer has the route, not all of them."
+  }
+
+  validation {
+    condition     = floor(var.rest_ready.interval_seconds) == var.rest_ready.interval_seconds && var.rest_ready.interval_seconds >= 1
+    error_message = "rest_ready.interval_seconds must be a whole number of at least 1: back-to-back attempts can land on the same load balancer."
+  }
+
+  validation {
+    condition     = floor(var.rest_ready.timeout_seconds) == var.rest_ready.timeout_seconds && var.rest_ready.successes * var.rest_ready.interval_seconds < var.rest_ready.timeout_seconds
+    error_message = "rest_ready.timeout_seconds must be a whole number above successes times interval_seconds, or the wait cannot pass inside its own ceiling."
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Contract inputs Confluent Cloud manages for us
 // ---------------------------------------------------------------------------

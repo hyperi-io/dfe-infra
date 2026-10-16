@@ -292,12 +292,13 @@ run "a_confluent_broker_refuses_a_missing_tier" {
 
   variables {
     kafka = {
-      provider          = "confluent-cloud"
-      connectivity      = "public"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
-      message_max_bytes = 8388608
-      landing_topics    = { main_land = {} }
+      provider             = "confluent-cloud"
+      connectivity         = "public"
+      num_partitions       = 12
+      log_retention_ms     = 259200000
+      message_max_bytes    = 8388608
+      landing_topics       = { main_land = {} }
+      confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
 
     seeds = {

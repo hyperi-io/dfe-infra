@@ -156,6 +156,13 @@ variables {
   // The tier render_dial.py sends when the dial names none.
   tier = "freight"
 
+  // No module default: the wait render_dial.py sends when the dial names none.
+  rest_ready = {
+    successes        = 12
+    timeout_seconds  = 900
+    interval_seconds = 5
+  }
+
   // Six distinct interfaces, which is Confluent's floor for an access point.
   // See the note above the mock_provider for why these are supplied here and
   // not created by the module.
@@ -456,33 +463,78 @@ run "confluent_cloud_basic_public_proof" {
     error_message = "auth_type is plain on every Confluent tier"
   }
 
-  // Tofu writes the topics and ACLs with the manager key, so on a public endpoint its wait is the
-  // readiness check that matters, and the DFE key, which tofu never uses, is not waited for.
+  // The provider's wait fails the apply on one reset its retries do not outlast, so neither key
+  // takes it. Tofu writes the topics and ACLs with the manager key, and rest_ready waits for that.
   assert {
-    condition     = confluent_api_key.manager.disable_wait_for_ready == false
-    error_message = "the manager key is waited for on a public endpoint, where the topics and ACLs are written with it next"
+    condition     = confluent_api_key.manager.disable_wait_for_ready == true && confluent_api_key.dfe.disable_wait_for_ready == true
+    error_message = "neither key takes the provider's wait on a public endpoint: terraform_data.rest_ready waits for the manager key instead"
   }
 
-  assert {
-    condition     = confluent_api_key.dfe.disable_wait_for_ready == true
-    error_message = "the DFE key is never waited for: tofu does not use it, and the wait fails the apply on one transport error"
-  }
-
-  // A new public cluster's route is probed before anything is written over it.
+  // A public cluster's REST endpoint is probed with the manager key before any ACL or topic is written.
   assert {
     condition     = length(terraform_data.rest_ready) == 1
-    error_message = "a public cluster's REST endpoint must be probed before the keys, ACLs and topics reach it"
+    error_message = "a public cluster's REST endpoint must answer the manager key before the ACLs and topics reach it"
   }
 
   assert {
-    condition     = terraform_data.rest_ready[0].input.url == "https://pkc-00000.us-west-2.aws.confluent.cloud:443/kafka/v3/clusters/lkc-000000"
-    error_message = "the probe must reach the cluster's own REST endpoint, at its v3 cluster path"
+    condition     = terraform_data.rest_ready[0].input.url == "https://pkc-00000.us-west-2.aws.confluent.cloud:443/kafka/v3/clusters/lkc-000000/topics"
+    error_message = "the probe must list the cluster's topics, the request the provider's own key wait makes"
   }
 
   assert {
-    condition     = terraform_data.rest_ready[0].triggers_replace[0] == confluent_kafka_cluster.this.id
-    error_message = "the probe must re-run for a new cluster, the one change that needs a new route"
+    condition     = terraform_data.rest_ready[0].triggers_replace[0] == confluent_kafka_cluster.this.id && terraform_data.rest_ready[0].triggers_replace[1] == confluent_api_key.manager.id
+    error_message = "the probe must re-run for a new cluster, which needs a new route, and for a new manager key, which has to sync"
   }
+}
+
+// A wait that cannot reach its run of answers inside its own ceiling is refused at plan.
+run "confluent_cloud_refuses_a_rest_wait_that_cannot_pass" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    tier         = "basic"
+    connectivity = "public"
+    region       = "us-west-2"
+
+    rest_ready = {
+      successes        = 12
+      timeout_seconds  = 60
+      interval_seconds = 5
+    }
+  }
+
+  expect_failures = [
+    var.rest_ready,
+  ]
+}
+
+// One answer proves one load balancer has the route, not all of them.
+run "confluent_cloud_refuses_a_single_answer_as_ready" {
+  command = plan
+
+  module {
+    source = "./confluent-cloud"
+  }
+
+  variables {
+    tier         = "basic"
+    connectivity = "public"
+    region       = "us-west-2"
+
+    rest_ready = {
+      successes        = 1
+      timeout_seconds  = 900
+      interval_seconds = 5
+    }
+  }
+
+  expect_failures = [
+    var.rest_ready,
+  ]
 }
 
 // The chain's 16 MiB is inside Freight's 20 MiB ceiling, so freight carries it
