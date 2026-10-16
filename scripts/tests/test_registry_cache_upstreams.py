@@ -7,7 +7,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Every image host the stack pulls is cached, or named as one ECR cannot cache.
+"""Every image host the stack pulls is cached, cacheable with a credential, or uncacheable.
 
 A host the cache does not know is pulled straight from its upstream, rate limits
 and all, and nothing at deploy time says so. The image tables are the ones
@@ -38,7 +38,7 @@ def _host(reference: str) -> str:
     return first if rest and ("." in first or ":" in first) else "docker.io"
 
 
-def _stack_hosts() -> set[str]:
+def _stack_repositories() -> list[str]:
     repositories = [arch.dfe_stack.DEFAULT_REGISTRY + "/dfe-engine", arch.STRIMZI_KAFKA_IMAGE]
     repositories += [repository for _key, _var, repository in arch.dfe_stack._DOCKER_THIRDPARTY]
     repositories += list(arch.DIGEST_PINNED.values())
@@ -48,19 +48,54 @@ def _stack_hosts() -> set[str]:
     repositories += [
         repo for _chart, _url, repos, _prefix in arch.OPERATOR_VIA_CHART.values() for repo in repos
     ]
-    return {_host(repository) for repository in repositories}
+    return repositories
 
 
-def test_every_stack_image_host_is_cached_or_named_uncacheable() -> None:
-    cached = {host for _url, host, _needs in render_dial._REGISTRY_CACHE_UPSTREAMS.values()}
-    missing = _stack_hosts() - cached - set(UNCACHEABLE)
+def _stack_hosts() -> set[str]:
+    return {_host(repository) for repository in _stack_repositories()}
+
+
+def _hosts(table: dict[str, tuple[str, str]]) -> set[str]:
+    return {host for _url, host in table.values()}
+
+
+def test_every_stack_image_host_is_cached_cacheable_or_named_uncacheable() -> None:
+    known = (
+        _hosts(render_dial._REGISTRY_CACHE_UPSTREAMS)
+        | _hosts(render_dial._REGISTRY_CACHE_CREDENTIALED)
+        | set(UNCACHEABLE)
+    )
+    missing = _stack_hosts() - known
     assert missing == set(), f"images from {sorted(missing)} would bypass the registry cache"
 
 
 def test_every_cached_host_is_one_the_stack_pulls_from() -> None:
-    """An upstream nothing pulls from is a rule and a credential for no image."""
-    cached = {host for _url, host, _needs in render_dial._REGISTRY_CACHE_UPSTREAMS.values()}
+    """An upstream nothing pulls from is a rule, and maybe a credential, for no image."""
+    cached = _hosts(render_dial._REGISTRY_CACHE_UPSTREAMS) | _hosts(
+        render_dial._REGISTRY_CACHE_CREDENTIALED
+    )
     assert cached - _stack_hosts() == set()
+
+
+def test_the_default_cache_takes_no_upstream_that_needs_a_credential() -> None:
+    """ECR refuses a docker.io or ghcr.io rule without a Secrets Manager credential."""
+    default = _hosts(render_dial._REGISTRY_CACHE_UPSTREAMS)
+    assert default == {"quay.io", "registry.k8s.io", "public.ecr.aws"}
+    assert default.isdisjoint(_hosts(render_dial._REGISTRY_CACHE_CREDENTIALED))
+
+
+def test_no_stack_image_is_a_docker_official_image_on_docker_hub() -> None:
+    """A Docker Official Image comes from its public.ecr.aws mirror, which the default cache covers."""
+    on_docker_hub = [
+        repository
+        for repository in _stack_repositories()
+        if _host(repository) == "docker.io"
+        and "/" not in repository.removeprefix("docker.io/").removeprefix("library/")
+    ]
+    assert on_docker_hub == [], (
+        f"{on_docker_hub} name Docker Hub's library/ path: read each from "
+        "public.ecr.aws/docker/library/<name> once that mirror carries the same tag and digest"
+    )
 
 
 def test_the_host_of_a_bare_reference_is_docker_hub() -> None:

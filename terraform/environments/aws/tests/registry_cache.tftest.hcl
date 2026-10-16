@@ -1,7 +1,7 @@
 // The aws root's registry cache, executable: the dial's upstreams reach the
 // registry-cache module, its node script reaches the managed node groups and
-// the DFE_NODE_USER_DATA hand-off to Karpenter, and the cache off leaves both
-// empty. Provider-free, like shapes.tftest.hcl beside it.
+// the DFE_NODE_USER_DATA hand-off to Karpenter, and the cache off, the default,
+// leaves both empty. Provider-free, like shapes.tftest.hcl beside it.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
@@ -157,6 +157,10 @@ variables {
     "vpc-cni"                = "v1.23.2-eksbuild.1"
   }
 
+  lambda_runtimes = {
+    "msk-broker-scaler" = "python3.14"
+  }
+
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
   endpoint  = { public = false, allowed_cidrs = [] }
   dns       = { private_zone = "dfe-example.internal", public_zone = "" }
@@ -209,12 +213,13 @@ variables {
     iac-source        = "dfe-infra/terraform/environments/aws"
   }
 
-  // What render_dial.py renders for an aws dial that names no credential.
+  // What render_dial.py renders for an aws dial that turns the cache on and names no credential.
   registry_cache = {
+    enabled          = true
     pull_expiry_days = 90
     upstreams = {
-      docker-hub = { upstream_url = "registry-1.docker.io", host = "docker.io", requires_credential = true }
       quay       = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
+      k8s        = { upstream_url = "registry.k8s.io", host = "registry.k8s.io", requires_credential = false }
       ecr-public = { upstream_url = "public.ecr.aws", host = "public.ecr.aws", requires_credential = false }
     }
   }
@@ -225,7 +230,7 @@ run "the_dials_upstreams_reach_the_cache_and_the_nodes" {
 
   assert {
     condition     = length(module.registry_cache) == 1
-    error_message = "an aws dial with upstreams must build the registry cache"
+    error_message = "an aws dial with the cache on must build the registry cache"
   }
 
   // namespace left empty takes the deployment's name, which no other deployment in the account shares.
@@ -240,8 +245,13 @@ run "the_dials_upstreams_reach_the_cache_and_the_nodes" {
   }
 
   assert {
-    condition     = output.registry_cache.uncached == ["docker-hub"]
-    error_message = "an upstream with no credential must be reported as pulled directly"
+    condition     = toset(keys(output.registry_cache.mirrors)) == toset(["public.ecr.aws", "quay.io", "registry.k8s.io"])
+    error_message = "with no credential named, the cache must mirror the three upstreams that need none, and docker.io and ghcr.io must pull directly"
+  }
+
+  assert {
+    condition     = output.registry_cache.uncached == []
+    error_message = "the dial renders no credentialed upstream it has no credential for, so nothing is reported skipped"
   }
 
   assert {
@@ -250,11 +260,62 @@ run "the_dials_upstreams_reach_the_cache_and_the_nodes" {
   }
 }
 
+// What render_dial.py renders for an aws dial that says nothing about the cache.
+run "the_cache_is_off_by_default" {
+  command = plan
+
+  variables {
+    registry_cache = {
+      pull_expiry_days = 90
+      upstreams = {
+        quay = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
+      }
+    }
+  }
+
+  assert {
+    condition     = length(module.registry_cache) == 0
+    error_message = "a dial that does not turn the cache on must build no cache"
+  }
+
+  assert {
+    condition     = output.DFE_NODE_USER_DATA == ""
+    error_message = "with the cache off by default no node may run a mirror script"
+  }
+}
+
+// A hand-written tfvars can still name a credentialed upstream with no ARN; the module skips it.
+run "an_upstream_needing_a_credential_without_one_is_pulled_directly" {
+  command = plan
+
+  variables {
+    registry_cache = {
+      enabled          = true
+      pull_expiry_days = 90
+      upstreams = {
+        docker-hub = { upstream_url = "registry-1.docker.io", host = "docker.io", requires_credential = true }
+        quay       = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
+      }
+    }
+  }
+
+  assert {
+    condition     = output.registry_cache.uncached == ["docker-hub"]
+    error_message = "an upstream with no credential must be reported as pulled directly"
+  }
+
+  assert {
+    condition     = !contains(keys(output.registry_cache.mirrors), "docker.io")
+    error_message = "no node may mirror an upstream the cache has no rule for"
+  }
+}
+
 run "a_namespace_from_the_dial_wins" {
   command = plan
 
   variables {
     registry_cache = {
+      enabled          = true
       namespace        = "dfe-blue"
       pull_expiry_days = 90
       upstreams = {
@@ -298,6 +359,7 @@ run "upstreams_without_an_expiry_are_refused" {
 
   variables {
     registry_cache = {
+      enabled = true
       upstreams = {
         quay = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
       }

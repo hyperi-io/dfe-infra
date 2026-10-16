@@ -73,13 +73,31 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 
 ## Registry cache
 
-Every node pulls its images through an ECR pull-through cache in the deployment's own account, so a Docker Hub, GHCR, Quay or ECR Public rate limit cannot fail a deploy. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
+An ECR pull-through cache in the deployment's own account, which every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through, so those registries' rate limits cannot fail a deploy. None of the three needs a credential. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
 
-- On by default. Docker Hub and GHCR are cached once the dial's `registry_cache.credentials` names an `ecr-pullthroughcache/` secret; the other three need none. `tofu output registry_cache` lists what is cached.
-- Image references never change: each node writes a containerd mirror per cached host with the upstream as fallback, so a cache that cannot answer costs a retry, never a failed pull.
+- Off by default. `registry_cache.enabled: "true"` in the dial turns it on, and `tofu output registry_cache` lists what is cached.
+- docker.io and ghcr.io images pull straight from upstream, anonymously, since no image the stack pulls needs a credential to read. A Docker Official Image comes from its `public.ecr.aws/docker/library/` mirror instead of docker.io, so the cache covers it.
+- Image references never change: each node writes a containerd mirror per cached host with the upstream as fallback, so a cache that cannot answer costs a retry, never a failed pull. The mirror logs in with the node's own IAM role.
 - Turning it on gives each managed node group its first launch template, which replaces the group.
+- The deploying identity needs ECR's pull-through cache rule and repository creation template actions, `iam:PassRole` to `ecr.amazonaws.com`, and `iam:CreateServiceLinkedRole` for `pullthroughcache.ecr.amazonaws.com` the first time. A permissions boundary on the roles it creates must allow `ecr:BatchImportUpstreamImage`, `ecr:CreateRepository`, `ecr:TagResource` and `kms:RetireGrant`.
 - `code.forgejo.org` and `docker.redpanda.com` have no ECR rule type. Helm charts are fetched by Argo CD and bootstrap, not nodes, and stay on their own registries.
 - Destroy deletes every repository ECR created under the deployment's rules.
+
+### Optional: cache docker.io and ghcr.io too
+
+Not part of the default deploy. ECR caches docker.io and ghcr.io only through a Secrets Manager credential, an AWS rule that holds whether the image is public or not. Where their rate limits bite, name one secret per upstream:
+
+```yaml
+registry_cache:
+  enabled: "true"
+  credentials:
+    docker-hub: "<secret ARN>"   # a Docker Hub username and personal access token
+    ghcr: "<secret ARN>"         # a GitHub username and a classic token with read:packages
+```
+
+- Each secret is named under `ecr-pullthroughcache/`, holds `{"username", "accessToken"}`, and is encrypted with the default `aws/secretsmanager` key. ECR reads no other prefix and supports no customer managed key here.
+- Either key may be left out. An upstream with no secret gets no rule, and its images pull directly.
+- ECR alone reads the secret, when it fetches from the upstream. No node or pod is handed it.
 
 ## Admin UI exposure
 

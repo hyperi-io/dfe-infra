@@ -1,6 +1,6 @@
 # registry-cache -- module contract
 
-REFERENCE. A pull-through cache inside the deployment's own cloud account that every node pulls container images through, so upstream rate limits (Docker Hub, GHCR, Quay, ECR Public) stop failing a deploy. The cache fetches each image once and serves every later pull itself. The same pattern ran for earlier DFE 2.1 customer deployments. One body per cloud:
+REFERENCE. A pull-through cache inside the deployment's own cloud account that every node pulls container images through, so upstream rate limits stop failing a deploy. The cache fetches each image once and serves every later pull itself. The same pattern ran for earlier DFE 2.1 customer deployments. One body per cloud:
 
 | Body | Status | Cache |
 |------|--------|-------|
@@ -10,11 +10,13 @@ REFERENCE. A pull-through cache inside the deployment's own cloud account that e
 
 Every body takes the inputs below and produces the outputs below. The caller is the per-cloud root, which hands `node_user_data` to the kubernetes-cluster module and to the Karpenter node class.
 
+The aws root's dial (`registry_cache`, off by default) sends the upstreams ECR caches with no credential: quay.io, registry.k8s.io and public.ecr.aws. It sends docker.io or ghcr.io only where the dial names a Secrets Manager credential for it, an opt-in off the default deploy path (`docs/deployment/aws-operations.md`). Without one their images pull straight from upstream, anonymously.
+
 ## How nodes use it
 
 Image references are never rewritten. Each node gets one containerd mirror per cached registry host (`/etc/containerd/certs.d/<host>/hosts.toml`) with the upstream as `server`, so containerd tries the cache first and the upstream second. A node that cannot reach the cache pulls exactly as it would with none.
 
-On AWS the mirror needs an ECR login, and kubelet's ECR credential provider matches image names, so it never sends one for `docker.io/...`. Widening its `matchImages` would hand the same ECR token to the upstream fallback too, because kubelet leaves the credential's server address empty. So the mirror entry carries its own `Authorization` header, refreshed from `aws ecr get-login-password` by a node timer at half the token's 12-hour life.
+On AWS the mirror needs an ECR login, and kubelet's ECR credential provider matches image names, so it never sends one for `quay.io/...`. Widening its `matchImages` would hand the same ECR token to the upstream fallback too, because kubelet leaves the credential's server address empty. So the mirror entry carries its own `Authorization` header, refreshed from `aws ecr get-login-password` by a node timer at half the token's 12-hour life.
 
 Rewriting image repositories in chart values was rejected: every third-party chart spells its image differently, operators start images of their own, and an outage of the cache would then fail every pull.
 

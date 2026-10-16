@@ -873,39 +873,58 @@ def test_a_nonsense_address_mode_is_refused_by_name() -> None:
         render(replace=bad)
 
 
-def test_the_registry_cache_is_on_with_every_upstream_when_the_dial_says_nothing() -> None:
+def test_the_registry_cache_is_off_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> None:
     cache = render()["registry_cache"]
-    assert cache["enabled"] is True
+    assert cache["enabled"] is False
     assert cache["namespace"] == ""
     assert cache["pull_expiry_days"] == render_dial.REGISTRY_CACHE_PULL_EXPIRY_DAYS
-    assert sorted(cache["upstreams"]) == ["docker-hub", "ecr-public", "ghcr", "k8s", "quay"]
+    assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
+    assert not any(upstream["requires_credential"] for upstream in cache["upstreams"].values())
     assert all(upstream["credential_arn"] == "" for upstream in cache["upstreams"].values())
 
 
-def test_only_docker_hub_and_ghcr_need_a_credential() -> None:
-    """ECR refuses those two without one, and caches the other three anonymously."""
-    upstreams = render()["registry_cache"]["upstreams"]
-    assert {key for key, upstream in upstreams.items() if upstream["requires_credential"]} == {"docker-hub", "ghcr"}
+def test_docker_hub_and_ghcr_are_cached_only_where_the_dial_names_a_credential() -> None:
+    """ECR refuses those two without one, so a dial that names none pulls them directly."""
+    block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n")
+    upstreams = render(replace=block)["registry_cache"]["upstreams"]
+    assert sorted(upstreams) == ["ecr-public", "ghcr", "k8s", "quay"]
+    assert upstreams["ghcr"] == {
+        "upstream_url": "ghcr.io",
+        "host": "ghcr.io",
+        "requires_credential": True,
+        "credential_arn": GHCR_CREDENTIAL,
+    }
+
+
+def test_a_blank_credential_caches_nothing_more() -> None:
+    block = ("profile: scale", "profile: scale\nregistry_cache:\n  credentials:\n    docker-hub: \"\"\n")
+    assert sorted(render(replace=block)["registry_cache"]["upstreams"]) == ["ecr-public", "k8s", "quay"]
 
 
 def test_the_dials_registry_cache_reaches_the_root() -> None:
     block = (
         "profile: scale",
-        "profile: scale\nregistry_cache:\n  enabled: \"false\"\n  namespace: dfe-blue\n"
-        f"  pull_expiry_days: 30\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n",
+        "profile: scale\nregistry_cache:\n  enabled: \"true\"\n  namespace: dfe-blue\n"
+        "  pull_expiry_days: 30\n",
     )
     cache = render(replace=block)["registry_cache"]
-    assert cache["enabled"] is False
+    assert cache["enabled"] is True
     assert cache["namespace"] == "dfe-blue"
     assert cache["pull_expiry_days"] == 30
-    assert cache["upstreams"]["ghcr"]["credential_arn"] == GHCR_CREDENTIAL
-    assert cache["upstreams"]["docker-hub"]["credential_arn"] == ""
 
 
-def test_a_credential_for_an_upstream_the_cache_has_no_rule_for_is_refused_by_name() -> None:
-    block = ("profile: scale", "profile: scale\nregistry_cache:\n  credentials:\n    gitlab: arn:aws:example\n")
-    with pytest.raises(render_dial.DialError, match=r"registry_cache\.credentials names gitlab"):
+def test_a_registry_cache_flag_that_is_not_a_boolean_is_refused_by_name() -> None:
+    block = ("profile: scale", "profile: scale\nregistry_cache:\n  enabled: \"yes\"\n")
+    with pytest.raises(render_dial.DialError, match=r"registry_cache\.enabled"):
         render(replace=block)
+
+
+def test_a_credential_for_an_upstream_that_takes_none_is_refused_by_name() -> None:
+    """quay.io needs no credential, and a name the cache does not know is a typo."""
+    for name in ("quay", "gitlab"):
+        block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    {name}: arn:aws:example\n")
+        with pytest.raises(render_dial.DialError, match=rf"registry_cache\.credentials names {name}"):
+            render(replace=block)
 
 
 def test_a_cloud_other_than_aws_renders_no_registry_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -352,9 +352,9 @@ variable "toolbox" {
 // ---------------------------------------------------------------------------
 
 variable "registry_cache" {
-  description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams, the registries the stack pulls from, with the credential ARNs the dial names; an upstream ECR refuses without a credential is skipped until it has one. namespace prefixes every rule and cached repository, and empty takes name. pull_expiry_days is how long a cached image outlives its last pull. enabled turns the whole cache off; on with no upstreams creates nothing."
+  description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams: the registries ECR caches with no credential (quay.io, registry.k8s.io, public.ecr.aws), plus docker.io or ghcr.io only where the dial names a Secrets Manager credential for it; an upstream that requires one and names none is skipped, and nodes pull it directly. namespace prefixes every rule and cached repository, and empty takes name. pull_expiry_days is how long a cached image outlives its last pull. enabled turns the cache on, and off (the default) creates nothing; on with no upstreams creates nothing either."
   type = object({
-    enabled          = optional(bool, true)
+    enabled          = optional(bool, false)
     namespace        = optional(string, "")
     pull_expiry_days = optional(number)
     upstreams = optional(map(object({

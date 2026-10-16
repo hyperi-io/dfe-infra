@@ -1,6 +1,8 @@
 # local-path-provisioner's helperPod.yaml, written into the local-path-config
 # ConfigMap by bootstrap.sh. Upstream's deploy/local-path-storage.yaml at the
-# bootstrap.local-path-provisioner tag, with its untagged busybox image pinned.
+# bootstrap.local-path-provisioner tag, with its untagged busybox image pinned
+# and read from the Docker Official Image's public.ecr.aws mirror, which serves
+# the same index digest, so a Docker Hub rate limit cannot stop it.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -13,5 +15,5 @@ spec:
       effect: NoSchedule
   containers:
   - name: helper-pod
-    image: docker.io/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+    image: public.ecr.aws/docker/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
     imagePullPolicy: IfNotPresent

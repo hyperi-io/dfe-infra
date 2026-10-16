@@ -1324,13 +1324,18 @@ def _toolbox(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
-# Rule prefix -> (the URL ECR's CreatePullThroughCacheRule takes, the image host, whether ECR needs a credential).
-_REGISTRY_CACHE_UPSTREAMS: dict[str, tuple[str, str, bool]] = {
-    "docker-hub": ("registry-1.docker.io", "docker.io", True),
-    "ghcr": ("ghcr.io", "ghcr.io", True),
-    "quay": ("quay.io", "quay.io", False),
-    "k8s": ("registry.k8s.io", "registry.k8s.io", False),
-    "ecr-public": ("public.ecr.aws", "public.ecr.aws", False),
+# Rule prefix -> (the URL ECR's CreatePullThroughCacheRule takes, the image host), for the
+# upstreams ECR caches with no credential.
+_REGISTRY_CACHE_UPSTREAMS: dict[str, tuple[str, str]] = {
+    "quay": ("quay.io", "quay.io"),
+    "k8s": ("registry.k8s.io", "registry.k8s.io"),
+    "ecr-public": ("public.ecr.aws", "public.ecr.aws"),
+}
+
+# The same, for the upstreams ECR caches only through a Secrets Manager credential the dial names.
+_REGISTRY_CACHE_CREDENTIALED: dict[str, tuple[str, str]] = {
+    "docker-hub": ("registry-1.docker.io", "docker.io"),
+    "ghcr": ("ghcr.io", "ghcr.io"),
 }
 
 # Days a cached image outlives its last pull when the dial names none.
@@ -1338,32 +1343,45 @@ REGISTRY_CACHE_PULL_EXPIRY_DAYS = 90
 
 
 def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
-    """registry_cache.* -- the pull-through cache every node pulls through, on unless the dial turns it off.
+    """registry_cache.* -- the pull-through cache, off unless the dial turns it on.
 
-    Every upstream is rendered with the credential ARN the dial names, empty when it names none.
+    The upstreams that need no credential are always rendered. A credentialed upstream is
+    rendered only when registry_cache.credentials names its secret, so with none its images
+    pull straight from the upstream.
     """
     credentials = _node(dial, ("registry_cache", "credentials"))
-    unknown = sorted(set(credentials) - set(_REGISTRY_CACHE_UPSTREAMS))
+    unknown = sorted(set(credentials) - set(_REGISTRY_CACHE_CREDENTIALED))
     if unknown:
         raise DialError(
-            f"registry_cache.credentials names {', '.join(unknown)}, which the cache has no rule for "
-            f"-- the upstreams are {', '.join(_REGISTRY_CACHE_UPSTREAMS)}"
+            f"registry_cache.credentials names {', '.join(unknown)}, which the cache takes no "
+            f"credential for -- the upstreams that take one are "
+            f"{', '.join(_REGISTRY_CACHE_CREDENTIALED)}"
         )
+    upstreams: dict[str, dict[str, object]] = {
+        prefix: {
+            "upstream_url": url,
+            "host": host,
+            "requires_credential": False,
+            "credential_arn": "",
+        }
+        for prefix, (url, host) in _REGISTRY_CACHE_UPSTREAMS.items()
+    }
+    for prefix, (url, host) in _REGISTRY_CACHE_CREDENTIALED.items():
+        credential_arn = _text(dial, ("registry_cache", "credentials", prefix))
+        if credential_arn:
+            upstreams[prefix] = {
+                "upstream_url": url,
+                "host": host,
+                "requires_credential": True,
+                "credential_arn": credential_arn,
+            }
     return {
-        "enabled": _flag(dial, ("registry_cache", "enabled"), default=True),
+        "enabled": _flag(dial, ("registry_cache", "enabled"), default=False),
         "namespace": _text(dial, ("registry_cache", "namespace")),
         "pull_expiry_days": _optional_number(
             dial, ("registry_cache", "pull_expiry_days"), REGISTRY_CACHE_PULL_EXPIRY_DAYS
         ),
-        "upstreams": {
-            prefix: {
-                "upstream_url": url,
-                "host": host,
-                "requires_credential": needs_credential,
-                "credential_arn": _text(dial, ("registry_cache", "credentials", prefix)),
-            }
-            for prefix, (url, host, needs_credential) in _REGISTRY_CACHE_UPSTREAMS.items()
-        },
+        "upstreams": upstreams,
     }
 
 
