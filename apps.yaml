@@ -644,6 +644,9 @@ apps:
       # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
       config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
       config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      # And the Kafka Secret's mechanism, mounted into one name both endpoints read.
+      config.source.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+      config.sink.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
     # Each of these renders empty, which the app reads as unset, until the
     # overlay value beside it is set.
     deployment_owned_when:
@@ -715,6 +718,9 @@ apps:
       # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
       config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
       config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      # And the Kafka Secret's mechanism, mounted into one name both endpoints read.
+      config.source.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+      config.sink.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
     # Each of these renders empty, which the app reads as unset, until the
     # overlay value beside it is set.
     deployment_owned_when:

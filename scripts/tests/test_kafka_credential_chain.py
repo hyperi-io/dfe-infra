@@ -843,14 +843,8 @@ MECHANISM_ENV = {
     "dfe-loader": "DFE_LOADER_KAFKA_SASL_MECHANISM",
     "dfe-receiver": "DFE_RECEIVER_KAFKA_SASL_MECHANISM",
     "dfe-transform-elastic": "KAFKA_SASL_MECHANISM",
-}
-
-# Clients whose validate_sasl takes only plain, scram_sha_256 and scram_sha_512,
-# refusing the Secret's SCRAM-SHA-512 and PLAIN, so they stay on their own
-# scram_sha_512 default until the app accepts librdkafka's spelling.
-REFUSES_SECRET_SPELLING = {
-    "dfe-transform-vector": "dfe-transform-vector src/config/loader.rs validate_sasl",
-    "dfe-transform-vrl": "dfe-transform-vrl src/config/validate.rs validate_sasl",
+    "dfe-transform-vector": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+    "dfe-transform-vrl": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
 }
 
 BUS_CELLS = [(profile, cloud) for profile in ("single", "scale") for cloud in CLOUDS]
@@ -880,27 +874,13 @@ def test_every_client_reads_the_mechanism_its_broker_serves() -> None:
                 )
 
 
-def test_every_credential_reader_is_handed_a_mechanism_or_named() -> None:
-    """A new client would otherwise pass by being in neither table."""
-    covered = set(MECHANISM_ENV) | set(REFUSES_SECRET_SPELLING)
+def test_every_credential_reader_is_handed_a_mechanism() -> None:
+    """A new client would otherwise pass by being absent from the table."""
     expect(
-        "every component reading dfe-kafka-user is accounted for",
-        covered == set(SECRET_CONSUMERS),
-        f"unaccounted {sorted(set(SECRET_CONSUMERS) - covered)}",
+        "every component reading dfe-kafka-user is handed a mechanism",
+        set(MECHANISM_ENV) == set(SECRET_CONSUMERS),
+        f"unaccounted {sorted(set(SECRET_CONSUMERS) - set(MECHANISM_ENV))}",
     )
-
-
-def test_an_app_that_refuses_the_secret_spelling_is_not_handed_it() -> None:
-    """Its validation rejects SCRAM-SHA-512, so the pod would not start on any broker."""
-    for service, reader in sorted(REFUSES_SECRET_SPELLING.items()):
-        for profile, cloud in BUS_CELLS:
-            env = effective_env(golden(service, profile, cloud), f"Deployment/{service}")
-            handed = sorted(name for name in env if "SASL_MECHANISM" in name.replace("__", "_"))
-            expect(
-                f"{service} is handed no mechanism [{profile}/{cloud}]",
-                not handed,
-                f"got {handed}; {reader}",
-            )
 
 
 def main() -> int:
