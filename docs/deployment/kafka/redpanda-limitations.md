@@ -66,7 +66,10 @@ chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.2.3, broker
   harness).
 - **cluster**: multi-broker `Redpanda` CR (`statefulset.replicas`); the operator
   owns Raft/seed bootstrap (no hand-rolled `seed_servers`). Validate at the target
-  scale before relying on it.
+  scale before relying on it. The secrets config must set `kafka_provider=redpanda`,
+  or the store path `kafka/redpanda` is never seeded and `dfe-kafka-user-store`
+  never syncs. `bootstrapServers` in `profile-scale.yaml` names Strimzi's Service,
+  so override it with the Redpanda cluster's in your own values.
 - **Known operator bug (workaround in place):** the `User` controller's
   `clusterRef` SRV discovery fails when SASL is enabled (redpanda-operator #1130,
   "Operator fails to load credentials from clusterRef when SASL is enabled"). The
