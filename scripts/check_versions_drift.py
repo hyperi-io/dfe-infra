@@ -465,6 +465,19 @@ CHECKS += [
         Path("helm/charts/otel-collector/Chart.yaml"),
         r"appVersion:\s*\"([^\"]+)\"",
     ),
+    # The gateway's wait for the engine runs on busybox, the collector image having no shell.
+    Check(
+        "otel gateway wait-for-engine busybox tag",
+        "services.busybox",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r"library/busybox\n\s*tag:\s*\"([^\"]+)\"",
+    ),
+    Check(
+        "otel gateway wait-for-engine busybox digest",
+        "services-digests.busybox",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r'library/busybox\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # valkey plain manifest: one tag@sha256 string, both halves checked
     Check(
         "valkey manifest image tag",

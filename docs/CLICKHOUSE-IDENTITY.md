@@ -68,7 +68,7 @@ catalogue 1.2.0, which mints `otel_writer`. On an older pair the user never exis
 and the app cannot connect. The apps and the keda shim wait for the engine to
 answer ready, and the engine reconciles its service users before it does.
 
-The collector's gateway does not wait: its image has no shell to run the wait in. Started before its user exists it stays Ready and retries each batch for `gateway.export.maxElapsedTime`. It reads the logs table's columns once, at start, so its log rows carry no `EventName` until the pod restarts.
+The collector's gateway waits too, on busybox's `wget`, because the collector image has no shell. It reads the logs table's columns once, at start, so a gateway that started before its user existed would write every log row without `EventName` until the pod restarted.
 
 ## The always-deployed set
 

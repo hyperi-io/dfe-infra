@@ -106,6 +106,30 @@ daemonset:
 # empty falls back to {project}-{env}.
 appNamespace: ""
 
+# The gateway's hold until dfe-engine reports ready, the keys dfe-common.waitForEngine reads.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty is appNamespace, where the engine runs.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  # The collector image has no shell, so the wait runs on busybox's wget.
+  image:
+    repository: public.ecr.aws/docker/library/busybox
+    tag: "1.38.0"  # == versions.yaml services.busybox (drift-checked).
+    # == versions.yaml services-digests.busybox (drift-checked).
+    digest: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
 # Cluster + dependency telemetry, feeding the pre-canned HyperDX dashboards
 # (dfe-engine#184). The dashboards are identical on every profile; collection cost
 # is not, so the expensive scrapers are gated here and enabled per profile.

@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _gate import COMPONENTS, WORKLOAD_KINDS, object_id, render_differences
+from _gate import COMPONENTS, WORKLOAD_KINDS, object_id, pod_spec, render_differences
 from _weave import REPO_ROOT, render_app
 
 CELLS = (("slim", "local"), ("scale", "aws"))
@@ -115,7 +115,7 @@ def pod_of(doc: dict) -> dict:
     """The pod spec of a workload, empty for any other object."""
     if doc.get("kind") not in WORKLOAD_KINDS:
         return {}
-    return (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
+    return pod_spec(doc)
 
 
 def minted(docs: list[dict]) -> set[str]:
@@ -274,3 +274,15 @@ def test_a_resume_that_turns_the_secret_group_on_too_restores_the_render() -> No
     pause = action("hunts-pause", PAUSE_THE_RUNNER, PAUSE_THE_SECRET)
     resume = action("hunts-resume", RESUME_THE_RUNNER, RESUME_THE_SECRET)
     assert restore_problems(pause, resume, *SLIM) == []
+
+
+def test_a_cronjobs_secret_reads_come_from_its_job_template() -> None:
+    env = [{"name": "X", "valueFrom": {"secretKeyRef": {"name": "s", "key": "k"}}}]
+    pod = {"containers": [{"name": "main", "env": env}]}
+    cronjob = {
+        "kind": "CronJob",
+        "metadata": {"name": "c"},
+        "spec": {"jobTemplate": {"spec": {"template": {"spec": pod}}}},
+    }
+    assert pod_of(cronjob) == pod
+    assert list(required_reads([cronjob])) == [("CronJob/c", "main env X", "s")]

@@ -50,6 +50,7 @@ from _gate import (
     golden,
     golden_path,
     object_id,
+    pod_spec,
     rendered_twice,
     route_problems,
     unresolved_refs,
@@ -240,7 +241,7 @@ def _images(path: Path) -> list[tuple[str, str]]:
     for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")):
         if not isinstance(doc, dict) or doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = doc["spec"]["template"]["spec"]
+        pod = pod_spec(doc)
         for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
             found.append((f"{object_id(doc)} {container['name']}", container["image"]))
     return found
@@ -290,6 +291,18 @@ def test_an_image_pinned_by_hand_is_caught() -> None:
         "carries no pinned digest",
         "Deployment/x c: registry.example.com/dfe/x:<pin:apps.dfe-ui> carries no pinned digest",
     ]
+
+
+def test_a_cronjobs_images_are_read_from_its_job_template(tmp_path: Path) -> None:
+    pod = {"containers": [{"name": "main", "image": "x:1"}]}
+    cronjob = {
+        "kind": "CronJob",
+        "metadata": {"name": "c"},
+        "spec": {"schedule": "@hourly", "jobTemplate": {"spec": {"template": {"spec": pod}}}},
+    }
+    path = tmp_path / "render.yaml"
+    path.write_text(yaml.safe_dump(cronjob), encoding="utf-8")
+    assert _images(path) == [("CronJob/c main", "x:1")]
 
 
 # ----------------------------------------------------------------------- env

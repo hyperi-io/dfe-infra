@@ -62,6 +62,56 @@ holds it.
 {{- end -}}
 
 {{/*
+otel-collector.waitForEngine -- dfe-common.waitForEngine's init container, on
+busybox's wget because the collector image has no shell. The gateway reads its
+logs table's columns once, at start, as the user the engine creates, so started
+first it writes every log row without EventName. Rendered only while the gateway
+connects to ClickHouse. test_clickhouse_app_identity.py holds the script to the
+library's.
+*/}}
+{{- define "otel-collector.waitForEngine" -}}
+{{- $w := .Values.waitForEngine | default dict -}}
+{{- $enabled := true -}}
+{{- if hasKey $w "enabled" -}}{{- $enabled = $w.enabled -}}{{- end -}}
+{{- if and $enabled (or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled) }}
+{{- $service := $w.service | default "dfe-engine" -}}
+{{- $namespace := $w.namespace | default .Values.appNamespace | default (include "dfe-common.namespace" .) -}}
+{{- $port := $w.port | default 8000 -}}
+{{- $timeout := $w.timeoutSeconds | default 600 -}}
+{{- $interval := $w.intervalSeconds | default 5 -}}
+{{- $image := $w.image | default dict -}}
+{{- if not (and $image.repository $image.tag $image.digest) -}}
+{{- fail "waitForEngine.image needs a repository, tag and digest: versions.yaml services.busybox and services-digests.busybox" -}}
+{{- end }}
+initContainers:
+  - name: wait-for-engine
+    image: {{ printf "%s:%s@%s" $image.repository $image.tag $image.digest | quote }}
+    imagePullPolicy: {{ $image.pullPolicy | default "IfNotPresent" }}
+    {{- include "dfe-common.containerSecurityContext" . | nindent 4 }}
+    {{- with $w.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        URL="http://{{ $service }}.{{ $namespace }}.svc.cluster.local:{{ $port }}/readyz"
+        DEADLINE=$(( $(date +%s) + {{ $timeout }} ))
+        echo "waiting for ${URL}"
+        until wget -q -O /dev/null -T 5 "$URL"; do
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            echo "dfe-engine did not report ready at ${URL} within {{ $timeout }}s -- GET /api/v1/system/schema on the engine says why" >&2
+            exit 1
+          fi
+          sleep {{ $interval }}
+        done
+        echo "dfe-engine is ready"
+{{- end }}
+{{- end -}}
+
+{{/*
 otel-collector.validateIngress -- the otel.ingress render guards. The messages
 are the gateway chart's own, word for word (helm/edge/gateway _routes.tpl), so
 both refusals read the same whichever chart an operator renders first.
