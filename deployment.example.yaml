@@ -523,7 +523,7 @@ toolbox:
 registry_cache:
   enabled: "true"            # true | false
   namespace: ""              # prefix of every cached repository; empty takes metadata.name. <= 19 characters
-  pull_expiry_days: ""       # days a cached image outlives its last pull; empty takes 90
+  expiry_days: ""            # days a cached image is kept after ECR cached it, then the next pull refetches it. Empty takes 90
 
 ## The system node pool -- what the cluster runs before any DFE workload lands.
 ## shape_ref indexes shapes/resolved/<cloud>-<region>.json; an instance type is never

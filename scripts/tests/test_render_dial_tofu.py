@@ -897,7 +897,7 @@ def test_the_registry_cache_is_on_with_the_credential_free_upstreams_when_the_di
     cache = render()["registry_cache"]
     assert cache["enabled"] is True
     assert cache["namespace"] == ""
-    assert cache["pull_expiry_days"] == render_dial.REGISTRY_CACHE_PULL_EXPIRY_DAYS
+    assert cache["expiry_days"] == render_dial.REGISTRY_CACHE_EXPIRY_DAYS
     assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
     assert not any(upstream["requires_credential"] for upstream in cache["upstreams"].values())
     assert all(upstream["credential_arn"] == "" for upstream in cache["upstreams"].values())
@@ -925,12 +925,12 @@ def test_the_dials_registry_cache_reaches_the_root() -> None:
     block = (
         "profile: scale",
         "profile: scale\nregistry_cache:\n  enabled: \"true\"\n  namespace: dfe-blue\n"
-        "  pull_expiry_days: 30\n",
+        "  expiry_days: 30\n",
     )
     cache = render(replace=block)["registry_cache"]
     assert cache["enabled"] is True
     assert cache["namespace"] == "dfe-blue"
-    assert cache["pull_expiry_days"] == 30
+    assert cache["expiry_days"] == 30
 
 
 def test_a_dial_that_turns_the_registry_cache_off_renders_it_off_with_its_upstreams() -> None:

@@ -1359,8 +1359,8 @@ _REGISTRY_CACHE_CREDENTIALED: dict[str, tuple[str, str]] = {
     "ghcr": ("ghcr.io", "ghcr.io"),
 }
 
-# Days a cached image outlives its last pull when the dial names none.
-REGISTRY_CACHE_PULL_EXPIRY_DAYS = 90
+# Days a cached image is kept after ECR cached it when the dial names none.
+REGISTRY_CACHE_EXPIRY_DAYS = 90
 
 
 def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
@@ -1399,8 +1399,8 @@ def _registry_cache(dial: dict[str, object]) -> dict[str, object]:
     return {
         "enabled": _flag(dial, ("registry_cache", "enabled"), default=True),
         "namespace": _text(dial, ("registry_cache", "namespace")),
-        "pull_expiry_days": _optional_number(
-            dial, ("registry_cache", "pull_expiry_days"), REGISTRY_CACHE_PULL_EXPIRY_DAYS
+        "expiry_days": _optional_number(
+            dial, ("registry_cache", "expiry_days"), REGISTRY_CACHE_EXPIRY_DAYS
         ),
         "upstreams": upstreams,
     }

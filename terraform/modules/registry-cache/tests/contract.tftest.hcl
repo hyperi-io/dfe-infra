@@ -23,10 +23,10 @@ variables {
     region  = "us-west-2"
   }
 
-  name             = "dfe-contract"
-  namespace        = "dfe-contract"
-  pull_expiry_days = 90
-  kms_key_arn      = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+  name        = "dfe-contract"
+  namespace   = "dfe-contract"
+  expiry_days = 90
+  kms_key_arn = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
 
   node_role_arns = {
     managed   = "arn:aws:iam::000000000000:role/dfe-e2e/dfe-contract-nodes"
@@ -156,13 +156,24 @@ run "aws_templates_shape_every_cached_repository" {
   }
 
   assert {
-    condition     = jsondecode(aws_ecr_repository_creation_template.this["quay"].lifecycle_policy).rules[0].selection.countType == "sinceImagePulled"
-    error_message = "the lifecycle rule must expire by last pull, so an image still in use is kept"
+    condition     = jsondecode(aws_ecr_repository_creation_template.this["quay"].lifecycle_policy).rules[0].selection.countType == "sinceImagePushed"
+    error_message = "the lifecycle rule must expire by age since ECR cached the image"
   }
 
   assert {
     condition     = jsondecode(aws_ecr_repository_creation_template.this["quay"].lifecycle_policy).rules[0].selection.countNumber == 90
-    error_message = "the lifecycle rule must take pull_expiry_days"
+    error_message = "the lifecycle rule must take expiry_days"
+  }
+
+  assert {
+    condition = alltrue([
+      for template in values(aws_ecr_repository_creation_template.this) :
+      alltrue([
+        for rule in jsondecode(template.lifecycle_policy).rules :
+        !(rule.selection.countType == "sinceImagePulled" && rule.action.type == "expire")
+      ])
+    ])
+    error_message = "ECR rejects a sinceImagePulled count with an expire action (it takes TRANSITION only), so no template's rule may pair them"
   }
 }
 

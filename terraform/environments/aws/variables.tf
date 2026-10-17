@@ -364,11 +364,11 @@ variable "toolbox" {
 // ---------------------------------------------------------------------------
 
 variable "registry_cache" {
-  description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams: the registries ECR caches with no credential (quay.io, registry.k8s.io, public.ecr.aws), plus docker.io or ghcr.io only where the dial names a Secrets Manager credential for it; an upstream that requires one and names none is skipped, and nodes pull it directly. namespace prefixes every rule and cached repository, and empty takes name. pull_expiry_days is how long a cached image outlives its last pull. enabled defaults to true, and false creates nothing. On with no upstreams creates nothing either."
+  description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams: the registries ECR caches with no credential (quay.io, registry.k8s.io, public.ecr.aws), plus docker.io or ghcr.io only where the dial names a Secrets Manager credential for it; an upstream that requires one and names none is skipped, and nodes pull it directly. namespace prefixes every rule and cached repository, and empty takes name. expiry_days is how many days a cached image is kept after ECR cached it, after which the next pull refetches it from the upstream. enabled defaults to true, and false creates nothing. On with no upstreams creates nothing either."
   type = object({
-    enabled          = optional(bool, true)
-    namespace        = optional(string, "")
-    pull_expiry_days = optional(number)
+    enabled     = optional(bool, true)
+    namespace   = optional(string, "")
+    expiry_days = optional(number)
     upstreams = optional(map(object({
       upstream_url        = string
       host                = string
@@ -380,8 +380,8 @@ variable "registry_cache" {
   nullable = false
 
   validation {
-    condition     = !var.registry_cache.enabled || length(var.registry_cache.upstreams) == 0 || var.registry_cache.pull_expiry_days != null
-    error_message = "registry_cache names upstreams, so pull_expiry_days must say how long a cached image outlives its last pull -- render_dial.py sends one."
+    condition     = !var.registry_cache.enabled || length(var.registry_cache.upstreams) == 0 || var.registry_cache.expiry_days != null
+    error_message = "registry_cache names upstreams, so expiry_days must say how many days a cached image is kept -- render_dial.py sends one."
   }
 }
 

@@ -69,13 +69,13 @@ variable "upstreams" {
   }
 }
 
-variable "pull_expiry_days" {
-  description = "Days a cached image is kept after its last pull before its lifecycle rule expires it, from tfvars (render_dial.py's default unless the dial's registry_cache.pull_expiry_days names another). A later pull fetches it from the upstream again."
+variable "expiry_days" {
+  description = "Days a cached image is kept after ECR cached it, after which the next pull refetches it from the upstream. From tfvars (render_dial.py's default unless the dial's registry_cache.expiry_days names another)."
   type        = number
 
   validation {
-    condition     = var.pull_expiry_days == floor(var.pull_expiry_days) && var.pull_expiry_days >= 1
-    error_message = "pull_expiry_days must be a whole number of days, at least 1."
+    condition     = var.expiry_days == floor(var.expiry_days) && var.expiry_days >= 1
+    error_message = "expiry_days must be a whole number of days, at least 1."
   }
 }
 

@@ -98,12 +98,12 @@ resource "aws_ecr_repository_creation_template" "this" {
   lifecycle_policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Expire an image no node has pulled for ${var.pull_expiry_days} days"
+      description  = "Expire an image ${var.expiry_days} days after ECR cached it"
       selection = {
         tagStatus   = "any"
-        countType   = "sinceImagePulled"
+        countType   = "sinceImagePushed"
         countUnit   = "days"
-        countNumber = var.pull_expiry_days
+        countNumber = var.expiry_days
       }
       action = { type = "expire" }
     }]
