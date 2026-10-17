@@ -60,6 +60,8 @@ from _weave import REPO_ROOT, contract, render_app, weave
 # (kind, name) -> the file that provides it, and the scenario it is limited to.
 ELSEWHERE: dict[tuple[str, str], tuple[str, str | None]] = {
     ("Secret", "clickhouse-admin-password"): ("helm/charts/clickhouse-cluster/values.yaml", None),
+    # The loader's own password, minted beside the engine (engine-service-clickhouse.yaml).
+    ("Secret", "loader-clickhouse"): ("helm/charts/dfe-extras/values.yaml", None),
     ("Secret", "dfe-clickhouse-ca"): ("helm/charts/clickhouse-cluster/values.yaml", None),
     ("Secret", "dfe-ferretdb-password"): ("helm/charts/ferretdb/values.yaml", None),
     ("Secret", "dfe-kafka-user"): ("helm/charts/kafka/templates/kafka-user.yaml", None),

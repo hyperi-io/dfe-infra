@@ -19,7 +19,8 @@ and what each check reads off the render:
 
 1. The runner dials as dfe_hunt_runner on that Secret, never the admin account.
 2. The engine is handed the same Secret and key, so the two cannot disagree.
-3. The engine and the keda shim keep the admin account common.yaml names.
+3. The engine keeps the admin account common.yaml names, and the keda shim
+   dials as the query reader.
 4. The Secret is minted once by ESO (CreatedOnce), not by the template.
 5. A pinned password renders a plain Secret; passwordSecretCreate=false renders
    nothing for the deployment to collide with.
@@ -115,15 +116,19 @@ def test_the_engine_is_handed_the_same_secret() -> None:
         )
 
 
-def test_the_engine_and_the_shim_keep_the_admin_account() -> None:
+def test_the_engine_keeps_the_admin_account_and_the_shim_reads_as_the_query_reader() -> None:
+    reader = COMMON["clickhouse"]["serviceUsers"]["queryReader"]
     for profile, cloud in cells():
         docs = golden(ENGINE, profile, cloud)
-        for deployment in (ENGINE, "dfe-keda-shim"):
+        for deployment, user, secret in (
+            (ENGINE, ADMIN_USER, ADMIN_SECRET),
+            ("dfe-keda-shim", reader["user"], (reader["passwordSecretName"], KEY)),
+        ):
             found = env(docs, deployment)
             expect(
-                f"{profile}/{cloud}: {deployment} still dials as {ADMIN_USER}",
-                found.get("DFE_CLICKHOUSE_USERNAME") == ADMIN_USER
-                and secret_ref(found.get("DFE_CLICKHOUSE_PASSWORD")) == ADMIN_SECRET,
+                f"{profile}/{cloud}: {deployment} dials as {user}",
+                found.get("DFE_CLICKHOUSE_USERNAME") == user
+                and secret_ref(found.get("DFE_CLICKHOUSE_PASSWORD")) == secret,
                 f"{found.get('DFE_CLICKHOUSE_USERNAME')} {found.get('DFE_CLICKHOUSE_PASSWORD')}",
             )
 

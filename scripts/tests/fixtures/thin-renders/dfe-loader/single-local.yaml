@@ -134,7 +134,7 @@ spec:
           valueFrom:
             secretKeyRef:
               key: password
-              name: clickhouse-admin-password
+              name: loader-clickhouse
         envFrom:
         - configMapRef:
             name: dfe-loader-env
@@ -328,7 +328,7 @@ apiVersion: v1
 data:
   DFE_LOADER_CLICKHOUSE_DATABASE: dfe
   DFE_LOADER_CLICKHOUSE_HOSTS: dfe-clickhouse.clickhouse.svc.cluster.local:8443
-  DFE_LOADER_CLICKHOUSE_USERNAME: default
+  DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
   DFE_LOADER_CLICKHOUSE__PROTOCOL: http
   DFE_LOADER_DLQ_MODE: kafka_only
   DFE_LOADER_DLQ_TOPIC: dfe_loader_dlq

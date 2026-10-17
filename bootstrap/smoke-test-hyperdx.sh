@@ -66,9 +66,9 @@ note() { echo "         $1"; }
 IFS= read -r -d '' JS_PROBE <<'JS' || true
 const e = process.env;
 const headers = {};
-if (e.PROBE_CH_AUTH) {
-  headers["X-ClickHouse-User"] = e.CLICKHOUSE_USER;
-  headers["X-ClickHouse-Key"] = e.CLICKHOUSE_PASSWORD;
+if (e.PROBE_CH_USER) {
+  headers["X-ClickHouse-User"] = e.PROBE_CH_USER;
+  headers["X-ClickHouse-Key"] = require("fs").readFileSync(0, "utf8");
 }
 if (e.PROBE_BEARER) headers.Authorization = "Bearer " + e.PROBE_BEARER;
 fetch(e.PROBE_URL, {
@@ -96,8 +96,8 @@ fetch(e.PROBE_URL, {
 JS
 
 # hdx_probe METHOD URL [VAR=value ...]: a GET prints the body and a HEAD the status
-# line and headers; PROBE_CH_AUTH=1 sends the pod's own ClickHouse credentials and
-# PROBE_BEARER=<jwt> a bearer token.
+# line and headers. PROBE_CH_USER=<user> sends that ClickHouse user with the
+# password read from stdin, and PROBE_BEARER=<jwt> a bearer token.
 hdx_probe() {
   local method="$1" url="$2"
   shift 2
@@ -224,11 +224,15 @@ check "HyperDX pod reaches ClickHouse over HTTP (${CH_URL:-deploy/${ENGINE_DEPLO
 # The query side of the same tables the integration test writes to. Rows may be
 # legitimately absent on a just-provisioned cluster, so assert the table RESOLVES;
 # freshness is the integration test's job.
-# ClickHouse serves /ping unauthenticated but rejects an unauthenticated query, so
-# the credentials come from HyperDX's own environment inside the pod. One helper,
-# one layer of quoting: threading the headers through check's eval mangles them.
+# ClickHouse rejects an unauthenticated query, so it reads as the query reader the
+# platform team's connection uses, its password on stdin. One helper, one layer of
+# quoting: threading the headers through check's eval mangles them.
+READER_USER="${DFE_HYPERDX_CH_USER:-dfe_query_reader}"
+READER_SECRET="${DFE_HYPERDX_CH_SECRET:-query-reader-clickhouse}"
 hdx_ch_query() {
-  hdx_probe GET "${CH_URL}/?query=$1" PROBE_CH_AUTH=1
+  kubectl -n "$NS_APP" get secret "$READER_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null |
+    kubectl -n "$NS_HYPERDX" exec -i "deploy/${HYPERDX_DEPLOY}" -c "$HYPERDX_CONTAINER" -- \
+      env "PROBE_METHOD=GET" "PROBE_URL=${CH_URL}/?query=$1" "PROBE_CH_USER=${READER_USER}" node -e "$JS_PROBE" 2>/dev/null
 }
 check "otel table ${OTEL_DB}.${OTEL_LOGS_TABLE} is queryable from HyperDX" \
   "printf '%s' \"\$(hdx_ch_query 'SELECT+count()+FROM+${OTEL_DB}.${OTEL_LOGS_TABLE}')\" | grep -qE '^[0-9]+'"

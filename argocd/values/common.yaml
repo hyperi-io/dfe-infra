@@ -270,14 +270,32 @@ clickhouse:
   # defaults to native and inserts RowBinary over it, so it takes this one.
   nativePort: 9000
   database: dfe
-  # The account the apps connect as, and the one credential the deploy layer
-  # owns. `default` because that is the only account the ClickHouse operator can
-  # password from a Secret, and it is what docker and single mode already start.
-  # Name and Secret must match clickhouse-cluster's users.admin.
-  # Per-service roles come from engine governance -- docs/CLICKHOUSE-IDENTITY.md.
+  # The admin account dfe-engine connects as to create every other user, and the
+  # one credential the deploy layer owns. `default` because that is the only
+  # account the ClickHouse operator can password from a Secret, and it is what
+  # docker and single mode already start. Name and Secret must match
+  # clickhouse-cluster's users.admin. No other workload reads it.
   user: default
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
+  # Each app's own user. dfe-extras mints each password into a Secret beside the
+  # engine, the engine creates the user on that password, and the app connects
+  # with it -- docs/CLICKHOUSE-IDENTITY.md. The names are dfe-engine's.
+  serviceUsers:
+    loader:
+      user: dfe_loader
+      passwordSecretName: loader-clickhouse
+      passwordSecretKey: password
+    # The keda shim's.
+    queryReader:
+      user: dfe_query_reader
+      passwordSecretName: query-reader-clickhouse
+      passwordSecretKey: password
+    # The OTel collector's, copied into its namespace as well.
+    otelWriter:
+      user: dfe_otel_writer
+      passwordSecretName: otel-writer-clickhouse
+      passwordSecretKey: password
   # HTTPS between the apps and ClickHouse. clickhouse-cluster serves it and
   # dfe-engine, dfe-loader and hyperdx dial it, all from this one block. Each
   # applies the same rule: on when `enabled` AND there is a CA to sign with --

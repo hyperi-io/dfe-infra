@@ -33,6 +33,35 @@ says, because clickhouse-cluster keeps 9000 open beside 9440 for this collector.
 {{- end -}}
 
 {{/*
+otel-collector.clickhouseUser / clickhouseSecret -- the collector's own
+ClickHouse user and the Secret its password is in: exporters.clickhouse when
+set, else clickhouse.serviceUsers.otelWriter. The exporter and the sqlquery
+receiver both use them. The admin account is refused, because dfe-engine alone
+holds it.
+*/}}
+{{- define "otel-collector.clickhouseUser" -}}
+{{- $user := .Values.exporters.clickhouse.username | default (dig "serviceUsers" "otelWriter" "user" "" .Values.clickhouse) -}}
+{{- if not $user -}}
+{{- fail "the collector has no ClickHouse user: set clickhouse.serviceUsers.otelWriter.user" -}}
+{{- end -}}
+{{- if eq $user (toString (dig "user" "" .Values.clickhouse)) -}}
+{{- fail (printf "the collector's ClickHouse user is %q, the admin account dfe-engine alone holds -- it writes as clickhouse.serviceUsers.otelWriter" $user) -}}
+{{- end -}}
+{{- $user -}}
+{{- end -}}
+
+{{- define "otel-collector.clickhouseSecret" -}}
+{{- $secret := .Values.exporters.clickhouse.passwordSecretName | default (dig "serviceUsers" "otelWriter" "passwordSecretName" "" .Values.clickhouse) -}}
+{{- if not $secret -}}
+{{- fail "the collector has no ClickHouse password Secret: set clickhouse.serviceUsers.otelWriter.passwordSecretName" -}}
+{{- end -}}
+{{- if eq $secret (toString (dig "passwordSecretName" "" .Values.clickhouse)) -}}
+{{- fail (printf "the collector's ClickHouse password is %q, the admin Secret dfe-engine alone reads -- it writes as clickhouse.serviceUsers.otelWriter" $secret) -}}
+{{- end -}}
+{{- $secret -}}
+{{- end -}}
+
+{{/*
 otel-collector.validateIngress -- the otel.ingress render guards. The messages
 are the gateway chart's own, word for word (helm/edge/gateway _routes.tpl), so
 both refusals read the same whichever chart an operator renders first.

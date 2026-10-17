@@ -59,9 +59,14 @@ spec:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
             # The ClickHouse the engine reads, over the same transport. The shim
-            # polls it READ-ONLY for the pressure gauge + the hunt due-count.
+            # only reads the pressure gauge and the hunt due-count, so it connects
+            # as the query reader.
             {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
-            {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
+            {{- $reader := dig "serviceUsers" "queryReader" dict .Values.clickhouse }}
+            {{- if or (not $reader.user) (not $reader.passwordSecretName) }}
+            {{- fail "clickhouse.serviceUsers.queryReader needs a user and a passwordSecretName: the keda shim connects as its own user, never the admin account" }}
+            {{- end }}
+            {{- include "dfe-engine.serviceClickhouseAuthEnv" $reader | nindent 12 }}
             - name: DFE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
             {{- with (include "dfe-extras.otelEndpoint" .) }}
