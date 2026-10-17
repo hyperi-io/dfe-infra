@@ -995,7 +995,7 @@ def test_the_destroy_runs_when_a_stage_raises(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_cloud_cycle_accepts_the_flag_among_the_cycle_arguments() -> None:
-    """hyperi-infra passes it after `--`, where the cycle's own parser judges it."""
+    """A workflow passes it after `--`, where the cycle's own parser judges it."""
     command = guard.cycle_command(
         ["--", "--diagnostics-dir", "/runner/diagnostics"], "single", Path("/tf"), Path("/k")
     )
