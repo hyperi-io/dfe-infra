@@ -996,6 +996,10 @@ SECRET_LINES = [
     (f'password="open quote {FAKE}', FAKE),
     (f"token => {FAKE}", FAKE),
     (f'"auth": "{FAKE}"', FAKE),
+    # A value printed as a type wrapping a string: Rust Debug, a Python repr.
+    (f'sasl_password: Some("{FAKE}")', FAKE),
+    (f'password: Password("{FAKE}")', FAKE),
+    (f"password: SecretStr('{FAKE}')", FAKE),
     (f"key {AWS_KEY_ID} leaked", AWS_KEY_ID),
     (f"gh {GITHUB_TOKEN} leaked", GITHUB_TOKEN),
     (f"jwt {JWT} end", JWT),
@@ -1020,6 +1024,10 @@ def test_redact_keeps_the_line_structure_and_the_text_around_a_credential() -> N
         f'{{"password":"{fe.MASK}","msg":"x"}}'
     )
     assert fe.redact(f"{PEM_BEGIN}\n{FAKE}\n{PEM_END}\nafter") == f"{fe.MASK}\nafter"
+    # The wrapper's closing bracket and what follows it stay.
+    assert fe.redact(f'sasl_password: Some("{FAKE}"), retries: 3') == (
+        f"sasl_password: {fe.MASK}), retries: 3"
+    )
 
 
 @pytest.mark.parametrize(

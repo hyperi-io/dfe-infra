@@ -654,6 +654,72 @@ def test_no_client_image_skips_the_kafka_reads(
     assert dg.KAFKA_CLI_IMAGE_ENV in _index(out)
 
 
+def _plaintext(args: list[str]) -> fe.Outcome:
+    """A bus with no SASL: no Secret on the engine, PLAINTEXT on its ConfigMap."""
+    if dg.ENGINE in args and "deploy" in args:
+        return _text("bootstrap=\nprotocol=\nsecret=\nconfigmaps=dfe-engine-env\n")
+    if "configmap" in args:
+        return _text("bootstrap=dfe-kafka.strimzi.svc:9092\nprotocol=PLAINTEXT\n")
+    return _answer(args)
+
+
+def _applied(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, answer=_answer
+) -> tuple[list[tuple[Path, bytes]], Path]:
+    """collect() with the real redactor, recording each file `apply -f` was handed as it ran."""
+    handed: list[tuple[Path, bytes]] = []
+
+    def reading(args: list[str]) -> fe.Outcome:
+        if "apply" in args:
+            path = Path(args[args.index("-f") + 1])
+            handed.append((path, path.read_bytes()))
+        return answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=reading)
+    return handed, out
+
+
+@pytest.mark.parametrize("answer", [_answer, _plaintext], ids=["sasl", "plaintext"])
+def test_the_manifest_kubectl_applies_is_the_unredacted_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, answer
+) -> None:
+    """Redaction masks `automountServiceAccountToken` and `"secret": {`, so it never sees this."""
+    handed, out = _applied(monkeypatch, tmp_path, answer)
+    ((path, sent),) = handed
+    assert not path.is_relative_to(out)
+    pod, _policy = json.loads(sent)["items"]
+    assert pod["spec"]["automountServiceAccountToken"] is False
+    volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+    if answer is _answer:
+        assert volumes["credential"]["secret"]["secretName"] == "dfe-kafka-user"
+    else:
+        assert "credential" not in volumes
+
+
+def test_the_bundle_keeps_a_redacted_copy_of_the_applied_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    handed, out = _applied(monkeypatch, tmp_path)
+    ((_path, sent),) = handed
+    kept = (out / dg.CLIENT_MANIFEST).read_bytes()
+    assert kept == fe.redact_bytes(sent)
+    assert fe.MASK.encode() in kept
+
+
+@pytest.mark.parametrize("failing", ["", "exec"])
+def test_the_applied_manifest_is_removed_after_the_bundle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failing: str
+) -> None:
+    def answer(args: list[str]) -> fe.Outcome:
+        if failing and failing in args:
+            raise OSError(f"{failing} broke")
+        return _answer(args)
+
+    handed, _out = _applied(monkeypatch, tmp_path, answer)
+    ((path, _sent),) = handed
+    assert not path.exists()
+
+
 def test_the_summary_names_each_topics_end_offset_and_each_groups_commit() -> None:
     lines = dg.kafka_summary_lines(GROUPS, OFFSETS)
     text = "\n".join(lines)

@@ -34,7 +34,7 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
                              dfe-engine's Deployment sets, and the ConfigMaps it loads
   kafka/configmap-<name>.txt the bootstrap address and security protocol each of those
                              ConfigMaps sets
-  kafka/client-pod.json      the client pod the Kafka reads run from
+  kafka/client-pod.json      a redacted copy of the client pod and NetworkPolicy applied
   kafka/consumer-groups.txt  kafka-consumer-groups.sh --describe --all-groups
   kafka/end-offsets.txt      the end offset of every _land, _load and _dlq topic
   kafka/summary.txt          per topic: its end offset, and each group's committed offset
@@ -65,6 +65,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -544,12 +545,14 @@ def client_script(facts: KafkaFacts, command: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class KafkaClient:
-    """The client pod one bundle applied, and whether kubectl accepted it."""
+    """The client pod one bundle applied, whether kubectl accepted it, and the file it read."""
 
     facts: KafkaFacts
     pod: str
     run_id: str
     started: bool
+    # The unredacted manifest outside the bundle, removed with the pod.
+    manifest: Path
 
 
 def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClient | None:
@@ -588,13 +591,22 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
         return None
     run_id = uuid.uuid4().hex[:8]
     pod = f"{CLIENT_NAME}-kafka-{run_id}"
-    manifest = client_manifest(pod, run_id, facts, image, ports)
-    bundle.write(CLIENT_MANIFEST, (json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
-    apply = ["apply", "-f", str(bundle.out / CLIENT_MANIFEST)]
-    applied = bundle.step(f"{CLIENT_MANIFEST}, applied", apply)
+    raw = (json.dumps(client_manifest(pod, run_id, facts, image, ports), indent=2) + "\n").encode()
+    # Redaction mangles the JSON (`automountServiceAccountToken`), so kubectl reads its own copy.
+    bundle.write(CLIENT_MANIFEST, raw)
+    descriptor, name = tempfile.mkstemp(prefix=f"{CLIENT_NAME}-", suffix=".json")
+    manifest = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+        applied = bundle.step(f"{CLIENT_MANIFEST}, applied", ["apply", "-f", str(manifest)])
+    except BaseException:
+        manifest.unlink(missing_ok=True)
+        raise
     if applied is None:
+        manifest.unlink(missing_ok=True)
         return None
-    return KafkaClient(facts, pod, run_id, applied.ok)
+    return KafkaClient(facts, pod, run_id, applied.ok, manifest)
 
 
 def _exec_args(client: KafkaClient, command: str) -> tuple[list[str], list[str]]:
@@ -627,19 +639,25 @@ def read_kafka(bundle: Bundle, client: KafkaClient) -> None:
 
 
 def stop_kafka_client(bundle: Bundle, client: KafkaClient) -> None:
-    """Delete the client pod and its NetworkPolicy, in the time CLEANUP_RESERVE kept back."""
+    """Delete the client pod and its NetworkPolicy, then the manifest kubectl applied.
+
+    The delete runs in the time CLEANUP_RESERVE kept back.
+    """
     args = [
         "-n", client.facts.namespace, "delete", "pod,networkpolicy", "-l",
         f"{RUN_LABEL}={client.run_id}", "--ignore-not-found", "--wait=false",
     ]
     timeout = min(CLEANUP_RESERVE, max(1.0, bundle.end - time.monotonic()))
-    bundle.runs += 1
-    argv = ["kubectl", *bundle.prefix, *args]
-    outcome = fe.run_bounded(argv, timeout=timeout, limit=fe.STDERR_BYTES)
-    if outcome.ok:
-        bundle.answered += 1
-    deleted = "(the client pod and its NetworkPolicy, deleted)"
-    bundle.note(deleted, fe.verdict(outcome, bundle.budget), args)
+    try:
+        bundle.runs += 1
+        argv = ["kubectl", *bundle.prefix, *args]
+        outcome = fe.run_bounded(argv, timeout=timeout, limit=fe.STDERR_BYTES)
+        if outcome.ok:
+            bundle.answered += 1
+        deleted = "(the client pod and its NetworkPolicy, deleted)"
+        bundle.note(deleted, fe.verdict(outcome, bundle.budget), args)
+    finally:
+        client.manifest.unlink(missing_ok=True)
 
 
 def kafka_summary_lines(groups: str, offsets: str) -> list[str]:
