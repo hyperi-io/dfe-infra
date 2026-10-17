@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         scripts/dfe_ops_diagnostics.py
 #  Purpose:      `dfe-ops diagnostics` -- the app logs, workload state, Argo status
-#                and Kafka offsets a failed smoke or acceptance stage leaves, written
+#                and Kafka offsets a failed cycle stage leaves, written
 #                to a bundle before anything is torn down. Registered into dfe-ops
 #                the way dfe_ops_failure_evidence.py is.
 #  Language:     Python
@@ -14,7 +14,7 @@
     dfe-ops diagnostics --dir DIR --label LABEL [--kubeconfig F] [--context C] [--server S]
                         [--log-minutes 30] [--budget 300]
 
-`dfe-ops cycle --diagnostics-dir DIR` runs it when its smoke or acceptance stage fails,
+`dfe-ops cycle --diagnostics-dir DIR` runs it when any stage from deploy+e2e on fails,
 before the destroy. The source acceptance runner runs it before it removes its source,
 which takes that source's own transform with it. Each run writes DIR/<UTC time>-<label>/:
 
@@ -811,7 +811,7 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
     diag = sub.add_parser(
         "diagnostics",
         help="write the DFE apps' recent logs, workloads, events, Argo status and Kafka offsets "
-        "to a timestamped bundle, for after a smoke or acceptance stage fails and before the "
+        "to a timestamped bundle, for after a cycle stage fails and before the "
         "teardown",
         description="Writes DIR/<UTC time>-<label>/: kubectl get pods,deploy,rs -A -o wide, the "
         "events of argocd and of every namespace an Argo Application deploys into, every "

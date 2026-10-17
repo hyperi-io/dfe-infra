@@ -766,7 +766,11 @@ def test_the_diagnostics_parser_needs_a_dir(capsys: pytest.CaptureFixture) -> No
     assert "--dir" in capsys.readouterr().err
 
 
-# --- the cycle runs it on a failed smoke or acceptance stage, before the destroy ---
+# --- the cycle runs it on a failed stage from deploy+e2e on, before the destroy ----
+
+SKIP_PRE_DEPLOY = ("--skip-capacity-check", "--skip-preflight")
+# The flags that add the acceptance and ui stages, so the cycle runs every stage it has.
+UI = ("--e2e", "--ui-repo", "/nonexistent/dfe-ui", "--acceptance-suite", "source")
 
 
 def _cycle(
@@ -774,6 +778,7 @@ def _cycle(
     *argv: str,
     fail: str = "",
     boxed=None,
+    skip: tuple[str, ...] = SKIP_PRE_DEPLOY,
 ) -> tuple[int, list[list[str]]]:
     ran: list[list[str]] = []
 
@@ -791,7 +796,7 @@ def _cycle(
     monkeypatch.setattr(dfeops, "_run_boxed", box)
     monkeypatch.setenv("DFE_ENGINE_REPO", "/nonexistent/dfe-engine")
     args = dfeops.build_parser().parse_args(
-        ["cycle", "--skip-capacity-check", "--skip-preflight", "--stack", "2.2.0-rc.99", *argv]
+        ["cycle", *skip, "--stack", "2.2.0-rc.99", *argv]
     )
     return dfeops.cmd_cycle(args), ran
 
@@ -800,14 +805,17 @@ def _words(ran: list[list[str]]) -> list[str]:
     return [cmd[2] for cmd in ran]
 
 
+@pytest.mark.parametrize(
+    "stage", ["capacity-check", "preflight", "stack-deploy", "verify", "acceptance", "ui"]
+)
 def test_without_the_flag_no_failed_stage_captures_diagnostics(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    for stage in ("verify", "acceptance"):
-        _rc, ran = _cycle(monkeypatch, "--acceptance-suite", "source", fail=stage)
-        assert "diagnostics" not in _words(ran)
-        acceptance = [cmd for cmd in ran if cmd[2] == "acceptance"]
-        assert all("--diagnostics-dir" not in cmd for cmd in acceptance)
+    _rc, ran = _cycle(monkeypatch, *UI, fail=stage, skip=())
+    assert stage in _words(ran)
+    assert "diagnostics" not in _words(ran)
+    acceptance = [cmd for cmd in ran if cmd[2] == "acceptance"]
+    assert all("--diagnostics-dir" not in cmd for cmd in acceptance)
 
 
 def test_a_failed_smoke_captures_diagnostics_before_the_destroy(
@@ -849,11 +857,36 @@ def test_a_failed_acceptance_captures_diagnostics_and_the_stage_is_handed_the_di
     assert ran[3][ran[3].index("--label") + 1] == "acceptance"
 
 
-def test_a_failed_deploy_captures_no_diagnostics(
+def test_a_failed_deploy_captures_diagnostics_before_the_destroy(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy")
-    assert _words(ran) == ["stack-deploy", "failure-evidence", "teardown"]
+    rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy")
+    assert rc == 1
+    assert _words(ran) == ["stack-deploy", "diagnostics", "failure-evidence", "teardown"]
+    assert ran[1][ran[1].index("--label") + 1] == "deploy+e2e"
+
+
+def test_a_failed_ui_stage_captures_diagnostics_before_the_destroy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rc, ran = _cycle(monkeypatch, *UI, "--diagnostics-dir", str(tmp_path), fail="ui")
+    assert rc == 1
+    assert _words(ran) == [
+        "stack-deploy", "verify", "acceptance", "ui", "diagnostics", "failure-evidence",
+        "teardown",
+    ]
+    assert ran[4][ran[4].index("--label") + 1] == "ui"
+
+
+@pytest.mark.parametrize("stage", ["capacity-check", "preflight"])
+def test_a_stage_before_the_deploy_captures_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stage: str
+) -> None:
+    """Nothing is deployed yet, so there are no app logs to read."""
+    rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail=stage, skip=())
+    assert rc == 1
+    assert _words(ran)[-3:] == [stage, "failure-evidence", "teardown"]
+    assert "diagnostics" not in _words(ran)
 
 
 def test_a_passing_cycle_captures_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

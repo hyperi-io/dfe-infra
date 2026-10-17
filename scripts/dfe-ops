@@ -146,8 +146,8 @@ Subcommands:
                the _land, _load and _dlq topics, read from a short-lived client pod
                that mounts the engine's own SASL Secret. Every file is redacted and
                the whole run is time-boxed. With --diagnostics-dir the cycle runs
-               it when smoke or acceptance fails, and the source suite before it
-               removes its source.
+               it when any stage from deploy+e2e on fails, and the source suite
+               before it removes its source.
   redact       Reads stdin and writes it to stdout a line at a time with every
                credential masked (the failure-evidence redactor), so a long-running
                command's output can be piped through it. Prints no banner of its
@@ -4486,8 +4486,9 @@ def _failure_evidence(
         print(f"  [warn] dfe-ops failure-evidence exited {rc}", file=sys.stderr)
 
 
-# The stages whose failure, under --diagnostics-dir, also leaves the apps' own logs and offsets.
-DIAGNOSED_STAGES = ("smoke", "acceptance")
+# The stages that run before anything is deployed. Under --diagnostics-dir every other
+# failed stage also leaves the apps' own logs and offsets.
+PRE_DEPLOY_STAGES = ("capacity", "preflight")
 
 
 def _diagnostics(self_cmd: list[str], kube: list[str], root: str, stage: str, env: dict) -> None:
@@ -4641,7 +4642,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
             if rc != 0:
                 aborted = True
                 print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
-                if args.diagnostics_dir and name in DIAGNOSED_STAGES:
+                if args.diagnostics_dir and name not in PRE_DEPLOY_STAGES:
                     _diagnostics(self_cmd, passthrough_kube, args.diagnostics_dir, name, stage_env)
                 _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
                 break
@@ -4872,7 +4873,7 @@ def build_parser() -> argparse.ArgumentParser:
                          f"timestamped directory per failure (default: {EVIDENCE_SUBDIR}/ under "
                          "--acceptance-shots-dir)")
     cy.add_argument("--diagnostics-dir", default=None, metavar="DIR",
-                    help="given, a failed smoke or acceptance stage writes `dfe-ops diagnostics` "
+                    help="given, a stage from deploy+e2e on that fails writes `dfe-ops diagnostics` "
                          "bundles here before the destroy -- the apps' recent logs, workloads, "
                          "events, Argo status and Kafka offsets -- and the source suite writes "
                          "one before it removes its source. Unset, nothing is captured")
@@ -5237,8 +5238,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_failure_evidence_subparser(sub)
 
     # diagnostics -- the apps' recent logs, workloads, events, Argo status and Kafka offsets a
-    # failed smoke or acceptance stage leaves. The cycle runs it; registered from
-    # dfe_ops_diagnostics.
+    # failed cycle stage leaves. The cycle runs it; registered from dfe_ops_diagnostics.
     add_diagnostics_subparser(sub)
 
     # redact -- stdin to stdout with credentials masked, so a command's output can be piped
