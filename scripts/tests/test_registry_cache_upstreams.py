@@ -67,15 +67,20 @@ def _container_images(node: object) -> list[str]:
     return found
 
 
-def _rendered_repositories() -> list[str]:
-    """Each repository a chart renders a container from, the deployment's DFE images aside."""
+def _rendered_images() -> list[str]:
+    """Each image reference a chart renders a container from, the deployment's DFE images aside."""
     # A DFE image renders with no host until the appset hands the chart the dial's registry.
     dfe_images = set(arch.dfe_stack.versions_at().get("digests", {}))
     covered, _skipped = pod_specs.rendered()
     found = []
     for _chart, docs in covered:
-        found += [_repository(image) for image in _container_images(list(docs))]
-    return [repository for repository in found if repository not in dfe_images]
+        found += _container_images(list(docs))
+    return [image for image in found if _repository(image) not in dfe_images]
+
+
+def _rendered_repositories() -> list[str]:
+    """Each repository a chart renders a container from, the deployment's DFE images aside."""
+    return [_repository(image) for image in _rendered_images()]
 
 
 def _client_pod_repositories() -> list[str]:

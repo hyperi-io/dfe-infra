@@ -10,7 +10,9 @@
 
 """The registry read itself is registry_pins.ref_platforms, covered in
 test_dfe_stack.py. These hold the checker's own half: the image list it builds
-from a stack, and the verdict it reaches on what the registry returned.
+from a stack, and the verdict it reaches on what the registry returned. The
+check that every chart-rendered image is read renders the charts, so it needs
+`helm` on PATH.
 
     python3 scripts/tests/test_check_image_arch.py
 """
@@ -24,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import check_image_arch as arch  # noqa: E402
+import test_registry_cache_upstreams as inventory  # noqa: E402
 
 # One of each image class: a published app, an unpublished one, an image tagged
 # by a family pin, a digest with no tag, third-party services, the bootstrap
@@ -319,6 +322,31 @@ def test_the_forgejo_curl_is_read_from_its_chart_values() -> None:
         f"{curl}",
     )
     expect("and nothing is broken", broken == [], f"{broken}")
+
+
+def _unread(rendered: list[str], refs: list[tuple[str, str]]) -> list[str]:
+    """Each rendered image reference that none of the gate's (label, reference) pairs reads."""
+    read = {ref for _label, ref in refs}
+    return sorted(set(rendered) - read)
+
+
+def test_every_image_a_chart_renders_is_read() -> None:
+    """An image one of our charts renders with no table entry ships unchecked, as a pin would."""
+    _, pins = arch.dfe_stack.stack_pins(arch.dfe_stack.load_root(), None)
+    refs, _, _ = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
+    rendered = inventory._rendered_images()
+    expect("the charts render third-party images to check", len(rendered) > 0, f"{rendered}")
+    unread = _unread(rendered, refs)
+    expect("each is read by the tag@digest the chart renders", unread == [], f"unread: {unread}")
+
+
+def test_expected_fail_a_rendered_image_missing_from_the_tables_is_caught() -> None:
+    kafbat = f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('kafbat')}"
+    curl = f"curlimages/curl:8.22.0@{_digest('curl')}"
+    refs = [("services.kafbat", kafbat)]
+    expect("an image no table names is reported", _unread([kafbat, curl], refs) == [curl])
+    other = f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('other')}"
+    expect("so is one the gate reads at another digest", _unread([other], refs) == [other])
 
 
 def test_default_image_ref_reads_repository_and_tag() -> None:
