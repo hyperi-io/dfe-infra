@@ -182,11 +182,11 @@ module "registry_cache" {
     region  = var.provision.region
   }
 
-  name             = var.name
-  namespace        = var.registry_cache.namespace != "" ? var.registry_cache.namespace : var.name
-  upstreams        = var.registry_cache.upstreams
-  pull_expiry_days = var.registry_cache.pull_expiry_days
-  kms_key_arn      = module.cluster.kms_key_arn
+  name        = var.name
+  namespace   = var.registry_cache.namespace != "" ? var.registry_cache.namespace : var.name
+  upstreams   = var.registry_cache.upstreams
+  expiry_days = var.registry_cache.expiry_days
+  kms_key_arn = module.cluster.kms_key_arn
 
   node_role_arns = {
     managed   = module.cluster.node_role_arn

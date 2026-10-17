@@ -215,8 +215,8 @@ variables {
 
   // What render_dial.py renders for an aws dial that turns the cache on and names no credential.
   registry_cache = {
-    enabled          = true
-    pull_expiry_days = 90
+    enabled     = true
+    expiry_days = 90
     upstreams = {
       quay       = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
       k8s        = { upstream_url = "registry.k8s.io", host = "registry.k8s.io", requires_credential = false }
@@ -266,7 +266,7 @@ run "the_cache_is_on_by_default" {
 
   variables {
     registry_cache = {
-      pull_expiry_days = 90
+      expiry_days = 90
       upstreams = {
         quay = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
       }
@@ -309,8 +309,8 @@ run "an_upstream_needing_a_credential_without_one_is_pulled_directly" {
 
   variables {
     registry_cache = {
-      enabled          = true
-      pull_expiry_days = 90
+      enabled     = true
+      expiry_days = 90
       upstreams = {
         docker-hub = { upstream_url = "registry-1.docker.io", host = "docker.io", requires_credential = true }
         quay       = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
@@ -356,9 +356,9 @@ run "a_namespace_from_the_dial_wins" {
 
   variables {
     registry_cache = {
-      enabled          = true
-      namespace        = "dfe-blue"
-      pull_expiry_days = 90
+      enabled     = true
+      namespace   = "dfe-blue"
+      expiry_days = 90
       upstreams = {
         quay = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
       }
@@ -376,8 +376,8 @@ run "the_cache_off_hands_karpenter_nothing" {
 
   variables {
     registry_cache = {
-      enabled          = false
-      pull_expiry_days = 90
+      enabled     = false
+      expiry_days = 90
       upstreams = {
         quay = { upstream_url = "quay.io", host = "quay.io", requires_credential = false }
       }

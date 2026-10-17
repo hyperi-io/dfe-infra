@@ -28,7 +28,7 @@ Rewriting image repositories in chart values was rejected: every third-party cha
 | `name` | `string` | Name prefix for the IAM role the body creates. |
 | `namespace` | `string` | Repository path every rule prefix starts with. Two deployments in one account and region set different ones. |
 | `upstreams` | `map(object({ upstream_url, host, requires_credential, credential_arn }))` | Keyed by the rule's prefix under `namespace`. An upstream whose `requires_credential` is true and whose `credential_arn` is empty gets no rule and no mirror. |
-| `pull_expiry_days` | `number` | Days a cached image is kept after its last pull. |
+| `expiry_days` | `number` | Days a cached image is kept after ECR cached it, after which the next pull refetches it from the upstream. |
 | `kms_key_arn` | `string` | The deployment's key; every cached repository is encrypted with it. |
 | `node_role_arns` | `map(string)` | The node roles that pull through the cache, keyed by a name known at plan. |
 | `tags` | `map(string)` | Tags every cached repository is created with. |
