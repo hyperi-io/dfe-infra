@@ -2,12 +2,13 @@
 {{- $caCopy := and (include "dfe-clickhouse.tlsEnabled" .) (dig "ca" "secretName" "" .Values.clickhouse.tls) }}
 {{- /* The namespaces the copies below land in, and the only ones the store serves. */}}
 {{- $consumers := prepend (.Values.extraCredentialNamespaces | default list) .Values.appNamespace | uniq }}
-# The admin credential, copied into the APP namespace.
+# The admin credential, copied into the APP namespace for dfe-engine, which
+# creates every other ClickHouse user with it.
 #
 # The server is started with CLICKHOUSE_USER set, so the official image stops
-# accepting a passwordless `default` and every app that sends no credential is
+# accepting a passwordless `default` and every client that sends no credential is
 # refused with code 194. admin-secret.yaml generates the password in-cluster, into
-# THIS namespace; the apps run elsewhere and nothing bridged the two.
+# THIS namespace. The engine runs elsewhere and nothing bridged the two.
 #
 # Same shape as the kafka chart's app-namespace copy: an in-cluster generated
 # value cannot be re-derived in a second namespace (the generator would mint a

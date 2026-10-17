@@ -19,8 +19,10 @@ secrets:
     existingSecret: '{{ .Values.sessionSecret.name }}'
   token-encryption:
     existingSecret: '{{ .Values.tokenEncryption.name }}'
+  # Off: HyperDX queries ClickHouse on the connection dfe-engine hands each team,
+  # and nothing it runs reads a password of its own.
   clickhouse:
-    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+    enabled: false
 
 extraEnv:
   # The telemetry.mode endpoint (apps/_common.yaml), on the collector's OTLP/HTTP

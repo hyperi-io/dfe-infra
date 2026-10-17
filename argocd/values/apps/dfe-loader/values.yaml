@@ -27,8 +27,9 @@ secrets:
     keys:
       username: username
       password: password
+  # The loader's own password, never the admin one.
   clickhouse:
-    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.loader.passwordSecretName }}'
     keys:
       password: password
 kafka:

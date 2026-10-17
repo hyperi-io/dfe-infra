@@ -225,7 +225,8 @@ def test_external_deploys_no_clickhouse_of_its_own() -> None:
     assert "ClickHouseCluster" in in_cluster
 
 
-def test_external_projects_its_password_where_the_apps_and_the_collector_read_it() -> None:
+def test_external_projects_its_password_where_the_engine_reads_it() -> None:
+    """The engine alone holds the external admin password. Every app has its own user."""
     docs = render_chart("clickhouse-cluster", data_overlay(EXTERNAL), "clickhouse")
     copies = [
         d for d in docs
@@ -235,7 +236,7 @@ def test_external_projects_its_password_where_the_apps_and_the_collector_read_it
     assert len(copies) == 1, [object_id(d) for d in docs]
     spec = copies[0]["spec"]
     namespaces = {s["matchLabels"]["kubernetes.io/metadata.name"] for s in spec["namespaceSelectors"]}
-    assert namespaces == {APP_NAMESPACE, "otel"}
+    assert namespaces == {APP_NAMESPACE}
     assert spec["externalSecretSpec"]["secretStoreRef"] == {"name": "dfe-secret-store", "kind": "ClusterSecretStore"}
     assert spec["externalSecretSpec"]["data"] == [
         {"secretKey": "password", "remoteRef": {"key": "dfe/test/clickhouse/external", "property": "password"}}
@@ -258,15 +259,17 @@ def test_the_collector_writes_to_the_external_server_over_tls() -> None:
     config = collector_config(data_overlay(EXTERNAL))
     exporter = config["exporters"]["clickhouse"]
     assert exporter["endpoint"] == f"tcp://{HOST}:9440?secure=true"
-    assert exporter["username"] == "default"
+    assert exporter["username"] == "dfe_otel_writer"
     datasource = config["receivers"]["sqlquery/clickhouse"]["datasource"]
+    assert datasource.startswith("clickhouse://dfe_otel_writer:")
     assert f"@{HOST}:9440/dfe?secure=true" in datasource
 
 
 def test_a_plaintext_external_server_is_dialled_without_tls() -> None:
+    """The external admin user stays the engine's: the collector writes as its own."""
     config = collector_config(data_overlay(PLAINTEXT))
     assert config["exporters"]["clickhouse"]["endpoint"] == f"tcp://{HOST}:9000"
-    assert config["exporters"]["clickhouse"]["username"] == "dfe_writer"
+    assert config["exporters"]["clickhouse"]["username"] == "dfe_otel_writer"
 
 
 def test_the_in_cluster_collector_keeps_its_plaintext_native_port() -> None:
@@ -336,7 +339,7 @@ def test_the_loader_inserts_into_the_external_server_with_the_system_roots() -> 
     docs = list(_app("dfe-loader", tuple(sorted(EXTERNAL.items()))))
     env = effective_env(docs, "Deployment/dfe-loader")
     assert env["DFE_LOADER_CLICKHOUSE_HOSTS"] == f"{HOST}:8443"
-    assert env["DFE_LOADER_CLICKHOUSE_USERNAME"] == "default"
+    assert env["DFE_LOADER_CLICKHOUSE_USERNAME"] == "dfe_loader"
     assert "SSL_CERT_FILE" not in env
 
 
@@ -354,7 +357,8 @@ def test_no_app_reads_the_in_cluster_ca_an_external_server_never_writes(service:
     docs = list(_app(service, tuple(sorted(EXTERNAL.items()))))
     named = {(kind, name) for kind, name, _optional, _where in references(docs)}
     assert ("Secret", "dfe-clickhouse-ca") not in named
-    assert ("Secret", "clickhouse-admin-password") in named
+    # The external admin password reaches the engine and nothing else.
+    assert (("Secret", "clickhouse-admin-password") in named) is (service == "dfe-engine")
 
 
 @pytest.mark.parametrize("service", ["dfe-engine", "dfe-loader", "hyperdx"])
