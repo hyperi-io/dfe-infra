@@ -76,6 +76,36 @@
       ]
     },
     {
+      "group_name": "loader",
+      "env_vars": [
+        {
+          "env_var": "DFE_CLICKHOUSE_LOADER_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "query-reader",
+      "env_vars": [
+        {
+          "env_var": "DFE_CLICKHOUSE_QUERY_READER_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
+      "group_name": "otel-writer",
+      "env_vars": [
+        {
+          "env_var": "DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD",
+          "key_name": "password",
+          "secret_key": "password"
+        }
+      ]
+    },
+    {
       "group_name": "kafka",
       "env_vars": [
         {

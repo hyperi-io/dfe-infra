@@ -106,6 +106,30 @@ daemonset:
 # empty falls back to {project}-{env}.
 appNamespace: ""
 
+# The gateway's hold until dfe-engine reports ready, the keys dfe-common.waitForEngine reads.
+waitForEngine:
+  enabled: true
+  service: dfe-engine
+  # Empty is appNamespace, where the engine runs.
+  namespace: ""
+  port: 8000
+  timeoutSeconds: 600
+  intervalSeconds: 5
+  # The collector image has no shell, so the wait runs on busybox's wget.
+  image:
+    repository: public.ecr.aws/docker/library/busybox
+    tag: "1.38.0"  # == versions.yaml services.busybox (drift-checked).
+    # == versions.yaml services-digests.busybox (drift-checked).
+    digest: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
 # Cluster + dependency telemetry, feeding the pre-canned HyperDX dashboards
 # (dfe-engine#184). The dashboards are identical on every profile; collection cost
 # is not, so the expensive scrapers are gated here and enabled per profile.
@@ -135,8 +159,8 @@ clusterTelemetry:
   # ClickHouse server metrics via sqlquery over system.metrics/events/parts.
   # Not the :9363 Prometheus endpoint -- the clickhouse-cluster chart does not
   # expose it and managed ClickHouse does not offer it, whereas these system tables
-  # are readable from any client on any provider.
-  # Credentials come from the gateway's existing CLICKHOUSE_PASSWORD env.
+  # are readable from any client on any provider. It dials as the exporter's
+  # user, whose role grants those three reads (dfe-schemas roles/clickhouse.yaml).
   clickhouse:
     enabled: true
     collectionInterval: 30s
@@ -226,7 +250,13 @@ clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   nativePort: 9000
   database: dfe
-  user: default
+  # The collector's own user, never the admin account: dfe-engine creates it on
+  # the password dfe-extras mints and copies into this namespace.
+  serviceUsers:
+    otelWriter:
+      user: dfe_otel_writer
+      passwordSecretName: otel-writer-clickhouse
+      passwordSecretKey: password
 
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
@@ -253,12 +283,13 @@ exporters:
   # tables the embedded HyperDX reads. THE default telemetry sink.
   clickhouse:
     enabled: true
-    # Empty -> derived from the shared clickhouse facts below, which is what a
-    # real deploy wants; set these only to point the exporter somewhere else.
+    # Empty -> derived from the shared clickhouse facts above, which is what a
+    # real deploy wants. Set these only to point the exporter somewhere else.
     endpoint: ""
     database: ""
     username: ""
-    passwordSecretName: clickhouse-admin-password
+    passwordSecretName: ""
+    passwordSecretKey: ""
     # ClickHouse session settings, merged into the exporter's DSN query string.
     #
     # A log body repeating a JSON path fails its whole batch with code 117 and

@@ -45,7 +45,7 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import APPSETS, INSTANCE, WORKLOAD_KINDS, effective_env, goldens, references
+from _gate import APPSETS, INSTANCE, WORKLOAD_KINDS, effective_env, goldens, pod_spec, references
 from _weave import contract, render_app, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -82,7 +82,7 @@ def bus_goldens(app: str) -> list[tuple[tuple[str, ...], list[dict]]]:
 
 
 def pod_specs(docs: list[dict]) -> list[dict]:
-    return [d["spec"]["template"]["spec"] for d in docs if d.get("kind") in WORKLOAD_KINDS]
+    return [pod_spec(d) for d in docs if d.get("kind") in WORKLOAD_KINDS]
 
 
 def unnamed_refs(docs: list[dict]) -> list[str]:
@@ -168,6 +168,13 @@ def test_the_data_dir_survived_the_removal() -> None:
         )
         expect(f"with a writable volume mounted there [{at}]",
                volume is not None and "emptyDir" in volume, f"got {volume!r}")
+
+
+def test_a_cronjobs_pod_is_read_from_its_job_template() -> None:
+    pod = {"containers": [{"name": "main"}], "volumes": [{"name": "data", "emptyDir": {}}]}
+    cronjob = {"kind": "CronJob", "spec": {"jobTemplate": {"spec": {"template": {"spec": pod}}}}}
+    expect("the CronJob's pod is the one its jobTemplate runs", pod_specs([cronjob]) == [pod],
+           f"got {pod_specs([cronjob])!r}")
 
 
 # --- #79: the residue ---------------------------------------------------------
@@ -283,6 +290,7 @@ def main() -> int:
         test_the_elastic_chart_keeps_the_name_from_env_does_read()
         test_the_vector_chart_mounts_no_binary_cache()
         test_the_data_dir_survived_the_removal()
+        test_a_cronjobs_pod_is_read_from_its_job_template()
         test_no_declared_app_renders_an_unnamed_secret_reference()
         test_a_cleared_kafka_secret_name_renders_no_unnamed_reference()
         test_the_common_overlay_carries_no_unread_sasl_block()

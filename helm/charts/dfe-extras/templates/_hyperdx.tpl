@@ -39,9 +39,10 @@ hyperdx.env -- the hyperdx container's env entries. It sets no
 OTEL_EXPORTER_OTLP_ENDPOINT, which the thin chart's env sets from telemetry.mode,
 no CLICKHOUSE_PORT or CLICKHOUSE_DB, which HyperDX never reads (CLICKHOUSE_HOST
 carries the port), and no DEFAULT_CONNECTIONS or DEFAULT_SOURCES, because
-dfe-engine serves each team its own connection. dfe-hyperdx-env carries the
-literal entries. The secret references and MONGO_URI, which the kubelet expands,
-stay in the thin chart's env.
+dfe-engine serves each team its own connection. For the same reason it sets no
+CLICKHOUSE_USER or CLICKHOUSE_PASSWORD: nothing the image runs reads them.
+dfe-hyperdx-env carries the literal entries. The secret references and
+MONGO_URI, which the kubelet expands, stay in the thin chart's env.
 */}}
 {{- define "hyperdx.env" -}}
 {{- $clickhouseCa := include "hyperdx.clickhouseCa" . }}
@@ -59,20 +60,6 @@ stay in the thin chart's env.
             # A URL: HyperDX refuses webhooks aimed at this host:port only when the value parses as one, and a bare host name registers no refusal at all.
             - name: CLICKHOUSE_HOST
               value: {{ printf "http://%s:%v" .Values.clickhouse.host .Values.clickhouse.port | quote }}
-            {{- if .Values.clickhouse.user }}
-            - name: CLICKHOUSE_USER
-              value: {{ .Values.clickhouse.user }}
-            {{- end }}
-            {{- if .Values.clickhouse.passwordSecretName }}
-            # Only reference a secret that the deploy actually creates. Referencing an
-            # absent secret leaves the pod in CreateContainerConfigError forever, which
-            # reads as "hyperdx is broken" rather than "this deploy has no CH user".
-            - name: CLICKHOUSE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.clickhouse.passwordSecretName }}
-                  key: {{ .Values.clickhouse.passwordSecretKey | default "password" }}
-            {{- end }}
             {{- if $clickhouseCa }}
             # Added to Node's bundled roots, not in place of them, for every
             # process in the image: the ClickHouse client and proxy verify 8443.
@@ -82,7 +69,8 @@ stay in the thin chart's env.
             {{- if .Values.mongodb.passwordSecretName }}
             # Declared BEFORE MONGO_URI: kubelet $(VAR) expansion only reads
             # previously-declared env. Only referenced when the deploy actually
-            # projects the secret (same guard as CLICKHOUSE_PASSWORD above).
+            # projects the secret: an absent one leaves the pod in
+            # CreateContainerConfigError.
             - name: MONGO_PASSWORD
               valueFrom:
                 secretKeyRef:

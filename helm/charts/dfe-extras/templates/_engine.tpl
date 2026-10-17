@@ -1,11 +1,7 @@
 {{/*
-dfe-engine.clickhouseAuthEnv -- the account the engine and the keda shim connect
-to ClickHouse as. The hunt runner connects as its own user instead
-(huntRunnerClickhouseAuthEnv).
-
-Defined once because both workloads talk to the same server and a partial
-rollout is the failure mode this chart has already seen with the JWT key: the
-engine works, a sidecar does not, and it reads as two unrelated faults.
+dfe-engine.clickhouseAuthEnv -- the admin account the engine connects to
+ClickHouse as, to create every other user. No other workload takes it: the hunt
+runner and the keda shim connect as their own users (serviceClickhouseAuthEnv).
 
 Emits nothing when clickhouse.user is unset, which leaves the previous
 passwordless behaviour intact for a server that accepts it.
@@ -32,23 +28,98 @@ Usage:
 {{- end }}
 
 {{/*
-dfe-engine.huntRunnerClickhouseAuthEnv -- the hunt runner's own ClickHouse user,
-in place of clickhouseAuthEnv. The password comes from the Secret
-engine-hunt-runner-clickhouse.yaml renders, the one the engine adopts for that user.
+dfe-engine.serviceClickhouseAuthEnv -- an app's own ClickHouse user, in place of
+clickhouseAuthEnv. Takes the identity (dict "user" "passwordSecretName"
+"passwordSecretKey"). The password is the Secret the engine adopts for that user.
 
 Usage:
   env:
-    {{- include "dfe-engine.huntRunnerClickhouseAuthEnv" . | nindent 12 }}
+    {{- include "dfe-engine.serviceClickhouseAuthEnv" .Values.huntRunner.clickhouse | nindent 12 }}
 */}}
-{{- define "dfe-engine.huntRunnerClickhouseAuthEnv" -}}
-{{- $hr := .Values.huntRunner.clickhouse -}}
+{{- define "dfe-engine.serviceClickhouseAuthEnv" -}}
 - name: DFE_CLICKHOUSE_USERNAME
-  value: {{ $hr.user | quote }}
+  value: {{ .user | quote }}
 - name: DFE_CLICKHOUSE_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ $hr.passwordSecretName }}
-      key: {{ $hr.passwordSecretKey }}
+      name: {{ .passwordSecretName }}
+      key: {{ .passwordSecretKey | default "password" }}
+{{- end }}
+
+{{/*
+dfe-engine.huntRunnerClickhouseAuthEnv -- the hunt runner's own ClickHouse user.
+*/}}
+{{- define "dfe-engine.huntRunnerClickhouseAuthEnv" -}}
+{{- include "dfe-engine.serviceClickhouseAuthEnv" .Values.huntRunner.clickhouse }}
+{{- end }}
+
+{{/*
+dfe-engine.clickhousePasswordSecret -- the Secret one app's ClickHouse password
+lives in, which both the engine and that app's pod read. Takes (dict "ctx" .
+"name" <Secret> "key" <data key> "password" <pinned value, or empty>).
+
+GENERATED IN-CLUSTER by ESO's Password generator with refreshPolicy CreatedOnce,
+for the reasons engine-jwt-secret.yaml gives: Argo renders with `helm template`,
+so a template-minted value would change on every sync, and Reloader would roll
+both pods onto a password the other had not been handed yet. A pinned password
+renders a plain Secret instead.
+*/}}
+{{- define "dfe-engine.clickhousePasswordSecret" -}}
+{{- if .password }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "dfe-common.labels" .ctx | nindent 4 }}
+  annotations:
+    # keep: a reinstall that minted a different password would leave the engine
+    # and the app on two values until both rolled.
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  {{ .key }}: {{ .password | quote }}
+{{- else }}
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ .name }}-gen
+  labels:
+    {{- include "dfe-common.labels" .ctx | nindent 4 }}
+spec:
+  length: 24
+  digits: 4
+  symbols: 0          # alphanumeric -- the value is a ClickHouse password passed through env
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "dfe-common.labels" .ctx | nindent 4 }}
+  annotations:
+    # The Secret carries ESO's ownerReference, so deleting this ExternalSecret by
+    # hand garbage-collects the password with it.
+    helm.sh/resource-policy: keep
+spec:
+  refreshPolicy: CreatedOnce
+  refreshInterval: "0"
+  target:
+    name: {{ .name }}
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        {{ .key }}: "{{ `{{ .password }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ .name }}-gen
+{{- end }}
 {{- end }}
 
 {{/*

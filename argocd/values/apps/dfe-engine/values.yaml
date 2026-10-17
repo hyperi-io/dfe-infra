@@ -33,6 +33,13 @@ secrets:
     existingSecret: '{{ .Values.auth.breakglassSecretName }}'
   hunt-runner:
     existingSecret: '{{ .Values.huntRunner.clickhouse.passwordSecretName }}'
+  # Each app's own ClickHouse password, which the engine creates that app's user on.
+  loader:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.loader.passwordSecretName }}'
+  query-reader:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.queryReader.passwordSecretName }}'
+  otel-writer:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.otelWriter.passwordSecretName }}'
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
   gitops:

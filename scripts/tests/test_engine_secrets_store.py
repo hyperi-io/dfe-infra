@@ -250,7 +250,9 @@ def test_without_the_store_the_sidecars_keep_the_engines_account() -> None:
     docs = render_extras("dfe-engine", "scale", "aws", annotations=NO_STORE)
     assert service_account(docs, "dfe-hunt-runner") == "dfe-engine"
     assert service_account(docs, "dfe-keda-shim") == "dfe-engine"
-    assert not [k for k in keyed(docs) if k[0] == "ServiceAccount"]
+    # The only account left is the one ESO reads the collector's password through.
+    accounts = [k[1] for k in keyed(docs) if k[0] == "ServiceAccount"]
+    assert accounts == ["otel-writer-clickhouse-reader"]
 
 
 # ---------------------------------------------------------------- the egress
