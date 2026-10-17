@@ -103,15 +103,15 @@ spec:
             {{- $pins := dict
                 "culvert" "sha256:3742cbd1727a4ee9c567b70d3bc3159edaaef6962eeec1049456f3d014e7df40"
                 "dfe-archiver" "sha256:178bc132ed212cbc1f8773ce670aa4431eccd96c0c8a381b39e03175897ba7c4"
-                "dfe-engine" "sha256:d0d5e520bf648eb4ca6ef89a60adeef52cd0a4f0662732a170650074f2ad3e82"
+                "dfe-engine" "sha256:fe155fa8aa56fee0d102e5d6617b8d90add189035023e6cc79523064bc36460c"
                 "dfe-fetcher" "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"
-                "dfe-loader" "sha256:0059c2ad010292655a137a8ee4f1bf5b8627e0362638267a1ff60bf3e301f09c"
-                "dfe-receiver" "sha256:0d39625a6b5d9db9346a2889615e1dacafcd209b0fef1d3229c7b0b8fea7cc89"
+                "dfe-loader" "sha256:20841377bb53a06d3e77c23739bcc6331fb90742d1a76eda7ddd732e14242663"
+                "dfe-receiver" "sha256:e5873fed9af5110fe3a294d25681e2b6d3f9476d813625d7be19d05fe609a553"
                 "dfe-transform-elastic" "sha256:43aabf0182a29293879612ec54e9e58db32bef59fbbe6dd5792b5ea009f0df14"
                 "dfe-transform-vector" "sha256:3e2e5ba96722dd1ba20cab4b148d1597df1204e94b28f82ff80cd1bfb69bb04a"
                 "dfe-transform-vrl" "sha256:4488519c02a89467732c888c9be18aa7eabe89892e8ad0142711941922a05ea5"
                 "dfe-ui" "sha256:afcc6e82c0fb6283b40d1c52a8c5bb281251e5d47795f469525910b9a62f2ab9"
-                "hyperdx" "sha256:6f5d2450ab180fde800ab440919a8ea51e9b2e16883908fbc90debd7252c82b3"
+                "hyperdx" "sha256:648ee4ac54d123fa8ec7090a2b65ca1e6b82b62cac12e6f484b72232073a52b2"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}

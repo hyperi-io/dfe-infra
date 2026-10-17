@@ -22,17 +22,17 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.44"
+    dfe-engine: "v1.22.45"
     dfe-ui: "v1.7.19"
-    dfe-receiver: "v1.15.49"
-    dfe-loader: "v1.18.52"
+    dfe-receiver: "v1.15.50"
+    dfe-loader: "v1.18.53"
     dfe-archiver: "v1.7.35"
     dfe-fetcher: "v1.4.39"
     dfe-transform-vrl: "v1.1.35"
     dfe-transform-vector: "v1.0.51"
     dfe-transform-elastic: "v1.1.14"
     culvert: "v2.1.23"
-    dfe-hyperdx: "v0.3.4"
+    dfe-hyperdx: "v0.3.7"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
@@ -270,7 +270,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:91c7f7cd058c51950821c4980d44a4d76f96fce97185eebdb5ab3a89b3122c80"
+        digest: "sha256:74baebcc27dc203f34ac3260f0d8059137eea07db6beb85a4f2a416de1661bb1"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""

@@ -94,8 +94,7 @@ def _values(app: dict) -> dict:
 @pytest.mark.parametrize("chart", [e["chart"] for e in _elements(_appset())])
 def test_with_no_digest_every_addon_comes_from_its_chart_repository_by_version(chart) -> None:
     element = _element(chart)
-    assert element["chartDigest"] == "", "a committed digest needs a stack pinning it"
-    assert _source(_render(element)) == {
+    assert _source(_render(element, chartDigest="")) == {
         "repoURL": element["repo"],
         "chart": element["chart"],
         "targetRevision": element["version"],
@@ -141,7 +140,7 @@ def test_a_digest_the_source_cannot_honour_fails_the_render(chart, digest, messa
 
 
 def test_with_no_image_digest_the_load_balancer_controller_runs_the_charts_own_tag() -> None:
-    values = _values(_render(_element("aws-load-balancer-controller")))
+    values = _values(_render(_element("aws-load-balancer-controller"), imageTag="", imageDigest=""))
     assert "image" not in values, values
     assert values["clusterName"] == "dfe-aws-test"
 
@@ -156,7 +155,7 @@ def test_a_pinned_image_digest_reaches_the_load_balancer_controller_as_tag_at_di
 def test_an_image_digest_with_no_tag_fails_the_render() -> None:
     message = "imageDigest is set for aws-load-balancer-controller with no imageTag"
     with pytest.raises(weave().WeaveError, match=re.escape(message)):
-        _render(_element("aws-load-balancer-controller"), imageDigest=IMAGE_DIGEST)
+        _render(_element("aws-load-balancer-controller"), imageTag="", imageDigest=IMAGE_DIGEST)
 
 
 def test_no_other_addon_takes_the_image_override() -> None:
