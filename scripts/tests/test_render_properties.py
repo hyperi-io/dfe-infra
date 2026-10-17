@@ -147,8 +147,8 @@ def test_no_object_renders_twice(service: str, profile: str, cloud: str, scenari
 
 def test_an_object_both_sources_render_is_caught() -> None:
     docs = golden("hyperdx", "slim", "local")
-    account = next(d for d in docs if d["kind"] == "ServiceAccount")
-    assert rendered_twice([*docs, account]) == ["ServiceAccount/dfe-hyperdx"]
+    service = next(d for d in docs if d["kind"] == "Service")
+    assert rendered_twice([*docs, service]) == ["Service/dfe-hyperdx"]
 
 
 @pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])

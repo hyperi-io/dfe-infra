@@ -5671,7 +5671,7 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.45"        # 2026-10-17, amd64 and arm64. The image thin chart 1.22.45 pins. scalo-py 2.31.17, dfe-schemas 0.2.13, logreducer 3.5.3. Reads each app's ClickHouse password from the loader, query-reader and otel-writer secret groups and creates that app's user, closes escalation and tenancy gaps, sizes source topics to the broker count, and the hunt runner waits out a full ClickHouse (dfe-engine#899 #900 #901 #902 #903 #904 #905 #906 #907 #908 #909 #911).
-      dfe-ui: "v1.7.19"              # 2026-10-15, amd64 and arm64. The image thin chart 1.7.19 pins. Sigma is hidden from view standards, a source keeps its views when its Views tab is hidden, a source save sends what the user means, and account management fixes (dfe-ui#552 #555 #557 #559).
+      dfe-ui: "v1.7.21"              # 2026-10-17, amd64 and arm64. The image thin chart 1.7.21 pins. Catalogue and list filter fixes, the catalogue's reach, the fetcher Processing tab, pool labels and a new Node.js base digest (dfe-ui#560 #561 #562 #564).
       dfe-receiver: "v1.15.50"      # 2026-10-17, amd64 and arm64. The image thin chart 1.15.50 pins. A rebuild on scalo-rs 2.14.17, with rustls 0.23.46 (dfe-receiver#196).
       dfe-loader: "v1.18.53"        # 2026-10-17, amd64 and arm64. The image thin chart 1.18.53 pins. scalo-rs 2.14.17 and rustls 0.23.46. Zoned timestamps land at their UTC instant, and the unused Coercer is gone (dfe-loader#260 #261 #262 #263).
       dfe-archiver: "v1.7.35"       # 2026-10-15, amd64 and arm64. The image thin chart 1.7.35 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-archiver#125).
@@ -5689,7 +5689,7 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:74baebcc27dc203f34ac3260f0d8059137eea07db6beb85a4f2a416de1661bb1"
-      dfe-ui: "sha256:7b2851743c77c089399402274f55def5ad7dff5f5b5c4e6a4e9687719913fe36"
+      dfe-ui: "sha256:cdfb5210323f32647a2527e738138ac836aae6aa3226918c0fd3b308f18c21bc"
       dfe-receiver: "sha256:e2ce151b12ffa43e1ca82f0b916c5e8e5361f5519e1f21fc703fd8b7ae024734"
       dfe-loader: "sha256:9ffa44cfa2e0e2cec16fa2528f77a8077789ac5d05ed1d2f0a246266d6bdc703"
       dfe-archiver: "sha256:caddfbc00d9ea0d9ef54c0c036e11c2f8e9decf5c60966c31e88f7d3d5cb4f85"
@@ -5717,7 +5717,7 @@ stacks:
       dfe-transform-elastic: "sha256:43aabf0182a29293879612ec54e9e58db32bef59fbbe6dd5792b5ea009f0df14"  # 1.1.14
       dfe-transform-vector: "sha256:3e2e5ba96722dd1ba20cab4b148d1597df1204e94b28f82ff80cd1bfb69bb04a"   # 1.0.51
       dfe-transform-vrl: "sha256:4488519c02a89467732c888c9be18aa7eabe89892e8ad0142711941922a05ea5"      # 1.1.35
-      dfe-ui: "sha256:afcc6e82c0fb6283b40d1c52a8c5bb281251e5d47795f469525910b9a62f2ab9"                # 1.7.19
+      dfe-ui: "sha256:821a62cc25648d5a56d9cc537b9b786a4cf0190a7ec58acb379c645d940b7b6e"                # 1.7.21
       hyperdx: "sha256:648ee4ac54d123fa8ec7090a2b65ca1e6b82b62cac12e6f484b72232073a52b2"                # 0.3.7
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
