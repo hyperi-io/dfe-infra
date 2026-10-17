@@ -37,6 +37,8 @@ spec:
       # which of the two wins is not proven.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      # The engine creates the query reader at startup, so until it is Ready this user cannot log in.
+      {{- include "dfe-common.waitForEngine" . | nindent 6 }}
       containers:
         - name: keda-shim
           image: {{ include "dfe-common.image" . | quote }}
