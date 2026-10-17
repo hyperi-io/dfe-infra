@@ -45,8 +45,9 @@ Subcommands:
   verify         Re-fetch GHCR image and thin-chart digests and compare them to
                  versions.yaml; check the unpinned toolbox family images exist at
                  the family tag for linux/amd64 and linux/arm64.
-  release-gate   Fail a release-maturity stack with an unpublished app, or with
-                 a DFE image whose index lacks linux/amd64 or linux/arm64.
+  release-gate   Fail any stack whose content.dfe-schemas is not the release its
+                 dfe-engine's uv.lock locks, and a release-maturity stack with an
+                 unpublished app or a DFE image lacking linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
                  --consumer or --lane slice, or (re)render the Mermaid blocks
@@ -71,7 +72,8 @@ render/images/graph/check-upgrade/resolve/suite need only python3 + git.
 verify, refresh-digests, platforms, a release-maturity release-gate, and the
 chart-digests reads cut and bump-app make, read the registry through `docker
 buildx imagetools`. cut lists each app's published tags through the registry's
-OCI API. Every one of those reads is anonymous, so none needs a token.
+OCI API. release-gate reads the pinned engine's uv.lock from GitHub at every
+maturity. Every one of those reads is anonymous, so none needs a token.
 """
 
 import argparse
@@ -80,6 +82,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1306,17 +1309,80 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     return 0
 
 
+SCHEMAS_PACKAGE = "dfe-schemas"
+
+# The app whose uv.lock names the dfe-schemas release a stack runs: it applies that release at startup.
+SCHEMAS_LOCKER = "dfe-engine"
+
+
+def locked_versions(lock_text: str, package: str) -> list[str]:
+    """Every version a uv.lock resolves ``package`` to, sorted, or none when it locks none.
+
+    Raises:
+        ValueError: The text is not TOML.
+    """
+    entries = tomllib.loads(lock_text).get("package", [])
+    found = {
+        str(entry.get("version", ""))
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("name") == package
+    }
+    return sorted(found)
+
+
+def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
+    """(status, detail) tying content.dfe-schemas to the release the pinned engine locks.
+
+    status is ok, skip or FAIL. The engine applies the dfe-schemas release its
+    uv.lock names, so a content pin naming any other certifies one no deployment
+    applies. The lock is read from the engine's public repository at its pinned tag.
+    """
+    engine = v.get("apps", {}).get(SCHEMAS_LOCKER, "")
+    if not engine:
+        return "skip", f"no apps.{SCHEMAS_LOCKER} pin, so no {SCHEMAS_PACKAGE} lock to compare"
+    where = f"{SCHEMAS_LOCKER} {engine} uv.lock"
+    try:
+        lock = registry_pins.repo_file(org, SCHEMAS_LOCKER, engine, "uv.lock")
+        locked = locked_versions(lock, SCHEMAS_PACKAGE)
+    except registry_pins.RegistryError as exc:
+        return "FAIL", f"cannot read {where}: {exc}"
+    except ValueError as exc:
+        return "FAIL", f"{where} is not TOML: {exc}"
+    pinned = v.get("content", {}).get(SCHEMAS_PACKAGE, "")
+    key = f"content.{SCHEMAS_PACKAGE}"
+    if len(locked) != 1:
+        held = f"versions {', '.join(locked)}" if locked else f"no {SCHEMAS_PACKAGE}"
+        return "FAIL", f"{where} locks {held}, so {key} {pinned or '(unpinned)'} matches nothing"
+    if _norm_version(pinned) == locked[0]:
+        return "ok", f"{key} {pinned} is the {SCHEMAS_PACKAGE} {SCHEMAS_LOCKER} {engine} locks"
+    fix = f'set {key} to "v{locked[0]}"'
+    if pinned:
+        fix += f", or pin a {SCHEMAS_LOCKER} that locks {_norm_version(pinned)}"
+    return "FAIL", (
+        f"{key} is {pinned or 'unpinned'}, but {SCHEMAS_LOCKER} {engine} locks "
+        f"{SCHEMAS_PACKAGE} {locked[0]}: {fix}"
+    )
+
+
 def cmd_release_gate(args: argparse.Namespace) -> int:
-    """Fail a release-maturity stack with an unpublished or single-arch DFE image.
+    """Fail a stack whose dfe-schemas pin its engine does not lock, or a release with a gap.
 
     A release must pin EVERY app; render silently comments out an app with no
     digest, so without this a release could cut a manifest MISSING a component
     and auto-advance `latest` to it. It must also carry both node architectures,
     read from the registry by digest. rc/alpha/beta may carry either gap, and
     their gate never touches the registry.
+
+    The dfe-schemas check runs at every maturity (schemas_lock_finding).
     """
     root = load_root()
     name, v = stack_pins(root, args.stack)
+    status, detail = schemas_lock_finding(v, args.org)
+    schemas_failed = status == "FAIL"
+    if schemas_failed:
+        print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
+    else:
+        print(f"release-gate {name}: {detail}")
     maturity = v.get("maturity", "")
     unp = unpublished_apps(v)
     if maturity != "release":
@@ -1324,8 +1390,8 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
             f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished, "
             "platforms not read (both allowed unless release)"
         )
-        return 0
-    failed = False
+        return 1 if schemas_failed else 0
+    failed = schemas_failed
     if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "
@@ -1889,9 +1955,10 @@ def main() -> int:
 
     p = sub.add_parser(
         "release-gate",
-        help="fail a release-maturity stack with unpublished apps or a single-arch image",
+        help="fail a dfe-schemas pin the engine does not lock, or a release with a gap",
     )
     p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--org", default="hyperi-io", help="GH org owning the engine repository")
     p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()

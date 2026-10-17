@@ -35,6 +35,7 @@ Everything here is decoupled from any pin FILE. The public surface is:
   version_key(tag)             -> numeric sort key for vX.Y.Z tags
   head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
   commit_summary(org, repo, sha) -> (subject line, commit date) of that commit
+  repo_file(org, repo, ref, path) -> one file of a public repository at a ref, read anonymously
 
 Every DFE image and chart is public, so no read here takes a credential. Tags,
 digests and build times come from the registry's own OCI API through
@@ -62,11 +63,17 @@ import random
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 
 import oci_registry
 
 GHCR = "ghcr.io"
+
+# Where repo_file reads a public repository's files with no credential.
+RAW_FILES = "https://raw.githubusercontent.com"
 
 # The only two failures that mean the tag is GONE rather than unreadable.
 _ABSENT = re.compile(r"not found|manifest unknown", re.IGNORECASE)
@@ -449,3 +456,28 @@ def commit_summary(org: str, repo: str, sha: str) -> tuple[str, str]:
     if not lines or not date:
         raise RegistryError(f"{org}/{repo}@{sha} returned no subject or date: {record!r}")
     return lines[0].strip(), date
+
+
+def repo_file(org: str, repo: str, ref: str, path: str) -> str:
+    """The text of one file in a public GitHub repository at a tag, branch or commit.
+
+    Read with no credential, so it answers where gh has no login, as in the stack
+    release gate. A busy host is retried on the quick schedule.
+
+    Raises:
+        RegistryError: The file is absent at that ref, or the host did not answer.
+    """
+    url = f"{RAW_FILES}/{org}/{repo}/{urllib.parse.quote(ref)}/{urllib.parse.quote(path)}"
+    waits = list(_QUICK_WAITS)
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=oci_registry.TIMEOUT_SECONDS) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            if exc.code not in oci_registry._TRANSIENT or not waits:
+                raise RegistryError(f"GET {url}: HTTP {exc.code} {exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if not waits:
+                raise RegistryError(f"GET {url}: {exc}") from exc
+        _sleep(waits.pop(0) * (0.5 + _random()))
