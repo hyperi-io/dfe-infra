@@ -25,8 +25,9 @@ exercises every branch with fabricated documents.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # The console's own order (dfe-ui SetupWizard/server.helpers.ts SETUP_WIZARD_STEPS).
 # The slug is the URL segment: /setup/<slug>.
@@ -55,6 +56,11 @@ class OnboardingError(RuntimeError):
     """The deployment cannot be onboarded, and the run says why."""
 
 
+def utc_now() -> str:
+    """The time now in UTC to the second, the RFC 3339 form `kubectl logs --timestamps` prints."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 @dataclass(frozen=True, slots=True)
 class StepResult:
     """One screen's outcome, for the table the run returns."""
@@ -66,6 +72,9 @@ class StepResult:
     detail: str
     shot: str = ""
     """Screenshot path, when one was taken."""
+
+    at: str = field(default_factory=utc_now)
+    """When the row was recorded, so it lines up with the app logs of the same minute."""
 
 
 def engine_steps(status: Mapping) -> tuple[str, ...]:
@@ -171,12 +180,13 @@ def report_table(results: Sequence[StepResult]) -> str:
         results: The run's outcomes, in the order they happened.
 
     Returns:
-        A fixed-width table.
+        A fixed-width table, each row led by the UTC time it was recorded.
     """
+    at = max((len(r.at) for r in results), default=2)
     width = max((len(r.slug) for r in results), default=4)
     status = max((len(r.status) for r in results), default=6)
-    rows = [f"{'step':<{width}}  {'status':<{status}}  detail"]
-    rows += [f"{r.slug:<{width}}  {r.status:<{status}}  {r.detail}" for r in results]
+    rows = [f"{'at':<{at}}  {'step':<{width}}  {'status':<{status}}  detail"]
+    rows += [f"{r.at:<{at}}  {r.slug:<{width}}  {r.status:<{status}}  {r.detail}" for r in results]
     return "\n".join(rows)
 
 

@@ -191,11 +191,12 @@ _KEY = (
     r"(?:signing|encryption|master|ssh|tls|hmac|session)[_-]?key|private[_-]?key|"
     r"authorization|credentials?|cookie|bearer|(?<![A-Za-z0-9])auth)"
 )
-# After the key: `=`, `:`, `:=` or `=>`, then a value that is quoted (plain or JSON-escaped),
-# a quote left open to the end of the line, or a run up to the next separator.
+# After the key: `=`, `:`, `:=` or `=>`, then a value: quoted (plain or JSON-escaped), a quote
+# left open to the end of the line, a name wrapping a quoted string, or a run to a separator.
 _ASSIGNMENT = re.compile(
     rf"""({_KEY}(?:\\?["'])?[ \t]*(?:=>|:=|[:=])[ \t]*)"""
-    r"""(\\"[^"\\\n]*\\"|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|["'][^\n]*|[^\s,;"'}\]\\]+)""",
+    r"""(\\"[^"\\\n]*\\"|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|["'][^\n]*|"""
+    r"""[A-Za-z_][\w.:]*\((?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*')|[^\s,;"'}\]\\]+)""",
     re.IGNORECASE,
 )
 # A line with none of these cannot hold a key above, so the per-key patterns skip it.
