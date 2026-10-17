@@ -70,6 +70,7 @@ Definitions: dfe-schemas `roles/clickhouse.yaml`.
 | `dfe_loader` | user + `dfe_loader_role` + `dfe_loader_profile` | dfe-loader | `INSERT ON dfe.*`, async-insert settings |
 | `dfe_query_reader` | user + `dfe_query_reader_role` + profile | HyperDX connections, the engine's parameterised views | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
 | `dfe_hunt_runner` | user + `dfe_hunt_runner_role` | hunt-runner | `SELECT`/`INSERT ON dfe.*`, password supplied by the deploy layer |
+| `dfe_otel_writer` | user + `dfe_otel_writer_role` | otel-collector | `INSERT ON dfe.otel_*`, `SELECT ON dfe.otel_traces` for its materialised view, and `system.metrics`/`events`/`parts` reads plus `SHOW TABLES` for the health scrape |
 | `dfe_otel_reader_role` | role only | admin + infra-admin group users | `SELECT ON dfe.*` |
 | `dfe_tenant_role` | role + row policy | org-bound OIDC users | `SELECT` fenced by `_org_id` |
 | `dfe_org_<org>` | user per org | `org_viewer` users | pins one org's `_org_id` |

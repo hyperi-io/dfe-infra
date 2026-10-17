@@ -104,6 +104,8 @@ An existing file is never overwritten.
 Renovate cannot reach (appset pins, `Chart.yaml` appVersions).
 `release-gate` fails a release-maturity stack that still has unpublished apps, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other.
 
+At every maturity it also fails when `content.dfe-schemas` differs from the dfe-schemas the pinned dfe-engine's `uv.lock` locks: move `content.dfe-schemas` to that locked version.
+
 The architecture check reads each index from the registry by digest, through `docker buildx imagetools`, which needs no login because every DFE package is public. A registry it cannot read fails the gate. Below `release` the gate never touches the registry.
 
 `dfe-stack platforms --stack <version>` prints the same per-image verdict for any stack and exits 1 on a gap:

@@ -365,9 +365,9 @@ def _engine_lock(locked: str | None) -> str:
 
 
 def _schemas_gate(
-    schemas: str | None, lock: str | None, maturity: str = "rc"
+    schemas: str | None, lock: str | None, maturity: str = "rc", engine: str = "v1.22.46"
 ) -> tuple[int, str, list[tuple[str, str, str, str]]]:
-    """release-gate over a stack pinning dfe-engine v1.22.46, the engine's lock answered by ``lock``.
+    """release-gate over a stack pinning dfe-engine ``engine``, its lock answered by ``lock``.
 
     ``schemas`` None leaves content.dfe-schemas unpinned, and ``lock`` None is a
     repository that will not serve the file.
@@ -383,7 +383,7 @@ def _schemas_gate(
     content = f'    content:\n      dfe-schemas: "{schemas}"\n' if schemas else ""
     block = (
         f"    maturity: {maturity}\n"
-        '    apps:\n      dfe-engine: "v1.22.46"\n'
+        f'    apps:\n      dfe-engine: "{engine}"\n'
         f"{content}"
         '    digests:\n      dfe-engine: "sha256:aaa"\n'
     )
@@ -421,11 +421,26 @@ def test_release_gate_fails_closed_when_the_engine_lock_cannot_be_read() -> None
     expect("carrying the read's own error", "cannot read" in out and "404" in out, out)
 
 
-def test_release_gate_fails_an_engine_lock_that_names_no_schemas() -> None:
-    """The engine's own floor on dfe-schemas is a specifier, not a locked version."""
-    rc, out, _ = _schemas_gate("v0.2.13", _engine_lock(None))
+def test_release_gate_passes_an_engine_that_predates_dfe_schemas() -> None:
+    """The 2.2.0-rc.1 shape: an engine that locks no dfe-schemas runs the schemas its image bundles."""
+    rc, out, asked = _schemas_gate("v0.2.0", _engine_lock(None), engine="v1.12.0")
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect(
+        "calling the check not applicable, naming the engine",
+        "not applicable" in out and "dfe-engine v1.12.0 locks no dfe-schemas" in out,
+        out,
+    )
+    expect("after reading that engine's lock", asked == [("hyperi-io", "dfe-engine", "v1.12.0", "uv.lock")], f"{asked}")
+
+
+def test_release_gate_fails_an_engine_lock_holding_two_schemas_versions() -> None:
+    lock = _engine_lock("0.2.13") + (
+        '\n[[package]]\nname = "dfe-schemas"\nversion = "0.2.11"\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
+    )
+    rc, out, _ = _schemas_gate("v0.2.13", lock)
     expect("the gate fails", rc == 1, f"exit {rc}\n{out}")
-    expect("saying the lock holds no dfe-schemas", "locks no dfe-schemas" in out, out)
+    expect("naming both locked versions", "versions 0.2.11, 0.2.13" in out, out)
 
 
 def test_release_gate_fails_an_engine_with_no_schemas_pin() -> None:

@@ -1336,6 +1336,7 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
     status is ok, skip or FAIL. The engine applies the dfe-schemas release its
     uv.lock names, so a content pin naming any other certifies one no deployment
     applies. The lock is read from the engine's public repository at its pinned tag.
+    An engine whose lock has no dfe-schemas predates it, so the check does not apply.
     """
     engine = v.get("apps", {}).get(SCHEMAS_LOCKER, "")
     if not engine:
@@ -1350,9 +1351,14 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
         return "FAIL", f"{where} is not TOML: {exc}"
     pinned = v.get("content", {}).get(SCHEMAS_PACKAGE, "")
     key = f"content.{SCHEMAS_PACKAGE}"
-    if len(locked) != 1:
-        held = f"versions {', '.join(locked)}" if locked else f"no {SCHEMAS_PACKAGE}"
-        return "FAIL", f"{where} locks {held}, so {key} {pinned or '(unpinned)'} matches nothing"
+    if not locked:
+        return "skip", (
+            f"{SCHEMAS_PACKAGE} lock check not applicable: "
+            f"{SCHEMAS_LOCKER} {engine} locks no {SCHEMAS_PACKAGE}"
+        )
+    if len(locked) > 1:
+        held = ", ".join(locked)
+        return "FAIL", f"{where} locks versions {held}, so {key} {pinned or '(unpinned)'} matches nothing"
     if _norm_version(pinned) == locked[0]:
         return "ok", f"{key} {pinned} is the {SCHEMAS_PACKAGE} {SCHEMAS_LOCKER} {engine} locks"
     fix = f'set {key} to "v{locked[0]}"'
