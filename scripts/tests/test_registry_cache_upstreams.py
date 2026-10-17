@@ -178,7 +178,14 @@ def test_the_inventory_reaches_every_chart_render_and_both_client_pods() -> None
     assert "otel/opentelemetry-collector-contrib" in rendered
     assert "apache/kafka" in rendered
     assert not [repository for repository in rendered if repository.startswith("dfe-")]
-    assert _client_pod_repositories() == ["apache/kafka", "apache/kafka"]
+    assert _client_pod_repositories() == ["quay.io/strimzi/kafka", "quay.io/strimzi/kafka"]
+
+
+def test_the_kafka_cli_pulls_through_the_default_cache() -> None:
+    """A deploy that names no registry credential still caches the Kafka CLI image."""
+    default = _hosts(render_dial._REGISTRY_CACHE_UPSTREAMS)
+    hosts = {_host(repository) for repository in _client_pod_repositories()}
+    assert hosts <= default, f"Kafka CLI images from {sorted(hosts - default)} need a credential to cache"
 
 
 def test_an_image_reference_loses_its_tag_and_digest_but_keeps_its_host() -> None:

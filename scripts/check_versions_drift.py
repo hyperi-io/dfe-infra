@@ -312,7 +312,7 @@ CHECKS += [
         Path("helm/charts/kafka/values.yaml"),
         r"name: dfe-kafka\n\s*version:\s*\"([^\"]+)\"",
     ),
-    # apache/kafka at that version, which single mode and the MSK bootstrap Job run.
+    # apache/kafka at that version, which the single-mode broker runs.
     Check(
         "kafka image digest (kafka values)",
         "services-digests.kafka-version",

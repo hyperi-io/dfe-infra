@@ -92,10 +92,11 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
 - SSoT logical version: `services.kafka-version` (4.3.1 -- the strimzi 1.2 ceiling).
 - k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR
   `spec.kafka.version`. Strimzi then pulls its OWN internal
-  `quay.io/strimzi/kafka:*-kafka-4.3.x` image - we never name that image.
+  `quay.io/strimzi/kafka:*-kafka-4.3.x` image for the brokers.
   Operator: `operators.strimzi-kafka-operator` (1.2.0, k8s-only).
+- Kafka CLI: `kafka.cliImage` in `helm/charts/kafka` values names a `quay.io/strimzi/kafka:<strimzi>-kafka-<kafka-version>@digest` image for the MSK bootstrap Job and the smoke-test and diagnostics client pods. Its `-kafka-` suffix is held to `kafka.version` by `scripts/tests/test_smoke_kafka_client_image.py`. It has no `versions.yaml` key.
 - docker: `APACHE_KAFKA_VERSION` -> `apache/kafka:<ver>@digest`.
-- Cascade: TWO IMAGES for one logical number (strimzi-internal vs apache/kafka).
+- Cascade: TWO BROKER IMAGES for one logical number (strimzi-internal vs apache/kafka).
   Same logical 4.x, two renderers each knowing their own image. Collapse the
   two into one image name and one of the two paths stops resolving, which is
   why the model is "logical version, two renderings".

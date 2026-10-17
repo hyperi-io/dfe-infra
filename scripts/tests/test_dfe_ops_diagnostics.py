@@ -60,7 +60,7 @@ PLANTED = (
     "pass-not-evidence",
     "jaas-not-evidence",
 )
-IMAGE = "apache/kafka:4.3.1@sha256:" + "0" * 64
+IMAGE = "quay.io/strimzi/kafka:1.3.0-kafka-4.3.1@sha256:" + "0" * 64
 
 
 def _pod(
@@ -737,13 +737,19 @@ def test_the_summary_of_unreadable_answers_says_so() -> None:
 
 
 def test_the_image_is_the_kafka_charts_pin_unless_overridden() -> None:
-    values = 'kafka:\n  mode: single\n  version: "4.3.1"\n  imageDigest: "sha256:abc"\n'
-    assert dg.kafka_image({}, values) == "apache/kafka:4.3.1@sha256:abc"
+    pinned = "quay.io/strimzi/kafka:1.3.0-kafka-4.3.1@sha256:abc"
+    values = f'kafka:\n  mode: single\n  version: "4.3.1"\n  cliImage: "{pinned}"\n'
+    assert dg.kafka_image({}, values) == pinned
     override = {dg.KAFKA_CLI_IMAGE_ENV: "mirror/kafka@sha256:d"}
     assert dg.kafka_image(override, values) == "mirror/kafka@sha256:d"
     assert dg.kafka_image({}, "kafka:\n  mode: single\n") == ""
     real = (REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml").read_text(encoding="utf-8")
-    assert dg.kafka_image({}, real).startswith("apache/kafka:")
+    assert dg.kafka_image({}, real).startswith("quay.io/strimzi/kafka:")
+
+
+def test_expected_fail_a_cli_image_with_no_digest_names_no_image() -> None:
+    values = 'kafka:\n  cliImage: "quay.io/strimzi/kafka:1.3.0-kafka-4.3.1"\n'
+    assert dg.kafka_image({}, values) == ""
 
 
 # --- the CLI, end to end through a fake kubectl ------------------------------------

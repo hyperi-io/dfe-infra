@@ -34,9 +34,12 @@ kafka:
   provider: strimzi
   name: dfe-kafka
   version: "4.3.1"
-  # The digest of apache/kafka at the version above, which single mode and the MSK
-  # bootstrap Job run. == versions.yaml services-digests.kafka-version (drift-checked).
+  # The digest of apache/kafka at the version above, which the single-mode broker
+  # runs. == versions.yaml services-digests.kafka-version (drift-checked).
   imageDigest: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
+  # The Kafka CLI image: the MSK bootstrap Job runs it, and the smoke test and dfe-ops diagnostics run their managed-broker client pods on it.
+  # From quay.io, which the registry cache serves with no credential. Its -kafka- suffix must equal version above.
+  cliImage: "quay.io/strimzi/kafka:1.3.0-kafka-4.3.1@sha256:1f189b1f0f32684302d8b018b1d21b411e2469a9c465fbdc18fa3599cb5bbdad"
   # Strimzi cluster mode only; empty lets Strimzi raise it, one way, as soon as a version roll finishes (docs/deployment/upgrades.md).
   metadataVersion: ""
   # cluster node count. Defaults to 3; set higher for more brokers.
@@ -172,7 +175,7 @@ kafka:
           limits:
             cpu: 500m
             memory: 512Mi
-        # The MSK IAM auth library. apache/kafka ships kafka-acls.sh and
+        # The MSK IAM auth library. kafka.cliImage ships kafka-acls.sh and
         # kafka-topics.sh but NOT this jar, so an init container fetches it and
         # verifies it before the CLI is ever asked to load it.
         iamAuth:

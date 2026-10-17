@@ -241,6 +241,8 @@ CHART_DEFAULT_IMAGES = {
 # full reference).
 CHART_VALUES_IMAGES = {
     "forgejo setup Job curl": (Path("helm/charts/forgejo/values.yaml"), ("setup", "image")),
+    # The MSK bootstrap Job, and the smoke test's and dfe-ops diagnostics' Kafka client pods.
+    "kafka CLI": (Path("helm/charts/kafka/values.yaml"), ("kafka", "cliImage")),
 }
 
 # Strimzi runs its brokers from this repository, tagged
