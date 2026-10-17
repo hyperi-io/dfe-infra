@@ -22,6 +22,7 @@ spec:
       # is not bound to.
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "otel-collector.waitForEngine" . | nindent 6 }}
       containers:
         - name: otel-collector
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"

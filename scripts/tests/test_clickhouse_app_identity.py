@@ -23,12 +23,14 @@ user the engine made for it. What has to hold, and what each check reads:
 4. The admin password is copied into the app namespace alone, so the collector's
    namespace never holds it.
 5. A workload on a user the engine creates waits for the engine first, or it
-   fails authentication until the engine's reconcile lands.
+   fails authentication until the engine's reconcile lands. The collector's
+   gateway runs dfe-common.waitForEngine's script on busybox.
 
 Needs `helm` on PATH. The golden checks read fixtures/thin-renders.
 """
 
 import functools
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -256,6 +258,74 @@ def test_the_collector_neither_reads_nor_dials_as_the_admin(profile: str, cloud:
 def test_the_collector_on_an_external_server_keeps_its_own_user() -> None:
     docs = _chart("otel-collector", "aws", "scale", "otel", yaml.safe_dump(EXTERNAL))
     assert collector_admin_use(docs) == []
+
+
+@pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])
+def test_the_collector_waits_for_the_engine(profile: str, cloud: str) -> None:
+    assert minted_user_without_a_wait(list(_chart("otel-collector", cloud, profile, "otel"))) == []
+
+
+def test_the_collector_on_an_external_server_waits_for_the_engine() -> None:
+    docs = _chart("otel-collector", "aws", "scale", "otel", yaml.safe_dump(EXTERNAL))
+    assert minted_user_without_a_wait(list(docs)) == []
+
+
+def test_a_collector_off_clickhouse_does_not_wait() -> None:
+    """With no ClickHouse user to log in as, the gateway has nothing to wait for."""
+    off = {"exporters": {"clickhouse": {"enabled": False}}}
+    off["clusterTelemetry"] = {"clickhouse": {"enabled": False}}
+    docs = _chart("otel-collector", "aws", "scale", "otel", yaml.safe_dump(off))
+    assert "initContainers" not in pod_spec(_gateway(docs))
+
+
+# The one line the two waits differ by: busybox carries wget, not curl.
+FETCH_LINES = (
+    'until curl -fsS -o /dev/null --max-time 5 "$URL"; do',
+    'until wget -q -O /dev/null -T 5 "$URL"; do',
+)
+
+
+def _gateway(docs: tuple[dict, ...]) -> dict:
+    return next(
+        d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-gateway")
+    )
+
+
+def _wait(doc: dict) -> dict:
+    return next(c for c in pod_spec(doc).get("initContainers") or [] if c["name"] == WAIT)
+
+
+def _wait_shape(container: dict) -> dict:
+    """The wait with its fetch line and the engine's namespace taken out, the parts both share."""
+    script = container["command"][-1]
+    for line in FETCH_LINES:
+        script = script.replace(line, "<fetch>")
+    script = re.sub(r"http://dfe-engine\.[a-z0-9-]+\.svc", "http://dfe-engine.<ns>.svc", script)
+    shared = ("resources", "securityContext")
+    return {"command": [*container["command"][:-1], script], **{k: container[k] for k in shared}}
+
+
+def test_the_collector_waits_as_the_apps_do() -> None:
+    """The gateway's wait and dfe-common.waitForEngine run one script, so neither can drift."""
+    shim = next(
+        d
+        for d in golden("dfe-engine", "scale", "aws")
+        if object_id(d) == "Deployment/dfe-keda-shim"
+    )
+    gateway = _wait(_gateway(_chart("otel-collector", "aws", "scale", "otel")))
+    assert _wait_shape(gateway) == _wait_shape(_wait(shim))
+    assert (
+        f"http://dfe-engine.{APP_NAMESPACE}.svc.cluster.local:8000/readyz" in gateway["command"][-1]
+    )
+    assert FETCH_LINES[1] in gateway["command"][-1]
+
+
+def test_the_collector_waits_on_busybox_through_the_registry_cache() -> None:
+    """The public.ecr.aws mirror of the Docker Official Image, which the default cache serves."""
+    image = _wait(_gateway(_chart("otel-collector", "aws", "scale", "otel")))["image"]
+    assert re.fullmatch(
+        r"public\.ecr\.aws/docker/library/busybox:[0-9.]+@sha256:[0-9a-f]{64}", image
+    )
 
 
 # ------------------------------------------------------------- where the admin lands
