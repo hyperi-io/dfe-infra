@@ -346,6 +346,41 @@ def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
            "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")
 
 
+TOPIC_RF_ENV = "DFE_KAFKA_TOPIC_REPLICATION_FACTOR"
+MANAGED_TOPIC_RF = "3"
+
+
+def test_a_managed_broker_gets_source_topics_at_three_replicas() -> None:
+    """Confluent Cloud and Redpanda Cloud refuse a topic below 3 replicas, and MSK's
+    min.insync.replicas of 2 refuses acks=all on fewer, so the engine is handed 3.
+
+    Rendered on the single tier, which hands the engine no factor of its own, so
+    the 3 can only have come from the managed block.
+    """
+    for provider in MANAGED_PROVIDERS:
+        facts = {**MANAGED_ANNOTATIONS, "dfe.hyperi.io/kafka_provider": provider}
+        docs = render_extras("dfe-engine", "single", "aws", annotations=facts)
+        env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
+        expect(f"{provider}: the engine creates source topics at {MANAGED_TOPIC_RF} replicas",
+               env.get(TOPIC_RF_ENV) == MANAGED_TOPIC_RF, f"got {env.get(TOPIC_RF_ENV)!r}")
+    in_cluster = effective_env(golden("dfe-engine", "single", "aws"), "Deployment/dfe-engine")
+    expect("one in-cluster broker leaves the factor to the engine",
+           TOPIC_RF_ENV not in in_cluster, f"got {in_cluster.get(TOPIC_RF_ENV)!r}")
+
+
+def test_the_managed_factor_rides_the_managed_block_alone() -> None:
+    """Under kafka_mode external, beside the endpoint, so an in-cluster deploy never gets it."""
+    doc = yaml.safe_load((APPSETS / "layer2-apps.yaml").read_text(encoding="utf-8"))
+    for index, source in enumerate(doc["spec"]["template"]["spec"]["sources"][:2]):
+        block = source["helm"]["values"]
+        managed = re.search(
+            r'\{\{- if eq \$kafkaMode "external" \}\}\n(?:\s*#.*\n)*\s*topicReplicationFactor: 3\n',
+            block,
+        )
+        expect(f"source {index} sets the factor under kafka_mode external", managed is not None,
+               "no topicReplicationFactor under the managed block")
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

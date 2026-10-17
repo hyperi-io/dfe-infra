@@ -237,12 +237,20 @@ class FakeEngine:
                  restart_required: tuple[str, ...] = (RESTART_HINT,),
                  deploy_restarts: tuple[str, ...] = (),
                  source_restarts: tuple[str, ...] = (),
-                 archiver: bool = True) -> None:
+                 archiver: bool = True,
+                 deploy_topics: dict | None = None,
+                 deploy_status: int = 200,
+                 transports: tuple[str, ...] | None = None) -> None:
         self.base = "https://dfe.example"
         self.verify = False
         self.token = "t"
         self.restart_required = restart_required
         self.deploy_restarts = deploy_restarts
+        #: The topic lists the deploy reports, and the status it answers with.
+        self.deploy_topics = deploy_topics if deploy_topics is not None else {"topics_ensured": ["a_land"]}
+        self.deploy_status = deploy_status
+        #: What /system/deployment says the deployment carries. None names no transport.
+        self.transports = transports
         #: What a create or an edit of the source reports, as the receiver's routing moves.
         self.source_restarts = source_restarts
         #: Whether this deployment runs a dfe-archiver, as /apps reports it.
@@ -282,9 +290,14 @@ class FakeEngine:
         if path == "/hyperdx/sources":
             return reply(200, {"teams": []})
         if method == "POST" and path.endswith("/deploy"):
-            return reply(200, {"applied": True, "topics_ensured": ["a_land"],
+            if self.deploy_status != 200:
+                return reply(self.deploy_status, {"message": "upstream timed out"})
+            return reply(200, {"applied": True, **self.deploy_topics,
                                "apps_synced": ["deploy instance"],
                                "restart_required": list(self.deploy_restarts)})
+        if path == "/system/deployment" and self.transports is not None:
+            return reply(200, {"transports": {"default": self.transports[0],
+                                              "available": list(self.transports)}})
         if method == "PUT" and path.startswith("/sources/"):
             self.sent[path] = dict(body or {})
             self.source = {**self.source, "transform": dict((body or {}).get("transform") or {})}
@@ -1659,6 +1672,77 @@ class TestTheRestartStep:
         steps.apply_restarts(driver, ["docker", "restart"], [FakeEngine.RESTART_HINT])
 
         assert len(driver.detail("restart")) <= steps.FAILURE_LINE_MAX + len(self.SERVICE) + 20
+
+
+class TestTheDeployRow:
+    """The engine never fails a deploy on a topic it could not create, so the row does.
+
+    Left to the run step, a refused topic surfaces minutes later as the receiver
+    answering 503 for every record, which names neither the topic nor the deploy.
+    """
+
+    NAME = "fb0123abcd"
+
+    def _deploy(self, engine: FakeEngine) -> FakeDriver:
+        driver = FakeDriver(FakePage())
+        steps.record_deploy(driver, engine, self.NAME)
+        return driver
+
+    def test_a_topic_the_engine_could_not_create_fails_the_step_by_name(self):
+        failed = [f"{self.NAME}_land", f"{self.NAME}_load"]
+        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": failed},
+                            transports=("bus",))
+
+        driver = self._deploy(engine)
+
+        assert driver.status("deploy") == "failed"
+        assert all(topic in driver.detail("deploy") for topic in failed)
+        assert "engine log" in driver.detail("deploy")
+
+    def test_a_refused_topic_fails_the_step_whatever_the_engine_says_it_carries(self):
+        engine = FakeEngine(deploy_topics={"topics_ensured": [f"{self.NAME}_load"],
+                                           "topics_failed": [f"{self.NAME}_land"]})
+
+        assert self._deploy(engine).status("deploy") == "failed"
+
+    def test_a_bus_deployment_that_made_no_topic_fails_the_step(self):
+        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": []},
+                            transports=("bus",))
+
+        driver = self._deploy(engine)
+
+        assert driver.status("deploy") == "failed"
+        assert "bus" in driver.detail("deploy")
+
+    def test_an_engine_that_names_no_transport_is_not_held_to_a_topic(self):
+        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": []})
+
+        assert self._deploy(engine).status("deploy") == "done"
+
+    def test_a_brokerless_deployment_makes_no_topic_and_passes(self):
+        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": []},
+                            transports=("direct",))
+
+        assert self._deploy(engine).status("deploy") == "done"
+
+    def test_the_topics_it_made_are_named_on_the_pass(self):
+        made = [f"{self.NAME}_land", f"{self.NAME}_load"]
+        engine = FakeEngine(deploy_topics={"topics_ensured": made, "topics_failed": []},
+                            transports=("bus",))
+
+        driver = self._deploy(engine)
+
+        assert driver.status("deploy") == "done"
+        assert all(topic in driver.detail("deploy") for topic in made)
+
+    def test_a_deploy_read_back_after_a_gateway_timeout_is_not_judged_on_topics(self):
+        """The read-back sees the deployed version and nothing the deploy reported."""
+        engine = FakeEngine(deploy_status=504, transports=("bus",))
+
+        driver = self._deploy(engine)
+
+        assert driver.status("deploy") == "done"
+        assert "not reported" in driver.detail("deploy")
 
 
 class TestTheOrderTheRunnerWalks:

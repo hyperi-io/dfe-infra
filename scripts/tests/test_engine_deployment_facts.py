@@ -552,6 +552,52 @@ def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     )
 
 
+TOPIC_RF_ENV = "DFE_KAFKA_TOPIC_REPLICATION_FACTOR"
+KAFKA_CHART_VALUES = REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml"
+
+
+def test_the_scale_tier_creates_source_topics_at_its_brokers_factor() -> None:
+    """A one-replica topic loses its source's records with the one broker holding it.
+
+    The scale tier runs the broker set at the kafka chart's replication factor, so
+    the engine is handed that same factor for each source's topics.
+    """
+    kafka_chart = yaml.safe_load(KAFKA_CHART_VALUES.read_text(encoding="utf-8"))
+    broker_factor = kafka_chart["kafka"]["profile"]["scale"]["replicationFactor"]
+    scale = yaml.safe_load((VALUES / "profile-scale.yaml").read_text(encoding="utf-8"))
+    expect(
+        "profile-scale.yaml hands the engine the broker set's own factor",
+        scale["kafka"]["topicReplicationFactor"] == broker_factor,
+        f"profile {scale['kafka'].get('topicReplicationFactor')!r}, kafka chart {broker_factor!r}",
+    )
+    for cloud in CLOUDS:
+        got = engine_env(golden(ENGINE, "scale", cloud)).get(TOPIC_RF_ENV)
+        expect(f"scale/{cloud}: the engine creates source topics at {broker_factor}",
+               got == str(broker_factor), f"got {got!r}")
+
+
+def test_a_single_broker_leaves_the_factor_to_the_engine() -> None:
+    """Unset, the engine clamps to the brokers it finds, which is the only answer one broker takes."""
+    for profile, cloud in CELLS:
+        if profile == "scale":
+            continue
+        got = engine_env(golden(ENGINE, profile, cloud)).get(TOPIC_RF_ENV)
+        expect(f"{profile}/{cloud} renders no replication factor", got is None, f"got {got!r}")
+
+
+def test_a_replication_factor_from_a_values_file_renders_whole() -> None:
+    # A values file reads a number as a float64, not the string an appset hands over.
+    got = literal_env("single", overlay={"kafka": {"topicReplicationFactor": 3}}).get(TOPIC_RF_ENV)
+    expect("a number from a values file renders as a whole factor", got == "3", f"got {got!r}")
+
+
+def test_a_replication_factor_the_engine_cannot_take_fails_the_render() -> None:
+    for value in (0, 2.5, "three"):
+        err = refusal("single", overlay={"kafka": {"topicReplicationFactor": value}})
+        expect(f"kafka.topicReplicationFactor={value!r} is refused by name",
+               "kafka.topicReplicationFactor" in err, f"refusal={err[-300:]!r}")
+
+
 ENSURE_TOPICS_ENV = "DFE_KAFKA_ENSURE_TOPICS"
 
 
@@ -628,6 +674,10 @@ def main() -> int:
         test_a_render_with_no_pod_range_keeps_the_engines_default()
         test_the_topic_size_reaches_the_engine_only_when_set()
         test_a_topic_size_that_is_not_bytes_fails_the_render()
+        test_the_scale_tier_creates_source_topics_at_its_brokers_factor()
+        test_a_single_broker_leaves_the_factor_to_the_engine()
+        test_a_replication_factor_from_a_values_file_renders_whole()
+        test_a_replication_factor_the_engine_cannot_take_fails_the_render()
         test_the_boot_topic_pass_is_turned_on_only_on_the_bus()
         test_each_profile_sets_the_boot_topic_pass_by_its_transport()
         test_every_profile_still_renders_with_the_real_overlays()

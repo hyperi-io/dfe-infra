@@ -514,6 +514,7 @@ data:
   DFE_KAFKA_BOOTSTRAP_SERVERS: dfe-kafka-kafka-bootstrap.strimzi.svc.cluster.local:9092
   DFE_KAFKA_ENSURE_TOPICS: 'true'
   DFE_KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+  DFE_KAFKA_TOPIC_REPLICATION_FACTOR: '3'
   DFE_LIBRARY_SEED_DIR: /etc/dfe-engine/content/library
   DFE_MESH_ENABLED: 'false'
   DFE_PROFILE: scale

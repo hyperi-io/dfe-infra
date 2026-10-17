@@ -169,6 +169,7 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
   provider, not from `auth.type`).
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
 - Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its own default size, which a cluster capped below it refuses. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
+- Replication: set the dfe-engine chart's `kafka.topicReplicationFactor` to 3. Confluent Cloud refuses any other factor and creates no topic on first write, so a source whose topics are refused never takes data. The layer 2 appsets set it for every external broker.
 
 Note: Confluent Cloud auto-provisions a billable Flink compute pool on cluster
 create (scalo `ProviderCapabilities.has_billable_side_resources`). If you tear a
