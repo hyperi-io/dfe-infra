@@ -279,6 +279,7 @@ extras:
         securityProtocol: ""
         provider: ""
         messageMaxBytes: ""
+        topicReplicationFactor: ""
       # Read for the role each entry carries: a catalogue entry sets
       # DFE_SOURCE_CATALOGUE_FILE. The refs the engine's content init containers
       # pull belong to the thin chart's values.

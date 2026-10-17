@@ -230,6 +230,12 @@ spec:
                 # common.yaml's in-cluster plain listener for every app.
                 securityProtocol: {{ $kafkaSecurityProtocol | quote }}
                 {{- end }}
+                {{- if eq $kafkaMode "external" }}
+                # Confluent Cloud and Redpanda Cloud refuse a topic below 3
+                # replicas, and MSK's min.insync.replicas of 2 refuses acks=all on
+                # fewer, so dfe-extras hands the engine 3 for each source's topics.
+                topicReplicationFactor: 3
+                {{- end }}
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
                 # The message size the broker was built with, whether or not
@@ -366,6 +372,9 @@ spec:
                 {{- end }}
                 {{- if and (eq $kafkaMode "external") $kafkaSecurityProtocol }}
                 securityProtocol: {{ $kafkaSecurityProtocol | quote }}
+                {{- end }}
+                {{- if eq $kafkaMode "external" }}
+                topicReplicationFactor: 3
                 {{- end }}
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}

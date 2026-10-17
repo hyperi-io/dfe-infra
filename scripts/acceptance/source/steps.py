@@ -218,7 +218,8 @@ def deploy(engine: Engine, name: str) -> dict:
         while time.monotonic() < until:
             current = engine.call("GET", f"/sources/{name}")
             if current.status == 200 and current.body.get("deployed_version"):
-                return {"applied": True, "topics_ensured": [], "apps_synced": [f"read back after a {reply.status}"]}
+                # No topic lists: the read-back cannot say which topics the deploy made.
+                return {"applied": True, "apps_synced": [f"read back after a {reply.status}"]}
             time.sleep(5)
     if reply.status != 200 or not reply.body.get("applied"):
         raise RuntimeError(f"deploy did not apply: {reply.status} {reply.body}")
@@ -227,13 +228,50 @@ def deploy(engine: Engine, name: str) -> dict:
     return reply.body
 
 
+def carries_bus(engine: Engine) -> bool | None:
+    """Whether this deployment carries a Kafka bus, or None when the engine does not say."""
+    reply = engine.call("GET", "/system/deployment")
+    body = reply.body if reply.status == 200 and isinstance(reply.body, dict) else {}
+    transports = body.get("transports")
+    available = transports.get("available") if isinstance(transports, dict) else None
+    if not isinstance(available, list):
+        return None
+    return "bus" in available
+
+
+def topic_outcome(deployed: dict, bus: bool | None) -> tuple[str, str]:
+    """The deploy row's status, and what it says about the source's Kafka topics.
+
+    The engine never fails a deploy on a topic it could not create, so this row
+    does. Otherwise the first sign is the receiver answering 503 for every record,
+    because the topic it produces to does not exist.
+
+    Args:
+        deployed: The engine's deploy reply.
+        bus: Whether the deployment carries a bus, or None when the engine did not say.
+
+    Returns:
+        The status and the topic half of the row's detail.
+    """
+    if "topics_ensured" not in deployed and "topics_failed" not in deployed:
+        return "done", "topics not reported"
+    ensured = sorted(deployed.get("topics_ensured") or [])
+    failed = sorted(deployed.get("topics_failed") or [])
+    if failed:
+        return "failed", (
+            f"topics NOT created {failed}: the broker refused them or could not be reached, "
+            f"and the engine log has its reason; topics ensured {ensured}"
+        )
+    if bus and not ensured:
+        return "failed", "topics ensured []: this deployment carries a bus and the deploy made no topic for the source"
+    return "done", f"topics ensured {ensured}"
+
+
 def record_deploy(driver, engine: Engine, name: str) -> dict:
     """The deploy step, and the body the steps after it read."""
     deployed = deploy(engine, name)
-    driver.record(
-        "deploy", "done",
-        f"applied; topics ensured {sorted(deployed.get('topics_ensured') or [])}; apps synced {deployed.get('apps_synced')}",
-    )
+    status, topics = topic_outcome(deployed, carries_bus(engine))
+    driver.record("deploy", status, f"applied; {topics}; apps synced {deployed.get('apps_synced')}")
     return deployed
 
 

@@ -67,6 +67,13 @@ thin chart's env.
             - name: DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES
               value: {{ int64 . | quote }}
             {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "kafka.topicReplicationFactor" "value" .Values.kafka.topicReplicationFactor "min" 1)) }}
+            # Each source's _land and _load topics take this replication factor.
+            # Unset, the engine clamps the dfe-schemas default to the brokers it
+            # finds, which a single broker needs.
+            - name: DFE_KAFKA_TOPIC_REPLICATION_FACTOR
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # The same kafka.securityProtocol dial every data-plane chart reads,
             # defaulting to the in-cluster brokers' plain listener.

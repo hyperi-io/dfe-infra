@@ -56,6 +56,11 @@ kafka:
   # count, the KEDA consumer ceiling and the per-partition throughput cap, and
   # feed the broker's num.partitions and the landing topic alike -- so there is
   # no literal here to drift from the one the broker uses.
+  #
+  # The engine creates each source's _land and _load topics at this factor, the
+  # kafka chart's profile.scale.replicationFactor, so losing a broker loses no
+  # source's records. A deployer who moves mode must move this with it.
+  topicReplicationFactor: 3
 
 # Observability collection -- full set. Container-level kubelet series scale with
 # the node count here; measure before widening metricGroups.
