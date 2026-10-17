@@ -5645,7 +5645,7 @@ stacks:
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
       otel-collector: "0.162.0"      # 2026-09-29. Both rendered collector configs pass otelcol validate on it.
-      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.7 merges, its packages/app version. The image is content.dfe-hyperdx.
+      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.8 merges, its packages/app version. The image is content.dfe-hyperdx.
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
       # renovate: datasource=docker depName=envoyproxy/envoy
@@ -5671,34 +5671,34 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.46"        # 2026-10-17, amd64 and arm64. The image thin chart 1.22.46 pins. scalo-py 2.31.17, dfe-schemas 0.2.13, logreducer 3.5.3. Reads each app's ClickHouse password from the loader, query-reader and otel-writer secret groups and creates that app's user, closes escalation and tenancy gaps, sizes source topics to the broker count, and the hunt runner waits out a full ClickHouse (dfe-engine#899 #900 #901 #902 #903 #904 #905 #906 #907 #908 #909 #911), with the follow-ups found testing dfe-ui#564 (dfe-engine#913).
-      dfe-ui: "v1.7.21"              # 2026-10-17, amd64 and arm64. The image thin chart 1.7.21 pins. Catalogue and list filter fixes, the catalogue's reach, the fetcher Processing tab, pool labels and a new Node.js base digest (dfe-ui#560 #561 #562 #564).
+      dfe-ui: "v1.7.22"              # 2026-10-17, amd64 and arm64. The image thin chart 1.7.22 pins, rendered on scalo-service 2.14.15. Catalogue and list filter fixes, the catalogue's reach, the fetcher Processing tab and pool labels, follows engine#900's org and hunt contract, and builds its JS natively for each arch (dfe-ui#560 #561 #562 #564 #566 #568 #569).
       dfe-receiver: "v1.15.50"      # 2026-10-17, amd64 and arm64. The image thin chart 1.15.50 pins. A rebuild on scalo-rs 2.14.17, with rustls 0.23.46 (dfe-receiver#196).
       dfe-loader: "v1.18.53"        # 2026-10-17, amd64 and arm64. The image thin chart 1.18.53 pins. scalo-rs 2.14.17 and rustls 0.23.46. Zoned timestamps land at their UTC instant, and the unused Coercer is gone (dfe-loader#260 #261 #262 #263).
       dfe-archiver: "v1.7.36"       # 2026-10-17, amd64 and arm64. The image thin chart 1.7.36 pins. scalo-rs 2.14.17. gRPC records are routed by _source, and grpc.default_topic is gone (dfe-archiver#127 #128).
-      dfe-fetcher: "v1.4.39"        # 2026-10-15, amd64 and arm64. The image thin chart 1.4.39 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-fetcher#235).
-      dfe-transform-vrl: "v1.1.35"   # 2026-10-15, amd64 and arm64. The image thin chart 1.1.35 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-vrl#107).
+      dfe-fetcher: "v1.4.40"        # 2026-10-17, amd64 and arm64. The image thin chart 1.4.40 pins. A rebuild on scalo-rs 2.14.17 (dfe-fetcher#236).
+      dfe-transform-vrl: "v1.1.36"   # 2026-10-17, amd64 and arm64. The image thin chart 1.1.36 pins. scalo-rs 2.14.17. Reads its Kafka SASL mechanism from the environment, the DFE_TRANSFORM_KAFKA_SASL_MECHANISM dfe-infra renders (dfe-transform-vrl#108 #109).
       dfe-transform-vector: "v1.0.51"  # 2026-10-15, amd64 and arm64. The image thin chart 1.0.51 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-vector#120).
       dfe-transform-elastic: "v1.1.14" # 2026-10-15, amd64 and arm64. The image thin chart 1.1.14 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-elastic#120). Idle until a source names it.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       # The edge-fleet VPN, opt in per deployment (layer2-edge.yaml). A public Apache-2.0 repo.
-      culvert: "v2.1.23"            # 2026-10-15, amd64 and arm64. The image thin chart 2.1.23 pins. scalo-py 2.31.15, which drops the us-east-1 fallback, and watchtower 1.23.1 (culvert#90 #91).
+      culvert: "v2.1.24"            # 2026-10-17, amd64 and arm64. The image thin chart 2.1.24 pins. A rebuild on scalo-py 2.31.17, and the licence declared as an SPDX expression (culvert#92 #93).
 
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:477e9ab7db2a6711b3869492009fdda0127bdc53ad802b14f8ffeea88c750112"
-      dfe-ui: "sha256:cdfb5210323f32647a2527e738138ac836aae6aa3226918c0fd3b308f18c21bc"
+      dfe-ui: "sha256:c57b7ec93f330c4c00095f42ff31850fd97435341fdcae1f24f67515e1d10f7a"
       dfe-receiver: "sha256:e2ce151b12ffa43e1ca82f0b916c5e8e5361f5519e1f21fc703fd8b7ae024734"
       dfe-loader: "sha256:9ffa44cfa2e0e2cec16fa2528f77a8077789ac5d05ed1d2f0a246266d6bdc703"
       dfe-archiver: "sha256:82224a6575162cc189dde9925a517470a64fe732a6afdc8c742ee233251292c8"
-      dfe-fetcher: "sha256:b2df42195ce9109bc208da3aa28da970ef024a166362385dd56baefd935774ff"
-      dfe-transform-vrl: "sha256:3c8bf896b138b71bd7f6cd8f230b7216d058b6ad9050eb48a6f3fe1432d50e39"
+      dfe-fetcher: "sha256:78d40fe1d136527b6a6be48ce9c623a537d7f4542649c64a995b5930f54ef6ea"
+      dfe-transform-vrl: "sha256:b1e9dfab9a38bf7c459cc1c8bbc5e6b77126f09729a3b1eac1797ade5ace9b3d"
       dfe-transform-vector: "sha256:604ffb17378c5b61aa6d9ca006857a1ac727fc77bcf15ef7e564ebe6ddc43f96"
       dfe-transform-elastic: "sha256:4325bcb2b7846fc2646c61b5fca408a39084124f08185cbfd28abb7d31076648"
-      dfe-hyperdx: "sha256:b81e22a6a2d13878867952e552273098b8b16f79cbbb72b2984886d7d8620b00"
-      culvert: "sha256:a0e2b9e87a6f87cbdd8cda488b2e228a9025cb76375f5e50adb806f9c22db941"
+      dfe-hyperdx: "sha256:c940894932bcd6e605063d605aa1c36727daf911d709aac3b00e2cb99613de67"
+      culvert: "sha256:ffe62ca621ba04766db81bb0a6812694582d09bf42468e4e8a2f898fe3a7583b"
       # Tagged by toolbox.dfe-toolbox.
       dfe-toolbox-base: "sha256:a08e64b708d201e1e26823ba3ffc8d4a8e54a669713c4047d40715a6ea3522e5"
 
@@ -5708,17 +5708,17 @@ stacks:
     # not published yet. The chart version is the app tag without its v, so it has no key here.
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
-      culvert: "sha256:3742cbd1727a4ee9c567b70d3bc3159edaaef6962eeec1049456f3d014e7df40"                # 2.1.23
+      culvert: "sha256:fe9dd4437d0e6b18fd7e1d38d33e9192fefc4eec3ae9d3fc1f731962c85f761b"                # 2.1.24
       dfe-archiver: "sha256:88dc338e214979129f192bf4296288fa9f45d2a38f4dbb5468cc0b456f6d3043"           # 1.7.36
       dfe-engine: "sha256:cf99c2dff08e1c8c6f635b3b55c48afb42affd73de3710e9c3de7845176598c9"             # 1.22.46
-      dfe-fetcher: "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"            # 1.4.39
+      dfe-fetcher: "sha256:c0bbae8998f9784ededf381b13e5dd64c0adae455e04d305ef13c02afaf20c78"            # 1.4.40
       dfe-loader: "sha256:20841377bb53a06d3e77c23739bcc6331fb90742d1a76eda7ddd732e14242663"             # 1.18.53
       dfe-receiver: "sha256:e5873fed9af5110fe3a294d25681e2b6d3f9476d813625d7be19d05fe609a553"           # 1.15.50
       dfe-transform-elastic: "sha256:43aabf0182a29293879612ec54e9e58db32bef59fbbe6dd5792b5ea009f0df14"  # 1.1.14
       dfe-transform-vector: "sha256:3e2e5ba96722dd1ba20cab4b148d1597df1204e94b28f82ff80cd1bfb69bb04a"   # 1.0.51
-      dfe-transform-vrl: "sha256:4488519c02a89467732c888c9be18aa7eabe89892e8ad0142711941922a05ea5"      # 1.1.35
-      dfe-ui: "sha256:821a62cc25648d5a56d9cc537b9b786a4cf0190a7ec58acb379c645d940b7b6e"                # 1.7.21
-      hyperdx: "sha256:648ee4ac54d123fa8ec7090a2b65ca1e6b82b62cac12e6f484b72232073a52b2"                # 0.3.7
+      dfe-transform-vrl: "sha256:914a214f02276e7b8eb4fb5e21c6308f25514bb12bb4f33c106840b50e59d9b6"      # 1.1.36
+      dfe-ui: "sha256:ed1b2ac1683cb950f3f237061e2e065d8106785d444ef55aef87e66958042df7"                # 1.7.22
+      hyperdx: "sha256:5f135eb18cf7476a786b5734b8c49b1fa0fccda5784fd320cc225b392b0c3f39"                # 0.3.8
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
@@ -5749,7 +5749,7 @@ stacks:
       dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 6a27ef66 (2026-10-17) is "fix: release check dial and two post checks (#268)".
       dfe-docker: "6a27ef663e13f38bf8b7c9e36067e512bdcfe9c6"
-      dfe-hyperdx: "v0.3.7"              # 2026-10-17, amd64 and arm64. The image thin chart 0.3.7 pins. Merges upstream HyperDX 2.41.0 and clears its advisories, refuses DELETE of a seeded source, scopes the shipped-dashboard lockdown, and follows a changed team ClickHouse password (dfe-hyperdx#149 #150 #151 #152 #153).
+      dfe-hyperdx: "v0.3.8"              # 2026-10-17, amd64 and arm64. The image thin chart 0.3.8 pins, rendered on scalo-service 2.14.15. Merges upstream HyperDX 2.41.0 and clears its advisories, refuses DELETE of a seeded source, scopes the shipped-dashboard lockdown, and follows a changed team ClickHouse password (dfe-hyperdx#149 #150 #151 #152 #153 #154).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
