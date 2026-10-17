@@ -10,12 +10,14 @@
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
 # Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
-# First-class provider alongside Strimzi, run the SAME way: operator + thin CR.
+# A provider alongside Strimzi, run the SAME way: operator + thin CR.
 # SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's
 # plain listener and the DFE kafka auth standard). The operator generates+manages
 # the bootstrap superuser secret; the dfe service account is a separate User CR
-# (redpanda-user.yaml), whose secret shape matches the Strimzi KafkaUser secret so
-# clients are identical across providers.
+# (redpanda-user.yaml) whose operator Secret holds only the password. The
+# app-namespace dfe-kafka-user Secret (username, password, sasl.mechanism) is
+# written by the same ClusterExternalSecret as for Strimzi, so clients are
+# identical across providers.
 apiVersion: cluster.redpanda.com/v1alpha2
 kind: Redpanda
 metadata:
