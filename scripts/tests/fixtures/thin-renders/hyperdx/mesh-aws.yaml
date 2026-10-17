@@ -22,22 +22,6 @@ spec:
   unhealthyPodEvictionPolicy: AlwaysAllow
 ---
 apiVersion: v1
-automountServiceAccountToken: false
-kind: ServiceAccount
-metadata:
-  labels:
-    app.kubernetes.io/instance: hyperdx-default-in-cluster
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: dfe-hyperdx
-    app.kubernetes.io/part-of: dfe
-    app.kubernetes.io/version: <pin:content.dfe-hyperdx>
-    dfe.hyperi.io/cloud: aws
-    dfe.hyperi.io/env: dev
-    helm.sh/chart: dfe-hyperdx-<pin:chart-version.dfe-hyperdx>
-  name: dfe-hyperdx
-  namespace: dfe
----
-apiVersion: v1
 kind: Service
 metadata:
   labels:
@@ -261,7 +245,6 @@ spec:
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: dfe-hyperdx
       terminationGracePeriodSeconds: 30
       volumes:
       - emptyDir: {}
