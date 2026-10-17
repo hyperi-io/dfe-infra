@@ -17,8 +17,10 @@ flowchart LR
 One command runs the whole loop (mode defaults: `scale` on Kubernetes, `slim`
 on Compose):
 
-    python3 scripts/dfe-ops cycle --mode single \
-        --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+```bash
+python3 scripts/dfe-ops cycle --mode single \
+    --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+```
 
 A dev/test deployment is ephemeral by design: create it, test it, destroy it,
 redeploy it in another mode, without asking anyone. The one exception is a
@@ -95,8 +97,10 @@ re-proves the deploy with the readiness gate and the `verify` smoke suite.
 Without that wait the gate exits on its first clean poll, which is the old
 revision's pods.
 
-    python3 scripts/dfe-ops refresh --mode slim \
-        --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+```bash
+python3 scripts/dfe-ops refresh --mode slim \
+    --kubeconfig .tmp/target.kubeconfig --env-file bootstrap/.env
+```
 
 It deploys nothing and tears nothing down. `--readiness-timeout` bounds the sync
 wait and the gate separately. `--skip-verify` stops after the gate, which proves
@@ -183,8 +187,10 @@ What the cluster must supply:
 
 Check any cluster read-only before touching it:
 
-    python3 scripts/dfe-ops preflight --mode scale --env-file bootstrap/.env \
-        --require-label dfe.hyperi.io/workload=dfe
+```bash
+python3 scripts/dfe-ops preflight --mode scale --env-file bootstrap/.env \
+    --require-label dfe.hyperi.io/workload=dfe
+```
 
 On a shared cluster whose nodes lack the workload label, preflight fails that
 check -- the wrong-cluster trap it exists to catch.

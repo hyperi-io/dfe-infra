@@ -25,7 +25,7 @@ tiers accept cluster-level config; Serverless abstracts capacity away.
 
 Note: this is Redpanda's MANAGED cloud, a different thing from the self-hosted
 Redpanda that DFE CAN auto-deploy in-cluster (`kafka.provider=redpanda`, BSL
-gate). See `docs/REDPANDA-LIMITATIONS.md` for the self-hosted licensing story;
+gate). See `docs/deployment/kafka/redpanda-limitations.md` for the self-hosted licensing story;
 Redpanda Cloud is a paid managed service, so the BSL "streaming service" clause
 is Redpanda's concern, not the deployer's.
 

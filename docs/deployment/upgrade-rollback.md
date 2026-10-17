@@ -73,7 +73,7 @@ creating it:
   take a Keeper snapshot and a ClickHouse backup before either scope
   moves. Neither is scripted here.
 - the deploy repo commit the first stage makes (`chore(upgrade): <stack> stage <n> -- <keys>`) is the config-side restore point. It carries the whole pin move (see [upgrades.md](upgrades.md), "What a stage moves"), so `git revert` of it, or a hand edit of `pins.yaml`, returns every component to the stack pinned before the upgrade.
-- the committed `sizing/resolved.yaml`, as it stood before a `--dial`
+- the committed `sizing/resolved.yaml`, as it stood before a `--dial` <!-- doc-paths: ignore -->
   re-resolve, is the sizing-side restore point `--previous` diffs the next
   resolve against, whichever direction a field moves.
 
@@ -89,11 +89,11 @@ of them (`kafka.sizing.*`, `kafka.controllerPool.enabled`, `cloud`),
 `kafka.storageModel`), and `kafka_provider` and
 `az_count` are OpenTofu inputs with no chart key. Reversing one is the same
 operation run backward: re-resolve with the previous dial against the
-committed `sizing/resolved.yaml` as `--previous`, and `resolve_sizing.py`
+committed `sizing/resolved.yaml` as `--previous`, and `resolve_sizing.py` <!-- doc-paths: ignore -->
 reports the field moving the other way as a new locked change, refused
 with exit 3 unless `--migrate` is passed again.
 
-That command only rewrites config -- `sizing/resolved.yaml`, the chart
+That command only rewrites config -- `sizing/resolved.yaml`, the chart <!-- doc-paths: ignore -->
 values overlay, the tofu tfvars. It writes no infrastructure and moves no
 data. Whether the underlying resource can follow the config back down
 depends on the field. `partition_count` cannot go back down at all --

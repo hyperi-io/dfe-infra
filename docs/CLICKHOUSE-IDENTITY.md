@@ -117,4 +117,4 @@ authentication method inline or ClickHouse refuses `users.yaml` outright and
 every server crashloops (`CANNOT_LOAD_CONFIG`), and the result would apply on
 k8s alone.
 
-Shared-fact mechanics between dfe-infra and dfe-docker: `docs/SHARED-SSOT.md`.
+Shared-fact mechanics between dfe-infra and dfe-docker: `docs/CI-MAINTENANCE-DESIGN.md`.

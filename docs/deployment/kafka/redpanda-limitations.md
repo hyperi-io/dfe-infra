@@ -23,6 +23,7 @@ docs and the BSL announcement.
 - **Internal / self-hosted production use is permitted.**
 
 **What this means for DFE:**
+
 - A **customer self-hosting DFE** with bundled Redpanda -- **fine** (internal use).
 - A **HyperI-hosted, multi-tenant DFE SaaS** that bundles Redpanda and lets
   tenants create topics -- **likely breaches the BSL clause.** Use **Strimzi**

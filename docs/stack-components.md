@@ -56,6 +56,7 @@ carries the image `tag@sha256`. docker: `.env` `DFE_<N>_VERSION=<tag>@<digest>`.
 | dfe-hyperdx (fork) | content.dfe-hyperdx | DFE_HYPERDX_VERSION | NO - first image pending |
 
 Notes:
+
 - dfe-transform-splack and dfe-transform-wasm are COMING, not members. Alpha and
   unpublished, so their `apps:` pins are commented out and they have no chart.
   Every line to uncomment when they ship carries the word `coming` beside one of
@@ -77,6 +78,7 @@ set in the CR our chart templates. SSoT holds the LOGICAL service version; the
 operator chart is a SEPARATE, k8s-only pin on its own release line.
 
 ### ClickHouse
+
 - SSoT logical version: `services.clickhouse-version` (26.3.42.3, LTS line).
 - k8s: `helm/charts/clickhouse-cluster` values `clickhouse.version` ->
   ClickHouseCluster CR `spec.image`; keeper image tag mirrors it. Operator:
@@ -86,6 +88,7 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
   number, both refs. Clean.
 
 ### Kafka
+
 - SSoT logical version: `services.kafka-version` (4.3.1 -- the strimzi 1.2 ceiling).
 - k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR
   `spec.kafka.version`. Strimzi then pulls its OWN internal
@@ -103,6 +106,7 @@ operator chart is a SEPARATE, k8s-only pin on its own release line.
   verified against strimzi's kafka-versions.yaml, in lockstep with the operator.
 
 ### Redpanda (opt-in, BSL)
+
 - SSoT logical version: `services.redpanda-version` (v26.2.3).
 - k8s: `helm/charts/kafka` values `kafka.redpanda.image.tag` -> Redpanda CR
   `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (26.2.4,
@@ -132,10 +136,12 @@ OUR chart sets the image via values from the SSoT; docker sets the same upstream
 image. One number, same image ref both sides.
 
 ### Kafbat (Kafka UI)
+
 - SSoT: `services.kafbat` (v1.5.0@sha256:...). k8s: `helm/charts/kafbat` `image.tag`.
   docker: `KAFBAT_VERSION` -> `ghcr.io/kafbat/kafka-ui`. ALIGNED today.
 
 ### FerretDB (Mongo-wire metadata store for HyperDX)
+
 - SSoT: `services.ferretdb` (2.7.0). k8s: `helm/charts/ferretdb` (image tag defaults
   to Chart appVersion). docker: `HYPERDX_FERRETDB_VERSION` ->
   `ghcr.io/ferretdb/ferretdb`.
@@ -143,6 +149,7 @@ image. One number, same image ref both sides.
   `services.ferretdb` / `services-digests.ferretdb`, drift-checked.
 
 ### postgres-documentdb (FerretDB 2.x PG backend)
+
 - SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). k8s:
   `helm/charts/ferretdb` `documentdb.image` (a standalone StatefulSet beside
   FerretDB). docker: `HYPERDX_POSTGRES_VERSION` ->
@@ -154,6 +161,7 @@ image. One number, same image ref both sides.
 ## Class E - third-party plain image, docker-ONLY
 
 ### Envoy (dfe-proxy)
+
 - SSoT: `services.envoy-proxy` (v1.39.2@sha256:...). docker: `DFE_PROXY_VERSION`
   -> `envoyproxy/envoy`. The compose stack's entrypoint, fronting dfe-ui and
   dfe-engine on one origin.

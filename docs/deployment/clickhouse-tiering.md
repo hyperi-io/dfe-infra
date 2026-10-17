@@ -108,7 +108,7 @@ tier -- silently, with no error, and every new insert landing on the wrong
 device. `clickhouse.tieredBlock.coldName` must therefore sort after `default`,
 and the chart fails the render if it does not:
 
-```
+```text
 clickhouse.tieredBlock.coldName "cold" sorts before "default", which silently
 inverts the tiers -- the bulk volume would become the hot one. Pick a name
 sorting after "default" (e.g. slow, tier2, warm)

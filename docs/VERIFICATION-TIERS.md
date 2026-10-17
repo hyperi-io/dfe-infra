@@ -52,7 +52,7 @@ One target, both data paths, end to end. Run the one that matches what you
 changed.
 
 - **T1a local** -- boot every interdependent repo as a process, both paths. The
-  procedure is [dfe-engine `docs/LOCAL-DEV.md`](#local-dev) plus each repo's own
+  procedure is [dfe-engine `docs/LOCAL-DEV.md`](#local-dev) plus each repo's own <!-- doc-paths: ignore -->
   local-dev doc; the local ClickHouse + Kafka come from the capped
   `local-services` daemons.
 
@@ -103,4 +103,4 @@ declares an external service.
 
 Each interdependent repo carries a local-dev `.md` (linked from its
 CONTRIBUTING) on running it locally and against the other repos: dfe-engine
-`docs/LOCAL-DEV.md`, dfe-ui, dfe-hyperdx. The T1a target is exactly that path.
+`docs/LOCAL-DEV.md`, dfe-ui, dfe-hyperdx. The T1a target is exactly that path. <!-- doc-paths: ignore -->

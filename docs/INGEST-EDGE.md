@@ -60,7 +60,7 @@ The load balancer door's NetworkPolicy admits each port the load balancers serve
 - On `door: gateway`, Envoy refuses `deny` on the receiver and otel routes before it checks `allow`.
 - On `door: loadbalancer` the one place left is the receiver's own `server.ip_filter` in `denylist` mode. The receiver reads that from its config file, which no values layer can derive from the ingest group, so a `deny` on this door is refused at render rather than accepted and ignored. Narrow `allow` instead.
 
-`server.ip_filter` does not reach the receiver's gRPC listeners in any case: tonic runs their accept loop, so gRPC and OTLP gRPC (4317) take no ip_filter and no per-IP rate limit (dfe-receiver `docs/HARDENING.md`). The load balancer's `allow` still applies to them, and so does their own `auth.mode`.
+`server.ip_filter` does not reach the receiver's gRPC listeners in any case: tonic runs their accept loop, so gRPC and OTLP gRPC (4317) take no ip_filter and no per-IP rate limit (dfe-receiver `docs/HARDENING.md`). The load balancer's `allow` still applies to them, and so does their own `auth.mode`. <!-- doc-paths: ignore -->
 
 ## The gateway door routes HTTP only
 

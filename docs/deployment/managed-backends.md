@@ -14,10 +14,10 @@ The token is what the vendor's own API takes for that cloud, and the tiers are t
 
 | Backend | AWS | GCP | Azure | Source |
 |---|---|---|---|---|
-| MSK | `aws` | not offered | not offered | AWS-only service, https://docs.aws.amazon.com/msk/latest/developerguide/port-info.html |
-| Confluent Cloud | `AWS`: freight, enterprise, basic | `GCP`: enterprise, basic | `AZURE`: enterprise, basic | https://docs.confluent.io/cloud/current/clusters/regions.html and the provider's `cloud` docs (Freight is AWS-only) |
-| Redpanda Cloud | `aws`: serverless | `gcp`: serverless, in beta, one region, no private connectivity | not offered | https://docs.redpanda.com/redpanda-cloud/get-started/cloud-overview/ and https://docs.redpanda.com/redpanda-cloud/reference/tiers/serverless-regions/ |
-| ClickHouse Cloud | host under `.aws.clickhouse.cloud` | host under `.gcp.clickhouse.cloud` | host under `.azure.clickhouse.cloud` | https://clickhouse.com/docs/cloud/reference/supported-regions |
+| MSK | `aws` | not offered | not offered | AWS-only service, <https://docs.aws.amazon.com/msk/latest/developerguide/port-info.html> |
+| Confluent Cloud | `AWS`: freight, enterprise, basic | `GCP`: enterprise, basic | `AZURE`: enterprise, basic | <https://docs.confluent.io/cloud/current/clusters/regions.html> and the provider's `cloud` docs (Freight is AWS-only) |
+| Redpanda Cloud | `aws`: serverless | `gcp`: serverless, in beta, one region, no private connectivity | not offered | <https://docs.redpanda.com/redpanda-cloud/get-started/cloud-overview/> and <https://docs.redpanda.com/redpanda-cloud/reference/tiers/serverless-regions/> |
+| ClickHouse Cloud | host under `.aws.clickhouse.cloud` | host under `.gcp.clickhouse.cloud` | host under `.azure.clickhouse.cloud` | <https://clickhouse.com/docs/cloud/reference/supported-regions> |
 
 Redpanda runs Dedicated and BYOC on Azure, but both are quote-only and the `redpanda-cloud` body refuses them, so Azure has no Redpanda Cloud here. Strimzi and Redpanda in the cluster run on every cloud: no vendor is involved.
 
@@ -29,19 +29,19 @@ Only the AWS halves are built today. The Confluent and Redpanda bodies build the
 
 A backend the cloud does not offer:
 
-```
+```text
 kafka.provider is msk, which is not offered on gcp. A managed backend is offered only as its instance on the deployment's own cloud, because one on another cloud is reached over the internet and every byte to it is billed as internet egress. On gcp the managed Kafka offered is confluent-cloud, redpanda-cloud, and a Kafka in the cluster (strimzi, redpanda) runs on any cloud.
 ```
 
 A tier the vendor does not run there:
 
-```
+```text
 The confluent-cloud tier freight is not offered on gcp: the vendor does not run it there. On gcp the confluent-cloud tiers offered are enterprise, basic.
 ```
 
 A ClickHouse Cloud service on another cloud:
 
-```
+```text
 clickhouse.host is a ClickHouse Cloud service on gcp, and this deployment runs on aws. A managed backend is offered only as its instance on the deployment's own cloud, because one on another cloud is reached over the internet and every byte to it is billed as internet egress. Create the service on aws (a host under .aws.clickhouse.cloud), or set clickhouse.mode to in_cluster.
 ```
 
@@ -51,12 +51,12 @@ A body handed another cloud's token refuses too: `cloud is GCP, and this body bu
 
 | Backend | Port | What dials it | Source |
 |---|---|---|---|
-| MSK | 9096 | every DFE client, SASL/SCRAM over TLS | https://docs.aws.amazon.com/msk/latest/developerguide/port-info.html |
+| MSK | 9096 | every DFE client, SASL/SCRAM over TLS | <https://docs.aws.amazon.com/msk/latest/developerguide/port-info.html> |
 | MSK | 9098 | the bootstrap Job alone, SASL/IAM | same |
-| Confluent Cloud | 9092 | every DFE client, bootstrap and brokers | https://docs.confluent.io/cloud/current/networking/networking-faq.html |
-| Redpanda Cloud | 9092 | every DFE client, the seed | https://docs.redpanda.com/cloud-data-platform/networking/serverless/aws/privatelink-api/ |
+| Confluent Cloud | 9092 | every DFE client, bootstrap and brokers | <https://docs.confluent.io/cloud/current/networking/networking-faq.html> |
+| Redpanda Cloud | 9092 | every DFE client, the seed | <https://docs.redpanda.com/cloud-data-platform/networking/serverless/aws/privatelink-api/> |
 | Redpanda Cloud | 9093-9095 | every DFE client, the brokers the seed names | same |
-| ClickHouse Cloud | 8443, 9440 | every DFE client, HTTPS and the native protocol over TLS | https://clickhouse.com/docs/guides/sre/network-ports |
+| ClickHouse Cloud | 8443, 9440 | every DFE client, HTTPS and the native protocol over TLS | <https://clickhouse.com/docs/guides/sre/network-ports> |
 
 In the cluster, network-policies opens these from `kafka.provider`, which layer2-platform reads off the cluster secret (`externalEgress.kafka.providers` in the chart's values), and the ClickHouse ports from the cluster secret's `clickhouse_port` and `clickhouse_native_port`. A broker with no provider entry keeps the generic 9092-9096 and 9098 range. `scripts/tests/test_managed_backend_egress.py` renders every app and data chart as Argo does for each backend, takes every workload given the backend's address as a client, and fails on any client in an isolated namespace with a port its policies do not open. It also holds the chart's ports equal to `offering.yaml`.
 
