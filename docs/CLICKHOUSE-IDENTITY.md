@@ -57,9 +57,7 @@ generator, from `clickhouse.serviceUsers` in `argocd/values/common.yaml` (the
 hunt runner's from `huntRunner.clickhouse`). They render with the engine, a wave
 before every app that reads one. On docker `make init` mints each into `.env`.
 
-HyperDX holds no ClickHouse password: under `oidc-proxy` the engine hands each
-team the connection it reads as. Under `header-dev` on docker its one seeded
-connection is the query reader.
+HyperDX never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s HyperDX is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` carries the query reader's password in every mode, and only `header-dev` reads it.
 
 The hunt runner's worker runs `INSERT ... SELECT` built from rule text, so its
 user is the identity a crafted rule runs as: no `url()`, `s3()`, `remote()` or
@@ -67,8 +65,10 @@ user is the identity a crafted rule runs as: no `url()`, `s3()`, `remote()` or
 
 Each app needs an engine whose contract names its password and dfe-schemas role
 catalogue 1.2.0, which mints `otel_writer`. On an older pair the user never exists
-and the app cannot connect. The apps that wait for the engine hold until it
-answers ready, and the engine reconciles its service users before it does.
+and the app cannot connect. The apps and the keda shim wait for the engine to
+answer ready, and the engine reconciles its service users before it does.
+
+The collector's gateway does not wait: its image has no shell to run the wait in. Started before its user exists it stays Ready and retries each batch for `gateway.export.maxElapsedTime`. It reads the logs table's columns once, at start, so its log rows carry no `EventName` until the pod restarts.
 
 ## The always-deployed set
 
@@ -99,6 +99,17 @@ materialised view's query as the user whose insert fired it, and
 `otel_traces_trace_id_ts_mv` reads `otel_traces`. Without it every traces batch
 fails with code 497. Its `SHOW TABLES` reads no rows: `system.parts` lists only
 the tables a user can see, and the collector reports every table's size.
+
+## Accepted privilege
+
+Each of these is wider than the app's queries need, and stays.
+
+| who | holds | why it stays |
+|---|---|---|
+| keda shim | the all-orgs reader, with `system.query_log`, `text_log` and `processes` | it shares the platform reader's role, and no caller sends it SQL: it runs its catalogued queries with identifier-checked binds |
+| OTel collector | `otel_traces` rows, and every `dfe` and `system` table's DDL through `SHOW TABLES` | the traces view needs the rows, the size report needs the tables listed, and no source table's rows are readable |
+| dfe-loader | `INSERT ON dfe.*` | a source's table is created with the source, and the loader has no listener an outsider reaches |
+| OTel collector | `INSERT ON dfe.otel_*` | a source table is named for its source, and a source name cannot hold `_` (dfe-engine `source/models.py`) |
 
 ## Quotas ride the tiers
 

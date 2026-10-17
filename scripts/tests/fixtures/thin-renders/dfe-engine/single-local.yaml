@@ -949,6 +949,27 @@ spec:
           name: clickhouse-ca
           readOnly: true
       enableServiceLinks: false
+      initContainers:
+      - command:
+        - /bin/sh
+        - -c
+        - "set -eu\nURL=\"http://dfe-engine.dfe.svc.cluster.local:8000/readyz\"\nDEADLINE=$(( $(date +%s) + 600 ))\necho \"waiting for ${URL}\"\nuntil curl -fsS -o /dev/null --max-time 5 \"$URL\"; do\n  if [ \"$(date +%s)\" -ge \"$DEADLINE\" ]; then\n    echo \"dfe-engine did not report ready at ${URL} within 600s -- GET /api/v1/system/schema on the engine says why\" >&2\n    exit 1\n  fi\n  sleep 5\ndone\necho \"dfe-engine is ready\"\n"
+        image: registry.example.com/dfe/dfe-engine:<pin:apps.dfe-engine>@<pin:digests.dfe-engine>
+        imagePullPolicy: IfNotPresent
+        name: wait-for-engine
+        resources:
+          limits:
+            cpu: 100m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
       nodeSelector:
         dfe.hyperi.io/workload: dfe
       securityContext:

@@ -48,6 +48,7 @@ SMOKE = REPO_ROOT / "bootstrap" / "smoke-test-hyperdx.sh"
 CH_USER = "dfe_query_reader"
 CH_SECRET = "query-reader-clickhouse"
 CH_FIXTURE_VALUE = "fixture-clickhouse-value"
+WRONG_VALUE = "not-the-fixture-value"
 TOKEN = "engine.issued.jwt"
 
 JWKS = "HyperDX can fetch the engine JWKS"
@@ -342,7 +343,7 @@ def test_an_unreachable_jwks_fails_both_checks() -> None:
 
 
 def test_rejected_clickhouse_credentials_fail_the_table_check() -> None:
-    out, seen = run_smoke(reader_password="wrong")
+    out, seen = run_smoke(reader_password=WRONG_VALUE)
 
     expect("ping needs no credentials", verdict(out, "PASS", PING), out.stdout)
     expect("the table check fails", verdict(out, "FAIL", TABLE), out.stdout)
