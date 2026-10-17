@@ -22,16 +22,19 @@ over the goldens holds for the published chart too. The committed contract must
 also be the chart's files/contract.json, byte for byte.
 
 A component whose chart-digests entry is not a digest yet is skipped. The pulls need
-the registry, and a private chart needs the credentials helm already holds, so the
-registry cases run only when DFE_WEAVE_PUBLISHED is set.
+the registry, so the registry cases run only when DFE_WEAVE_PUBLISHED is set: Helm
+Lint's published-charts job sets it whenever a change touches what they read. No pull
+carries a credential.
 """
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 
 from _gate import CELLS, COMPONENTS, golden, object_id, published_render, render_differences
-from _weave import contract, published_chart
+from _weave import _anonymous, contract, published_chart
 
 NEEDS_REGISTRY = pytest.mark.skipif(
     not os.environ.get("DFE_WEAVE_PUBLISHED"),
@@ -53,6 +56,13 @@ def test_the_published_chart_renders_as_its_golden(
 ) -> None:
     published = published_render(service, profile, cloud, scenario)
     assert render_differences(golden(service, profile, cloud, scenario), published) == []
+
+
+def test_a_registry_pull_is_handed_no_credential() -> None:
+    """helm falls back to Docker's config when its own is empty, so both are empty."""
+    env = _anonymous()[1]
+    assert json.loads(Path(env["HELM_REGISTRY_CONFIG"]).read_text(encoding="utf-8")) == {}
+    assert not (Path(env["DOCKER_CONFIG"]) / "config.json").exists()
 
 
 # ---------------------------------------------------------------- expected fails

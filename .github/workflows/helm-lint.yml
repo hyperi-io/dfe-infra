@@ -27,6 +27,7 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
       images: ${{ steps.images.outputs.relevant }}
+      published: ${{ steps.published.outputs.relevant }}
     steps:
       # Depth 2 carries a pull request merge commit's two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,6 +111,34 @@ jobs:
             scripts/suite_graph.py
             scripts/version_range.py
             scripts/yaml_subset.py
+            # The job's own environment.
+            .github/workflows/helm-lint.yml
+            .github/actions/**
+            .python-version
+            scripts/tests/requirements-ci.txt
+
+      # The published-chart renders pull every thin chart from the registry, so they run
+      # only where their verdict can change: the pins, the goldens and contracts they are
+      # held to, and what the render layers. test_helm_lint_triggers.py holds this list
+      # to the render's own inputs.
+      - name: Match the changed files against what the published renders read
+        id: published
+        uses: ./.github/actions/changes
+        with:
+          paths: |
+            versions.yaml
+            scripts/tests/fixtures/contracts/**
+            scripts/tests/fixtures/thin-renders/**
+            scripts/tests/_weave.py
+            scripts/tests/_gate.py
+            scripts/tests/test_weave_published.py
+            scripts/dfe-weave
+            scripts/check_versions_drift.py
+            scripts/version_range.py
+            argocd/appsets/layer2-apps.yaml
+            argocd/appsets/layer2-edge.yaml
+            argocd/values/**
+            helm/charts/dfe-extras/**
             # The job's own environment.
             .github/workflows/helm-lint.yml
             .github/actions/**
@@ -510,6 +539,52 @@ jobs:
         with:
           path: ${{ runner.temp }}/image-arch-verdicts.json
           key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # The goldens render every thin chart on the one library _weave.py pins, so a chart
+  # published on another library, or from another contract, still passes them. This
+  # renders the chart the registry serves, by its chart-digests pin, against each of
+  # its goldens. The pulls are anonymous: _weave.py hands helm an empty registry
+  # config and Docker config.
+  published-charts:
+    name: published thin charts render as their goldens
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' && needs.changes.outputs.published != 'false' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
+      # the tree reaches its site-packages. The install is a step of its own because
+      # `uv run --with-requirements` does not check hashes.
+      - name: Set up uv and the repo's Python
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          activate-environment: true
+          venv-path: ${{ runner.temp }}/venv
+          enable-cache: false
+
+      # A python3 that is not the venv's would run every step below on the runner's own
+      # Python and still pass, so the version is checked before anything runs on it.
+      - name: Install the pinned test dependencies, hashes required
+        run: |
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # SHORTCUT: a push to main reports a difference without failing while main pins
+      # charts that differ from their goldens. Drop continue-on-error once a push passes.
+      - name: Each published thin chart renders as its golden
+        continue-on-error: ${{ github.event_name == 'push' }}
+        env:
+          DFE_WEAVE_PUBLISHED: "1"
+        run: python3 -m pytest scripts/tests/test_weave_published.py -q -p no:cacheprovider
 
   # Drift guard (#22): the dfe-deploy template's governance actions dial chart
   # values by dot-path; a chart renaming a dial var would orphan an action

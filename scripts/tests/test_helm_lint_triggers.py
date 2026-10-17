@@ -33,6 +33,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+import _gate
+import _weave
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
@@ -267,6 +270,64 @@ def test_a_change_the_images_filter_sees_also_starts_the_workflow() -> None:
     assert outside == [], f"in the `images` filter, outside helm-lint.yml's paths: {outside}"
 
 
+# --- the narrower filter in front of the published-chart renders --------------------------------
+
+PUBLISHED_JOB = "published-charts"
+
+
+def _published_filters() -> list[str]:
+    return _patterns(_filter_steps(WORKFLOW.name)["published"]["with"]["paths"])
+
+
+def _published_inputs() -> list[str]:
+    """Every file a published render reads, from the constants _weave and _gate render with."""
+    weave = _weave.weave()
+    roots = [
+        _gate.VERSIONS,
+        _gate.GOLDENS,
+        _weave.CONTRACTS,
+        Path(_gate.__file__),
+        Path(_weave.__file__),
+        Path(__file__).with_name("test_weave_published.py"),
+        REPO_ROOT / weave.APPSET,
+        *(REPO_ROOT / path for path in _gate.APPSETS.values()),
+        REPO_ROOT / weave.VALUES_DIR,
+        REPO_ROOT / weave.EXTRAS_PATH,
+    ]
+    files = {p for root in roots for p in (root.rglob("*") if root.is_dir() else [root])}
+    found = {p.relative_to(REPO_ROOT).as_posix() for p in files if p.is_file()}
+    found |= set(_script_closure(_weave.SCRIPT))
+    found |= set(_script_closure(Path(_weave.drift().__file__)))
+    return sorted(found)
+
+
+def test_the_published_renders_run_when_anything_they_read_changes() -> None:
+    inputs = _published_inputs()
+    assert {"versions.yaml", "scripts/dfe-weave", "scripts/version_range.py"} <= set(inputs), inputs
+    outside = [path for path in inputs if not _covers(_published_filters(), path)]
+    assert outside == [], f"read by a published render, outside its `published` filter: {outside}"
+
+
+def test_the_published_job_waits_on_its_own_filter() -> None:
+    jobs = _load(WORKFLOW.name)["jobs"]
+    assert jobs["changes"]["outputs"]["published"] == "${{ steps.published.outputs.relevant }}"
+    assert "needs.changes.outputs.published != 'false'" in str(jobs[PUBLISHED_JOB]["if"])
+
+
+def test_the_published_job_runs_the_registry_cases() -> None:
+    """Without DFE_WEAVE_PUBLISHED every registry case skips, which reads as a pass."""
+    steps = _load(WORKFLOW.name)["jobs"][PUBLISHED_JOB]["steps"]
+    runs = [step for step in steps if "test_weave_published.py" in step.get("run", "")]
+    assert len(runs) == 1, runs
+    assert runs[0].get("env", {}).get("DFE_WEAVE_PUBLISHED") == "1", runs[0]
+
+
+def test_a_change_the_published_filter_sees_also_starts_the_workflow() -> None:
+    workflow = _filters()
+    outside = [p for p in _published_filters() if not _covers(workflow, p.removesuffix("**"))]
+    assert outside == [], f"in the `published` filter, outside helm-lint.yml's paths: {outside}"
+
+
 # --- the shared filter's own verdicts ---------------------------------------------------------
 
 _GIT_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1"}
@@ -385,17 +446,21 @@ def test_a_paths_block_the_script_cannot_read_fails_rather_than_skipping(
 
 
 @pytest.mark.parametrize(
-    ("changed", "verdict"),
+    ("filter_id", "changed", "verdict"),
     [
         # A deploy-tooling change of the shape that met a registry rate limit: no pin, no reader.
-        (["bootstrap/bootstrap.sh", "scripts/dfe-ops", "scripts/tests/test_render_env.py"], "false"),
-        (["bootstrap/bootstrap.sh", "versions.yaml"], "true"),
-        (["helm/charts/forgejo/values.yaml"], "true"),
-        (["scripts/registry_pins.py"], "true"),
+        ("images", ["bootstrap/bootstrap.sh", "scripts/dfe-ops", "scripts/tests/test_render_env.py"], "false"),
+        ("images", ["bootstrap/bootstrap.sh", "versions.yaml"], "true"),
+        ("images", ["helm/charts/forgejo/values.yaml"], "true"),
+        ("images", ["scripts/registry_pins.py"], "true"),
+        # An appset the published renders never read, and code they never reach.
+        ("published", ["argocd/appsets/layer1-addons.yaml", "scripts/dfe-ops", "terraform/x.tf"], "false"),
+        ("published", ["scripts/tests/fixtures/thin-renders/dfe-ui/slim-local.yaml"], "true"),
+        ("published", ["versions.yaml"], "true"),
     ],
 )
-def test_the_images_filter_runs_the_arch_check_only_for_what_it_reads(
-    tmp_path: Path, changed: list[str], verdict: str
+def test_a_narrower_filter_runs_its_job_only_for_what_it_reads(
+    tmp_path: Path, filter_id: str, changed: list[str], verdict: str
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -411,7 +476,7 @@ def test_the_images_filter_runs_the_arch_check_only_for_what_it_reads(
     _git(repo, "commit", "-q", "-m", "change")
     _git(repo, "checkout", "-q", "main")
     _git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
-    paths = _filter_steps(WORKFLOW.name)["images"]["with"]["paths"]
+    paths = _filter_steps(WORKFLOW.name)[filter_id]["with"]["paths"]
     done, output = _run_filter(repo, paths, "pull_request")
     assert done.returncode == 0, done.stdout + done.stderr
     assert output == f"relevant={verdict}\n"
