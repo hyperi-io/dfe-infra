@@ -30,7 +30,7 @@ extras:
     dfe-fetcher: "v1.4.40"
     dfe-transform-vrl: "v1.1.36"
     dfe-transform-vector: "v1.0.52"
-    dfe-transform-elastic: "v1.1.14"
+    dfe-transform-elastic: "v1.1.15"
     culvert: "v2.1.25"
     dfe-hyperdx: "v0.3.8"
 

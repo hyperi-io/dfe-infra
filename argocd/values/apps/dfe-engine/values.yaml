@@ -444,12 +444,12 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.14@sha256:4325bcb2b7846fc2646c61b5fca408a39084124f08185cbfd28abb7d31076648"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.15@sha256:f80535c886903ce66ad10f8223a47b2cf93cd371369141fdbf1d253f0f801c06"
     - name: dfe-transform-elastic-catalogue
       kind: emit
       role: catalogue
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.14@sha256:4325bcb2b7846fc2646c61b5fca408a39084124f08185cbfd28abb7d31076648"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.15@sha256:f80535c886903ce66ad10f8223a47b2cf93cd371369141fdbf1d253f0f801c06"
 # The env names this mount; the contract's writable path `config` mounts at /config.
 config:
   mountPath: /config

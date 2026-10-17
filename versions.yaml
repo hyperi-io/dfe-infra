@@ -5678,7 +5678,7 @@ stacks:
       dfe-fetcher: "v1.4.40"        # 2026-10-17, amd64 and arm64. The image thin chart 1.4.40 pins. A rebuild on scalo-rs 2.14.17 (dfe-fetcher#236).
       dfe-transform-vrl: "v1.1.36"   # 2026-10-17, amd64 and arm64. The image thin chart 1.1.36 pins. scalo-rs 2.14.17. Reads its Kafka SASL mechanism from the environment, the DFE_TRANSFORM_KAFKA_SASL_MECHANISM dfe-infra renders (dfe-transform-vrl#108 #109).
       dfe-transform-vector: "v1.0.52"  # 2026-10-17, amd64 and arm64. The image thin chart 1.0.52 pins. scalo-rs 2.14.17. Reads its Kafka SASL mechanism from the environment, which the thin chart sets from the Kafka Secret (dfe-transform-vector#121 #122 #123).
-      dfe-transform-elastic: "v1.1.14" # 2026-10-15, amd64 and arm64. The image thin chart 1.1.14 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-elastic#120). Idle until a source names it.
+      dfe-transform-elastic: "v1.1.15" # 2026-10-17, amd64 and arm64. The image thin chart 1.1.15 pins. A rebuild on scalo-rs 2.14.17, with rustls 0.23.46 (dfe-transform-elastic#121). Idle until a source names it.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -5696,7 +5696,7 @@ stacks:
       dfe-fetcher: "sha256:78d40fe1d136527b6a6be48ce9c623a537d7f4542649c64a995b5930f54ef6ea"
       dfe-transform-vrl: "sha256:b1e9dfab9a38bf7c459cc1c8bbc5e6b77126f09729a3b1eac1797ade5ace9b3d"
       dfe-transform-vector: "sha256:7467609522eae04b7bca46ef5aaf48b82b51cbe5a58a624378be84599396a804"
-      dfe-transform-elastic: "sha256:4325bcb2b7846fc2646c61b5fca408a39084124f08185cbfd28abb7d31076648"
+      dfe-transform-elastic: "sha256:f80535c886903ce66ad10f8223a47b2cf93cd371369141fdbf1d253f0f801c06"
       dfe-hyperdx: "sha256:c940894932bcd6e605063d605aa1c36727daf911d709aac3b00e2cb99613de67"
       culvert: "sha256:44386305c05cb1b4dd6d3f4a81963064e878ec2ed731eb3914b517d0fea2d4a9"
       # Tagged by toolbox.dfe-toolbox.
@@ -5714,7 +5714,7 @@ stacks:
       dfe-fetcher: "sha256:c0bbae8998f9784ededf381b13e5dd64c0adae455e04d305ef13c02afaf20c78"            # 1.4.40
       dfe-loader: "sha256:a2c032df6965689b66935377b130aafd9ef725acb2aa86f1b1dcb6196ad0a726"             # 1.18.54
       dfe-receiver: "sha256:e5873fed9af5110fe3a294d25681e2b6d3f9476d813625d7be19d05fe609a553"           # 1.15.50
-      dfe-transform-elastic: "sha256:43aabf0182a29293879612ec54e9e58db32bef59fbbe6dd5792b5ea009f0df14"  # 1.1.14
+      dfe-transform-elastic: "sha256:b4e1f9b5a33bc934cfefa1367c64e8e82a0f12de69d303e1e41b98d8a0ce8929"  # 1.1.15
       dfe-transform-vector: "sha256:860ba1511d624b92f8cb55c72bc83470b32d10b3eebeb9c26a5ed881dc09afd5"   # 1.0.52
       dfe-transform-vrl: "sha256:914a214f02276e7b8eb4fb5e21c6308f25514bb12bb4f33c106840b50e59d9b6"      # 1.1.36
       dfe-ui: "sha256:ed1b2ac1683cb950f3f237061e2e065d8106785d444ef55aef87e66958042df7"                # 1.7.22
@@ -5744,7 +5744,7 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.13"             # 2026-10-17. The engine applies it at startup. dfe-engine v1.22.45 requires >=0.2.13 and locks 0.2.13, the release whose role catalogue gives each app its own ClickHouse role (dfe-schemas#73).
+      dfe-schemas: "v0.2.13"             # 2026-10-17. The engine applies it at startup. dfe-engine v1.22.46 requires >=0.2.13 and locks 0.2.13, the release whose role catalogue gives each app its own ClickHouse role (dfe-schemas#73).
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 6a27ef66 (2026-10-17) is "fix: release check dial and two post checks (#268)".
