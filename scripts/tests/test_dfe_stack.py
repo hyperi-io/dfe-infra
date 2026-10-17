@@ -275,36 +275,41 @@ def test_an_unreadable_registry_is_an_error_not_a_pass() -> None:
     )
 
 
-def _release_gate_over(maturity: str, reader) -> tuple[int, str]:
-    """release-gate over a throwaway stack of _IMAGES_PINS's published images."""
+def _no_repo_files(org: str, repo: str, ref: str, path: str) -> str:
+    raise stack.registry_pins.RegistryError(f"unexpected read of {org}/{repo}@{ref}:{path}")
+
+
+def _run_release_gate(block: str, reader, repo_file=_no_repo_files) -> tuple[int, str]:
+    """release-gate over one throwaway stack block, its registry and repository reads answered here."""
     import argparse
     import contextlib
     import io
     import tempfile
 
-    pins = (
-        'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n'
+    pins = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n' + block
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "versions.yaml").write_text(pins, encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT, stack.registry_pins.repo_file
+        out = io.StringIO()
+        try:
+            stack.REPO_ROOT, stack.registry_pins.repo_file = Path(td), repo_file
+            args = argparse.Namespace(stack=None, registry="registry.example/org", org="hyperi-io")
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                rc = _with_platforms(reader, lambda: stack.cmd_release_gate(args))
+        finally:
+            stack.REPO_ROOT, stack.registry_pins.repo_file = original
+    return rc, out.getvalue()
+
+
+def _release_gate_over(maturity: str, reader) -> tuple[int, str]:
+    """release-gate over a throwaway stack of _IMAGES_PINS's published images."""
+    block = (
         f"    maturity: {maturity}\n"
         '    apps:\n      an-app: "v1.0.0"\n'
         '    content:\n      a-fork: "v0.2.7"\n'
         '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
     )
-    with tempfile.TemporaryDirectory() as td:
-        (Path(td) / "versions.yaml").write_text(pins, encoding="utf-8", newline="\n")
-        original = stack.REPO_ROOT
-        out = io.StringIO()
-        try:
-            stack.REPO_ROOT = Path(td)
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                rc = _with_platforms(
-                    reader,
-                    lambda: stack.cmd_release_gate(
-                        argparse.Namespace(stack=None, registry="registry.example/org")
-                    ),
-                )
-        finally:
-            stack.REPO_ROOT = original
-    return rc, out.getvalue()
+    return _run_release_gate(block, reader)
 
 
 def test_release_gate_fails_a_release_with_a_single_arch_image() -> None:
@@ -340,6 +345,194 @@ def test_release_gate_never_reads_the_registry_below_release() -> None:
     expect("an rc stack passes", rc == 0, f"exit {rc}\n{out}")
     expect("without a registry read", not asked, f"{asked}")
     expect("and says the platforms were not read", "platforms not read" in out, out)
+
+
+def _engine_lock(locked: str | None) -> str:
+    """A uv.lock in the shape dfe-engine's takes: its own floor on dfe-schemas, then what it resolved."""
+    lock = (
+        'version = 1\nrevision = 3\nrequires-python = ">=3.14"\n\n'
+        '[[package]]\nname = "dfe-engine"\nversion = "0.0.0"\nsource = { editable = "." }\n'
+        'dependencies = [\n    { name = "dfe-schemas" },\n]\n\n'
+        '[package.metadata]\nrequires-dist = [\n'
+        '    { name = "dfe-schemas", specifier = ">=0.2.11,<1" },\n]\n'
+    )
+    if locked is None:
+        return lock
+    return lock + (
+        f'\n[[package]]\nname = "dfe-schemas"\nversion = "{locked}"\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
+    )
+
+
+def _schemas_gate(
+    schemas: str | None, lock: str | None, maturity: str = "rc", engine: str = "v1.22.46"
+) -> tuple[int, str, list[tuple[str, str, str, str]]]:
+    """release-gate over a stack pinning dfe-engine ``engine``, its lock answered by ``lock``.
+
+    ``schemas`` None leaves content.dfe-schemas unpinned, and ``lock`` None is a
+    repository that will not serve the file.
+    """
+    asked: list[tuple[str, str, str, str]] = []
+
+    def repo_file(org: str, repo: str, ref: str, path: str) -> str:
+        asked.append((org, repo, ref, path))
+        if lock is None:
+            raise stack.registry_pins.RegistryError("HTTP 404 Not Found")
+        return lock
+
+    content = f'    content:\n      dfe-schemas: "{schemas}"\n' if schemas else ""
+    block = (
+        f"    maturity: {maturity}\n"
+        f'    apps:\n      dfe-engine: "{engine}"\n'
+        f"{content}"
+        '    digests:\n      dfe-engine: "sha256:aaa"\n'
+    )
+    rc, out = _run_release_gate(block, _both_platforms, repo_file)
+    return rc, out, asked
+
+
+def test_release_gate_fails_a_schemas_pin_the_engine_does_not_lock() -> None:
+    """An engine that moved to a newer dfe-schemas than the stack's content pin."""
+    for maturity in ("rc", "release"):
+        rc, out, asked = _schemas_gate("v0.2.11", _engine_lock("0.2.13"), maturity)
+        expect(f"a {maturity} stack fails", rc == 1, f"exit {rc}\n{out}")
+        expect(
+            f"{maturity}: the error names both versions and the engine",
+            "v0.2.11" in out and "0.2.13" in out and "dfe-engine v1.22.46" in out,
+            out,
+        )
+        expect(f"{maturity}: and the fix", 'set content.dfe-schemas to "v0.2.13"' in out, out)
+        expect(
+            f"{maturity}: the lock is read at the pinned engine tag",
+            asked == [("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")],
+            f"{asked}",
+        )
+
+
+def test_release_gate_passes_a_schemas_pin_the_engine_locks() -> None:
+    rc, out, _ = _schemas_gate("v0.2.13", _engine_lock("0.2.13"))
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and says what it compared", "dfe-engine v1.22.46 locks" in out, out)
+
+
+def test_release_gate_fails_closed_when_the_engine_lock_cannot_be_read() -> None:
+    rc, out, _ = _schemas_gate("v0.2.13", None)
+    expect("an unread lock fails the gate", rc == 1, f"exit {rc}\n{out}")
+    expect("carrying the read's own error", "cannot read" in out and "404" in out, out)
+
+
+def test_release_gate_passes_an_engine_that_predates_dfe_schemas() -> None:
+    """The 2.2.0-rc.1 shape: an engine that locks no dfe-schemas runs the schemas its image bundles."""
+    rc, out, asked = _schemas_gate("v0.2.0", _engine_lock(None), engine="v1.12.0")
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect(
+        "calling the check not applicable, naming the engine",
+        "not applicable" in out and "dfe-engine v1.12.0 locks no dfe-schemas" in out,
+        out,
+    )
+    expect("after reading that engine's lock", asked == [("hyperi-io", "dfe-engine", "v1.12.0", "uv.lock")], f"{asked}")
+
+
+def test_release_gate_fails_an_engine_lock_holding_two_schemas_versions() -> None:
+    lock = _engine_lock("0.2.13") + (
+        '\n[[package]]\nname = "dfe-schemas"\nversion = "0.2.11"\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
+    )
+    rc, out, _ = _schemas_gate("v0.2.13", lock)
+    expect("the gate fails", rc == 1, f"exit {rc}\n{out}")
+    expect("naming both locked versions", "versions 0.2.11, 0.2.13" in out, out)
+
+
+def test_release_gate_fails_an_engine_with_no_schemas_pin() -> None:
+    rc, out, _ = _schemas_gate(None, _engine_lock("0.2.13"))
+    expect("the gate fails", rc == 1, f"exit {rc}\n{out}")
+    expect("and the fix names the version to pin", 'set content.dfe-schemas to "v0.2.13"' in out, out)
+
+
+def test_release_gate_reads_no_lock_for_a_stack_with_no_engine() -> None:
+    rc, out = _release_gate_over("rc", _both_platforms)
+    expect("the gate passes without a repository read", rc == 0, f"exit {rc}\n{out}")
+    expect("and says why nothing was compared", "no apps.dfe-engine pin" in out, out)
+
+
+def test_locked_versions_reads_the_resolved_package_not_a_specifier() -> None:
+    found = stack.locked_versions(_engine_lock("0.2.13"), "dfe-schemas")
+    expect("the resolved version alone", found == ["0.2.13"], f"{found}")
+    none = stack.locked_versions(_engine_lock(None), "dfe-schemas")
+    expect("and nothing for a package the lock has none of", none == [], f"{none}")
+
+
+def _serving_files(files: dict[str, bytes], fail: list[int]):
+    """Serve ``files`` by path on loopback and point registry_pins.repo_file at it.
+
+    Returns a context manager yielding the (path, Authorization) of every request.
+    """
+    import contextlib
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    import _oci
+
+    seen: list[tuple[str, str]] = []
+
+    class Files(_oci._Quiet):
+        def do_GET(self) -> None:  # noqa: N802
+            seen.append((self.path, self.headers.get("Authorization", "")))
+            if fail:
+                self._send(fail.pop(0))
+            elif self.path in files:
+                self._send(200, files[self.path])
+            else:
+                self._send(404)
+
+    @contextlib.contextmanager
+    def serving():
+        pins = stack.registry_pins
+        original = pins.RAW_FILES, pins._sleep
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Files)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        thread.start()
+        pins.RAW_FILES, pins._sleep = f"http://127.0.0.1:{server.server_port}", lambda s: None
+        try:
+            yield seen
+        finally:
+            pins.RAW_FILES, pins._sleep = original
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    return serving()
+
+
+_LOCK_PATH = "/hyperi-io/dfe-engine/v1.22.46/uv.lock"
+
+
+def test_repo_file_reads_a_public_file_with_no_credential() -> None:
+    with _serving_files({_LOCK_PATH: b"version = 1\n"}, []) as seen:
+        body = stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")
+    expect("the file's text comes back", body == "version = 1\n", repr(body))
+    expect("read at org/repo/ref/path", [path for path, _ in seen] == [_LOCK_PATH], f"{seen}")
+    expect("carrying no credential", all(auth == "" for _, auth in seen), f"{seen}")
+
+
+def test_repo_file_absent_is_an_error_naming_it() -> None:
+    raised = ""
+    with _serving_files({}, []):
+        try:
+            stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v9.9.9", "uv.lock")
+        except stack.registry_pins.RegistryError as exc:
+            raised = str(exc)
+    named = "404" in raised and "v9.9.9/uv.lock" in raised
+    expect("a 404 raises, naming the status and the file", named, raised)
+
+
+def test_repo_file_retries_a_busy_host() -> None:
+    with _serving_files({_LOCK_PATH: b"version = 1\n"}, [503]) as seen:
+        body = stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")
+    expect("the second attempt is served", body == "version = 1\n", repr(body))
+    expect("after one retry", len(seen) == 2, f"{seen}")
 
 
 # A stack with a thin chart per image, hyperdx's under its own chart name, and a
