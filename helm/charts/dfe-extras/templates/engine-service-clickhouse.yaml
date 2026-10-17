@@ -1,0 +1,122 @@
+{{- define "dfe-extras.engine.serviceClickhouse" -}}
+{{- /*
+Each app's ClickHouse password (clickhouse.serviceUsers), as a Secret beside the
+engine. The engine adopts it (DFE_CLICKHOUSE_<ROLE>_PASSWORD, its contract's
+secret groups) and creates the app's user on it, and the app connects with the
+same value -- docs/CLICKHOUSE-IDENTITY.md.
+
+Rendered with the engine, a wave before every app that reads one, so no app
+waits on a Secret nothing has made yet. The collector runs in its own namespace,
+so its Secret is also copied there (otelWriter).
+*/ -}}
+{{- $admin := .Values.clickhouse -}}
+{{- range $role, $identity := ($admin.serviceUsers | default dict) }}
+{{- if or (not $identity.user) (not $identity.passwordSecretName) }}
+{{- fail (printf "clickhouse.serviceUsers.%s needs a user and a passwordSecretName: each app connects to ClickHouse as its own user, never the admin account" $role) }}
+{{- end }}
+{{- if or (eq $identity.user (toString $admin.user)) (eq $identity.passwordSecretName (toString $admin.passwordSecretName)) }}
+{{- fail (printf "clickhouse.serviceUsers.%s names the admin account or its Secret, which only dfe-engine reads" $role) }}
+{{- end }}
+{{- if ne (toString (dig "passwordSecretCreate" true $identity)) "false" }}
+---
+{{ include "dfe-engine.clickhousePasswordSecret" (dict "ctx" $ "name" $identity.passwordSecretName "key" ($identity.passwordSecretKey | default "password") "password" "") }}
+{{- end }}
+{{- end }}
+{{- with (dig "serviceUsers" "otelWriter" dict $admin) }}
+{{- $secret := .passwordSecretName }}
+{{- $key := .passwordSecretKey | default "password" }}
+{{- $collector := dig "collectorNamespace" "otel" ($.Values.telemetry | default dict) }}
+{{- $store := printf "%s-%s" $.Release.Namespace $secret }}
+---
+# The collector's password, copied into the collector's namespace. A generated
+# value cannot be re-derived there (the generator would mint another), so ESO's
+# kubernetes provider copies the one that exists, through an account whose Role
+# names that Secret alone -- the same shape as clickhouse-cluster's admin copy.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $secret }}-reader
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $secret }}-reader
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ $secret | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $secret }}-reader
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $secret }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ $secret }}-reader
+    namespace: {{ $.Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ $store }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise.
+  conditions:
+    - namespaces:
+        - {{ $collector | quote }}
+  provider:
+    kubernetes:
+      remoteNamespace: {{ $.Release.Namespace }}
+      server:
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ $.Release.Namespace }}
+      auth:
+        serviceAccount:
+          name: {{ $secret }}-reader
+          namespace: {{ $.Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ $store }}
+  labels:
+    {{- include "dfe-common.labels" $ | nindent 4 }}
+spec:
+  externalSecretName: {{ $secret }}
+  refreshTime: 1h
+  namespaceSelectors:
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ $collector | quote }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ $store }}
+      kind: ClusterSecretStore
+    target:
+      name: {{ $secret }}
+      creationPolicy: Owner
+    data:
+      - secretKey: {{ $key }}
+        remoteRef:
+          key: {{ $secret }}
+          property: {{ $key }}
+{{- end }}
+{{- end -}}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.serviceClickhouse") }}

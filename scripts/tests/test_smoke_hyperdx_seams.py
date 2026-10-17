@@ -43,8 +43,12 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SMOKE = REPO_ROOT / "bootstrap" / "smoke-test-hyperdx.sh"
 
-CH_USER = "hdx"
+# The query reader the platform team's connection reads as, and the Secret beside
+# the engine its password is in. HyperDX's own pod holds no ClickHouse credential.
+CH_USER = "dfe_query_reader"
+CH_SECRET = "query-reader-clickhouse"
 CH_FIXTURE_VALUE = "fixture-clickhouse-value"
+WRONG_VALUE = "not-the-fixture-value"
 TOKEN = "engine.issued.jwt"
 
 JWKS = "HyperDX can fetch the engine JWKS"
@@ -69,6 +73,13 @@ with open(os.environ["FAKE_POD"], encoding="utf-8") as fh:
 if "get" in args:
     rest = args[args.index("get") + 1:]
     name = rest[1]
+    if rest[0] == "secret":
+        held = pod.get("secrets", {}).get(name)
+        if held is None:
+            sys.exit(1)
+        import base64
+        sys.stdout.write(base64.b64encode(held.encode()).decode())
+        sys.exit(0)
     engine = "engine_token" in pod or "engine_env" in pod
     present = name == "dfe-hyperdx" or (name == "dfe-engine" and engine)
     if "-o" in rest:
@@ -162,13 +173,15 @@ def run_smoke(
     engine_token: str | None = None,
     in_deployment_env: bool = False,
     engine_ch: dict | None = None,
+    reader_password: str | None = CH_FIXTURE_VALUE,
 ) -> tuple[subprocess.CompletedProcess, dict]:
     """The smoke script against the local server, and what the server saw.
 
     The settings live in an envFrom ConfigMap, the thin chart's shape, unless
     `in_deployment_env` puts them in the Deployment's own env. `engine_ch` deploys
     an engine whose ClickHouse settings name the local server, with these entries
-    laid over them; an entry of None leaves that variable unset.
+    laid over them. An entry of None leaves that variable unset. `reader_password`
+    is the query reader's Secret, None for a deployment that has none.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), Frontend)
     server.cfg = {
@@ -202,11 +215,8 @@ def run_smoke(
             pod = {
                 "env": settings if in_deployment_env else {},
                 "configmap_env": {} if in_deployment_env else settings,
-                "pod_env": {
-                    "CLICKHOUSE_USER": CH_USER,
-                    "CLICKHOUSE_PASSWORD": CH_FIXTURE_VALUE,
-                    **(pod_env or {}),
-                },
+                "pod_env": dict(pod_env or {}),
+                "secrets": {} if reader_password is None else {CH_SECRET: reader_password},
             }
             if engine_token:
                 pod["engine_token"] = engine_token
@@ -260,8 +270,19 @@ def test_a_node_only_pod_passes_all_three_seams() -> None:
         "the count query reached ClickHouse",
         seen["queries"] == ["SELECT count() FROM dfe.otel_logs"],
     )
-    expect("the pod's own ClickHouse credentials were sent", seen["ch_credentials_ok"])
+    expect("the query reader's credentials were sent", seen["ch_credentials_ok"])
     expect("the password is never echoed", CH_FIXTURE_VALUE not in out.stdout + out.stderr)
+
+
+def test_hyperdx_holding_a_credential_of_its_own_is_not_used() -> None:
+    """The pod's own CLICKHOUSE_* env is not what the check reads as."""
+    out, seen = run_smoke(
+        pod_env={"CLICKHOUSE_USER": "default", "CLICKHOUSE_PASSWORD": CH_FIXTURE_VALUE},
+        reader_password=None,
+    )
+
+    expect("the table check fails", verdict(out, "FAIL", TABLE), out.stdout)
+    expect("no credentials were accepted", not seen["ch_credentials_ok"])
 
 
 def test_unreadable_headers_skip_the_embed_checks() -> None:
@@ -322,7 +343,7 @@ def test_an_unreachable_jwks_fails_both_checks() -> None:
 
 
 def test_rejected_clickhouse_credentials_fail_the_table_check() -> None:
-    out, seen = run_smoke(pod_env={"CLICKHOUSE_PASSWORD": "wrong"})
+    out, seen = run_smoke(reader_password=WRONG_VALUE)
 
     expect("ping needs no credentials", verdict(out, "PASS", PING), out.stdout)
     expect("the table check fails", verdict(out, "FAIL", TABLE), out.stdout)
@@ -361,7 +382,7 @@ def test_the_probe_dials_the_url_the_engine_hands_hyperdx() -> None:
         "the count query reached ClickHouse",
         seen["queries"] == ["SELECT count() FROM dfe.otel_logs"],
     )
-    expect("with the pod's own ClickHouse credentials", seen["ch_credentials_ok"])
+    expect("with the query reader's credentials", seen["ch_credentials_ok"])
 
 
 def test_an_engine_on_tls_is_dialled_over_https_on_its_port() -> None:

@@ -9,9 +9,9 @@ cloud: local
 appNamespace: ""
 
 # Further namespaces the admin credential is projected into (same ESO copy as
-# appNamespace). The otel collector's ClickHouse exporter authenticates with it.
-extraCredentialNamespaces:
-  - otel
+# appNamespace). Empty: only dfe-engine, in the app namespace, reads it, and the
+# collector writes as its own user.
+extraCredentialNamespaces: []
 
 clickhouse:
   # Deployment mode (DFE owns its data layer; deploy unless external given):

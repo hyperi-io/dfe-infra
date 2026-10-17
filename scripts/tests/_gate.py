@@ -157,7 +157,7 @@ NAMESPACE = "dfe"
 # publishes the API server's CA as this ConfigMap.
 CLUSTER_PROVIDED = {("ConfigMap", "kube-root-ca.crt")}
 
-WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet")
+WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob")
 PROBES = ("startupProbe", "livenessProbe", "readinessProbe")
 # Kubernetes fills these in when a probe leaves them out, so they compare as set.
 PROBE_DEFAULTS = {
@@ -380,8 +380,17 @@ def _flatten(node: object, path: str, out: dict[str, object]) -> None:
         out[path] = node
 
 
-def _pod_spec(doc: dict) -> dict:
-    return (doc.get("spec", {}).get("template", {}) or {}).get("spec", {}) or {}
+def _template_holder(doc: dict) -> dict:
+    """The spec that holds a workload's pod template: a CronJob's sits in its jobTemplate."""
+    spec = doc.get("spec") or {}
+    if doc.get("kind") == "CronJob":
+        return (spec.get("jobTemplate") or {}).get("spec") or {}
+    return spec
+
+
+def pod_spec(doc: dict) -> dict:
+    """A workload's pod spec, empty when it has none."""
+    return (_template_holder(doc).get("template") or {}).get("spec") or {}
 
 
 def port_numbers(docs: list[dict]) -> dict[str, int]:
@@ -390,7 +399,7 @@ def port_numbers(docs: list[dict]) -> dict[str, int]:
     for doc in docs:
         if doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = _pod_spec(doc)
+        pod = pod_spec(doc)
         for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
             for port in container.get("ports") or []:
                 if "name" in port:
@@ -437,7 +446,7 @@ def effective_env(docs: list[dict], workload: str) -> dict[str, object]:
     """The main container's effective env of one workload (``Kind/name``) in a render."""
     configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
     doc = next(d for d in docs if object_id(d) == workload)
-    return dict(_effective_env(_pod_spec(doc)["containers"][0], configmaps))
+    return dict(_effective_env(pod_spec(doc)["containers"][0], configmaps))
 
 
 def _container(container: dict, configmaps: dict[str, dict], numbers: dict[str, int]) -> dict:
@@ -470,7 +479,12 @@ def _metadata(doc: dict) -> dict:
 
 def _workload(doc: dict, configmaps: dict[str, dict]) -> dict:
     spec = dict(doc.get("spec") or {})
-    template = spec.pop("template", {}) or {}
+    holder = spec
+    if doc.get("kind") == "CronJob":
+        job = dict(spec.get("jobTemplate") or {})
+        holder = job["spec"] = dict(job.get("spec") or {})
+        spec["jobTemplate"] = job
+    template = holder.pop("template", {}) or {}
     pod = {**POD_DEFAULTS, **(template.get("spec") or {})}
     numbers = port_numbers([doc])
     containers = pod.pop("containers", None) or []
@@ -493,7 +507,7 @@ def _workload(doc: dict, configmaps: dict[str, dict]) -> dict:
     meta = {
         k: v for k, v in (template.get("metadata") or {}).items() if k in ("labels", "annotations")
     }
-    spec["template"] = {"metadata": meta, "spec": pod}
+    holder["template"] = {"metadata": meta, "spec": pod}
     return {"metadata": _metadata(doc), "spec": spec}
 
 
@@ -583,7 +597,7 @@ def forward_references(docs: list[dict]) -> list[str]:
     for doc in docs:
         if doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = _pod_spec(doc)
+        pod = pod_spec(doc)
         for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
             declared = set()
             for source in container.get("envFrom") or []:
@@ -608,7 +622,7 @@ def references(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
     for doc in docs:
         if doc.get("kind") not in WORKLOAD_KINDS:
             continue
-        pod = _pod_spec(doc)
+        pod = pod_spec(doc)
         where = object_id(doc)
         for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
             at = f"{where} {container.get('name')}"

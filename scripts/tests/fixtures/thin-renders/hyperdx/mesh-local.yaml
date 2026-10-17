@@ -136,12 +136,6 @@ spec:
             secretKeyRef:
               key: token-encryption-key
               name: dfe-hyperdx-token-encryption
-        - name: CLICKHOUSE_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              key: password
-              name: clickhouse-admin-password
-              optional: true
         envFrom:
         - configMapRef:
             name: dfe-hyperdx-env
@@ -305,7 +299,6 @@ spec:
 apiVersion: v1
 data:
   CLICKHOUSE_HOST: http://dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local:8123
-  CLICKHOUSE_USER: default
   DASHBOARD_PROVISIONER_ALL_TEAMS: 'true'
   DASHBOARD_PROVISIONER_DIR: /etc/hyperdx/dashboards
   DASHBOARD_PROVISIONER_REQUIRE_REFS: 'true'
