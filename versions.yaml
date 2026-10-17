@@ -5670,11 +5670,11 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.45"        # 2026-10-17, amd64 and arm64. The image thin chart 1.22.45 pins. scalo-py 2.31.17, dfe-schemas 0.2.13, logreducer 3.5.3. Reads each app's ClickHouse password from the loader, query-reader and otel-writer secret groups and creates that app's user, closes escalation and tenancy gaps, sizes source topics to the broker count, and the hunt runner waits out a full ClickHouse (dfe-engine#899 #900 #901 #902 #903 #904 #905 #906 #907 #908 #909 #911).
+      dfe-engine: "v1.22.46"        # 2026-10-17, amd64 and arm64. The image thin chart 1.22.46 pins. scalo-py 2.31.17, dfe-schemas 0.2.13, logreducer 3.5.3. Reads each app's ClickHouse password from the loader, query-reader and otel-writer secret groups and creates that app's user, closes escalation and tenancy gaps, sizes source topics to the broker count, and the hunt runner waits out a full ClickHouse (dfe-engine#899 #900 #901 #902 #903 #904 #905 #906 #907 #908 #909 #911), with the follow-ups found testing dfe-ui#564 (dfe-engine#913).
       dfe-ui: "v1.7.21"              # 2026-10-17, amd64 and arm64. The image thin chart 1.7.21 pins. Catalogue and list filter fixes, the catalogue's reach, the fetcher Processing tab, pool labels and a new Node.js base digest (dfe-ui#560 #561 #562 #564).
       dfe-receiver: "v1.15.50"      # 2026-10-17, amd64 and arm64. The image thin chart 1.15.50 pins. A rebuild on scalo-rs 2.14.17, with rustls 0.23.46 (dfe-receiver#196).
       dfe-loader: "v1.18.53"        # 2026-10-17, amd64 and arm64. The image thin chart 1.18.53 pins. scalo-rs 2.14.17 and rustls 0.23.46. Zoned timestamps land at their UTC instant, and the unused Coercer is gone (dfe-loader#260 #261 #262 #263).
-      dfe-archiver: "v1.7.35"       # 2026-10-15, amd64 and arm64. The image thin chart 1.7.35 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-archiver#125).
+      dfe-archiver: "v1.7.36"       # 2026-10-17, amd64 and arm64. The image thin chart 1.7.36 pins. scalo-rs 2.14.17. gRPC records are routed by _source, and grpc.default_topic is gone (dfe-archiver#127 #128).
       dfe-fetcher: "v1.4.39"        # 2026-10-15, amd64 and arm64. The image thin chart 1.4.39 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-fetcher#235).
       dfe-transform-vrl: "v1.1.35"   # 2026-10-15, amd64 and arm64. The image thin chart 1.1.35 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-vrl#107).
       dfe-transform-vector: "v1.0.51"  # 2026-10-15, amd64 and arm64. The image thin chart 1.0.51 pins. scalo-rs 2.14.15 and rustls 0.23.46 (dfe-transform-vector#120).
@@ -5688,11 +5688,11 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:74baebcc27dc203f34ac3260f0d8059137eea07db6beb85a4f2a416de1661bb1"
+      dfe-engine: "sha256:477e9ab7db2a6711b3869492009fdda0127bdc53ad802b14f8ffeea88c750112"
       dfe-ui: "sha256:cdfb5210323f32647a2527e738138ac836aae6aa3226918c0fd3b308f18c21bc"
       dfe-receiver: "sha256:e2ce151b12ffa43e1ca82f0b916c5e8e5361f5519e1f21fc703fd8b7ae024734"
       dfe-loader: "sha256:9ffa44cfa2e0e2cec16fa2528f77a8077789ac5d05ed1d2f0a246266d6bdc703"
-      dfe-archiver: "sha256:caddfbc00d9ea0d9ef54c0c036e11c2f8e9decf5c60966c31e88f7d3d5cb4f85"
+      dfe-archiver: "sha256:82224a6575162cc189dde9925a517470a64fe732a6afdc8c742ee233251292c8"
       dfe-fetcher: "sha256:b2df42195ce9109bc208da3aa28da970ef024a166362385dd56baefd935774ff"
       dfe-transform-vrl: "sha256:3c8bf896b138b71bd7f6cd8f230b7216d058b6ad9050eb48a6f3fe1432d50e39"
       dfe-transform-vector: "sha256:604ffb17378c5b61aa6d9ca006857a1ac727fc77bcf15ef7e564ebe6ddc43f96"
@@ -5709,8 +5709,8 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:3742cbd1727a4ee9c567b70d3bc3159edaaef6962eeec1049456f3d014e7df40"                # 2.1.23
-      dfe-archiver: "sha256:178bc132ed212cbc1f8773ce670aa4431eccd96c0c8a381b39e03175897ba7c4"           # 1.7.35
-      dfe-engine: "sha256:fe155fa8aa56fee0d102e5d6617b8d90add189035023e6cc79523064bc36460c"             # 1.22.45
+      dfe-archiver: "sha256:88dc338e214979129f192bf4296288fa9f45d2a38f4dbb5468cc0b456f6d3043"           # 1.7.36
+      dfe-engine: "sha256:cf99c2dff08e1c8c6f635b3b55c48afb42affd73de3710e9c3de7845176598c9"             # 1.22.46
       dfe-fetcher: "sha256:2563f4b5d16bc56e9108863c64901b88fd85f03a44374b5153eaa822c040a194"            # 1.4.39
       dfe-loader: "sha256:20841377bb53a06d3e77c23739bcc6331fb90742d1a76eda7ddd732e14242663"             # 1.18.53
       dfe-receiver: "sha256:e5873fed9af5110fe3a294d25681e2b6d3f9476d813625d7be19d05fe609a553"           # 1.15.50

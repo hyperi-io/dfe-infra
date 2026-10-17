@@ -424,7 +424,7 @@ content:
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.35@sha256:caddfbc00d9ea0d9ef54c0c036e11c2f8e9decf5c60966c31e88f7d3d5cb4f85"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.36@sha256:82224a6575162cc189dde9925a517470a64fe732a6afdc8c742ee233251292c8"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
