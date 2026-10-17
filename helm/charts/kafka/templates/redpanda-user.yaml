@@ -3,10 +3,11 @@
 # DFE service account on redpanda -- the operator's User CR, the direct analogue
 # of the Strimzi KafkaUser (kafka-user.yaml). Same SCRAM-512 mechanism, same ACLs
 # (topic '*': Read/Write/Create/Describe/Alter/Delete/DescribeConfigs/AlterConfigs;
-# consumer groups prefixed 'dfe-': Read/Describe), and the operator writes the
-# generated password into a Secret named after the user -- identical shape to the
-# Strimzi-minted secret, so clients read dfe-kafka-user/password the same way
-# regardless of provider.
+# consumer groups prefixed 'dfe-': Read/Describe), and the same password source:
+# <user>-store when user.password.fromSecretsStore is on, else a Secret named
+# after the user that the operator generates into. Neither carries username or
+# sasl.mechanism, so clusterexternalsecret-appns.yaml and kafka-user-appkeys.yaml
+# write those, as they do on Strimzi.
 #
 # The topic set is the same on every provider because one principal drives every
 # topic call dfe-engine makes; kafka-user.yaml maps each operation to its call.
@@ -49,7 +50,7 @@ spec:
     password:
       valueFrom:
         secretKeyRef:
-          name: {{ .Values.user.name }}
+          name: {{ .Values.user.name }}{{ if .Values.user.password.fromSecretsStore }}-store{{ end }}
           key: password
   authorization:
     type: simple
