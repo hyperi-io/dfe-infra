@@ -60,18 +60,16 @@ Strimzi. The operator is installed only on an explicit opt-in: the
 chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.2.3, broker
 `redpanda-version` v26.2.2).
 
-- **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS
-  off on the internal listener -- matching Strimzi's plain SCRAM listener. The
-  operator generates+manages the bootstrap superuser; the `dfe-kafka-user` service
-  account is a `User` CR whose operator-generated Secret has the **same shape as
-  the Strimzi-minted secret**, so clients authenticate identically across
-  providers. Kafka API is on **9093** (TLS-off internal listener).
+- **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS off on the internal listener -- matching Strimzi's plain SCRAM listener -- with the Kafka API on **9093**. The operator generates and manages the bootstrap superuser, and the `dfe-kafka-user` `User` CR reads its password from the store-backed `dfe-kafka-user-store` Secret the Strimzi `KafkaUser` reads. That Secret carries `password` alone, so the chart writes `username`, `password` and `sasl.mechanism` into `dfe-kafka-user` in the app namespaces, as it does for Strimzi. With `user.password.fromSecretsStore=false` the operator generates the password into a broker-namespace Secret named after the user, and the chart merges the other two keys into it.
 - **single** (small/test): one-broker `Redpanda` CR. Live-validated end to end
   on the on-prem reference cluster (SCRAM produce->consume via the matrix
   harness).
 - **cluster**: multi-broker `Redpanda` CR (`statefulset.replicas`); the operator
   owns Raft/seed bootstrap (no hand-rolled `seed_servers`). Validate at the target
-  scale before relying on it.
+  scale before relying on it. The secrets config must set `kafka_provider=redpanda`,
+  or the store path `kafka/redpanda` is never seeded and `dfe-kafka-user-store`
+  never syncs. `bootstrapServers` in `profile-scale.yaml` names Strimzi's Service,
+  so override it with the Redpanda cluster's in your own values.
 - **Known operator bug (workaround in place):** the `User` controller's
   `clusterRef` SRV discovery fails when SASL is enabled (redpanda-operator #1130,
   "Operator fails to load credentials from clusterRef when SASL is enabled"). The

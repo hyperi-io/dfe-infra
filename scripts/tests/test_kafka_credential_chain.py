@@ -36,6 +36,11 @@ through the kafka chart, the way Argo does, and hold every property it reads to
 a field the deploy layer seeds -- Confluent's API key is the username, so its
 seed carries both.
 
+**In-cluster Redpanda.** The operator writes the User's Secret into the broker
+namespace with a password alone, so no client on the scale tier could start. It
+takes the Strimzi path: the User reads the store's password, and the same
+three-key copy lands in the app namespaces.
+
 **The mechanism each client dials with.** A client handed no mechanism falls
 back to its own SCRAM-SHA-512 default, which Confluent Cloud refuses at the
 handshake. Each client that accepts librdkafka's spelling reads `sasl.mechanism`
@@ -51,6 +56,7 @@ fixtures/thin-renders, which test_thin_renders.py holds equal to what Argo deplo
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
 
+import copy
 import importlib.machinery
 import importlib.util
 import re
@@ -116,7 +122,15 @@ SECRET_CONSUMERS = (
 )
 
 # What layer2-data hands every chart for an in-cluster broker on its own cluster.
-IN_CLUSTER_FACTS = ("appNamespace=dfe", "env=dev", "kafka.provider=strimzi")
+IN_CLUSTER_FACTS = ("appNamespace=dfe", "env=dev")
+
+# The brokers this chart deploys itself at kafka.mode=cluster.
+IN_CLUSTER = ("strimzi", "redpanda")
+
+
+def licence(provider: str) -> tuple[str, ...]:
+    """Redpanda is BSL, so its deployer sets the opt-in and the appset never does."""
+    return ("kafka.redpanda.acceptLicense=true",) if provider == "redpanda" else ()
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -165,7 +179,9 @@ def build_harness_deps() -> None:
     build_deps(LIBRARY_HARNESS)
 
 
-def layer2_data(chart: Path, profile: str, cloud: str, infra: dict | None = None) -> list[dict]:
+def layer2_data(
+    chart: Path, profile: str, cloud: str, infra: dict | None = None, provider: str = "strimzi"
+) -> list[dict]:
     """One layer2-data chart as its Application renders it for an in-cluster broker.
 
     valueFiles in order -- the deployer's infra/<chart>.yaml last when given --
@@ -182,7 +198,14 @@ def layer2_data(chart: Path, profile: str, cloud: str, infra: dict | None = None
             overlay = Path(tmp) / f"{chart.name}.yaml"
             overlay.write_text(yaml.safe_dump(infra), encoding="utf-8", newline="\n")
             cascade.append(overlay)
-        return render(chart, *IN_CLUSTER_FACTS, f"cloud={cloud}", values=tuple(cascade))
+        return render(
+            chart,
+            *IN_CLUSTER_FACTS,
+            f"cloud={cloud}",
+            f"kafka.provider={provider}",
+            *licence(provider),
+            values=tuple(cascade),
+        )
 
 
 def kafbat_infra(profile: str, cloud: str) -> dict:
@@ -258,18 +281,21 @@ def written_keys(docs: list[dict], secret: str) -> set[str]:
 
 def test_the_scale_profile_writes_the_keys_its_apps_read() -> None:
     """The defect: turning the projection off dropped username and the mechanism."""
-    for cloud in CLOUDS:
-        written = written_keys(layer2_data(KAFKA, "scale", cloud), "dfe-kafka-user")
-        expect(
-            f"the scale render writes username into dfe-kafka-user [{cloud}]",
-            "username" in written,
-            f"got {sorted(written)}",
-        )
-        expect(
-            f"and sasl.mechanism [{cloud}]",
-            "sasl.mechanism" in written,
-            f"got {sorted(written)}",
-        )
+    for provider in IN_CLUSTER:
+        for cloud in CLOUDS:
+            at = f"{provider}/{cloud}"
+            docs = layer2_data(KAFKA, "scale", cloud, provider=provider)
+            written = written_keys(docs, "dfe-kafka-user")
+            expect(
+                f"the scale render writes username into dfe-kafka-user [{at}]",
+                "username" in written,
+                f"got {sorted(written)}",
+            )
+            expect(
+                f"and sasl.mechanism [{at}]",
+                "sasl.mechanism" in written,
+                f"got {sorted(written)}",
+            )
 
 
 def test_every_consumer_key_is_one_the_scale_render_supplies() -> None:
@@ -282,54 +308,64 @@ def test_every_consumer_key_is_one_the_scale_render_supplies() -> None:
         for service in SECRET_CONSUMERS:
             own = secret_key_refs(golden(service, "scale", cloud), "dfe-kafka-user")
             expect(f"{service} reads it on the scale tier [{cloud}]", own, "no reference")
-        written = written_keys(layer2_data(KAFKA, "scale", cloud), "dfe-kafka-user")
-        expect(
-            f"every key the apps read is written by the scale tier's broker [{cloud}]",
-            read <= written,
-            f"unwritten: {sorted(read - written)}",
-        )
+        for provider in IN_CLUSTER:
+            docs = layer2_data(KAFKA, "scale", cloud, provider=provider)
+            written = written_keys(docs, "dfe-kafka-user")
+            expect(
+                f"every key the apps read is written by the scale tier's {provider} broker [{cloud}]",
+                read <= written,
+                f"unwritten: {sorted(read - written)}",
+            )
 
 
 def test_the_keys_do_not_depend_on_the_projection_flag() -> None:
     """username and a mechanism have nothing to do with a cross-namespace copy."""
-    for from_store in ("true", "false"):
-        docs = render(
-            KAFKA,
-            "kafka.mode=cluster",
-            "kafka.provider=strimzi",
-            "appNamespace=dfe-local",
-            f"user.password.fromSecretsStore={from_store}",
-        )
-        written = written_keys(docs, "dfe-kafka-user")
-        expect(
-            f"fromSecretsStore={from_store} still writes username",
-            "username" in written,
-            f"got {sorted(written)}",
-        )
-        expect(
-            f"fromSecretsStore={from_store} still writes sasl.mechanism",
-            "sasl.mechanism" in written,
-            f"got {sorted(written)}",
-        )
+    for provider in IN_CLUSTER:
+        for from_store in ("true", "false"):
+            docs = render(
+                KAFKA,
+                "kafka.mode=cluster",
+                f"kafka.provider={provider}",
+                "appNamespace=dfe-local",
+                f"user.password.fromSecretsStore={from_store}",
+                *licence(provider),
+            )
+            written = written_keys(docs, "dfe-kafka-user")
+            expect(
+                f"{provider}: fromSecretsStore={from_store} still writes username",
+                "username" in written,
+                f"got {sorted(written)}",
+            )
+            expect(
+                f"{provider}: fromSecretsStore={from_store} still writes sasl.mechanism",
+                "sasl.mechanism" in written,
+                f"got {sorted(written)}",
+            )
 
 
 def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
-    """The User Operator owns dfe-kafka-user; a second owner would fight it."""
-    docs = render(
-        KAFKA,
-        "kafka.mode=cluster",
-        "kafka.provider=strimzi",
-        "appNamespace=dfe-local",
-        "user.password.fromSecretsStore=false",
-    )
-    appkeys = [
-        d for d in docs
-        if d.get("kind") == "ExternalSecret"
-        and d["metadata"]["name"].endswith("-appkeys")
-    ]
-    expect("the app-keys ExternalSecret renders", len(appkeys) == 1, f"got {len(appkeys)}")
-    policy = appkeys[0]["spec"]["target"]["creationPolicy"]
-    expect("it merges into the operator's Secret", policy == "Merge", f"got {policy}")
+    """The broker's operator owns dfe-kafka-user here, and a second owner would fight it."""
+    for provider in IN_CLUSTER:
+        docs = render(
+            KAFKA,
+            "kafka.mode=cluster",
+            f"kafka.provider={provider}",
+            "appNamespace=dfe-local",
+            "user.password.fromSecretsStore=false",
+            *licence(provider),
+        )
+        appkeys = [
+            d for d in docs
+            if d.get("kind") == "ExternalSecret"
+            and d["metadata"]["name"].endswith("-appkeys")
+        ]
+        expect(
+            f"{provider}: the app-keys ExternalSecret renders",
+            len(appkeys) == 1,
+            f"got {len(appkeys)}",
+        )
+        policy = appkeys[0]["spec"]["target"]["creationPolicy"] if appkeys else None
+        expect(f"{provider}: it merges into the operator's Secret", policy == "Merge", f"got {policy}")
 
 
 def test_the_single_tier_still_carries_the_same_shape() -> None:
@@ -528,6 +564,7 @@ CLUSTER = {
 }
 BROKERS = {
     "strimzi": {"dfe.hyperi.io/kafka_provider": "strimzi"},
+    "redpanda": {"dfe.hyperi.io/kafka_provider": "redpanda"},
     "msk": {
         "dfe.hyperi.io/kafka_provider": "msk",
         "dfe.hyperi.io/kafka_mode": "external",
@@ -603,6 +640,7 @@ def layer2_kafka(broker: str, *sets: str) -> list[dict]:
             f"env={facts['dfe.hyperi.io/env']}",
             f"cloud={facts['dfe.hyperi.io/cloud']}",
             f"kafka.provider={facts['dfe.hyperi.io/kafka_provider']}",
+            *licence(broker),
             *sets,
             values=cascade,
         )
@@ -830,6 +868,70 @@ def test_the_in_cluster_credential_is_unchanged() -> None:
         "the Strimzi credential renders exactly as it did",
         doc.get("spec") == expected,
         f"got {doc.get('spec')}",
+    )
+
+
+def password_ref(docs: list[dict], kind: str) -> dict:
+    """The Secret key the one broker user of `kind` takes its password from, {} if not one."""
+    found = [d for d in docs if d.get("kind") == kind]
+    if len(found) != 1:
+        return {}
+    return found[0]["spec"]["authentication"].get("password", {}).get("valueFrom", {}).get(
+        "secretKeyRef", {}
+    )
+
+
+def test_in_cluster_redpanda_projects_the_strimzi_credential() -> None:
+    """The Redpanda operator's own Secret carries a password alone, so the apps read this copy."""
+    seed = next(name for name in render_dial._seeds("redpanda") if name.startswith("kafka/"))
+    want = copy.deepcopy(app_credential(layer2_kafka("strimzi")).get("spec", {}))
+    if want:
+        want["externalSecretSpec"]["data"][0]["remoteRef"]["key"] = f"dfe/test/{seed}"
+    docs = layer2_kafka("redpanda")
+    expect(
+        "redpanda: dfe-kafka-user is the Strimzi credential, read from its own seed",
+        bool(want) and app_credential(docs).get("spec") == want,
+        f"want the Strimzi spec reading dfe/test/{seed}",
+    )
+    keys = {key for key, _ in store_reads(docs)}
+    expect(
+        f"redpanda: the chart reads dfe/test/{seed} and nothing else",
+        keys == {f"dfe/test/{seed}"},
+        f"got {sorted(keys)}",
+    )
+    reads = {prop for _, prop in store_reads(docs)}
+    expect(
+        f"redpanda: {seed} holds every property the chart reads",
+        bool(reads) and reads <= set(render_dial._seeds("redpanda")[seed]),
+        f"got {sorted(reads)}",
+    )
+
+
+def test_the_redpanda_user_takes_the_password_its_clients_are_given() -> None:
+    """A User minting its own password would refuse the one the store hands every client."""
+    docs = layer2_kafka("redpanda")
+    ref = password_ref(docs, "User")
+    strimzi = password_ref(layer2_kafka("strimzi"), "KafkaUser")
+    expect(
+        "the Redpanda User reads the Secret the Strimzi KafkaUser reads",
+        bool(ref) and ref == strimzi,
+        f"got {ref}, KafkaUser reads {strimzi}",
+    )
+    store = [
+        d for d in docs
+        if d.get("kind") == "ExternalSecret"
+        and d["spec"].get("target", {}).get("name") == ref.get("name")
+    ]
+    expect("an ExternalSecret in the broker namespace writes it", len(store) == 1, f"got {len(store)}")
+    expect(
+        "with the key the User names",
+        ref.get("key") in written_keys(store, ref.get("name", "")),
+        f"got {sorted(written_keys(store, ref.get('name', '')))}",
+    )
+    expect(
+        "from the store path and property the apps' copy reads",
+        bool(store) and store_reads(store) == store_reads([app_credential(docs)]),
+        f"got {sorted(store_reads(store))}",
     )
 
 

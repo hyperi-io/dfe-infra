@@ -1,10 +1,11 @@
-{{- if and (eq .Values.kafka.mode "cluster") (eq .Values.kafka.provider "strimzi") (not .Values.user.password.fromSecretsStore) }}
+{{- if and (eq .Values.kafka.mode "cluster") (has .Values.kafka.provider (list "strimzi" "redpanda")) (not .Values.user.password.fromSecretsStore) }}
 # The two NON-SECRET keys the apps read out of dfe-kafka-user, written whether or
 # not the credential is projected from the secrets store.
 #
 # Strimzi's User Operator owns a Secret named after the KafkaUser and puts
-# `password` + `sasl.jaas.config` in it -- no `username`, and a mechanism is not
-# something an operator would write at all. Four charts read those two keys off
+# `password` + `sasl.jaas.config` in it, and the Redpanda operator's carries
+# `password` alone -- no `username`, and a mechanism is not something an operator
+# would write at all. Four charts read those two keys off
 # that Secret (dfe-receiver, dfe-loader, dfe-archiver, kafbat), so on a profile
 # that turns the store projection off they name a key nothing creates and every
 # one of those pods sits in CreateContainerConfigError with no container started

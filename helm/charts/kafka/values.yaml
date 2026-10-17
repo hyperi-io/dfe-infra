@@ -16,8 +16,9 @@ appNamespace: ""
 # (mode=external may use msk_iam where the supplied broker mandates IAM, but the
 # DFE-owned brokers are always SCRAM-512.) BOTH provider paths now enforce it:
 # Strimzi via its listeners + KafkaUser, Redpanda via the operator's Redpanda CR
-# (auth.sasl) + User CR -- both mint a dfe-kafka-user/password Secret of the same
-# shape, so clients authenticate identically regardless of provider.
+# (auth.sasl) + User CR. For both, the ClusterExternalSecret writes the
+# app-namespace dfe-kafka-user Secret (username, password, sasl.mechanism), so
+# clients authenticate identically regardless of provider.
 kafka:
   # Deployment mode (DFE owns its substrate; deploy unless external given):
   #   disabled -> no broker (the brokerless tiers slim + mesh use gRPC)

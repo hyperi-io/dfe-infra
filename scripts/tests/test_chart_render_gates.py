@@ -179,11 +179,14 @@ def test_single_mode_still_refuses_without_the_licence() -> None:
 
 
 def test_accepting_the_licence_renders_the_redpanda_cluster() -> None:
+    # The Redpanda User takes the same store-backed credential as the Strimzi
+    # KafkaUser, which needs the namespace the appset passes.
     docs = render(
         KAFKA,
         "kafka.mode=cluster",
         "kafka.provider=redpanda",
         "kafka.redpanda.acceptLicense=true",
+        "appNamespace=dfe-local",
     )
     expect("cluster mode renders the Redpanda CR once accepted",
            any(d.get("kind") == "Redpanda" for d in docs),
