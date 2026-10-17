@@ -15,6 +15,8 @@ any -- is a per-deployment choice behind the `clickhouse-cluster` chart's
 | **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22) |
 | Altinity operator | -- | **NOT tested.** Nothing in this stack has run under it |
 
+An external ClickHouse must run 24.10 or later, because the collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server refuses, so the collector cannot insert.
+
 ## History and rationale
 
 Until ClickHouse published an operator of its own, the Kubernetes options were
