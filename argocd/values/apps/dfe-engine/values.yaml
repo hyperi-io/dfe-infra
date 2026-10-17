@@ -33,6 +33,13 @@ secrets:
     existingSecret: '{{ .Values.auth.breakglassSecretName }}'
   hunt-runner:
     existingSecret: '{{ .Values.huntRunner.clickhouse.passwordSecretName }}'
+  # Each app's own ClickHouse password, which the engine creates that app's user on.
+  loader:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.loader.passwordSecretName }}'
+  query-reader:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.queryReader.passwordSecretName }}'
+  otel-writer:
+    existingSecret: '{{ .Values.clickhouse.serviceUsers.otelWriter.passwordSecretName }}'
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
   gitops:
@@ -407,27 +414,27 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.49@sha256:cabeef936d8ac25bb46128ced02ed2bc258db53516c678400438cd7d213074c3"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.50@sha256:e2ce151b12ffa43e1ca82f0b916c5e8e5361f5519e1f21fc703fd8b7ae024734"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.52@sha256:594c048da7e14840c4ed29c167ced2dffcb7b05f0b0eeee5741663d0b76ae77f"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.53@sha256:9ffa44cfa2e0e2cec16fa2528f77a8077789ac5d05ed1d2f0a246266d6bdc703"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.35@sha256:caddfbc00d9ea0d9ef54c0c036e11c2f8e9decf5c60966c31e88f7d3d5cb4f85"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.36@sha256:82224a6575162cc189dde9925a517470a64fe732a6afdc8c742ee233251292c8"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.39@sha256:b2df42195ce9109bc208da3aa28da970ef024a166362385dd56baefd935774ff"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.40@sha256:78d40fe1d136527b6a6be48ce9c623a537d7f4542649c64a995b5930f54ef6ea"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.35@sha256:3c8bf896b138b71bd7f6cd8f230b7216d058b6ad9050eb48a6f3fe1432d50e39"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.36@sha256:b1e9dfab9a38bf7c459cc1c8bbc5e6b77126f09729a3b1eac1797ade5ace9b3d"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract

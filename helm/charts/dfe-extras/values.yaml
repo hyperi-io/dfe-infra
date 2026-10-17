@@ -22,17 +22,17 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.44"
-    dfe-ui: "v1.7.19"
-    dfe-receiver: "v1.15.49"
-    dfe-loader: "v1.18.52"
-    dfe-archiver: "v1.7.35"
-    dfe-fetcher: "v1.4.39"
-    dfe-transform-vrl: "v1.1.35"
+    dfe-engine: "v1.22.46"
+    dfe-ui: "v1.7.22"
+    dfe-receiver: "v1.15.50"
+    dfe-loader: "v1.18.53"
+    dfe-archiver: "v1.7.36"
+    dfe-fetcher: "v1.4.40"
+    dfe-transform-vrl: "v1.1.36"
     dfe-transform-vector: "v1.0.51"
     dfe-transform-elastic: "v1.1.14"
-    culvert: "v2.1.23"
-    dfe-hyperdx: "v0.3.4"
+    culvert: "v2.1.24"
+    dfe-hyperdx: "v0.3.8"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
@@ -85,6 +85,12 @@ extras:
         host: ""
         port: 8123
         database: dfe
+        # argocd/values/common.yaml's clickhouse.serviceUsers.loader.
+        serviceUsers:
+          loader:
+            user: dfe_loader
+            passwordSecretName: loader-clickhouse
+            passwordSecretKey: password
         tls:
           enabled: false
           port: 8443
@@ -210,9 +216,6 @@ extras:
       clickhouse:
         host: dfe-clickhouse.clickhouse.svc.cluster.local
         port: 8123
-        user: ""
-        passwordSecretName: ""
-        passwordSecretKey: password
         tls:
           enabled: false
           issuerRef:
@@ -267,11 +270,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:91c7f7cd058c51950821c4980d44a4d76f96fce97185eebdb5ab3a89b3122c80"
+        digest: "sha256:477e9ab7db2a6711b3869492009fdda0127bdc53ad802b14f8ffeea88c750112"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.19"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.22"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
@@ -301,6 +304,23 @@ extras:
         host: ""
         port: 8123
         database: dfe
+        # Each app's own user and the Secret its password is minted into, beside
+        # the engine (argocd/values/common.yaml's clickhouse.serviceUsers).
+        # passwordSecretCreate false hands a Secret to the deployment, under the
+        # same name and key, and mints nothing.
+        serviceUsers:
+          loader:
+            user: dfe_loader
+            passwordSecretName: loader-clickhouse
+            passwordSecretKey: password
+          queryReader:
+            user: dfe_query_reader
+            passwordSecretName: query-reader-clickhouse
+            passwordSecretKey: password
+          otelWriter:
+            user: dfe_otel_writer
+            passwordSecretName: otel-writer-clickhouse
+            passwordSecretKey: password
         tls:
           enabled: false
           port: 8443

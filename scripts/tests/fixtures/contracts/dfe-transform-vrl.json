@@ -58,6 +58,11 @@
           "env_var": "DFE_TRANSFORM_SINK_SASL_PASSWORD",
           "key_name": "sink-password",
           "secret_key": "password"
+        },
+        {
+          "env_var": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+          "key_name": "mechanism",
+          "secret_key": "sasl.mechanism"
         }
       ]
     }
@@ -130,7 +135,7 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [
       {
@@ -152,8 +157,8 @@
   },
   "image_profile": "production",
   "oci_labels": {
-    "title": "",
-    "description": "",
+    "title": "dfe-transform-vrl",
+    "description": "Embedded VRL transform engine -- Kafka-to-Kafka pipelines",
     "vendor": "HYPERI PTY LIMITED",
     "label_namespace": "io.hyperi",
     "licenses": "BUSL-1.1",
@@ -408,7 +413,7 @@
             "default": false
           },
           "mechanism": {
-            "description": "SASL mechanism: plain, `scram_sha_256`, `scram_sha_512`.",
+            "description": "SASL mechanism: plain, `scram_sha_256`, `scram_sha_512`, or librdkafka's\n`PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, in any case.",
             "type": "string",
             "default": "scram_sha_512"
           },
@@ -645,6 +650,10 @@
           {
             "type": "object",
             "properties": {
+              "type": {
+                "type": "string",
+                "const": "file"
+              },
               "path": {
                 "type": "string"
               },
@@ -658,10 +667,6 @@
                   }
                 ],
                 "default": null
-              },
-              "type": {
-                "type": "string",
-                "const": "file"
               }
             },
             "required": [
@@ -672,12 +677,12 @@
           {
             "type": "object",
             "properties": {
-              "path": {
-                "type": "string"
-              },
               "type": {
                 "type": "string",
                 "const": "mmdb"
+              },
+              "path": {
+                "type": "string"
               }
             },
             "required": [
@@ -688,6 +693,10 @@
           {
             "type": "object",
             "properties": {
+              "type": {
+                "type": "string",
+                "const": "stix"
+              },
               "path": {
                 "type": [
                   "string",
@@ -719,10 +728,6 @@
                   }
                 ],
                 "default": null
-              },
-              "type": {
-                "type": "string",
-                "const": "stix"
               }
             },
             "required": [
@@ -732,15 +737,15 @@
           {
             "type": "object",
             "properties": {
+              "type": {
+                "type": "string",
+                "const": "sqlite"
+              },
               "path": {
                 "type": "string"
               },
               "query": {
                 "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "const": "sqlite"
               }
             },
             "required": [

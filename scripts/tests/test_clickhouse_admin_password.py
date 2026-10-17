@@ -7,10 +7,10 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The in-cluster ClickHouse admin password, from the generator to every reader.
+"""The in-cluster ClickHouse admin password, from the generator to its one reader.
 
-ClickHouse reads the password once, when the server starts. The apps read a copy
-that is refreshed hourly, at their own start. A second value minted into the
+ClickHouse reads the password once, when the server starts. The engine reads a
+copy that is refreshed hourly, at its own start. A second value minted into the
 source Secret after one side has read the first leaves the two on different
 passwords until ClickHouse restarts, and every connection fails with code 194.
 ESO's CreatedOnce does not prevent that -- it re-runs the generator on any
@@ -22,7 +22,8 @@ Per tier and cloud, what has to hold:
    and immutable.
 2. The server reads that Secret and key, in cluster and single mode alike.
 3. The app-namespace copy reads that Secret and key from the server's namespace.
-4. The engine, the loader and HyperDX read the copy.
+4. The engine reads the copy, and the loader and HyperDX do not: each app
+   connects as its own user (test_clickhouse_app_identity.py).
 
     python3 scripts/tests/test_clickhouse_admin_password.py
 
@@ -45,11 +46,12 @@ VALUES = REPO_ROOT / "argocd" / "values"
 DATA_NS = "clickhouse"
 APP_NS = "dfe"
 
-# Each app's deploy.service, its workload, and the env var carrying the password.
+# Each app's deploy.service, its workload, the env var carrying a ClickHouse
+# password, and whether that is the admin copy.
 CLIENTS = (
-    ("dfe-engine", "Deployment/dfe-engine", "DFE_CLICKHOUSE_PASSWORD"),
-    ("dfe-loader", "Deployment/dfe-loader", "DFE_LOADER__CLICKHOUSE__PASSWORD"),
-    ("hyperdx", "Deployment/dfe-hyperdx", "CLICKHOUSE_PASSWORD"),
+    ("dfe-engine", "Deployment/dfe-engine", "DFE_CLICKHOUSE_PASSWORD", True),
+    ("dfe-loader", "Deployment/dfe-loader", "DFE_LOADER__CLICKHOUSE__PASSWORD", False),
+    ("hyperdx", "Deployment/dfe-hyperdx", "CLICKHOUSE_PASSWORD", False),
 )
 
 
@@ -197,12 +199,12 @@ def test_the_apps_read_the_password_the_server_reads() -> None:
                 f"got {source}",
             )
             copied = (spec["target"]["name"], spec["data"][0]["secretKey"])
-            for service, workload, var in CLIENTS:
+            for service, workload, var, admin in CLIENTS:
                 env = effective_env(golden(service, profile, cloud), workload)
                 ref = secret_ref(env.get(var))
                 expect(
-                    f"{where}: {service} reads {var} from the copy",
-                    ref == copied,
+                    f"{where}: {service} {'reads' if admin else 'does not read'} {var} from the copy",
+                    (ref == copied) is admin,
                     f"got {ref}, copy {copied}",
                 )
 
