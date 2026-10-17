@@ -121,7 +121,7 @@
     "kafka"
   ],
   "keda": null,
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [
       {
@@ -144,8 +144,8 @@
   },
   "image_profile": "production",
   "oci_labels": {
-    "title": "",
-    "description": "",
+    "title": "dfe-fetcher",
+    "description": "Data fetcher for external services (AWS, Azure, M365, GCP)",
     "vendor": "HYPERI PTY LIMITED",
     "label_namespace": "io.hyperi",
     "licenses": "BUSL-1.1",
@@ -365,7 +365,8 @@
             "compression": "zstd",
             "acks": "all",
             "retries": 5
-          }
+          },
+          "librdkafka_overrides": {}
         }
       },
       "buffer": {
@@ -7239,6 +7240,14 @@
               "acks": "all",
               "retries": 5
             }
+          },
+          "librdkafka_overrides": {
+            "description": "Raw librdkafka properties, winning over `producer` and every setting\nscalo derives, on each producer this section builds: the output, the\nDLQ, and a bus destination with no broker settings of its own.\n`message.max.bytes` here sets the producer's record ceiling, and\n`producer.batch_size` is held under it. Not read when `output.kafka`\nis set, which replaces this section.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
           }
         }
       },

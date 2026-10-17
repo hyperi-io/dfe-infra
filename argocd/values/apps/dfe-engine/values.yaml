@@ -429,12 +429,12 @@ content:
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.39@sha256:b2df42195ce9109bc208da3aa28da970ef024a166362385dd56baefd935774ff"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.40@sha256:78d40fe1d136527b6a6be48ce9c623a537d7f4542649c64a995b5930f54ef6ea"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.35@sha256:3c8bf896b138b71bd7f6cd8f230b7216d058b6ad9050eb48a6f3fe1432d50e39"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.36@sha256:b1e9dfab9a38bf7c459cc1c8bbc5e6b77126f09729a3b1eac1797ade5ace9b3d"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
