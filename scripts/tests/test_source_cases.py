@@ -960,6 +960,51 @@ class TestTheCorpusFilter:
         assert corpus_module.asked == [(("cisco_ios",), 1)]
         assert detail.startswith("NOT routed")
 
+    def test_a_routed_probe_names_how_many_reached_the_catch_all_first(self, corpus_module):
+        store = RoutingStore(routed=1, strayed=2)
+
+        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
+                                   Path("c.tar.gz"), store, "fb1", "src-test", 0.0, ("cisco_ios",))
+
+        assert detail == "routed into dfe.fb1 after 1 probe pass(es), 2 probe(s) landed in dfe.main"
+        probes = steps.marked("src-test", steps.PROBE)
+        assert any(" FROM main " in sql and probes in sql for sql in store.asked)
+
+    def test_an_unrouted_probe_names_how_many_reached_the_catch_all(self, corpus_module):
+        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
+                                   Path("c.tar.gz"), RoutingStore(routed=0, strayed=0), "fb1",
+                                   "src-test", 0.0, ("cisco_ios",))
+
+        assert detail.startswith("NOT routed into dfe.fb1")
+        assert detail.endswith(", 0 probe(s) landed in dfe.main")
+
+    def test_a_catch_all_that_cannot_be_read_is_named_rather_than_raised(self, corpus_module):
+        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
+                                   Path("c.tar.gz"), RoutingStore(routed=1, strayed=-1), "fb1",
+                                   "src-test", 0.0, ("cisco_ios",))
+
+        assert detail.startswith("routed into dfe.fb1")
+        assert detail.endswith(", dfe.main could not be read: RuntimeError")
+
+
+class RoutingStore(FakeStore):
+    """A datastore holding *routed* probes in the source's table and *strayed* in dfe.main.
+
+    A negative *strayed* is a dfe.main that refuses the query.
+    """
+
+    def __init__(self, routed: int, strayed: int) -> None:
+        self.routed, self.strayed = routed, strayed
+        self.asked: list[str] = []
+
+    def scalar(self, sql):
+        self.asked.append(sql)
+        if " FROM main " not in sql:
+            return self.routed
+        if self.strayed < 0:
+            raise RuntimeError("datastore refused the query: 500")
+        return self.strayed
+
 
 @dataclass(frozen=True)
 class FakeSample:

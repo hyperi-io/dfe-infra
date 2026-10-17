@@ -17,7 +17,9 @@ suite's judgement is testable without a deployment to point it at.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -391,6 +393,26 @@ class TestTheRunsVerdict:
 
         assert len(table.splitlines()) == 3
         assert wizard.WELCOME in table
+
+    def test_each_row_carries_the_utc_time_it_was_recorded(self):
+        before = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        row = wizard.StepResult(wizard.WELCOME, "done", "opened")
+        after = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", row.at)
+        assert before <= row.at <= after
+
+    def test_the_table_shows_when_each_step_happened(self):
+        results = [
+            wizard.StepResult(wizard.WELCOME, "done", "opened", at="2026-10-17T01:02:03Z"),
+            wizard.StepResult(wizard.COMPLETE, "failed", "stuck", at="2026-10-17T01:09:30Z"),
+        ]
+
+        header, first, second = wizard.report_table(results).splitlines()
+
+        assert header.split()[:3] == ["at", "step", "status"]
+        assert first.startswith(f"2026-10-17T01:02:03Z  {wizard.WELCOME}")
+        assert second.startswith(f"2026-10-17T01:09:30Z  {wizard.COMPLETE}")
 
 
 class TestTheAccessSummaryTheDeployHandsOver:

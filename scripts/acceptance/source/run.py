@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -98,6 +99,47 @@ def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
     elif created:
         driver.results.append(wizard.StepResult("teardown", "kept", f"{case.name} left deployed (--keep)"))
     driver.results.extend(case.cleanup(run))
+
+
+def capture_diagnostics(prefix: list[str], label: str, timeout: float) -> wizard.StepResult:
+    """Run the capture --diagnostics-exec names, labelled *label*, stopped at *timeout* seconds.
+
+    Returns:
+        The diagnostics row. A capture that fails is skipped rather than failed: the run
+        has already failed, and the bundle is only evidence of why.
+    """
+    command = [*prefix, "--label", label]
+    try:
+        proc = subprocess.Popen(command)
+    except OSError as exc:
+        why = f"could not start {prefix[0]}: {exc.strerror or exc}"
+        return wizard.StepResult("diagnostics", "skipped", why)
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        why = f"the capture passed its {timeout:g}s and was stopped"
+        return wizard.StepResult("diagnostics", "skipped", why)
+    if code != 0:
+        return wizard.StepResult("diagnostics", "skipped", f"the capture exited {code}")
+    return wizard.StepResult("diagnostics", "done", f"bundle {label} written before the teardown")
+
+
+def close_out(run: cases.Run, case: cases.Case, api_url: str) -> None:
+    """Capture a failed run's diagnostics, then remove what the run made, whatever the capture did.
+
+    The capture comes first because the teardown deletes the source, and the source's
+    own transform pods with it.
+    """
+    driver, args = run.driver, run.args
+    try:
+        if args.diagnostics_exec and wizard.exit_code(driver.results):
+            prefix = shlex.split(args.diagnostics_exec)
+            row = capture_diagnostics(prefix, f"source-{case.name}", args.diagnostics_timeout)
+            driver.results.append(row)
+    finally:
+        teardown(run, case, api_url)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -166,7 +208,7 @@ def run(args: argparse.Namespace) -> int:
             context.close()
             browser.close()
 
-    teardown(current, case, api_url)
+    close_out(current, case, api_url)
 
     held = (password, new_password, store.password, engine.password, engine.token)
     print()
@@ -259,6 +301,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")
     parser.add_argument("--keep", action="store_true", help="leave the source deployed")
+    parser.add_argument("--diagnostics-exec", default="", metavar="PREFIX",
+                        help="command the runner appends `--label source-<name>` to and runs "
+                             "once, when a step failed and before the teardown removes the "
+                             "source and its transform pods (k8s: dfe-ops diagnostics --dir DIR "
+                             "<kubectl flags>). Empty captures nothing")
+    parser.add_argument("--diagnostics-timeout", type=float, default=360.0, metavar="SECONDS",
+                        help="seconds the capture runs before it is stopped")
     parser.add_argument("--insecure", action="store_true", help="accept a certificate this machine does not trust")
     parser.add_argument("--resolve", action="append", default=[], metavar="HOST:IP", type=onboarding._host_ip,
                         help="resolve HOST to IP inside the browser (repeatable)")

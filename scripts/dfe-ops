@@ -138,6 +138,16 @@ Subcommands:
                volumes and annotations, no Secret data is read, and every log
                is redacted.
                The cycle runs it once when a stage fails, before the destroy.
+  diagnostics  Writes a timestamped bundle: the last 30 minutes of every
+               dfe-receiver, dfe-loader, dfe-engine, dfe-hunt-runner and
+               dfe-transform-* container's log, pods, Deployments and ReplicaSets,
+               the DFE namespaces' events, every Argo Application's sync and
+               health, and each consumer group's offsets beside the end offsets of
+               the _land, _load and _dlq topics, read from a short-lived client pod
+               that mounts the engine's own SASL Secret. Every file is redacted and
+               the whole run is time-boxed. With --diagnostics-dir the cycle runs
+               it when smoke or acceptance fails, and the source suite before it
+               removes its source.
   redact       Reads stdin and writes it to stdout a line at a time with every
                credential masked (the failure-evidence redactor), so a long-running
                command's output can be piped through it. Prints no banner of its
@@ -318,6 +328,8 @@ import profiles  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
+from dfe_ops_diagnostics import BUDGET as DIAGNOSTICS_BUDGET  # noqa: E402
+from dfe_ops_diagnostics import add_diagnostics_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_failure_evidence import add_failure_evidence_subparser, safe_name  # noqa: E402
 from dfe_ops_init import add_init_subparser  # noqa: E402
@@ -445,6 +457,30 @@ def _run_streaming(cmd: list[str], *, env: dict | None = None) -> int:
     """Run a subprocess inheriting stdio (live output); return its exit code."""
     print(f"==> {' '.join(cmd)}", file=sys.stderr)
     return subprocess.run(cmd, env=env).returncode
+
+
+def _run_boxed(cmd: list[str], *, env: dict | None, timeout: float) -> int | None:
+    """`_run_streaming`, stopped at `timeout` seconds.
+
+    The child stays in this process group, so a cloud-cycle that stops the cycle at
+    its deadline stops the child with it.
+
+    Returns:
+        Its exit code, or None when it could not start or was stopped.
+    """
+    print(f"==> {' '.join(cmd)}", file=sys.stderr)
+    try:
+        proc = subprocess.Popen(cmd, env=env)
+    except OSError as exc:
+        print(f"  [warn] could not start {cmd[0]}: {exc.strerror or exc}", file=sys.stderr)
+        return None
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        print(f"  [warn] the command above passed its {timeout:g}s and was stopped", file=sys.stderr)
+        return None
 
 
 # --- kubeconfig subcommand ---------------------------------------------------
@@ -1940,6 +1976,29 @@ def _run_edge_suite(args: argparse.Namespace, kube: list[str], namespace: str, u
     return rc if restored else (rc or 1)
 
 
+# Seconds a diagnostics capture runs before its caller stops it: its own budget, then a minute.
+DIAGNOSTICS_BOX = DIAGNOSTICS_BUDGET + 60.0
+
+
+def diagnostics_runner_args(diagnostics_dir: str | None, kube: list[str]) -> list[str]:
+    """The source runner's flags for a capture before it removes its source, or none.
+
+    Args:
+        diagnostics_dir: --diagnostics-dir, where the bundle goes; None captures nothing.
+        kube: The stage's kubectl argv, whose flags aim the capture at the same cluster.
+
+    Returns:
+        --diagnostics-exec with the `dfe-ops diagnostics` prefix, and its time box.
+    """
+    if not diagnostics_dir:
+        return []
+    capture = [
+        sys.executable, str(Path(__file__).resolve()), "diagnostics", "--dir", diagnostics_dir,
+        *kube[1:],
+    ]
+    return ["--diagnostics-exec", shlex.join(capture), "--diagnostics-timeout", str(DIAGNOSTICS_BOX)]
+
+
 def cmd_acceptance(args: argparse.Namespace) -> int:
     """Run the live acceptance suite against a deployed stack.
 
@@ -2207,6 +2266,7 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
                 runner.append("--keep")
             for pair in resolve:
                 runner += ["--resolve", pair]
+            runner += diagnostics_runner_args(args.diagnostics_dir, kube)
             rc = subprocess.run(runner, env=env).returncode
             # The suite removes what it made: a run that minted the Secret takes
             # it back out, so the namespace does not keep AWS keys between runs.
@@ -4426,6 +4486,26 @@ def _failure_evidence(
         print(f"  [warn] dfe-ops failure-evidence exited {rc}", file=sys.stderr)
 
 
+# The stages whose failure, under --diagnostics-dir, also leaves the apps' own logs and offsets.
+DIAGNOSED_STAGES = ("smoke", "acceptance")
+
+
+def _diagnostics(self_cmd: list[str], kube: list[str], root: str, stage: str, env: dict) -> None:
+    """Write the diagnostics bundle for a failed stage, stopped at DIAGNOSTICS_BOX.
+
+    Nothing it does reaches the cycle's verdict or its destroy: the stage has already failed.
+    """
+    print(f"\n=== diagnostics for stage {stage}: under {root} ===", file=sys.stderr)
+    capture = [*self_cmd, "diagnostics", "--dir", root, "--label", stage, *kube]
+    try:
+        rc = _run_boxed(capture, env=env, timeout=DIAGNOSTICS_BOX)
+    except Exception as exc:  # a capture that breaks is a warning, never a skipped destroy
+        print(f"  [warn] dfe-ops diagnostics raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+    if rc != 0:
+        print(f"  [warn] dfe-ops diagnostics ended {rc}", file=sys.stderr)
+
+
 def cmd_cycle(args: argparse.Namespace) -> int:
     """THE validation cycle this repo owns: preflight -> deploy+E2E -> smoke -> destroy.
 
@@ -4536,6 +4616,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         ]
         if args.from_terraform:
             acceptance_cmd += ["--from-terraform", args.from_terraform]
+        # The source runner captures before it removes its source, which takes its transform pods.
+        if args.diagnostics_dir:
+            acceptance_cmd += ["--diagnostics-dir", args.diagnostics_dir]
         stages.append(("acceptance", acceptance_cmd))
     # The UI stage is opt-in: it needs a dfe-ui checkout and node, which not
     # every cycle runner has, and a cycle that starts failing for want of a
@@ -4549,36 +4632,39 @@ def cmd_cycle(args: argparse.Namespace) -> int:
 
     results: list[tuple[str, int, float]] = []
     aborted = False
-    for name, cmd in stages:
-        print(f"\n=== cycle stage: {name} ===", file=sys.stderr)
-        started = time.monotonic()
-        rc = _run_streaming(cmd, env=stage_env)
-        results.append((name, rc, time.monotonic() - started))
-        if rc != 0:
-            aborted = True
-            print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
-            _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
-            break
-
-    # Destroy is NOT skipped on failure -- an aborted cycle must not strand a
-    # half-deployed stack (and a cloud target must never outlive its test).
-    # A terraform-provisioned target also destroys its IaC state: the on-cluster
-    # teardown alone would leave the control plane + nodes running (and
-    # billing), which breaks the ephemeral-cloud rule.
-    if args.keep:
-        print("\n--keep: leaving the deployment up (destroy it yourself: dfe-ops teardown).", file=sys.stderr)
-    else:
-        print("\n=== cycle stage: destroy ===", file=sys.stderr)
-        teardown_cmd = [*self_cmd, "teardown", "--force"]
-        if args.from_terraform:
-            teardown_cmd += [
-                "--from-terraform", args.from_terraform, "--with-terraform", "--tf-dir", args.from_terraform,
-            ]
-        started = time.monotonic()
-        rc = _run_streaming(teardown_cmd, env=stage_env)
-        results.append(("destroy", rc, time.monotonic() - started))
-        if rc != 0:
-            aborted = True
+    try:
+        for name, cmd in stages:
+            print(f"\n=== cycle stage: {name} ===", file=sys.stderr)
+            started = time.monotonic()
+            rc = _run_streaming(cmd, env=stage_env)
+            results.append((name, rc, time.monotonic() - started))
+            if rc != 0:
+                aborted = True
+                print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
+                if args.diagnostics_dir and name in DIAGNOSED_STAGES:
+                    _diagnostics(self_cmd, passthrough_kube, args.diagnostics_dir, name, stage_env)
+                _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
+                break
+    finally:
+        # Destroy is NOT skipped on failure, nor on an exception above -- an aborted
+        # cycle must not strand a half-deployed stack (and a cloud target must never
+        # outlive its test). A terraform-provisioned target also destroys its IaC
+        # state: the on-cluster teardown alone would leave the control plane + nodes
+        # running (and billing), which breaks the ephemeral-cloud rule.
+        if args.keep:
+            print("\n--keep: leaving the deployment up (destroy it yourself: dfe-ops teardown).", file=sys.stderr)
+        else:
+            print("\n=== cycle stage: destroy ===", file=sys.stderr)
+            teardown_cmd = [*self_cmd, "teardown", "--force"]
+            if args.from_terraform:
+                teardown_cmd += [
+                    "--from-terraform", args.from_terraform, "--with-terraform", "--tf-dir", args.from_terraform,
+                ]
+            started = time.monotonic()
+            rc = _run_streaming(teardown_cmd, env=stage_env)
+            results.append(("destroy", rc, time.monotonic() - started))
+            if rc != 0:
+                aborted = True
 
     print("\n=== cycle summary ===", file=sys.stderr)
     for name, rc, secs in results:
@@ -4785,6 +4871,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="where a failed stage's node, event and CNI evidence goes, one "
                          f"timestamped directory per failure (default: {EVIDENCE_SUBDIR}/ under "
                          "--acceptance-shots-dir)")
+    cy.add_argument("--diagnostics-dir", default=None, metavar="DIR",
+                    help="given, a failed smoke or acceptance stage writes `dfe-ops diagnostics` "
+                         "bundles here before the destroy -- the apps' recent logs, workloads, "
+                         "events, Argo status and Kafka offsets -- and the source suite writes "
+                         "one before it removes its source. Unset, nothing is captured")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -4989,6 +5080,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "references, before it creates a fetched source (default: leave the Secret alone)")
     ac.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD,
                     help="secrets CLI the credentials are read with: bao or vault")
+    ac.add_argument("--diagnostics-dir", default=None, metavar="DIR",
+                    help="given, a source suite run with a failed step writes a `dfe-ops diagnostics` "
+                         "bundle here before it removes its source and that source's transform pods")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
@@ -5141,6 +5235,11 @@ def build_parser() -> argparse.ArgumentParser:
     # files before the destroy. The cycle runs it; registered from
     # dfe_ops_failure_evidence.
     add_failure_evidence_subparser(sub)
+
+    # diagnostics -- the apps' recent logs, workloads, events, Argo status and Kafka offsets a
+    # failed smoke or acceptance stage leaves. The cycle runs it; registered from
+    # dfe_ops_diagnostics.
+    add_diagnostics_subparser(sub)
 
     # redact -- stdin to stdout with credentials masked, so a command's output can be piped
     # through the failure-evidence redactor. Registered from dfe_ops_redact.

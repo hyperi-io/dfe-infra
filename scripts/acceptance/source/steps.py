@@ -618,7 +618,9 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
     The proof is a probe row found by its marker, which the transform keeps.
     Each probe is marked as one, so the corpus count after this never takes a
-    late probe for a corpus row.
+    late probe for a corpus row. Either way the line ends on how many probes
+    reached dfe.main: probes there mean the receiver had not taken the source's
+    rule, and none there or in the source's table mean they were lost after it.
     """
     until = time.monotonic() + deadline
     passes = 0
@@ -626,19 +628,33 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
         post_corpus(receiver_url, verify, engine_repo, corpus_file, run, 1, modules, PROBE)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
-            return f"routed into dfe.{name} after {passes} probe pass(es)"
+            return (
+                f"routed into dfe.{name} after {passes} probe pass(es), "
+                f"{probes_in_main(store, run)}"
+            )
         if time.monotonic() >= until:
-            return f"NOT routed into dfe.{name} within {deadline:.0f}s ({passes} probe passes)"
+            return (
+                f"NOT routed into dfe.{name} within {deadline:.0f}s ({passes} probe passes), "
+                f"{probes_in_main(store, run)}"
+            )
         time.sleep(20)
 
 
-def strayed_rows(store: Datastore, run_id: str) -> int:
-    """Corpus rows of this run that landed in the catch-all, found by the marker each carries.
+def strayed_rows(store: Datastore, run_id: str, kind: str = CORPUS) -> int:
+    """Rows of this run marked as *kind* that landed in the catch-all, found by the marker.
 
-    Probes are left out: the first ones land in the catch-all by design, before
-    the receiver rolls onto the new rule.
+    Corpus rows by default. The first probes land in the catch-all by design,
+    before the receiver rolls onto the new rule.
     """
-    return store.scalar(f"SELECT count() FROM main WHERE {marked(run_id, CORPUS)}")
+    return store.scalar(f"SELECT count() FROM main WHERE {marked(run_id, kind)}")
+
+
+def probes_in_main(store: Datastore, run_id: str) -> str:
+    """How many of this run's probes reached dfe.main, as the routed row's last clause."""
+    try:
+        return f"{strayed_rows(store, run_id, PROBE)} probe(s) landed in dfe.main"
+    except (RuntimeError, OSError, ValueError) as exc:  # Datastore.query's three ways to fail
+        return f"dfe.main could not be read: {type(exc).__name__}"
 
 
 def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, str]:
