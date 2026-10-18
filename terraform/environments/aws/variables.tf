@@ -80,6 +80,29 @@ variable "resolved_shapes" {
   }))
 }
 
+variable "node_image" {
+  description = "The image every EKS managed node group launches, a three-layer cascade. scripts/resolve_sizing.py images auto-selects it from the SSM parameter /aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended -- family the EKS AMI type, version its newest dated release -- and writes node-images.auto.tfvars.json, which loads after terraform.tfvars. A failed lookup, or node_image.pin: true in the dial, writes nothing, so a value in terraform.tfvars applies. This default is the last resort: EKS's recommended AL2023 arm64 type with no version, so a new group takes EKS's newest release at create."
+  type = object({
+    family  = string
+    version = optional(string)
+  })
+  default = {
+    family = "AL2023_ARM_64_STANDARD"
+  }
+  nullable = false
+}
+
+variable "instance_ami_id" {
+  description = "The AMI the toolbox instance and the tunnel forwarder launch. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the region from the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when the lookup failed or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox or the forwarder is on."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !(var.toolbox.enabled || var.edge.tunnel.address.mode == "forwarder") || var.instance_ami_id != null
+    error_message = "The toolbox or the tunnel forwarder is on and no AMI was resolved for it. Run scripts/resolve_sizing.py images, or set instance_ami_id in terraform.tfvars."
+  }
+}
+
 variable "network" {
   description = "From tfvars (the dial's network block). nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans, 2-6, up to the region's own ceiling. subnet_newbits is how many bits each subnet adds to provision.cidr, which sets how many addresses each zone's subnets carry for nodes and pods."
   type = object({

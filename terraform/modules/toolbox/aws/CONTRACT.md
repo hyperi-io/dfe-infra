@@ -21,6 +21,7 @@ this module's to close; see "Out of scope" at the end.
 | `network` | `object({ vpc_id, cidr, private_subnet_ids })` | Where the instance lands. `cidr` scopes the egress rule of every target whose `scope` is `vpc`; a target outside the VPC says so and is opened to `0.0.0.0/0` on its own port instead. |
 | `instance_type` | `string` | Auto-selected by the shape resolver, newest arm64 generation in the region: the root passes the first type of the shape `toolbox.aws.shape_ref` names. Validated as a Graviton (arm64) family. |
 | `root_volume` | `object({ type, size_gib })` | The same resolved shape's root disk. |
+| `ami_id` | `string` | The root's `instance_ami_id`: the newest AL2023 arm64 AMI in the region, auto-selected by `scripts/resolve_sizing.py images`, else tfvars. Null when neither answered, refused only while `enabled` is true -- see "AMI resolution" below. |
 | `ttl_minutes` | `number` | Idle-session bound, 15-480, enforced here AND by `dfe-ops`. |
 | `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql`, `kafka-cli` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" below. |
 | `session` | `object({ idle_timeout_minutes, max_duration_minutes })` | The SHELL document's preferences only. |
@@ -201,22 +202,9 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
 
 ## AMI resolution (`#8`)
 
-Resolved through the SSM public parameter
-`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`
-(<https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami-parameter-store.html>)
--- never a literal AMI id. Deliberately the ALWAYS-LATEST alias, not a dated
-pin the way `karpenter-pools/values.yaml`'s `amiAlias: al2023@v20260827` is.
-That pin exists because a Karpenter node is long-lived and Karpenter
-reconciles continuously, so an unpinned "latest" alias there means the running
-fleet's image can drift mid-life with no version an operator could point at.
-This instance has no such lifecycle: it is created fresh on every `bastion
-up` and terminated on every `bastion down`, so there is no "already-running
-box whose image silently moved" failure mode to guard against, and the
-correct behaviour for an on-demand debugging box is to always carry whatever
-AL2023 currently ships. AWS also changed this exact parameter's own behaviour
-on 2026-08-17 to always track the latest kernel rather than staying fixed at
-its original one -- consistent with treating "latest at the moment you bring
-it up" as the intended semantics here, not a gap to close later.
+`scripts/resolve_sizing.py images` reads the SSM public parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64` (<https://docs.aws.amazon.com/linux/al2023/ug/ec2.html>) and writes its AMI id as the root's `instance_ami_id`, the first layer of the node-image cascade (`terraform/modules/kubernetes-cluster/CONTRACT.md`, "Node images"). A value in `terraform.tfvars` applies when that lookup failed or the dial pins node images. There is no third layer: an AMI id belongs to one region, so an enabled toolbox with neither is refused by name at plan, and a disabled one needs none. The lookup is not a data source here, because a failing data source would fail the whole plan.
+
+It is the newest AMI rather than a dated pin like `karpenter-pools/values.yaml`'s `amiAlias`. That pin exists because a Karpenter node is long-lived and reconciles continuously, so its image must not drift mid-life. This instance is created fresh on every `bastion up` and terminated on every `bastion down`, so the newest AMI at the last resolve is the right one. `bastion up` does not resolve on its own, so re-run the resolver first to bring up the newest AL2023: each AL2023 AMI is deprecated 90 days after release (the AL2023 page above), which hides it from listings but still launches by id (<https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ami-deprecate.html>).
 
 IMDSv2 required, hop limit 1 (`metadata_options`), matching
 `karpenter-pools/values.yaml`'s node-level setting verbatim. Per `#7`, this

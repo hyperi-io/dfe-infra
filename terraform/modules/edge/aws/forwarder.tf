@@ -8,7 +8,7 @@
 // instance that DNATs to whichever cluster nodes are running.
 //
 // The instance follows terraform/modules/toolbox/aws throughout -- the same
-// always-latest AL2023 arm64 AMI lookup, the same SSM-managed access with no
+// resolver-written AL2023 arm64 AMI, the same SSM-managed access with no
 // inbound ssh rule, and the same narrow instance role.
 //
 // The instance lands in a PUBLIC subnet, whose route table sends 0.0.0.0/0 at
@@ -27,13 +27,6 @@
 // and that pod stay in the one availability zone.
 
 data "aws_region" "current" {}
-
-// Always-latest alias, deliberately NOT pinned to a dated release the way
-// karpenter-pools.amiAlias is -- the same reasoning toolbox/aws/main.tf states,
-// and this instance is likewise rebuilt rather than carried through a long life.
-data "aws_ssm_parameter" "al2023_arm64" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
-}
 
 locals {
   forwarder_enabled = var.tunnel.address.mode == "forwarder"
@@ -250,7 +243,7 @@ resource "aws_eip_association" "forwarder" {
 resource "aws_instance" "forwarder" {
   count = local.forwarder_enabled ? 1 : 0
 
-  ami           = data.aws_ssm_parameter.al2023_arm64.value
+  ami           = var.tunnel.address.ami_id
   instance_type = var.tunnel.address.instance_type
   subnet_id     = local.forwarder_subnet_id
 

@@ -43,11 +43,6 @@ mock_provider "aws" {
     }
   }
 
-  mock_data "aws_ssm_parameter" {
-    defaults = {
-      value = "ami-0123456789abcdef0"
-    }
-  }
 }
 
 mock_provider "random" {}

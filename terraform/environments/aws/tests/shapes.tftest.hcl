@@ -44,12 +44,6 @@ mock_provider "aws" {
     }
   }
 
-  mock_data "aws_ssm_parameter" {
-    defaults = {
-      value = "ami-0123456789abcdef0"
-    }
-  }
-
   // The toolbox refuses a tunnel address that is not an IPv4 address.
   mock_resource "aws_eip" {
     defaults = {
@@ -158,6 +152,9 @@ variables {
     }
   }
 
+  // What scripts/resolve_sizing.py images writes into node-images.auto.tfvars.json.
+  instance_ami_id = "ami-0123456789abcdef0"
+
   eks_addon_versions = {
     "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
     "coredns"                = "v1.14.7-eksbuild.11"
@@ -238,6 +235,27 @@ run "the_toolbox_and_the_forwarder_launch_on_the_resolved_shape" {
   assert {
     condition     = length(module.edge[0].tunnel_listener_ports) > 0
     error_message = "address.mode forwarder must build the forwarder from the resolved shape"
+  }
+}
+
+// With no AMI from the resolver or tfvars, the forwarder is refused by name and
+// the node groups keep the root's own default image.
+run "a_forwarder_refuses_an_unresolved_ami" {
+  command = plan
+
+  variables {
+    instance_ami_id = null
+  }
+
+  expect_failures = [var.instance_ami_id]
+}
+
+run "the_node_image_falls_back_to_the_roots_default" {
+  command = plan
+
+  assert {
+    condition     = var.node_image.family == "AL2023_ARM_64_STANDARD" && var.node_image.version == null
+    error_message = "with nothing resolved and nothing in tfvars, node_image must be the root's last-resort default"
   }
 }
 

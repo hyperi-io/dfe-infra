@@ -81,6 +81,15 @@ target:
 ## until it lands.
 kubernetes_version: "1.36"
 
+## Node images. `python3 scripts/resolve_sizing.py images` writes the cloud's
+## recommended node image, at its newest dated release, into the root's
+## node-images.auto.tfvars.json, which beats terraform.tfvars. pin: "true" skips
+## that lookup, so a value in terraform.tfvars holds -- the hold for a bad
+## provider image or a reproducible rebuild. With neither, the root's variable
+## default applies (terraform/modules/kubernetes-cluster/CONTRACT.md).
+node_image:
+  pin: "false"               # true | false
+
 ## Egress. per-az puts a NAT gateway in every zone, so a zone failure and the
 ## cross-zone data charge both stay contained; single puts one in the first
 ## zone and is the cheaper tyre-kick default.

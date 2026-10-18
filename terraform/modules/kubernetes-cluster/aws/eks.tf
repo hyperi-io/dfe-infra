@@ -200,9 +200,6 @@ locals {
   // kubelet. With neither there is no template and no node group changes.
   node_launch_template = length(var.controller_tags) > 0 || var.node_user_data != ""
 
-  // EKS's own name for the arm64 Amazon Linux 2023 image, fixed by the arm64 policy the precondition below asserts per shape.
-  node_ami_type = "AL2023_ARM_64_STANDARD"
-
   // EKS merges a managed group's user data with its own NodeConfig only in MIME multi-part form.
   node_user_data_boundary = "==DFE-NODE=="
   node_user_data_mime = var.node_user_data == "" ? null : join("\n", [
@@ -270,7 +267,10 @@ resource "aws_eks_node_group" "this" {
 
   // ARM everywhere in the cloud; the arch itself is asserted against the
   // resolved shape below rather than assumed from the image name.
-  ami_type = local.node_ami_type
+  ami_type = var.node_image.family
+
+  // A dated release moves the group's image only when a resolve and an apply move it, and null leaves the release it runs.
+  release_version = var.node_image.version
 
   instance_types = var.resolved_shapes[each.value.shape_ref].instance_types
   capacity_type  = each.value.capacity_type
@@ -318,7 +318,7 @@ resource "aws_eks_node_group" "this" {
   lifecycle {
     precondition {
       condition     = var.resolved_shapes[each.value.shape_ref].arch == "arm64"
-      error_message = "Node pool '${each.key}' resolves to ${var.resolved_shapes[each.value.shape_ref].arch}, but the ${local.node_ami_type} image this module launches is arm64 only."
+      error_message = "Node pool '${each.key}' resolves to ${var.resolved_shapes[each.value.shape_ref].arch}, but the ${var.node_image.family} image this module launches is arm64 only."
     }
   }
 }

@@ -135,6 +135,26 @@ variable "resolved_shapes" {
   }
 }
 
+variable "node_image" {
+  description = "The EKS-optimised image every managed node group launches, from the node-image cascade (CONTRACT.md): scripts/resolve_sizing.py images reads the SSM parameter /aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended, else tfvars, else the root's default. family is the EKS AMI type and version its dated release, so a node group's image moves only when a resolve and an apply move it. A null version leaves the release to EKS, which takes the newest for the cluster's minor when a group is created and holds it."
+  type = object({
+    family  = string
+    version = optional(string)
+  })
+  nullable = false
+
+  // The shapes are arm64-only, so the image family has to be one of EKS's arm64 types.
+  validation {
+    condition     = can(regex("_ARM_64(_|$)", var.node_image.family))
+    error_message = "node_image.family must be an arm64 EKS AMI type, because every resolved shape is arm64. Got ${var.node_image.family}."
+  }
+
+  validation {
+    condition     = var.node_image.version == null || (can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]{8}$", var.node_image.version)) && startswith(coalesce(var.node_image.version, "-"), "${var.kubernetes_version}."))
+    error_message = "node_image.version must be an EKS release for Kubernetes ${var.kubernetes_version}, <patch>-<YYYYMMDD> such as ${var.kubernetes_version}.4-20261012, or null."
+  }
+}
+
 variable "network" {
   description = "From tfvars (the dial's network block). nat = per-az puts one NAT gateway in each availability zone, so a zone failure and cross-zone data charges both stay contained. nat = single puts one in the first, which is cheaper. az_count is how many zones the VPC spans, 2-6. subnet_newbits is how many bits each subnet adds to provision.cidr: the VPC splits into 2^subnet_newbits equal blocks, private subnets from the first and public from the midpoint, and every pod takes an address from its node's private subnet under the VPC CNI."
   type = object({

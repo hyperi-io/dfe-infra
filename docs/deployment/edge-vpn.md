@@ -79,7 +79,7 @@ launches on, `toolbox` by default: the newest arm64 generation the shape
 resolver picks from `shapes/compute-shapes.yaml`, with its root volume. A
 larger type for more tunnel bandwidth goes in
 `sizing.overrides.<shape>.instance_type`, and the dial refuses an instance type
-of its own. The family has to be Graviton to match the AMI the module resolves.
+of its own. The family has to be Graviton to match the AL2023 arm64 AMI that `scripts/resolve_sizing.py images` resolves.
 
 ## Client addressing
 

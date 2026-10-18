@@ -84,6 +84,15 @@ without one.
         --previous sizing/resolved.yaml --migrate
     python3 scripts/resolve_sizing.py capture --region us-west-2 \
         --fixtures scripts/tests/fixtures/sizing
+    python3 scripts/resolve_sizing.py images --dial deployment.yaml
+
+``images`` resolves the node images on any profile, separately from the sizing,
+because it reads the live provider wherever a resolve reads fixtures: each
+cloud's recommended node image at its newest version, written to
+``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
+elsewhere). A lookup that fails warns and writes no key, so tfvars or the
+variable default applies, and ``node_image.pin: "true"`` in the dial skips the
+lookups altogether. scripts/node_images.py carries the cascade and the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -110,8 +119,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import node_images
 from aws_cli import run_aws
-from render_dial import CONTROLLER_POOLS
+from render_dial import CONTROLLER_POOLS, TOFU_ROOTS, DialError, _kubernetes_version
 from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
@@ -3618,6 +3628,74 @@ def run_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _node_image_pin(tree: dict[str, object]) -> bool:
+    """The dial's node_image.pin, refusing anything but true or false."""
+    raw = (_scalar(tree, "node_image", "pin") or "false").lower()
+    if raw not in ("true", "false"):
+        raise ResolveError(f"node_image.pin must be true or false, got {raw!r}")
+    return raw == "true"
+
+
+def run_images(args: argparse.Namespace) -> int:
+    """Resolve the dial's node images and write them where its tofu root loads them."""
+    tree = _load(args.dial)
+    cloud = _scalar(tree, "target", "provision", "cloud")
+    if cloud is None:
+        print(
+            "resolve_sizing: the dial provisions no cloud, so there is no node image to resolve",
+            file=sys.stderr,
+        )
+        return 0
+    if cloud not in node_images.LOOKUPS:
+        # On-prem nodes are supplied, and no provider publishes a recommended image for them.
+        print(
+            f"resolve_sizing: no provider publishes a node image for {cloud}, so tfvars and the "
+            "variable default apply",
+            file=sys.stderr,
+        )
+        return 0
+    try:
+        kubernetes_version = _kubernetes_version(tree, cloud)
+    except DialError as err:
+        raise ResolveError(str(err)) from err
+    except ValueError as err:
+        # render_dial.py compares minors as dotted integers, so a floor spelt as a range stops here.
+        raise ResolveError(
+            f"cannot compare kubernetes_version with versions.yaml's platform floor for {cloud}: {err}"
+        ) from err
+    region = _scalar(tree, "target", "provision", "region")
+    account = _scalar(tree, "target", "provision", "account")
+    if region is None or account is None:
+        raise ResolveError("target.provision needs a region and an account to resolve node images")
+    arch = _scalar(_load(args.shapes), "clouds", cloud, "arch")
+    if arch is None:
+        raise ResolveError(f"compute-shapes.yaml declares no clouds.{cloud}.arch")
+    out = args.out or TOFU_ROOTS / cloud
+    if not out.is_dir():
+        raise ResolveError(f"no tofu root at {out} -- pass --out to write the node images elsewhere")
+
+    pinned = _node_image_pin(tree)
+    target = node_images.Target(cloud, region, account, kubernetes_version, arch)
+    read = (
+        node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
+    )
+
+    def warn(message: str) -> None:
+        print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
+
+    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn)
+    path = node_images.write_tfvars(out, values)
+    if pinned:
+        print(
+            "resolve_sizing: node_image.pin is true, so no lookup ran and the tfvars value holds",
+            file=sys.stderr,
+        )
+    for key, value in sorted(values.items()):
+        print(f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}", file=sys.stderr)
+    print(f"resolve_sizing: wrote {path}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. `resolve` is the default, so the common call names no subcommand."""
     parser = argparse.ArgumentParser(
@@ -3653,6 +3731,22 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--region", default="us-west-2", help="the region to capture")
     capture.add_argument("--fixtures", type=Path, required=True, help="the fixtures directory")
     capture.set_defaults(func=run_capture)
+
+    images = sub.add_parser(
+        "images", help="resolve each node image the provider recommends, at its newest version"
+    )
+    images.add_argument("--dial", type=Path, required=True, help="the deployment dial")
+    images.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read")
+    images.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="where node-images.auto.tfvars.json is written (default: the cloud's tofu root)",
+    )
+    images.add_argument(
+        "--fixtures", type=Path, default=None, help="answer from recorded provider responses"
+    )
+    images.set_defaults(func=run_images)
     return parser
 
 

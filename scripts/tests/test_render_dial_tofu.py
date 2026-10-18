@@ -159,7 +159,11 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     }
     # A credential the root reads from TF_VAR_*, which the dial never carries.
     environment_only = {"clickhouse_external_password"}
-    expected = declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only
+    # resolve_sizing.py images writes these into node-images.auto.tfvars.json, and both default.
+    node_images = {"node_image", "instance_ami_id"}
+    expected = (
+        declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only - node_images
+    )
     assert set(render()) == expected
 
 

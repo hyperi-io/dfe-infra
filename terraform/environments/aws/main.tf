@@ -142,6 +142,7 @@ module "cluster" {
   addon_versions     = var.eks_addon_versions
   node_pools         = var.node_pools
   resolved_shapes    = var.resolved_shapes
+  node_image         = var.node_image
   network            = var.network
   endpoint           = var.endpoint
   dns                = { private_zone = var.dns.private_zone }
@@ -254,6 +255,7 @@ module "edge" {
       zone          = var.edge.tunnel.address.zone
       instance_type = local.forwarder_shape == null ? null : local.forwarder_shape.instance_types[0]
       root_volume   = local.forwarder_shape == null ? null : local.forwarder_shape.root_volume
+      ami_id        = local.forwarder_shape == null ? null : var.instance_ami_id
     }
     openvpn       = var.edge.tunnel.openvpn
     source_ranges = var.edge.tunnel.source_ranges
@@ -644,6 +646,7 @@ module "toolbox" {
 
   instance_type = local.toolbox_shape.instance_types[0]
   root_volume   = local.toolbox_shape.root_volume
+  ami_id        = var.instance_ami_id
   ttl_minutes   = var.toolbox.ttl_minutes
   tool_versions = var.toolbox.tool_versions
 

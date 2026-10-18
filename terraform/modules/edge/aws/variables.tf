@@ -75,6 +75,13 @@ variable "tunnel" {
     byte and does nothing else, and within a burstable family the baseline
     network bandwidth rises with the size.
 
+    address.ami_id is the newest AL2023 arm64 AMI in the region, auto-selected
+    by scripts/resolve_sizing.py images from the SSM parameter
+    /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else
+    the root's tfvars instance_ami_id. The forwarder is rebuilt rather than
+    carried through a long life, so the newest id at the last resolve is the
+    right one. Read on mode forwarder alone, and refused there when null.
+
     address.zone pins the instance to one availability zone, because a hop to a
     node in another zone crosses a boundary billed per GB. Empty takes the
     network's first zone, and the public subnet in that zone is what the
@@ -96,6 +103,7 @@ variable "tunnel" {
     address = optional(object({
       mode          = optional(string, "byo")
       instance_type = optional(string)
+      ami_id        = optional(string)
       root_volume = optional(object({
         type     = string
         size_gib = number
@@ -119,12 +127,17 @@ variable "tunnel" {
 
   validation {
     condition     = var.tunnel.address.mode != "forwarder" || can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.tunnel.address.instance_type))
-    error_message = "tunnel.address.instance_type must name a Graviton (arm64) family on mode forwarder -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${coalesce(var.tunnel.address.instance_type, "nothing")}."
+    error_message = "tunnel.address.instance_type must name a Graviton (arm64) family on mode forwarder -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module launches. Got ${coalesce(var.tunnel.address.instance_type, "nothing")}."
   }
 
   validation {
     condition     = var.tunnel.address.mode != "forwarder" || var.tunnel.address.root_volume != null
     error_message = "tunnel.address.root_volume must carry the forwarder's root disk type and size on mode forwarder -- the root reads both from the resolved shape."
+  }
+
+  validation {
+    condition     = var.tunnel.address.mode != "forwarder" || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.tunnel.address.ami_id))
+    error_message = "tunnel.address.ami_id must be an AMI id on mode forwarder, and none was resolved. Run scripts/resolve_sizing.py images, or set instance_ami_id in terraform.tfvars. Got ${coalesce(var.tunnel.address.ami_id, "nothing")}."
   }
 
   validation {
