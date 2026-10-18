@@ -29,6 +29,8 @@ dfe-engine creates every table as an argumentless `Replicated*` engine inside a 
 
 The `user_directories` list has to replace the image's default rather than add to it. An appended `<replicated>` sits behind `local_directory`, which then takes every `CREATE ROLE`. Keeper's log and snapshots live on the data PVC beside the tables, so the two are never lost apart. The Keeper identity is generated once and never rotated, because the server can read only the znodes created under it. Under another value the server exits with code 231 at start. In single mode `config.d/dfe-listen.xml` replaces the image's `docker_related_config.xml`, so Keeper, raft and interserver bind loopback and no other pod reaches them, and only 8123, 9000 and 8443 listen on the pod's address. Rationale and the reference config: dfe-schemas `docs/clickhouse-platform.md`.
 
+In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, and `network-policies` leaves the keeper pods out of `data-ingress-policy` (`operatorIngressScoped`). Only the operator and the ClickHouse servers that reference the keeper reach 2181, 2281 and 9123, and only the other keepers reach raft on 9234. Policies are additive, so while `data-ingress-policy` selected them every DFE, data and operator namespace reached every port on the keepers. Pinned by `scripts/tests/test_keeper_ingress.py`.
+
 ## History and rationale
 
 Until ClickHouse published an operator of its own, the Kubernetes options were

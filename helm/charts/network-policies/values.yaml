@@ -36,6 +36,15 @@ operatorNamespaces:
   strimzi: strimzi
   clickhouse: clickhouse-operator-system
 
+# Data-namespace pods whose ingress their operator's own NetworkPolicy states whole, by the label
+# the operator writes on them. Policies are additive, so a pod data-ingress-policy selects takes
+# every port from every DFE, data and operator namespace, and nothing narrower can take that back.
+# Keeper is here because its client port holds every replicated table's coordination: the
+# ClickHouse operator admits it only from itself and the clusters referencing the keeper
+# (clickhouse-cluster's KeeperCluster turns that policy on). Empty selects every pod as before.
+operatorIngressScoped:
+  clickhouse.com/role: [clickhouse-keeper]
+
 # Pod label that takes a workload OUT of the namespace-wide egress baseline.
 # NetworkPolicies are additive: a pod the baseline selects can always reach the
 # whole namespace, and nothing added later narrows that. A workload whose

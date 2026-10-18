@@ -8,7 +8,17 @@ metadata:
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
+  {{- with $.Values.operatorIngressScoped }}
+  podSelector:
+    matchExpressions:
+      {{- range $key, $values := . }}
+      - key: {{ $key | quote }}
+        operator: NotIn
+        values: {{ toJson $values }}
+      {{- end }}
+  {{- else }}
   podSelector: {}
+  {{- end }}
   policyTypes:
     - Ingress
   ingress:

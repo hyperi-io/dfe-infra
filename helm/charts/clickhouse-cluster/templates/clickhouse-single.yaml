@@ -269,6 +269,7 @@ data:
       <interserver_listen_host>127.0.0.1</interserver_listen_host>
       <http_port remove="remove"/>
       <tcp_port remove="remove"/>
+      <!-- The client listeners are IPv4 only: a :: entry fails with EAI in docker and EADDRINUSE on kind. -->
       <protocols>
         <http><type>http</type><host>0.0.0.0</host><port>8123</port><description>http</description></http>
         <tcp><type>tcp</type><host>0.0.0.0</host><port>9000</port><description>native protocol</description></tcp>
