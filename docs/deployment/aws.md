@@ -269,8 +269,8 @@ the egress ports.
   Standard cluster to Express later -- authenticated both ways: SASL/SCRAM
   for every DFE app, and SASL/IAM for the in-cluster bootstrap Job alone,
   since Kafka ACLs live in the data plane and tofu cannot write the first
-  one. That Job creates the landing and DLQ topics and the SCRAM principal's
-  ACLs, and exits non-zero on any failure.
+  one. That Job writes only the SCRAM principal's ACLs and exits non-zero on
+  any failure. dfe-engine creates the topics.
 - MSK's broker-count scaler, its telemetry sink and its rebalancing
   behaviour are operational detail, not part of the provider choice -- see
   [Kafka telemetry and autoscaling](aws-operations.md#kafka-telemetry-and-autoscaling)

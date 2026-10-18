@@ -6,8 +6,8 @@
 // FIRST ACL unless it is already permitted -- and SASL/IAM is the way out,
 // because there the IAM policy IS the authorisation and no ACL has to exist.
 //
-// The Job itself -- the SCRAM principal's ACLs and the landing topics -- is
-// chart work. This module mints what it needs and outputs the role.
+// The Job itself is chart work: it sets the SCRAM principal's ACLs and creates
+// no topic. This module mints what it needs and outputs the role.
 
 locals {
   // MSK's IAM resource names. A topic and a group ARN both carry the cluster
@@ -41,9 +41,8 @@ data "aws_iam_policy_document" "bootstrap" {
     resources = [aws_msk_cluster.this.arn]
   }
 
-  // Topic scope: create the landing and DLQ topics, set their partitions and
-  // retention, and produce and consume for the smoke check that proves the
-  // cluster works before DFE is pointed at it.
+  // Topic scope. The Job sets ACLs on topics and creates none: dfe-engine
+  // creates the landing and DLQ topics at its own startup.
   statement {
     effect = "Allow"
 
