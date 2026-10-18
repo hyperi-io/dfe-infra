@@ -25,6 +25,11 @@
 #                        row committed at 5 on main_land
 #   engine-offsets       what dfe-engine's python3 prints for the OffsetFetch fallback.
 #                        Absent, it prints a librdkafka error and exits 1
+#   redpanda             the strimzi broker pod ships rpk, so CORE 3 takes the rpk path
+#   rpk-groups           what `rpk group list` prints
+#   rpk-describe         what `rpk group describe` prints
+#   rpk-describe-error   `rpk group describe` prints this to stderr and exits 1
+# Each rpk call the broker pod runs is logged, less `rpk`, to rpk.log.
 # An engine exec of `python3 -` runs pod-bin/python3 under engine-env, which logs its
 # argv to python.log, the DFE_KAFKA_SASL_PASSWORD it was handed to python-env.log and
 # the script it read to python-script.py.
@@ -217,7 +222,20 @@ case "$*" in
         echo "dfe-kafka-broker-0 Running"; exit 0 ;;
     "-n strimzi get pods "*) exit 0 ;;
     "-n strimzi get secret dfe-kafka-user "*) printf 'YnJva2VyLXB3'; exit 0 ;;
-    "-n strimzi exec dfe-kafka-broker-0 -- sh -c command -v rpk") exit 1 ;;
+    "-n strimzi exec dfe-kafka-broker-0 -- sh -c command -v rpk") [[ -f "${STUB_DIR}/redpanda" ]]; exit $? ;;
+    "-n strimzi exec dfe-kafka-broker-0 -- rpk "*)
+        printf '%s\n' "${args[*]:6}" >> "${STUB_DIR}/rpk.log"
+        case "${args[*]:6}" in
+            "topic list") echo main_land ;;
+            "group list") cat "${STUB_DIR}/rpk-groups" 2>/dev/null ;;
+            "group describe "*)
+                if [[ -f "${STUB_DIR}/rpk-describe-error" ]]; then
+                    cat "${STUB_DIR}/rpk-describe-error" >&2
+                    exit 1
+                fi
+                cat "${STUB_DIR}/rpk-describe" 2>/dev/null ;;
+        esac
+        exit 0 ;;
     "-n strimzi exec -i dfe-kafka-broker-0 -- sh -s") run_kafka_script; exit $? ;;
     "apply -f -") cat > "${STUB_DIR}/applied.yaml"; exit 0 ;;
     "-n dfe-test wait --for=condition=Ready pod/"*)
@@ -529,6 +547,58 @@ GROUP_CHECK="consumer group dfe-loader is committed on main_land (loader CONSUME
     run bash "${SMOKE}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"[FAIL] infra OTel logs landing fresh"*$'\n'"    output: "* ]]
+}
+
+# An in-cluster Redpanda broker: ns/strimzi holds a broker pod that ships rpk.
+redpanda_broker() {
+    touch "${STUB_DIR}/strimzi" "${STUB_DIR}/redpanda" "${STUB_DIR}/rpk.log"
+    printf '%s\n' "BROKER  GROUP         STATE" "0       dfe-archiver  Stable" > "${STUB_DIR}/rpk-groups"
+    export DFE_PROFILE=single
+}
+
+# `rpk group describe dfe-loader` for a group with a commit of 5 on main_land.
+rpk_loader_committed() {
+    printf '%s\n' \
+        "GROUP        dfe-loader" \
+        "COORDINATOR  0" \
+        "STATE        Stable" \
+        "BALANCER     cooperative-sticky" \
+        "MEMBERS      1" \
+        "TOTAL-LAG    0" \
+        "" \
+        "TOPIC      PARTITION  CURRENT-OFFSET  LOG-START-OFFSET  LOG-END-OFFSET  LAG  MEMBER-ID       CLIENT-ID   HOST" \
+        "main_land  0          5               0                 5               0    dfe-loader-1-a  dfe-loader  10.0.0.7" > "${STUB_DIR}/rpk-describe"
+}
+
+@test "on Redpanda the loader's own group is described by name and passes on its commit" {
+    redpanda_broker
+    rpk_loader_committed
+    run bash "${SMOKE}"
+    [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 5, read by rpk group describe"* ]]
+    [[ "$(cat "${STUB_DIR}/rpk.log")" == *"group describe dfe-loader"* ]]
+    [[ "$(cat "${STUB_DIR}/rpk.log")" != *"group list"* ]]
+    [ ! -s "${STUB_DIR}/python.log" ]
+}
+
+@test "expected failure: on Redpanda a group that is not dfe-loader does not pass the loader's check" {
+    redpanda_broker
+    # The loader's group has never committed, so the broker reports it Dead and lists no offset.
+    printf '%s\n' "GROUP        dfe-loader" "COORDINATOR  0" "STATE        Dead" "MEMBERS      0" > "${STUB_DIR}/rpk-describe"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] ${GROUP_CHECK}"$'\n'"    rpk group describe, no offset above 0 for dfe-loader: GROUP"* ]]
+    [[ "${output}" != *"[PASS] ${GROUP_CHECK}"* ]]
+    [[ "${output}" != *"[PASS] a consumer group is committed"* ]]
+    [ ! -s "${STUB_DIR}/python.log" ]
+}
+
+@test "on Redpanda an rpk describe that errors falls back to OffsetFetch from dfe-engine" {
+    redpanda_broker
+    echo "unable to describe groups: NOT_COORDINATOR: This is not the correct coordinator." > "${STUB_DIR}/rpk-describe-error"
+    printf 'committed 2 over 1 partition(s) of main_land\n' > "${STUB_DIR}/engine-offsets"
+    run bash "${SMOKE}"
+    [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 2, read by librdkafka OffsetFetch from dfe-engine"$'\n'"    rpk group describe failed first: unable to describe groups: NOT_COORDINATOR"* ]]
+    [ "$(cat "${STUB_DIR}/python.log")" = "- dfe-loader main_land" ]
 }
 
 @test "an in-cluster broker is still reached in ns/strimzi over SASL_PLAINTEXT" {

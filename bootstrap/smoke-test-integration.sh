@@ -214,6 +214,51 @@ engine_group_offsets() {
   printf '%s' "$ENGINE_GROUP_OFFSETS_PY" | kubectl -n "$NS_APP" exec -i deploy/dfe-engine -c dfe-engine -- python3 - "$LOADER_GROUP" "$KAFKA_TOPIC" 2>&1
 }
 
+# The loader's offsets on the topic, summed, or empty when none is above 0. Any GROUP column must name the loader.
+loader_offsets_in() {
+  printf '%s\n' "$1" | awk -v g="$LOADER_GROUP" -v t="$KAFKA_TOPIC" '
+    { header = 0; for (i = 1; i <= NF; i++) if ($i == "CURRENT-OFFSET") header = 1 }
+    header { gc = tc = oc = 0; for (i = 1; i <= NF; i++) { if ($i == "GROUP") gc = i; if ($i == "TOPIC") tc = i; if ($i == "CURRENT-OFFSET") oc = i }; next }
+    tc && $tc == t && (!gc || $gc == g) && $oc ~ /^[0-9]+$/ { s += $oc }
+    END { if (s > 0) print s }'
+}
+
+# The tools print their failures to stdout and can still exit 0, so an Error line is a failed read.
+read_errored() {
+  [ "$1" -ne 0 ] || printf '%s\n' "$2" | awk '/^(Error|ERROR)/ { e = 1 } END { exit !e }'
+}
+
+# loader_group_check READER READ_FN: the loader's own group, since the archiver commits on _land
+# too. MSK Express can answer kafka-consumer-groups.sh with UnknownServerException, so only a read
+# that errors falls back to OffsetFetch from dfe-engine.
+loader_group_check() {
+  local reader="$1" read_fn="$2"
+  local name="consumer group ${LOADER_GROUP} is committed on ${KAFKA_TOPIC} (loader CONSUMED)"
+  local answer rc offset fallback
+  answer="$("$read_fn")"
+  rc=$?
+  offset="$(loader_offsets_in "$answer")"
+  if [ -n "$offset" ]; then
+    pass "${name}: offset ${offset}, read by ${reader}"
+    return
+  fi
+  if ! read_errored "$rc" "$answer"; then
+    fail "$name"
+    first_line_of "${reader}, no offset above 0 for ${LOADER_GROUP}" "$answer"
+    return
+  fi
+  fallback="$(engine_group_offsets)"
+  offset="$(printf '%s\n' "$fallback" | awk '$1 == "committed" && $2 ~ /^[0-9]+$/ { n = $2 } END { if (n > 0) print n }')"
+  if [ -n "$offset" ]; then
+    pass "${name}: offset ${offset}, read by librdkafka OffsetFetch from dfe-engine"
+    first_line_of "${reader} failed first" "$answer"
+  else
+    fail "$name"
+    first_line_of "$reader" "$answer"
+    first_line_of "dfe-engine OffsetFetch" "$fallback"
+  fi
+}
+
 # Run by the ClickHouse pod's shell: a password line on stdin becomes clickhouse-client's CLICKHOUSE_PASSWORD, so no argv carries it.
 # shellcheck disable=SC2016  # Expanded inside the ClickHouse pod, not here.
 CH_CLIENT_SH='if IFS= read -r pw; then export CLICKHOUSE_PASSWORD="$pw"; fi; exec clickhouse-client "$@" </dev/null'
@@ -634,8 +679,10 @@ if [ -n "$KPOD" ]; then
       "kubectl -n $NS_KAFKA exec $KPOD -- rpk topic list 2>/dev/null | grep -qw '${KAFKA_TOPIC}'"
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- rpk topic describe ${KAFKA_TOPIC} -p 2>/dev/null | awk 'NR>1{s+=\$5} END{print s+0}')\" -gt 0"
-    check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "kubectl -n $NS_KAFKA exec $KPOD -- rpk group list 2>/dev/null | awk 'NR > 1 && NF { n++ } END { exit !n }'"
+    rpk_group_read() {
+      kubectl -n "$NS_KAFKA" exec "$KPOD" -- rpk group describe "$LOADER_GROUP" 2>&1
+    }
+    loader_group_check "rpk group describe" rpk_group_read
   else
     # apache/kafka KRaft or Strimzi. Two things the first cut got wrong, both
     # live-proven broken on Strimzi 2026-07-17 (see scripts/deploy_matrix.py
@@ -712,48 +759,10 @@ KSH
     # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
-    # The loader's group, by name: the archiver commits on the _land topics too, so any
-    # group's offset would pass a loader that never commits.
     loader_group_read() {
       kafka_cli "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --group ${LOADER_GROUP} --offsets"
     }
-    # The loader's committed offsets on the topic in a --describe answer, summed, or empty when none is above 0.
-    loader_offsets_in() {
-      printf '%s\n' "$1" | awk -v g="$LOADER_GROUP" -v t="$KAFKA_TOPIC" '$1 == g && $2 == t && $4 ~ /^[0-9]+$/ { s += $4 } END { if (s > 0) print s }'
-    }
-    # The tool prints its failures to stdout and can still exit 0, so an Error line is a failed read.
-    read_errored() {
-      [ "$1" -ne 0 ] || printf '%s\n' "$2" | awk '/^Error/ { e = 1 } END { exit !e }'
-    }
-    # MSK Express can answer kafka-consumer-groups.sh with UnknownServerException, so a read that
-    # errors falls back to OffsetFetch from dfe-engine. A tool that answers is not second-guessed.
-    loader_group_check() {
-      local name="consumer group ${LOADER_GROUP} is committed on ${KAFKA_TOPIC} (loader CONSUMED)"
-      local answer rc offset fallback
-      answer="$(loader_group_read)"
-      rc=$?
-      offset="$(loader_offsets_in "$answer")"
-      if [ -n "$offset" ]; then
-        pass "${name}: offset ${offset}, read by kafka-consumer-groups.sh"
-        return
-      fi
-      if ! read_errored "$rc" "$answer"; then
-        fail "$name"
-        first_line_of "kafka-consumer-groups.sh, no offset above 0 for ${LOADER_GROUP}" "$answer"
-        return
-      fi
-      fallback="$(engine_group_offsets)"
-      offset="$(printf '%s\n' "$fallback" | awk '$1 == "committed" && $2 ~ /^[0-9]+$/ { n = $2 } END { if (n > 0) print n }')"
-      if [ -n "$offset" ]; then
-        pass "${name}: offset ${offset}, read by librdkafka OffsetFetch from dfe-engine"
-        first_line_of "kafka-consumer-groups.sh failed first" "$answer"
-      else
-        fail "$name"
-        first_line_of kafka-consumer-groups.sh "$answer"
-        first_line_of "dfe-engine OffsetFetch" "$fallback"
-      fi
-    }
-    loader_group_check
+    loader_group_check kafka-consumer-groups.sh loader_group_read
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,
     # and the file backend is an EROFS no-op under the read-only rootfs.

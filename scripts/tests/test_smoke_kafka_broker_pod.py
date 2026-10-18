@@ -342,27 +342,41 @@ def test_a_redpanda_broker_is_found_by_its_label() -> None:
         "redpanda",
     )
     sidecar = pod("redpanda-console-7d9f", {"app.kubernetes.io/name": "console"}, "other")
-    stdout, counts = smoke([sidecar, broker], rpk_groups="BROKER GROUP STATE\n0 dfe-loader Stable")
+    stdout, counts = smoke([sidecar, broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER)
 
     expect("the broker is used", execs(counts, "redpanda-0") > 0, str(counts))
     expect("the other pod is not", execs(counts, "redpanda-console-7d9f") == 0, str(counts))
     expect("the topic is found", "[PASS] topic main_land exists (created)" in stdout, stdout)
     expect(
-        "the group is found",
-        "[PASS] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
+        "the loader's group is found",
+        f"[PASS] {GROUP_CHECK}: offset 5, read by rpk group describe" in stdout,
         stdout,
     )
+    expect("it is described by name", counts.get("rpk_described:dfe-loader") == 1, str(counts))
 
 
-def test_an_rpk_group_list_with_only_its_header_is_not_a_group() -> None:
+# What `rpk group list` prints with only the archiver's group on the broker.
+RPK_GROUPS = "BROKER  GROUP         STATE\n0       dfe-archiver  Stable"
+# What `rpk group describe dfe-loader` prints for a group with a commit of 5 on main_land.
+RPK_LOADER = (
+    "GROUP        dfe-loader\nCOORDINATOR  0\nSTATE        Stable\nMEMBERS      1\n"
+    "TOTAL-LAG    0\n\n"
+    "TOPIC      PARTITION  CURRENT-OFFSET  LOG-START-OFFSET  LOG-END-OFFSET  LAG  MEMBER-ID\n"
+    "main_land  0          5               0                 5               0    dfe-loader-1-a"
+)
+
+
+def test_on_redpanda_another_groups_presence_is_not_the_loaders_commit() -> None:
     broker = pod("redpanda-0", {"cluster.redpanda.com/broker": "true"}, "redpanda")
-    stdout, _ = smoke([broker], rpk_groups="BROKER GROUP STATE")
-
-    expect(
-        "the group check fails",
-        "[FAIL] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
-        stdout,
-    )
+    never_committed = "GROUP        dfe-loader\nCOORDINATOR  0\nSTATE        Dead\nMEMBERS      0"
+    for name, describe in (
+        ("a group that never committed", never_committed),
+        ("another topic's commit", RPK_LOADER.replace("main_land", "other_land")),
+        ("no committed offset", RPK_LOADER.replace("5               0", "-               0")),
+    ):
+        stdout, counts = smoke([broker], rpk_groups=RPK_GROUPS, rpk_describe=describe)
+        expect(f"{name} fails the check", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
+        expect(f"{name}: no fallback is asked", "engine_offsets" not in counts, str(counts))
 
 
 DLQ_RETENTION = "DLQ retention is longer than the data-topic default"

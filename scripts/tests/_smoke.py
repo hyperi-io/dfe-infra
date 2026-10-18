@@ -21,7 +21,9 @@ topic describe shows (604800000 when absent, an authorisation error when None).
 A pod with the role `other` ships
 the Kafka tools and runs no broker, as Strimzi's cruise-control pod does. Every
 exec into one of its pods is counted as `kafka_exec:<pod>`, and each groups read
-as `groups_asked:<group>` (`--all-groups` for every group).
+as `groups_asked:<group>` (`--all-groups` for every group). A redpanda pod answers
+`rpk group list` with `rpk_groups` and `rpk group describe <group>` with
+`rpk_describe`, each describe counted as `rpk_described:<group>`.
 
 An exec of `python3 -` in dfe-engine runs the script it is handed for real, against
 a stand-in `confluent_kafka` that answers OffsetFetch from `engine_offsets`: a group
@@ -141,6 +143,9 @@ def kafka_rpk(rest):
         print("0 0 0 5")
     elif rest[:2] == ["group", "list"]:
         print(kafka.get("rpk_groups", ""))
+    elif rest[:2] == ["group", "describe"]:
+        bump("rpk_described:" + rest[2])
+        print(kafka.get("rpk_describe", ""))
     sys.exit(0)
 
 
