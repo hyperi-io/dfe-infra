@@ -53,6 +53,8 @@ groupAuthorization -- the CIDR-only `authorization:` block a group's routes
   carry, deny rules ahead of the allow rule, or nothing for an open group with
   no deny list. Takes (dict "ctx" $ "group" <g> "indent" <n>).
 groupSummary -- one line naming every web group's state, for annotations.
+groupRanges  -- JSON {console, api, admin, selfRanges}: the CIDRs each web
+  group's policies admit, and exposure.selfRanges, for annotations.
 lbSourceRanges -- JSON array of the load balancer's source ranges.
 oidcFronted  -- JSON array of "<ns>/<route>" an OIDC SecurityPolicy targets, so
   no second policy lands on the same route.
@@ -348,6 +350,16 @@ true
 {{- $parts = append $parts (printf "%s=%s" $g $f.state) -}}
 {{- end -}}
 {{- join "," $parts -}}
+{{- end -}}
+
+{{- /* An off group renders no route, so it admits no address at all. */ -}}
+{{- define "envoy-gateway-config.groupRanges" -}}
+{{- $ranges := dict "selfRanges" (.ctx.Values.exposure.selfRanges | default list) -}}
+{{- range $g := list "console" "api" "admin" -}}
+{{- $f := include "envoy-gateway-config.groupFence" (dict "ctx" $.ctx "group" $g) | fromJson -}}
+{{- $_ := set $ranges $g (ternary (list) $f.allow (eq $f.state "off")) -}}
+{{- end -}}
+{{- toJson $ranges -}}
 {{- end -}}
 
 {{- /* One Service carries every listener, so the load balancer admits the union

@@ -4,12 +4,18 @@ Helpers shared by the NodePool and EC2NodeClass templates.
   karpenter-pools.nodeClass  -- the pool's EC2NodeClass settings, its own
                                 overrides layered over the chart defaults
   karpenter-pools.generation -- the generation number a family name carries
+  karpenter-pools.terminationGracePeriod -- the pool's drain bound, its own over
+                                the chart's
   karpenter-pools.validate   -- the render guards; templates/validate.yaml runs them
 */}}
 
 {{- define "karpenter-pools.nodeClass" -}}
 {{- $base := deepCopy .ctx.Values.karpenter.nodeClass -}}
 {{- mergeOverwrite $base (deepCopy (.pool.nodeClass | default dict)) | toYaml -}}
+{{- end -}}
+
+{{- define "karpenter-pools.terminationGracePeriod" -}}
+{{- .pool.terminationGracePeriod | default .ctx.Values.karpenter.terminationGracePeriod | default "" | toString -}}
 {{- end -}}
 
 {{- /* m9g -> 9, r9gd -> 9, c8gn -> 8. The first digit run after the class
@@ -68,6 +74,12 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 
 {{- if not $pool.expireAfter -}}
 {{- fail (printf "karpenter.pools.%s.expireAfter is empty -- the CRD defaults it to 720h, so leaving it out is a forced 30-day replacement rather than no expiry. Say Never when that is what is meant" $name) -}}
+{{- end -}}
+
+{{- /* Karpenter's own CRD pattern. With no value a blocked drain waits forever. */ -}}
+{{- $grace := include "karpenter-pools.terminationGracePeriod" (dict "ctx" $.ctx "pool" $pool) -}}
+{{- if not (regexMatch "^([0-9]+(s|m|h))+$" $grace) -}}
+{{- fail (printf "karpenter.pools.%s resolves terminationGracePeriod %q -- Karpenter takes digits then s, m or h, such as 24h, and with none a drain a PodDisruptionBudget blocks waits forever. Set karpenter.terminationGracePeriod, or the pool's own" $name $grace) -}}
 {{- end -}}
 
 {{- if not $pool.limits -}}

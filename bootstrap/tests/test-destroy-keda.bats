@@ -20,6 +20,9 @@
 #                      karpenter-pools is deleted; before that they always show
 #   nodeclaims-unreadable  listing the NodeClaims fails
 #   owner-patch-refused  patching an Application by its plain name fails
+#   pdbs               "<namespace>|<name>" PodDisruptionBudgets
+#   pods               "<namespace>|<name>|<karpenter.sh/do-not-disrupt>" pods
+#   held-apps          Application names the listing prints until the operators' are deleted
 # aws is a stub too: it logs every call to aws.log, answers the three describes
 # from security-groups.json, interfaces.json and instances.json, refuses every
 # delete with an error naming an account when aws-refuses exists, and refuses a
@@ -76,6 +79,15 @@ case "$*" in
     "-n argocd delete applications.argoproj.io "*karpenter-pools-dfe-aws-test*)
         : > "${STUB_DIR}/pools-deleted"
         ;;
+    "-n argocd delete applications.argoproj.io "*strimzi-kafka-operator-dfe-aws-test*)
+        : > "${STUB_DIR}/operators-deleted"
+        ;;
+    "get poddisruptionbudgets.policy -A "*)
+        [[ -f "${STUB_DIR}/pdbs" ]] && cat "${STUB_DIR}/pdbs"
+        ;;
+    "get pods -A "*)
+        [[ -f "${STUB_DIR}/pods" ]] && cat "${STUB_DIR}/pods"
+        ;;
     "get nodeclaims.karpenter.sh "*)
         [[ -f "${STUB_DIR}/nodeclaims-unreadable" ]] && exit 1
         [[ -f "${STUB_DIR}/nodeclaim-polls" ]] || exit 0
@@ -104,6 +116,9 @@ case "$*" in
     "-n argocd get applications.argoproj.io "*)
         if [[ -f "${STUB_DIR}/stuck" && ! -f "${STUB_DIR}/patched" ]]; then
             echo "application.argoproj.io/dfe-receiver"
+        fi
+        if [[ -f "${STUB_DIR}/held-apps" && ! -f "${STUB_DIR}/operators-deleted" ]]; then
+            cat "${STUB_DIR}/held-apps"
         fi
         ;;
     "delete ns argocd "*)
@@ -707,6 +722,129 @@ instances() {
     [ "$status" -eq 0 ]
     [[ "${output}" =~ WARN:\ Karpenter\ still\ holds\ NodeClaims\ the\ cluster\ would\ not\ list\ after\ ([0-9]+)s ]]
     [ "${BASH_REMATCH[1]}" -ge 600 ]
+}
+
+# The same Applications as layer1-addons.yaml and layer2-platform.yaml render them: a
+# digest-pinned chart is an OCI source carrying a repoURL and path "." but no chart.
+oci_controllers() {
+    printf '%s\n' \
+        'aws-load-balancer-controller-dfe-aws-test  .  oci://public.ecr.aws/eks/aws-load-balancer-controller' \
+        'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
+        'karpenter-pools-dfe-aws-test     helm/charts/karpenter-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'dfe-receiver-default-dfe-aws-test  .  oci://ghcr.io/hyperi-io/charts/dfe-receiver' > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+@test "a digest-pinned Karpenter controller still outlives every NodeClaim its pools launched" {
+    oci_controllers 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first pools last_claims controller
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"dfe-receiver-default-dfe-aws-test"* ]]
+    [[ "${first}" != *"karpenter"* ]]
+    [[ "${first}" != *"aws-load-balancer-controller"* ]]
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' <<<"${log_text}")" -eq 0 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "every namespace ESO or cert-manager clears a finalizer in goes before that controller does" {
+    # shellcheck disable=SC2016 # the stub expands $* when it runs, not here
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text argocd gateway cert_manager_ns cert_manager eso eso_ns
+    log_text="$(log)"
+    argocd="$(line_of 'delete ns argocd ' "${log_text}")"
+    gateway="$(line_of 'delete ns envoy-gateway-system ' "${log_text}")"
+    cert_manager="$(line_of 'helm uninstall cert-manager -n cert-manager' "${log_text}")"
+    cert_manager_ns="$(line_of 'delete ns cert-manager ' "${log_text}")"
+    eso="$(line_of 'helm uninstall external-secrets -n external-secrets' "${log_text}")"
+    eso_ns="$(line_of 'delete ns external-secrets ' "${log_text}")"
+    [ -n "${argocd}" ]
+    [ -n "${gateway}" ]
+    [ -n "${cert_manager}" ]
+    [ -n "${cert_manager_ns}" ]
+    [ -n "${eso}" ]
+    [ -n "${eso_ns}" ]
+    [ "${argocd}" -lt "${cert_manager}" ]
+    [ "${gateway}" -lt "${cert_manager}" ]
+    [ "${cert_manager}" -lt "${cert_manager_ns}" ]
+    [ "${cert_manager_ns}" -lt "${eso}" ]
+    [ "${eso}" -lt "${eso_ns}" ]
+    [ "$(grep -c -- '^delete ns cert-manager ' <<<"${log_text}")" -eq 1 ]
+}
+
+@test "the PodDisruptionBudgets and do-not-disrupt pods of a torn-down namespace go before the pools, and no other tenant's" {
+    karpenter_deployment 0
+    printf '%s\n' 'dfe-test|dfe-receiver' 'kube-system|coredns' > "${STUB_DIR}/pdbs"
+    printf '%s\n' 'dfe-test|dfe-loader-0|true' 'dfe-test|dfe-ui-1|' 'other-tenant|theirs|true' > "${STUB_DIR}/pods"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text released pdb annotated pools
+    log_text="$(log)"
+    released="$(last_line_of 'get services -A' "${log_text}")"
+    pdb="$(line_of '-n dfe-test delete poddisruptionbudgets.policy dfe-receiver --ignore-not-found --wait=false' "${log_text}")"
+    annotated="$(line_of '-n dfe-test annotate pod dfe-loader-0 karpenter.sh/do-not-disrupt-' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${pdb}" ]
+    [ -n "${annotated}" ]
+    [ -n "${pools}" ]
+    [ "${released}" -lt "${pdb}" ]
+    [ "${pdb}" -lt "${pools}" ]
+    [ "${annotated}" -lt "${pools}" ]
+    [[ "${log_text}" != *"-n kube-system delete poddisruptionbudgets"* ]]
+    [[ "${log_text}" != *"annotate pod dfe-ui-1"* ]]
+    [[ "${log_text}" != *"-n other-tenant annotate"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+# A scale deployment's three data operators beside the data app they finalize and the load balancer controller.
+data_operators() {
+    printf '%s\n' \
+        'strimzi-kafka-operator-dfe-aws-test strimzi-kafka-operator  https://strimzi.io/charts/' \
+        'clickhouse-operator-helm-dfe-aws-test clickhouse-operator-helm  ghcr.io/clickhouse' \
+        'redpanda-operator-dfe-aws-test operator  https://charts.redpanda.com' \
+        'kafka-dfe-aws-test    helm/charts/kafka https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller  https://aws.github.io/eks-charts' \
+        > "${STUB_DIR}/applications"
+    printf '%s\n' \
+        application.argoproj.io/strimzi-kafka-operator-dfe-aws-test \
+        application.argoproj.io/clickhouse-operator-helm-dfe-aws-test \
+        application.argoproj.io/redpanda-operator-dfe-aws-test > "${STUB_DIR}/held-apps"
+}
+
+@test "the data operators outlive step 1, and go in step 3 only after the CRs they finalize" {
+    data_operators
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first rest kafka redpanda operators
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"kafka-dfe-aws-test"* ]]
+    [[ "${first}" != *"operator"* ]]
+    rest="$(grep -- '^-n argocd delete applications.argoproj.io .*aws-load-balancer-controller-dfe-aws-test' <<<"${log_text}")"
+    [[ "${rest}" == *"kafka-dfe-aws-test"* ]]
+    [[ "${rest}" != *"operator-"* ]]
+    [[ "${log_text}" != *"-n argocd delete applications.argoproj.io --all"* ]]
+    kafka="$(line_of '-n strimzi delete kafka --all' "${log_text}")"
+    redpanda="$(line_of '-n strimzi delete redpandas.cluster.redpanda.com --all' "${log_text}")"
+    operators="$(line_of '-n argocd delete applications.argoproj.io strimzi-kafka-operator-dfe-aws-test clickhouse-operator-helm-dfe-aws-test redpanda-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${kafka}" ]
+    [ -n "${redpanda}" ]
+    [ -n "${operators}" ]
+    [ "${kafka}" -lt "${operators}" ]
+    [ "${redpanda}" -lt "${operators}" ]
+    # Neither wait counts an operator still held, so neither runs to its cap.
+    [[ "${output}" != *"WARN"* ]]
 }
 
 @test "a cluster without karpenter-pools never waits on NodeClaims" {

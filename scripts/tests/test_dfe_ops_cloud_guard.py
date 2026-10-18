@@ -21,6 +21,7 @@ Runner is asked to stop, or stops at a deadline a few seconds out.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -1931,6 +1932,49 @@ def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(tmp
                    deadline=time.monotonic() + 2, stop_timeout=1)
     assert ready.exists()
     assert time.monotonic() - started < 10
+
+
+class _DeadlineTeardown:
+    """A teardown whose one child sleeps past its deadline, as the workload teardown did."""
+
+    def __init__(self) -> None:
+        self.dispositions = ""
+        self.stopped_after = 0.0
+
+    def run(self) -> None:
+        probe = "import signal; print(int(signal.getsignal(signal.SIGTERM)), int(signal.getsignal(signal.SIGINT)))"
+        self.dispositions = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, encoding="utf-8", check=True
+        ).stdout.strip()
+        started = time.monotonic()
+        with contextlib.suppress(guard_mod.DeadlineError):
+            guard_mod.Runner().run([sys.executable, "-c", "import time; time.sleep(60)"], new_session=True,
+                                   deadline=time.monotonic() + 1, stop_timeout=30)
+        self.stopped_after = time.monotonic() - started
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_expected_fail_a_child_the_teardown_starts_still_stops_on_its_deadline_sigterm() -> None:
+    """An ignored SIGTERM passes to every child, which only SIGKILL then ends, stop_timeout later."""
+    teardown = _DeadlineTeardown()
+    with guard_mod.teardown_on_exit(teardown):
+        pass
+    assert teardown.dispositions == f"{int(signal.SIG_DFL)} {int(signal.SIG_IGN)}", teardown.dispositions
+    assert teardown.stopped_after < 10, teardown.stopped_after
+
+
+def test_the_guard_itself_outlives_a_sigterm_while_the_teardown_runs() -> None:
+    class Signalled:
+        survived = False
+
+        def run(self) -> None:
+            os.kill(os.getpid(), signal.SIGTERM)
+            Signalled.survived = True
+
+    with guard_mod.teardown_on_exit(Signalled()):
+        pass
+    assert Signalled.survived
+    assert signal.getsignal(signal.SIGTERM) is not guard_mod._hold_through_teardown
 
 
 def test_a_child_that_ends_before_its_deadline_returns_its_own_code() -> None:

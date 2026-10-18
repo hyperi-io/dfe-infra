@@ -11,7 +11,7 @@
 """What `dfe-ops teardown` hands destroy.sh when the cluster secret may be gone.
 
 A bootstrap that stops before writing the Argo CD cluster secret, or a second
-teardown after step 8 deleted it, leaves destroy.sh nothing to read the run's
+teardown after step 7 deleted it, leaves destroy.sh nothing to read the run's
 cloud, region, cluster, VPC and run tags from. The cloud root's outputs carry
 the same facts, so the teardown passes them through and step 9 can still sweep
 a test run.

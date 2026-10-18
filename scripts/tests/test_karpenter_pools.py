@@ -3,8 +3,9 @@
 #  File:         test_karpenter_pools.py
 #  Purpose:      Prove the optional minVcpu/minMemoryGib pool floor renders the
 #                right Karpenter requirement, and that omitting it changes
-#                nothing for every pool that does not set it, and that a test
-#                run's tags hold every pool to the run's instance sizes.
+#                nothing for every pool that does not set it, that a test
+#                run's tags hold every pool to the run's instance sizes, and
+#                that every pool bounds how long a drain waits.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -59,8 +60,10 @@ BASE_POOL = {
 }
 
 
-def render(pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | None = None) -> dict:
-    """The rendered NodePool for one pool named `clickhouse`, with run tags and sizes when given."""
+def nodepool_run(
+    pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | None = None, extra: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess:
+    """helm template of the NodePool for one pool named `clickhouse`, with run tags, sizes and `extra` when given."""
     cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/nodepool.yaml"]
     for s in BASE_SETS:
         cmd += ["--set", s]
@@ -69,7 +72,15 @@ def render(pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | No
         cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
     if sizes is not None:
         cmd += ["--set-json", f"karpenter.runInstanceSizes={json.dumps(sizes)}"]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    cmd += list(extra)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+
+
+def render(
+    pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | None = None, extra: tuple[str, ...] = ()
+) -> dict:
+    """The rendered NodePool for one pool named `clickhouse`."""
+    out = nodepool_run(pool, tags, sizes, extra)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed:\n{out.stderr}")
     return yaml.safe_load(out.stdout)
@@ -98,7 +109,7 @@ def test_min_vcpu_renders_a_gt_floor_one_below_the_stated_value() -> None:
     reqs = requirements(render({**BASE_POOL, "minVcpu": 16}))
     cpu = next(r for r in reqs if r["key"] == "karpenter.k8s.aws/instance-cpu")
     expect("the operator is Gt", cpu["operator"] == "Gt", cpu)
-    expect("Gt 15 expresses >= 16 (Karpenter has no Ge)", cpu["values"] == ["15"], cpu)
+    expect("Gt 15 expresses >= 16", cpu["values"] == ["15"], cpu)
 
 
 def test_min_memory_gib_converts_to_mib_and_renders_a_gt_floor() -> None:
@@ -278,8 +289,43 @@ def test_a_deployment_overrides_the_run_sizes_or_turns_them_off() -> None:
     expect("an empty list renders no instance-size requirement", SIZE_KEY not in keys, keys)
 
 
+# spec.template.spec.terminationGracePeriod's pattern in the karpenter.sh_nodepools CRD
+# at karpenter-provider-aws v1.14.1, the release versions.yaml pins.
+GRACE_PATTERN = re.compile(r"^([0-9]+(s|m|h))+$")
+
+
+def grace(doc: dict) -> str | None:
+    return doc["spec"]["template"]["spec"].get("terminationGracePeriod")
+
+
+def test_every_pool_bounds_its_drain_by_default() -> None:
+    """Unset, a drain a PodDisruptionBudget or do-not-disrupt pod blocks never ends."""
+    value = grace(render(BASE_POOL))
+    expect("the chart default reaches the NodePool", value == "24h", value)
+    expect("in the form the CRD admits", bool(GRACE_PATTERN.match(value or "")), value)
+
+
+def test_a_deployment_or_a_pool_sets_its_own_drain_bound() -> None:
+    chart_wide = ("--set", "karpenter.terminationGracePeriod=2h")
+    value = grace(render(BASE_POOL, extra=chart_wide))
+    expect("karpenter.terminationGracePeriod reaches every pool", value == "2h", value)
+    own = grace(render({**BASE_POOL, "terminationGracePeriod": "15m"}, extra=chart_wide))
+    expect("a pool's own value wins over the chart's", own == "15m", own)
+
+
+def test_expected_fail_a_drain_bound_karpenter_would_refuse_fails_the_render() -> None:
+    """The CRD refuses these at admission, which fails the whole pools sync."""
+    for value in ("", "1d", "Never", "24"):
+        out = nodepool_run(BASE_POOL, extra=("--set-string", f"karpenter.terminationGracePeriod={value}"))
+        expect(f"{value!r} is refused", out.returncode != 0, out.stdout)
+        expect(f"and named for {value!r}", "resolves terminationGracePeriod" in out.stderr, out.stderr)
+
+
 def main() -> int:
     with standalone():
+        test_every_pool_bounds_its_drain_by_default()
+        test_a_deployment_or_a_pool_sets_its_own_drain_bound()
+        test_expected_fail_a_drain_bound_karpenter_would_refuse_fails_the_render()
         test_no_floor_set_adds_no_requirement()
         test_min_vcpu_renders_a_gt_floor_one_below_the_stated_value()
         test_min_memory_gib_converts_to_mib_and_renders_a_gt_floor()

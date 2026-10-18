@@ -2828,6 +2828,8 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
 # The gateway chart's own record of what each web exposure group admits, as
 # `console=<state>,api=<state>,admin=<state>`: off, open, deny, listed or allow-all.
 EDGE_FENCE_ANNOTATION = "dfe.hyperi.io/edge-fence"
+# Beside it, as JSON: the CIDRs each group's policies admit, and exposure.selfRanges.
+EDGE_FENCE_RANGES_ANNOTATION = "dfe.hyperi.io/edge-fence-ranges"
 EDGE_GROUP_SURFACES = {
     "console": "dfe-ui, HyperDX and the engine's browser families",
     "api": "the engine's CLI families and /openapi.json",
@@ -2852,6 +2854,67 @@ def edge_group_states(annotation: str) -> dict[str, str]:
     return states
 
 
+def edge_group_ranges(annotation: str) -> dict[str, list[str]]:
+    """The CIDR lists an edge-fence-ranges annotation carries, empty when it cannot be read.
+
+    Args:
+        annotation: The annotation's value.
+
+    Returns:
+        Each group name, and selfRanges, to the CIDRs listed under it.
+    """
+    try:
+        doc = json.loads(annotation) if annotation else {}
+    except ValueError:
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    return {str(key): [str(cidr) for cidr in value] for key, value in doc.items() if isinstance(value, list)}
+
+
+def _edge_group_line(group: str, state: str, ranges: dict[str, list[str]] | None) -> str:
+    """One group's notice line, or empty for a state that earns none.
+
+    Args:
+        group: The web exposure group.
+        state: Its state off the edge-fence annotation.
+        ranges: The edge-fence-ranges lists, or None where no Service carries them,
+            so what the group admits beyond its own list is not known.
+
+    Returns:
+        The line, naming every address the group's policies admit when known.
+    """
+    surfaces = EDGE_GROUP_SURFACES.get(group, group)
+    key = f"exposure.groups.{group}"
+    if state == "allow-all":
+        return (f"WARNING: {key} admits every address -- {surfaces} are open to the whole "
+                f"internet behind their own logins. Name the ranges that need them in {key}.allow")
+    if state not in ("deny", "listed"):
+        return ""
+    admitted = (ranges or {}).get(group, [])
+    own = set((ranges or {}).get("selfRanges", []))
+    selfs = [cidr for cidr in admitted if cidr in own]
+    listed = [cidr for cidr in admitted if cidr not in own]
+    if state == "deny":
+        if ranges is None:
+            reach = "answer 403 to every address outside exposure.selfRanges"
+        elif selfs:
+            reach = f"answer 403 to every address outside exposure.selfRanges ({', '.join(selfs)})"
+        else:
+            reach = "answer 403 to every address"
+        return (f"==> {group}: CLOSED -- the gateway is internet-facing and {key}.allow is "
+                f"empty, so {surfaces} {reach}. Set {key}.allow in the deploy repo's "
+                f"infra/common.yaml to open it")
+    parts = []
+    if listed:
+        parts.append(f"{', '.join(listed)} from {key}.allow")
+    if selfs:
+        parts.append(f"{', '.join(selfs)} from exposure.selfRanges")
+    if not parts:
+        return f"==> {group}: fenced to {key}.allow and exposure.selfRanges"
+    return f"==> {group}: fenced to {' and '.join(parts)} -- {surfaces} answer 403 to every other address"
+
+
 def edge_fence_notice(kube: list[str]) -> str:
     """What each web exposure group admits, read off the live Envoy Service, one line per group.
 
@@ -2866,23 +2929,20 @@ def edge_fence_notice(kube: list[str]) -> str:
     if rc != 0:
         return ""
     states: dict[str, str] = {}
+    ranges: dict[str, list[str]] | None = None
     for item in doc.get("items") or []:
-        annotation = ((item.get("metadata") or {}).get("annotations") or {}).get(EDGE_FENCE_ANNOTATION)
-        states |= edge_group_states(annotation or "")
-    lines = []
-    for group, state in states.items():
-        surfaces = EDGE_GROUP_SURFACES.get(group, group)
-        key = f"exposure.groups.{group}"
-        if state == "allow-all":
-            lines.append(f"WARNING: {key} admits every address -- {surfaces} are open to the whole "
-                         f"internet behind their own logins. Name the ranges that need them in {key}.allow")
-        elif state == "deny":
-            lines.append(f"==> {group}: CLOSED -- the gateway is internet-facing and {key}.allow is "
-                         f"empty, so {surfaces} answer 403. Set {key}.allow in the deploy repo's "
-                         f"infra/common.yaml to open it")
-        elif state == "listed":
-            lines.append(f"==> {group}: fenced to {key}.allow")
-    return "\n".join(lines)
+        annotations = (item.get("metadata") or {}).get("annotations") or {}
+        states |= edge_group_states(annotations.get(EDGE_FENCE_ANNOTATION) or "")
+        # The chart always writes every key, so nothing read means nothing known.
+        parsed = edge_group_ranges(annotations.get(EDGE_FENCE_RANGES_ANNOTATION) or "")
+        if not parsed:
+            continue
+        ranges = ranges if ranges is not None else {}
+        for key, cidrs in parsed.items():
+            merged = ranges.setdefault(key, [])
+            merged.extend(cidr for cidr in dict.fromkeys(cidrs) if cidr not in merged)
+    lines = [_edge_group_line(group, state, ranges) for group, state in states.items()]
+    return "\n".join(line for line in lines if line)
 
 
 def _route_hosts(kube: list[str], console: str) -> list[str]:

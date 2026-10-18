@@ -3,8 +3,8 @@ component: karpenter
 env: local
 cloud: local
 
-# Karpenter's node shaping. Every field below but runInstanceSizes is empty by
-# default and filled by the resolver's values overlay (sizing/<tier>.values.yaml)
+# Karpenter's node shaping. Every field below but runInstanceSizes and
+# terminationGracePeriod is empty by default and filled by the resolver's values overlay (sizing/<tier>.values.yaml)
 # plus the cluster facts the tofu emits, so nothing else here names an instance
 # type, a generation or a size. A cloud with no Karpenter leaves `pools` empty
 # and this chart renders nothing.
@@ -45,6 +45,14 @@ karpenter:
     - large
     - xlarge
     - 2xlarge
+
+  # How long a draining node waits on a pod it may not evict -- one a
+  # PodDisruptionBudget or karpenter.sh/do-not-disrupt holds -- before Karpenter
+  # deletes it, counted from the node's deletion whatever started it. Unset, that
+  # drain waits forever. 24h is the bound EKS Auto Mode applies to its own nodes.
+  # A NodeClaim keeps the value it was created with, so a change reaches a
+  # running node only by replacing it as drift.
+  terminationGracePeriod: "24h"
 
   # What every EC2NodeClass inherits. A pool overrides only what its workload
   # forces -- ClickHouse and CI take the instance store, everything else does not.
@@ -121,6 +129,7 @@ karpenter:
   #   expireAfter          a duration, or the literal Never. NEVER omitted: the
   #                        CRD defaults it to 720h, so an omission is a forced
   #                        30-day replacement rather than no expiry.
+  #   terminationGracePeriod  optional, this pool's own karpenter.terminationGracePeriod.
   #   taints               list of {key, value, effect}.
   #   labels               map applied to every node the pool makes.
   #   limits               map of resource -> quantity. Required: a pool with no

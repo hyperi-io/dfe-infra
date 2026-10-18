@@ -297,6 +297,8 @@ WEB_GROUPS = {
 WEB_GROUP_KEYS = ("enabled", "allow", "allowPublic")
 INTERNET_FACING_PATH = ("envoyGateway", "service", "internetFacing")
 CLOUD_ANNOTATION = "dfe.hyperi.io/cloud"
+# The cluster's own egress, comma-separated, which layer2-edge.yaml hands the gateway as exposure.selfRanges.
+SELF_RANGES_ANNOTATION = "dfe.hyperi.io/edge_self_ranges"
 # The gateway's values below the deploy repo's, layered in layer2-edge.yaml's order.
 GATEWAY_CHART_VALUES = REPO_ROOT / "helm" / "edge" / "gateway" / "values.yaml"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
@@ -1352,6 +1354,31 @@ def _cloud_from_secret(kubeconfig: str | None, namespace: str) -> tuple[str, str
     return cloud, f"secret/{ARGO_CLUSTER}'s {CLOUD_ANNOTATION} is empty"
 
 
+def read_self_ranges(kubeconfig: str | None, namespace: str) -> str:
+    """The cluster secret's self ranges, comma-separated. Raises UpgradeError when unreadable."""
+    return _cluster_secret_annotation(kubeconfig, namespace, SELF_RANGES_ANNOTATION)
+
+
+def _self_range_reach(overlays: list[tuple[str, str]], kubeconfig: str | None, namespace: str) -> str:
+    """Whom a closed web group answers 403, worded for the refusal.
+
+    Every web group admits exposure.selfRanges. layer2-edge.yaml writes the
+    cluster secret's annotation as inline values, which Argo CD layers over
+    every values file, so the deploy repo's own exposure.selfRanges counts only
+    while that annotation is empty.
+    """
+    try:
+        own = [cidr.strip() for cidr in read_self_ranges(kubeconfig, namespace).split(",") if cidr.strip()]
+    except UpgradeError:
+        return "every address outside exposure.selfRanges"
+    if own:
+        return f"every address outside exposure.selfRanges ({', '.join(own)})"
+    stated = [name for name, text in overlays if "selfRanges" in yaml_subset.keys_under(text, ("exposure",))]
+    if stated:
+        return f"every address outside the exposure.selfRanges {stated[-1]} sets"
+    return "every address"
+
+
 def _group_closes(layers: list[tuple[str, str]], parent: tuple[str, ...]) -> bool:
     """Whether the layered values leave a group enabled without allowPublic, which an empty allow list closes."""
     enabled = _layered(layers, (*parent, "enabled"))[0].lower() == "true"
@@ -1371,15 +1398,16 @@ def check_web_plane(
     """The deploy repo states who reaches the web routes when the upgrade crosses WEB_FENCE_STACK.
 
     Below that stack the gateway fenced no web route by address. From it an
-    internet-facing gateway refuses every address on a web route whose allow
-    list is empty, so a deploy repo that set nothing loses dfe-ui, HyperDX and
+    internet-facing gateway refuses every address outside exposure.selfRanges on
+    a web route whose allow list is empty, so a deploy repo that set nothing loses dfe-ui, HyperDX and
     the engine API to 403 on upgrade without an error. From WEB_GROUP_STACK the
     list is per exposure group, and a console or api group whose enabled, allow
     or allowPublic the deploy repo's gateway overlays set is the operator's
     decision and passes, `allow: []` included. Below it the list is
     ui.allowed_cidrs. A gateway that is not internet-facing for the
     deployment's cloud fences nothing and passes. The cloud is `cloud`, else the
-    cluster secret's, read only once a list is unstated. A stack name dfe-stack
+    cluster secret's, read only once a list is unstated, and a refusal names the
+    self ranges off the same secret. A stack name dfe-stack
     cannot order counts as crossing the cutover, so it refuses rather than
     passes.
 
@@ -1441,6 +1469,7 @@ def check_web_plane(
         return True, f"the gateway is internet-facing on {cloud}, and its values leave {names} off or open"
 
     served = "; ".join(f"{web.serves} ({web.name})" for web in closed)
+    reach = _self_range_reach(overlays, kubeconfig, argocd_namespace)
     if closed[0].group:
         remedy = (
             "Set exposure.groups.<group>.allow to the CIDRs that may reach them, for "
@@ -1456,7 +1485,7 @@ def check_web_plane(
         f"{crossing}. The gateway is internet-facing on {cloud} ({facing_from} sets "
         f"{'.'.join(INTERNET_FACING_PATH)}: true), and {unset} {' or '.join(web.name for web in closed)}. "
         f"Under {from_stack} the gateway fenced no web route by address. Under {to_stack} these answer 403 to "
-        f"every address from the first sync: {served}. {remedy} "
+        f"{reach} from the first sync: {served}. {remedy} "
         f"A /0 admits every address, as {from_stack} did. See {FROM_220_DOC}."
     )
 

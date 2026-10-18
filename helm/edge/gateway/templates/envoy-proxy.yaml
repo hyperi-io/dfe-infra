@@ -48,8 +48,9 @@ spec:
           image: {{ .Values.envoyGateway.proxy.image | quote }}
       envoyService:
         type: {{ $svc.type | default "LoadBalancer" }}
-        {{- /* What each web group admits, for dfe-ops and anyone reading the
-               Service, written wherever a group is fenced at all. */}}
+        {{- /* What each web group admits, by state and by address, for dfe-ops
+               and anyone reading the Service, written wherever a group is
+               fenced at all. */}}
         {{- $fence := "" }}
         {{- $summary := include "envoy-gateway-config.groupSummary" (dict "ctx" .) }}
         {{- if or $svc.internetFacing (regexMatch "=(listed|allow-all|deny)" $summary) }}
@@ -62,6 +63,7 @@ spec:
           {{- end }}
           {{- with $fence }}
           dfe.hyperi.io/edge-fence: {{ . | quote }}
+          dfe.hyperi.io/edge-fence-ranges: {{ include "envoy-gateway-config.groupRanges" (dict "ctx" $) | quote }}
           {{- end }}
           {{- /* Written only once a public zone is named, so a deployment that
                  manages its own DNS by hand is untouched. The marker beside it
