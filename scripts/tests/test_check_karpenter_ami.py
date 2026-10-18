@@ -72,8 +72,12 @@ def test_the_real_stack_reads_against_the_recorded_releases(capsys: pytest.Captu
         assert pin in captured.out
 
 
-def test_the_ssm_source_reports_the_same_lag(capsys: pytest.CaptureFixture[str]) -> None:
-    assert _run("--source", "ssm", "--region", "us-west-2", "--fixtures", str(FIXTURES)) == 0
+def test_the_ssm_source_reports_the_same_lag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    versions = str(_versions(tmp_path))
+    argv = ("--versions", versions, "--source", "ssm", "--region", "us-west-2", "--fixtures", str(FIXTURES))
+    assert _run(*argv) == 0
     err = capsys.readouterr().err
     assert "v20261003, 9 day(s) behind" in err
     assert "v20261012 (ssm us-west-2)" in err
