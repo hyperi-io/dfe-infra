@@ -30,10 +30,10 @@ import sys
 from pathlib import Path
 
 import yaml
+from test_clickhouse_replication import READ_ONLY_WORDS
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
-from test_clickhouse_replication import READ_ONLY_WORDS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
