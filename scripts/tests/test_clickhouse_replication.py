@@ -102,9 +102,13 @@ def one(docs: tuple[dict, ...], kind: str) -> dict:
     return matches[0]
 
 
+def parse(text: str) -> ElementTree.Element:
+    return ElementTree.fromstring(text)  # noqa: S314 -- the chart's own render, not outside input
+
+
 def config_file(docs: tuple[dict, ...], name: str) -> ElementTree.Element | None:
     text = (one(docs, "ConfigMap").get("data") or {}).get(name)
-    return ElementTree.fromstring(text) if text else None
+    return parse(text) if text else None
 
 
 def replication_config(docs: tuple[dict, ...]) -> ElementTree.Element | None:
@@ -292,7 +296,7 @@ def test_single_mode_serves_every_service_port_beyond_loopback() -> None:
             p
             for text in files
             if text.lstrip().startswith("<clickhouse>")
-            for p in ElementTree.fromstring(text).iterfind("protocols/*")
+            for p in parse(text).iterfind("protocols/*")
         ]
         wide = {int(text_at(p, "port")) for p in protocols if text_at(p, "host") not in LOOPBACK}
         service = next(d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == "dfe-clickhouse")

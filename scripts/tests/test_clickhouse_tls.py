@@ -259,9 +259,11 @@ def test_single_mode_serves_https_from_the_certificate() -> None:
                any(p["port"] == 8443 for p in service["spec"]["ports"]), f"{service['spec']['ports']}")
         tls_xml = config["data"].get("dfe-tls.xml", "")
         # A protocol with its own host: https_port binds listen_host, which is loopback.
+        # The chart's own render, not outside input.
+        root = ElementTree.fromstring(tls_xml or "<clickhouse/>")  # noqa: S314
         wide = {
             (p.findtext("type"), p.findtext("port"))
-            for p in ElementTree.fromstring(tls_xml or "<clickhouse/>").iterfind("protocols/*")
+            for p in root.iterfind("protocols/*")
             if p.findtext("host") not in ("127.0.0.1", "::1")
         }
         expect(f"{tier} config.d serves https on 8443 beyond loopback", ("tls", "8443") in wide,
