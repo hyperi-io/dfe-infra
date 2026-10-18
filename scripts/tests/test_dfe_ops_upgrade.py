@@ -4336,6 +4336,107 @@ def test_expected_fail_a_deploy_repo_self_range_counts_while_the_cluster_secret_
     ) in detail
 
 
+@pytest.mark.parametrize(
+    "overlays",
+    [
+        {"common.yaml": "exposure:\n  selfRanges: []\n"},
+        {"common.yaml": "exposure:\n  selfRanges: []  # none yet\n"},
+        {"common.yaml": "exposure:\n  selfRanges:\n"},
+        {"common.yaml": "exposure:\n  selfRanges: ~\n"},
+        {"common.yaml": "exposure:\n  selfRanges:\n    # - 192.0.2.9/32\n"},
+        {
+            "common.yaml": "exposure:\n  selfRanges:\n    - 192.0.2.9/32\n",
+            "envoy-gateway-config.yaml": "exposure:\n  selfRanges: []\n",
+        },
+    ],
+)
+def test_expected_fail_an_empty_deploy_repo_self_range_list_admits_nobody(
+    deploy: Path, overlays: dict[str, str]
+) -> None:
+    """The last overlay to set the list decides it, so an empty one names no range."""
+    for name, text in overlays.items():
+        _write_infra(deploy, name, text)
+    ok, detail = _web(deploy)
+    assert ok is False
+    assert "these answer 403 to every address from the first sync" in detail, detail
+
+
+@pytest.mark.parametrize(
+    ("overlays", "named"),
+    [
+        ({"common.yaml": "exposure:\n  selfRanges: [192.0.2.9/32]\n"}, "infra/common.yaml"),
+        (
+            {"common.yaml": "exposure:\n  selfRanges: [\n    192.0.2.9/32\n  ]\n"},
+            "infra/common.yaml",
+        ),
+        (
+            {
+                "common.yaml": "exposure:\n  selfRanges: []\n",
+                "envoy-gateway-config.yaml": "exposure:\n  selfRanges:\n    - 192.0.2.9/32\n",
+            },
+            "infra/envoy-gateway-config.yaml",
+        ),
+    ],
+)
+def test_a_deploy_repo_self_range_list_with_an_entry_is_named(
+    deploy: Path, overlays: dict[str, str], named: str
+) -> None:
+    for name, text in overlays.items():
+        _write_infra(deploy, name, text)
+    ok, detail = _web(deploy)
+    assert ok is False
+    assert f"every address outside the exposure.selfRanges {named} sets from the first sync" in detail, detail
+
+
+def test_expected_fail_plan_with_a_cloud_and_no_cluster_reads_no_self_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """--cloud answers the one question plan needs a cluster for, and no --kubeconfig names one."""
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+    monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws"))
+
+    out = capsys.readouterr().out
+    assert rc == u.EXIT_BLOCKED, out
+    assert calls == []
+    assert "these answer 403 to every address outside exposure.selfRanges from the first sync" in out
+
+
+def test_plan_with_a_cloud_and_a_kubeconfig_names_the_self_ranges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+    monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws", kubeconfig="kc"))
+
+    assert rc == u.EXIT_BLOCKED
+    assert "every address outside exposure.selfRanges (203.0.113.7/32)" in capsys.readouterr().out
+    assert len(calls) == 1
+    assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
+    assert calls[0][-1] == SELF_RANGES_JSONPATH
+
+
+def test_plan_whose_from_came_off_the_cluster_secret_names_the_self_ranges(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Reading FROM off the cluster secret puts a cluster in play, --cloud or not."""
+    _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
+    (deploy / "pins.yaml").unlink()
+    monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
+    calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"), _proc(0, stdout="203.0.113.7/32\n"))
+
+    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws"))
+
+    assert rc == u.EXIT_BLOCKED
+    assert "every address outside exposure.selfRanges (203.0.113.7/32)" in capsys.readouterr().out
+    assert len(calls) == 2
+    assert calls[1][-1] == SELF_RANGES_JSONPATH
+
+
 def test_read_self_ranges_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
     assert READ_SELF_RANGES("kc", "argocd") == "203.0.113.7/32"

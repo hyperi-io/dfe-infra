@@ -361,14 +361,14 @@ log() {
 }
 
 # Seconds of the clock the Application wait ran: from its first kubectl call to
-# the last settle pause before step 3, which is the 10 the script sleeps between.
+# step 4's first namespace delete, less the 10s and 5s settle pauses of steps 2 and 3.
 applications_wait_seconds() {
-    local first_poll step3
+    local first_poll step4
     first_poll="$(awk '$3 == "keda" { print $1; exit }' "${STUB_DIR}/trace.log")"
-    step3="$(awk '$3 == "strimzi" && $4 == "delete" { print $1; exit }' "${STUB_DIR}/trace.log")"
+    step4="$(awk '$2 == "delete" && $3 == "ns" { print $1; exit }' "${STUB_DIR}/trace.log")"
     [ -n "${first_poll}" ]
-    [ -n "${step3}" ]
-    echo $((step3 - 10 - first_poll))
+    [ -n "${step4}" ]
+    echo $((step4 - 15 - first_poll))
 }
 
 @test "the Application wait ends at its 300s budget when every kubectl call takes time" {
@@ -845,6 +845,63 @@ data_operators() {
     [ "${redpanda}" -lt "${operators}" ]
     # Neither wait counts an operator still held, so neither runs to its cap.
     [[ "${output}" != *"WARN"* ]]
+}
+
+# The data operators and Karpenter on one cluster, with the PodDisruptionBudgets a
+# Kafka and a ClickHouseCluster carry and two NodeClaims that take ${1} listings to go.
+data_operators_on_karpenter() {
+    data_operators
+    printf '%s\n' \
+        'karpenter-dfe-aws-test karpenter' \
+        'karpenter-pools-dfe-aws-test  helm/charts/karpenter-pools' >> "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+    printf '%s\n' 'strimzi|dfe-kafka-kafka' 'clickhouse|dfe-clickhouse' > "${STUB_DIR}/pdbs"
+}
+
+@test "every data CR goes before its PodDisruptionBudget and the pools, and the operators only after the drain" {
+    data_operators_on_karpenter 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text pdb pools last_claims operators cr deleted
+    log_text="$(log)"
+    pdb="$(line_of '-n strimzi delete poddisruptionbudgets.policy dfe-kafka-kafka' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    operators="$(line_of '-n argocd delete applications.argoproj.io strimzi-kafka-operator-dfe-aws-test clickhouse-operator-helm-dfe-aws-test redpanda-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${pdb}" ]
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ -n "${operators}" ]
+    # While a CR stands its operator puts back a PodDisruptionBudget deleted from under it.
+    for cr in '-n strimzi delete kafka' '-n strimzi delete redpandas.cluster.redpanda.com' \
+        '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
+        '-n clickhouse delete keepercluster' '-n clickhouse delete clickhouseinstallation'; do
+        deleted="$(line_of "${cr} --all --timeout=120s" "${log_text}")"
+        [ -n "${deleted}" ]
+        [ "${deleted}" -lt "${pdb}" ]
+    done
+    [ "${pdb}" -lt "${pools}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${operators}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "the dry run names the data CRs before the drain blockers, and the operators after the pools" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local kafka clickhouse blockers pools operators
+    kafka="$(line_of 'kubectl -n strimzi delete kafka --all --timeout=120s' "${output}")"
+    clickhouse="$(line_of 'kubectl -n clickhouse delete clickhouseinstallation --all --timeout=120s' "${output}")"
+    blockers="$(line_of 'delete every PodDisruptionBudget' "${output}")"
+    pools="$(line_of 'delete karpenter-pools' "${output}")"
+    operators="$(line_of "delete the data operators' Applications" "${output}")"
+    [ -n "${kafka}" ]
+    [ -n "${clickhouse}" ]
+    [ "${kafka}" -lt "${blockers}" ]
+    [ "${clickhouse}" -lt "${blockers}" ]
+    [ "${blockers}" -lt "${pools}" ]
+    [ "${pools}" -lt "${operators}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
 }
 
 @test "a cluster without karpenter-pools never waits on NodeClaims" {
