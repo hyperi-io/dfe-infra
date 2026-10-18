@@ -81,7 +81,7 @@ jobs:
       # images are dfe-stack release-gate's, above.
       - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
         id: arch
-        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json"
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json" --seed scripts/image-arch-proven.json
 
       # Saved on a failed gate too: the file holds only the verdicts that passed.
       - name: Save the proven image verdicts
