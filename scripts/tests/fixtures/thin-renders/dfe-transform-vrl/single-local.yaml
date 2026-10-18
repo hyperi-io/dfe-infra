@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -42,6 +44,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -57,6 +60,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -72,6 +76,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -98,6 +103,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -126,6 +132,7 @@ spec:
         app.kubernetes.io/name: dfe-transform-vrl
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+        dfe.hyperi.io/app: dfe-transform-vrl
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -312,6 +319,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>

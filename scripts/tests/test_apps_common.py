@@ -50,6 +50,9 @@ w = weave()
 
 VALUES = REPO_ROOT / "argocd" / "values"
 COMMON = VALUES / "common.yaml"
+# The label network-policies selects every instance of an app by.
+POLICIES = REPO_ROOT / "helm" / "charts" / "network-policies" / "values.yaml"
+APP_LABEL = yaml.safe_load(POLICIES.read_text(encoding="utf-8"))["appLabel"]
 # The apps the manifest declares: deploy.service is the key the appset layers by.
 SERVICES = tuple(yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))["apps"])
 CLOUDS = ("aws", "azure", "gcp", "local", "local-dfe")
@@ -429,6 +432,18 @@ def test_every_app_is_labelled_part_of_dfe_with_its_env_and_cloud(
     assert wanted.items() <= deployment["metadata"]["labels"].items()
     assert wanted.items() <= pod_labels.items()
     assert deployment["metadata"]["annotations"]["reloader.stakater.com/auto"] == "true"
+
+
+@SERVICE
+def test_every_instance_carries_the_label_its_apps_policies_select(
+    service: str, thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
+) -> None:
+    """A per-config instance is named <app>-<source>, and the app label still names the app."""
+    renamed = {**_overlay("hyperdx", False), "fullnameOverride": f"{_chart_name(service)}-flowx"}
+    docs = _render(thin_charts[service], deploy_for(renamed), service)
+    pod_labels = _deployment(docs)["spec"]["template"]["metadata"]["labels"]
+    assert pod_labels["app.kubernetes.io/name"] == f"{_chart_name(service)}-flowx"
+    assert pod_labels[APP_LABEL] == _chart_name(service)
 
 
 @pytest.mark.parametrize("cloud", ["aws", "local"])

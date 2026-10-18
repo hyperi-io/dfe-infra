@@ -315,7 +315,10 @@ def engine_egress(facts: dict[str, str]) -> list[dict]:
 
 def test_the_store_opens_the_engines_secrets_egress_on_443_alone() -> None:
     policies = [p for p in network_policies(AWS_FACTS) if p["metadata"]["name"].startswith("allow-external-secrets-")]
-    assert [p["spec"]["podSelector"] for p in policies] == [{"matchLabels": ENGINE_LABELS}]
+    assert [p["spec"]["podSelector"] for p in policies] == [
+        {"matchLabels": ENGINE_LABELS},
+        {"matchLabels": {"dfe.hyperi.io/app": "dfe-engine"}},
+    ]
     ports = {(port["port"], port["protocol"]) for p in policies for r in p["spec"]["egress"] for port in r["ports"]}
     assert ports == {(443, "TCP")}
 

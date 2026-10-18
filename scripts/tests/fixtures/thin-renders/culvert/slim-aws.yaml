@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
@@ -45,6 +47,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
@@ -66,6 +69,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     dfe.hyperi.io/exposure: public
@@ -98,6 +102,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
@@ -133,6 +138,7 @@ metadata:
     app.kubernetes.io/name: dfe-culvert
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.culvert>
+    dfe.hyperi.io/app: culvert
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
@@ -158,6 +164,7 @@ spec:
         app.kubernetes.io/name: dfe-culvert
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.culvert>
+        dfe.hyperi.io/app: culvert
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/egress-scoped: 'true'
         dfe.hyperi.io/env: dev

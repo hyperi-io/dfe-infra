@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -48,6 +50,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -63,6 +66,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -89,6 +93,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -116,6 +121,7 @@ spec:
         app.kubernetes.io/name: dfe-transform-elastic
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+        dfe.hyperi.io/app: dfe-transform-elastic
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
@@ -280,6 +286,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-elastic
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/app: dfe-transform-elastic
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-elastic-<pin:chart-version.dfe-transform-elastic>
