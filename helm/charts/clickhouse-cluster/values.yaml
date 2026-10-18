@@ -98,6 +98,9 @@ clickhouse:
       periodSeconds: 5
       timeoutSeconds: 10
       failureThreshold: 10
+    # The four-letter commands Keeper answers on its client port, read-only only. The
+    # operator sends mntr to read each keeper's state and the probe above sends ruok.
+    fourLetterWords: "ruok,isro,mntr,srvr,stat"
     # Keeper's own log, written to the data PVC above. Same fields and bound as
     # clickhouse.serverLog; left unset, the operator keeps 50 trace-level files of
     # up to 1000M on it.

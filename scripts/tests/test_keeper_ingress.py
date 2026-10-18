@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from test_clickhouse_replication import READ_ONLY_WORDS
 
 from _charts import chart_dir
 from _expect import expect, standalone, summary
@@ -130,6 +131,24 @@ def test_cluster_mode_keeper_takes_the_operators_policy() -> None:
                 f"{profile}/{cloud}: the KeeperCluster turns on the operator's NetworkPolicy",
                 policy == "Enabled",
                 f"got {policy!r}",
+            )
+
+
+def test_cluster_mode_keeper_answers_only_read_only_words() -> None:
+    """The operator's policy admits operator-labelled pods from any namespace, so the
+    words that force recovery or move leadership are switched off rather than fenced."""
+    for profile in CLUSTER_PROFILES:
+        for cloud in CLOUDS:
+            keepers = [d for d in render_clickhouse(profile, cloud) if d.get("kind") == "KeeperCluster"]
+            extra = (keepers[0]["spec"].get("settings") or {}).get("extraConfig") or {} if keepers else {}
+            listed = (extra.get("keeper_server") or {}).get("four_letter_word_white_list") or ""
+            words = {w for w in listed.split(",") if w}
+            expect(f"{profile}/{cloud}: the KeeperCluster sets a four-letter word list", bool(words), f"got {listed!r}")
+            expect(f"{profile}/{cloud}: every listed word is read-only", words <= READ_ONLY_WORDS, f"got {sorted(words)}")
+            expect(
+                f"{profile}/{cloud}: mntr (the operator) and ruok (the liveness probe) still answer",
+                {"mntr", "ruok"} <= words,
+                f"got {sorted(words)}",
             )
 
 
