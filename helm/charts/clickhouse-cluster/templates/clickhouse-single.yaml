@@ -259,9 +259,10 @@ data:
       </user_directories>
     </clickhouse>
   # Mounted over the image's own docker_related_config.xml, which opens every port
-  # on every interface. Keeper (9181), raft (9234) and interserver (9009) bind
-  # listen_host, so they stay on loopback and no other pod reaches them. Only the
-  # client protocols below listen on the pod's address.
+  # on every interface. Keeper (9181) binds listen_host. Raft (9234) and interserver
+  # (9009) bind interserver_listen_host, and raft binds every interface when that is
+  # unset. All three stay on loopback, so no other pod reaches them. Only the client
+  # protocols below listen on the pod's address.
   dfe-listen.xml: |
     <clickhouse>
       <listen_host>127.0.0.1</listen_host>
