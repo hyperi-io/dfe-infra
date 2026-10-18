@@ -40,8 +40,9 @@ operatorNamespaces:
 # the operator writes on them. Policies are additive, so a pod data-ingress-policy selects takes
 # every port from every DFE, data and operator namespace, and nothing narrower can take that back.
 # Keeper is here because its client port holds every replicated table's coordination: the
-# ClickHouse operator admits it only from itself and the clusters referencing the keeper
-# (clickhouse-cluster's KeeperCluster turns that policy on). Empty selects every pod as before.
+# ClickHouse operator admits it only from pods labelled as the operator, in any namespace, and the
+# clusters referencing the keeper (clickhouse-cluster's KeeperCluster turns that policy on).
+# Empty selects every pod as before.
 operatorIngressScoped:
   clickhouse.com/role: [clickhouse-keeper]
 

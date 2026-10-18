@@ -15,8 +15,8 @@ and policies are additive. While data-ingress-policy selects the keeper pods, ev
 data and operator namespace reaches every port on them, whatever a narrower policy says.
 
 So the KeeperCluster turns on the operator's managed policy, which admits 2181, 2281 and
-9123 from the operator and the ClickHouse clusters referencing the keeper, and raft 9234
-from the other keepers. data-ingress-policy leaves the keeper pods out by the role label
+9123 from pods labelled as the operator in any namespace and the ClickHouse clusters
+referencing the keeper, and raft 9234 from the other keepers. data-ingress-policy leaves the keeper pods out by the role label
 the operator writes, which the fixture below ties to the operator pin in versions.yaml.
 
     python3 scripts/tests/test_keeper_ingress.py
