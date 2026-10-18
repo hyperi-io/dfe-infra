@@ -46,6 +46,7 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 {{- end -}}
 
 {{- $policies := list "WhenEmpty" "WhenEmptyOrUnderutilized" "Balanced" -}}
+{{- $reasons := list "Underutilized" "Empty" "Drifted" -}}
 {{- range $name, $pool := $k.pools -}}
 
 {{- if not $pool.families -}}
@@ -68,8 +69,45 @@ Helpers shared by the NodePool and EC2NodeClass templates.
 {{- fail (printf "karpenter.pools.%s.consolidation.after is empty -- the CRD requires it, and its own default of 0s consolidates the moment a node looks idle" $name) -}}
 {{- end -}}
 
-{{- if not $pool.budgetNodes -}}
-{{- fail (printf "karpenter.pools.%s.budgetNodes is empty -- the CRD's default budget lets 10%% of the pool terminate at once, which takes a quorum with it on a pool of three" $name) -}}
+{{- if not $pool.budgets -}}
+{{- fail (printf "karpenter.pools.%s.budgets is empty -- the CRD's default budget lets 10%% of the pool terminate at once, which takes a quorum with it on a pool of three" $name) -}}
+{{- end -}}
+
+{{- /* The CRD's own patterns for nodes and duration, and its pairing rule for schedule. */ -}}
+{{- range $i, $budget := $pool.budgets -}}
+{{- if not (regexMatch "^((100|[0-9]{1,2})%|[0-9]+)$" (toString $budget.nodes)) -}}
+{{- fail (printf "karpenter.pools.%s.budgets[%d].nodes is %q -- the CRD takes a node count or a whole percent up to 100%%, such as 1 or 25%%" $name $i (toString $budget.nodes)) -}}
+{{- end -}}
+{{- range $reason := ($budget.reasons | default list) -}}
+{{- if not (has $reason $reasons) -}}
+{{- fail (printf "karpenter.pools.%s.budgets[%d] names reason %q -- the CRD takes Underutilized, Empty or Drifted, and no reasons at all means every one" $name $i (toString $reason)) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $budget.schedule (not $budget.duration) -}}
+{{- fail (printf "karpenter.pools.%s.budgets[%d] sets schedule with no duration -- the CRD refuses either without the other" $name $i) -}}
+{{- end -}}
+{{- if and $budget.duration (not $budget.schedule) -}}
+{{- fail (printf "karpenter.pools.%s.budgets[%d] sets duration with no schedule -- the CRD refuses either without the other" $name $i) -}}
+{{- end -}}
+{{- with $budget.duration -}}
+{{- if not (regexMatch "^((([0-9]+(h|m))|([0-9]+h[0-9]+m))(0s)?)$" (toString .)) -}}
+{{- fail (printf "karpenter.pools.%s.budgets[%d].duration is %q -- the CRD takes hours and minutes only, such as 20h or 3h30m" $name $i (toString .)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* An inactive budget allows everything, so a reason only scheduled budgets
+       name is unlimited whenever none of them is running. */ -}}
+{{- range $reason := $reasons -}}
+{{- $covered := false -}}
+{{- range $budget := $pool.budgets -}}
+{{- if and (not $budget.schedule) (or (not $budget.reasons) (has $reason ($budget.reasons | default list))) -}}
+{{- $covered = true -}}
+{{- end -}}
+{{- end -}}
+{{- if not $covered -}}
+{{- fail (printf "karpenter.pools.%s names no always-on budget for %s -- Karpenter leaves a reason no active budget names unlimited, so add one with no schedule" $name $reason) -}}
+{{- end -}}
 {{- end -}}
 
 {{- if not $pool.expireAfter -}}

@@ -71,6 +71,20 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 - Named in a chart render but never pulled, so not checked: Envoy Gateway's rate-limit image (the gateway uses only `rateLimit.local`), cert-manager's ACME HTTP-01 solver (every issuer here solves DNS-01), and Strimzi's Kafka Bridge, Kafka Connect build and other-version Kafka images (no chart renders a KafkaBridge or KafkaConnect, and the Kafka resource names only `services.kafka-version`).
 - The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
 
+## Disruption budgets
+
+Each Karpenter pool gets one budget per reason from its class: how many nodes may be terminating at once.
+
+| Pool | Underutilized | Empty | Drifted |
+|---|---|---|---|
+| kafka-broker, kraft-controller, clickhouse, keeper | 0 | 1 | 1 |
+| eks-system, general | 25% | 25% | 10% |
+| ci-burst | 100% | 100% | 100% |
+
+- `k8s.disruption.maintenance_window` (a UTC cron `schedule`, daily or one weekday, and a `duration`) holds drift to the window on every pool but ci-burst. Karpenter has no "only inside" budget, so the resolver writes a zero Drifted budget from the window's close to its next open.
+- `k8s.disruption.posture: conservative` drops elastic Underutilized to 12% and replaces a stateful node for drift only inside the window. With no window, drift never replaces one.
+- Expiry is not budgeted. The elastic pools' 720h `expireAfter` replaces a node whether the window is open or not.
+
 ## Registry cache
 
 An ECR pull-through cache in the deployment's own account, which every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through, so those registries' rate limits cannot fail a deploy. None of the three needs a credential. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).

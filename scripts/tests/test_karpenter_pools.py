@@ -4,8 +4,9 @@
 #  Purpose:      Prove the optional minVcpu/minMemoryGib pool floor renders the
 #                right Karpenter requirement, and that omitting it changes
 #                nothing for every pool that does not set it, that a test
-#                run's tags hold every pool to the run's instance sizes, and
-#                that every pool bounds how long a drain waits.
+#                run's tags hold every pool to the run's instance sizes, that
+#                every pool bounds how long a drain waits, and that its
+#                disruption budgets render in the form the CRD takes.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -53,7 +54,11 @@ BASE_POOL = {
     "arch": "arm64",
     "capacityTypes": ["on-demand"],
     "consolidation": {"policy": "WhenEmpty", "after": "10m"},
-    "budgetNodes": "1",
+    "budgets": [
+        {"nodes": "0", "reasons": ["Underutilized"]},
+        {"nodes": "1", "reasons": ["Empty"]},
+        {"nodes": "1", "reasons": ["Drifted"]},
+    ],
     "expireAfter": "Never",
     "limits": {"cpu": "32", "memory": "128Gi"},
     "generationGt": "7",
@@ -321,8 +326,62 @@ def test_expected_fail_a_drain_bound_karpenter_would_refuse_fails_the_render() -
         expect(f"and named for {value!r}", "resolves terminationGracePeriod" in out.stderr, out.stderr)
 
 
+# A stateful pool's budgets with a weekly window's drift hold after them.
+WINDOWED_BUDGETS = [
+    *BASE_POOL["budgets"],
+    {"nodes": "0", "reasons": ["Drifted"], "schedule": "0 6 * * 6", "duration": "164h"},
+]
+
+
+def budgets(doc: dict) -> list[dict]:
+    return doc["spec"]["disruption"]["budgets"]
+
+
+def test_every_budget_renders_in_order_with_its_reasons_and_schedule() -> None:
+    rendered = budgets(render({**BASE_POOL, "budgets": WINDOWED_BUDGETS}))
+    expect("the budgets reach the NodePool as written", rendered == WINDOWED_BUDGETS, rendered)
+
+
+def test_a_count_written_as_a_number_renders_as_the_string_the_crd_takes() -> None:
+    """The CRD types nodes as a string, so a bare 1 in a hand-written overlay is refused at admission."""
+    rendered = budgets(render({**BASE_POOL, "budgets": [{"nodes": 1}]}))
+    expect("a reason-blind count renders as a string", rendered == [{"nodes": "1"}], rendered)
+
+
+# Each case is one budget list the NodePool CRD or Karpenter's own reading would
+# get wrong, with the phrase the guard names it by.
+REFUSED_BUDGETS = (
+    ([], "budgets is empty"),
+    ([{"nodes": "110%"}], "budgets[0].nodes is"),
+    ([{"nodes": "ten"}], "budgets[0].nodes is"),
+    ([{"reasons": ["Drifted"]}], "budgets[0].nodes is"),
+    ([{"nodes": "1", "reasons": ["Expired"]}], "budgets[0] names reason \"Expired\""),
+    ([{"nodes": "1"}, {"nodes": "0", "schedule": "0 6 * * *"}], "budgets[1] sets schedule"),
+    ([{"nodes": "1"}, {"nodes": "0", "duration": "20h"}], "budgets[1] sets duration"),
+    ([{"nodes": "1"}, {"nodes": "0", "schedule": "0 6 * * *", "duration": "1d"}], "budgets[1].duration is"),
+    (
+        [
+            {"nodes": "0", "reasons": ["Underutilized"]},
+            {"nodes": "1", "reasons": ["Empty"]},
+            {"nodes": "0", "reasons": ["Drifted"], "schedule": "0 6 * * 6", "duration": "164h"},
+        ],
+        "no always-on budget for Drifted",
+    ),
+)
+
+
+def test_expected_fail_a_budget_list_karpenter_would_misread_fails_the_render() -> None:
+    for pool_budgets, said in REFUSED_BUDGETS:
+        out = nodepool_run({**BASE_POOL, "budgets": pool_budgets})
+        expect(f"{pool_budgets!r} is refused", out.returncode != 0, out.stdout)
+        expect(f"and named for {pool_budgets!r}", said in out.stderr, out.stderr)
+
+
 def main() -> int:
     with standalone():
+        test_every_budget_renders_in_order_with_its_reasons_and_schedule()
+        test_a_count_written_as_a_number_renders_as_the_string_the_crd_takes()
+        test_expected_fail_a_budget_list_karpenter_would_misread_fails_the_render()
         test_every_pool_bounds_its_drain_by_default()
         test_a_deployment_or_a_pool_sets_its_own_drain_bound()
         test_expected_fail_a_drain_bound_karpenter_would_refuse_fails_the_render()

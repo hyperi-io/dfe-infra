@@ -18,10 +18,24 @@ spec:
   disruption:
     consolidationPolicy: {{ $pool.consolidation.policy }}
     consolidateAfter: {{ $pool.consolidation.after | quote }}
+    # Karpenter takes the most restrictive active budget naming a reason, and a
+    # scheduled one is active from each schedule hit (UTC) for its duration.
     budgets:
-      # How many of this pool's nodes may be terminating at once, across every
-      # disruption reason.
-      - nodes: {{ $pool.budgetNodes | quote }}
+      {{- range $pool.budgets }}
+      - nodes: {{ .nodes | quote }}
+        {{- with .reasons }}
+        reasons:
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+        {{- end }}
+        {{- with .schedule }}
+        schedule: {{ . | quote }}
+        {{- end }}
+        {{- with .duration }}
+        duration: {{ . | quote }}
+        {{- end }}
+      {{- end }}
   template:
     {{- with $pool.labels }}
     metadata:

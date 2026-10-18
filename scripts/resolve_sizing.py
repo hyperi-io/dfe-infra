@@ -124,7 +124,16 @@ from pathlib import Path
 
 import node_images
 from aws_cli import run_aws
-from render_dial import CONTROLLER_POOLS, TOFU_ROOTS, DialError, _kubernetes_version
+from render_dial import (
+    CONTROLLER_POOLS,
+    MINUTES_PER_DAY,
+    TOFU_ROOTS,
+    DialError,
+    Disruption,
+    MaintenanceWindow,
+    _kubernetes_version,
+    read_disruption,
+)
 from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
@@ -471,6 +480,8 @@ class Dial:
     # writes these into tofu; this script merges them with what it derives, so
     # there is a single writer of the `node_pools` tofu variable.
     node_pools: dict[str, dict[str, object]] = field(default_factory=dict)
+    # k8s.disruption -- the posture and maintenance window every Karpenter pool's budgets follow.
+    disruption: Disruption = field(default_factory=Disruption)
 
 
 def _dial_number(tree: object, *path: str) -> float | None:
@@ -532,6 +543,10 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
             f"network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak "
             f"of, and no AWS region offers more than 6 -- got {az_count}"
         )
+    try:
+        disruption = read_disruption(tree)
+    except DialError as err:
+        raise ResolveError(str(err)) from err
     return Dial(
         path=path,
         tier=_scalar(tree, "profile") or "single",
@@ -555,6 +570,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         az_count=az_count,
         overrides=_read_overrides(tree),
         node_pools=_read_node_pools(tree),
+        disruption=disruption,
     )
 
 
@@ -2617,9 +2633,67 @@ _ELASTIC_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "30m"}
 _CI_BURST_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "60s"}
 
 # The pets: a fixed EKS managed node group already carries their floor count
-# (build_tfvars), and Karpenter's own budget stays conservative to match --
+# (build_tfvars), and Karpenter's own budgets stay conservative to match --
 # never more than one at a time, mirroring eks.tf's own max_unavailable = 1.
 STATEFUL_USE_CASES = ("kafka-broker", "kraft-controller", "clickhouse", "keeper")
+
+# How many nodes each disruption reason may have terminating, per pool class.
+# Karpenter takes the most restrictive budget naming a reason and leaves a reason
+# no active budget names unlimited, so each class names all three.
+_STATEFUL_BUDGETS = {"Underutilized": "0", "Empty": "1", "Drifted": "1"}
+_ELASTIC_BUDGETS = {"Underutilized": "25%", "Empty": "25%", "Drifted": "10%"}
+# Half the elastic Underutilized budget, rounded down because the CRD takes whole percents.
+_CONSERVATIVE_ELASTIC_UNDERUTILIZED = "12%"
+# Retryable work, matching compute-shapes.yaml's ci-burst entry: every reason, every node.
+_CI_BURST_BUDGETS = ({"nodes": "100%"},)
+
+
+def _drift_hold(window: MaintenanceWindow) -> dict[str, object]:
+    """A zero Drifted budget, active from the window's close until its next open.
+
+    An inactive Karpenter budget allows everything, so drift is held outside the
+    window rather than allowed inside it.
+    """
+    period = window.period_minutes
+    opens = (window.weekday or 0) * MINUTES_PER_DAY + window.hour * 60 + window.minute
+    closes = (opens + window.minutes) % period
+    weekday = "*" if window.weekday is None else str(closes // MINUTES_PER_DAY)
+    hours, minutes = divmod(period - window.minutes, 60)
+    return {
+        "nodes": "0",
+        "reasons": ["Drifted"],
+        "schedule": f"{closes % 60} {closes % MINUTES_PER_DAY // 60} * * {weekday}",
+        "duration": (f"{hours}h" if hours else "") + (f"{minutes}m" if minutes else ""),
+    }
+
+
+def _disruption_budgets(use_case: str, disruption: Disruption) -> list[dict[str, object]]:
+    """One pool's Karpenter disruption budgets, per reason, then the drift hold a window adds.
+
+    Args:
+        use_case: The workload class the pool exists for.
+        disruption: The dial's k8s.disruption posture and window.
+
+    Returns:
+        The budget list, in the shape karpenter-pools' NodePool template renders.
+    """
+    if use_case == "ci-burst":
+        return [dict(budget) for budget in _CI_BURST_BUDGETS]
+    stateful = use_case in STATEFUL_USE_CASES
+    nodes = dict(_STATEFUL_BUDGETS if stateful else _ELASTIC_BUDGETS)
+    if disruption.posture == "conservative":
+        if not stateful:
+            nodes["Underutilized"] = _CONSERVATIVE_ELASTIC_UNDERUTILIZED
+        elif disruption.window is None:
+            # Conservative replaces a stateful node for drift only inside a window, and there is none.
+            nodes["Drifted"] = "0"
+    budgets: list[dict[str, object]] = [
+        {"nodes": value, "reasons": [reason]} for reason, value in nodes.items()
+    ]
+    if disruption.window is not None:
+        budgets.append(_drift_hold(disruption.window))
+    return budgets
+
 
 _GENERATION_DIGIT = re.compile(r"\d+")
 
@@ -2711,6 +2785,7 @@ def build_karpenter_pools(
     choices: dict[str, Choice],
     cloud_entry: dict[str, object],
     pool_vcpu: dict[str, float] | None = None,
+    disruption: Disruption | None = None,
 ) -> dict[str, object]:
     """Karpenter's NodePool/EC2NodeClass shaping, for every EC2-sourced choice.
 
@@ -2727,6 +2802,9 @@ def build_karpenter_pools(
         pool_vcpu: vCPU a pool's own workloads request (Core.pool_vcpu). A
             pool whose demand needs more of its chosen shape than the sized
             count gets limits for that many nodes instead.
+        disruption: The dial's k8s.disruption, which shapes every pool's
+            budgets (_disruption_budgets). None is the balanced posture with
+            no window.
 
     Returns:
         `{name: pool}`, ready to nest under `karpenter.pools`; empty when
@@ -2737,6 +2815,7 @@ def build_karpenter_pools(
             same fail-safe select_shape applies to a name it cannot parse,
             rather than emitting a pool Karpenter's own render guard refuses.
     """
+    disruption = disruption if disruption is not None else Disruption()
     pools: dict[str, object] = {}
     for use_case, choice in choices.items():
         if use_case == "msk-broker":
@@ -2752,15 +2831,15 @@ def build_karpenter_pools(
         if use_case == "ci-burst":
             consolidation = dict(_CI_BURST_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_SPOT_FIRST)
-            budget_nodes, expire_after = "100%", "Never"
+            expire_after = "Never"
         elif use_case in STATEFUL_USE_CASES:
             consolidation = dict(_STATEFUL_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_ON_DEMAND)
-            budget_nodes, expire_after = "1", "Never"
+            expire_after = "Never"
         else:
             consolidation = dict(_ELASTIC_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_ON_DEMAND)
-            budget_nodes, expire_after = "25%", "720h"
+            expire_after = "720h"
 
         nodes = max(choice.count, 1)
         demand = (pool_vcpu or {}).get(use_case, 0.0)
@@ -2773,7 +2852,7 @@ def build_karpenter_pools(
             "arch": str(entry.get("arch") or "arm64"),
             "capacityTypes": capacity_types,
             "consolidation": consolidation,
-            "budgetNodes": budget_nodes,
+            "budgets": _disruption_budgets(use_case, disruption),
             "expireAfter": expire_after,
             "labels": {WORKLOAD_LABEL: use_case},
             # Twice the nodes the sized fleet or the pool's own demand needs, in
@@ -2808,6 +2887,7 @@ def build_values(
     cloud_entry: dict[str, object] | None = None,
     storage_model: str = "auto",
     controller_pool: str = "combined",
+    disruption: Disruption | None = None,
 ) -> dict[str, object]:
     """The chart values overlay -- only keys the charts declare today.
 
@@ -2824,6 +2904,9 @@ def build_values(
     no kafka.controllerPool key at all, so the chart's own combined default
     holds and syncing this fragment onto a live cluster cannot move its
     metadata quorum; separate writes the sized pool with enabled true.
+
+    `disruption` is the dial's own k8s.disruption, which every Karpenter pool's
+    budgets follow (build_karpenter_pools).
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -2941,7 +3024,7 @@ def build_values(
     if ch:
         out["clickhouse"] = ch
     if choices and cloud_entry is not None:
-        pools = build_karpenter_pools(choices, cloud_entry, core.pool_vcpu)
+        pools = build_karpenter_pools(choices, cloud_entry, core.pool_vcpu, disruption)
         if pools:
             out["karpenter"] = {"pools": pools}
     return out
@@ -3548,6 +3631,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         cloud_entry if populated else None,
         dial.storage_model,
         dial.controller_pool,
+        dial.disruption,
     )
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",

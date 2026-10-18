@@ -124,8 +124,17 @@ karpenter:
   #                        can be retried.
   #   consolidation        policy is WhenEmpty | WhenEmptyOrUnderutilized |
   #                        Balanced; after is how long the controller waits first.
-  #   budgetNodes          how many nodes may be terminating at once -- "10%",
-  #                        "1", "100%".
+  #   budgets              list of disruption budgets, each {nodes, reasons,
+  #                        schedule, duration}. nodes is how many may be
+  #                        terminating at once, "1" or "25%". reasons names any of
+  #                        Underutilized, Empty and Drifted, and none means all
+  #                        three. schedule (UTC cron) and duration come together
+  #                        and make the budget active for that long after each
+  #                        hit. Karpenter takes the most restrictive active
+  #                        budget naming a reason and leaves a reason no active
+  #                        budget names unlimited, so templates/_pools.tpl
+  #                        refuses a reason with no always-on budget. The
+  #                        resolver sets them from the dial's k8s.disruption.
   #   expireAfter          a duration, or the literal Never. NEVER omitted: the
   #                        CRD defaults it to 720h, so an omission is a forced
   #                        30-day replacement rather than no expiry.

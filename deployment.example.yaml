@@ -840,6 +840,20 @@ k8s:
   ## per-cloud argocd/values/<cloud>.yaml the chart already carries.
   load_balancer_type: ""     # e.g. nlb (AWS), "" for the default Service type
   config_storage: ""         # e.g. s3 (AWS), "" for in-cluster config storage
+  ## Pool disruption intent: how fast the node pools may lose nodes. Each cloud's
+  ## pools renderer applies it in its own terms, and a cloud with no dynamic pools
+  ## ignores it.
+  ##   balanced     -- the standard rates, and the default.
+  ##   conservative -- elastic pools remove underused nodes at half the rate, and
+  ##                   a stateful node is replaced for drift only inside the
+  ##                   window. With no window, drift never replaces one.
+  ## With a window set, drift waits for it on every pool but ci-burst. Without one,
+  ## drift runs any time (balanced). Empty and underused nodes ignore the window.
+  disruption:
+    posture: balanced        # balanced | conservative
+    maintenance_window:
+      schedule: ""           # UTC cron, daily "M H * * *" or weekly "M H * * D" (0 is Sunday), e.g. "0 2 * * 6"
+      duration: ""           # hours and minutes, e.g. 4h or 3h30m, set together with schedule
 
 ## ---------------------------------------------------------------------------
 ## CLOUD worked example -- AWS. The genericised swap: to move this deployment to
