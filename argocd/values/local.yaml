@@ -62,9 +62,8 @@ listeners:
   - { name: grpc, port: 8443, protocol: TCP, exposed: false }
   - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false }
 
-# This deploy runs DFE's OWN ClickHouse (single/keeperless interim -- stops the
-# exit-231 crashloop the prior cluster-mode instance hit while it shared a Keeper
-# with another tenant on the cluster). Flip to cluster (with DFE-owned
+# This deploy runs DFE's OWN ClickHouse (single mode, its Keeper embedded, so it
+# shares no Keeper with another tenant on the cluster). Flip to cluster (with DFE-owned
 # dfe-keeper) or external to test those paths. It does NOT reuse a ClickHouse
 # the cluster already runs.
 clickhouse:

@@ -1,7 +1,8 @@
 {{- if eq .Values.clickhouse.mode "single" }}
 {{- $tls := include "dfe-clickhouse.tlsEnabled" . }}
-# Standalone single-node ClickHouse (no operator, no Keeper). For small/test.
-# Tables are MergeTree (non-replicated) -- the engine emits topology=single DDL.
+# Standalone single-node ClickHouse (no operator). For small/test. Keeper runs
+# embedded in the server and the server declares a cluster of one, so the
+# engine's Replicated DDL lands here exactly as it does in cluster mode.
 # Admin user/db created on first start via the official image's entrypoint env.
 apiVersion: v1
 kind: Service
@@ -73,6 +74,16 @@ spec:
               value: {{ .Values.clickhouse.database | quote }}
             - name: CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT
               value: "1"
+            # The embedded Keeper's digest identity. Every znode the server creates
+            # is readable with it alone, so a pod that reaches 9181 cannot write a
+            # SQL user into the access storage.
+            - name: DFE_KEEPER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.clickhouse.name }}-keeper-identity
+                  key: password
+            - name: DFE_KEEPER_IDENTITY
+              value: "dfe:$(DFE_KEEPER_PASSWORD)"
             {{- if and (eq (include "dfe-clickhouse.storageBulk" .) "object") (not .Values.clickhouse.objectStore.usePodIdentity) }}
             {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 12 }}
             {{- end }}
@@ -85,6 +96,11 @@ spec:
             - name: custom-config
               mountPath: /etc/clickhouse-server/config.d/dfe-custom.xml
               subPath: dfe-custom.xml
+            # config.d overlay: embedded Keeper, the macros, a one-node cluster and
+            # SQL users in Keeper. See dfe-replication.xml in the ConfigMap below.
+            - name: custom-config
+              mountPath: /etc/clickhouse-server/config.d/dfe-replication.xml
+              subPath: dfe-replication.xml
             # users.d overlay: async inserts for every writer via the default
             # settings profile (async_insert has no table-level form).
             - name: custom-config
@@ -203,6 +219,36 @@ data:
         <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
         <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
       </access_control_improvements>
+    </clickhouse>
+  # What the engine's Replicated DDL needs, as a cluster of one: embedded Keeper,
+  # the {cluster}/{shard}/{replica} macros, the cluster {cluster} names, and SQL
+  # users and roles in Keeper. user_directories REPLACES the image's list, because
+  # an appended <replicated> sits behind local_directory, which then takes every
+  # role the engine creates. Keeper's log and snapshots share the data PVC with the tables.
+  dfe-replication.xml: |
+    <clickhouse>
+      <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <four_letter_word_white_list>ruok,isro,mntr,srvr,stat</four_letter_word_white_list>
+        <raft_configuration>
+          <server><id>1</id><hostname>localhost</hostname><port>9234</port></server>
+        </raft_configuration>
+      </keeper_server>
+      <zookeeper>
+        <node><host>localhost</host><port>9181</port></node>
+        <identity from_env="DFE_KEEPER_IDENTITY"/>
+      </zookeeper>
+      <macros><cluster>dfe</cluster><shard>01</shard><replica>r1</replica></macros>
+      <remote_servers>
+        <dfe><shard><internal_replication>true</internal_replication><replica><host>localhost</host><port>9000</port></replica></shard></dfe>
+      </remote_servers>
+      <user_directories replace="replace">
+        <users_xml><path>users.xml</path></users_xml>
+        <replicated><zookeeper_path>/clickhouse/access/</zookeeper_path></replicated>
+      </user_directories>
     </clickhouse>
   # users.d overlay: async inserts for EVERY writer, via the default settings
   # profile (the base every identity inherits). async_insert is user/query-scope

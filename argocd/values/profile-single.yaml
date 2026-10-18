@@ -23,7 +23,7 @@ keda:
   pressure:
     targetValue: 70
 
-# ClickHouse -- single standalone node (keeperless, MergeTree).
+# ClickHouse -- single standalone node, Keeper embedded, a cluster of one.
 # mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
 # layered after this file, so a deployer reaches external, cached-object or
 # tiered-block there.

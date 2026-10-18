@@ -44,8 +44,8 @@ exposure:
 tls:
   issuerName: dfe-internal-ca
 
-# Standard profile substrate: DFE's own single-node ClickHouse (keeperless,
-# MergeTree), no Kafka (gRPC transport). Flip to cluster/external to test those.
+# Standard profile backing services: DFE's own single-node ClickHouse (Keeper
+# embedded), no Kafka (gRPC transport). Flip to cluster/external to test those.
 clickhouse:
   mode: single
 
