@@ -320,7 +320,7 @@ run "msk_configuration_contents" {
 
   assert {
     condition     = strcontains(aws_msk_configuration.this.server_properties, "auto.create.topics.enable=false")
-    error_message = "auto.create.topics.enable must render false -- the bootstrap Job pre-creates the landing topics so their partitions and retention are ours to set"
+    error_message = "auto.create.topics.enable must render false -- dfe-engine creates the landing topics so their partitions and retention are ours to set"
   }
 
   assert {
@@ -874,5 +874,27 @@ run "msk_every_role_carries_the_permissions_boundary" {
       [for role in aws_iam_role.broker_scaler : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
     ))
     error_message = "every aws_iam_role in the msk body must carry var.permissions_boundary"
+  }
+}
+
+run "msk_bootstrap_role_holds_only_the_acl_write_grants" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  assert {
+    condition     = length(data.aws_iam_policy_document.bootstrap.statement) == 1
+    error_message = "the bootstrap role grants at cluster scope only: the Job writes ACLs and creates no topic"
+  }
+
+  assert {
+    condition = toset(data.aws_iam_policy_document.bootstrap.statement[0].actions) == toset([
+      "kafka-cluster:Connect",
+      "kafka-cluster:DescribeCluster",
+      "kafka-cluster:AlterCluster",
+    ])
+    error_message = "an ACL write needs Connect, DescribeCluster and AlterCluster, and nothing more"
   }
 }

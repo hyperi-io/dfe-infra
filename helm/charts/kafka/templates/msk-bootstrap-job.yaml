@@ -44,7 +44,7 @@ metadata:
     # records: Argo omits hooks from an Application's resource tree, so a hook that
     # never fires is invisible and the deploy reports success over a broker nobody
     # bootstrapped. Tracked, this Job is Progressing until it completes, which is
-    # what holds the app layer back until the ACLs and topics are really there.
+    # what holds the app layer back until the ACLs are really there.
     #
     # Wave 0 runs it after the wave -1 ServiceAccount. There is no broker to wait
     # for in external mode -- MSK is up before the cluster syncs.

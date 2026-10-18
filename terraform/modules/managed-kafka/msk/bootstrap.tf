@@ -9,16 +9,6 @@
 // The Job itself is chart work: it sets the SCRAM principal's ACLs and creates
 // no topic. This module mints what it needs and outputs the role.
 
-locals {
-  // MSK's IAM resource names. A topic and a group ARN both carry the cluster
-  // name and its UUID, which is why the role can only be built after the
-  // cluster is known.
-  msk_arn_prefix = "arn:${data.aws_partition.current.partition}:kafka:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}"
-
-  cluster_topics = "${local.msk_arn_prefix}:topic/${var.name}/${aws_msk_cluster.this.cluster_uuid}/*"
-  cluster_groups = "${local.msk_arn_prefix}:group/${var.name}/${aws_msk_cluster.this.cluster_uuid}/*"
-}
-
 resource "aws_iam_role" "bootstrap" {
   name                 = "${var.name}-kafka-bootstrap"
   path                 = var.iam_path
@@ -41,34 +31,8 @@ data "aws_iam_policy_document" "bootstrap" {
     resources = [aws_msk_cluster.this.arn]
   }
 
-  // Topic scope. The Job sets ACLs on topics and creates none: dfe-engine
-  // creates the landing and DLQ topics at its own startup.
-  statement {
-    effect = "Allow"
-
-    actions = [
-      "kafka-cluster:CreateTopic",
-      "kafka-cluster:DescribeTopic",
-      "kafka-cluster:AlterTopic",
-      "kafka-cluster:WriteData",
-      "kafka-cluster:ReadData",
-    ]
-
-    resources = [local.cluster_topics]
-  }
-
-  // Group scope: the ACLs the Job writes fence DFE's consumers to the dfe-
-  // prefix, and asserting them means reading and altering the groups they name.
-  statement {
-    effect = "Allow"
-
-    actions = [
-      "kafka-cluster:DescribeGroup",
-      "kafka-cluster:AlterGroup",
-    ]
-
-    resources = [local.cluster_groups]
-  }
+  // Nothing at topic or group scope: an ACL write, even one naming a topic or a
+  // group, is authorised as ALTER CLUSTER, and dfe-engine creates the topics.
 }
 
 resource "aws_iam_role_policy" "bootstrap" {
