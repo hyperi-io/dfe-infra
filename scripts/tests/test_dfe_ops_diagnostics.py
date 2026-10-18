@@ -789,6 +789,9 @@ def test_an_errored_groups_read_is_named_failed_never_no_group() -> None:
 
 def test_a_read_failure_is_an_error_line_or_how_the_command_ended() -> None:
     assert dg.read_failure(_text(GROUPS), 300.0) == ""
+    # The same two prefixes the smoke test's read_errored takes.
+    shouted = "GROUP dfe-loader\nERROR NOT_COORDINATOR: This is not the correct coordinator.\n"
+    assert dg.read_failure(_text(shouted), 300.0) == shouted.splitlines()[1]
     assert dg.read_failure(None, 300.0) == "not run: the 300s budget was spent"
     refused = fe.Outcome(returncode=1, error="command terminated with exit code 1")
     assert dg.read_failure(refused, 300.0) == "exit 1: command terminated with exit code 1"

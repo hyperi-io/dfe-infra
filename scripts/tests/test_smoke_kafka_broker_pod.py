@@ -100,6 +100,7 @@ def smoke(
     *,
     engine_offsets: dict | None = None,
     engine_env: dict | None = None,
+    engine_ready: bool = False,
     **kafka: object,
 ) -> tuple[str, dict]:
     fixture: dict = {
@@ -112,6 +113,9 @@ def smoke(
             **kafka,
         },
     }
+    # A dfe-engine whose schema converged, so CORE 0 passes and only CORE 3 can fail the run.
+    if engine_ready:
+        fixture["engine_schema"] = True
     if engine_offsets is not None:
         fixture["engine_offsets"] = engine_offsets
     if engine_env is not None:
@@ -342,17 +346,47 @@ def test_a_redpanda_broker_is_found_by_its_label() -> None:
         "redpanda",
     )
     sidecar = pod("redpanda-console-7d9f", {"app.kubernetes.io/name": "console"}, "other")
-    stdout, counts = smoke([sidecar, broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER)
+    stdout, counts = smoke(
+        [sidecar, broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER, engine_ready=True
+    )
 
     expect("the broker is used", execs(counts, "redpanda-0") > 0, str(counts))
     expect("the other pod is not", execs(counts, "redpanda-console-7d9f") == 0, str(counts))
     expect("the topic is found", "[PASS] topic main_land exists (created)" in stdout, stdout)
+    expect("its messages are counted", f"[PASS] {PRODUCED_CHECK}" in stdout, stdout)
     expect(
         "the loader's group is found",
         f"[PASS] {GROUP_CHECK}: offset 5, read by rpk group describe" in stdout,
         stdout,
     )
     expect("it is described by name", counts.get("rpk_described:dfe-loader") == 1, str(counts))
+    expect("the whole run passes", "Vertical integration verified." in stdout, stdout)
+
+
+PRODUCED_CHECK = "topic main_land has messages (receiver PRODUCED)"
+
+
+def rpk_partitions(replicas: str, log_start: int, high_watermark: int) -> str:
+    """`rpk topic describe main_land -p` for one partition, REPLICAS printed as rpk does."""
+    header = "PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK"
+    return f"{header}\n0          0       1      {replicas}   {log_start}   {high_watermark}"
+
+
+def test_on_redpanda_produced_reads_the_high_watermark_whatever_the_replica_count() -> None:
+    broker = pod("redpanda-0", {"cluster.redpanda.com/broker": "true"}, "redpanda")
+    for name, partitions, verdict in (
+        ("RF 3, high watermark 0", rpk_partitions("[0 1 2]", 0, 0), "FAIL"),
+        ("RF 1, log start 0 and high watermark 5", rpk_partitions("[0]", 0, 5), "PASS"),
+        ("RF 3, high watermark 7", rpk_partitions("[0 1 2]", 2, 7), "PASS"),
+    ):
+        stdout, _ = smoke(
+            [broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER, rpk_partitions=partitions,
+            engine_ready=True,
+        )
+        shown = f"[{verdict}] {PRODUCED_CHECK}" in stdout
+        expect(f"{name}: PRODUCED is a {verdict}", shown, stdout)
+        passed = "Vertical integration verified." in stdout
+        expect(f"{name}: the run's verdict follows it", passed == (verdict == "PASS"), stdout)
 
 
 # What `rpk group list` prints with only the archiver's group on the broker.

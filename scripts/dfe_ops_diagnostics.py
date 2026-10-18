@@ -663,10 +663,10 @@ def _decoded(outcome: fe.Outcome | None) -> str:
 def read_failure(outcome: fe.Outcome | None, budget: float) -> str:
     """Why a Kafka read gave no answer to trust, as one line, or empty when it gave one.
 
-    The Kafka tools print a failure to stdout as an `Error` line and can still exit 0.
+    The Kafka tools print a failure to stdout as an `Error` or `ERROR` line and can still exit 0.
     """
     lines = _decoded(outcome).splitlines()
-    said = next((line.strip() for line in lines if line.startswith("Error")), "")
+    said = next((line.strip() for line in lines if line.startswith(("Error", "ERROR"))), "")
     if outcome is not None and outcome.ok:
         return said
     return said or fe.verdict(outcome, budget)

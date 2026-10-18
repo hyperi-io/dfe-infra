@@ -26,6 +26,7 @@
 #   engine-offsets       what dfe-engine's python3 prints for the OffsetFetch fallback.
 #                        Absent, it prints a librdkafka error and exits 1
 #   redpanda             the strimzi broker pod ships rpk, so CORE 3 takes the rpk path
+#   rpk-partitions       what `rpk topic describe main_land -p` prints
 #   rpk-groups           what `rpk group list` prints
 #   rpk-describe         what `rpk group describe` prints
 #   rpk-describe-error   `rpk group describe` prints this to stderr and exits 1
@@ -227,6 +228,7 @@ case "$*" in
         printf '%s\n' "${args[*]:6}" >> "${STUB_DIR}/rpk.log"
         case "${args[*]:6}" in
             "topic list") echo main_land ;;
+            "topic describe "*) cat "${STUB_DIR}/rpk-partitions" 2>/dev/null ;;
             "group list") cat "${STUB_DIR}/rpk-groups" 2>/dev/null ;;
             "group describe "*)
                 if [[ -f "${STUB_DIR}/rpk-describe-error" ]]; then
@@ -553,8 +555,19 @@ GROUP_CHECK="consumer group dfe-loader is committed on main_land (loader CONSUME
 redpanda_broker() {
     touch "${STUB_DIR}/strimzi" "${STUB_DIR}/redpanda" "${STUB_DIR}/rpk.log"
     printf '%s\n' "BROKER  GROUP         STATE" "0       dfe-archiver  Stable" > "${STUB_DIR}/rpk-groups"
+    rpk_partitions "[0 1 2]" 0 5
     export DFE_PROFILE=single
 }
+
+# `rpk topic describe main_land -p` for one partition with replicas ${1}, log start ${2} and
+# high watermark ${3}: rpk prints REPLICAS as `[0 1 2]`, so the fields move with the replica count.
+rpk_partitions() {
+    printf '%-11s%-8s%-7s%-10s%-18s%s\n' \
+        PARTITION LEADER EPOCH REPLICAS LOG-START-OFFSET HIGH-WATERMARK \
+        0 0 1 "${1}" "${2}" "${3}" > "${STUB_DIR}/rpk-partitions"
+}
+
+PRODUCED_CHECK="topic main_land has messages (receiver PRODUCED)"
 
 # `rpk group describe dfe-loader` for a group with a commit of 5 on main_land.
 rpk_loader_committed() {
@@ -574,10 +587,42 @@ rpk_loader_committed() {
     redpanda_broker
     rpk_loader_committed
     run bash "${SMOKE}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[PASS] ${PRODUCED_CHECK}"* ]]
     [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 5, read by rpk group describe"* ]]
+    [[ "${output}" == *"Vertical integration verified."* ]]
     [[ "$(cat "${STUB_DIR}/rpk.log")" == *"group describe dfe-loader"* ]]
     [[ "$(cat "${STUB_DIR}/rpk.log")" != *"group list"* ]]
     [ ! -s "${STUB_DIR}/python.log" ]
+}
+
+@test "expected failure: on Redpanda at RF 3 a high watermark of 0 FAILs PRODUCED" {
+    redpanda_broker
+    rpk_loader_committed
+    rpk_partitions "[0 1 2]" 0 0
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] ${PRODUCED_CHECK}"$'\n'"    rpk topic describe -p, no high watermark above 0: PARTITION"* ]]
+    [[ "${output}" != *"[PASS] ${PRODUCED_CHECK}"* ]]
+}
+
+@test "on Redpanda at RF 1 a log start of 0 and a high watermark of 5 PASS PRODUCED" {
+    redpanda_broker
+    rpk_loader_committed
+    rpk_partitions "[0]" 0 5
+    run bash "${SMOKE}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[PASS] ${PRODUCED_CHECK}"* ]]
+    [[ "$(cat "${STUB_DIR}/rpk.log")" == *"topic describe main_land -p"* ]]
+}
+
+@test "on Redpanda at RF 3 a high watermark above 0 PASSes PRODUCED" {
+    redpanda_broker
+    rpk_loader_committed
+    rpk_partitions "[0 1 2]" 2 7
+    run bash "${SMOKE}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[PASS] ${PRODUCED_CHECK}"* ]]
 }
 
 @test "expected failure: on Redpanda a group that is not dfe-loader does not pass the loader's check" {
@@ -586,6 +631,9 @@ rpk_loader_committed() {
     printf '%s\n' "GROUP        dfe-loader" "COORDINATOR  0" "STATE        Dead" "MEMBERS      0" > "${STUB_DIR}/rpk-describe"
     run bash "${SMOKE}"
     [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[PASS] ${PRODUCED_CHECK}"* ]]
+    # The group check is the only FAIL, so no other CORE 3 check hides behind it.
+    [[ "${output}" == *"Results: "*" passed, 1 failed, "* ]]
     [[ "${output}" == *"[FAIL] ${GROUP_CHECK}"$'\n'"    rpk group describe, no offset above 0 for dfe-loader: GROUP"* ]]
     [[ "${output}" != *"[PASS] ${GROUP_CHECK}"* ]]
     [[ "${output}" != *"[PASS] a consumer group is committed"* ]]
@@ -597,7 +645,10 @@ rpk_loader_committed() {
     echo "unable to describe groups: NOT_COORDINATOR: This is not the correct coordinator." > "${STUB_DIR}/rpk-describe-error"
     printf 'committed 2 over 1 partition(s) of main_land\n' > "${STUB_DIR}/engine-offsets"
     run bash "${SMOKE}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"[PASS] ${PRODUCED_CHECK}"* ]]
     [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 2, read by librdkafka OffsetFetch from dfe-engine"$'\n'"    rpk group describe failed first: unable to describe groups: NOT_COORDINATOR"* ]]
+    [[ "${output}" == *"Vertical integration verified."* ]]
     [ "$(cat "${STUB_DIR}/python.log")" = "- dfe-loader main_land" ]
 }
 

@@ -121,11 +121,11 @@ first_line_of() {
   local label="$1" line="" scrubbed
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
-    [ -n "$line" ] && break
+    [[ -n "$line" ]] && break
   done <<< "$2"
-  if [ -z "$line" ]; then
+  if [[ -z "$line" ]]; then
     echo "    ${label}: (printed nothing)"
-  elif scrubbed="$(printf '%s\n' "${line:0:300}" | "$DFE_OPS" redact 2>/dev/null)" && [ -n "$scrubbed" ]; then
+  elif scrubbed="$(printf '%s\n' "${line:0:300}" | "$DFE_OPS" redact 2>/dev/null)" && [[ -n "$scrubbed" ]]; then
     echo "    ${label}: ${scrubbed}"
   else
     echo "    ${label}: (withheld: dfe-ops redact could not mask it)"
@@ -223,9 +223,39 @@ loader_offsets_in() {
     END { if (s > 0) print s }'
 }
 
+# The high watermarks summed off `rpk topic describe -p`, whose last column is always HIGH-WATERMARK.
+# REPLICAS prints as `[0 1 2]`, so every other column moves with the replica count.
+rpk_high_watermarks_in() {
+  printf '%s\n' "$1" | awk '$NF == "HIGH-WATERMARK" { hw = 1; next } hw && $NF ~ /^[0-9]+$/ { s += $NF } END { print s + 0 }'
+}
+
 # The tools print their failures to stdout and can still exit 0, so an Error line is a failed read.
 read_errored() {
-  [ "$1" -ne 0 ] || printf '%s\n' "$2" | awk '/^(Error|ERROR)/ { e = 1 } END { exit !e }'
+  [[ "$1" -ne 0 ]] || printf '%s\n' "$2" | awk '/^(Error|ERROR)/ { e = 1 } END { exit !e }'
+}
+
+# The readers CORE 3 runs, in the broker pod or the Kafka client pod KPOD names.
+rpk_partitions_read() {
+  kubectl -n "$NS_KAFKA" exec "$KPOD" -- rpk topic describe "$KAFKA_TOPIC" -p 2>&1
+}
+rpk_group_read() {
+  kubectl -n "$NS_KAFKA" exec "$KPOD" -- rpk group describe "$LOADER_GROUP" 2>&1
+}
+loader_group_read() {
+  kafka_cli "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --group ${LOADER_GROUP} --offsets"
+}
+
+# A message on the topic is a high watermark above 0 on one of its partitions.
+rpk_produced_check() {
+  local name="topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" answer sum
+  answer="$(rpk_partitions_read)"
+  sum="$(rpk_high_watermarks_in "$answer")"
+  if [[ "$sum" -gt 0 ]]; then
+    pass "$name"
+  else
+    fail "$name"
+    first_line_of "rpk topic describe -p, no high watermark above 0" "$answer"
+  fi
 }
 
 # loader_group_check READER READ_FN: the loader's own group, since the archiver commits on _land
@@ -238,7 +268,7 @@ loader_group_check() {
   answer="$("$read_fn")"
   rc=$?
   offset="$(loader_offsets_in "$answer")"
-  if [ -n "$offset" ]; then
+  if [[ -n "$offset" ]]; then
     pass "${name}: offset ${offset}, read by ${reader}"
     return
   fi
@@ -249,7 +279,7 @@ loader_group_check() {
   fi
   fallback="$(engine_group_offsets)"
   offset="$(printf '%s\n' "$fallback" | awk '$1 == "committed" && $2 ~ /^[0-9]+$/ { n = $2 } END { if (n > 0) print n }')"
-  if [ -n "$offset" ]; then
+  if [[ -n "$offset" ]]; then
     pass "${name}: offset ${offset}, read by librdkafka OffsetFetch from dfe-engine"
     first_line_of "${reader} failed first" "$answer"
   else
@@ -677,11 +707,7 @@ if [ -n "$KPOD" ]; then
     # Redpanda standalone (single tier).
     check "topic ${KAFKA_TOPIC} exists (created)" \
       "kubectl -n $NS_KAFKA exec $KPOD -- rpk topic list 2>/dev/null | grep -qw '${KAFKA_TOPIC}'"
-    check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
-      "test \"\$(kubectl -n $NS_KAFKA exec $KPOD -- rpk topic describe ${KAFKA_TOPIC} -p 2>/dev/null | awk 'NR>1{s+=\$5} END{print s+0}')\" -gt 0"
-    rpk_group_read() {
-      kubectl -n "$NS_KAFKA" exec "$KPOD" -- rpk group describe "$LOADER_GROUP" 2>&1
-    }
+    rpk_produced_check
     loader_group_check "rpk group describe" rpk_group_read
   else
     # apache/kafka KRaft or Strimzi. Two things the first cut got wrong, both
@@ -759,9 +785,6 @@ KSH
     # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
-    loader_group_read() {
-      kafka_cli "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --group ${LOADER_GROUP} --offsets"
-    }
     loader_group_check kafka-consumer-groups.sh loader_group_read
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,

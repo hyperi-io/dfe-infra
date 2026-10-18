@@ -22,8 +22,9 @@ A pod with the role `other` ships
 the Kafka tools and runs no broker, as Strimzi's cruise-control pod does. Every
 exec into one of its pods is counted as `kafka_exec:<pod>`, and each groups read
 as `groups_asked:<group>` (`--all-groups` for every group). A redpanda pod answers
-`rpk group list` with `rpk_groups` and `rpk group describe <group>` with
-`rpk_describe`, each describe counted as `rpk_described:<group>`.
+`rpk topic describe -p` with `rpk_partitions` (one RF 3 partition at a high watermark
+of 5 when absent), `rpk group list` with `rpk_groups` and `rpk group describe <group>`
+with `rpk_describe`, each describe counted as `rpk_described:<group>`.
 
 An exec of `python3 -` in dfe-engine runs the script it is handed for real, against
 a stand-in `confluent_kafka` that answers OffsetFetch from `engine_offsets`: a group
@@ -70,6 +71,11 @@ try:
 except (OSError, ValueError):
     counts = {}
 kafka = fixture.get("kafka")
+# rpk topic describe -p at RF 3: REPLICAS prints as `[0 1 2]`, and HIGH-WATERMARK is always last.
+RPK_PARTITIONS = (
+    "PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK\\n"
+    "0          1       2      [0 1 2]   0                 5"
+)
 
 
 def bump(key):
@@ -139,8 +145,7 @@ def kafka_rpk(rest):
     if rest[:2] == ["topic", "list"]:
         print("\\n".join(kafka["topics"]))
     elif rest[:2] == ["topic", "describe"]:
-        print("PARTITION LOG-START-OFFSET HIGH-WATERMARK")
-        print("0 0 0 5")
+        print(kafka.get("rpk_partitions", RPK_PARTITIONS))
     elif rest[:2] == ["group", "list"]:
         print(kafka.get("rpk_groups", ""))
     elif rest[:2] == ["group", "describe"]:
