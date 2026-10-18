@@ -19,8 +19,10 @@ storage, as the first writable user_directories entry.
 
 Single mode writes all of it into one config.d file, with Keeper embedded. Its
 user_directories must REPLACE the image's list: appended, local_directory stays first
-and takes every role the engine creates. Keeper creates its znodes under a generated identity, so
-a pod that reaches 9181 cannot write a SQL user into them.
+and takes every role the engine creates. Keeper creates its znodes under a generated
+identity, kept out of preprocessed_configs. A second file takes the place of the image's
+own listener file, so Keeper, raft and interserver bind loopback and no other pod reaches
+them, and only the client protocols listen on the pod's address.
 
 Cluster mode gets all of it from the operator, so the chart's extraConfig must not
 carry any of those keys: a merged override shadows what the operator wrote. The
@@ -54,13 +56,17 @@ CLOUDS = ("local", "aws")
 
 CONFIG_D = "/etc/clickhouse-server/config.d/"
 REPLICATION_FILE = "dfe-replication.xml"
+LISTEN_FILE = "dfe-listen.xml"
+# The image's file that opens every listener on every interface.
+IMAGE_LISTEN_NAME = "docker_related_config.xml"
+LOOPBACK = {"127.0.0.1", "::1"}
 DATA_DIR = "/var/lib/clickhouse"
 # The four-letter words that only read. The rest reset stats, move leadership or force recovery.
 READ_ONLY_WORDS = {"conf", "cons", "dirs", "envi", "isro", "mntr", "ruok", "srvr", "stat", "wchs"}
 
 # The keys clickhouse-operator v0.0.8 writes itself (templates/base.yaml.tmpl, cluster.yaml.tmpl).
 OPERATOR_VERSION = "0.0.8"
-OPERATOR_OWNED = ("keeper_server", "macros", "remote_servers", "user_directories", "zookeeper")
+OPERATOR_OWNED = ("macros", "remote_servers", "user_directories", "zookeeper")
 
 
 @functools.cache
@@ -96,9 +102,13 @@ def one(docs: tuple[dict, ...], kind: str) -> dict:
     return matches[0]
 
 
-def replication_config(docs: tuple[dict, ...]) -> ElementTree.Element | None:
-    text = (one(docs, "ConfigMap").get("data") or {}).get(REPLICATION_FILE)
+def config_file(docs: tuple[dict, ...], name: str) -> ElementTree.Element | None:
+    text = (one(docs, "ConfigMap").get("data") or {}).get(name)
     return ElementTree.fromstring(text) if text else None
+
+
+def replication_config(docs: tuple[dict, ...]) -> ElementTree.Element | None:
+    return config_file(docs, REPLICATION_FILE)
 
 
 def text_at(root: ElementTree.Element, path: str) -> str:
@@ -134,10 +144,13 @@ def test_single_mode_runs_keeper_embedded_beside_its_tables() -> None:
             continue
         port = text_at(root, "keeper_server/tcp_port")
         nodes = [(text_at(n, "host"), text_at(n, "port")) for n in root.findall("zookeeper/node")]
+        listen = config_file(docs, LISTEN_FILE)
+        bound = {(e.text or "").strip() for e in listen.findall("listen_host")} if listen is not None else set()
+        # A name such as localhost can resolve to ::1 alone, where Keeper does not listen.
         expect(
-            f"{where}: the server connects to its own Keeper",
-            nodes == [("localhost", port)],
-            f"got {nodes}",
+            f"{where}: the server dials its own Keeper on the address Keeper binds",
+            len(nodes) == 1 and nodes[0][1] == port and nodes[0][0] in bound,
+            f"got {nodes}, Keeper binds {sorted(bound)}",
         )
         raft = [text_at(s, "id") for s in root.findall("keeper_server/raft_configuration/server")]
         expect(
@@ -169,6 +182,11 @@ def test_single_mode_keeper_takes_a_generated_identity() -> None:
             continue
         identity = root.find("zookeeper/identity")
         env_name = identity.attrib.get("from_env", "") if identity is not None else ""
+        expect(
+            f"{where}: the identity stays out of preprocessed_configs",
+            identity is not None and identity.attrib.get("hide_in_preprocessed") == "1",
+            f"got {None if identity is None else identity.attrib}",
+        )
         container = server_container(docs)
         env = {e["name"]: e for e in container.get("env") or []}
         value = (env.get(env_name) or {}).get("value", "")
@@ -220,7 +238,7 @@ def test_single_mode_names_a_cluster_of_this_one_server() -> None:
         )
         expect(
             f"{where}: remote_servers holds the cluster the macro names, with this server alone",
-            replicas == [("localhost", "9000")],
+            len(replicas) == 1 and replicas[0][0] in LOOPBACK and replicas[0][1] == "9000",
             f"got {replicas}",
         )
 
@@ -244,6 +262,45 @@ def test_single_mode_keeps_sql_users_in_keeper() -> None:
         )
 
 
+def test_single_mode_keeps_keeper_raft_and_interserver_on_loopback() -> None:
+    for where, docs in single_cells():
+        root = config_file(docs, LISTEN_FILE)
+        expect(f"{where}: the ConfigMap carries {LISTEN_FILE}", root is not None)
+        if root is None:
+            continue
+        mounts = {m.get("mountPath"): m for m in server_container(docs).get("volumeMounts") or []}
+        # Under any other name the image's file still merges and reopens every interface.
+        expect(
+            f"{where}: {LISTEN_FILE} takes the place of the image's {IMAGE_LISTEN_NAME}",
+            (mounts.get(CONFIG_D + IMAGE_LISTEN_NAME) or {}).get("subPath") == LISTEN_FILE,
+            f"mounts: {sorted(mounts)}",
+        )
+        hosts = {(e.text or "").strip() for e in root.findall("listen_host")}
+        # Keeper's client port binds listen_host and has no host setting of its own.
+        expect(f"{where}: listen_host is loopback only", bool(hosts) and hosts <= LOOPBACK, f"got {hosts}")
+        expect(
+            f"{where}: raft and interserver listen on loopback",
+            text_at(root, "interserver_listen_host") in LOOPBACK,
+            f"got {text_at(root, 'interserver_listen_host')!r}",
+        )
+
+
+def test_single_mode_serves_every_service_port_beyond_loopback() -> None:
+    for where, docs in single_cells():
+        files = (one(docs, "ConfigMap").get("data") or {}).values()
+        protocols = [
+            p
+            for text in files
+            if text.lstrip().startswith("<clickhouse>")
+            for p in ElementTree.fromstring(text).iterfind("protocols/*")
+        ]
+        wide = {int(text_at(p, "port")) for p in protocols if text_at(p, "host") not in LOOPBACK}
+        service = next(d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == "dfe-clickhouse")
+        served = {p["port"] for p in service["spec"]["ports"]}
+        # A Service port served only on loopback refuses every client.
+        expect(f"{where}: every Service port listens on the pod's address", served == wide, f"Service {sorted(served)}, wide {sorted(wide)}")
+
+
 def test_cluster_mode_leaves_replication_to_the_operator() -> None:
     for profile in CLUSTER_PROFILES:
         for cloud in CLOUDS:
@@ -256,6 +313,10 @@ def test_cluster_mode_leaves_replication_to_the_operator() -> None:
                 f"{where}: extraConfig shadows none of the operator's replication config",
                 not shadowed,
                 f"got {shadowed}",
+            )
+            expect(
+                f"{where}: the servers embed no Keeper beside the KeeperCluster",
+                "keeper_server" not in extra,
             )
             keeper = one(docs, "KeeperCluster")["metadata"]["name"]
             expect(

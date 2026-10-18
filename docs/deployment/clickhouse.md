@@ -23,11 +23,11 @@ dfe-engine creates every table as an argumentless `Replicated*` engine inside a 
 
 | | `mode: cluster` | `mode: single` |
 | --- | --- | --- |
-| Keeper | The `KeeperCluster` the CR references, under an identity the operator mints | Embedded in the server on 9181, under the identity in the `dfe-clickhouse-keeper-identity` Secret |
+| Keeper | The `KeeperCluster` the CR references, under an identity the operator mints | Embedded in the server on loopback 9181, under the identity in the `dfe-clickhouse-keeper-identity` Secret |
 | Macros and cluster | Written by the operator: `{cluster}` is `default`, holding every replica | `config.d/dfe-replication.xml`: `{cluster}` is `dfe`, holding the one server |
 | Access storage | The operator's base config lists `users_xml` then `replicated` | `dfe-replication.xml` replaces the image's list with `users_xml` then `replicated` |
 
-The `user_directories` list has to replace the image's default rather than add to it. An appended `<replicated>` sits behind `local_directory`, which then takes every `CREATE ROLE`. Keeper's log and snapshots live on the data PVC beside the tables, so the two are never lost apart. The Keeper identity is generated once and never rotated, because the server can read only the znodes created under it. Rationale and the reference config: dfe-schemas `docs/clickhouse-platform.md`.
+The `user_directories` list has to replace the image's default rather than add to it. An appended `<replicated>` sits behind `local_directory`, which then takes every `CREATE ROLE`. Keeper's log and snapshots live on the data PVC beside the tables, so the two are never lost apart. The Keeper identity is generated once and never rotated, because the server can read only the znodes created under it. Under another value the server exits with code 231 at start. In single mode `config.d/dfe-listen.xml` replaces the image's `docker_related_config.xml`, so Keeper, raft and interserver bind loopback and no other pod reaches them, and only 8123, 9000 and 8443 listen on the pod's address. Rationale and the reference config: dfe-schemas `docs/clickhouse-platform.md`.
 
 ## History and rationale
 

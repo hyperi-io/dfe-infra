@@ -39,6 +39,7 @@ import tempfile
 import time
 import urllib.parse
 from pathlib import Path
+from xml.etree import ElementTree
 
 import yaml
 
@@ -257,7 +258,13 @@ def test_single_mode_serves_https_from_the_certificate() -> None:
         expect(f"{tier} Service exposes 8443",
                any(p["port"] == 8443 for p in service["spec"]["ports"]), f"{service['spec']['ports']}")
         tls_xml = config["data"].get("dfe-tls.xml", "")
-        expect(f"{tier} config.d opens https_port 8443", "<https_port>8443</https_port>" in tls_xml,
+        # A protocol with its own host: https_port binds listen_host, which is loopback.
+        wide = {
+            (p.findtext("type"), p.findtext("port"))
+            for p in ElementTree.fromstring(tls_xml or "<clickhouse/>").iterfind("protocols/*")
+            if p.findtext("host") not in ("127.0.0.1", "::1")
+        }
+        expect(f"{tier} config.d serves https on 8443 beyond loopback", ("tls", "8443") in wide,
                tls_xml)
         for leaf in ("tls.crt", "tls.key"):
             path = f"/etc/clickhouse-server/tls/{leaf}"
