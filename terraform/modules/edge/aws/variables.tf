@@ -78,9 +78,9 @@ variable "tunnel" {
     address.ami_id is the newest AL2023 arm64 AMI in the region, auto-selected
     by scripts/resolve_sizing.py images from the SSM parameter
     /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else
-    the root's tfvars instance_ami_id. The forwarder is rebuilt rather than
-    carried through a long life, so the newest id at the last resolve is the
-    right one. Read on mode forwarder alone, and refused there when null.
+    the root's tfvars forwarder_ami_id. The forwarder is rebuilt rather than
+    carried through a long life, so the newest id at the last full resolve is
+    the right one. Read on mode forwarder alone, and refused there when null.
 
     address.zone pins the instance to one availability zone, because a hop to a
     node in another zone crosses a boundary billed per GB. Empty takes the
@@ -137,7 +137,7 @@ variable "tunnel" {
 
   validation {
     condition     = var.tunnel.address.mode != "forwarder" || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.tunnel.address.ami_id))
-    error_message = "tunnel.address.ami_id must be an AMI id on mode forwarder, and none was resolved. Run scripts/resolve_sizing.py images, or set instance_ami_id in terraform.tfvars. Got ${coalesce(var.tunnel.address.ami_id, "nothing")}."
+    error_message = "tunnel.address.ami_id must be an AMI id on mode forwarder, and none was resolved. Run scripts/resolve_sizing.py images, or set forwarder_ami_id in terraform.tfvars. Got ${coalesce(var.tunnel.address.ami_id, "nothing")}."
   }
 
   validation {

@@ -87,7 +87,7 @@ RENDER_DIAL = REPO_ROOT / "scripts" / "render_dial.py"
 RESOLVE_SIZING = REPO_ROOT / "scripts" / "resolve_sizing.py"
 AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws"
 
-# The one key `up` re-resolves: the node groups' release stays for a full apply to move.
+# The one key `up` re-resolves: the node groups' release and the forwarder's AMI wait for a full resolve.
 TOOLBOX_IMAGE_KEY = "instance_ami_id"
 SCRATCH_KUBECONFIG = REPO_ROOT / ".tmp" / "toolbox-eks-api.kubeconfig"
 
@@ -278,9 +278,10 @@ def _resolve_toolbox_image() -> bool:
 
     The instance is rebuilt on every `up`, so the AMI an earlier resolve wrote
     is stale by then, or absent on a deployment that never resolved one. A
-    lookup that fails drops the key and warns, so the apply takes
-    terraform.tfvars' instance_ami_id or refuses by name rather than launching
-    the old image. The exit status is non-zero only for a dial it cannot read.
+    lookup that fails drops the key and warns, and a pinned dial empties the
+    file, so the apply takes terraform.tfvars' instance_ami_id or refuses by
+    name rather than launching the old image. The exit status is non-zero only
+    for a dial it cannot read.
     """
     result = _run(
         [

@@ -255,7 +255,7 @@ module "edge" {
       zone          = var.edge.tunnel.address.zone
       instance_type = local.forwarder_shape == null ? null : local.forwarder_shape.instance_types[0]
       root_volume   = local.forwarder_shape == null ? null : local.forwarder_shape.root_volume
-      ami_id        = local.forwarder_shape == null ? null : var.instance_ami_id
+      ami_id        = local.forwarder_shape == null ? null : var.forwarder_ami_id
     }
     openvpn       = var.edge.tunnel.openvpn
     source_ranges = var.edge.tunnel.source_ranges

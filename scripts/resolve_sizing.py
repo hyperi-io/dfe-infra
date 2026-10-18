@@ -92,10 +92,10 @@ cloud's recommended node image at its newest version, written to
 ``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
 elsewhere). A lookup that fails warns and writes no key, so tfvars or the
 variable default applies, and ``node_image.pin: "true"`` in the dial skips the
-lookups altogether. ``--only <key>`` resolves that key and keeps the file's
-others, which is how ``dfe-ops bastion up`` refreshes the toolbox's AMI without
-moving the node groups' release. scripts/node_images.py carries the cascade and
-the sources.
+lookups altogether and empties the file, ``--only`` or not. ``--only <key>``
+resolves that key and keeps the file's others, which is how ``dfe-ops bastion
+up`` refreshes the toolbox's AMI without moving the node groups' release or the
+forwarder's AMI. scripts/node_images.py carries the cascade and the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -3694,10 +3694,12 @@ def run_images(args: argparse.Namespace) -> int:
         print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
 
     values = node_images.resolve(target, pinned=pinned, read=read, warn=warn, keys=keys)
-    path = node_images.write_tfvars(out, values, keys=keys)
+    # A pin empties the file whatever --only names, or an earlier key would still beat terraform.tfvars.
+    path = node_images.write_tfvars(out, values, keys=None if pinned else keys)
     if pinned:
         print(
-            "resolve_sizing: node_image.pin is true, so no lookup ran and the tfvars value holds",
+            "resolve_sizing: node_image.pin is true, so no lookup ran, the file is empty and the "
+        "tfvars value holds",
             file=sys.stderr,
         )
     for key, value in sorted(values.items()):

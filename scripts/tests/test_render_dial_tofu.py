@@ -32,6 +32,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import check_platform  # noqa: E402
+import node_images  # noqa: E402
 import render_dial  # noqa: E402
 from yaml_subset import parse as parse_dial  # noqa: E402
 
@@ -161,10 +162,10 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     }
     # A credential the root reads from TF_VAR_*, which the dial never carries.
     environment_only = {"clickhouse_external_password"}
-    # resolve_sizing.py images writes these into node-images.auto.tfvars.json, and both default.
-    node_images = {"node_image", "instance_ami_id"}
+    # resolve_sizing.py images writes these into node-images.auto.tfvars.json, and each defaults.
+    images = {key for key, _lookup in node_images.LOOKUPS["aws"]}
     expected = (
-        declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only - node_images
+        declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only - images
     )
     assert set(render()) == expected
 

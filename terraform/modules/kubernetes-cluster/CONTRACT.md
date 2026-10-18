@@ -90,7 +90,7 @@ map(object({
 A node image is a three-layer cascade, highest first, and OpenTofu orders the layers itself:
 
 1. The provider's recommendation, read live: `scripts/resolve_sizing.py images` writes it to `node-images.auto.tfvars.json` in the cloud's root, which loads after `terraform.tfvars`. The lookups live in `scripts/node_images.py`.
-2. A value in `terraform.tfvars`, which applies when the lookup failed or when the dial sets `node_image.pin: "true"` to skip it -- the hold for a bad provider image or a reproducible rebuild.
+2. A value in `terraform.tfvars`, which applies when the lookup failed or when the dial sets `node_image.pin: "true"` to skip it and empty the file -- the hold for a bad provider image or a reproducible rebuild. The pin takes effect on the next `images` run, because tofu never reads the dial.
 3. The root's variable default, the one image literal the tree carries, named in `scripts/check_tofu_literals.py`'s `ALLOWED` table.
 
 The lookup runs in the resolver, never in a tofu data source, because a failing data source fails the whole plan and layer 2 would never get its turn. A failed lookup writes no key and warns once. The check refuses a node image literal, an image SSM path or an AMI data source anywhere else in a `.tf` file.
@@ -99,13 +99,13 @@ Long-lived nodes take a DATED release, so their image moves only on the next res
 
 | Body | Layer 1 reads | Writes | Layer 3 | Status |
 |------|---------------|--------|---------|--------|
-| `aws/` | The SSM parameter `/aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended` ([EKS](https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html)) | `node_image = { family = "AL2023_ARM_64_STANDARD", version = "<patch>-<YYYYMMDD>" }` | The AMI type, no version | Implemented, deployed and tested |
+| `aws/` | The SSM parameter `/aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended` ([EKS](https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html)) | `node_image = { family = "AL2023_ARM_64_STANDARD", version = "<patch>-<YYYYMMDD>" }` | The AMI type, no version | Implemented and tested, on recorded SSM answers and in tofu tests. Cloud-cycle wiring pending, so no deploy has taken its answer yet |
 | `gcp/` | `gcloud container get-server-config --location <region>`, its `defaultImageType`, once `validNodeVersions` carries the minor ([ServerConfig](https://docs.cloud.google.com/kubernetes-engine/docs/reference/rest/v1/ServerConfig)) | `node_image = { family = "COS_CONTAINERD" }` | `COS_CONTAINERD`, GKE's recommended image | Lookup coded and unit-tested against the documented response shape. No body, not deployed or tested live |
 | `azure/` | `az aks get-versions --location <region>`, confirming the minor is listed and not preview ([AKS](https://learn.microsoft.com/en-us/rest/api/aks/managed-clusters/list-kubernetes-versions)) | `node_image = { family = "Ubuntu" }` | `Ubuntu` | Lookup coded and unit-tested against the documented response shape. No body, not deployed or tested live |
 | `rke2/` | Nothing: no provider publishes a recommended node OS ([RKE2 requirements](https://docs.rke2.io/install/requirements), 2026-10-07, validates a list of distributions and recommends none) | Nothing | Its root's default | Layers 2 and 3 only. Not built |
 
 GKE's `defaultImageType` and the EKS `recommended` parameter are machine answers. AKS publishes no API answer for an OS SKU: its guidance is the unversioned `Ubuntu` SKU, which moves to the newest validated Ubuntu with each minor ([OS versions](https://learn.microsoft.com/en-us/azure/aks/upgrade-os-version)), so the lookup writes it only once the location lists the minor as generally available.
 
-On `aws/` the toolbox instance and the tunnel forwarder take the root's `instance_ami_id` from the same command, the newest AMI in `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`. Neither has a layer 3, because an AMI id belongs to one region: an unresolved one is refused by name, and only once the toolbox or the forwarder is on.
+On `aws/` the toolbox instance takes the root's `instance_ami_id` and the tunnel forwarder its `forwarder_ami_id`, both from the same command, the newest AMI in `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`. They are separate keys because `dfe-ops bastion up` refreshes the toolbox's alone, and a new AMI replaces the forwarder instance. Neither has a layer 3, because an AMI id belongs to one region: an unresolved one is refused by name, and only once its instance is on.
 
 Karpenter's node class takes the same EKS release as its own dated alias, `al2023@v<YYYYMMDD>`, pinned in `versions.yaml` (`operators.karpenter-al2023-ami`) behind the release-age gate rather than through this cascade. `scripts/check_karpenter_ami.py` warns in CI, and never fails, when that pin lags the newest release for the stack's minor.

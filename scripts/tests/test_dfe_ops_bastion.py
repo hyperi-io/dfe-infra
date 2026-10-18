@@ -723,18 +723,20 @@ def test_up_applies_nothing_when_the_ami_resolve_cannot_read_the_dial(
     assert "no AMI was resolved and nothing was applied" in capsys.readouterr().err
 
 
-def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The real subcommand, from recorded SSM answers: the AMI moves and the node release stays."""
+def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: str) -> Path:
+    """A dial and an aws root holding an earlier resolve's file, with `_run` answering from recorded SSM."""
     dial = tmp_path / "deployment.yaml"
     dial.write_text(
         'target:\n  provision:\n    cloud: aws\n    account: "000000000000"\n    region: us-west-2\n'
-        'kubernetes_version: "1.36"\n',
+        f'kubernetes_version: "1.36"\nnode_image:\n  pin: "{pin}"\n',
         encoding="utf-8",
     )
     root = tmp_path / "aws"
     root.mkdir()
-    (root / "node-images.auto.tfvars.json").write_text(
+    path = root / "node-images.auto.tfvars.json"
+    path.write_text(
         json.dumps({
+            "forwarder_ami_id": "ami-11111111111111111",
             "instance_ami_id": "ami-00000000000000000",
             "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
         }),
@@ -748,12 +750,29 @@ def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatc
         return subprocess.run([*cmd, "--fixtures", str(fixtures)], check=False, **kwargs)  # type: ignore[call-overload]
 
     monkeypatch.setattr(bastion, "_run", run_with_recorded_answers)
+    return path
+
+
+def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real subcommand: the toolbox AMI moves, the node release and the forwarder's AMI stay."""
+    path = _recorded_resolve(tmp_path, monkeypatch, pin="false")
 
     assert bastion._resolve_toolbox_image() is True
-    assert json.loads((root / "node-images.auto.tfvars.json").read_text(encoding="utf-8")) == {
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "forwarder_ami_id": "ami-11111111111111111",
         "instance_ami_id": "ami-0957e38de3db270cc",
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
     }
+
+
+def test_up_on_a_pinned_dial_leaves_terraform_tfvars_in_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier resolve's keys would beat the operator's hold, so a pin empties the file."""
+    path = _recorded_resolve(tmp_path, monkeypatch, pin="true")
+
+    assert bastion._resolve_toolbox_image() is True
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
 
 
 def test_up_targets_the_toolbox_module_and_nothing_else(

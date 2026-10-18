@@ -20,16 +20,17 @@ OpenTofu orders them itself: an ``*.auto.tfvars.json`` loads after
 ``terraform.tfvars``, so a key written here wins and a key left out lets the
 layers below through. A lookup that fails writes no key and warns once. It never
 fails the run, because a lower layer still holds an answer. ``node_image.pin:
-"true"`` in the dial skips every lookup, so the operator's tfvars value holds --
-a deliberate hold for a bad provider image or a reproducible rebuild.
+"true"`` in the dial skips every lookup and empties the file, so the operator's
+tfvars value holds -- a deliberate hold for a bad provider image or a
+reproducible rebuild.
 
 Long-lived nodes take a DATED release, so their image moves only on the next
 resolve and apply. An instance rebuilt on every use takes the newest AMI id.
 
     aws     the EKS managed node groups' AMI type and dated release, from the
             AL2023 ``recommended`` SSM parameter for the cluster's minor, and
-            the toolbox and tunnel forwarder's AMI id, from the AL2023
-            ``ami-amazon-linux-latest`` parameter
+            the toolbox's and the tunnel forwarder's AMI ids, each its own key,
+            from the AL2023 ``ami-amazon-linux-latest`` parameter
     gcp     GKE's server config ``defaultImageType`` for the location
     azure   AKS's version-tracking Linux OS SKU, once the location lists the
             minor as generally available
@@ -303,8 +304,13 @@ def aks_node_image(target: Target, read: Reader) -> dict[str, str]:
 type Lookup = Callable[[Target, Reader], object]
 
 # Per cloud, the tfvars key each lookup writes -- the keys that cloud's root declares.
+# The forwarder's AMI is its own key, so a toolbox-only refresh never replaces the forwarder.
 LOOKUPS: dict[str, tuple[tuple[str, Lookup], ...]] = {
-    "aws": (("node_image", eks_node_image), ("instance_ami_id", instance_ami)),
+    "aws": (
+        ("node_image", eks_node_image),
+        ("instance_ami_id", instance_ami),
+        ("forwarder_ami_id", instance_ami),
+    ),
     "gcp": (("node_image", gke_node_image),),
     "azure": (("node_image", aks_node_image),),
 }
@@ -380,10 +386,12 @@ def write_tfvars(
 ) -> Path:
     """Write the answered keys, replacing what an earlier resolve left for them.
 
-    With ``keys`` None every key is replaced, so an empty answer writes ``{}``
-    and nothing a previous resolve wrote outlives a pin or a failed lookup.
-    With ``keys`` named, only those are replaced -- dropped when unanswered --
-    and every other key in the file stays as it was.
+    With ``keys`` None the whole file is replaced, so an empty answer writes
+    ``{}`` and nothing a previous resolve wrote outlives a failed lookup.
+    ``resolve_sizing.py images`` writes a pin this way whatever ``--only``
+    named, so nothing outlives a pin either. With ``keys`` named, only those
+    are replaced -- dropped when unanswered -- and every other key in the file
+    stays as it was.
     """
     path = directory / TFVARS_NAME
     kept: dict[str, object] = {}

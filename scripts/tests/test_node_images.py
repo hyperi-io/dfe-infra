@@ -198,12 +198,13 @@ def test_expected_fail_an_aks_answer_with_no_values_is_refused(tmp_path: Path) -
 # --- the cascade -------------------------------------------------------------
 
 
-def test_aws_resolves_both_keys_its_root_declares() -> None:
+def test_aws_resolves_every_key_its_root_declares() -> None:
     warnings: list[str] = []
     values = node_images.resolve(AWS, pinned=False, read=RECORDED, warn=warnings.append)
     assert values == {
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261012"},
         "instance_ami_id": "ami-0957e38de3db270cc",
+        "forwarder_ami_id": "ami-0957e38de3db270cc",
     }
     assert warnings == []
 
@@ -240,7 +241,10 @@ def test_expected_fail_one_failed_lookup_warns_once_and_leaves_only_its_key_out(
     read = _recorded(tmp_path, "aws-us-west-2-al2023-ami-arm64.txt", ami)
     warnings: list[str] = []
     values = node_images.resolve(AWS, pinned=False, read=read, warn=warnings.append)
-    assert values == {"instance_ami_id": "ami-0957e38de3db270cc"}
+    assert values == {
+        "instance_ami_id": "ami-0957e38de3db270cc",
+        "forwarder_ami_id": "ami-0957e38de3db270cc",
+    }
     assert len(warnings) == 1
     assert warnings[0].startswith("node_image not resolved (no recorded response")
     assert "the tfvars value or the variable default applies" in warnings[0]
@@ -297,12 +301,13 @@ def _images(dial: Path, out: Path, *extra: str) -> int:
     return resolve_sizing.main(["images", "--dial", str(dial), "--out", str(out), *extra])
 
 
-def test_the_images_subcommand_writes_both_aws_keys(tmp_path: Path) -> None:
+def test_the_images_subcommand_writes_every_aws_key(tmp_path: Path) -> None:
     out = tmp_path / "root"
     out.mkdir()
     assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES)) == 0
     written = json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
     assert written == {
+        "forwarder_ami_id": "ami-0957e38de3db270cc",
         "instance_ami_id": "ami-0957e38de3db270cc",
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261012"},
     }
@@ -325,7 +330,7 @@ def test_every_failed_lookup_still_exits_zero_and_warns(
     empty.mkdir()
     assert _images(_dial(tmp_path), out, "--fixtures", str(empty)) == 0
     assert json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")) == {}
-    assert capsys.readouterr().err.count("WARNING node image") == 2
+    assert capsys.readouterr().err.count("WARNING node image") == len(node_images.LOOKUPS["aws"])
 
 
 @pytest.mark.parametrize(
@@ -345,10 +350,11 @@ def test_a_gcp_or_azure_dial_resolves_against_the_shared_platform_range(
 
 
 def _existing(out: Path) -> Path:
-    """A node-images file an earlier resolve left: a node release and an AMI old enough to replace."""
+    """A node-images file an earlier resolve left: a node release and AMIs old enough to replace."""
     path = out / "node-images.auto.tfvars.json"
     path.write_text(
         json.dumps({
+            "forwarder_ami_id": "ami-11111111111111111",
             "instance_ami_id": "ami-00000000000000000",
             "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
         }),
@@ -358,15 +364,29 @@ def _existing(out: Path) -> Path:
 
 
 def test_only_one_key_is_resolved_and_the_rest_of_the_file_kept(tmp_path: Path) -> None:
-    """bastion up refreshes the AMI without moving the node groups' release under a later apply."""
+    """bastion up refreshes the toolbox AMI without moving the node release or replacing the forwarder."""
     out = tmp_path / "root"
     out.mkdir()
     path = _existing(out)
     assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id") == 0
     assert json.loads(path.read_text(encoding="utf-8")) == {
+        "forwarder_ami_id": "ami-11111111111111111",
         "instance_ami_id": "ami-0957e38de3db270cc",
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
     }
+
+
+def test_a_pinned_only_run_leaves_nothing_an_earlier_resolve_wrote(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Under a pin terraform.tfvars must hold, and any key left in the auto file would beat it."""
+    out = tmp_path / "root"
+    out.mkdir()
+    path = _existing(out)
+    dial = _dial(tmp_path, pin="true")
+    assert _images(dial, out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id") == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
+    assert "node_image.pin is true" in capsys.readouterr().err
 
 
 def test_expected_fail_a_failed_only_lookup_drops_the_stale_key(
@@ -380,6 +400,7 @@ def test_expected_fail_a_failed_only_lookup_drops_the_stale_key(
     empty.mkdir()
     assert _images(_dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id") == 0
     assert json.loads(path.read_text(encoding="utf-8")) == {
+        "forwarder_ami_id": "ami-11111111111111111",
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
     }
     assert capsys.readouterr().err.count("WARNING node image") == 1

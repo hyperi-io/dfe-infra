@@ -153,7 +153,8 @@ variables {
   }
 
   // What scripts/resolve_sizing.py images writes into node-images.auto.tfvars.json.
-  instance_ami_id = "ami-0123456789abcdef0"
+  instance_ami_id  = "ami-0123456789abcdef0"
+  forwarder_ami_id = "ami-0123456789abcdef1"
 
   eks_addon_versions = {
     "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
@@ -244,7 +245,51 @@ run "a_forwarder_refuses_an_unresolved_ami" {
   command = plan
 
   variables {
+    forwarder_ami_id = null
+  }
+
+  expect_failures = [var.forwarder_ami_id]
+}
+
+// The forwarder reads its own key, so the toolbox-only refresh bastion up runs
+// never reaches it.
+run "the_forwarder_launches_without_the_toolbox_ami" {
+  command = plan
+
+  variables {
     instance_ami_id = null
+  }
+
+  assert {
+    condition     = length(module.edge[0].tunnel_listener_ports) > 0
+    error_message = "the forwarder must plan on forwarder_ami_id alone, with the toolbox off and its AMI unresolved"
+  }
+}
+
+run "a_toolbox_refuses_an_unresolved_ami" {
+  command = plan
+
+  variables {
+    instance_ami_id = null
+    toolbox = {
+      enabled                    = true
+      aws                        = { shape_ref = "toolbox", operator_role_arn = "arn:aws:iam::000000000000:role/example-operator" }
+      ttl_minutes                = 60
+      session                    = { idle_timeout_minutes = 15, max_duration_minutes = 240 }
+      session_log_retention_days = 90
+      tool_versions = {
+        kubectl                    = "1"
+        helm                       = "1"
+        argocd-cli                 = "1"
+        tofu                       = "1"
+        yq                         = "1"
+        aws-cli                    = "1"
+        aws-session-manager-plugin = "1"
+        clickhouse-client          = "1"
+        psql                       = "1"
+        kafka-cli                  = "1"
+      }
+    }
   }
 
   expect_failures = [var.instance_ami_id]

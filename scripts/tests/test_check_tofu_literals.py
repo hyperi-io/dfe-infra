@@ -235,6 +235,48 @@ REFUSED = {
         'data "aws_ami" "x" {\n  most_recent = true\n}\n',
         ("data.aws_ami.x", "data source", "aws_ami"),
     ),
+    "an SSM parameter data source, whatever it names": (
+        'data "aws_ssm_parameter" "x" {\n  name = var.parameter\n}\n',
+        ("data.aws_ssm_parameter.x", "data source", "aws_ssm_parameter"),
+    ),
+    "an SSM path data source": (
+        'data "aws_ssm_parameters_by_path" "x" {\n  path = var.path\n}\n',
+        ("data.aws_ssm_parameters_by_path.x", "data source", "aws_ssm_parameters_by_path"),
+    ),
+    "an AMI id in upper-case hex, under a name out of scope": (
+        'locals {\n  base = "ami-0123456789ABCDEF0"\n}\n',
+        ("locals", "base", "ami-0123456789ABCDEF0"),
+    ),
+    "Canonical's Ubuntu SSM path": (
+        'locals {\n  base = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"\n}\n',
+        ("locals", "base", "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"),
+    ),
+    "Debian's SSM path": (
+        'locals {\n  base = "/aws/service/debian/release/12/latest/arm64"\n}\n',
+        ("locals", "base", "/aws/service/debian/release/12/latest/arm64"),
+    ),
+    "SUSE's SSM path": (
+        'locals {\n  base = "/aws/service/suse/sles/15-sp6/arm64/latest"\n}\n',
+        ("locals", "base", "/aws/service/suse/sles/15-sp6/arm64/latest"),
+    ),
+    "the ECS-optimised SSM path": (
+        'locals {\n  base = "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"\n}\n',
+        ("locals", "base", "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"),
+    ),
+    "an AMI id in a heredoc script": (
+        'resource "aws_instance" "x" {\n  user_data = <<-EOT\n    #!/bin/bash\n'
+        "    aws ec2 run-instances --image-id=ami-0123456789abcdef0\n  EOT\n}\n",
+        ("resource.aws_instance.x", "user_data", "ami-0123456789abcdef0"),
+    ),
+    "a Karpenter alias in a heredoc manifest": (
+        'resource "kubectl_manifest" "x" {\n  yaml_body = <<-YAML\n    spec:\n'
+        "      amiSelectorTerms:\n        - alias: al2023@v20261012\n  YAML\n}\n",
+        ("resource.kubectl_manifest.x", "yaml_body", "al2023@v20261012"),
+    ),
+    "an AMI id in a heredoc JSON document": (
+        'locals {\n  launch = <<EOT\n{"ImageId":"ami-0123456789abcdef0"}\nEOT\n}\n',
+        ("locals", "launch", "ami-0123456789abcdef0"),
+    ),
 }
 
 
@@ -242,6 +284,12 @@ REFUSED = {
 def test_expected_fail_each_hiding_place_is_found(snippet: tuple[str, tuple[str, str, str]]) -> None:
     text, hit = snippet
     assert hit in literals(text)
+
+
+def test_expected_fail_an_image_in_a_heredoc_is_reported_on_its_own_line() -> None:
+    text = REFUSED["a Karpenter alias in a heredoc manifest"][0]
+    (hit,) = check.scan_text(text, "probe.tf")
+    assert hit.line == text.splitlines().index("        - alias: al2023@v20261012") + 1
 
 
 # Literals that are not a chosen value, each one passed.
@@ -263,6 +311,19 @@ PASSED = {
     ),
     "an image name inside prose": (
         'variable "node_image" {\n  description = "EKS AMI type, AL2023_ARM_64_STANDARD by default"\n}\n'
+    ),
+    "an image path in a heredoc description": (
+        'variable "ami_id" {\n  description = <<-DESCRIPTION\n'
+        "    Read from /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else tfvars.\n"
+        "  DESCRIPTION\n}\n"
+    ),
+    "an AMI id in a heredoc error message": (
+        'variable "ami_id" {\n  validation {\n    condition = var.ami_id != null\n'
+        "    error_message = <<-EOT\n      Set one such as ami-0123456789abcdef0 in tfvars\n    EOT\n  }\n}\n"
+    ),
+    "a heredoc that names no image": (
+        'resource "aws_instance" "x" {\n  user_data = <<-EOT\n    #!/bin/bash\n'
+        "    echo cosine ubuntu-like ${var.ami_id}\n  EOT\n}\n"
     ),
 }
 

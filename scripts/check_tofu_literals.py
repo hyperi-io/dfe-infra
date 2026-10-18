@@ -33,9 +33,11 @@ component rather than chosen -- each with the reason it stays.
 
 A node image is caught by its VALUE as well, under any name and in any block:
 an AMI id, an EKS AMI type, a Karpenter alias, an image SSM parameter path, a
-GKE image type or an AKS OS SKU, and an AMI data source. A node image resolves
-through ``scripts/resolve_sizing.py images`` (scripts/node_images.py), so tofu
-never looks one up itself, and its one literal is the root variable's default.
+GKE image type or an AKS OS SKU, and an AMI or SSM data source. A heredoc body
+is read word by word, except a description's or an error message's. A node
+image resolves through ``scripts/resolve_sizing.py images``
+(scripts/node_images.py), so tofu never looks one up itself, and its one
+literal is the root variable's default.
 
 Stdlib only, like every other script here: the scanner reads the HCL subset
 this tree uses, and a construct it cannot read fails loudly rather than being
@@ -84,9 +86,12 @@ UNSCANNED_BLOCKS = frozenset({"terraform", "provider", "output", "moved", "check
 
 # A string that IS a node image, whatever name it sits under -- each matched whole.
 NODE_IMAGE_VALUES = (
-    re.compile(r"ami-(?:[0-9a-f]{8}|[0-9a-f]{17})"),
+    re.compile(r"(?i:ami-(?:[0-9a-f]{8}|[0-9a-f]{17}))"),
     re.compile(r"resolve:ssm:.*"),
-    re.compile(r"/aws/service/(?:ami-amazon-linux-latest|eks/optimized-ami|bottlerocket|ami-windows-latest)/.*"),
+    re.compile(
+        r"/aws/service/(?:ami-amazon-linux-latest|ami-windows-latest|bottlerocket|canonical|debian|suse|"
+        r"eks/optimized-ami|ecs/optimized-ami)/.*"
+    ),
     re.compile(r"(?:AL2|AL2023|BOTTLEROCKET|WINDOWS)_[A-Za-z0-9_]+"),
     re.compile(r"(?:al2|al2023|bottlerocket|windows20\d\d)@.+"),
     re.compile(r"(?i:cos|cos_containerd|ubuntu_containerd|windows_ltsc_containerd)"),
@@ -97,7 +102,16 @@ NODE_IMAGE_VALUES = (
 )
 
 # Data sources that look a node image up inside tofu, where a provider failure fails the plan.
-NODE_IMAGE_DATA_SOURCES = frozenset({"aws_ami", "aws_ami_ids"})
+# An SSM read counts whatever parameter it names, because SSM is how AWS publishes image ids.
+NODE_IMAGE_DATA_SOURCES = frozenset(
+    {"aws_ami", "aws_ami_ids", "aws_ssm_parameter", "aws_ssm_parameters_by_path"}
+)
+
+# Prose for a reader, never a value tofu passes on, so an image a heredoc names there is documentation.
+PROSE_ATTRIBUTES = frozenset({"description", "error_message"})
+
+# One word of a heredoc body, split where YAML, JSON, shell and HCL separate a value from its key.
+_HEREDOC_WORD = re.compile(r"[^\s\"'`,;()\[\]{}=<>|]+")
 
 # The contract constants, keyed "<path>:<address>:<attribute>". A value here is
 # fixed by a vendor, a protocol or another component, and the reason says which.
@@ -588,6 +602,17 @@ def is_node_image(text: str) -> bool:
     return any(pattern.fullmatch(text) for pattern in NODE_IMAGE_VALUES)
 
 
+def _heredoc_images(token: Token) -> list[Token]:
+    """Each word of a heredoc body that is a node image, on the line it sits."""
+    found: list[Token] = []
+    for word in _HEREDOC_WORD.finditer(token.text):
+        if is_node_image(word.group()):
+            # The body starts on the line after the `<<` that opens it.
+            line = token.line + 1 + token.text.count("\n", 0, word.start())
+            found.append(Token("string", word.group(), line))
+    return found
+
+
 def _image_values(tokens: list[Token], attribute: str) -> list[tuple[str, Token]]:
     """Node-image strings in an expression, keyed by their path through object constructors."""
     items = _object_items(tokens)
@@ -596,7 +621,13 @@ def _image_values(tokens: list[Token], attribute: str) -> list[tuple[str, Token]
         for key, value in items:
             found.extend(_image_values(value, f"{attribute}.{key}"))
         return found
-    return [(attribute, t) for t in tokens if t.kind == "string" and is_node_image(t.text)]
+    strings = [(attribute, t) for t in tokens if t.kind == "string" and is_node_image(t.text)]
+    if attribute.rsplit(".", 1)[-1] in PROSE_ATTRIBUTES:
+        return strings
+    words = [
+        (attribute, word) for t in tokens if t.kind == "heredoc" for word in _heredoc_images(t)
+    ]
+    return [*strings, *words]
 
 
 def _block_images(block: Block, address: str, prefix: str) -> list[tuple[str, int, str, Token]]:
