@@ -311,7 +311,12 @@ LOOKUPS: dict[str, tuple[tuple[str, Lookup], ...]] = {
 
 
 def resolve(
-    target: Target, *, pinned: bool, read: Reader, warn: Callable[[str], None]
+    target: Target,
+    *,
+    pinned: bool,
+    read: Reader,
+    warn: Callable[[str], None],
+    keys: frozenset[str] | None = None,
 ) -> dict[str, object]:
     """Every node-image key this cloud's lookups answered.
 
@@ -320,6 +325,7 @@ def resolve(
         pinned: The dial's node_image.pin -- true skips every lookup.
         read: The provider reader.
         warn: Called once per value no lookup answered.
+        keys: Resolve only these keys, or every one the cloud has when None.
 
     Returns:
         The tfvars keys to write. A failed lookup leaves its key out, so tfvars
@@ -330,6 +336,8 @@ def resolve(
         return {}
     values: dict[str, object] = {}
     for key, lookup in LOOKUPS[target.cloud]:
+        if keys is not None and key not in keys:
+            continue
         try:
             values[key] = lookup(target, read)
         except ImageLookupError as err:
@@ -367,13 +375,25 @@ def fixture_reader(directory: Path) -> Reader:
     return read
 
 
-def write_tfvars(directory: Path, values: dict[str, object]) -> Path:
-    """Write the answered keys, replacing whatever an earlier resolve left.
+def write_tfvars(
+    directory: Path, values: dict[str, object], *, keys: frozenset[str] | None = None
+) -> Path:
+    """Write the answered keys, replacing what an earlier resolve left for them.
 
-    An empty answer still writes ``{}``, so a key a previous resolve wrote
-    cannot outlive a pin or a failed lookup.
+    With ``keys`` None every key is replaced, so an empty answer writes ``{}``
+    and nothing a previous resolve wrote outlives a pin or a failed lookup.
+    With ``keys`` named, only those are replaced -- dropped when unanswered --
+    and every other key in the file stays as it was.
     """
     path = directory / TFVARS_NAME
-    body = json.dumps(values, indent=2, sort_keys=True) + "\n"
+    kept: dict[str, object] = {}
+    if keys is not None and path.is_file():
+        try:
+            earlier = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            earlier = {}
+        if isinstance(earlier, dict):
+            kept = {key: value for key, value in earlier.items() if key not in keys}
+    body = json.dumps({**kept, **values}, indent=2, sort_keys=True) + "\n"
     path.write_text(body, encoding="utf-8", newline="\n")
     return path

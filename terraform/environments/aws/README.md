@@ -142,7 +142,7 @@ refuses a shape whose `arch` is not `arm64`, because the machine image
 this root launches is arm64-only. Every image in the stack ships a multi-arch
 manifest, so nothing else changes.
 
-`python3 ../../../scripts/resolve_sizing.py images --dial ../../../deployment.yaml` writes the machine images into `node-images.auto.tfvars.json` here, with this shell's AWS credentials: `node_image`, EKS's recommended AL2023 arm64 type at its newest dated release, and `instance_ami_id`, the newest AL2023 arm64 AMI the toolbox and the forwarder launch. A failed lookup warns and writes nothing, so a value in `terraform.tfvars` or the variable default applies (`modules/kubernetes-cluster/CONTRACT.md`, "Node images"). Re-run it before an apply that should move the node groups to a newer release, and before `dfe-ops bastion up`.
+`python3 ../../../scripts/resolve_sizing.py images --dial ../../../deployment.yaml` writes the machine images into `node-images.auto.tfvars.json` here, with this shell's AWS credentials: `node_image`, EKS's recommended AL2023 arm64 type at its newest dated release, and `instance_ami_id`, the newest AL2023 arm64 AMI the toolbox and the forwarder launch. A failed lookup warns and writes nothing, so a value in `terraform.tfvars` or the variable default applies (`modules/kubernetes-cluster/CONTRACT.md`, "Node images"). Re-run it before an apply that should move the node groups to a newer release. `dfe-ops bastion up` re-resolves `instance_ami_id` alone on its own.
 
 ## Kafka
 

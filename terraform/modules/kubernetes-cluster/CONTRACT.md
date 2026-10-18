@@ -108,4 +108,4 @@ GKE's `defaultImageType` and the EKS `recommended` parameter are machine answers
 
 On `aws/` the toolbox instance and the tunnel forwarder take the root's `instance_ami_id` from the same command, the newest AMI in `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`. Neither has a layer 3, because an AMI id belongs to one region: an unresolved one is refused by name, and only once the toolbox or the forwarder is on.
 
-Karpenter's node class takes the same EKS release as its own dated alias, `al2023@v<YYYYMMDD>`, pinned in `versions.yaml` (`operators.karpenter-al2023-ami`) behind the release-age gate rather than through this cascade.
+Karpenter's node class takes the same EKS release as its own dated alias, `al2023@v<YYYYMMDD>`, pinned in `versions.yaml` (`operators.karpenter-al2023-ami`) behind the release-age gate rather than through this cascade. `scripts/check_karpenter_ami.py` warns in CI, and never fails, when that pin lags the newest release for the stack's minor.

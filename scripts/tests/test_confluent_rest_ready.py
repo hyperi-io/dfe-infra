@@ -35,7 +35,6 @@ import struct
 import subprocess
 import sys
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -319,6 +318,44 @@ def _url(port: int) -> str:
     return f"https://127.0.0.1:{port}/kafka/v3/clusters/lkc-000000/topics"
 
 
+@pytest.fixture
+def clock(tmp_path: Path) -> Path:
+    """A `date +%s` and a `sleep` on PATH that share one counter, so a bound is counted, not raced.
+
+    The probe reads its clock through `date` and waits through `sleep`, so with
+    these first on PATH every interval it waits moves the counter by exactly
+    that much and no real time passes: the attempts a bound allows are a fixed
+    number, whatever the host's load.
+    """
+    real_date = shutil.which("date")
+    assert real_date, "date is on PATH"
+    counter = tmp_path / "clock"
+    counter.write_text("1000000\n", encoding="utf-8")
+    bin_dir = tmp_path / "clock-bin"
+    bin_dir.mkdir()
+    (bin_dir / "date").write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [[ $# -eq 1 && "$1" == "+%s" ]]; then cat "{counter}"; else exec "{real_date}" "$@"; fi\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    (bin_dir / "sleep").write_text(
+        "#!/usr/bin/env bash\n"
+        f'now="$(cat "{counter}")"\n'
+        f'printf "%s\\n" "$(( now + $1 ))" > "{counter}"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    for shim in ("date", "sleep"):
+        (bin_dir / shim).chmod(0o755)
+    return bin_dir
+
+
+def _attempts(stdout: str) -> int:
+    """How many attempts the probe printed."""
+    return sum(1 for line in stdout.splitlines() if " attempt " in line)
+
+
 def test_a_200_for_the_key_is_a_ready_endpoint(tls: tuple[ssl.SSLContext, Path]) -> None:
     context, ca = tls
     with endpoint(context, []) as (port, served):
@@ -353,25 +390,25 @@ def test_a_reset_starts_the_count_again(tls: tuple[ssl.SSLContext, Path]) -> Non
 
 
 def test_an_endpoint_that_keeps_resetting_fails_at_the_bound_and_names_the_host(
-    tls: tuple[ssl.SSLContext, Path],
+    tls: tuple[ssl.SSLContext, Path], clock: Path
 ) -> None:
+    """A 3s bound at a 1s interval is attempts at 0s, 1s and 2s, and a fourth would land past it."""
     context, ca = tls
-    started = time.monotonic()
     with endpoint(context, ["reset"] * 50) as (port, served):
-        out = run_probe(_url(port), "3", "3", "1", ca=ca)
-    elapsed = time.monotonic() - started
+        out = run_probe(_url(port), "3", "3", "1", ca=ca, path=clock)
     assert out.returncode == 1, out.stdout + out.stderr
-    assert len(served) >= 2, "it retries a reset rather than failing on the first one"
+    assert _attempts(out.stdout) == 3, out.stdout
+    assert served == ["reset"] * 3, "it retries a reset rather than failing on the first one"
     assert "Connection reset by peer" in out.stdout, out.stdout
-    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 3s" in out.stderr, out.stderr
-    assert elapsed < 20, f"a 3s bound took {elapsed:.0f}s"
+    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 3s (3 attempts" in out.stderr, out.stderr
 
 
-def test_a_key_that_never_syncs_fails_at_the_bound(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_a_key_that_never_syncs_fails_at_the_bound(tls: tuple[ssl.SSLContext, Path], clock: Path) -> None:
     context, ca = tls
-    with endpoint(context, ["unsynced"] * 50) as (port, _served):
-        out = run_probe(_url(port), "2", "3", "1", ca=ca)
+    with endpoint(context, ["unsynced"] * 50) as (port, served):
+        out = run_probe(_url(port), "2", "3", "1", ca=ca, path=clock)
     assert out.returncode == 1, out.stdout + out.stderr
+    assert served == ["unsynced"] * 3, served
     assert "last: HTTP 401 from 127.0.0.1" in out.stderr, out.stderr
 
 
@@ -384,13 +421,24 @@ def test_a_wrong_key_is_not_ready(tls: tuple[ssl.SSLContext, Path]) -> None:
     assert "HTTP 401" in out.stdout, out.stdout
 
 
-def test_a_closed_port_fails_at_the_bound() -> None:
+def test_a_closed_port_fails_at_the_bound(clock: Path) -> None:
+    """A 2s bound at a 1s interval is exactly two attempts, counted on the stand-in clock."""
     with socket.create_server(("127.0.0.1", 0)) as listener:
         port = listener.getsockname()[1]
-    out = run_probe(_url(port), "3", "2", "1")
+    out = run_probe(_url(port), "3", "2", "1", path=clock)
     assert out.returncode == 1, out.stdout + out.stderr
-    assert "attempt 2: " in out.stdout, out.stdout
-    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 2s" in out.stderr, out.stderr
+    assert _attempts(out.stdout) == 2, out.stdout
+    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 2s (2 attempts" in out.stderr, out.stderr
+
+
+def test_the_probe_waits_on_the_clock_it_is_handed(clock: Path) -> None:
+    """Every wait goes through the stand-in, so the counter moves and no real interval passes."""
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+    out = run_probe(_url(port), "3", "60", "30", path=clock)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert _attempts(out.stdout) == 2, out.stdout
+    assert (clock.parent / "clock").read_text(encoding="utf-8").strip() == "1000030"
 
 
 def test_an_untrusted_certificate_is_not_an_answer(tls: tuple[ssl.SSLContext, Path]) -> None:

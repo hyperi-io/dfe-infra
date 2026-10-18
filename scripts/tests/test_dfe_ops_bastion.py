@@ -664,6 +664,7 @@ def test_up_sets_enabled_applies_and_waits_for_online(
     tofu_calls = _mock_run(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),  # render_dial.py --tofu
+        subprocess.CompletedProcess(args=[], returncode=0),  # resolve_sizing.py images
         subprocess.CompletedProcess(args=[], returncode=0),  # tofu apply
     )
     _mock_outputs(monkeypatch)
@@ -677,9 +678,82 @@ def test_up_sets_enabled_applies_and_waits_for_online(
     assert rc == 0
     assert '  enabled: "true"' in dial.read_text(encoding="utf-8")
     assert any("render_dial.py" in str(part) for part in tofu_calls[0])
-    assert "apply" in tofu_calls[1]
-    assert "-target=module.toolbox" in tofu_calls[1]
+    assert "apply" in tofu_calls[2]
+    assert "-target=module.toolbox" in tofu_calls[2]
     assert any("describe-instance-information" in call for call in aws_calls)
+
+
+def test_up_resolves_the_toolbox_ami_after_the_render_and_before_the_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The instance is rebuilt on every up, so the AMI the last resolve wrote is stale by now."""
+    dial = _dial_file(tmp_path, monkeypatch)
+    tofu_calls = _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
+    )
+    _mock_outputs(monkeypatch)
+    _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
+
+    assert bastion.cmd_bastion_up(_args()) == 0
+    resolve = [str(part) for part in tofu_calls[1]]
+    assert resolve[1:3] == [str(bastion.RESOLVE_SIZING), "images"]
+    assert resolve[resolve.index("--dial") + 1] == str(dial)
+    assert resolve[resolve.index("--out") + 1] == str(bastion.AWS_ROOT)
+    # The node groups' release is a full apply's to move, never a bastion's.
+    assert resolve[resolve.index("--only") + 1] == "instance_ami_id"
+    assert resolve.count("--only") == 1
+    assert "apply" in tofu_calls[2]
+
+
+def test_up_applies_nothing_when_the_ami_resolve_cannot_read_the_dial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    _dial_file(tmp_path, monkeypatch)
+    tofu_calls = _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=1),
+    )
+
+    assert bastion.cmd_bastion_up(_args()) == 1
+    assert len(tofu_calls) == 2, "a failed resolve must stop before tofu apply"
+    assert "no AMI was resolved and nothing was applied" in capsys.readouterr().err
+
+
+def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real subcommand, from recorded SSM answers: the AMI moves and the node release stays."""
+    dial = tmp_path / "deployment.yaml"
+    dial.write_text(
+        'target:\n  provision:\n    cloud: aws\n    account: "000000000000"\n    region: us-west-2\n'
+        'kubernetes_version: "1.36"\n',
+        encoding="utf-8",
+    )
+    root = tmp_path / "aws"
+    root.mkdir()
+    (root / "node-images.auto.tfvars.json").write_text(
+        json.dumps({
+            "instance_ami_id": "ami-00000000000000000",
+            "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bastion, "DIAL", dial)
+    monkeypatch.setattr(bastion, "AWS_ROOT", root)
+    fixtures = SCRIPTS / "tests" / "fixtures" / "node-images"
+
+    def run_with_recorded_answers(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        return subprocess.run([*cmd, "--fixtures", str(fixtures)], check=False, **kwargs)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(bastion, "_run", run_with_recorded_answers)
+
+    assert bastion._resolve_toolbox_image() is True
+    assert json.loads((root / "node-images.auto.tfvars.json").read_text(encoding="utf-8")) == {
+        "instance_ami_id": "ami-0957e38de3db270cc",
+        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+    }
 
 
 def test_up_targets_the_toolbox_module_and_nothing_else(
@@ -693,12 +767,13 @@ def test_up_targets_the_toolbox_module_and_nothing_else(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
     )
     _mock_outputs(monkeypatch)
     _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
 
     assert bastion.cmd_bastion_up(_args()) == 0
-    assert [part for part in tofu_calls[1] if str(part).startswith("-target=")] == [
+    assert [part for part in tofu_calls[2] if str(part).startswith("-target=")] == [
         "-target=module.toolbox"
     ]
 
@@ -730,6 +805,7 @@ def test_up_admits_the_instances_own_slash_32_and_nothing_wider(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
     )
     _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
     _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
@@ -753,6 +829,7 @@ def test_up_waits_until_culvert_itself_carries_the_range(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
     )
     _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
     _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
@@ -769,6 +846,7 @@ def test_up_reports_non_zero_when_the_range_never_reaches_culvert(
     _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
     )
@@ -789,6 +867,7 @@ def test_up_opens_no_hole_when_the_dial_declines_the_reach_back(
     _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
     )
@@ -852,6 +931,7 @@ def test_the_hole_is_skipped_rather_than_failed_where_no_tunnel_runs(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
     )
     _mock_outputs(monkeypatch, REACH_BACK_OUTPUTS)
     _mock_aws(monkeypatch, _ok({"InstanceInformationList": [{"PingStatus": "Online"}]}))
@@ -865,6 +945,7 @@ def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.M
     dial = _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
     )
@@ -887,6 +968,7 @@ def test_up_fails_when_tofu_apply_fails(tmp_path: Path, monkeypatch: pytest.Monk
     _mock_run(
         monkeypatch,
         subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=1),
     )
 
@@ -899,6 +981,7 @@ def test_up_fails_when_the_instance_never_goes_online(
     _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
+        subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
         subprocess.CompletedProcess(args=[], returncode=0),
     )

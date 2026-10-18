@@ -328,16 +328,69 @@ def test_every_failed_lookup_still_exits_zero_and_warns(
     assert capsys.readouterr().err.count("WARNING node image") == 2
 
 
-def test_a_gcp_dial_stops_cleanly_on_a_platform_floor_it_cannot_compare(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    ("cloud", "region", "family"),
+    [("gcp", "us-central1", "COS_CONTAINERD"), ("azure", "westus2", "Ubuntu")],
+)
+def test_a_gcp_or_azure_dial_resolves_against_the_shared_platform_range(
+    tmp_path: Path, cloud: str, region: str, family: str
 ) -> None:
-    """versions.yaml spells the gcp floor as a range, which render_dial.py compares as integers."""
+    """Neither has a root yet, so --out names where the answer goes, and versions.yaml floors both by range."""
     out = tmp_path / "root"
     out.mkdir()
-    dial = _dial(tmp_path, cloud="gcp", region="us-central1")
-    assert _images(dial, out, "--fixtures", str(FIXTURES)) == 1
-    assert "cannot compare kubernetes_version" in capsys.readouterr().err
-    assert not (out / "node-images.auto.tfvars.json").exists()
+    dial = _dial(tmp_path, cloud=cloud, region=region)
+    assert _images(dial, out, "--fixtures", str(FIXTURES)) == 0
+    written = json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert written == {"node_image": {"family": family}}
+
+
+def _existing(out: Path) -> Path:
+    """A node-images file an earlier resolve left: a node release and an AMI old enough to replace."""
+    path = out / "node-images.auto.tfvars.json"
+    path.write_text(
+        json.dumps({
+            "instance_ami_id": "ami-00000000000000000",
+            "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+        }),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_only_one_key_is_resolved_and_the_rest_of_the_file_kept(tmp_path: Path) -> None:
+    """bastion up refreshes the AMI without moving the node groups' release under a later apply."""
+    out = tmp_path / "root"
+    out.mkdir()
+    path = _existing(out)
+    assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id") == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "instance_ami_id": "ami-0957e38de3db270cc",
+        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+    }
+
+
+def test_expected_fail_a_failed_only_lookup_drops_the_stale_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An AMI an earlier resolve wrote must not survive a lookup that could not confirm it."""
+    out = tmp_path / "root"
+    out.mkdir()
+    path = _existing(out)
+    empty = tmp_path / "no-answers"
+    empty.mkdir()
+    assert _images(_dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id") == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+    }
+    assert capsys.readouterr().err.count("WARNING node image") == 1
+
+
+def test_expected_fail_only_a_key_the_cloud_does_not_resolve_is_refused(tmp_path: Path) -> None:
+    out = tmp_path / "root"
+    out.mkdir()
+    path = _existing(out)
+    assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "node_pools") == 1
+    assert json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"] == "ami-00000000000000000"
 
 
 def test_a_dial_with_no_provisioned_cloud_resolves_nothing(tmp_path: Path) -> None:

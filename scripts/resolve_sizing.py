@@ -92,7 +92,10 @@ cloud's recommended node image at its newest version, written to
 ``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
 elsewhere). A lookup that fails warns and writes no key, so tfvars or the
 variable default applies, and ``node_image.pin: "true"`` in the dial skips the
-lookups altogether. scripts/node_images.py carries the cascade and the sources.
+lookups altogether. ``--only <key>`` resolves that key and keeps the file's
+others, which is how ``dfe-ops bastion up`` refreshes the toolbox's AMI without
+moving the node groups' release. scripts/node_images.py carries the cascade and
+the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -3659,7 +3662,7 @@ def run_images(args: argparse.Namespace) -> int:
     except DialError as err:
         raise ResolveError(str(err)) from err
     except ValueError as err:
-        # render_dial.py compares minors as dotted integers, so a floor spelt as a range stops here.
+        # A version render_dial.py cannot read as dotted integers stops by name, not as a traceback.
         raise ResolveError(
             f"cannot compare kubernetes_version with versions.yaml's platform floor for {cloud}: {err}"
         ) from err
@@ -3675,6 +3678,13 @@ def run_images(args: argparse.Namespace) -> int:
         raise ResolveError(f"no tofu root at {out} -- pass --out to write the node images elsewhere")
 
     pinned = _node_image_pin(tree)
+    keys = frozenset(args.only) if args.only else None
+    offered = {key for key, _lookup in node_images.LOOKUPS[cloud]}
+    if keys is not None and not keys <= offered:
+        raise ResolveError(
+            f"--only {', '.join(sorted(keys - offered))}: {cloud} resolves only "
+            f"{', '.join(sorted(offered))}"
+        )
     target = node_images.Target(cloud, region, account, kubernetes_version, arch)
     read = (
         node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
@@ -3683,8 +3693,8 @@ def run_images(args: argparse.Namespace) -> int:
     def warn(message: str) -> None:
         print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
 
-    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn)
-    path = node_images.write_tfvars(out, values)
+    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn, keys=keys)
+    path = node_images.write_tfvars(out, values, keys=keys)
     if pinned:
         print(
             "resolve_sizing: node_image.pin is true, so no lookup ran and the tfvars value holds",
@@ -3745,6 +3755,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     images.add_argument(
         "--fixtures", type=Path, default=None, help="answer from recorded provider responses"
+    )
+    images.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="resolve just this key and keep the file's others (repeatable), e.g. instance_ami_id",
     )
     images.set_defaults(func=run_images)
     return parser

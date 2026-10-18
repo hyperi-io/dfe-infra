@@ -62,7 +62,7 @@ toolbox:
 ```
 
 ```bash
-dfe-ops bastion up [--ttl MIN]      # apply, wait for Online
+dfe-ops bastion up [--ttl MIN]      # read the newest AL2023 AMI, apply, wait for Online
 dfe-ops bastion join [--ttl MIN]    # REFUSED until hyperi-io/culvert#40 lands
 dfe-ops bastion peers               # the hub's peers and their last handshake
 dfe-ops bastion hub <peer>          # reach one appliance through the tunnel

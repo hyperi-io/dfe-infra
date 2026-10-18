@@ -30,6 +30,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
+import check_platform  # noqa: E402
 import render_dial  # noqa: E402
 from yaml_subset import parse as parse_dial  # noqa: E402
 
@@ -710,6 +712,48 @@ def test_a_dial_with_no_kubernetes_version_takes_the_platform_floor(
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     assert render_dial._platform_version("aws") == "1.37"
     assert render(drop='kubernetes_version: "1.36"')["kubernetes_version"] == "1.37"
+
+
+def test_a_platform_range_floors_at_its_low_side(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gcp and azure have no key of their own, so they read the shared range."""
+    versions = tmp_path / "versions.yaml"
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      kubernetes: "1.34-1.36"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
+    for cloud in ("gcp", "azure"):
+        assert render_dial._platform_version(cloud) == "1.34"
+        assert render_dial._kubernetes_version({"kubernetes_version": "1.36"}, cloud) == "1.36"
+        assert render_dial._kubernetes_version({}, cloud) == "1.34"
+        with pytest.raises(render_dial.DialError, match=r"below the platform floor 1\.34"):
+            render_dial._kubernetes_version({"kubernetes_version": "1.33"}, cloud)
+
+
+@pytest.mark.parametrize(
+    ("value", "floor"),
+    [(">=1.34", "1.34"), (">= 1.37", "1.37"), ("1.34-1.36", "1.34"), ("v1.34-v1.36", "1.34"), ("1.35", "1.35")],
+)
+def test_a_platform_floor_is_the_low_side_whatever_the_spelling(value: str, floor: str) -> None:
+    assert render_dial._platform_floor(value) == floor
+
+
+def test_every_platform_floor_agrees_with_the_bootstrap_check() -> None:
+    """bootstrap/check_platform.py refuses a cluster below the same floor this renders a dial against."""
+    tree = render_dial._parse_yaml_subset(
+        render_dial.VERSIONS_FILE.read_text(encoding="utf-8"), source="versions.yaml"
+    )
+    values = [
+        str(value)
+        for stack in tree["stacks"].values()
+        for key, value in (stack.get("platform") or {}).items()
+        if key in ("kubernetes", *render_dial._PLATFORM_KEY.values())
+    ]
+    assert values, "versions.yaml carries no platform floor to compare"
+    for value in values:
+        assert render_dial._platform_floor(value) == check_platform.parse_requirement(value)[0], value
 
 
 def test_the_written_file_is_json_the_root_can_read(tmp_path: Path) -> None:
