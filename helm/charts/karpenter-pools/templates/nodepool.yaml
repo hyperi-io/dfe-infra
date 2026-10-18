@@ -32,6 +32,7 @@ spec:
       # Stated even when it is Never, because the CRD's own default is 720h and
       # an omission reads as "no expiry" while meaning a forced replacement.
       expireAfter: {{ $pool.expireAfter | quote }}
+      terminationGracePeriod: {{ include "karpenter-pools.terminationGracePeriod" (dict "ctx" $ "pool" $pool) | quote }}
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass

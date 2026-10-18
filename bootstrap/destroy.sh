@@ -17,11 +17,11 @@ APPLICATIONS_WAIT=300
 LOAD_BALANCERS_WAIT=300
 # Seconds step 1 gives Karpenter to drain and terminate the nodes its pools launched.
 NODECLAIMS_WAIT=600
-# The namespaces steps 4 and 8 delete. With dfe-* and keda they are every
-# namespace this teardown removes, and the only ones step 1 touches.
+# The namespaces step 4 deletes, then steps 7 and 8. With dfe-* and keda they
+# are every namespace this teardown removes, and the only ones step 1 touches.
 DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
-PLATFORM_NAMESPACES=(argocd cert-manager external-secrets envoy-gateway-system)
-# Facts off the Argo CD cluster secret, which step 8 deletes, or the caller's DFE_* environment.
+PLATFORM_NAMESPACES=(argocd envoy-gateway-system cert-manager external-secrets)
+# Facts off the Argo CD cluster secret, which step 7 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
 CLUSTER_REGION=""
 CLUSTER_NAME=""
@@ -124,7 +124,7 @@ torn_down_namespace() {
     return 1
 }
 
-# The cluster secret lives in the argocd namespace step 8 deletes, so it is read first.
+# The cluster secret lives in the argocd namespace step 7 deletes, so it is read first.
 # A bootstrap that stopped before writing it, or a second teardown, leaves none, and
 # then the caller's DFE_* facts stand in: `dfe-ops teardown --from-terraform` passes them.
 read_cluster_facts() {
@@ -158,14 +158,15 @@ release_applicationset_owners() {
 }
 
 # "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools) or other -- and nothing when they cannot be listed.
+# A digest-pinned chart is an OCI source with no chart field, so its name is the last segment of the repoURL.
 application_roles() {
     local listing name sources role
-    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{"\n"}{end}' 2>/dev/null)" || return 0
+    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.source.repoURL}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{" "}{.spec.sources[*].repoURL}{"\n"}{end}' 2>/dev/null)" || return 0
     while read -r name sources; do
         [[ -n "${name}" ]] || continue
-        if [[ " ${sources} " == *" aws-load-balancer-controller "* ]]; then
+        if [[ " ${sources} " == *" aws-load-balancer-controller "* || " ${sources} " == *"/aws-load-balancer-controller "* ]]; then
             role=lb
-        elif [[ " ${sources} " == *" karpenter "* ]]; then
+        elif [[ " ${sources} " == *" karpenter "* || " ${sources} " == *"/karpenter "* ]]; then
             role=karpenter
         elif [[ " ${sources} " == *"/karpenter-pools "* ]]; then
             role=pools
@@ -564,14 +565,18 @@ fi
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
-echo "==> [7/9] Uninstalling Layer 1 (ESO, cert-manager)"
-run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
+echo "==> [7/9] Uninstalling Layer 1 (cert-manager, ESO)"
+# Only ESO clears an ExternalSecret's finalizer and only cert-manager an ACME
+# challenge's, so a namespace goes while both still run, and a controller's own
+# namespace once its release is uninstalled.
+delete_namespace argocd
+delete_namespace envoy-gateway-system
 run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
+delete_namespace cert-manager
+run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
 
 echo "==> [8/9] Cleaning up namespaces"
-for ns in "${PLATFORM_NAMESPACES[@]}"; do
-    delete_namespace "${ns}"
-done
+delete_namespace external-secrets
 # destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
 # already carried, and removing an adopted LoadBalancer provider would strand
 # every other tenant's Service on the cluster.

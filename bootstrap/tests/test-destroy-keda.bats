@@ -709,6 +709,65 @@ instances() {
     [ "${BASH_REMATCH[1]}" -ge 600 ]
 }
 
+# The same Applications as layer1-addons.yaml and layer2-platform.yaml render them: a
+# digest-pinned chart is an OCI source carrying a repoURL and path "." but no chart.
+oci_controllers() {
+    printf '%s\n' \
+        'aws-load-balancer-controller-dfe-aws-test  .  oci://public.ecr.aws/eks/aws-load-balancer-controller' \
+        'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
+        'karpenter-pools-dfe-aws-test     helm/charts/karpenter-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'dfe-receiver-default-dfe-aws-test  .  oci://ghcr.io/hyperi-io/charts/dfe-receiver' > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+@test "a digest-pinned Karpenter controller still outlives every NodeClaim its pools launched" {
+    oci_controllers 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first pools last_claims controller
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"dfe-receiver-default-dfe-aws-test"* ]]
+    [[ "${first}" != *"karpenter"* ]]
+    [[ "${first}" != *"aws-load-balancer-controller"* ]]
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' <<<"${log_text}")" -eq 0 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "every namespace ESO or cert-manager clears a finalizer in goes before that controller does" {
+    # shellcheck disable=SC2016 # the stub expands $* when it runs, not here
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text argocd gateway cert_manager_ns cert_manager eso eso_ns
+    log_text="$(log)"
+    argocd="$(line_of 'delete ns argocd ' "${log_text}")"
+    gateway="$(line_of 'delete ns envoy-gateway-system ' "${log_text}")"
+    cert_manager="$(line_of 'helm uninstall cert-manager -n cert-manager' "${log_text}")"
+    cert_manager_ns="$(line_of 'delete ns cert-manager ' "${log_text}")"
+    eso="$(line_of 'helm uninstall external-secrets -n external-secrets' "${log_text}")"
+    eso_ns="$(line_of 'delete ns external-secrets ' "${log_text}")"
+    [ -n "${argocd}" ]
+    [ -n "${gateway}" ]
+    [ -n "${cert_manager}" ]
+    [ -n "${cert_manager_ns}" ]
+    [ -n "${eso}" ]
+    [ -n "${eso_ns}" ]
+    [ "${argocd}" -lt "${cert_manager}" ]
+    [ "${gateway}" -lt "${cert_manager}" ]
+    [ "${cert_manager}" -lt "${cert_manager_ns}" ]
+    [ "${cert_manager_ns}" -lt "${eso}" ]
+    [ "${eso}" -lt "${eso_ns}" ]
+    [ "$(grep -c -- '^delete ns cert-manager ' <<<"${log_text}")" -eq 1 ]
+}
+
 @test "a cluster without karpenter-pools never waits on NodeClaims" {
     gateway_behind_the_controller 0
     run bash "${DESTROY}" --force

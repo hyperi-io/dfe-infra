@@ -21,8 +21,8 @@ and the group's `deny` list is refused first.
 
 | `exposure.groups.<group>.allow` | The group's routes | Said by |
 |---|---|---|
-| empty | 403 to every address | NOTES, `dfe-ops access-summary` |
-| ranges | the ranges, and `exposure.selfRanges` | NOTES |
+| empty | 403 to every address outside `exposure.selfRanges` | NOTES, `dfe-ops access-summary` |
+| ranges | the ranges, and `exposure.selfRanges` | NOTES, `dfe-ops access-summary` |
 | a `/0` of either family | every address | a WARNING in both |
 
 Every web route the chart renders carries its own SecurityPolicy with its group's
@@ -38,7 +38,9 @@ apart: its source ranges are the union of the enabled web groups' allow lists,
 the ingest group's while an ingest route renders, `exposure.selfRanges` and
 `envoyGateway.service.loadBalancerSourceRanges`. A group that admits every
 address leaves it open. The Envoy Service carries the web groups' state as
-`dfe.hyperi.io/edge-fence: console=<state>,api=<state>,admin=<state>`.
+`dfe.hyperi.io/edge-fence: console=<state>,api=<state>,admin=<state>`, and the
+CIDRs each group's routes admit, with `exposure.selfRanges`, as JSON in
+`dfe.hyperi.io/edge-fence-ranges`.
 
 `exposure.selfRanges` is the cluster's own NAT egress, which the aws root writes
 onto the cluster secret. It is a fact, never an allow list: the deployer's lists

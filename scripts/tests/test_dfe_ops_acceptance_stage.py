@@ -39,6 +39,7 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_acceptance_stage"] = dfeops
 _loader.exec_module(dfeops)
 
+import test_edge_web_fence as edge_fence  # noqa: E402
 from acceptance import clients  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402
 from acceptance.source import run as source_run  # noqa: E402
@@ -360,12 +361,75 @@ def test_expected_fail_an_off_or_open_group_earns_no_line(monkeypatch: pytest.Mo
               "spec": {"type": "LoadBalancer"}}]
     monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
     notice = dfeops.edge_fence_notice(["kubectl"])
-    assert notice.splitlines() == ["==> console: fenced to exposure.groups.console.allow"], notice
+    assert notice.splitlines() == [
+        "==> console: fenced to exposure.groups.console.allow and exposure.selfRanges"
+    ], notice
 
 
 def test_an_unreadable_service_gives_no_fence_notice(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (1, {}, "Forbidden"))
     assert dfeops.edge_fence_notice(["kubectl"]) == ""
+
+
+# --- the notice says who the rendered gateway admits ------------------------------------
+GATEWAY_SELF = ["203.0.113.200/32"]
+GATEWAY_CONSOLE = ["203.0.113.7/32", "198.51.100.0/24"]
+
+
+def _rendered_notice(monkeypatch: pytest.MonkeyPatch, *values: str) -> dict[str, str]:
+    """The notice for the aws gateway rendered with `values`, one line per group.
+
+    Envoy Gateway copies the EnvoyProxy's envoyService annotations onto the Service
+    it creates, which is the object the notice reads.
+    """
+    service = edge_fence.envoy_service(edge_fence.render("aws", *values))
+    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
+                           "annotations": service["annotations"]}, "spec": {"type": service["type"]}}]
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    lines = dfeops.edge_fence_notice(["kubectl"]).splitlines()
+    return {line.removeprefix("==> ").split(":", 1)[0]: line for line in lines}
+
+
+def test_an_empty_list_with_self_ranges_names_the_addresses_still_admitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guarded run's runner is one of them, and it drives the console through this gateway."""
+    lines = _rendered_notice(monkeypatch, *edge_fence.self_ranges(GATEWAY_SELF))
+    for group in ("console", "api"):
+        assert "CLOSED" in lines[group], lines
+        reach = f"answer 403 to every address outside exposure.selfRanges ({GATEWAY_SELF[0]})."
+        assert reach in lines[group], lines
+    assert "admin" not in lines, lines
+
+
+@pytest.mark.parametrize("own", [GATEWAY_SELF, []], ids=["with self ranges", "no self ranges"])
+def test_a_listed_group_names_its_list_and_the_self_ranges_it_admits(
+    monkeypatch: pytest.MonkeyPatch, own: list[str]
+) -> None:
+    lines = _rendered_notice(monkeypatch, *edge_fence.allow("console", GATEWAY_CONSOLE),
+                             *edge_fence.self_ranges(own))
+    want = f"==> console: fenced to {', '.join(GATEWAY_CONSOLE)} from exposure.groups.console.allow"
+    if own:
+        want += f" and {own[0]} from exposure.selfRanges"
+    assert lines["console"] == f"{want} -- {dfeops.EDGE_GROUP_SURFACES['console']} answer 403 to every other address"
+
+
+def test_expected_fail_no_list_and_no_self_ranges_admits_nobody(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines = _rendered_notice(monkeypatch)
+    assert "answer 403 to every address. Set exposure.groups.console.allow" in lines["console"], lines
+    assert "selfRanges" not in lines["console"], lines
+
+
+def test_a_gateway_that_wrote_no_ranges_claims_nothing_about_who_else_gets_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
+                           "annotations": {dfeops.EDGE_FENCE_ANNOTATION: "console=deny,api=deny,admin=off",
+                                           dfeops.EDGE_FENCE_RANGES_ANNOTATION: "not json"}},
+              "spec": {"type": "LoadBalancer"}}]
+    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    notice = dfeops.edge_fence_notice(["kubectl"])
+    assert "answer 403 to every address outside exposure.selfRanges" in notice, notice
 
 
 def test_expected_fail_only_clusterip_services_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
