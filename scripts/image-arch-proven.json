@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "images": {
+    "public.ecr.aws/docker/library/busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e": [
+      "linux/386",
+      "linux/amd64",
+      "linux/arm",
+      "linux/arm64",
+      "linux/ppc64le",
+      "linux/riscv64",
+      "linux/s390x"
+    ],
+    "public.ecr.aws/eks/aws-load-balancer-controller:v3.6.0@sha256:337a9bf9a99bbac372c8da20afad7b059e0bc89034f1087e325455b28c7fd488": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
+    "public.ecr.aws/karpenter/controller:1.14.1@sha256:445baefaaa689029cc12ac1f659b916b0b82fb14308ce536f8521fcf079116fa": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  "charts": {
+    "oci://public.ecr.aws/karpenter/karpenter@sha256:91434e00fb102d6ee0d1bd34a4457a32fe01a8fa833fe1a2a37da4f50272079b": {
+      "version": "1.14.1",
+      "images": {
+        "karpenter controller": "public.ecr.aws/karpenter/controller:1.14.1@sha256:445baefaaa689029cc12ac1f659b916b0b82fb14308ce536f8521fcf079116fa"
+      }
+    }
+  }
+}

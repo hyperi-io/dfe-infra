@@ -93,6 +93,7 @@ jobs:
             # CHART_VALUES_IMAGES in check_image_arch.py
             helm/charts/forgejo/values.yaml
             scripts/check_image_arch.py
+            scripts/image-arch-proven.json
             scripts/dfe-stack
             scripts/check_suite_drift.py
             scripts/composition.py
@@ -489,7 +490,7 @@ jobs:
 
       - name: Every pinned third-party image ships linux/amd64 and linux/arm64
         id: gate
-        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json"
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json" --seed scripts/image-arch-proven.json
 
       # Saved on a failed gate too: the file holds only the verdicts that passed.
       - name: Save the proven image verdicts

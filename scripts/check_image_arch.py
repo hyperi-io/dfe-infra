@@ -72,10 +72,15 @@ always read. What a chart read at a digest declared is recorded the same way. Th
 run writes the file back with everything digest-pinned it proved, read or
 recalled, and prints one line of cache hits, registry reads and reads per host.
 
+--seed names a committed file in the same schema, read and never written. It holds
+verdicts for digests an anonymous registry stops serving a shared CI address once
+that address has spent its data limit (public.ecr.aws answers 429 "Data limit
+exceeded"). A seed entry is reviewed like any other pin.
+
 Usage:
     python3 scripts/check_image_arch.py [--stack VER] [--require linux/amd64,linux/arm64]
                                         [--resolve-charts] [--third-party-only]
-                                        [--verdict-cache FILE] [--image REF ...]
+                                        [--verdict-cache FILE] [--seed FILE] [--image REF ...]
 Requires `docker` with the buildx plugin on PATH.
 """
 
@@ -671,6 +676,27 @@ def load_verdicts(path: Path) -> tuple[VerdictCache, str]:
     return VerdictCache(recalled=recalled, recalled_charts=recalled_charts), ""
 
 
+def merge_seed(cache: VerdictCache, seed: VerdictCache) -> VerdictCache:
+    """``cache`` with the committed seed's digest-keyed verdicts added where it has none.
+
+    A digest names fixed content, so a verdict proved once from any host holds for
+    every run. The seed answers the reads a shared CI address cannot make when an
+    anonymous registry has spent its data limit for that address.
+
+    Args:
+        cache: The verdicts restored from an earlier run of this workflow.
+        seed: The verdicts committed to the repository.
+
+    Returns:
+        ``cache``, extended in place with every seed entry it lacked.
+    """
+    for ref, platforms in seed.recalled.items():
+        cache.recalled.setdefault(ref, platforms)
+    for source, record in seed.recalled_charts.items():
+        cache.recalled_charts.setdefault(source, record)
+    return cache
+
+
 def save_verdicts(path: Path, cache: VerdictCache) -> None:
     """Write what this run proved to ``path``, replacing what was there."""
     doc = {
@@ -953,6 +979,11 @@ def main() -> int:
         type=Path,
         help="JSON file of verdicts an earlier run proved; read first, rewritten with this run's",
     )
+    parser.add_argument(
+        "--seed",
+        type=Path,
+        help="committed JSON file of digest verdicts, same schema as --verdict-cache; read, never written",
+    )
     args = parser.parse_args()
 
     required = {item.strip() for item in args.require.split(",") if item.strip()}
@@ -962,6 +993,11 @@ def main() -> int:
         cache, note = load_verdicts(args.verdict_cache)
         if note:
             print(note)
+    if args.seed:
+        seed, note = load_verdicts(args.seed)
+        if note:
+            print(note.replace("verdict cache", "seed", 1))
+        merge_seed(cache, seed)
     try:
         failures, refs, skipped = _check(args, required, budget, cache)
     finally:

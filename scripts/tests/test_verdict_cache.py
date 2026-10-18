@@ -77,6 +77,7 @@ def run_gate(
     registry: FakeRegistry,
     cache: Path | None,
     *refs: str,
+    seed: Path | None = None,
 ) -> int:
     monkeypatch.setattr(subprocess, "run", registry)
     argv = ["check_image_arch.py"]
@@ -84,6 +85,8 @@ def run_gate(
         argv += ["--image", ref]
     if cache is not None:
         argv += ["--verdict-cache", str(cache)]
+    if seed is not None:
+        argv += ["--seed", str(seed)]
     monkeypatch.setattr(sys, "argv", argv)
     return arch.main()
 
@@ -264,3 +267,50 @@ def test_the_read_count_names_each_registry_and_counts_retries_and_chart_reads(m
 )
 def test_only_a_full_sha256_digest_counts_as_pinned(ref: str, pinned: bool) -> None:
     assert arch.is_digest_pinned(ref) is pinned
+
+
+def write_seed(path: Path, images: dict[str, list[str]]) -> Path:
+    doc = {"schema": arch.VERDICT_CACHE_SCHEMA, "images": images, "charts": {}}
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_a_seeded_digest_is_not_read_even_with_no_cache_yet(monkeypatch, tmp_path, capsys) -> None:
+    seed = write_seed(tmp_path / "seed.json", {PINNED: ["linux/amd64", "linux/arm64"]})
+    before = seed.read_text(encoding="utf-8")
+    registry = FakeRegistry()
+
+    assert run_gate(monkeypatch, registry, tmp_path / "verdicts.json", PINNED, seed=seed) == 0
+
+    out = capsys.readouterr().out
+    assert registry.calls == []
+    assert f"  ok     {PINNED} {PINNED} (proven by an earlier run)" in out
+    assert recorded(tmp_path / "verdicts.json") == {PINNED: ["linux/amd64", "linux/arm64"]}
+    assert seed.read_text(encoding="utf-8") == before
+
+
+def test_a_seed_entry_under_a_tag_is_ignored_and_read(monkeypatch, tmp_path) -> None:
+    seed = write_seed(tmp_path / "seed.json", {BY_TAG: ["linux/amd64", "linux/arm64"]})
+    registry = FakeRegistry(docker=[(0, BOTH, "")])
+
+    assert run_gate(monkeypatch, registry, None, BY_TAG, seed=seed) == 0
+    assert registry.read(BY_TAG)
+
+
+def test_a_seed_missing_a_required_platform_is_read_again(monkeypatch, tmp_path) -> None:
+    seed = write_seed(tmp_path / "seed.json", {PINNED: ["linux/amd64"]})
+    registry = FakeRegistry(docker=[(0, BOTH, "")])
+
+    assert run_gate(monkeypatch, registry, None, PINNED, seed=seed) == 0
+    assert registry.read(PINNED)
+
+
+def test_the_committed_seed_holds_only_digest_verdicts_carrying_both_platforms() -> None:
+    seed, note = arch.load_verdicts(REPO_ROOT / "scripts" / "image-arch-proven.json")
+    doc = json.loads((REPO_ROOT / "scripts" / "image-arch-proven.json").read_text(encoding="utf-8"))
+
+    assert note == ""
+    assert len(seed.recalled) == len(doc["images"])
+    assert len(seed.recalled_charts) == len(doc["charts"])
+    for ref, platforms in seed.recalled.items():
+        assert {"linux/amd64", "linux/arm64"} <= platforms, ref
