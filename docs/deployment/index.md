@@ -123,7 +123,7 @@ new records to `main`. Query the old table directly for anything older than the
 upgrade, and drop it once nothing needs it.
 
 The Kafka landing topic moves with the source name, from `default_land` to
-`main_land`. The kafka chart pre-creates the new one; the old topic keeps
+`main_land`. dfe-engine creates the new one at startup. The old topic keeps
 whatever it already holds until it is deleted.
 
 ## Version pins

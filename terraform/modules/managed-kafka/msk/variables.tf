@@ -254,7 +254,7 @@ variable "eks_cluster_name" {
 }
 
 variable "pod_identity" {
-  description = "Namespace and service account of the in-cluster bootstrap Job. The Job itself -- the ACLs and the landing topics -- is chart work; this module mints the identity it authenticates with."
+  description = "Namespace and service account of the in-cluster bootstrap Job. The Job itself, which writes the ACLs, is chart work. This module mints the identity it authenticates with."
   type = object({
     namespace       = string
     service_account = string

@@ -320,7 +320,7 @@ run "msk_configuration_contents" {
 
   assert {
     condition     = strcontains(aws_msk_configuration.this.server_properties, "auto.create.topics.enable=false")
-    error_message = "auto.create.topics.enable must render false -- the bootstrap Job pre-creates the landing topics so their partitions and retention are ours to set"
+    error_message = "auto.create.topics.enable must render false -- dfe-engine creates the landing topics so their partitions and retention are ours to set"
   }
 
   assert {

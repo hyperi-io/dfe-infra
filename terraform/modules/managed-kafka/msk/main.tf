@@ -125,8 +125,8 @@ resource "aws_msk_configuration" "this" {
   description = "DFE broker profile for ${var.name} (${var.env}) -- the Express-applicable subset"
 
   // auto.create.topics.enable stays FALSE: dfe-loader treats a missing *_land
-  // topic as fatal, so the landing topics are pre-created by the bootstrap Job
-  // rather than conjured by the first produce, which is what makes their
+  // topic as fatal, so dfe-engine creates the landing topics at startup
+  // rather than the first produce conjuring them, which is what makes their
   // partition count and retention ours to set.
   server_properties = <<-PROPERTIES
     num.partitions=${var.num_partitions}
