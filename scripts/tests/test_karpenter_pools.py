@@ -109,7 +109,7 @@ def test_min_vcpu_renders_a_gt_floor_one_below_the_stated_value() -> None:
     reqs = requirements(render({**BASE_POOL, "minVcpu": 16}))
     cpu = next(r for r in reqs if r["key"] == "karpenter.k8s.aws/instance-cpu")
     expect("the operator is Gt", cpu["operator"] == "Gt", cpu)
-    expect("Gt 15 expresses >= 16 (Karpenter has no Ge)", cpu["values"] == ["15"], cpu)
+    expect("Gt 15 expresses >= 16", cpu["values"] == ["15"], cpu)
 
 
 def test_min_memory_gib_converts_to_mib_and_renders_a_gt_floor() -> None:

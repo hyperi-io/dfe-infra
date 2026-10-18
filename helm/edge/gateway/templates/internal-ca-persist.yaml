@@ -74,8 +74,9 @@ spec:
   # reach the path wins it, and no later rebuild overwrites a stored root with
   # the one it just minted.
   updatePolicy: IfNotExists
-  # The stored root must survive this deployment being torn down -- surviving a
-  # teardown is the whole point.
+  # A persistent deployment's stored root must survive its teardown, which is the
+  # whole point. A tagged test run's entries carry the run's tags, so its own
+  # sweep deletes them with the run and the next run mints a fresh root.
   deletionPolicy: None
   secretStoreRefs:
     - name: {{ $p.secretStoreName }}

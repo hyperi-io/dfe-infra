@@ -1071,20 +1071,27 @@ class Teardown:
         return 1
 
 
+def _hold_through_teardown(_signum: int, _frame: object) -> None:
+    """Swallow a termination signal while the teardown runs."""
+
+
 @contextlib.contextmanager
 def teardown_on_exit(teardown: Teardown) -> Iterator[None]:
     """Run `teardown` however the block exits; a termination signal becomes an exception first.
 
-    SIGINT and the termination signals are ignored while the teardown itself
-    runs, and its children start in a session of their own, so a second Ctrl-C
-    cannot cut a destroy short.
+    While the teardown itself runs, SIGINT is ignored and the termination
+    signals are caught and dropped, and its children start in a session of
+    their own, so a second Ctrl-C cannot cut a destroy short. A caught signal,
+    unlike an ignored one, is reset to its default in every child exec starts,
+    so the workload teardown's deadline SIGTERM still stops destroy.sh.
     """
     previous = {sig: signal.signal(sig, _raise_interrupted) for sig in TEARDOWN_SIGNALS}
     try:
         yield
     finally:
-        for sig in (signal.SIGINT, *TEARDOWN_SIGNALS):
-            signal.signal(sig, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        for sig in TEARDOWN_SIGNALS:
+            signal.signal(sig, _hold_through_teardown)
         try:
             teardown.run()
         finally:
