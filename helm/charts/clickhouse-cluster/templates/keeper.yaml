@@ -58,6 +58,10 @@ spec:
     # Keeper's log shares the data PVC with the raft log and snapshots.
     logger:
       {{- include "dfe-clickhouse.logger" .Values.clickhouse.keeper.log | nindent 6 }}
+    # The operator writes extraConfig as 99-extra-config.yaml, which merges after its own config.
+    extraConfig:
+      keeper_server:
+        four_letter_word_white_list: {{ .Values.clickhouse.keeper.fourLetterWords | quote }}
   {{- if or .Values.nodeScheduling .Values.clickhouse.podSpread.enabled .Values.clickhouse.keeper.serviceAccount.name }}
   podTemplate:
     {{- with .Values.clickhouse.keeper.serviceAccount.name }}
