@@ -28,7 +28,9 @@ same call with ``aws`` filled in.
 import subprocess
 
 
-def run_cli(binary: str, args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    binary: str, args: list[str], *, timeout: float, new_session: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Run ``<binary> <args>``, capturing stdout/stderr as text.
 
     Args:
@@ -37,6 +39,9 @@ def run_cli(binary: str, args: list[str], *, timeout: float) -> subprocess.Compl
             region and output flags, since not every call wants them.
         timeout: Seconds before the call counts as a hang rather than a slow
             API, passed straight to `subprocess.run`.
+        new_session: Start the CLI in a session of its own, so a signal sent to
+            the caller's process group never reaches it. The timeout and an
+            exception in the caller still kill it.
 
     Returns:
         The completed process, whatever its exit code -- `check=False`
@@ -55,15 +60,17 @@ def run_cli(binary: str, args: list[str], *, timeout: float) -> subprocess.Compl
         errors="replace",
         check=False,
         timeout=timeout,
+        start_new_session=new_session,
     )
 
 
-def run_aws(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+def run_aws(args: list[str], *, timeout: float, new_session: bool = False) -> subprocess.CompletedProcess[str]:
     """Run ``aws <args>``, capturing stdout/stderr as text.
 
     Args:
         args: The full argv after ``aws``.
         timeout: Seconds before the call counts as a hang.
+        new_session: Start it in a session of its own, as `run_cli` describes.
 
     Returns:
         The completed process, whatever its exit code.
@@ -71,4 +78,4 @@ def run_aws(args: list[str], *, timeout: float) -> subprocess.CompletedProcess[s
     Raises:
         FileNotFoundError: The `aws` binary is not on PATH.
     """
-    return run_cli("aws", args, timeout=timeout)
+    return run_cli("aws", args, timeout=timeout, new_session=new_session)

@@ -927,7 +927,7 @@ def test_expected_fail_a_secret_still_listed_when_the_wait_runs_out_fails_its_de
 def test_a_hung_aws_call_is_a_sweep_error_not_a_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every caller handles CloudSweepError; a TimeoutExpired would end a teardown with a traceback."""
 
-    def hang(args: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    def hang(args: list[str], *, timeout: float, **_kwargs: object) -> subprocess.CompletedProcess:
         raise subprocess.TimeoutExpired(["aws", *args], timeout)
 
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", hang)
@@ -1287,6 +1287,31 @@ def test_another_protected_tag_replaces_the_default() -> None:
     assert cloud_sweep.build_parser().parse_args(["--region", REGION]).protected_tag == "lifecycle=permanent"
 
 
+def test_parse_protected_tags_reads_every_pair() -> None:
+    assert cloud_sweep.parse_protected_tags(" lifecycle=permanent , keep=yes,") == {
+        "lifecycle": "permanent",
+        "keep": "yes",
+    }
+
+
+@pytest.mark.parametrize(
+    "protected",
+    ["", ",", " ", "lifecycle", "=permanent", "lifecycle=", "lifecycle=permanent,keep"],
+)
+def test_expected_fail_a_protected_tag_that_protects_nothing_is_refused_before_any_aws_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, protected: str
+) -> None:
+    """Read as no pair, it would leave every resource unprotected without saying so."""
+
+    def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess:
+        raise AssertionError("no aws call should happen before --protected-tag is checked")
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", boom)
+    code = cloud_sweep.main(["--region", REGION, "--protected-tag", protected])
+    assert code == 2
+    assert "--protected-tag" in capsys.readouterr().err
+
+
 def test_delete_resources_names_a_kind_with_no_scripted_delete() -> None:
     resources = [_resource("tagged:rds", "arn:aws:rds:us-west-2:0:db:dfe-db", tagged=True)]
     failures = cloud_sweep.delete_resources(resources, REGION)
@@ -1553,6 +1578,29 @@ def test_expected_fail_only_security_groups_inherit_the_vpcs_expiry() -> None:
         kind="eni", id="eni-1", name="eni-1", created=None, tagged=False, extra={"vpc_id": "vpc-expired"}
     )
     assert _expired_ids([_vpc("vpc-expired", EXPIRED_RUN), eni]) == ["vpc-expired"]
+
+
+def test_expected_fail_an_untagged_group_inside_a_protected_vpc_is_never_selected(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The VPC itself is never swept, so nothing is selected through its expiry."""
+    resources = [_vpc("vpc-kept", {**EXPIRED_RUN, "lifecycle": "permanent"}), _sg("sg-eks-cluster", "vpc-kept")]
+    assert _expired_ids(resources) == []
+    cloud_sweep.print_report(resources, _expiry())
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("security-group"))
+    assert "in-expired-vpc" not in line
+
+
+def test_expected_fail_main_selects_nothing_through_a_vpc_its_protected_tag_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    resources = [_vpc("vpc-kept", {**EXPIRED_RUN, "keep": "yes"}), _sg("sg-eks-cluster", "vpc-kept")]
+    monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: resources)
+    code = cloud_sweep.main(
+        ["--region", REGION, "--expired", "--grace", "0", "--now", str(NOW), "--protected-tag", "keep=yes"]
+    )
+    assert code == 0, capsys.readouterr().out
+    assert "sweep clean: no expired run resources left" in capsys.readouterr().out
 
 
 def test_the_report_names_the_expired_vpc_an_untagged_group_is_selected_through(

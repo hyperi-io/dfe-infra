@@ -220,6 +220,23 @@ delete_applications_but_operators() {
     kubectl -n argocd delete applications.argoproj.io "${names[@]}" --wait=false 2>/dev/null || true
 }
 
+# Only its operator clears a data CR's finalizer, and while a CR stands its
+# operator puts back any PodDisruptionBudget deleted from under it, so each CR
+# goes while step 1 keeps the operators running, before the drain. Bounded all the same.
+delete_data_resources() {
+    run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # The kafka chart's Redpanda cluster, on the redpanda provider.
+    run kubectl -n strimzi delete redpandas.cluster.redpanda.com --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # A CloudNativePG Cluster exists only on an install that predates its removal.
+    run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
+    # clickhouseinstallation the Altinity operator's, and any left keeps its
+    # finalizer and wedges step 4's namespace delete.
+    run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+}
+
 # A PodDisruptionBudget or karpenter.sh/do-not-disrupt in a namespace this
 # teardown removes protects nothing now but still holds a draining node, so
 # both go before the pools.
@@ -500,7 +517,7 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     read_cluster_facts
 fi
 
-echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets"
+echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets, and the DFE data CRs"
 # Orphaned, so Argo stops generating Applications while each one stays, still
 # carrying the finalizer that deletes what it deployed, until it is deleted below.
 run kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
@@ -516,12 +533,13 @@ run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete triggerauthentication --all -A --timeout=30s 2>/dev/null || true
 # The load balancer controller's Application goes last, once it has released
-# every load balancer the others took. Karpenter's pools follow the load
-# balancers, its controller their nodes, and the data operators wait for step 3.
+# every load balancer the others took. The data CRs, then Karpenter's pools,
+# follow the load balancers, its controller their nodes, the operators step 3.
 if [[ "${DRY_RUN}" != "true" ]]; then
     roles="$(application_roles)"
     delete_applications_in_role other "${roles}" || true
     release_load_balancers
+    delete_data_resources
     release_drain_blockers
     if delete_applications_in_role pools "${roles}"; then
         await_nodeclaims_gone
@@ -532,6 +550,7 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     await_applications_gone "$(names_in_role operator "${roles}")"
 else
     echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, Karpenter's, karpenter-pools and the data operators', then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+    delete_data_resources
     echo "[DRY-RUN] delete every PodDisruptionBudget and take karpenter.sh/do-not-disrupt off every pod in the namespaces this teardown removes"
     echo "[DRY-RUN] delete karpenter-pools, and wait up to ${NODECLAIMS_WAIT}s for Karpenter to remove every NodeClaim before its controller goes"
     echo "[DRY-RUN] kubectl -n argocd delete applications.argoproj.io --all --wait=false, the data operators' excepted"
@@ -543,20 +562,8 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 10
 fi
 
-echo "==> [3/9] Deleting DFE data resources (CRDs), then their operators"
-# Only its operator clears a data CR's finalizer, so each CR goes while step 1
-# has kept that operator running. Bounded all the same.
-run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-# The kafka chart's Redpanda cluster, on the redpanda provider.
-run kubectl -n strimzi delete redpandas.cluster.redpanda.com --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-# A CloudNativePG Cluster exists only on an install that predates its removal.
-run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-# ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
-# clickhouseinstallation the Altinity operator's, and any left keeps its
-# finalizer and wedges the namespace delete below.
-run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+echo "==> [3/9] Deleting the data operators"
+# Step 1 deleted the CRs they finalize, so they go once the nodes have drained.
 if [[ "${DRY_RUN}" != "true" ]]; then
     if delete_applications_in_role operator "${roles}"; then
         await_applications_gone

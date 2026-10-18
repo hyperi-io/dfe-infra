@@ -1963,6 +1963,53 @@ def test_expected_fail_a_child_the_teardown_starts_still_stops_on_its_deadline_s
     assert teardown.stopped_after < 10, teardown.stopped_after
 
 
+# A guard whose teardown makes one sweep call, through the real teardown_on_exit.
+SWEEPS_IN_THE_TEARDOWN = (
+    "import sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import cloud_sweep, dfe_ops_cloud_guard\n"
+    "class Sweep:\n"
+    "    def run(self):\n"
+    "        print(cloud_sweep.run_aws(['ec2', 'describe-network-interfaces'], 'us-west-2'), flush=True)\n"
+    "with dfe_ops_cloud_guard.teardown_on_exit(Sweep()):\n"
+    "    pass\n"
+)
+# An aws CLI that says it has started, then answers two seconds later.
+SLOW_AWS = "#!/usr/bin/env bash\nprintf '%s' \"$$\" > \"${FAKE_AWS_STARTED}\"\nsleep 2\nprintf '{\"ok\": true}\\n'\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+@pytest.mark.parametrize("signum", guard_mod.TEARDOWN_SIGNALS)
+def test_expected_fail_a_signal_to_the_guards_group_never_cuts_a_teardown_sweep_short(
+    tmp_path: Path, signum: int
+) -> None:
+    """The teardown catches the signal, so an aws child sharing the guard's group would die of it."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "aws").write_text(SLOW_AWS, encoding="utf-8")
+    (bin_dir / "aws").chmod(0o755)
+    started = tmp_path / "aws-started"
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_AWS_STARTED": str(started)}
+    guard = subprocess.Popen(
+        [sys.executable, "-c", SWEEPS_IN_THE_TEARDOWN, str(REPO_ROOT / "scripts")],
+        env=env, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8",
+    )
+    try:
+        give_up = time.monotonic() + 30
+        while not (started.is_file() and started.read_text(encoding="utf-8")) and time.monotonic() < give_up:
+            time.sleep(0.05)
+        assert started.is_file(), "the fake aws never started"
+        os.killpg(guard.pid, signum)
+        out, err = guard.communicate(timeout=30)
+    finally:
+        if guard.poll() is None:
+            os.killpg(guard.pid, signal.SIGKILL)
+            guard.wait()
+    assert guard.returncode == 0, err
+    assert "{'ok': True}" in out
+
+
 def test_the_guard_itself_outlives_a_sigterm_while_the_teardown_runs() -> None:
     class Signalled:
         survived = False
