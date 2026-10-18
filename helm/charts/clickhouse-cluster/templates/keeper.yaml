@@ -47,6 +47,13 @@ spec:
     {{- with (.Values.clickhouse.keeper.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
+  # The operator's own ingress policy: raft 9234 from the other keepers, and 2181, 2281 and 9123
+  # from pods labelled as the operator in any namespace and the ClickHouse clusters that reference
+  # this keeper. network-policies leaves these pods out of data-ingress-policy, which would open
+  # every port to every DFE namespace.
+  # Risk-accepted: the any-namespace operator peer (docs/THREAT-MODEL.md, Accepted risks).
+  networkPolicy:
+    policy: Enabled
   settings:
     # Keeper's log shares the data PVC with the raft log and snapshots.
     logger:
