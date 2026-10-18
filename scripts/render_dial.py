@@ -1136,14 +1136,14 @@ def _controller_pool(dial: dict[str, object]) -> str:
     return value
 
 
-# What k8s.disruption.posture may say, each mapped onto Karpenter budgets by resolve_sizing.py.
+# What k8s.disruption.posture may say, pool disruption intent each cloud's pools renderer applies.
 DISRUPTION_POSTURES = ("balanced", "conservative")
 DISRUPTION_AT = ("k8s", "disruption")
 MINUTES_PER_DAY = 1440
 
 # Daily or one weekday only: the drift hold outside any other schedule is not one cron line.
 _WINDOW_SCHEDULE = re.compile(r"^(?P<minute>\d{1,2}) (?P<hour>\d{1,2}) \* \* (?P<weekday>\*|[0-6])$")
-# Hours and minutes, the two units a Karpenter budget duration takes.
+# Hours and minutes only, the units a window's length is written in.
 _WINDOW_DURATION = re.compile(r"^(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?$")
 
 
@@ -1196,8 +1196,8 @@ def _maintenance_window(dial: dict[str, object]) -> MaintenanceWindow | None:
         return None
     if schedule is None or duration is None:
         raise DialError(
-            f"{'.'.join(at_window)} needs both schedule and duration, or neither -- Karpenter "
-            "refuses a budget schedule without a duration"
+            f"{'.'.join(at_window)} needs both schedule and duration, or neither -- a window is "
+            "when it opens and how long it stays open"
         )
     opens = _WINDOW_SCHEDULE.match(schedule)
     if not opens or int(opens["minute"]) > 59 or int(opens["hour"]) > 23:
@@ -1218,7 +1218,7 @@ def _maintenance_window(dial: dict[str, object]) -> MaintenanceWindow | None:
 
 
 def read_disruption(dial: dict[str, object]) -> Disruption:
-    """Read k8s.disruption, refusing a posture or window Karpenter cannot carry by name.
+    """Read k8s.disruption, the pools' disruption intent, refusing a bad posture or window by name.
 
     Args:
         dial: The parsed deployment dial.
@@ -1228,7 +1228,7 @@ def read_disruption(dial: dict[str, object]) -> Disruption:
 
     Raises:
         DialError: The posture is outside DISRUPTION_POSTURES, or the window
-            is half set, opens on a schedule with no one-line complement, or
+            is half set, repeats other than daily or on one weekday, or
             lasts zero time or its whole period.
     """
     posture = _text(dial, (*DISRUPTION_AT, "posture"), "balanced")
@@ -2122,7 +2122,7 @@ def main() -> int:
         f"KRaft metadata quorum (kafka.controller_pool): {controller_pool}",
         file=sys.stderr,
     )
-    print(f"Karpenter disruption (k8s.disruption): {disruption_line}", file=sys.stderr)
+    print(f"Pool disruption (k8s.disruption): {disruption_line}", file=sys.stderr)
     for line in disruption_warnings:
         print(f"render_dial: WARNING -- {line}", file=sys.stderr)
 

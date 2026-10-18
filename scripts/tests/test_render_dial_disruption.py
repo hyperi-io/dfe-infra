@@ -2,8 +2,8 @@
 #  Project:      dfe-infra
 #  File:         test_render_dial_disruption.py
 #  Purpose:      Guard the dial's k8s.disruption block -- the posture and the
-#                maintenance window read through one vocabulary, and anything
-#                Karpenter cannot carry is refused by name before a resolve.
+#                maintenance window read through one vocabulary, and a window
+#                no pools renderer can carry is refused by name before a resolve.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -105,7 +105,7 @@ def test_expected_fail_a_posture_outside_the_vocabulary_is_refused_by_name(postu
     ],
 )
 def test_expected_fail_half_a_window_is_refused(body: str) -> None:
-    """Karpenter's CRD refuses a schedule without a duration, and either alone means nothing."""
+    """A window is when it opens and how long it stays open, so either alone means nothing."""
     with pytest.raises(render_dial.DialError, match="needs both schedule and duration"):
         disruption(body)
 
@@ -166,7 +166,7 @@ def _render(tmp_path: Path, text: str) -> subprocess.CompletedProcess:
 def test_the_render_says_drift_runs_any_time_with_no_window(tmp_path: Path) -> None:
     result = _render(tmp_path, EXAMPLE.read_text(encoding="utf-8"))
     assert result.returncode == 0, result.stderr
-    assert "Karpenter disruption (k8s.disruption): balanced, drift any time" in result.stderr
+    assert "Pool disruption (k8s.disruption): balanced, drift any time" in result.stderr
 
 
 def test_the_render_names_the_window_drift_waits_for(tmp_path: Path) -> None:
@@ -176,7 +176,7 @@ def test_the_render_names_the_window_drift_waits_for(tmp_path: Path) -> None:
     result = _render(tmp_path, text)
     assert result.returncode == 0, result.stderr
     assert (
-        "Karpenter disruption (k8s.disruption): balanced, drift only inside 0 2 * * 6 for 4h (UTC), "
+        "Pool disruption (k8s.disruption): balanced, drift only inside 0 2 * * 6 for 4h (UTC), "
         "ci-burst excepted" in result.stderr
     )
     assert "WARNING -- k8s.disruption" not in result.stderr
