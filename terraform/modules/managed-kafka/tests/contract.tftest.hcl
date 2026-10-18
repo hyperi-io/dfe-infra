@@ -876,3 +876,25 @@ run "msk_every_role_carries_the_permissions_boundary" {
     error_message = "every aws_iam_role in the msk body must carry var.permissions_boundary"
   }
 }
+
+run "msk_bootstrap_role_holds_only_the_acl_write_grants" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  assert {
+    condition     = length(data.aws_iam_policy_document.bootstrap.statement) == 1
+    error_message = "the bootstrap role grants at cluster scope only: the Job writes ACLs and creates no topic"
+  }
+
+  assert {
+    condition = toset(data.aws_iam_policy_document.bootstrap.statement[0].actions) == toset([
+      "kafka-cluster:Connect",
+      "kafka-cluster:DescribeCluster",
+      "kafka-cluster:AlterCluster",
+    ])
+    error_message = "an ACL write needs Connect, DescribeCluster and AlterCluster, and nothing more"
+  }
+}

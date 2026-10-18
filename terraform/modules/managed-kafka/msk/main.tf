@@ -8,12 +8,6 @@
 // IAM exists for the in-cluster bootstrap Job alone, which is what lets the Job
 // create the first Kafka ACL on a cluster that grants nothing by default.
 
-data "aws_partition" "current" {}
-
-data "aws_region" "current" {}
-
-data "aws_caller_identity" "current" {}
-
 locals {
   // MSK takes one instance type for the whole cluster, so the resolver's
   // best-first list collapses to its head here; the rest are the fallbacks a
