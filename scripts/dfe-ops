@@ -140,15 +140,17 @@ Subcommands:
                is redacted.
                The cycle runs it once when a stage fails, before the destroy.
   diagnostics  Writes a timestamped bundle: the last 30 minutes of every
-               dfe-receiver, dfe-loader, dfe-engine, dfe-hunt-runner and
-               dfe-transform-* container's log, pods, Deployments and ReplicaSets,
-               the DFE namespaces' events, every Argo Application's sync and
-               health, and each consumer group's offsets beside the end offsets of
-               the _land, _load and _dlq topics, read from a short-lived client pod
-               that mounts the engine's own SASL Secret. Every file is redacted and
-               the whole run is time-boxed. With --diagnostics-dir the cycle runs
-               it when any stage from deploy+e2e on fails, and the source suite
-               before it removes its source.
+               dfe-receiver, dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner
+               and dfe-transform-* container's log, pods, Deployments and
+               ReplicaSets, the DFE namespaces' events, every Argo Application's
+               sync and health, and each consumer group's offsets beside the end
+               offsets of the _land, _load and _dlq topics, read from a short-lived
+               client pod that mounts the engine's own SASL Secret. With
+               --from-terraform on an msk backend it also copies MSK's broker logs
+               from their S3 bucket. Every file is redacted and the whole run is
+               time-boxed. With --diagnostics-dir the cycle runs it when any stage
+               from deploy+e2e on fails, and the source suite before it removes its
+               source.
   redact       Reads stdin and writes it to stdout a line at a time with every
                credential masked (the failure-evidence redactor), so a long-running
                command's output can be piped through it. Prints no banner of its
@@ -4704,7 +4706,10 @@ def cmd_cycle(args: argparse.Namespace) -> int:
                 aborted = True
                 print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
                 if args.diagnostics_dir and name not in PRE_DEPLOY_STAGES:
-                    _diagnostics(self_cmd, passthrough_kube, args.diagnostics_dir, name, stage_env)
+                    # The terraform outputs name the Kafka backend, for MSK's broker logs.
+                    tf = ["--from-terraform", args.from_terraform] if args.from_terraform else []
+                    aim = [*passthrough_kube, *tf]
+                    _diagnostics(self_cmd, aim, args.diagnostics_dir, name, stage_env)
                 _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
                 break
     finally:

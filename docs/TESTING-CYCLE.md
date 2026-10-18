@@ -138,7 +138,7 @@ The cycle runs `dfe-ops failure-evidence` once before the destroy, so the eviden
 
 ## Diagnostics bundle
 
-With `--diagnostics-dir DIR`, a failed stage from `deploy+e2e` on runs `dfe-ops diagnostics` before the destroy, as does the source suite before it removes its source and that source's transform pods. Each run writes `DIR/<UTC time>-<label>/`: `logs/` (the last 30 minutes of the receiver, loader, engine, hunt runner and every transform), `workloads.txt`, `events/`, `argo-applications.txt` and `kafka/` (consumer group and topic offsets). The Kafka reads come from a short-lived pod that mounts the engine's own SASL Secret, so no Secret is read. Every file is redacted, the whole capture stops at 300 seconds, and a capture that fails is recorded in `index.txt` while the rest still run.
+With `--diagnostics-dir DIR`, a failed stage from `deploy+e2e` on runs `dfe-ops diagnostics` before the destroy, as does the source suite before it removes its source and that source's transform pods. Each run writes `DIR/<UTC time>-<label>/`: `logs/` (the last 30 minutes of the receiver, loader, archiver, engine, hunt runner and every transform), `workloads.txt`, `events/`, `argo-applications.txt` and `kafka/` (group and topic offsets, broker API versions, the loader group read step by step). The Kafka reads come from a short-lived pod that mounts the engine's own SASL Secret, so no Secret is read. On `msk` it copies MSK's broker logs from S3 into `kafka/broker-logs/`, and S3's batching can leave out the last few minutes. Every file is redacted, the whole capture stops at 300 seconds, and a capture that fails is recorded in `index.txt` while the rest still run.
 
 ## The env-file contract (how a teammate gets running)
 

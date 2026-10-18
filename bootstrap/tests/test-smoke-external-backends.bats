@@ -21,6 +21,13 @@
 #   strimzi             ns/strimzi exists with one Running broker pod
 #   client-never-ready   the client pod never reports Ready
 #   cred/                the mounted dfe-kafka-user Secret's files
+#   groups-output        what kafka-consumer-groups.sh prints. Absent, a dfe-loader
+#                        row committed at 5 on main_land
+#   engine-offsets       what dfe-engine's python3 prints for the OffsetFetch fallback.
+#                        Absent, it prints a librdkafka error and exits 1
+# An engine exec of `python3 -` runs pod-bin/python3 under engine-env, which logs its
+# argv to python.log, the DFE_KAFKA_SASL_PASSWORD it was handed to python-env.log and
+# the script it read to python-script.py.
 # An exec into dfe-clickhouse-0 runs its command on this host as the pod would,
 # with ch-bin/clickhouse-client logging its argv to clickhouse-client.log and its
 # CLICKHOUSE_PASSWORD to clickhouse-env.log. pod-bin/curl appends the config it
@@ -115,11 +122,29 @@ case "${tool} $*" in
         printf 'Topic: dfe_loader_dlq\tPartitionCount: 3\tConfigs: retention.ms=604800000\n' ;;
     "kafka-get-offsets.sh "*) echo "main_land:0:5" ;;
     "kafka-consumer-groups.sh "*)
-        echo "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG"
-        echo "dfe-loader main_land 0 5 5 0" ;;
+        if [[ -f "${STUB_DIR}/groups-output" ]]; then
+            cat "${STUB_DIR}/groups-output"
+        else
+            echo "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG"
+            echo "dfe-loader main_land 0 5 5 0"
+        fi ;;
 esac
 STUB
-    chmod +x "${STUB_DIR}/bin/ch-answer" "${STUB_DIR}/pod-bin/curl" "${STUB_DIR}/ch-bin/clickhouse-client" "${STUB_DIR}/kafka-bin/tool"
+
+    cat > "${STUB_DIR}/pod-bin/python3" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_DIR}/python.log"
+printf '%s\n' "${DFE_KAFKA_SASL_PASSWORD-(unset)}" >> "${STUB_DIR}/python-env.log"
+cat > "${STUB_DIR}/python-script.py"
+if [[ -f "${STUB_DIR}/engine-offsets" ]]; then
+    cat "${STUB_DIR}/engine-offsets"
+    exit 0
+fi
+echo 'Error: KafkaException: KafkaError{code=_TRANSPORT,val=-195,str="FindCoordinator response error: Local: Broker transport failure"}'
+exit 1
+STUB
+    : > "${STUB_DIR}/python.log"
+    chmod +x "${STUB_DIR}/bin/ch-answer" "${STUB_DIR}/pod-bin/curl" "${STUB_DIR}/pod-bin/python3" "${STUB_DIR}/ch-bin/clickhouse-client" "${STUB_DIR}/kafka-bin/tool"
     for tool in kafka-topics.sh kafka-get-offsets.sh kafka-consumer-groups.sh; do
         ln -s tool "${STUB_DIR}/kafka-bin/${tool}"
     done
@@ -163,6 +188,17 @@ case "$*" in
             [[ -n "${line}" ]] && pod_env+=("${line}")
         done < "${STUB_DIR}/engine-env"
         exec env -i PATH="${STUB_DIR}/pod-bin:/usr/bin:/bin" STUB_DIR="${STUB_DIR}" "${pod_env[@]}" sh -c "${last}" ;;
+    *" exec -i deploy/dfe-engine -c dfe-engine -- python3 - "*)
+        pod_env=()
+        if [[ -f "${STUB_DIR}/engine-env" ]]; then
+            while IFS= read -r line; do
+                [[ -n "${line}" ]] && pod_env+=("${line}")
+            done < "${STUB_DIR}/engine-env"
+        fi
+        for ((i = 0; i < ${#args[@]}; i++)); do
+            [[ "${args[i]}" == -- ]] && break
+        done
+        exec env -i PATH="${STUB_DIR}/pod-bin:/usr/bin:/bin" STUB_DIR="${STUB_DIR}" "${pod_env[@]}" "${args[@]:i+1}" ;;
     *" exec -i deploy/dfe-receiver -- curl "*)
         body="$(cat)"
         [[ -f "${STUB_DIR}/receiver-down" ]] && exit 1
@@ -354,7 +390,7 @@ managed_kafka() {
     run bash "${SMOKE}"
     [[ "${output}" == *"[PASS] topic main_land exists (created)"* ]]
     [[ "${output}" == *"[PASS] topic main_land has messages (receiver PRODUCED)"* ]]
-    [[ "${output}" == *"[PASS] a consumer group is committed on main_land (loader CONSUMED)"* ]]
+    [[ "${output}" == *"[PASS] consumer group dfe-loader is committed on main_land (loader CONSUMED): offset 5, read by kafka-consumer-groups.sh"* ]]
     [[ "${output}" == *"[PASS] DLQ topic dfe_transform_dlq pre-created"* ]]
     [[ "${output}" == *"[PASS] DLQ retention is longer than the data-topic default"* ]]
     [[ "${output}" == *"Vertical integration verified."* ]]
@@ -414,6 +450,85 @@ managed_kafka() {
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"[FAIL] managed-broker client pod Ready in ns/dfe-test"* ]]
     [ ! -f "${STUB_DIR}/applied.yaml" ]
+}
+
+# What kafka-consumer-groups.sh 4.3.1 printed against MSK Express in a cloud cycle, verbatim.
+msk_groups_error() {
+    printf '\n%s\n' "Error: Executing consumer group command failed due to java.util.concurrent.ExecutionException: org.apache.kafka.common.errors.UnknownServerException: The server experienced an unexpected error when processing the request." > "${STUB_DIR}/groups-output"
+}
+
+GROUP_CHECK="consumer group dfe-loader is committed on main_land (loader CONSUMED)"
+
+@test "the group check describes the loader's own group, never every group" {
+    managed_kafka
+    run bash "${SMOKE}"
+    [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 5, read by kafka-consumer-groups.sh"* ]]
+    [[ "$(cat "${STUB_DIR}/kafka.log")" == *"kafka-consumer-groups.sh --bootstrap-server b-1.kafka.example.com:9096,b-2.kafka.example.com:9096 --command-config "*" --describe --group dfe-loader --offsets"* ]]
+    [[ "$(cat "${STUB_DIR}/kafka.log")" != *"--all-groups"* ]]
+    [ ! -s "${STUB_DIR}/python.log" ]
+}
+
+@test "expected failure: MSK's UnknownServerException FAILs the group check with its first line, when the fallback fails too" {
+    managed_kafka
+    msk_groups_error
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] ${GROUP_CHECK}"$'\n'"    kafka-consumer-groups.sh: Error: Executing consumer group command failed due to java.util.concurrent.ExecutionException: org.apache.kafka.common.errors.UnknownServerException: The server experienced an unexpected error when processing the request."$'\n'"    dfe-engine OffsetFetch: Error: KafkaException: "* ]]
+    [[ "${output}" != *"[PASS] ${GROUP_CHECK}"* ]]
+}
+
+@test "a groups read that errors falls back to OffsetFetch from dfe-engine, which passes on a committed offset" {
+    managed_kafka
+    msk_groups_error
+    printf 'committed 3 over 3 partition(s) of main_land\n' > "${STUB_DIR}/engine-offsets"
+    printf '%s\n' DFE_KAFKA_SASL_PASSWORD=engine-kafka-pw > "${STUB_DIR}/engine-env"
+    run bash "${SMOKE}"
+    [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 3, read by librdkafka OffsetFetch from dfe-engine"$'\n'"    kafka-consumer-groups.sh failed first: Error: Executing consumer group command failed due to "* ]]
+    [[ "${output}" == *"Vertical integration verified."* ]]
+    [ "$(cat "${STUB_DIR}/python.log")" = "- dfe-loader main_land" ]
+    [[ "$(cat "${STUB_DIR}/python-script.py")" == *"list_consumer_group_offsets"* ]]
+    # The engine's own env holds its credential, and no command line on either side carries it.
+    [ "$(cat "${STUB_DIR}/python-env.log")" = engine-kafka-pw ]
+    [[ "$(cat "${STUB_DIR}/kubectl.log")" != *"engine-kafka-pw"* ]]
+    [[ "${output}" != *"engine-kafka-pw"* ]]
+}
+
+@test "expected failure: a fallback that finds no committed offset above 0 stays a FAIL" {
+    managed_kafka
+    msk_groups_error
+    printf 'committed 0 over 0 partition(s) of main_land\n' > "${STUB_DIR}/engine-offsets"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] ${GROUP_CHECK}"* ]]
+    [[ "${output}" == *"    dfe-engine OffsetFetch: committed 0 over 0 partition(s) of main_land"* ]]
+}
+
+@test "expected failure: another group's commit on main_land does not pass the loader's check" {
+    managed_kafka
+    printf '%s\n' "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG" "dfe-archiver main_land 0 5 5 0" > "${STUB_DIR}/groups-output"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] ${GROUP_CHECK}"$'\n'"    kafka-consumer-groups.sh, no offset above 0 for dfe-loader: GROUP TOPIC PARTITION"* ]]
+    # The tool answered, so its answer stands: no fallback is asked.
+    [ ! -s "${STUB_DIR}/python.log" ]
+}
+
+@test "expected failure: a credential in the line a FAIL prints is masked" {
+    managed_kafka
+    printf '%s\n' 'Error: bad client config sasl.jaas.config=ScramLoginModule required username="u" password="leak-pw";' > "${STUB_DIR}/groups-output"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"    kafka-consumer-groups.sh: Error: bad client config sasl.jaas.config="* ]]
+    [[ "${output}" == *"***REDACTED***"* ]]
+    [[ "${output}" != *"leak-pw"* ]]
+}
+
+@test "expected failure: any failed check prints a line of what its command said" {
+    external_clickhouse
+    touch "${STUB_DIR}/ch-unreachable" "${STUB_DIR}/receiver-down"
+    run bash "${SMOKE}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"[FAIL] infra OTel logs landing fresh"*$'\n'"    output: "* ]]
 }
 
 @test "an in-cluster broker is still reached in ns/strimzi over SASL_PLAINTEXT" {

@@ -22,10 +22,12 @@ cluster is involved.
 """
 
 import argparse
+import gzip
 import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -111,8 +113,10 @@ PODS = [
     _pod("dfe", "dfe-hyperdx", "g7", ("hyperdx",)),
     _pod("dfe", "dfe-keda-shim", "h8", ("shim",)),
     _pod("strimzi", "dfe-kafka-broker", "0", ("kafka",), owner_kind="StatefulSet"),
+    _pod("dfe", "dfe-archiver", "j9", ("dfe-archiver",)),
 ]
 LOGGED = [
+    ("dfe", "dfe-archiver-j9", "dfe-archiver"),
     ("dfe", "dfe-engine-c3", "git-sync-init"),
     ("dfe", "dfe-engine-c3", "dfe-engine"),
     ("dfe", "dfe-engine-c3", "git-sync"),
@@ -232,13 +236,21 @@ def _run(
     budget: float = 60.0,
     minutes: int = dg.LOG_MINUTES,
     image: str = IMAGE,
+    tf_dir: str = "",
+    outside=None,
 ) -> tuple[list[list[str]], Path]:
-    """collect() against a fake runner: every kubectl argv after `kubectl`, and the bundle."""
+    """collect() against a fake runner: every kubectl argv after `kubectl`, and the bundle.
+
+    `outside` answers every other command, tofu and aws, with its whole argv. Without it
+    none may run.
+    """
     calls: list[list[str]] = []
 
     def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
-        assert argv[0] == "kubectl"
         assert 0 < timeout <= budget
+        if argv[0] != "kubectl":
+            assert outside is not None, argv
+            return outside(argv)
         calls.append(argv[1:])
         return answer(argv[1:])
 
@@ -247,7 +259,7 @@ def _run(
     out.mkdir()
     (out / fe.INDEX).write_text("", encoding="utf-8")
     start = time.monotonic()
-    bundle = dg.Bundle(out, [], budget, start + budget - 5.0, start + budget)
+    bundle = dg.Bundle(out, [], budget, start + budget - 5.0, start + budget, tf_dir=tf_dir)
     dg.collect(bundle, minutes=minutes, image=image)
     return calls, out
 
@@ -326,6 +338,10 @@ def test_every_capture_the_brief_names_is_issued_and_lands(
         dg.CLIENT_MANIFEST,
         "kafka/consumer-groups.txt",
         "kafka/end-offsets.txt",
+        "kafka/broker-api-versions.txt",
+        "kafka/groups-list.txt",
+        "kafka/loader-group-state.txt",
+        "kafka/loader-group-offsets.txt",
         "kafka/summary.txt",
     ):
         assert (out / name).is_file(), name
@@ -346,11 +362,26 @@ def test_the_kafka_reads_run_in_order_and_the_pod_is_deleted_last(
         next((word for word in ("apply", "wait", "exec", "delete") if word in call), "")
         for call in calls
     ]
-    assert [verb for verb in verbs if verb] == ["apply", "wait", "exec", "exec", "delete"]
+    assert [verb for verb in verbs if verb] == ["apply", "wait", *["exec"] * 6, "delete"]
     assert verbs[-1] == "delete"
     delete = calls[-1]
     assert delete[:3] == ["-n", "dfe", "delete"]
     assert "--wait=false" in delete
+
+
+def test_the_stepwise_reads_name_the_loader_group_one_call_each(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls, _out = _run(monkeypatch, tmp_path)
+    # The tool line of each client script, less the bootstrap address and client config.
+    tool = re.compile(rf'{dg.KAFKA_BIN}/(\S+) --bootstrap-server \S+ --command-config "\$P" ?(.*)')
+    tools = [" ".join(tool.search(call[-1]).groups()).strip() for call in calls if "exec" in call]
+    assert tools[2:] == [
+        "kafka-broker-api-versions.sh",
+        "kafka-consumer-groups.sh --list",
+        "kafka-consumer-groups.sh --describe --group dfe-loader --state --timeout 10000",
+        "kafka-consumer-groups.sh --describe --group dfe-loader --offsets --timeout 10000",
+    ]
 
 
 # --- fail soft --------------------------------------------------------------------
@@ -445,7 +476,7 @@ def test_an_unwritable_dir_is_a_named_skip(tmp_path: Path, capsys: pytest.Captur
 def _diagnostics_args(root: Path, label: str, *, budget: float = 30.0) -> argparse.Namespace:
     return argparse.Namespace(
         dir=str(root), label=label, kubeconfig="", context="", server="",
-        log_minutes=dg.LOG_MINUTES, budget=budget,
+        log_minutes=dg.LOG_MINUTES, budget=budget, from_terraform="",
     )
 
 
@@ -736,6 +767,200 @@ def test_the_summary_of_unreadable_answers_says_so() -> None:
     assert dg.kafka_summary_lines("", "") == ["neither Kafka read answered with a row"]
 
 
+# What kafka-consumer-groups.sh 4.3.1 printed against MSK Express in a cloud cycle, exit 0.
+MSK_GROUPS_ERROR = (
+    "\nError: Executing consumer group command failed due to java.util.concurrent."
+    "ExecutionException: org.apache.kafka.common.errors.UnknownServerException: The server "
+    "experienced an unexpected error when processing the request.\n"
+)
+
+
+def test_an_errored_groups_read_is_named_failed_never_no_group() -> None:
+    failed = dg.read_failure(_text(MSK_GROUPS_ERROR), 300.0)
+    assert failed == MSK_GROUPS_ERROR.strip()
+    lines = dg.kafka_summary_lines(MSK_GROUPS_ERROR, OFFSETS, groups_failed=failed)
+    assert lines[0] == f"groups read FAILED: {MSK_GROUPS_ERROR.strip()}"
+    assert "main_land end offset 80" in lines
+    assert not [line for line in lines if "no consumer group" in line]
+    assert lines[lines.index("main_land end offset 80") + 1] == (
+        "  groups not known: the groups read FAILED"
+    )
+
+
+def test_a_read_failure_is_an_error_line_or_how_the_command_ended() -> None:
+    assert dg.read_failure(_text(GROUPS), 300.0) == ""
+    assert dg.read_failure(None, 300.0) == "not run: the 300s budget was spent"
+    refused = fe.Outcome(returncode=1, error="command terminated with exit code 1")
+    assert dg.read_failure(refused, 300.0) == "exit 1: command terminated with exit code 1"
+
+
+def test_the_bundle_says_an_errored_groups_read_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def answer(args: list[str]) -> fe.Outcome:
+        if "kafka-consumer-groups.sh" in " ".join(args):
+            return _text(MSK_GROUPS_ERROR)
+        return _answer(args)
+
+    _calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    summary = (out / "kafka" / "summary.txt").read_text(encoding="utf-8")
+    assert summary.startswith("groups read FAILED: Error: Executing consumer group command failed")
+    assert "no consumer group" not in summary
+    index = _index(out)
+    assert "kafka/consumer-groups.txt: answered, but the read FAILED: Error: Executing" in index
+    assert "kafka/loader-group-offsets.txt: answered, but the read FAILED: Error: " in index
+
+
+# --- MSK's broker logs, from the S3 bucket the terraform outputs name ---------------
+
+TF_DIR = "/tf/aws"
+BUCKET = "dfe-e2e-dfe-cycle-msk-broker-logs"
+MSK_OUTPUTS = {"DFE_KAFKA_PROVIDER": "msk", "DFE_KAFKA_BROKER_LOG_BUCKET": BUCKET}
+HOUR = "AWSLogs/123456789012/KafkaBrokerLogs/us-west-2/dfe-cycle-0a1b/2026-10-18-10"
+
+
+def _deliver(staging: Path) -> fe.Outcome:
+    """Two objects as MSK delivers them: a gzipped batch and a plain one, a minute apart."""
+    hour = staging / HOUR
+    hour.mkdir(parents=True)
+    older = hour / "Broker-1_10-20_a.log.gz"
+    older.write_bytes(gzip.compress(f"ERROR SASL failed password={PLANTED[0]}\n".encode()))
+    newer = hour / "Broker-2_10-21_b.log"
+    newer.write_text("INFO [KafkaServer id=2] started\n", encoding="utf-8")
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(newer, (1_000_060, 1_000_060))
+    return fe.Outcome(returncode=0)
+
+
+def _aws(outputs: dict, sync=_deliver):
+    """A tofu answering `outputs` and an aws whose s3 sync runs `sync`, each argv recorded."""
+    seen: list[list[str]] = []
+
+    def run(argv: list[str]) -> fe.Outcome:
+        seen.append(argv)
+        if argv[0] == "tofu":
+            assert argv[1] == f"-chdir={TF_DIR}"
+            name = argv[-1]
+            if name in outputs:
+                return _text(outputs[name])
+            return fe.Outcome(returncode=1, error=f'Error: Output "{name}" not found')
+        assert argv[:4] == ["aws", "s3", "sync", f"s3://{BUCKET}"], argv
+        return sync(Path(argv[4]))
+
+    return run, seen
+
+
+def test_msk_broker_logs_land_decompressed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    outside, seen = _aws(MSK_OUTPUTS)
+    calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    logs = out / "kafka" / "broker-logs" / HOUR
+    batch = (logs / "Broker-1_10-20_a.log").read_text(encoding="utf-8")
+    assert batch == f"ERROR SASL failed password={fe.MASK}\n"
+    assert (logs / "Broker-2_10-21_b.log").read_text(encoding="utf-8").startswith("INFO")
+    index = _index(out)
+    assert f"kafka/broker-logs/: aws s3 sync s3://{BUCKET}: ok, 2 log(s) kept." in index
+    assert "minutes apart" in index
+    # The download is staged outside the bundle and removed with it.
+    staging = Path(seen[-1][4])
+    assert not staging.is_relative_to(out)
+    assert not staging.exists()
+    # The client pod is gone before the copy, which needs no cluster.
+    assert "delete" in calls[-1]
+
+
+def test_the_newest_broker_logs_are_kept_up_to_the_byte_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(dg, "BROKER_LOG_TOTAL", 40)
+    outside, _seen = _aws(MSK_OUTPUTS)
+    _calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    logs = out / "kafka" / "broker-logs" / HOUR
+    assert (logs / "Broker-2_10-21_b.log").is_file()
+    assert not (logs / "Broker-1_10-20_a.log").exists()
+    assert "1 log(s) kept, 1 more past the 40 byte limit" in _index(out)
+
+
+@pytest.mark.parametrize(
+    ("outputs", "said"),
+    [
+        ({"DFE_KAFKA_PROVIDER": "strimzi"}, "not run: the Kafka backend is strimzi, not msk"),
+        ({"DFE_KAFKA_PROVIDER": ""}, "not run: the Kafka backend is none, not msk"),
+        (
+            {"DFE_KAFKA_PROVIDER": "msk", "DFE_KAFKA_BROKER_LOG_BUCKET": ""},
+            "not run: no broker-log bucket, so the logs are in CloudWatch",
+        ),
+        ({}, f"not run: tofu -chdir={TF_DIR} output -raw DFE_KAFKA_PROVIDER: exit 1: Error: "),
+    ],
+    ids=["strimzi", "no-bus", "cloudwatch-sink", "no-output"],
+)
+def test_no_msk_bucket_copies_nothing_and_says_why(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outputs: dict, said: str
+) -> None:
+    outside, seen = _aws(outputs)
+    _calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    assert not [argv for argv in seen if argv[0] == "aws"]
+    assert f"kafka/broker-logs/: {said}" in _index(out)
+    assert not (out / "kafka" / "broker-logs").exists()
+
+
+def test_a_refused_copy_is_one_line_and_the_bundle_still_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def refused(_staging: Path) -> fe.Outcome:
+        return fe.Outcome(returncode=1, error="fatal error: An error occurred (AccessDenied)")
+
+    outside, _seen = _aws(MSK_OUTPUTS, sync=refused)
+    calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    said = f"aws s3 sync s3://{BUCKET}: exit 1: fatal error: An error occurred (AccessDenied)"
+    assert f"{said}, 0 log(s) kept" in _index(out)
+    assert "delete" in calls[-1]
+
+
+def test_a_copy_that_raises_is_recorded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def broken(_staging: Path) -> fe.Outcome:
+        raise OSError("aws broke")
+
+    outside, _seen = _aws(MSK_OUTPUTS, sync=broken)
+    _calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    assert "kafka/broker-logs/: raised OSError: aws broke" in _index(out)
+
+
+def test_a_corrupt_log_object_is_named_and_the_rest_are_kept(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def corrupt(staging: Path) -> fe.Outcome:
+        _deliver(staging)
+        (staging / HOUR / "Broker-3_10-22_c.log.gz").write_bytes(b"not gzip at all")
+        return fe.Outcome(returncode=0)
+
+    outside, _seen = _aws(MSK_OUTPUTS, sync=corrupt)
+    _calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
+    index = _index(out)
+    assert f"kafka/broker-logs/{HOUR}/Broker-3_10-22_c.log: not kept: BadGzipFile" in index
+    assert ", 2 log(s) kept" in index
+
+
+def test_a_dead_api_server_still_leaves_the_broker_logs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    outside, _seen = _aws(MSK_OUTPUTS)
+    _calls, out = _run(
+        monkeypatch, tmp_path, answer=lambda _args: fe.Outcome(returncode=1, error="refused"),
+        tf_dir=TF_DIR, outside=outside,
+    )
+    assert "not run: the API server answered neither read above" in _index(out)
+    assert (out / "kafka" / "broker-logs" / HOUR / "Broker-2_10-21_b.log").is_file()
+
+
+def test_the_diagnostics_parser_takes_the_terraform_dir() -> None:
+    base = ["diagnostics", "--dir", "/d"]
+    assert dfeops.build_parser().parse_args(base).from_terraform == ""
+    parsed = dfeops.build_parser().parse_args([*base, "--from-terraform", "/tf"])
+    assert parsed.from_terraform == "/tf"
+
+
 def test_the_image_is_the_kafka_charts_pin_unless_overridden() -> None:
     values = 'kafka:\n  mode: single\n  version: "4.3.1"\n  imageDigest: "sha256:abc"\n'
     assert dg.kafka_image({}, values) == "apache/kafka:4.3.1@sha256:abc"
@@ -902,6 +1127,29 @@ def test_a_failed_smoke_captures_diagnostics_before_the_destroy(
     # The subcommand's own parser has to accept every flag the cycle hands it.
     parsed = dfeops.build_parser().parse_args(capture[2:])
     assert (parsed.dir, parsed.label) == (str(root), "smoke")
+
+
+def test_a_terraform_cycle_hands_diagnostics_its_terraform_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The outputs name the Kafka backend and the bucket MSK's broker logs land in."""
+    root = tmp_path / "diag"
+    rc, ran = _cycle(
+        monkeypatch, "--from-terraform", TF_DIR, "--diagnostics-dir", str(root), fail="verify"
+    )
+    assert rc == 1
+    capture = next(cmd for cmd in ran if cmd[2] == "diagnostics")
+    assert capture[capture.index("--from-terraform") + 1] == TF_DIR
+    parsed = dfeops.build_parser().parse_args(capture[2:])
+    assert (parsed.dir, parsed.from_terraform) == (str(root), TF_DIR)
+
+
+def test_a_cycle_without_terraform_hands_diagnostics_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="verify")
+    capture = next(cmd for cmd in ran if cmd[2] == "diagnostics")
+    assert "--from-terraform" not in capture
 
 
 def test_a_failed_acceptance_captures_diagnostics_and_the_stage_is_handed_the_dir(

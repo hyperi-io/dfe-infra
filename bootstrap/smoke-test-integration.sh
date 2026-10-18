@@ -42,6 +42,7 @@
 #  Contract names (env-overridable) default to the SSoT:
 #    dfe.main           -- dfe-schemas common-header + loader default
 #    main_land          -- receiver default_source `main` + topic_suffix `_land`
+#    dfe-loader         -- the loader's consumer group, its source default, which no chart overrides
 #    dfe.otel_logs      -- dfe-hyperdx fork otel source (otel tables in the dfe db)
 #  NOTE: chain commands (curl/CLI paths) are first-cut and may need tuning to the
 #  exact image tooling on first live run -- the PRINCIPLE is fixed: assert the
@@ -78,6 +79,7 @@ PROFILE="${DFE_PROFILE:-}"
 # Contract names (SSoT defaults; override per deployment if reconfigured).
 CH_DATA_TABLE="${DFE_CH_DATA_TABLE:-dfe.main}"
 KAFKA_TOPIC="${DFE_KAFKA_TOPIC:-main_land}"
+LOADER_GROUP="${DFE_LOADER_GROUP:-dfe-loader}"
 OTEL_DB="${DFE_OTEL_DB:-dfe}"
 OTEL_LOGS_TABLE="${DFE_OTEL_LOGS_TABLE:-otel_logs}"
 # Freshness window (seconds): a CORE pipeline must show data NEWER than this, so
@@ -107,13 +109,41 @@ POST_FIXTURE="${DFE_POST_FIXTURE:-${POST_DIR}/fixtures/post-hitchhiker.ndjson}"
 POST_CLEANUP="${DFE_POST_CLEANUP:-false}"
 
 PASS=0; FAIL=0; SKIP=0
+pass() { echo "  [PASS] $1"; PASS=$((PASS+1)); }
+fail() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
+skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
+
+# The failure-evidence redactor, the one place that knows what a credential looks like.
+DFE_OPS="${POST_DIR}/../scripts/dfe-ops"
+
+# `    LABEL: <first non-empty line of TEXT>`, cut at 300 characters and redacted, or withheld when it cannot be.
+first_line_of() {
+  local label="$1" line="" scrubbed
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -n "$line" ] && break
+  done <<< "$2"
+  if [ -z "$line" ]; then
+    echo "    ${label}: (printed nothing)"
+  elif scrubbed="$(printf '%s\n' "${line:0:300}" | "$DFE_OPS" redact 2>/dev/null)" && [ -n "$scrubbed" ]; then
+    echo "    ${label}: ${scrubbed}"
+  else
+    echo "    ${label}: (withheld: dfe-ops redact could not mask it)"
+  fi
+}
+
+# A FAIL prints the first line its command printed, so the reason is in the log.
 check() {
-  local name="$1" cmd="$2"
+  local name="$1" cmd="$2" out
   # pipefail is off for the check itself: a check ending in grep -q closes the
   # pipe on the first match, and the producer's SIGPIPE would fail a passing check.
-  if ( set +o pipefail; eval "$cmd" ) >/dev/null 2>&1; then echo "  [PASS] $name"; PASS=$((PASS+1)); else echo "  [FAIL] $name"; FAIL=$((FAIL+1)); fi
+  if out="$( ( set +o pipefail; eval "$cmd" ) 2>&1 )"; then
+    pass "$name"
+  else
+    fail "$name"
+    first_line_of output "$out"
+  fi
 }
-skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
 # cluster_fact() -- one annotation off the cluster secret every appset renders from, shared with the other bootstrap scripts.
 # shellcheck source-path=SCRIPTDIR source=scripts/cluster-facts.sh
@@ -143,6 +173,46 @@ ch_nodes() {
 # engine_ch_query() -- an external server queried from the engine's own container, shared with the other smoke tests.
 # shellcheck source-path=SCRIPTDIR source=scripts/engine-clickhouse.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/engine-clickhouse.sh"
+
+# Run by python3 in dfe-engine's container: group $1's committed offsets on topic $2 through
+# librdkafka's OffsetFetch, dialled with the engine's own DFE_KAFKA_* settings and credential,
+# so none crosses kubectl. Its stderr is closed, which leaves kubectl's own errors the only ones.
+ENGINE_GROUP_OFFSETS_PY='import os
+import sys
+
+os.dup2(os.open(os.devnull, os.O_WRONLY), 2)
+group, topic = sys.argv[1], sys.argv[2]
+env = os.environ.get
+try:
+    from confluent_kafka import ConsumerGroupTopicPartitions
+    from confluent_kafka.admin import AdminClient
+
+    conf = {"bootstrap.servers": env("DFE_KAFKA_BOOTSTRAP_SERVERS", "")}
+    protocol = env("DFE_KAFKA_SECURITY_PROTOCOL", "")
+    if protocol and protocol.upper() != "PLAINTEXT":
+        conf["security.protocol"] = protocol
+    mechanism = env("DFE_KAFKA_SASL_MECHANISM", "")
+    if mechanism:
+        conf["sasl.mechanisms"] = mechanism
+        conf["sasl.username"] = env("DFE_KAFKA_SASL_USERNAME", "")
+        conf["sasl.password"] = env("DFE_KAFKA_SASL_PASSWORD", "")
+    request = [ConsumerGroupTopicPartitions(group)]
+    future = AdminClient(conf).list_consumer_group_offsets(request, request_timeout=20)[group]
+    partitions = future.result(timeout=30).topic_partitions or []
+except TimeoutError:
+    print("Error: TimeoutError: no OffsetFetch answer within 30s")
+    sys.exit(1)
+except Exception as exc:
+    print(f"Error: {type(exc).__name__}: {exc}")
+    sys.exit(1)
+rows = [p for p in partitions if p.topic == topic and p.error is None and p.offset >= 0]
+print(f"committed {sum(p.offset for p in rows)} over {len(rows)} partition(s) of {topic}")
+'
+
+# engine_group_offsets: ENGINE_GROUP_OFFSETS_PY's answer for the loader's group on the landing topic.
+engine_group_offsets() {
+  printf '%s' "$ENGINE_GROUP_OFFSETS_PY" | kubectl -n "$NS_APP" exec -i deploy/dfe-engine -c dfe-engine -- python3 - "$LOADER_GROUP" "$KAFKA_TOPIC" 2>&1
+}
 
 # Run by the ClickHouse pod's shell: a password line on stdin becomes clickhouse-client's CLICKHOUSE_PASSWORD, so no argv carries it.
 # shellcheck disable=SC2016  # Expanded inside the ClickHouse pod, not here.
@@ -642,10 +712,48 @@ KSH
     # being written to and drained. Output is topic:partition:offset.
     check "topic ${KAFKA_TOPIC} has messages (receiver PRODUCED)" \
       "test \"\$(kafka_cli '/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --topic ${KAFKA_TOPIC}' | awk -F: '{s+=\$3} END{print s+0}')\" -gt 0"
-    # A row of --describe naming the topic with a numeric committed offset above 0:
-    # the tool prints its failures to stdout, so a non-empty reading proves nothing.
-    check "a consumer group is committed on ${KAFKA_TOPIC} (loader CONSUMED)" \
-      "printf '%s' \"\$(kafka_cli '/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --all-groups')\" | awk -v t='${KAFKA_TOPIC}' '\$2 == t && \$4 ~ /^[0-9]+\$/ && \$4 > 0 { n++ } END { exit !n }'"
+    # The loader's group, by name: the archiver commits on the _land topics too, so any
+    # group's offset would pass a loader that never commits.
+    loader_group_read() {
+      kafka_cli "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server ${KAFKA_ADDR} --command-config \$P --describe --group ${LOADER_GROUP} --offsets"
+    }
+    # The loader's committed offsets on the topic in a --describe answer, summed, or empty when none is above 0.
+    loader_offsets_in() {
+      printf '%s\n' "$1" | awk -v g="$LOADER_GROUP" -v t="$KAFKA_TOPIC" '$1 == g && $2 == t && $4 ~ /^[0-9]+$/ { s += $4 } END { if (s > 0) print s }'
+    }
+    # The tool prints its failures to stdout and can still exit 0, so an Error line is a failed read.
+    read_errored() {
+      [ "$1" -ne 0 ] || printf '%s\n' "$2" | awk '/^Error/ { e = 1 } END { exit !e }'
+    }
+    # MSK Express can answer kafka-consumer-groups.sh with UnknownServerException, so a read that
+    # errors falls back to OffsetFetch from dfe-engine. A tool that answers is not second-guessed.
+    loader_group_check() {
+      local name="consumer group ${LOADER_GROUP} is committed on ${KAFKA_TOPIC} (loader CONSUMED)"
+      local answer rc offset fallback
+      answer="$(loader_group_read)"
+      rc=$?
+      offset="$(loader_offsets_in "$answer")"
+      if [ -n "$offset" ]; then
+        pass "${name}: offset ${offset}, read by kafka-consumer-groups.sh"
+        return
+      fi
+      if ! read_errored "$rc" "$answer"; then
+        fail "$name"
+        first_line_of "kafka-consumer-groups.sh, no offset above 0 for ${LOADER_GROUP}" "$answer"
+        return
+      fi
+      fallback="$(engine_group_offsets)"
+      offset="$(printf '%s\n' "$fallback" | awk '$1 == "committed" && $2 ~ /^[0-9]+$/ { n = $2 } END { if (n > 0) print n }')"
+      if [ -n "$offset" ]; then
+        pass "${name}: offset ${offset}, read by librdkafka OffsetFetch from dfe-engine"
+        first_line_of "kafka-consumer-groups.sh failed first" "$answer"
+      else
+        fail "$name"
+        first_line_of kafka-consumer-groups.sh "$answer"
+        first_line_of "dfe-engine OffsetFetch" "$fallback"
+      fi
+    }
+    loader_group_check
     # The DLQ standard's topics must exist BEFORE the first poisoned message:
     # a DLQ write happens at failure time, when nothing can be creating topics,
     # and the file backend is an EROFS no-op under the read-only rootfs.
