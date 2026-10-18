@@ -25,6 +25,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_tofu_literals as check  # noqa: E402
 
 TOOLBOX_MAIN = Path("terraform") / "modules" / "toolbox" / "aws" / "main.tf"
+EKS = Path("terraform") / "modules" / "kubernetes-cluster" / "aws" / "eks.tf"
+FORWARDER = Path("terraform") / "modules" / "edge" / "aws" / "forwarder.tf"
 
 
 def literals(text: str) -> list[tuple[str, str, str]]:
@@ -86,6 +88,44 @@ def test_expected_fail_an_instance_type_put_back_in_a_real_module_is_refused(
     assert "ALLOWED entry matches no literal" not in out
 
 
+def test_expected_fail_an_eks_ami_type_put_back_in_the_cluster_module_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _tree_copy(tmp_path)
+    module = root / EKS
+    text = module.read_text(encoding="utf-8")
+    assert "ami_type = var.node_image.family" in text
+    literal = text.replace("ami_type = var.node_image.family", 'ami_type = "AL2023_ARM_64_STANDARD"')
+    module.write_text(literal, encoding="utf-8", newline="\n")
+    assert check.main(root) == 1
+    out = capsys.readouterr().out
+    assert "ami_type = 'AL2023_ARM_64_STANDARD' -- a node image resolves through" in out
+
+
+def test_expected_fail_an_ssm_image_lookup_put_back_in_tofu_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The data source the resolver replaced, under a name the sizing scope never reads."""
+    root = _tree_copy(tmp_path)
+    module = root / FORWARDER
+    text = module.read_text(encoding="utf-8")
+    assert "ami           = var.tunnel.address.ami_id" in text
+    lookup = (
+        'data "aws_ssm_parameter" "al2023_arm64" {\n'
+        '  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"\n'
+        "}\n"
+    )
+    module.write_text(text + "\n" + lookup, encoding="utf-8", newline="\n")
+    assert check.main(root) == 1
+    out = capsys.readouterr().out
+    assert "data.aws_ssm_parameter.al2023_arm64 name = '/aws/service/ami-amazon-linux-latest/" in out
+
+
+def test_the_node_image_default_is_the_one_image_literal_in_the_tree() -> None:
+    images = [hit.key for hit in check.scan_tree() if hit.kind == "image"]
+    assert images == ["terraform/environments/aws/variables.tf:variable.node_image:default.family"]
+
+
 # Every shape a sizing literal takes in this tree, each one refused.
 REFUSED = {
     "a resource attribute": (
@@ -142,6 +182,101 @@ REFUSED = {
         'resource "aws_msk_cluster" "x" {\n  kafka_version = "4.2.x.kraft"\n}\n',
         ("resource.aws_msk_cluster.x", "kafka_version", "4.2.x.kraft"),
     ),
+    "an AMI id": (
+        'resource "aws_instance" "x" {\n  ami = "ami-0123456789abcdef0"\n}\n',
+        ("resource.aws_instance.x", "ami", "ami-0123456789abcdef0"),
+    ),
+    "an EKS AMI type in a local": (
+        'locals {\n  node_ami_type = "AL2023_ARM_64_STANDARD"\n}\n',
+        ("locals", "node_ami_type", "AL2023_ARM_64_STANDARD"),
+    ),
+    "a node image under a name out of scope": (
+        'resource "aws_eks_node_group" "x" {\n  labels = { os = "BOTTLEROCKET_ARM_64" }\n}\n',
+        ("resource.aws_eks_node_group.x", "labels.os", "BOTTLEROCKET_ARM_64"),
+    ),
+    "an image SSM parameter path": (
+        'data "aws_ssm_parameter" "x" {\n'
+        '  name = "/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/arm64/standard/recommended"\n'
+        "}\n",
+        (
+            "data.aws_ssm_parameter.x",
+            "name",
+            "/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/arm64/standard/recommended",
+        ),
+    ),
+    "an SSM image reference": (
+        'resource "aws_launch_template" "x" {\n'
+        '  image_id = "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"\n'
+        "}\n",
+        (
+            "resource.aws_launch_template.x",
+            "image_id",
+            "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64",
+        ),
+    ),
+    "a Karpenter alias": (
+        'locals {\n  alias = "al2023@v20261012"\n}\n',
+        ("locals", "alias", "al2023@v20261012"),
+    ),
+    "a GKE image type": (
+        'resource "google_container_node_pool" "x" {\n  node_config {\n'
+        '    image_type = "COS_CONTAINERD"\n  }\n}\n',
+        ("resource.google_container_node_pool.x", "node_config.image_type", "COS_CONTAINERD"),
+    ),
+    "an AKS OS SKU": (
+        'resource "azurerm_kubernetes_cluster_node_pool" "x" {\n  os_sku = "AzureLinux"\n}\n',
+        ("resource.azurerm_kubernetes_cluster_node_pool.x", "os_sku", "AzureLinux"),
+    ),
+    "a node image variable default": (
+        'variable "node_image" {\n  default = { family = "AL2023_ARM_64_STANDARD" }\n}\n',
+        ("variable.node_image", "default.family", "AL2023_ARM_64_STANDARD"),
+    ),
+    "an AMI data source": (
+        'data "aws_ami" "x" {\n  most_recent = true\n}\n',
+        ("data.aws_ami.x", "data source", "aws_ami"),
+    ),
+    "an SSM parameter data source, whatever it names": (
+        'data "aws_ssm_parameter" "x" {\n  name = var.parameter\n}\n',
+        ("data.aws_ssm_parameter.x", "data source", "aws_ssm_parameter"),
+    ),
+    "an SSM path data source": (
+        'data "aws_ssm_parameters_by_path" "x" {\n  path = var.path\n}\n',
+        ("data.aws_ssm_parameters_by_path.x", "data source", "aws_ssm_parameters_by_path"),
+    ),
+    "an AMI id in upper-case hex, under a name out of scope": (
+        'locals {\n  base = "ami-0123456789ABCDEF0"\n}\n',
+        ("locals", "base", "ami-0123456789ABCDEF0"),
+    ),
+    "Canonical's Ubuntu SSM path": (
+        'locals {\n  base = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"\n}\n',
+        ("locals", "base", "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"),
+    ),
+    "Debian's SSM path": (
+        'locals {\n  base = "/aws/service/debian/release/12/latest/arm64"\n}\n',
+        ("locals", "base", "/aws/service/debian/release/12/latest/arm64"),
+    ),
+    "SUSE's SSM path": (
+        'locals {\n  base = "/aws/service/suse/sles/15-sp6/arm64/latest"\n}\n',
+        ("locals", "base", "/aws/service/suse/sles/15-sp6/arm64/latest"),
+    ),
+    "the ECS-optimised SSM path": (
+        'locals {\n  base = "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"\n}\n',
+        ("locals", "base", "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"),
+    ),
+    "an AMI id in a heredoc script": (
+        'resource "aws_instance" "x" {\n  user_data = <<-EOT\n    #!/bin/bash\n'
+        "    aws ec2 run-instances --image-id=ami-0123456789abcdef0\n  EOT\n}\n",
+        ("resource.aws_instance.x", "user_data", "ami-0123456789abcdef0"),
+    ),
+    "a Karpenter alias in a heredoc manifest": (
+        'resource "kubectl_manifest" "x" {\n  yaml_body = <<-YAML\n    spec:\n'
+        "      amiSelectorTerms:\n        - alias: al2023@v20261012\n  YAML\n}\n",
+        ("resource.kubectl_manifest.x", "yaml_body", "al2023@v20261012"),
+    ),
+    "an AMI id in a heredoc JSON document": (
+        'locals {\n  launch = <<EOT\n{"ImageId":"ami-0123456789abcdef0"}\nEOT\n}\n',
+        ("locals", "launch", "ami-0123456789abcdef0"),
+    ),
 }
 
 
@@ -149,6 +284,12 @@ REFUSED = {
 def test_expected_fail_each_hiding_place_is_found(snippet: tuple[str, tuple[str, str, str]]) -> None:
     text, hit = snippet
     assert hit in literals(text)
+
+
+def test_expected_fail_an_image_in_a_heredoc_is_reported_on_its_own_line() -> None:
+    text = REFUSED["a Karpenter alias in a heredoc manifest"][0]
+    (hit,) = check.scan_text(text, "probe.tf")
+    assert hit.line == text.splitlines().index("        - alias: al2023@v20261012") + 1
 
 
 # Literals that are not a chosen value, each one passed.
@@ -163,6 +304,27 @@ PASSED = {
     "an interpolated string": 'locals {\n  instance_type = "${var.family}.large"\n}\n',
     "a name out of scope": 'resource "aws_instance" "x" {\n  description = "three brokers"\n}\n',
     "a meta-argument": 'resource "aws_instance" "x" {\n  count = 2\n}\n',
+    "an image from the cascade": 'resource "aws_instance" "x" {\n  ami = var.ami_id\n}\n',
+    "an image family checked by its suffix": (
+        'variable "node_image" {\n  validation {\n'
+        '    condition = can(regex("_ARM_64(_|$)", var.node_image.family))\n  }\n}\n'
+    ),
+    "an image name inside prose": (
+        'variable "node_image" {\n  description = "EKS AMI type, AL2023_ARM_64_STANDARD by default"\n}\n'
+    ),
+    "an image path in a heredoc description": (
+        'variable "ami_id" {\n  description = <<-DESCRIPTION\n'
+        "    Read from /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else tfvars.\n"
+        "  DESCRIPTION\n}\n"
+    ),
+    "an AMI id in a heredoc error message": (
+        'variable "ami_id" {\n  validation {\n    condition = var.ami_id != null\n'
+        "    error_message = <<-EOT\n      Set one such as ami-0123456789abcdef0 in tfvars\n    EOT\n  }\n}\n"
+    ),
+    "a heredoc that names no image": (
+        'resource "aws_instance" "x" {\n  user_data = <<-EOT\n    #!/bin/bash\n'
+        "    echo cosine ubuntu-like ${var.ami_id}\n  EOT\n}\n"
+    ),
 }
 
 

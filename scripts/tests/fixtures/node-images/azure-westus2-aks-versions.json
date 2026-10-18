@@ -1,0 +1,51 @@
+{
+  "_provenance": "The KubernetesVersionListResult shape from https://learn.microsoft.com/en-us/rest/api/aks/managed-clusters/list-kubernetes-versions (api-version 2026-07-01, read 2026-10-18), as `az aks get-versions --output json` prints it. Not a captured response: the field names are the API's, the values are illustrative.",
+  "values": [
+    {
+      "capabilities": {
+        "supportPlan": [
+          "KubernetesOfficial"
+        ]
+      },
+      "isPreview": true,
+      "patchVersions": {
+        "1.37.0": {
+          "upgrades": []
+        }
+      },
+      "version": "1.37"
+    },
+    {
+      "capabilities": {
+        "supportPlan": [
+          "KubernetesOfficial",
+          "AKSLongTermSupport"
+        ]
+      },
+      "isDefault": true,
+      "patchVersions": {
+        "1.36.2": {
+          "upgrades": [
+            "1.37.0"
+          ]
+        }
+      },
+      "version": "1.36"
+    },
+    {
+      "capabilities": {
+        "supportPlan": [
+          "KubernetesOfficial"
+        ]
+      },
+      "patchVersions": {
+        "1.35.6": {
+          "upgrades": [
+            "1.36.2"
+          ]
+        }
+      },
+      "version": "1.35"
+    }
+  ]
+}

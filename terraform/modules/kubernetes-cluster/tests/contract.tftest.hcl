@@ -143,6 +143,9 @@ variables {
     }
   }
 
+  // What scripts/resolve_sizing.py images writes, read from the EKS recommended SSM parameter.
+  node_image = { family = "AL2023_ARM_64_STANDARD", version = "1.36.4-20261012" }
+
   // What render_dial.py renders from versions.yaml's eks-addons, for the minor above.
   addon_versions = {
     "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
@@ -1573,6 +1576,7 @@ run "aws_addons_refuse_a_kube_proxy_for_another_minor" {
 
   variables {
     kubernetes_version = "1.35"
+    node_image         = { family = "AL2023_ARM_64_STANDARD", version = "1.35.9-20261012" }
   }
 
   expect_failures = [aws_eks_addon.this]
@@ -1588,6 +1592,7 @@ run "aws_addons_take_a_full_override_for_another_minor" {
 
   variables {
     kubernetes_version = "1.35"
+    node_image         = { family = "AL2023_ARM_64_STANDARD", version = "1.35.9-20261012" }
     addon_versions = {
       "aws-ebs-csi-driver"     = "v1.66.0-eksbuild.1"
       "coredns"                = "v1.13.2-eksbuild.1"
@@ -1790,5 +1795,88 @@ run "aws_node_script_rides_a_mime_launch_template" {
   assert {
     condition     = aws_launch_template.nodes["system"].metadata_options[0].http_put_response_hop_limit == 1
     error_message = "a template added for the script must keep IMDSv2 at hop limit 1, not EKS's template default of 2"
+  }
+}
+
+// The node image arrives through the cascade, so every managed group launches
+// exactly the family and the dated release the caller passed.
+run "aws_node_groups_launch_the_cascaded_image" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = alltrue([for g in aws_eks_node_group.this : g.ami_type == var.node_image.family])
+    error_message = "every node group must launch the node_image family it was handed, never a literal of its own"
+  }
+
+  assert {
+    condition     = alltrue([for g in aws_eks_node_group.this : g.release_version == var.node_image.version])
+    error_message = "every node group must pin the dated release node_image carries, so its image moves only on a resolve and an apply"
+  }
+}
+
+// The shapes are arm64, so an x86 image family is a resolver or tfvars fault.
+run "aws_rejects_an_x86_node_image" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_image = { family = "AL2023_x86_64_STANDARD" }
+  }
+
+  expect_failures = [var.node_image]
+}
+
+// A release built for another minor cannot join this cluster's node groups.
+run "aws_rejects_a_node_image_release_for_another_minor" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_image = { family = "AL2023_ARM_64_STANDARD", version = "1.35.9-20261012" }
+  }
+
+  expect_failures = [var.node_image]
+}
+
+// latest is not a release: the cascade writes a dated one or none.
+run "aws_rejects_a_node_image_release_that_is_not_dated" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_image = { family = "AL2023_ARM_64_STANDARD", version = "latest" }
+  }
+
+  expect_failures = [var.node_image]
+}
+
+// No version is the cascade's last layer: EKS takes its newest release at create.
+run "aws_a_node_image_with_no_version_plans" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_image = { family = "AL2023_ARM_64_STANDARD" }
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["system"].ami_type == "AL2023_ARM_64_STANDARD"
+    error_message = "a node_image with no version must still launch its family"
   }
 }

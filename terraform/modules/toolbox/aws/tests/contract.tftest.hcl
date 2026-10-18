@@ -9,15 +9,6 @@ mock_provider "aws" {
     }
   }
 
-  // The AL2023 arm64 AMI id this module resolves through the SSM public
-  // parameter -- never a literal in the module itself, but the mock has to
-  // answer something for the instance resource to plan against.
-  mock_data "aws_ssm_parameter" {
-    defaults = {
-      value = "ami-0123456789abcdef0"
-    }
-  }
-
   mock_resource "aws_security_group" {
     defaults = {
       id = "sg-0000000000000toolbox"
@@ -59,6 +50,9 @@ variables {
   instance_type = "t4g.small"
   root_volume   = { type = "gp3", size_gib = 20 }
   ttl_minutes   = 60
+
+  // What scripts/resolve_sizing.py images writes as the root's instance_ami_id.
+  ami_id = "ami-0123456789abcdef0"
 
   tool_versions = {
     kubectl                    = "v1.36.0"
@@ -198,6 +192,48 @@ run "enabled_renders_the_instance_with_no_public_ip_and_no_inbound_rule" {
     condition     = aws_instance.this[0].instance_initiated_shutdown_behavior == "terminate"
     error_message = "an OS shutdown must terminate the instance -- that is the whole self-terminate mechanism, and it needs no IAM grant"
   }
+
+  assert {
+    condition     = aws_instance.this[0].ami == var.ami_id
+    error_message = "the instance must launch the AMI the resolver wrote, never one this module looks up itself"
+  }
+}
+
+// --- the AMI arrives from the resolver or tfvars, and an enabled toolbox with
+// neither is refused by name rather than failing inside the provider.
+
+run "rejects_an_enabled_toolbox_with_no_ami" {
+  command = plan
+
+  variables {
+    ami_id = null
+  }
+
+  expect_failures = [var.ami_id]
+}
+
+run "a_disabled_toolbox_needs_no_ami" {
+  command = plan
+
+  variables {
+    enabled = false
+    ami_id  = null
+  }
+
+  assert {
+    condition     = length(aws_instance.this) == 0
+    error_message = "a disabled toolbox must plan with no AMI resolved"
+  }
+}
+
+run "rejects_an_ami_id_that_is_not_one" {
+  command = plan
+
+  variables {
+    ami_id = "al2023-ami-kernel-default-arm64"
+  }
+
+  expect_failures = [var.ami_id]
 }
 
 // --- a target the deployer brought from OUTSIDE the VPC. The VPC CIDR is the

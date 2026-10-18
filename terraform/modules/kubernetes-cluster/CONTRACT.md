@@ -29,6 +29,7 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `addon_versions` | `map(string)` | AWS-only today. The managed add-on versions, keyed by add-on name, one for every add-on the body installs: pinned in tfvars, rendered from versions.yaml's `eks-addons`. Each is built for one Kubernetes minor, so a cluster on another minor sets every entry, and the plan refuses a kube-proxy built for any minor but `kubernetes_version`. |
 | `node_pools` | `map(object(...))` | Keyed by pool name. Each pool: `shape_ref`, `min_size`, `max_size`, `desired_size`, `capacity_type`, `disk_gb`, `labels`, `taints`. |
 | `resolved_shapes` | `map(object({ instance_types, arch, root_volume }))` | Keyed by `shape_ref`. Auto-selected by the shape resolver under each shape's generation policy: the newest arm64 generation in the region, or the generation the shape pins, with the reason and unpin trigger beside the pin in `shapes/compute-shapes.yaml`. Never an instance type written by hand. `instance_types` is ordered best-first so the cloud can fall back when the first is unavailable, holds at most the two newest generations, and a pinned shape can carry a single type; `root_volume` is the shape's root disk `type` and `size_gib`, and every node pool's shape carries one. |
+| `node_image` | `object({ family, version })` | The image every node pool launches, through the node-image cascade below. `family` is the cloud's own image name -- an EKS AMI type, a GKE image type, an AKS OS SKU. `version` is the dated release where the body can pin one (`aws/`: the EKS AMI `release_version`), and null takes the newest the cloud offers when a pool is created. A body refuses a family that does not match its arm64 shapes. |
 | `network` | `object({ nat, az_count, subnet_newbits })` | From tfvars. `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans, 2-6. `subnet_newbits` is how many bits each subnet adds to `provision.cidr`, which sets the addresses each zone's nodes and pods draw from. |
 | `endpoint` | `object({ public, allowed_cidrs })` | The private API endpoint is always on. `public` adds the public one, restricted to `allowed_cidrs`. |
 | `dns` | `object({ private_zone })` | The private zone always exists. No public zone here -- it and the identities that write it are the edge module's. |
@@ -82,10 +83,29 @@ map(object({
   in private subnets. Public subnets carry load balancers and egress only.
 - **No provider block.** A body declares `required_providers` and nothing else;
   the root configures the provider.
-- **Nothing hardcoded.** An instance type, a size, a volume type, a count, a
-  retention, a CIDR or a version arrives as an input with no default: an instance
-  type and a root volume from the shape resolver, everything else from tfvars.
-  The only literals allowed are ones the cloud's own API defines: managed policy
-  names, add-on names, the machine-image family, Kubernetes label keys and
-  service principals. Each carries a one-line comment saying why it is
-  structural. The rule is stated once in `terraform/README.md`.
+- **Nothing hardcoded.** An instance type, a size, a volume type, a count, a retention, a CIDR, a version or a node image arrives as an input with no default: an instance type and a root volume from the shape resolver, a node image from the node-image cascade below, everything else from tfvars. The only literals allowed are ones the cloud's own API defines: managed policy names, add-on names, Kubernetes label keys and service principals. Each carries a one-line comment saying why it is structural. The rule is stated once in `terraform/README.md`.
+
+## Node images
+
+A node image is a three-layer cascade, highest first, and OpenTofu orders the layers itself:
+
+1. The provider's recommendation, read live: `scripts/resolve_sizing.py images` writes it to `node-images.auto.tfvars.json` in the cloud's root, which loads after `terraform.tfvars`. The lookups live in `scripts/node_images.py`.
+2. A value in `terraform.tfvars`, which applies when the lookup failed or when the dial sets `node_image.pin: "true"` to skip it and empty the file -- the hold for a bad provider image or a reproducible rebuild. The pin takes effect on the next `images` run, because tofu never reads the dial.
+3. The root's variable default, the one image literal the tree carries, named in `scripts/check_tofu_literals.py`'s `ALLOWED` table.
+
+The lookup runs in the resolver, never in a tofu data source, because a failing data source fails the whole plan and layer 2 would never get its turn. A failed lookup writes no key and warns once. The check refuses a node image literal, an image SSM path or an AMI data source anywhere else in a `.tf` file.
+
+Long-lived nodes take a DATED release, so their image moves only on the next resolve and apply. An instance rebuilt on every use takes the newest image id.
+
+| Body | Layer 1 reads | Writes | Layer 3 | Status |
+|------|---------------|--------|---------|--------|
+| `aws/` | The SSM parameter `/aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended` ([EKS](https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html)) | `node_image = { family = "AL2023_ARM_64_STANDARD", version = "<patch>-<YYYYMMDD>" }` | The AMI type, no version | Implemented and tested, on recorded SSM answers and in tofu tests. Cloud-cycle wiring pending, so no deploy has taken its answer yet |
+| `gcp/` | `gcloud container get-server-config --location <region>`, its `defaultImageType`, once `validNodeVersions` carries the minor ([ServerConfig](https://docs.cloud.google.com/kubernetes-engine/docs/reference/rest/v1/ServerConfig)) | `node_image = { family = "COS_CONTAINERD" }` | `COS_CONTAINERD`, GKE's recommended image | Lookup coded and unit-tested against the documented response shape. No body, not deployed or tested live |
+| `azure/` | `az aks get-versions --location <region>`, confirming the minor is listed and not preview ([AKS](https://learn.microsoft.com/en-us/rest/api/aks/managed-clusters/list-kubernetes-versions)) | `node_image = { family = "Ubuntu" }` | `Ubuntu` | Lookup coded and unit-tested against the documented response shape. No body, not deployed or tested live |
+| `rke2/` | Nothing: no provider publishes a recommended node OS ([RKE2 requirements](https://docs.rke2.io/install/requirements), 2026-10-07, validates a list of distributions and recommends none) | Nothing | Its root's default | Layers 2 and 3 only. Not built |
+
+GKE's `defaultImageType` and the EKS `recommended` parameter are machine answers. AKS publishes no API answer for an OS SKU: its guidance is the unversioned `Ubuntu` SKU, which moves to the newest validated Ubuntu with each minor ([OS versions](https://learn.microsoft.com/en-us/azure/aks/upgrade-os-version)), so the lookup writes it only once the location lists the minor as generally available.
+
+On `aws/` the toolbox instance takes the root's `instance_ami_id` and the tunnel forwarder its `forwarder_ami_id`, both from the same command, the newest AMI in `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`. They are separate keys because `dfe-ops bastion up` refreshes the toolbox's alone, and a new AMI replaces the forwarder instance. Neither has a layer 3, because an AMI id belongs to one region: an unresolved one is refused by name, and only once its instance is on.
+
+Karpenter's node class takes the same EKS release as its own dated alias, `al2023@v<YYYYMMDD>`, pinned in `versions.yaml` (`operators.karpenter-al2023-ami`) behind the release-age gate rather than through this cascade. `scripts/check_karpenter_ami.py` warns in CI, and never fails, when that pin lags the newest release for the stack's minor.

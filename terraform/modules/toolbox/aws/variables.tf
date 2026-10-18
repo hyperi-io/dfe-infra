@@ -35,7 +35,22 @@ variable "instance_type" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9]*g[a-z]*\\.[a-z0-9-]+$", var.instance_type))
-    error_message = "instance_type must name a Graviton (arm64) family -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module resolves. Got ${var.instance_type}."
+    error_message = "instance_type must name a Graviton (arm64) family -- the generation letter is followed by a literal 'g' (t4g, m7g, c8gn, ...) -- to match the AL2023 arm64 AMI this module launches. Got ${var.instance_type}."
+  }
+}
+
+variable "ami_id" {
+  description = "The AMI the instance launches: the newest AL2023 arm64 AMI in the region, auto-selected by scripts/resolve_sizing.py images from the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else the root's tfvars instance_ami_id. Null when neither answered, which is refused only while enabled is true. The instance is rebuilt on every bastion up, so the newest id at the last resolve is the right one -- see CONTRACT.md, AMI resolution."
+  type        = string
+
+  validation {
+    condition     = var.ami_id == null || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.ami_id))
+    error_message = "ami_id must be an AMI id such as ami-0123456789abcdef0. Got ${coalesce(var.ami_id, "null")}."
+  }
+
+  validation {
+    condition     = !var.enabled || var.ami_id != null
+    error_message = "enabled is true and no AMI was resolved. Run scripts/resolve_sizing.py images, or set instance_ami_id in terraform.tfvars."
   }
 }
 

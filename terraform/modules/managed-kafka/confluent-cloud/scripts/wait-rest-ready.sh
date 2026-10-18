@@ -17,7 +17,7 @@
 #  Only HTTP 200 counts. A 401 or 403 is a key the endpoint has not synced, and
 #  a reset, a TLS failure or a timeout is an endpoint with no route yet: each
 #  starts the count again. The credential reaches curl on stdin, never in an
-#  argument. Needs bash 3.2 and curl, so it runs on any Linux or macOS deployer.
+#  argument. Needs bash 3.2, curl and date, so it runs on any Linux or macOS deployer.
 
 set -euo pipefail
 
@@ -30,6 +30,11 @@ readonly UNSAFE='["\\[:cntrl:]]'
 die() {
     printf 'wait-rest-ready: %s\n' "$*" >&2
     exit 1
+}
+
+# The clock and the wait are the `date` and `sleep` on PATH, so a test can stand its own in.
+now() {
+    date +%s
 }
 
 main() {
@@ -51,7 +56,7 @@ main() {
     host="${host%%/*}"
     host="${host%:*}"
 
-    local deadline=$(( SECONDS + timeout ))
+    local deadline=$(( $(now) + timeout ))
     local attempt=0 streak=0 out answer code last
     while :; do
         attempt=$(( attempt + 1 ))
@@ -76,7 +81,7 @@ main() {
         if (( streak >= want )); then
             return 0
         fi
-        if (( SECONDS + interval >= deadline )); then
+        if (( $(now) + interval >= deadline )); then
             die "${host} did not list its topics with HTTP 200 ${want} times in a row within ${timeout}s (${attempt} attempts, last: ${last}). A reset is an endpoint not yet routed to this cluster, and a 401 a key it has not synced: re-run the apply once it answers, or check egress to ${host}:443."
         fi
         sleep "${interval}"

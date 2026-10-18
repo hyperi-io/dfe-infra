@@ -9,8 +9,9 @@
 - A type with no dependable resolver, or whose newest generation is known to break, is pinned in tfvars, or in the shapes data that feeds them, with a one-line reason naming what lifts the pin.
 - Every other value arrives from tfvars, rendered from the deployment dial by `scripts/render_dial.py` or written into a hand-kept tfvars file.
 - Each such variable's `description` says which of the two its value comes from.
-- A literal the cloud's own API fixes -- a managed policy name, a protocol port, a service principal, an image family -- stays in the `.tf` as a named local with a one-line comment saying why.
-- `scripts/check_tofu_literals.py` enforces this in the test suite. Such a constant goes in its `ALLOWED` table with the same reason, and an entry that stops matching anything fails too.
+- A node image comes from the provider's own recommendation, newest dated release, through `scripts/resolve_sizing.py images` and `node-images.auto.tfvars.json`, then tfvars, then the root variable's default -- the cascade in `modules/kubernetes-cluster/CONTRACT.md`, "Node images". Tofu never looks one up with a data source.
+- A literal the cloud's own API fixes -- a managed policy name, a protocol port, a service principal -- stays in the `.tf` as a named local with a one-line comment saying why.
+- `scripts/check_tofu_literals.py` enforces this in the test suite, and catches a node image by its value under any name. Such a constant goes in its `ALLOWED` table with the same reason, and an entry that stops matching anything fails too.
 
 ## Where each cloud's types come from
 

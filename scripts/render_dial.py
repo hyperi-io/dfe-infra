@@ -1018,6 +1018,11 @@ def _platform_version(cloud: str) -> str | None:
     turns this floor and the dial's own choice into the version that runs.
     Absent for a cloud with no stage yet, in which case the dial's own field
     is all there is.
+
+    A value is spelt the way bootstrap/check_platform.py's parse_requirement
+    reads it: `>=1.34` is a floor alone, and a range `1.34-1.36` is a floor and a
+    ceiling. The floor is the low side either way. The ceiling is what
+    check_platform.py warns above, and it never refuses a dial.
     """
     if not VERSIONS_FILE.is_file():
         return None
@@ -1034,8 +1039,16 @@ def _platform_version(cloud: str) -> str | None:
     for key in (_PLATFORM_KEY.get(cloud, cloud), "kubernetes"):
         value = _scalar(tree, ("stacks", current, "platform", key))
         if value is not None:
-            return value.removeprefix(">=").strip()
+            return _platform_floor(value)
     return None
+
+
+def _platform_floor(value: str) -> str:
+    """The floor of one platform requirement: `>=1.34` and `1.34-1.36` both give 1.34."""
+    # A leading `v` is a prefix, not a separator, as check_platform.py reads it.
+    bare = value.strip().removeprefix(">=").strip().removeprefix("v")
+    low, _, _ceiling = bare.partition("-")
+    return low.strip().removeprefix("v")
 
 
 def _version_at_least(version: str, floor: str) -> bool:

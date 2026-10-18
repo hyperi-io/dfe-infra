@@ -39,15 +39,6 @@ mock_provider "aws" {
     }
   }
 
-  // The AL2023 arm64 AMI id this module resolves through the SSM public
-  // parameter -- never a literal in the module itself, but the mock has to
-  // answer something for the instance resource to plan against.
-  mock_data "aws_ssm_parameter" {
-    defaults = {
-      value = "ami-0123456789abcdef0"
-    }
-  }
-
   mock_data "aws_region" {
     defaults = {
       region = "us-west-2"
@@ -330,7 +321,7 @@ run "the_forwarder_holds_the_address_and_is_reached_only_through_ssm" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -363,6 +354,11 @@ run "the_forwarder_holds_the_address_and_is_reached_only_through_ssm" {
     error_message = "the instance type and the root volume's type and size must be the ones the resolved shape hands in"
   }
 
+  assert {
+    condition     = aws_instance.forwarder[0].ami == var.tunnel.address.ami_id
+    error_message = "the forwarder must launch the AMI the resolver wrote, never one this module looks up itself"
+  }
+
   // The Elastic IP is its own resource, never an `instance` attribute on
   // aws_eip: the address is in every client config already issued, so
   // replacing the instance must not replace it.
@@ -381,7 +377,7 @@ run "the_forwarder_role_reads_the_node_list_and_can_do_nothing_else" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -417,7 +413,7 @@ run "the_security_group_admits_both_tunnels_from_everywhere_by_default" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -473,7 +469,7 @@ run "the_node_group_admits_each_node_port_from_the_forwarders_own_group" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -528,7 +524,7 @@ run "the_node_port_rule_follows_the_number_the_dial_pins" {
 
   variables {
     tunnel = {
-      address    = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } }
+      address    = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } }
       node_ports = { wireguard = 30010, openvpn = 30011 }
     }
   }
@@ -546,7 +542,7 @@ run "a_named_allow_list_replaces_the_open_default_on_every_listener" {
 
   variables {
     tunnel = {
-      address       = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } }
+      address       = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } }
       source_ranges = ["203.0.113.0/24", "198.51.100.0/24"]
     }
   }
@@ -569,7 +565,7 @@ run "turning_the_openvpn_listener_off_closes_its_door_end_to_end" {
 
   variables {
     tunnel = {
-      address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } }
+      address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } }
       openvpn = false
     }
   }
@@ -608,7 +604,7 @@ run "the_forwarder_takes_the_networks_first_zone_by_default" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -628,7 +624,7 @@ run "the_forwarder_never_lands_in_a_subnet_outside_the_public_set" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-1b" } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-1b" } }
   }
 
   assert {
@@ -646,7 +642,7 @@ run "a_named_zone_selects_its_own_subnet" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-1c" } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-1c" } }
   }
 
   assert {
@@ -664,7 +660,7 @@ run "a_zone_the_vpc_does_not_span_is_refused_by_name" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-9z" } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 }, zone = "mock-9z" } }
   }
 
   expect_failures = [
@@ -673,13 +669,13 @@ run "a_zone_the_vpc_does_not_span_is_refused_by_name" {
 }
 
 // --- the instance type is sized by bandwidth, and the family has to match the
-// arm64 AMI this module resolves.
+// arm64 AMI this module launches.
 
 run "rejects_a_non_graviton_forwarder_instance_type" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t3.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t3.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   expect_failures = [
@@ -692,7 +688,20 @@ run "rejects_a_forwarder_with_no_root_volume" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small" } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0" } }
+  }
+
+  expect_failures = [
+    var.tunnel,
+  ]
+}
+
+// The AMI arrives from the resolver or tfvars, so a forwarder with neither is refused by name.
+run "rejects_a_forwarder_with_no_ami" {
+  command = plan
+
+  variables {
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   expect_failures = [
@@ -731,7 +740,7 @@ run "rejects_a_node_port_outside_the_kubernetes_range" {
 
   variables {
     tunnel = {
-      address    = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } }
+      address    = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } }
       node_ports = { wireguard = 8080 }
     }
   }
@@ -747,7 +756,7 @@ run "the_user_data_carries_the_cluster_tag_and_the_port_map" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -808,7 +817,7 @@ run "a_changed_port_map_rebuilds_the_instance_rather_than_restarting_it" {
   command = plan
 
   variables {
-    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {
@@ -832,7 +841,7 @@ run "every_role_carries_the_permissions_boundary" {
   variables {
     permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
     iam_path             = "/dfe-e2e/"
-    tunnel               = { address = { mode = "forwarder", instance_type = "t4g.small", root_volume = { type = "gp3", size_gib = 20 } } }
+    tunnel               = { address = { mode = "forwarder", instance_type = "t4g.small", ami_id = "ami-0123456789abcdef0", root_volume = { type = "gp3", size_gib = 20 } } }
   }
 
   assert {

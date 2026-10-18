@@ -225,6 +225,13 @@ jobs:
       - name: Stack compatibility check (advisory)
         run: python3 scripts/dfe-stack compat-check
 
+      # Exits 0 on a lag, which it annotates as a warning: the bump is a reviewed
+      # versions.yaml change behind the release-age gate, never this step's to force.
+      - name: Karpenter AMI alias currency (advisory)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_karpenter_ami.py
+
       # dfe-ops is the CLI every deploy, verify, teardown and cycle runs
       # through, and has no extension, so no glob elsewhere ever compiles it.
       - name: dfe-ops compiles
