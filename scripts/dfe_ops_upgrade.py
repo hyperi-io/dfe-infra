@@ -1367,6 +1367,9 @@ def _lists_an_entry(text: str, path: tuple[str, ...]) -> bool:
     dotted = ".".join(path)
     inline = values_migration.value_of(text, dotted)
     if inline is not None:
+        # A flow list opened here and closed on a later line reads back as a bare "[".
+        if inline.strip().startswith("[") and not inline.strip().endswith("]"):
+            return True
         return inline.strip("[] \t") not in ("", "~", "null", "Null", "NULL")
     items = values_migration.list_items(text, dotted)
     return items is None or bool(items)

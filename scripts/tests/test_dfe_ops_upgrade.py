@@ -4366,6 +4366,10 @@ def test_expected_fail_an_empty_deploy_repo_self_range_list_admits_nobody(
     [
         ({"common.yaml": "exposure:\n  selfRanges: [192.0.2.9/32]\n"}, "infra/common.yaml"),
         (
+            {"common.yaml": "exposure:\n  selfRanges: [\n    192.0.2.9/32\n  ]\n"},
+            "infra/common.yaml",
+        ),
+        (
             {
                 "common.yaml": "exposure:\n  selfRanges: []\n",
                 "envoy-gateway-config.yaml": "exposure:\n  selfRanges:\n    - 192.0.2.9/32\n",
