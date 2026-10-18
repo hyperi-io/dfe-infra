@@ -1122,7 +1122,12 @@ KARPENTER_VALUES_FIELDS = {
     "consolidation",
     "policy",
     "after",
-    "budgetNodes",
+    # The disruption budget list, and the four fields one budget is made of.
+    "budgets",
+    "nodes",
+    "reasons",
+    "schedule",
+    "duration",
     "expireAfter",
     "labels",
     "limits",
@@ -1185,7 +1190,7 @@ def test_every_karpenter_pool_carries_every_field_the_chart_guard_requires(tmp_p
         "consolidation:",
         "policy:",
         "after:",
-        "budgetNodes:",
+        "budgets:",
         "expireAfter:",
         "limits:",
     ):
@@ -1928,7 +1933,159 @@ def test_karpenter_ci_burst_pool_is_spot_first() -> None:
     choice = _choice(use_case="ci-burst", instance_type="c9gd.4xlarge", fallbacks=["c8gd.4xlarge"])
     pool = resolve_sizing.build_karpenter_pools({"ci-burst": choice}, {})["ci-burst"]
     assert pool["capacityTypes"] == ["spot", "on-demand"]
-    assert pool["budgetNodes"] == "100%"
+    assert pool["budgets"] == [{"nodes": "100%"}]
+
+
+# ---------------------------------------------------------------------------
+# Disruption budgets -- one per reason, and a drift hold outside the window
+# ---------------------------------------------------------------------------
+
+# Karpenter's three budget reasons, in the order every pool lists them.
+BUDGET_REASONS = ("Underutilized", "Empty", "Drifted")
+DAILY_0200_4H = render_dial.MaintenanceWindow(minute=0, hour=2, weekday=None, minutes=240)
+
+
+def _budgets(use_case: str, disruption: render_dial.Disruption | None = None) -> list[dict]:
+    """The budgets build_karpenter_pools gives one pool of `use_case`."""
+    choice = _choice(use_case=use_case, instance_type="m9g.large", fallbacks=[])
+    pools = resolve_sizing.build_karpenter_pools({use_case: choice}, {}, None, disruption)
+    return pools[use_case]["budgets"]
+
+
+def _per_reason(budgets: list[dict]) -> dict[str, str]:
+    """reason -> nodes for the always-on budgets, the ones with no schedule."""
+    return {b["reasons"][0]: b["nodes"] for b in budgets if "schedule" not in b}
+
+
+@pytest.mark.parametrize("use_case", resolve_sizing.STATEFUL_USE_CASES)
+def test_a_stateful_pool_never_consolidates_and_moves_one_node_at_a_time(use_case: str) -> None:
+    assert _budgets(use_case) == [
+        {"nodes": "0", "reasons": ["Underutilized"]},
+        {"nodes": "1", "reasons": ["Empty"]},
+        {"nodes": "1", "reasons": ["Drifted"]},
+    ]
+
+
+@pytest.mark.parametrize("use_case", ["eks-system", "general"])
+def test_an_elastic_pool_drifts_slower_than_it_consolidates(use_case: str) -> None:
+    assert _budgets(use_case) == [
+        {"nodes": "25%", "reasons": ["Underutilized"]},
+        {"nodes": "25%", "reasons": ["Empty"]},
+        {"nodes": "10%", "reasons": ["Drifted"]},
+    ]
+
+
+@pytest.mark.parametrize("posture", render_dial.DISRUPTION_POSTURES)
+@pytest.mark.parametrize("window", [None, DAILY_0200_4H])
+def test_ci_burst_keeps_one_budget_for_every_reason_whatever_the_dial(
+    posture: str, window: render_dial.MaintenanceWindow | None
+) -> None:
+    assert _budgets("ci-burst", render_dial.Disruption(posture, window)) == [{"nodes": "100%"}]
+
+
+@pytest.mark.parametrize("use_case", ["clickhouse", "keeper", "general", "eks-system"])
+@pytest.mark.parametrize("posture", render_dial.DISRUPTION_POSTURES)
+@pytest.mark.parametrize("window", [None, DAILY_0200_4H])
+def test_every_pool_names_every_reason_in_an_always_on_budget(
+    use_case: str, posture: str, window: render_dial.MaintenanceWindow | None
+) -> None:
+    """A reason no active budget names is unlimited, so a scheduled budget alone never covers one."""
+    budgets = _budgets(use_case, render_dial.Disruption(posture, window))
+    assert tuple(_per_reason(budgets)) == BUDGET_REASONS
+
+
+@pytest.mark.parametrize(
+    ("window", "schedule", "duration"),
+    [
+        (DAILY_0200_4H, "0 6 * * *", "20h"),
+        (render_dial.MaintenanceWindow(minute=0, hour=22, weekday=None, minutes=240), "0 2 * * *", "20h"),
+        (render_dial.MaintenanceWindow(minute=30, hour=22, weekday=6, minutes=210), "0 2 * * 0", "164h30m"),
+        (render_dial.MaintenanceWindow(minute=0, hour=0, weekday=0, minutes=60), "0 1 * * 0", "167h"),
+        (render_dial.MaintenanceWindow(minute=45, hour=23, weekday=None, minutes=1), "46 23 * * *", "23h59m"),
+    ],
+)
+def test_a_window_adds_a_drift_hold_from_its_close_to_its_next_open(
+    window: render_dial.MaintenanceWindow, schedule: str, duration: str
+) -> None:
+    hold = {"nodes": "0", "reasons": ["Drifted"], "schedule": schedule, "duration": duration}
+    for use_case in ("clickhouse", "general"):
+        budgets = _budgets(use_case, render_dial.Disruption("balanced", window))
+        assert budgets[-1] == hold, use_case
+        assert budgets[:-1] == _budgets(use_case), use_case
+
+
+def _karpenter_active(schedule: str, duration: str, minute: int) -> bool:
+    """Budget.IsActive in karpenter v1 (pkg/apis/v1/nodepool.go), for the cron forms the dial admits.
+
+    Active when a schedule hit lands in (minute - duration, minute]. Minute 0 is a
+    Sunday 00:00 UTC, and hits are laid out three weeks either side of the sweep.
+    """
+    at_minute, at_hour, _dom, _month, weekday = schedule.split()
+    start = int(at_hour) * 60 + int(at_minute)
+    days = range(-21, 35) if weekday == "*" else range(int(weekday) - 21, 35, 7)
+    lookback = _seconds(duration) // 60
+    return any(minute - lookback < day * 1440 + start <= minute for day in days)
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        DAILY_0200_4H,
+        render_dial.MaintenanceWindow(minute=0, hour=22, weekday=None, minutes=240),
+        render_dial.MaintenanceWindow(minute=30, hour=22, weekday=6, minutes=210),
+        render_dial.MaintenanceWindow(minute=0, hour=0, weekday=0, minutes=1),
+        render_dial.MaintenanceWindow(minute=59, hour=23, weekday=0, minutes=10079),
+    ],
+)
+def test_the_drift_hold_is_active_exactly_when_the_window_is_closed(window: render_dial.MaintenanceWindow) -> None:
+    """Swept minute by minute over two weeks against Karpenter's own activity rule."""
+    hold = _budgets("clickhouse", render_dial.Disruption("balanced", window))[-1]
+    opens = f"{window.minute} {window.hour} * * {'*' if window.weekday is None else window.weekday}"
+    length = f"{window.minutes}m"
+    wrong = [
+        minute
+        for minute in range(2 * 7 * 1440)
+        if _karpenter_active(hold["schedule"], hold["duration"], minute) == _karpenter_active(opens, length, minute)
+    ]
+    assert not wrong, f"{len(wrong)} minutes where the hold and the window agree, first at {wrong[0]}"
+
+
+def test_conservative_halves_elastic_consolidation_and_nothing_else_there() -> None:
+    conservative = _per_reason(_budgets("general", render_dial.Disruption("conservative", None)))
+    assert conservative == {"Underutilized": "12%", "Empty": "25%", "Drifted": "10%"}
+
+
+def test_conservative_with_no_window_holds_stateful_drift_altogether() -> None:
+    """With no window there is no inside, so a stateful node only moves when an operator moves it."""
+    held = _per_reason(_budgets("kafka-broker", render_dial.Disruption("conservative", None)))
+    assert held == {"Underutilized": "0", "Empty": "1", "Drifted": "0"}
+
+
+def test_conservative_with_a_window_lets_stateful_drift_inside_it() -> None:
+    budgets = _budgets("kafka-broker", render_dial.Disruption("conservative", DAILY_0200_4H))
+    assert budgets == _budgets("kafka-broker", render_dial.Disruption("balanced", DAILY_0200_4H))
+    assert _per_reason(budgets)["Drifted"] == "1"
+
+
+def _with_disruption(dial: Path, block: str) -> Path:
+    """Append a k8s.disruption block -- k8s is the last section `_dial` writes."""
+    dial.write_text(dial.read_text(encoding="utf-8") + "  disruption:\n" + block, encoding="utf-8")
+    return dial
+
+
+def test_the_dial_window_and_posture_reach_the_pools_bootstrap_carries(tmp_path: Path) -> None:
+    block = '    posture: conservative\n    maintenance_window:\n      schedule: "0 2 * * 6"\n      duration: "4h"\n'
+    assert _run(_with_disruption(_dial(tmp_path), block), tmp_path) == 0
+    pools = _pools(tmp_path)
+    hold = {"nodes": "0", "reasons": ["Drifted"], "schedule": "0 6 * * 6", "duration": "164h"}
+    assert pools["clickhouse"]["budgets"][-1] == hold
+    assert _per_reason(pools["general"]["budgets"])["Underutilized"] == "12%"
+    assert pools["ci-burst"]["budgets"] == [{"nodes": "100%"}]
+
+
+def test_expected_fail_a_disruption_block_the_dial_refuses_fails_the_resolve(tmp_path: Path, capsys) -> None:
+    assert _run(_with_disruption(_dial(tmp_path), "    posture: fast\n"), tmp_path) == 1
+    assert "k8s.disruption.posture must be one of" in capsys.readouterr().err
 
 
 def test_karpenter_a_pinned_policy_emits_generation_in_not_generation_gt() -> None:
@@ -2283,6 +2440,30 @@ def test_the_general_nodepool_renders_its_sized_limit_and_consolidation_delay(
     assert int(nodepool["spec"]["limits"]["cpu"]) >= 2 * _scale_app_set_vcpu()
     after = nodepool["spec"]["disruption"]["consolidateAfter"]
     assert _seconds(after) > _readiness_timeout_s(), after
+
+
+def test_every_nodepool_renders_the_budgets_the_resolver_wrote(tmp_path: Path) -> None:
+    """The window's drift hold has to survive the values overlay and the chart to reach Karpenter."""
+    if HELM_BIN is None:
+        pytest.skip("helm is not on PATH")
+    block = '    maintenance_window:\n      schedule: "30 22 * * 6"\n      duration: "3h30m"\n'
+    assert _run(_with_disruption(_dial(tmp_path), block), tmp_path) == 0
+    fragment = tmp_path / "sizing" / "scale.values.yaml"
+    result = _helm_template("karpenter-pools", CHART_RENDER_BASES["karpenter-pools"], fragment)
+    assert result.returncode == 0, result.stderr
+    rendered = {
+        d["metadata"]["name"]: d["spec"]["disruption"]["budgets"]
+        for d in yaml.safe_load_all(result.stdout)
+        if d and d["kind"] == "NodePool"
+    }
+    pools = _pools(tmp_path)
+    assert rendered == {name: pool["budgets"] for name, pool in pools.items()}
+    assert rendered["keeper"][-1] == {
+        "nodes": "0",
+        "reasons": ["Drifted"],
+        "schedule": "0 2 * * 0",
+        "duration": "164h30m",
+    }
 
 
 # ---------------------------------------------------------------------------
