@@ -12,6 +12,7 @@
   "env_prefix": "",
   "metric_prefix": "",
   "config_mount_path": "",
+  "service_account": "none",
   "image_registry": "ghcr.io/hyperi-io",
   "extra_ports": [
     {

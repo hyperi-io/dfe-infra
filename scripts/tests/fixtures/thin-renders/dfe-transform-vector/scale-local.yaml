@@ -157,12 +157,6 @@ spec:
         - --config
         - /etc/dfe-transform-vector/config.yaml
         env:
-        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
-          valueFrom:
-            secretKeyRef:
-              key: sasl.mechanism
-              name: dfe-kafka-user
-              optional: true
         - name: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
         - name: DFE_TRANSFORM_SINK_BROKERS
@@ -206,6 +200,11 @@ spec:
           valueFrom:
             secretKeyRef:
               key: password
+              name: dfe-kafka-user
+        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+          valueFrom:
+            secretKeyRef:
+              key: sasl.mechanism
               name: dfe-kafka-user
         image: registry.example.com/dfe/dfe-transform-vector:<pin:apps.dfe-transform-vector>@<pin:digests.dfe-transform-vector>
         imagePullPolicy: IfNotPresent
