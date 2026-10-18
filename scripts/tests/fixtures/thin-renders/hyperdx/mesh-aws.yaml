@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-hyperdx
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:content.dfe-hyperdx>
+    dfe.hyperi.io/app: dfe-hyperdx
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-hyperdx-<pin:chart-version.dfe-hyperdx>
@@ -30,6 +31,7 @@ metadata:
     app.kubernetes.io/name: dfe-hyperdx
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:content.dfe-hyperdx>
+    dfe.hyperi.io/app: dfe-hyperdx
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-hyperdx-<pin:chart-version.dfe-hyperdx>
@@ -61,6 +63,7 @@ metadata:
     app.kubernetes.io/name: dfe-hyperdx
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:content.dfe-hyperdx>
+    dfe.hyperi.io/app: dfe-hyperdx
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-hyperdx-<pin:chart-version.dfe-hyperdx>
@@ -88,6 +91,7 @@ spec:
         app.kubernetes.io/name: dfe-hyperdx
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:content.dfe-hyperdx>
+        dfe.hyperi.io/app: dfe-hyperdx
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-hyperdx-<pin:chart-version.dfe-hyperdx>

@@ -35,6 +35,7 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "network-policies"
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
+APP_LABEL = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))["appLabel"]
 
 CH_PORTS = {8443, 9440}
 KAFKA_PORTS = {9092, 9093, 9094, 9095, 9096, 9098}
@@ -86,15 +87,16 @@ def external(docs: list[dict], purpose: str | None = None) -> list[dict]:
     ]
 
 
+def app_of(policy: dict) -> str:
+    """The app a policy selects by app.kubernetes.io/name or the app label, "*" for every pod."""
+    labels = policy["spec"]["podSelector"].get("matchLabels") or {}
+    if not labels:
+        return "*"
+    return labels.get("app.kubernetes.io/name") or labels[APP_LABEL]
+
+
 def apps_of(policies: list[dict]) -> set[str]:
-    names = set()
-    for p in policies:
-        selector = p["spec"]["podSelector"]
-        if not selector:
-            names.add("*")
-        else:
-            names.add(selector["matchLabels"]["app.kubernetes.io/name"])
-    return names
+    return {app_of(p) for p in policies}
 
 
 def ports_of(policies: list[dict]) -> set[int]:
@@ -159,8 +161,7 @@ def test_kafka_external_on() -> None:
 def ports_by_app(policies: list[dict]) -> dict[str, set[int]]:
     found: dict[str, set[int]] = {}
     for p in policies:
-        app = p["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/name"]
-        found.setdefault(app, set()).update(
+        found.setdefault(app_of(p), set()).update(
             port["port"] for rule in p["spec"]["egress"] for port in rule.get("ports", [])
         )
     return found
@@ -334,6 +335,49 @@ def test_internet_egress_is_unchanged() -> None:
            f"got {sorted(ports_of(internet))}")
 
 
+def test_every_app_policy_has_a_twin_selecting_its_instances() -> None:
+    """A per-config instance's app.kubernetes.io/name is <app>-<source>, so the app label selects it."""
+    docs = render("kafka.mode=external", "clickhouse.mode=external", "telemetry.mode=external")
+    policies = {
+        d["metadata"]["name"]: d
+        for d in docs
+        if d.get("kind") == "NetworkPolicy"
+        and d["metadata"]["name"].startswith(("allow-external-", "allow-internet-egress-"))
+    }
+    by_name = [
+        p for p in policies.values()
+        if "app.kubernetes.io/name" in (p["spec"]["podSelector"].get("matchLabels") or {})
+    ]
+    expect("the purposes render policies by name", len(by_name) > 1, f"got {len(by_name)}")
+    for policy in by_name:
+        name = policy["metadata"]["name"]
+        twin = policies.get(f"{name}-instances")
+        expect(f"{name} has an instances twin", twin is not None)
+        if twin is None:
+            continue
+        expect(f"{name}-instances selects the app by {APP_LABEL}",
+               twin["spec"]["podSelector"] == {"matchLabels": {APP_LABEL: app_of(policy)}},
+               f"got {twin['spec']['podSelector']}")
+        expect(f"{name}-instances opens what {name} opens",
+               (twin["metadata"]["namespace"], twin["spec"]["egress"])
+               == (policy["metadata"]["namespace"], policy["spec"]["egress"]))
+    otel = sorted(n for n in policies if n.startswith("allow-external-otel-"))
+    expect("the namespace-wide policy renders once", otel == ["allow-external-otel-egress-all"],
+           f"got {otel}")
+
+
+def test_an_empty_app_label_renders_the_name_policies_alone() -> None:
+    names = [
+        d["metadata"]["name"]
+        for d in render("kafka.mode=external", "appLabel=")
+        if d.get("kind") == "NetworkPolicy"
+    ]
+    expect("the name policies still render", "allow-external-kafka-egress-dfe-fetcher" in names,
+           f"got {names}")
+    expect("and no instances twin", not [n for n in names if n.endswith("-instances")],
+           f"got {names}")
+
+
 def main() -> int:
     with standalone():
         test_all_internal_opens_nothing()
@@ -358,6 +402,8 @@ def main() -> int:
         test_the_network_model_is_declared_once()
         test_a_deployment_can_move_the_ranges()
         test_internet_egress_is_unchanged()
+        test_every_app_policy_has_a_twin_selecting_its_instances()
+        test_an_empty_app_label_renders_the_name_policies_alone()
         return summary()
 
 

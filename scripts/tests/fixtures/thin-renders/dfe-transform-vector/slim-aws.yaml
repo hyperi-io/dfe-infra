@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -42,6 +44,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -57,6 +60,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -72,6 +76,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -103,6 +108,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -131,6 +137,7 @@ spec:
         app.kubernetes.io/name: dfe-transform-vector
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+        dfe.hyperi.io/app: dfe-transform-vector
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -287,6 +294,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>

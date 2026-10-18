@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-ui
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-ui>
+    dfe.hyperi.io/app: dfe-ui
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-ui
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-ui>
+    dfe.hyperi.io/app: dfe-ui
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>
@@ -46,6 +48,7 @@ metadata:
     app.kubernetes.io/name: dfe-ui
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-ui>
+    dfe.hyperi.io/app: dfe-ui
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>
@@ -72,6 +75,7 @@ metadata:
     app.kubernetes.io/name: dfe-ui
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-ui>
+    dfe.hyperi.io/app: dfe-ui
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>
@@ -98,6 +102,7 @@ spec:
         app.kubernetes.io/name: dfe-ui
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-ui>
+        dfe.hyperi.io/app: dfe-ui
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>
@@ -215,6 +220,7 @@ metadata:
     app.kubernetes.io/name: dfe-ui
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-ui>
+    dfe.hyperi.io/app: dfe-ui
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-ui-<pin:chart-version.dfe-ui>

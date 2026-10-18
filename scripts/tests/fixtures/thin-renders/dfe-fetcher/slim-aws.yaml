@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-fetcher
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-fetcher>
+    dfe.hyperi.io/app: dfe-fetcher
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-fetcher-<pin:chart-version.dfe-fetcher>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-fetcher
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-fetcher>
+    dfe.hyperi.io/app: dfe-fetcher
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-fetcher-<pin:chart-version.dfe-fetcher>
@@ -42,6 +44,7 @@ metadata:
     app.kubernetes.io/name: dfe-fetcher
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-fetcher>
+    dfe.hyperi.io/app: dfe-fetcher
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-fetcher-<pin:chart-version.dfe-fetcher>
@@ -68,6 +71,7 @@ metadata:
     app.kubernetes.io/name: dfe-fetcher
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-fetcher>
+    dfe.hyperi.io/app: dfe-fetcher
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-fetcher-<pin:chart-version.dfe-fetcher>
@@ -96,6 +100,7 @@ spec:
         app.kubernetes.io/name: dfe-fetcher
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-fetcher>
+        dfe.hyperi.io/app: dfe-fetcher
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-fetcher-<pin:chart-version.dfe-fetcher>

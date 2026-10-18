@@ -689,7 +689,8 @@ def test_deploy_repo_overlay_beats_the_profile() -> None:
     }
     expect("the overlay's mode=external reaches network-policies", derived != set())
     expect("it opens the CH clients, not the internet-egress apps",
-           not any(n.endswith(("dfe-fetcher", "dfe-archiver")) for n in derived),
+           not any(n.removesuffix("-instances").endswith(("dfe-fetcher", "dfe-archiver"))
+                   for n in derived),
            f"got {sorted(derived)}")
     baseline = render("network-policies")
     expect("the profile alone opens nothing",

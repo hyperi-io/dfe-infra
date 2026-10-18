@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -42,6 +44,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -74,6 +77,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -101,6 +105,7 @@ spec:
         app.kubernetes.io/name: dfe-loader
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-loader>
+        dfe.hyperi.io/app: dfe-loader
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -292,6 +297,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
