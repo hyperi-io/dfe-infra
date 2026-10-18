@@ -206,23 +206,29 @@ PROVIDER_AXIS_CASES = {
 }
 
 
+def _matrix_cases() -> dict[str, dict[str, object]]:
+    """Every case the matrix snapshots, name -> the _dial keywords that build it.
+
+    test_node_pools_golden.py renders the pool chart from the same cases, so a
+    case added here reaches both snapshots.
+    """
+    cases: dict[str, dict[str, object]] = {
+        _case_name(cloud, focus, band): {"cloud": cloud, "focus": focus, "estimate": band}
+        for cloud, focus, band in _cases()
+    }
+    cases[OVERRIDE_CASE] = {"cloud": "aws", "estimate": 10000, "extra": OVERRIDE_BLOCK}
+    for name, provider in PROVIDER_AXIS_CASES.items():
+        cases[name] = {"cloud": "aws", "focus": "economy", "estimate": 10000, "provider": provider}
+    return cases
+
+
 @pytest.fixture(scope="module")
 def matrix(tmp_path_factory) -> dict[str, object]:
     """Resolve every case in the matrix once, and answer the snapshots."""
     built: dict[str, object] = {}
-    for cloud, focus, band in _cases():
-        out = tmp_path_factory.mktemp(_case_name(cloud, focus, band))
-        dial = _dial(out, cloud=cloud, focus=focus, estimate=band)
-        status = _run(dial, out, cloud=cloud)
-        built[_case_name(cloud, focus, band)] = _summary(out, status)
-    out = tmp_path_factory.mktemp("overridden")
-    status = _run(_dial(out, estimate=10000, extra=OVERRIDE_BLOCK), out, cloud="aws")
-    built[OVERRIDE_CASE] = _summary(out, status)
-    for name, provider in PROVIDER_AXIS_CASES.items():
+    for name, dial in _matrix_cases().items():
         out = tmp_path_factory.mktemp(name)
-        status = _run(
-            _dial(out, cloud="aws", focus="economy", estimate=10000, provider=provider), out, cloud="aws"
-        )
+        status = _run(_dial(out, **dial), out, cloud=dial["cloud"])
         built[name] = _summary(out, status)
     return built
 
