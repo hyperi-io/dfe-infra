@@ -269,13 +269,15 @@ spec:
                   tags: {{ . | fromJson | toJson }}
                   {{- end }}
                 {{- if $pools }}
+                {{- with $pools | fromJson }}
                 # The renderer and the pool classes the resolver sized, carried
                 # as one line of JSON on the cluster secret. Parsed rather than
                 # spliced, so an annotation that is not JSON fails this render
                 # instead of injecting arbitrary values into the Application.
-                # Absent beside the cluster facts, the chart fails the render
-                # rather than leaving `classes: {}` for prune to act on.
-                {{- $pools | fromJson | toYaml | nindent 2 }}
+                # Absent or empty beside the cluster facts, the chart fails the
+                # render rather than leaving `classes: {}` for prune to act on.
+                {{- toYaml . | nindent 2 }}
+                {{- end }}
                 {{- end }}
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}

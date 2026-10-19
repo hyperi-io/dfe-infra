@@ -15,6 +15,8 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
+        # Not in the selector, which a live Deployment cannot change.
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       # The k8s_cluster receiver reads the API server, so the gateway needs the
@@ -37,7 +39,7 @@ spec:
             # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD}). The
             # collector's own password, which dfe-extras copies into this
             # namespace beside the engine. Shared by the ClickHouse exporter and
-            # the sqlquery receiver.
+            # the sql_query receiver.
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:

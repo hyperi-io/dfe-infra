@@ -21,7 +21,7 @@ it, so the file the extension reads is the one the Secret projects.
 {{- end -}}
 
 {{/*
-otel-collector.clickhouseQuery -- the query string the exporter and the sqlquery
+otel-collector.clickhouseQuery -- the query string the exporter and the sql_query
 receiver append to the native address: secure=true on an external server that
 speaks TLS. An in-cluster server stays on plaintext 9000 whatever clickhouse.tls
 says, because clickhouse-cluster keeps 9000 open beside 9440 for this collector.
@@ -35,7 +35,7 @@ says, because clickhouse-cluster keeps 9000 open beside 9440 for this collector.
 {{/*
 otel-collector.clickhouseUser / clickhouseSecret -- the collector's own
 ClickHouse user and the Secret its password is in: exporters.clickhouse when
-set, else clickhouse.serviceUsers.otelWriter. The exporter and the sqlquery
+set, else clickhouse.serviceUsers.otelWriter. The exporter and the sql_query
 receiver both use them. The admin account is refused, because dfe-engine alone
 holds it.
 */}}

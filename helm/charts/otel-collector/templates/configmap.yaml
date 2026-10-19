@@ -44,7 +44,7 @@ data:
       {{- if .Values.clusterTelemetry.clickhouse.enabled }}
       # Server-side ClickHouse health. Column aliases become the metric names, so
       # each SELECT is a fixed set of named columns rather than a metric/value pair.
-      sqlquery/clickhouse:
+      sql_query/clickhouse:
         driver: clickhouse
         datasource: "clickhouse://{{ include "otel-collector.clickhouseUser" . }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
         collection_interval: {{ .Values.clusterTelemetry.clickhouse.collectionInterval }}
@@ -197,7 +197,7 @@ data:
                   regex: "true"
                 - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
                   action: keep
-                  regex: dfe
+                  regex: {{ .Values.project | regexQuoteMeta | quote }}
                 {{- with .Values.clusterTelemetry.dfeServices.pushedCharts }}
                 - source_labels: [__meta_kubernetes_pod_label_helm_sh_chart]
                   action: drop
@@ -462,7 +462,7 @@ data:
         {{- end }}
         {{- if .Values.clusterTelemetry.clickhouse.enabled }}
         metrics/clickhouse:
-          receivers: [sqlquery/clickhouse]
+          receivers: [sql_query/clickhouse]
           processors: [memory_limiter, resource/clickhouse, batch]
           exporters:
             - prometheus

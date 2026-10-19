@@ -777,6 +777,45 @@ oci_controllers() {
     [[ "${output}" != *"WARN"* ]]
 }
 
+# The digest-pinned controller beside the pools and network-policies, both of which
+# carry a deploy repo whose URL ends in /karpenter as their values source.
+deploy_repo_named_karpenter() {
+    printf '%s\n' \
+        'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
+        'karpenter-pools-dfe-aws-test     helm/charts/node-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/acme/karpenter' \
+        'network-policies-dfe-aws-test     helm/charts/network-policies https://github.com/hyperi-io/dfe-infra.git https://git.example.com/acme/karpenter' \
+        > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+@test "pools deployed from a repo named karpenter still go before every NodeClaim, and the controller after" {
+    deploy_repo_named_karpenter 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text pools last_claims controller
+    log_text="$(log)"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ -n "${controller}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [ "$(grep -c -- '^get nodeclaims.karpenter.sh' <<<"${log_text}")" -eq 3 ]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' <<<"${log_text}")" -eq 0 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "an app deployed from a repo named karpenter goes with the first delete, not with the controller" {
+    deploy_repo_named_karpenter 0
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local first
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' "${STUB_DIR}/kubectl.log")"
+    [[ "${first}" == "-n argocd delete applications.argoproj.io network-policies-dfe-aws-test --wait=false" ]]
+}
+
 @test "every namespace ESO or cert-manager clears a finalizer in goes before that controller does" {
     # shellcheck disable=SC2016 # the stub expands $* when it runs, not here
     printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"

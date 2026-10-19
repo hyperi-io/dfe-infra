@@ -163,3 +163,26 @@ def test_no_config_uses_the_deprecated_processor_name() -> None:
     for config in (gateway(docs), daemonset(docs)):
         names = [name.split("/")[0] for name in config["processors"]]
         assert "k8sattributes" not in names, names
+
+
+def test_no_config_uses_the_deprecated_receiver_name() -> None:
+    """0.162.0 renamed sqlquery to sql_query and logs a warning for the old name."""
+    docs = default_render()
+    for config in (gateway(docs), daemonset(docs)):
+        names = [name.split("/")[0] for name in config["receivers"]]
+        assert "sqlquery" not in names, names
+    pipeline = gateway(docs)["service"]["pipelines"]["metrics/clickhouse"]
+    assert pipeline["receivers"] == ["sql_query/clickhouse"]
+    assert "sql_query/clickhouse" in gateway(docs)["receivers"]
+
+
+@pytest.mark.parametrize("project", ["dfe", "acme"])
+def test_the_gateway_pod_carries_its_part_of_label_outside_the_selector(project: str) -> None:
+    """The processor reads part-of off the pod, and a live Deployment refuses a changed selector."""
+    deployment = only(render(f"project={project}"), "Deployment")
+    labels = deployment["spec"]["template"]["metadata"]["labels"]
+    assert labels["app.kubernetes.io/part-of"] == project, labels
+    assert deployment["spec"]["selector"] == {
+        "matchLabels": {"app.kubernetes.io/name": f"{project}-otel-collector-gateway"}
+    }
+    assert deployment["spec"]["selector"]["matchLabels"].items() <= labels.items()
