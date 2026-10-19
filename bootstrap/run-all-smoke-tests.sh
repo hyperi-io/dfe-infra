@@ -13,8 +13,8 @@ readonly SCRIPT_DIR
 TOTAL_PASS=0
 TOTAL_FAIL=0
 TOTAL_UNPROVEN=0
-# A suite that could not tell a working seam from a broken one exits with this,
-# and gets its own word -- a guess either way is what the suites exist to prevent.
+# A suite that ran and could not decide exits with this and gets its own word in
+# the log, and it still fails the run: a scale nobody proved is not a working autoscaler.
 readonly EXIT_UNPROVEN=3
 
 run_test() {
@@ -29,7 +29,7 @@ run_test() {
     case "${rc}" in
         0) echo "  >>> ${name}: PASSED" ;;
         "${EXIT_UNPROVEN}")
-            echo "  >>> ${name}: UNPROVEN -- it ran and could not decide; see the verdict above"
+            echo "  >>> ${name}: UNPROVEN -- it ran and could not decide, which fails the run; see the verdict above"
             (( TOTAL_UNPROVEN++ )) || true
             ;;
         *)
@@ -54,9 +54,9 @@ run_test "Auth & Ingress" "smoke-test-auth.sh"
 run_test "HyperDX seams (auth/data/embed)" "smoke-test-hyperdx.sh"
 run_test "Transform file sets (engine files = pod mount, byte for byte)" "smoke-test-transforms.sh"
 run_test "KEDA Autoscaling" "smoke-test-keda.sh"
-# The deep scale PROOF (artificial +1 pod via the fail-safe shim) mutates the cluster +
-# takes ~2-3 min, so it is gated. Defaults ON for full validation; set
-# DFE_KEDA_SCALE_TEST=0 to skip it for a fast smoke run.
+# The deep scale PROOF (artificial +1 pod per pressure-driven app via the fail-safe shim)
+# mutates the cluster and takes about 12 min, so it is gated. Defaults ON for full
+# validation. DFE_KEDA_SCALE_TEST=0 skips it for a fast smoke run.
 if [ "${DFE_KEDA_SCALE_TEST:-1}" = "1" ]; then
     run_test "KEDA scale proof (artificial +1 pod)" "keda-scale-test.sh"
 fi
@@ -66,6 +66,6 @@ echo "========================================"
 echo "  FINAL: ${TOTAL_PASS} suites run, ${TOTAL_FAIL} failed, ${TOTAL_UNPROVEN} unproven"
 echo "========================================"
 
-if (( TOTAL_FAIL > 0 )); then
+if (( TOTAL_FAIL > 0 || TOTAL_UNPROVEN > 0 )); then
     exit 1
 fi
