@@ -17,6 +17,10 @@ resolve no pool, so only the AWS ones render. Two things no cluster receives are
 dropped first: Helm's `# Source:` lines, which name the template file, and blank
 lines between documents, which Helm 4.3 writes and Helm 4.1 does not.
 
+One more case, RUN_CASE, renders what no sizing case reaches: a maintenance
+window's scheduled budget, a test run's tags and node script, and the pool fields
+only a deployer's own overlay sets.
+
     python3 -m pytest scripts/tests/test_node_pools_golden.py -q
 
 REGENERATING THE GOLDENS IS A DELIBERATE ACT, never a way past a red test. Read
@@ -31,6 +35,7 @@ review sees the cause and the effect together.
 Needs `helm` on PATH.
 """
 
+import base64
 import difflib
 import os
 import re
@@ -44,6 +49,7 @@ from test_resolve_sizing import (
     _helm_template,
     _matrix_cases,
     _run,
+    _with_disruption,
 )
 
 GOLDENS = Path(__file__).resolve().parent / "fixtures" / "node-pools"
@@ -58,7 +64,33 @@ SOURCE_LINE = re.compile(r"^# Source: .*\n", re.M)
 # A document separator sits at column 0, so no block scalar's own blank line is caught.
 BLANK_BEFORE_SEPARATOR = re.compile(r"\n\n+(?=---\n)")
 
-CASES = {name: dial for name, dial in _matrix_cases().items() if dial["cloud"] == "aws"}
+SIZING_CASES = {name: dial for name, dial in _matrix_cases().items() if dial["cloud"] == "aws"}
+
+RUN_CASE = "aws-scale-economy-10000-test-run"
+RUN_DIAL = SIZING_CASES["aws-scale-economy-10000"]
+RUN_WINDOW = '    maintenance_window:\n      schedule: "30 22 * * 6"\n      duration: "3h30m"\n'
+RUN_NODE_SCRIPT = "#!/bin/bash\nset -euo pipefail\necho mirrors\n"
+# Applied after the resolver's overlay: a test run's cluster facts, then one pool
+# carrying every field no resolve writes, generationIn dropped for its floor.
+RUN_OVERLAY: dict[str, object] = {
+    "karpenter": {
+        "cluster": {"userData": base64.b64encode(RUN_NODE_SCRIPT.encode()).decode()},
+        "tags": {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"},
+        "pools": {
+            "general": {
+                "weight": 10,
+                "minVcpu": 4,
+                "minMemoryGib": 16,
+                "generationIn": None,
+                "generationGt": "7",
+                "terminationGracePeriod": "2h",
+                "nodeClass": {"metadata": {"httpPutResponseHopLimit": 2}},
+            }
+        },
+    }
+}
+
+CASES = sorted([*SIZING_CASES, RUN_CASE])
 
 
 def normalise(case: str, rendered: str) -> str:
@@ -69,14 +101,20 @@ def normalise(case: str, rendered: str) -> str:
 
 def render(out: Path, case: str) -> str:
     """One case resolved into `out` and rendered, as its golden file holds it."""
-    dial = CASES[case]
-    _run(_dial(out, **dial), out, cloud=dial["cloud"])
-    result = _helm_template(CHART, CHART_RENDER_BASES[CHART], out / "sizing" / "scale.values.yaml")
+    if case == RUN_CASE:
+        assert _run(_with_disruption(_dial(out, **RUN_DIAL), RUN_WINDOW), out, cloud="aws") == 0
+        overlay = RUN_OVERLAY
+    else:
+        dial = SIZING_CASES[case]
+        _run(_dial(out, **dial), out, cloud=dial["cloud"])
+        overlay = None
+    fragment = out / "sizing" / "scale.values.yaml"
+    result = _helm_template(CHART, CHART_RENDER_BASES[CHART], fragment, overlay)
     assert result.returncode == 0, result.stderr
     return normalise(case, result.stdout)
 
 
-@pytest.mark.parametrize("case", sorted(CASES))
+@pytest.mark.parametrize("case", CASES)
 def test_each_golden_is_the_live_render(tmp_path: Path, case: str) -> None:
     if HELM_BIN is None:
         pytest.skip("helm is not on PATH")

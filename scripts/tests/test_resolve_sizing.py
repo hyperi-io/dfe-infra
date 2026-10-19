@@ -2291,16 +2291,24 @@ def aws_golden_outputs(tmp_path_factory) -> dict[str, Path]:
     return outputs
 
 
-def _helm_template(chart: str, base: dict[str, object], fragment: Path) -> subprocess.CompletedProcess:
+def _helm_template(
+    chart: str,
+    base: dict[str, object],
+    fragment: Path,
+    overlay: dict[str, object] | None = None,
+) -> subprocess.CompletedProcess:
+    """`helm template` of `chart` over `base`, then the resolver's `fragment`, then `overlay`."""
     base_path = fragment.with_name(f"_render_base_{chart}.json")
     # JSON is valid YAML, so this needs no writer beyond the stdlib's own.
     base_path.write_text(json.dumps(base), encoding="utf-8")
-    chart_dir = CHARTS_DIR / chart
+    cmd = ["helm", "template", "t", str(CHARTS_DIR / chart), "-f", str(base_path)]
+    cmd += ["-f", str(fragment)]
+    if overlay is not None:
+        overlay_path = fragment.with_name(f"_render_overlay_{chart}.json")
+        overlay_path.write_text(json.dumps(overlay), encoding="utf-8")
+        cmd += ["-f", str(overlay_path)]
     return subprocess.run(
-        ["helm", "template", "t", str(chart_dir), "-f", str(base_path), "-f", str(fragment)],
-        capture_output=True,
-        text=True,
-        check=False,
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
     )
 
 
