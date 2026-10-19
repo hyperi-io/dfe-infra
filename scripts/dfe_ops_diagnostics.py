@@ -27,7 +27,9 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
   logs/<namespace>/<pod>.<container>.log
                              the last --log-minutes of each container of dfe-receiver,
                              dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner and every
-                             dfe-transform-* deployment, the per-source ones included
+                             dfe-fetcher-* and dfe-transform-* deployment, the per-source ones
+                             included. The cycle passes the failed stage's own length when it
+                             ran longer than the default
   logs/<namespace>/<pod>.<container>.previous.log
                              the run before, for a container that restarted
   kafka/engine.txt           the bootstrap address, security protocol and SASL Secret name
@@ -112,6 +114,7 @@ LOGGED_APPS = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-hunt-runner",
+    "dfe-fetcher",
     "dfe-transform",
 )
 ENGINE = "dfe-engine"
@@ -1026,7 +1029,8 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
         "events of argocd and of every namespace an Argo Application deploys into, every "
         "Application's sync and health with each resource not Synced and Healthy, the last "
         "--log-minutes of every container of dfe-receiver, dfe-loader, dfe-archiver, dfe-engine, "
-        "dfe-hunt-runner and each dfe-transform-* deployment with the previous run of any that "
+        "dfe-hunt-runner and each dfe-fetcher-* and dfe-transform-* deployment with the previous "
+        "run of any that "
         "restarted, and every consumer group's offsets with the end offset of each _land, _load "
         "and _dlq topic, then the brokers' API versions and the loader group's list, state and "
         "offsets one read at a time. The Kafka reads run from a short-lived pod beside dfe-engine "
