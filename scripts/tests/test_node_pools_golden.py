@@ -7,7 +7,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Golden renders of helm/charts/karpenter-pools, one per AWS case of the sizing matrix.
+"""Golden renders of helm/charts/node-pools, one per AWS case of the sizing matrix.
 
 Each case resolves the dial test_resolve_sizing.py snapshots in
 `fixtures/sizing/golden-matrix.json`, renders the chart with `helm template` from
@@ -45,7 +45,7 @@ import re
 from pathlib import Path
 
 import pytest
-from test_karpenter_pools import appset_values, helm
+from test_node_pools import appset_values, helm
 from test_resolve_sizing import (
     CHART_RENDER_BASES,
     CHARTS_DIR,
@@ -58,7 +58,7 @@ from test_resolve_sizing import (
 )
 
 GOLDENS = Path(__file__).resolve().parent / "fixtures" / "node-pools"
-CHART = "karpenter-pools"
+CHART = "node-pools"
 WRITE_GOLDEN = os.environ.get("NODE_POOLS_GOLDEN") == "write"
 REWRITE = "NODE_POOLS_GOLDEN=write python3 -m pytest scripts/tests/test_node_pools_golden.py"
 HEADER = (
@@ -152,13 +152,13 @@ def test_the_appset_path_renders_each_golden(tmp_path: Path, case: str) -> None:
     dial = SIZING_CASES[case]
     _run(_dial(tmp_path, **dial), tmp_path, cloud=dial["cloud"])
     cluster = CHART_RENDER_BASES[CHART]["pools"]["aws"]["cluster"]
-    resolved = (tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8").strip()
+    resolved = (tmp_path / "sizing" / "scale.pools.json").read_text(encoding="utf-8").strip()
     values = appset_values(
         {
             "dfe.hyperi.io/karpenter_discovery_tag": cluster["discoveryTag"],
             "dfe.hyperi.io/karpenter_instance_profile": cluster["instanceProfile"],
             "dfe.hyperi.io/karpenter_kms_key_id": cluster["kmsKeyId"],
-            "dfe.hyperi.io/karpenter_pools": resolved,
+            "dfe.hyperi.io/node_pools": resolved,
         }
     )
     path = tmp_path / "appset-values.json"
@@ -184,7 +184,7 @@ def test_source_lines_and_document_spacing_move_no_golden() -> None:
     case = min(CASES)
     golden = (GOLDENS / f"{case}.yaml").read_text(encoding="utf-8")
     body = golden.removeprefix(HEADER.format(case=case))
-    sourced = re.sub(r"^---\n", "---\n# Source: karpenter-pools/templates/karpenter/nodepool.yaml\n", body, flags=re.M)
+    sourced = re.sub(r"^---\n", "---\n# Source: node-pools/templates/karpenter/nodepool.yaml\n", body, flags=re.M)
     spaced = sourced.replace("\n---\n", "\n\n---\n")
     assert spaced.count("\n\n---\n") > 1, "the rebuilt render spaced no document"
     assert normalise(case, spaced) == golden

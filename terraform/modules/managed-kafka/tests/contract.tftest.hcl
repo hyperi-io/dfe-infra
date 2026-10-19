@@ -617,7 +617,7 @@ run "msk_autoscaler_refuses_a_period_that_is_not_whole_minutes" {
 }
 
 // S2: the Lambda's env carries only what an increase can act on -- no
-// min_brokers, no scale-in knob of any kind.
+// min_brokers, no scale-in dial of any kind.
 run "msk_autoscaler_lambda_is_increase_only" {
   command = plan
 
@@ -637,7 +637,7 @@ run "msk_autoscaler_lambda_is_increase_only" {
 
   assert {
     condition     = length(aws_lambda_function.broker_scaler[0].environment[0].variables) == 3
-    error_message = "the Lambda's env must carry exactly CLUSTER_ARN, MAX_BROKERS and STEP -- an extra key here would be a scale-down or re-arm knob this design does not have"
+    error_message = "the Lambda's env must carry exactly CLUSTER_ARN, MAX_BROKERS and STEP -- an extra key here would be a scale-down or re-arm dial this design does not have"
   }
 
   assert {

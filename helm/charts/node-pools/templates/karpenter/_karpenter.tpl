@@ -8,7 +8,19 @@ class, from the class's shared fields and its `aws` block.
   karpenter-aws.terminationGracePeriod -- the class's drain bound, its own over
                               pools.terminationGracePeriod
   karpenter-aws.validate   -- the render guards, which pools.validate runs
+  karpenter-aws.nodeClassKeys -- the keys an EC2NodeClass setting block takes,
+                              at .at, checked a level deep
 */}}
+
+{{- define "karpenter-aws.nodeClassKeys" -}}
+{{- include "pools.keys" (dict "at" .at "value" .nodeClass "allowed" (list "amiAlias" "metadata" "rootVolume" "instanceStorePolicy") "what" "an EC2NodeClass setting") -}}
+{{- with .nodeClass.metadata -}}
+{{- include "pools.keys" (dict "at" (printf "%s.metadata" $.at) "value" . "allowed" (list "httpTokens" "httpPutResponseHopLimit") "what" "an instance metadata setting") -}}
+{{- end -}}
+{{- with .nodeClass.rootVolume -}}
+{{- include "pools.keys" (dict "at" (printf "%s.rootVolume" $.at) "value" . "allowed" (list "sizeGi" "type" "iops" "throughputMibS") "what" "a root volume setting") -}}
+{{- end -}}
+{{- end -}}
 
 {{- define "karpenter-aws.nodeClass" -}}
 {{- $base := deepCopy .ctx.Values.pools.aws.nodeClass -}}
@@ -32,6 +44,13 @@ class, from the class's shared fields and its `aws` block.
 {{- range $key, $_ := $p.aws -}}
 {{- if not (has $key (list "cluster" "tags" "runInstanceSizes" "nodeClass")) -}}
 {{- fail (printf "pools.aws.%s is not a karpenter-aws setting -- pools.aws holds cluster, tags, runInstanceSizes and nodeClass" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- include "pools.keys" (dict "at" "pools.aws.cluster" "value" ($p.aws.cluster | default dict) "allowed" (list "discoveryTag" "instanceProfile" "kmsKeyId" "userData") "what" "a cluster fact the kubernetes-cluster module outputs") -}}
+{{- include "karpenter-aws.nodeClassKeys" (dict "at" "pools.aws.nodeClass" "nodeClass" ($p.aws.nodeClass | default dict)) -}}
+{{- range $name, $class := $p.classes -}}
+{{- with ($class.aws | default dict).nodeClass -}}
+{{- include "karpenter-aws.nodeClassKeys" (dict "at" (printf "pools.classes.%s.aws.nodeClass" $name) "nodeClass" .) -}}
 {{- end -}}
 {{- end -}}
 

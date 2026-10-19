@@ -143,8 +143,8 @@ spec:
     serviceAccountName: {{ . }}
     {{- end }}
     {{- /* instance-store needs a hard requirement, not a preference: the cache
-    is only real NVMe on the karpenter-pools chart's own `clickhouse` pool
-    (build_karpenter_pools names every pool's nodeSelector after its use case),
+    is only real NVMe on the node-pools chart's own `clickhouse` pool
+    (build_pool_classes labels every pool's nodes after its use case),
     so start from that label and let a deployer's own nodeScheduling.nodeSelector
     add to or override it. */ -}}
     {{- $nodeSelector := dict }}

@@ -9,7 +9,7 @@ kind: EC2NodeClass
 metadata:
   name: ci-burst
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -24,7 +24,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -48,8 +48,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -70,7 +70,7 @@ kind: EC2NodeClass
 metadata:
   name: clickhouse
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -85,7 +85,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -109,8 +109,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -131,7 +131,7 @@ kind: EC2NodeClass
 metadata:
   name: eks-system
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -146,7 +146,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -169,8 +169,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -191,7 +191,7 @@ kind: EC2NodeClass
 metadata:
   name: general
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -206,7 +206,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -229,8 +229,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 2
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -251,7 +251,7 @@ kind: EC2NodeClass
 metadata:
   name: kafka-broker
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -266,7 +266,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -289,8 +289,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -311,7 +311,7 @@ kind: EC2NodeClass
 metadata:
   name: keeper
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -326,7 +326,7 @@ spec:
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     #!/bin/bash
     set -euo pipefail
@@ -349,8 +349,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -368,7 +368,7 @@ kind: NodePool
 metadata:
   name: ci-burst
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -422,7 +422,7 @@ spec:
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
@@ -436,7 +436,7 @@ kind: NodePool
 metadata:
   name: clickhouse
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -502,7 +502,7 @@ spec:
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
@@ -520,7 +520,7 @@ kind: NodePool
 metadata:
   name: eks-system
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -586,7 +586,7 @@ spec:
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
@@ -600,7 +600,7 @@ kind: NodePool
 metadata:
   name: general
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -672,7 +672,7 @@ spec:
         # instance sustains more IOPS/throughput at the same family) still fits
         # a smaller instance's cpu/memory REQUEST, which is all Karpenter's own
         # bin-packing looks at. Gt (n-1) expresses ">= n", the same requirement as
-        # the Gte n the v1.14.1 CRD also accepts (gate-3-correctness.md P3).
+        # the Gte n the v1.14.1 CRD also accepts.
         - key: karpenter.k8s.aws/instance-cpu
           operator: Gt
           values:
@@ -680,10 +680,10 @@ spec:
         - key: karpenter.k8s.aws/instance-memory
           operator: Gt
           values:
-            # instance-memory is in MiB; the pool states GiB, so 1024x - 1.
+            # instance-memory is in MiB and the pool states GiB, so 1024x - 1.
             - "16383"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
@@ -697,7 +697,7 @@ kind: NodePool
 metadata:
   name: kafka-broker
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -763,7 +763,7 @@ spec:
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
@@ -781,7 +781,7 @@ kind: NodePool
 metadata:
   name: keeper
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -847,7 +847,7 @@ spec:
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
-        # RunInstances (values.yaml, runInstanceSizes).
+        # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:

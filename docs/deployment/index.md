@@ -192,9 +192,11 @@ For a mirror that needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SE
   cluster through the `local` target
 - [aws.md](aws.md) - deploying on AWS: EKS, Karpenter, sizing, and the
   MSK/Confluent/Redpanda Kafka and ClickHouse choices
-- [aws-operations.md](aws-operations.md) - running and tearing down a
-  deployed AWS cluster: node pools and images, admin UI exposure, Kafka
-  telemetry and autoscaling, teardown, upgrades
+- [aws-operations.md](aws-operations.md) - running a deployed AWS cluster:
+  node pools and images, admin UI exposure, Kafka telemetry and autoscaling,
+  upgrades
+- [aws-teardown.md](aws-teardown.md) - tearing an AWS cluster down: lifecycle
+  tags, the teardown order, and sweeping what is left
 - [upgrade-rollback.md](upgrade-rollback.md) - the rollback runbook: what
   rolling back means per upgrade stage, the `dfe-ops upgrade rollback`
   refusal rule, the sizing config-vs-data rule, and the soak before a

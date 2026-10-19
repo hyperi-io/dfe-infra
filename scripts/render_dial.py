@@ -92,7 +92,7 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     # (real YAML booleans, an empty-or-numeric string), not a render_dial.py
     # translation, the same way ui.* is left for a real YAML/Helm parse to
     # type-check. bootstrap.sh carries these onto the cluster-secret
-    # annotations the same way it already does for the karpenter-pools
+    # annotations the same way it already does for the node-pools
     # facts, and argocd/appsets/layer2-platform.yaml reads them back for
     # this chart alone.
     (("toolbox", "pod", "enabled"), "DFE_TOOLBOX_POD_ENABLED"),

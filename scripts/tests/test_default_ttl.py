@@ -7,7 +7,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The default TTL knob, end to end.
+"""The default TTL dial, end to end.
 
 DFE_CLICKHOUSE_DEFAULT_TTL_DAYS is the TTL every time-series table takes unless a
 source or a dfe-schemas definition declares its own. ONE workload applies it:

@@ -1,7 +1,7 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/onprem.yaml
-## Purpose:   The per-target knob matrix for `cloud: onprem` -- every sizing
-##            knob the target changes or refuses, and why, so the sizing
+## Purpose:   The per-target dial matrix for `cloud: onprem` -- every sizing
+##            dial the target changes or refuses, and why, so the sizing
 ##            report can print the whole list rather than implying nothing
 ##            was dropped on this target's account.
 ## Language:  YAML
@@ -10,7 +10,7 @@
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## docstring's TARGETS_DIR paragraph. Every dial below carries a `state` of
 ## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
 ## prints beside it. NO LISTS: nested maps and scalars only, parsed by
 ## scripts/yaml_subset.py.

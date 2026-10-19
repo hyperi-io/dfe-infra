@@ -50,7 +50,7 @@ standard cluster for all deployments (on-prem and cloud) unless a deployment
 has a strong reason otherwise. The seam is always an existing k8s
 abstraction or a chart mode -- never a fork of the charts.
 
-| Component | Seam | Knob | Swap targets |
+| Component | Seam | Dial | Swap targets |
 |---|---|---|---|
 | Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 standard; EKS-class only with cause |
 | DNS | external-dns / estate-managed | provider config; or the deployment's own DNS | CoreDNS record (on-prem), Route53, ... |

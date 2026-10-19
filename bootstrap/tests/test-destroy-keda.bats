@@ -642,12 +642,13 @@ applicationset_owner() {
 }
 
 # An AWS deployment's Applications: both controllers, Karpenter's pools and one app,
-# with two NodeClaims that take ${1} listings to go once the pools are deleted.
+# with two NodeClaims that take ${1} listings to go once the pools are deleted. The
+# pools render from ${2}, the node-pools chart by default.
 karpenter_deployment() {
     printf '%s\n' \
         'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller' \
         'karpenter-dfe-aws-test karpenter' \
-        'karpenter-pools-dfe-aws-test  helm/charts/karpenter-pools' \
+        "karpenter-pools-dfe-aws-test  ${2:-helm/charts/node-pools}" \
         'dfe-receiver-default-dfe-aws-test  helm/charts/dfe-receiver' > "${STUB_DIR}/applications"
     echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
 }
@@ -692,6 +693,26 @@ instances() {
     [[ "${output}" != *"WARN"* ]]
 }
 
+@test "the pools are found by their Application name, whatever chart path they render from" {
+    # A cluster synced before the chart moved still carries the old path.
+    karpenter_deployment 2 helm/charts/karpenter-pools
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first released pools last_claims controller
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    released="$(last_line_of 'get services -A' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [[ "${first}" != *"karpenter-pools"* ]]
+    [ -n "${pools}" ]
+    [ "${released}" -lt "${pools}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
 @test "neither Karpenter Application goes with the first delete, and no delete names the controller" {
     karpenter_deployment 0
     run bash "${DESTROY}" --force
@@ -730,7 +751,7 @@ oci_controllers() {
     printf '%s\n' \
         'aws-load-balancer-controller-dfe-aws-test  .  oci://public.ecr.aws/eks/aws-load-balancer-controller' \
         'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
-        'karpenter-pools-dfe-aws-test     helm/charts/karpenter-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'karpenter-pools-dfe-aws-test     helm/charts/node-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
         'dfe-receiver-default-dfe-aws-test  .  oci://ghcr.io/hyperi-io/charts/dfe-receiver' > "${STUB_DIR}/applications"
     echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
 }
@@ -853,7 +874,7 @@ data_operators_on_karpenter() {
     data_operators
     printf '%s\n' \
         'karpenter-dfe-aws-test karpenter' \
-        'karpenter-pools-dfe-aws-test  helm/charts/karpenter-pools' >> "${STUB_DIR}/applications"
+        'karpenter-pools-dfe-aws-test  helm/charts/node-pools' >> "${STUB_DIR}/applications"
     echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
     printf '%s\n' 'strimzi|dfe-kafka-kafka' 'clickhouse|dfe-clickhouse' > "${STUB_DIR}/pdbs"
 }

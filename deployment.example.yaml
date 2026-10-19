@@ -822,9 +822,9 @@ docker:
 
 ## ---------------------------------------------------------------------------
 ## k8s SLICE -- consumed by this repo's render_dial. Each field maps to one DFE_*
-## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap knobs are
-## the DeployContext seam expressed as dial fields -- change the cloud, change
-## these, everything else is the same orchestrator.
+## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap dials are
+## the DeployContext seam -- change the cloud, change these, everything else is
+## the same orchestrator.
 ## ---------------------------------------------------------------------------
 k8s:
   env: local                 # DFE_ENV
@@ -835,7 +835,7 @@ k8s:
   repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart repo Argo reads, with DFE_REPO_TOKEN only if your copy is private
   target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
-  ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).
+  ## Cloud-swap dials. Blank = the cluster/chart default (local-path, ClusterIP).
   ## Set per cloud (see the AWS worked example below). These layer onto the
   ## per-cloud argocd/values/<cloud>.yaml the chart already carries.
   load_balancer_type: ""     # e.g. nlb (AWS), "" for the default Service type

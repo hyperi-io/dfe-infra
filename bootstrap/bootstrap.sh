@@ -129,20 +129,20 @@
 #                            networkModel; empty omits the annotation and
 #                            common.yaml's range stands
 #   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
-#                            karpenter-pools' pools.aws.cluster.discoveryTag.
+#                            node-pools' pools.aws.cluster.discoveryTag.
 #                            Empty omits the annotation (non-AWS clouds)
 #   DFE_KARPENTER_INSTANCE_PROFILE   the pre-provisioned node instance profile,
-#                            for karpenter-pools' pools.aws.cluster.instanceProfile.
+#                            for node-pools' pools.aws.cluster.instanceProfile.
 #                            Empty omits the annotation (non-AWS clouds)
 #   DFE_KARPENTER_KMS_KEY_ID the deployment CMK every node root volume is
 #                            encrypted with, for
-#                            karpenter-pools' pools.aws.cluster.kmsKeyId. Empty
+#                            node-pools' pools.aws.cluster.kmsKeyId. Empty
 #                            omits the annotation (non-AWS clouds)
 #   DFE_NODE_USER_DATA       the registry cache's containerd mirror script,
-#                            base64, for karpenter-pools' pools.aws.cluster.userData.
+#                            base64, for node-pools' pools.aws.cluster.userData.
 #                            Empty omits the annotation (nothing cached)
 #   DFE_RUN_TAGS             a test run's id and expiry tags as one line of JSON,
-#                            for karpenter-pools' pools.aws.tags and the load
+#                            for node-pools' pools.aws.tags and the load
 #                            balancer controller's defaultTags. Empty omits the
 #                            annotation (every deployment that is not a test run)
 #   DFE_RESOURCE_TAGS        the cloud root's whole tag set (governance plus run)
@@ -563,7 +563,7 @@ export DFE_SERVICE_CIDR_ANNOTATION="${DFE_SERVICE_CIDR:+dfe.hyperi.io/service_ci
 # cloud but AWS, whose root always provisions a bucket.
 export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:-}"
 export DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION="${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT:+dfe.hyperi.io/clickhouse_object_store_endpoint: \"${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT}\"}"
-# The karpenter-pools chart's three cluster facts, each rendered only when set --
+# The node-pools chart's three cluster facts, each rendered only when set --
 # empty on a non-AWS cloud, where Karpenter does not run.
 export DFE_KARPENTER_DISCOVERY_TAG="${DFE_KARPENTER_DISCOVERY_TAG:-}"
 export DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION="${DFE_KARPENTER_DISCOVERY_TAG:+dfe.hyperi.io/karpenter_discovery_tag: \"${DFE_KARPENTER_DISCOVERY_TAG}\"}"
@@ -736,24 +736,21 @@ fi
 export DFE_SIZING_DIR="${DFE_SIZING_DIR:-${DFE_SIZING_DIR_DEFAULT}}"
 echo "Sizing artefacts: ${DFE_SIZING_DIR}"
 
-# The Karpenter NodePools, from the resolver's own one-line JSON artefact.
-# The karpenter-pools chart renders nothing without them, so a cluster with no
-# pools answers a pending workload by leaving it pending. An explicit
-# DFE_KARPENTER_POOLS wins, for a deployment whose resolve ran elsewhere.
-DFE_KARPENTER_POOLS_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.karpenter.json"
-if [[ -z "${DFE_KARPENTER_POOLS:-}" && -f "${DFE_KARPENTER_POOLS_FILE}" ]]; then
-  DFE_KARPENTER_POOLS="$(tr -d '\n' < "${DFE_KARPENTER_POOLS_FILE}")"
-  echo "Karpenter pools: ${DFE_KARPENTER_POOLS_FILE}"
+# The node pools, from the resolver's own one-line JSON artefact. The
+# node-pools chart refuses a Karpenter cluster without them. An explicit
+# DFE_NODE_POOLS wins, for a deployment whose resolve ran elsewhere.
+DFE_NODE_POOLS_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.pools.json"
+if [[ -z "${DFE_NODE_POOLS:-}" && -f "${DFE_NODE_POOLS_FILE}" ]]; then
+  DFE_NODE_POOLS="$(tr -d '\n' < "${DFE_NODE_POOLS_FILE}")"
+  echo "Node pools: ${DFE_NODE_POOLS_FILE}"
 fi
-export DFE_KARPENTER_POOLS="${DFE_KARPENTER_POOLS:-}"
+export DFE_NODE_POOLS="${DFE_NODE_POOLS:-}"
 # A cluster with a Karpenter discovery tag is a cluster running the controller,
-# and the pools are the only thing that tells it what it may launch. Refuse
-# rather than omit the annotation: the chart reports Synced and Healthy with an
-# empty resource list, so an absent pool set otherwise shows up only as a
-# workload that stays Pending for ever.
-if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_KARPENTER_POOLS}" ]]; then
+# and the pools are the only thing that tells it what it may launch. Refused
+# here rather than left for the chart to fail at sync.
+if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_NODE_POOLS}" ]]; then
   echo "ERROR: this cluster runs Karpenter and no NodePools were found." >&2
-  echo "       Looked for: ${DFE_KARPENTER_POOLS_FILE}" >&2
+  echo "       Looked for: ${DFE_NODE_POOLS_FILE}" >&2
   echo "       Resolve them with scripts/resolve_sizing.py --out ${DFE_SIZING_DIR}," >&2
   echo "       or set DFE_SIZING_DIR to wherever that resolve's --out pointed." >&2
   exit 1
@@ -761,9 +758,9 @@ fi
 # A single quote inside the JSON would close the YAML scalar early, so double it
 # -- YAML's own escape for a quote inside a single-quoted scalar.
 # shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
-DFE_KARPENTER_POOLS_YAML="${DFE_KARPENTER_POOLS//\'/\'\'}"
+DFE_NODE_POOLS_YAML="${DFE_NODE_POOLS//\'/\'\'}"
 # shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
-export DFE_KARPENTER_POOLS_ANNOTATION="${DFE_KARPENTER_POOLS:+dfe.hyperi.io/karpenter_pools: '${DFE_KARPENTER_POOLS_YAML}'}"
+export DFE_NODE_POOLS_ANNOTATION="${DFE_NODE_POOLS:+dfe.hyperi.io/node_pools: '${DFE_NODE_POOLS_YAML}'}"
 # A test run's id and expiry as one line of JSON, quoted the same way as the pools.
 export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
 # shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion

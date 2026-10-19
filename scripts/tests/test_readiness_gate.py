@@ -245,7 +245,7 @@ def test_a_restart_hours_ago_in_minutes_is_not_live_churn() -> None:
     )
 
 
-def test_the_churn_window_is_a_knob() -> None:
+def test_the_churn_window_is_a_dial() -> None:
     """A deployment that wants a wider window sets one, and it is obeyed."""
     pods = {"pods": ["cnpg cnpg-operator-0 1/1 Running 104 (164m ago) 6d"]}
     out = run_gate(pods, READINESS_CHURN_MINUTES="200")

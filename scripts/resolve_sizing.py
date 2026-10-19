@@ -26,7 +26,7 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
               are never printed -- costs report as T-shirt buckets.
 
 Five artefacts come out, all under ``--out`` (the repo root by default), plus
-``sizing/<tier>.karpenter.json`` wherever Karpenter runs and
+``sizing/<tier>.pools.json`` wherever there are node pools to place and
 ``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
 
     shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
@@ -46,7 +46,7 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    node_pools.system with what it derives, so
                                    the two producers never collide on it.
     sizing/<tier>.values.yaml      the chart values overlay
-    sizing/<tier>.karpenter.json   the pools half of that overlay -- the renderer
+    sizing/<tier>.pools.json       the pools half of that overlay -- the renderer
                                    and the pool classes -- on one line, for
                                    bootstrap.sh to carry onto the cluster
                                    secret. Written only where there are pools
@@ -159,7 +159,7 @@ EXIT_REFUSED = 2
 # tell a cap breach (2) from a locked-field change (3) without parsing stderr.
 EXIT_LOCKED_CHANGE = 3
 
-# Where a per-target knob matrix (blocked / renamed / managed, each with its
+# Where a per-target dial matrix (blocked / renamed / managed, each with its
 # reason) is read from when one exists. Absent, the report says so and prints the
 # locked fields sizing.yaml already carries instead of implying nothing was
 # dropped.
@@ -533,7 +533,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         resolved_cloud = "onprem"
     # The target overlay defaults to the cloud's own key -- what we run on AWS
     # is the aws overlay -- EXCEPT when Kafka itself is a fully vendor-managed
-    # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the knobs
+    # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the dials
     # that govern the BROKER, which is what a re-size actually needs to see
     # when there is no cloud-side shape to report on for it.
     default_target = kafka_provider if kafka_provider in SAAS_KAFKA_PROVIDERS else resolved_cloud
@@ -2781,7 +2781,7 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
     )
     if stores & {"raid0", "required"}:
         # RAID0 is the only value Karpenter's EC2NodeClass accepts -- see
-        # helm/charts/karpenter-pools/values.yaml's own comment on the field.
+        # helm/charts/node-pools/values.yaml's own comment on the field.
         node_class["instanceStorePolicy"] = "RAID0"
     return node_class
 
@@ -3163,14 +3163,14 @@ def _ratio_table(core: Core) -> list[str]:
     return lines
 
 
-# The three states a target overlay may put a knob in -- see sizing/targets/.
-TARGET_KNOB_STATES = ("blocked", "renamed", "managed")
+# The three states a target overlay may put a dial in -- see sizing/targets/.
+TARGET_DIAL_STATES = ("blocked", "renamed", "managed")
 
 
 def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
-    """The per-target knob matrix, read from sizing/targets/<target>.yaml.
+    """The per-target dial matrix, read from sizing/targets/<target>.yaml.
 
-    Every knob a target's own provider or contract changes carries one of
+    Every dial a target's own provider or contract changes carries one of
     three states -- blocked, renamed or managed -- with the one-sentence
     reason a re-size and this report both trust. Absent, the section says so
     rather than implying nothing was dropped on that target's account.
@@ -3178,7 +3178,7 @@ def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
     if not overlay_path.is_file():
         return [
             "",
-            "A per-target knob matrix -- `blocked` / `renamed` / `managed` with the reason for each"
+            "A per-target dial matrix -- `blocked` / `renamed` / `managed` with the reason for each"
             f" -- is read from `{overlay_path.relative_to(REPO_ROOT)}` when one exists. There is none"
             f" for `{target}`, so the locked fields above are the whole list and nothing was dropped"
             " on a target's account.",
@@ -3187,16 +3187,16 @@ def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
     status = str(overlay.get("status", "")).strip()
     lines = [
         "",
-        f"Per-target knob matrix from `{overlay_path.relative_to(REPO_ROOT)}`"
+        f"Per-target dial matrix from `{overlay_path.relative_to(REPO_ROOT)}`"
         + (f" -- **{status}**." if status else "."),
         "",
     ]
-    knobs = {name: body for name, body in overlay.items() if isinstance(body, dict)}
-    if not knobs:
-        lines.append("No knobs recorded for this target.")
+    dials = {name: body for name, body in overlay.items() if isinstance(body, dict)}
+    if not dials:
+        lines.append("No dials recorded for this target.")
         return lines
-    lines += ["| Knob | State | Reason |", "|---|---|---|"]
-    for name, body in sorted(knobs.items()):
+    lines += ["| Dial | State | Reason |", "|---|---|---|"]
+    for name, body in sorted(dials.items()):
         state = str(body.get("state", "")).strip() or "?"
         reason = str(body.get("reason", "")).strip()
         lines.append(f"| `{name}` | {state} | {reason} |")
@@ -3329,7 +3329,7 @@ def build_report(
         )
     lines.append(f"- {_at(sizing, 'ceilings', 'professional_services_message')}")
 
-    lines += ["", "## The knobs this target manages or locks", ""]
+    lines += ["", "## The dials this target manages or locks", ""]
     locked = _at(sizing, "locked")
     if isinstance(locked, dict):
         lines += ["| Locked field | Why a re-size refuses it |", "|---|---|"]
@@ -3524,7 +3524,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         # ci-burst is not a core requirement -- size_core derives no node for it,
         # so it always resolves off the shape's own floor size -- but every
         # populated cloud carries retryable build/test work, so it always joins
-        # the resolve rather than needing its own dial knob.
+        # the resolve rather than needing a dial of its own.
         wanted.append("ci-burst")
         for use_case in wanted:
             entry = _at(cloud_entry, "use_cases", use_case)
@@ -3659,12 +3659,12 @@ def run_resolve(args: argparse.Namespace) -> int:
         # and the overlay above only reaches a cluster through a deploy repo.
         # One line, because it lands verbatim in a cluster-secret annotation
         # the appset inlines as YAML flow (JSON is a subset of it).
-        karpenter_path = out / "sizing" / f"{core.tier}.karpenter.json"
-        karpenter_path.write_text(
+        pools_path = out / "sizing" / f"{core.tier}.pools.json"
+        pools_path.write_text(
             json.dumps(pools, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
-        written.append(karpenter_path)
+        written.append(pools_path)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
     report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")

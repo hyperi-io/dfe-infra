@@ -163,7 +163,7 @@ clouds:
 
       ## Every broker is identical -- one family, one storage profile, one
       ## config -- so scaling out is "add a broker" and throughput, CPU and disk
-      ## grow together. `replicas` is the only scale knob.
+      ## grow together. `replicas` is the only scale dial.
       ##
       ## The workload shape map first proposed the storage-optimised `i` family
       ## here. It takes `m` instead: the broker's log lives on a PVC sized by the
