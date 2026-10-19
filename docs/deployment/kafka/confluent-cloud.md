@@ -19,7 +19,7 @@ DFE security floor still holds -- PLAIN is only ever sent over TLS, enforced by
 scalo `providers::validate` and `KafkaConfig::validate`.
 
 Read the opinionated baseline in [README.md](README.md) first. Confluent Cloud
-is the most managed of the three clouds: it exposes very few broker knobs and
+is the most managed of the three clouds: it exposes very few broker dials and
 expresses the rest per topic.
 
 **On the AWS path, tofu builds this for you.** Setting `kafka.provider: confluent-cloud` in the deployment dial makes `terraform/environments/aws` call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud` module instead of hand-rolling the snippet below -- see [aws.md](../aws.md#kafka-and-clickhouse) and that module's `CONTRACT.md`. That module defaults to the **Freight** tier (private networking, no public endpoint, autoscales on eCKUs) rather than the `standard` tier this page's own worked example uses. Confluent caps a topic's `max.message.bytes` by cluster type: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, and 20 MB on Freight. So Freight and Enterprise carry DFE's 16 MiB size chain and Basic and Standard do not. The example below is for a deployment standing Confluent Cloud up by some other means and pointing DFE at it with `kafka.mode=external`.

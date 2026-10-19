@@ -1,4 +1,4 @@
-// The aws-sm body's deletion-protection knob: recovery_window_days. Provider-
+// The aws-sm body's deletion-protection dial: recovery_window_days. Provider-
 // free by construction, like managed-kafka's contracts -- mock_provider means
 // no credentials, no API call and no cost.
 

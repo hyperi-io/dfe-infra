@@ -14,7 +14,7 @@ every mode, every model, and the evidence behind each -- is
 what it ships as: empty derives the model from whether an object store is
 supplied (`clickhouse.objectStore.endpoint` set means `cached-object`, nothing
 means `local`), and writing a value here overrides that. There is no second
-knob: the model decides the disks, the policy and the volumes together. The
+dial: the model decides the disks, the policy and the volumes together. The
 names are `<family>-<bulk>`, where the family says whether parts MOVE to the
 bulk store or are COPIED to it. (Previously `tiered` and `s3backed`.)
 

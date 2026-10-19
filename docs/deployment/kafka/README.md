@@ -43,7 +43,7 @@ in each guide); the rest is fixed by the platform and called out per guide.
 ## The one opinionated baseline
 
 MINIMAL, best-for-high-volume-at-scale, works-everywhere. One value per line,
-not a knob per topic. Rationale below each; sources at the end.
+not a dial per topic. Rationale below each, sources at the end.
 
 | Setting | DFE default | Why |
 |---|---|---|
@@ -103,7 +103,7 @@ out in the guide). "Per-topic" = not a broker default; set it on each topic.
 | `log.segment.bytes` | Settable (512 MiB) | Broker settable | Locked -- managed | Locked -- not exposed | Cluster `log_segment_size` on Dedicated; managed on Serverless |
 | `message.max.bytes` | Settable (default) | Broker settable | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
 
-The pattern: **the more managed the platform, the fewer broker knobs it exposes,
+The pattern: **the more managed the platform, the fewer broker dials it exposes,
 and the more the DFE default is either already enforced (RF3, KRaft) or must be
 expressed per-topic instead of as a broker default.** MSK Provisioned is the
 closest to self-hosted (full `server.properties`); MSK Serverless and Confluent

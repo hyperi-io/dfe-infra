@@ -169,7 +169,7 @@ result against `sizing/resolved.yaml`. Every changed field is classified: <!-- d
 
 - LIVE-SAFE: broker count up (the rebalancer spreads data onto the new
   brokers), ClickHouse replicas up, a PVC growing, an instance type moving
-  under a Karpenter node roll, retention, any dynamically updatable knob.
+  under a Karpenter node roll, retention, any dynamically updatable dial.
 - DRAIN-FIRST: broker count down. `remove-brokers` moves data off the broker
   before its pod goes.
 - LOCKED: the six fields in `sizing.yaml`'s `locked:` section -- partition
