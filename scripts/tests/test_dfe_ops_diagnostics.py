@@ -1244,8 +1244,21 @@ def test_a_stage_before_the_deploy_captures_nothing(
     assert "diagnostics" not in _words(ran)
 
 
-def test_a_passing_cycle_captures_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_passing_cycle_keeps_one_bundle_before_the_destroy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A green cycle is evidence too: one bundle, labelled passed, taken while the stack is up."""
     rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path))
+    assert rc == 0
+    words = _words(ran)
+    assert words.count("diagnostics") == 1
+    assert words[-2:] == ["diagnostics", "teardown"]
+    capture = next(cmd for cmd in ran if "diagnostics" in cmd)
+    assert capture[capture.index("--label") + 1] == "passed"
+
+
+def test_a_passing_cycle_without_the_flag_captures_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, ran = _cycle(monkeypatch)
     assert rc == 0
     assert "diagnostics" not in _words(ran)
 

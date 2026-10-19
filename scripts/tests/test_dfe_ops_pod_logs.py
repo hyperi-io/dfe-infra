@@ -627,24 +627,27 @@ def test_a_failed_acceptance_keeps_the_pod_logs_it_followed(
     assert "its owner closed standard input" in index
 
 
-def test_a_passing_acceptance_removes_what_its_follower_wrote(
+def test_a_passing_acceptance_keeps_what_its_follower_wrote(
     monkeypatch: pytest.MonkeyPatch, fake_kubectl: tuple[Path, dict[str, str]], tmp_path: Path
 ) -> None:
-    """The suites need a cluster, so the run is replaced by one that starts the follower."""
+    """A green run's pod logs are evidence too. The run is replaced by one that starts the follower."""
     _log, files = fake_kubectl
     root = tmp_path / "diag"
+    kept: list[Path] = []
 
     def passing(args: argparse.Namespace, followers: list[pl.Owned]) -> int:
         out = pl.stage_dir(args.diagnostics_dir, "acceptance")
         owned = pl.spawn(SELF_CMD, out, [NAMESPACE], [])
         assert owned is not None
         followers.append(owned)
+        kept.append(out)
         _until(lambda: _files_present(out, files), "every run's file appears")
         return 0
 
     monkeypatch.setattr(dfeops, "_acceptance", passing)
     assert dfeops.cmd_acceptance(_acceptance_args(root)) == 0
-    assert list(root.iterdir()) == []
+    assert kept
+    assert _files_present(kept[0], files)
 
 
 def test_acceptance_without_the_flag_starts_no_follower(
