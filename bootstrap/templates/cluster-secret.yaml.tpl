@@ -74,9 +74,10 @@ metadata:
     # The registry cache's node script, base64, which layer2-platform.yaml
     # hands every EC2NodeClass. Blank when the cloud root caches nothing.
     ${DFE_NODE_USER_DATA_ANNOTATION}
-    # The pools themselves, as one line of JSON -- layer2-platform.yaml inlines
-    # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
-    # renders no NodePool at all, so a pending workload stays pending.
+    # The pool renderer and classes, as one line of JSON -- layer2-platform.yaml
+    # inlines it at the karpenter-pools chart's pools root, which JSON is valid
+    # YAML flow style for. Blank renders no NodePool at all, so a pending
+    # workload stays pending.
     ${DFE_KARPENTER_POOLS_ANNOTATION}
     # A test run's id and expiry as one line of JSON, which layer1-addons.yaml
     # and layer2-platform.yaml hand to the load balancer controller and

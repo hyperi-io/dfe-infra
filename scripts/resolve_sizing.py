@@ -46,10 +46,11 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    node_pools.system with what it derives, so
                                    the two producers never collide on it.
     sizing/<tier>.values.yaml      the chart values overlay
-    sizing/<tier>.karpenter.json   the karpenter.pools half of that overlay, on
-                                   one line, for bootstrap.sh to carry onto the
-                                   cluster secret. Written only where there are
-                                   pools to place.
+    sizing/<tier>.karpenter.json   the pools half of that overlay -- the renderer
+                                   and the pool classes -- on one line, for
+                                   bootstrap.sh to carry onto the cluster
+                                   secret. Written only where there are pools
+                                   to place.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, in which cost bucket, and where
                                    the ceiling is
@@ -716,7 +717,7 @@ class Core:
     root_volume_demand_mib_s: float = 0.0
     root_volume_demand_iops: int = 0
     # vCPU a shared pool's own workloads request, keyed by use case -- the
-    # demand build_karpenter_pools sizes a pool from when no Node carries it.
+    # demand build_pool_classes sizes a pool from when no Node carries it.
     pool_vcpu: dict[str, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     used: list[Ratio] = field(default_factory=list)
@@ -2615,8 +2616,12 @@ def _yaml_list(items: tuple[object, ...] | list[object], indent: int) -> list[st
 
 
 # ---------------------------------------------------------------------------
-# Karpenter -- the dynamic node pools, rendered from the same shape entries
+# Pool classes -- the dynamic node pools, rendered from the same shape entries
 # ---------------------------------------------------------------------------
+
+# The chart renderer the classes below are written for (pools.renderer), whose own
+# fields sit under each class's `aws` key.
+POOL_RENDERER = "karpenter-aws"
 
 # Karpenter's own accepted capacity-type labels -- never a resolver invention.
 CAPACITY_TYPE_ON_DEMAND = ("on-demand",)
@@ -2675,7 +2680,7 @@ def _disruption_budgets(use_case: str, disruption: Disruption) -> list[dict[str,
         disruption: The dial's k8s.disruption posture and window.
 
     Returns:
-        The budget list, in the shape karpenter-pools' NodePool template renders.
+        The budget list, in the shape the karpenter-aws NodePool template renders.
     """
     if use_case == "ci-burst":
         return [dict(budget) for budget in _CI_BURST_BUDGETS]
@@ -2754,10 +2759,10 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
     """This pool's own EC2NodeClass override -- its resolved root volume, and
     RAID0 where the shape's own volume profile asks for one.
 
-    Every pool overrides the chart's own (empty) nodeClass.rootVolume default
-    rather than sharing one: the root disk a workload actually carries is what
-    select_shape and _size_up_to_carry_the_volumes resolved for IT, and a
-    shared default would paper over a real difference between pools.
+    Every pool overrides the chart's own (empty) pools.aws.nodeClass.rootVolume
+    default rather than sharing one: the root disk a workload actually carries is
+    what select_shape and _size_up_to_carry_the_volumes resolved for IT, and a
+    shared default would hide a real difference between pools.
     """
     root = choice.volumes.get("root")
     node_class: dict[str, object] = {}
@@ -2781,18 +2786,21 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
     return node_class
 
 
-def build_karpenter_pools(
+def build_pool_classes(
     choices: dict[str, Choice],
     cloud_entry: dict[str, object],
     pool_vcpu: dict[str, float] | None = None,
     disruption: Disruption | None = None,
 ) -> dict[str, object]:
-    """Karpenter's NodePool/EC2NodeClass shaping, for every EC2-sourced choice.
+    """One pool class per EC2-sourced choice, for the POOL_RENDERER renderer.
 
-    Each pool renders from the shape the resolver chose and admits that
-    family alone (_karpenter_families), so a new generation reaches the pools
-    with the next resolve, as a reviewed diff. msk-broker is the one choice
-    this does not cover: MSK runs its own brokers, and there is no EC2
+    A class carries the fields every renderer reads -- arch, capacity types,
+    consolidation, the per-reason budgets, expiry, the workload label, taints
+    and limits -- and its EC2 families, generation and EC2NodeClass override
+    under `aws`. Each class renders from the shape the resolver chose and
+    admits that family alone (_karpenter_families), so a new generation reaches
+    the pools with the next resolve, as a reviewed diff. msk-broker is the one
+    choice this does not cover: MSK runs its own brokers, and there is no EC2
     instance for Karpenter to place.
 
     Args:
@@ -2807,7 +2815,7 @@ def build_karpenter_pools(
             no window.
 
     Returns:
-        `{name: pool}`, ready to nest under `karpenter.pools`; empty when
+        `{name: class}`, ready to nest under `pools.classes`, or empty when
         there is nothing for Karpenter to place.
 
     Raises:
@@ -2848,7 +2856,6 @@ def build_karpenter_pools(
             nodes = max(nodes, math.ceil(round(demand / choice.vcpu, 6)))
 
         pool: dict[str, object] = {
-            "families": families,
             "arch": str(entry.get("arch") or "arm64"),
             "capacityTypes": capacity_types,
             "consolidation": consolidation,
@@ -2868,14 +2875,16 @@ def build_karpenter_pools(
         taints = _workload_taints(use_case, "NoSchedule")
         if taints:
             pool["taints"] = taints
+        aws: dict[str, object] = {"families": families}
         if policy == "pinned" and pin:
             # The admitted families' own generations, as an instance_type override can sit off the pin.
-            pool["generationIn"] = [str(g) for g in sorted(set(generations))]
+            aws["generationIn"] = [str(g) for g in sorted(set(generations))]
         else:
-            pool["generationGt"] = str(min(generations) - 1)
+            aws["generationGt"] = str(min(generations) - 1)
         node_class = _karpenter_node_class(entry, choice)
         if node_class:
-            pool["nodeClass"] = node_class
+            aws["nodeClass"] = node_class
+        pool["aws"] = aws
         pools[use_case] = pool
     return pools
 
@@ -2893,7 +2902,7 @@ def build_values(
 
     `choices` and `cloud_entry` are None on a cloud with no live shape
     resolution (onprem, or a stub cloud) -- Karpenter does not run there, and
-    the overlay carries no `karpenter` key at all rather than an empty one.
+    the overlay carries no `pools` key at all rather than an empty one.
 
     `storage_model` is the dial's own override (Dial.storage_model). auto
     writes no clickhouse.storageModel key at all, so the chart derives it from
@@ -2906,7 +2915,7 @@ def build_values(
     metadata quorum; separate writes the sized pool with enabled true.
 
     `disruption` is the dial's own k8s.disruption, which every Karpenter pool's
-    budgets follow (build_karpenter_pools).
+    budgets follow (build_pool_classes).
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -2937,7 +2946,7 @@ def build_values(
         # validate.yaml refuses a KEDA ceiling below kafka.replicas outright --
         # the chart's own static default (6) is right at the floor and wrong
         # the moment the resolved broker count passes it. Twice the resolved
-        # count, same headroom convention build_karpenter_pools already uses
+        # count, same headroom convention build_pool_classes already uses
         # for its own NodePool limits, capped at the partition count so a
         # broker added at the ceiling still gets a share (partitions is always
         # a multiple of brokers, so it is never below broker.count either).
@@ -3024,9 +3033,9 @@ def build_values(
     if ch:
         out["clickhouse"] = ch
     if choices and cloud_entry is not None:
-        pools = build_karpenter_pools(choices, cloud_entry, core.pool_vcpu, disruption)
-        if pools:
-            out["karpenter"] = {"pools": pools}
+        classes = build_pool_classes(choices, cloud_entry, core.pool_vcpu, disruption)
+        if classes:
+            out["pools"] = {"renderer": POOL_RENDERER, "classes": classes}
     return out
 
 
@@ -3643,16 +3652,16 @@ def run_resolve(args: argparse.Namespace) -> int:
     values_path.write_text("\n".join([*header, *_yaml_block(values)]) + "\n", encoding="utf-8")
     written.append(values_path)
 
-    karpenter = values.get("karpenter")
-    if isinstance(karpenter, dict) and karpenter.get("pools"):
-        # The SAME pools the values overlay carries, written again where
-        # bootstrap.sh can read them without a YAML parser -- it ships none,
+    pools = values.get("pools")
+    if isinstance(pools, dict) and pools.get("classes"):
+        # The SAME renderer and classes the values overlay carries, written again
+        # where bootstrap.sh can read them without a YAML parser -- it ships none,
         # and the overlay above only reaches a cluster through a deploy repo.
         # One line, because it lands verbatim in a cluster-secret annotation
         # the appset inlines as YAML flow (JSON is a subset of it).
         karpenter_path = out / "sizing" / f"{core.tier}.karpenter.json"
         karpenter_path.write_text(
-            json.dumps(karpenter["pools"], sort_keys=True, separators=(",", ":")) + "\n",
+            json.dumps(pools, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
         written.append(karpenter_path)
