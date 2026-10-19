@@ -12,7 +12,7 @@
 Nothing in helm/ asserted this before: a malformed trigger URL only surfaced on
 a real cluster, during the manual rc.13 test pass. keda-scale-test.sh reads the
 ServiceName back out of the rendered URL with a plain shell parameter expansion
-(`${REAL_URL##*service=}` then `${REAL_SERVICE%%&*}`), so this reads the URL the
+(`${url##*service=}` then `${service%%&*}`), so this reads the URL the
 receiver's ScaledObject carries and applies the same extraction, proving the two
 sides still agree. The trigger is argocd/values/apps/_fragments/pressure-trigger.yaml,
 which the receiver's integration values append on every tier but slim.
@@ -47,7 +47,7 @@ def metrics_api_url(docs: list[dict]) -> str:
 
 
 def shell_extract_service(url: str) -> str:
-    """Mirror keda-scale-test.sh's `${REAL_URL##*service=}` / `%%&*` parse."""
+    """Mirror keda-scale-test.sh's `${url##*service=}` / `%%&*` parse."""
     service = url.rsplit("service=", 1)[-1] if "service=" in url else url
     return service.split("&", 1)[0]
 

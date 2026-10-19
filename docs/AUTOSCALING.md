@@ -17,10 +17,10 @@ flowchart LR
     KEDA -->|"pods go Pending"| nodes
 ```
 
-- **Pod scaling is KEDA, on every target.** The charts ship the ScaledObjects
+- Pod scaling is KEDA, on every target. The charts ship the ScaledObjects
   (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim); nothing about
   KEDA changes between on-prem and cloud.
-- **Two triggers render and the HPA takes the higher.** The app charts ship both
+- Two triggers render and the HPA takes the higher. The app charts ship both
   `keda.cpu` (native scaler, nothing of ours in the path) and a `metrics-api` entry in
   `keda.extraTriggers` (`argocd/values/apps/_fragments/pressure-trigger.yaml`) -- the
   scalo ScalingPressure composite through the fail-safe dfe-keda-shim. A tier or an
@@ -31,12 +31,8 @@ flowchart LR
   deployment in any namespace resolves it without a values override;
   `keda.pressure.shimAddress` is for a shim outside the release namespace only.
   dfe-transform-vector carries no pressure trigger: it sets no `scaling_pressure` gauge, so cpu is its only live trigger.
-  `bootstrap/keda-scale-test.sh` proves the path on each deploy. Its scale-out bound
-  is derived from the ScaledObject's own polling interval plus the HPA sync period
-  rather than fixed (dfe-infra #275), and it exits 3 for UNPROVEN where the HPA read
-  the injected pressure above target and still left the replicas alone, which is the
-  unreproduced stall in dfe-infra #134 and is neither a working scaler nor a broken one.
-- **Node scaling forks by target.** KEDA makes pods Pending; what turns Pending
+  `bootstrap/keda-scale-test.sh` proves the path on each deploy. It injects pressure for a throwaway Deployment, then for every app whose ScaledObject carries the shim trigger at once, and each goes from its floor to one above and back. Its scale-out bound is the HPA sync period twice over plus a pod-start allowance, because above a floor of zero the HPA reads the metric itself and KEDA's pollingInterval does not govern scaling. At scale-out it logs each HPA reading and fails when the pressure reading is under target, so a cpu-driven scale cannot pass for a pressure one. UNPROVEN (exit 3: the HPA read the pressure over target and left the replicas alone, or an app was off its floor before the run) fails the smoke run like a FAIL does.
+- Node scaling forks by target. KEDA makes pods Pending, and what turns Pending
   pods into new nodes depends entirely on where the cluster runs. That fork is a
   DECLARED decision, recorded here -- never an assumption baked into a chart.
 
