@@ -30,8 +30,12 @@ the renderer the classes go to.
 
 {{- /* Cluster facts with no classes is a lost pool annotation, and the empty render it makes would prune every live NodePool, renderer or not. */ -}}
 {{- $cluster := ($p.aws | default dict).cluster | default dict -}}
-{{- if and (not $p.classes) $cluster.discoveryTag -}}
-{{- fail (printf "pools.aws.cluster.discoveryTag is %q, so this cluster runs Karpenter, and pools.classes is empty -- rendering no NodePool would delete every live one. The classes reach this chart on the cluster secret's dfe.hyperi.io/node_pools annotation, which bootstrap.sh writes from sizing/<tier>.pools.json" (toString $cluster.discoveryTag)) -}}
+{{- if not $p.classes -}}
+{{- range $fact := list "discoveryTag" "instanceProfile" "kmsKeyId" -}}
+{{- with index $cluster $fact -}}
+{{- fail (printf "pools.aws.cluster.%s is %q, so this cluster runs Karpenter, and pools.classes is empty -- rendering no NodePool would delete every live one. The classes reach this chart on the cluster secret's dfe.hyperi.io/node_pools annotation, which bootstrap.sh writes from sizing/<tier>.pools.json" $fact (toString .)) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- $roots := list "renderer" "terminationGracePeriod" "classes" "aws" -}}

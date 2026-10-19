@@ -164,9 +164,17 @@ release_applicationset_owners() {
 }
 
 # Success when ${1}, an Application's sources, names chart ${2}. A digest-pinned
-# chart is an OCI source with no chart field, so its name ends the repoURL.
+# chart is an OCI source with no chart field, so its name ends the repoURL. A git
+# repoURL ending the same way names a repo.
 names_chart() {
-    [[ " ${1} " == *" ${2} "* || " ${1} " == *"/${2} "* ]]
+    local source sources
+    read -ra sources <<<"${1}"
+    for source in "${sources[@]}"; do
+        if [[ "${source}" == "${2}" || ( "${source}" == oci://* && "${source}" == */"${2}" ) ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # "<role> <name>" per Application -- lb, karpenter, pools, operator (a data
@@ -177,12 +185,12 @@ application_roles() {
     listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.source.repoURL}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{" "}{.spec.sources[*].repoURL}{"\n"}{end}' 2>/dev/null)" || return 0
     while read -r name sources; do
         [[ -n "${name}" ]] || continue
-        if names_chart "${sources}" aws-load-balancer-controller; then
+        if [[ "${name}" == karpenter-pools-* ]]; then
+            role=pools
+        elif names_chart "${sources}" aws-load-balancer-controller; then
             role=lb
         elif names_chart "${sources}" karpenter; then
             role=karpenter
-        elif [[ "${name}" == karpenter-pools-* ]]; then
-            role=pools
         elif names_chart "${sources}" strimzi-kafka-operator || names_chart "${sources}" clickhouse-operator-helm \
             || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
             role=operator

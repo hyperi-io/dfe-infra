@@ -173,13 +173,13 @@ def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
     expect("the appset reads the node_pools annotation",
            'dfe.hyperi.io/node_pools' in block, block)
     expect("and lands it on the pools root",
-           "$pools | fromJson | toYaml | nindent" in block, block)
+           "with $pools | fromJson" in block and "toYaml . | nindent" in block, block)
     expect("parsed rather than spliced, so a non-JSON annotation fails the render",
            "pools: {{ $pools }}" not in block, block)
     expect("only for the karpenter-pools app", 'eq .app "karpenter-pools"' in block, block)
     # The nindent is relative to this values STRING, not to the appset file, so
     # prove the emitted block parses back beside pools.aws.
-    indent = int(block.split("$pools | fromJson | toYaml | nindent ", 1)[1].split()[0].rstrip("}- "))
+    indent = int(block.split("toYaml . | nindent ", 1)[1].split()[0].rstrip("}- "))
     pools = {"classes": {"clickhouse": BASE_POOL}, "renderer": "karpenter-aws"}
     body = yaml.safe_dump(pools, default_flow_style=False, sort_keys=True).rstrip("\n")
     emitted = "\n".join(" " * indent + line for line in body.splitlines())
@@ -457,6 +457,43 @@ def test_expected_fail_a_cluster_secret_without_the_pool_annotation_fails_the_sy
     expect("one NodePool and one EC2NodeClass", kinds == ["EC2NodeClass", "NodePool"], kinds)
 
 
+PRUNE_REFUSAL = "rendering no NodePool would delete every live one"
+
+
+def test_expected_fail_an_empty_pool_annotation_reaches_the_prune_guard() -> None:
+    """An empty map on the secret must reach the chart's prune guard, not break the values YAML."""
+    annotations = {**CLUSTER_FACTS, "dfe.hyperi.io/node_pools": "{}"}
+    pools = appset_values(annotations)["pools"]
+    expect("the values block parses, with no renderer or classes", sorted(pools) == ["aws"], pools)
+    out = appset_render(annotations)
+    expect("the chart refuses the render", out.returncode != 0, out.stdout)
+    expect("on its own prune guard", PRUNE_REFUSAL in out.stderr, out.stderr)
+
+
+def test_expected_fail_any_karpenter_fact_without_classes_fails_the_render() -> None:
+    """A secret holding only some of the facts still runs Karpenter, and an empty render prunes."""
+    facts = {
+        "instanceProfile": "dfe-test",
+        "kmsKeyId": "arn:aws:kms:us-west-2:000000000000:key/abc",
+    }
+    for kept in (("instanceProfile",), ("kmsKeyId",), ("instanceProfile", "kmsKeyId")):
+        sets: list[str] = []
+        for fact in kept:
+            sets += ["--set", f"pools.aws.cluster.{fact}={facts[fact]}"]
+        for renderer in ((), ("--set", "pools.renderer=karpenter-aws")):
+            out = helm(["helm", "template", "t", str(CHART), *sets, *renderer])
+            case = f"{kept} {renderer or 'no renderer'}"
+            expect(f"the render fails with {case}", out.returncode != 0, out.stdout)
+            named = f"pools.aws.cluster.{kept[0]} is" in out.stderr
+            expect(f"and names the fact and the annotation, with {case}",
+                   named and "dfe.hyperi.io/node_pools" in out.stderr, out.stderr)
+    no_tag = dict(CLUSTER_FACTS)
+    del no_tag["dfe.hyperi.io/karpenter_discovery_tag"]
+    out = appset_render(no_tag)
+    expect("a secret without its discovery tag fails the sync", out.returncode != 0, out.stdout)
+    expect("on the prune guard", PRUNE_REFUSAL in out.stderr, out.stderr)
+
+
 # Each case is one values shape the chart must refuse rather than render around,
 # with the phrase its guard names it by. A misplaced field renders nothing silently.
 REFUSED_SHAPES = (
@@ -547,6 +584,8 @@ def main() -> int:
         test_no_classes_render_nothing_whatever_the_renderer()
         test_expected_fail_a_karpenter_cluster_with_no_classes_fails_the_render()
         test_expected_fail_a_cluster_secret_without_the_pool_annotation_fails_the_sync()
+        test_expected_fail_an_empty_pool_annotation_reaches_the_prune_guard()
+        test_expected_fail_any_karpenter_fact_without_classes_fails_the_render()
         test_expected_fail_a_renderer_or_a_class_shape_the_chart_does_not_carry_fails_the_render()
         test_expected_fail_an_unknown_renderer_fails_even_with_no_class()
         return summary()

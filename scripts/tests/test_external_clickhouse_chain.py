@@ -260,7 +260,7 @@ def test_the_collector_writes_to_the_external_server_over_tls() -> None:
     exporter = config["exporters"]["clickhouse"]
     assert exporter["endpoint"] == f"tcp://{HOST}:9440?secure=true"
     assert exporter["username"] == "dfe_otel_writer"
-    datasource = config["receivers"]["sqlquery/clickhouse"]["datasource"]
+    datasource = config["receivers"]["sql_query/clickhouse"]["datasource"]
     assert datasource.startswith("clickhouse://dfe_otel_writer:")
     assert f"@{HOST}:9440/dfe?secure=true" in datasource
 

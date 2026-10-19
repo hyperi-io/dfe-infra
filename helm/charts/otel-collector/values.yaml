@@ -156,7 +156,7 @@ clusterTelemetry:
     collectionInterval: 30s
     metricGroups: [node, pod, container]
 
-  # ClickHouse server metrics via sqlquery over system.metrics/events/parts.
+  # ClickHouse server metrics via sql_query over system.metrics/events/parts.
   # Not the :9363 Prometheus endpoint -- the clickhouse-cluster chart does not
   # expose it and managed ClickHouse does not offer it, whereas these system tables
   # are readable from any client on any provider. It dials as the exporter's

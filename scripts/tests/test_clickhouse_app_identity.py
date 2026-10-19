@@ -244,9 +244,9 @@ def collector_admin_use(docs: tuple[dict, ...]) -> list[str]:
     config = _gateway_config(docs)
     if config["exporters"]["clickhouse"]["username"] == ADMIN_USER:
         found.append(f"exporters.clickhouse.username={ADMIN_USER}")
-    datasource = config["receivers"]["sqlquery/clickhouse"]["datasource"]
+    datasource = config["receivers"]["sql_query/clickhouse"]["datasource"]
     if datasource.startswith(f"clickhouse://{ADMIN_USER}:"):
-        found.append(f"receivers.sqlquery/clickhouse dials as {ADMIN_USER}")
+        found.append(f"receivers.sql_query/clickhouse dials as {ADMIN_USER}")
     return found
 
 

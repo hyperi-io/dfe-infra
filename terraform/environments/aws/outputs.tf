@@ -58,7 +58,7 @@ output "DFE_CLICKHOUSE_PORT" {
 }
 
 output "DFE_CLICKHOUSE_NATIVE_PORT" {
-  description = "The external server's native protocol port, as a string, which the otel collector's exporter and sqlquery receiver dial. Empty on an in-cluster server."
+  description = "The external server's native protocol port, as a string, which the otel collector's exporter and sql_query receiver dial. Empty on an in-cluster server."
   value       = var.clickhouse.mode == "external" ? tostring(var.clickhouse.native_port) : ""
 }
 
