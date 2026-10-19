@@ -38,7 +38,8 @@ data:
         collection_interval: {{ .Values.clusterTelemetry.k8sCluster.collectionInterval }}
         auth_type: serviceAccount
         node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
-        allocatable_types_to_report: [cpu, memory, storage, ephemeral-storage]
+        # No storage: a node's allocatable carries no such key, so it emits no series.
+        allocatable_types_to_report: [cpu, memory, ephemeral-storage]
       {{- end }}
       {{- if .Values.clusterTelemetry.clickhouse.enabled }}
       # Server-side ClickHouse health. Column aliases become the metric names, so
@@ -308,6 +309,24 @@ data:
           - key: service.name
             value: k8s-cluster
             action: upsert
+      # The owning pod's labels on every pod and container series, joined on the
+      # k8s.pod.uid the receiver sets, because its series arrive on no connection.
+      k8s_attributes/k8s_cluster:
+        auth_type: serviceAccount
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          # Already on every series it matches, and listed so the default set stays off.
+          metadata: [k8s.pod.uid]
+          # The label key is the attribute name the usage rollups filter on, set
+          # explicitly so a semconv feature gate cannot move it to k8s.pod.label(s).<key>.
+          labels:
+            - tag_name: app.kubernetes.io/part-of
+              key: app.kubernetes.io/part-of
+            - tag_name: dfe.hyperi.io/app
+              key: dfe.hyperi.io/app
       {{- end }}
       {{- if .Values.clusterTelemetry.clickhouse.enabled }}
       resource/clickhouse:
@@ -431,7 +450,7 @@ data:
         {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
         metrics/k8s_cluster:
           receivers: [k8s_cluster]
-          processors: [memory_limiter, resource/k8s_cluster, batch]
+          processors: [memory_limiter, k8s_attributes/k8s_cluster, resource/k8s_cluster, batch]
           exporters:
             - prometheus
             {{- if .Values.exporters.clickhouse.enabled }}
@@ -700,7 +719,7 @@ data:
         check_interval: 5s
         limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.daemonsetMemory" .) }}
         spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.daemonsetMemory" .) }}
-      k8sattributes:
+      k8s_attributes:
         auth_type: serviceAccount
         extract:
           metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name, k8s.deployment.name]
@@ -717,7 +736,7 @@ data:
               - set(attributes["service.name"], attributes["k8s.container.name"]) where attributes["service.name"] == nil and attributes["k8s.container.name"] != nil
               - set(attributes["service.name"], attributes["k8s.deployment.name"]) where attributes["service.name"] == nil and attributes["k8s.deployment.name"] != nil
               - set(attributes["service.name"], attributes["k8s.pod.name"]) where attributes["service.name"] == nil and attributes["k8s.pod.name"] != nil
-      # Node-scoped metrics carry no pod, so k8sattributes cannot enrich them and
+      # Node-scoped metrics carry no pod, so k8s_attributes cannot enrich them and
       # they arrive with an empty ServiceName. Both attributes are set here instead.
       resource/node:
         attributes:
@@ -749,7 +768,7 @@ data:
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [memory_limiter, k8sattributes, transform/log_service_name, batch]
+          processors: [memory_limiter, k8s_attributes, transform/log_service_name, batch]
           exporters: [otlp/gateway]
         metrics:
           receivers:
@@ -757,5 +776,5 @@ data:
             {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
             - kubeletstats
             {{- end }}
-          processors: [memory_limiter, k8sattributes, resource/node, batch]
+          processors: [memory_limiter, k8s_attributes, resource/node, batch]
           exporters: [otlp/gateway]
