@@ -10,8 +10,8 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS
 
-Operations (teardown, node pools, edge exposure, Kafka telemetry, upgrades):
-[aws-operations.md](aws-operations.md).
+Operations: [aws-operations.md](aws-operations.md). Teardown:
+[aws-teardown.md](aws-teardown.md).
 
 DFE's AWS path provisions an EKS cluster with OpenTofu, then hands it to the
 same bootstrap and Argo CD layers every other cluster uses. Nothing about
@@ -27,7 +27,7 @@ A few things hold for every deployment:
   default (`network.nat: single`) or one per availability zone (`per-az`)
   when a zone failure or the cross-zone charge outweighs the extra gateway.
 - `network.az_count` (default 3, 2-6) sizes the VPC and is one of the six
-  fields `sizing.yaml` locks once resolved (see [Sizing knobs and locks](#sizing-knobs-and-locks)); a Strimzi/MSK broker count steps up
+  fields `sizing.yaml` locks once resolved (see [Sizing dials and locks](#sizing-dials-and-locks)). A Strimzi/MSK broker count steps up
   to at least the AZ count, so a deployment spanning more zones than the
   tyre-kick floor's three brokers still spreads one broker per zone.
 - The Kubernetes API's private endpoint is always on. `endpoint.public: true`
@@ -147,12 +147,11 @@ priced on this scale in [edge.md](edge.md).
 - `bootstrap.sh` reads `<out>/sizing/` from the same place, so resolving with
   the `--out` above needs nothing else said. A resolve run anywhere else has to
   set `DFE_SIZING_DIR` to that directory. On a cluster running Karpenter,
-  bootstrap REFUSES when `<tier>.karpenter.json` is not there: the chart's own
-  empty default renders no NodePool, the Application still reports Synced and
-  Healthy, and every workload the fixed managed node groups cannot fit stays
-  Pending with nothing reporting why.
+  bootstrap REFUSES when `<tier>.pools.json` is not there, and the node-pools
+  chart refuses to render with no pool classes rather than prune the
+  cluster's NodePools.
 
-### Sizing knobs and locks
+### Sizing dials and locks
 
 - `sizing.focus` buys headroom over the sized peak: `economy` (40%),
   `balanced` (60%) or `performance` (100%). None of the three trade away RF3
@@ -332,6 +331,6 @@ The receiver NLB is created with one Elastic IP per public subnet. Those
 addresses exist, and AWS bills them, while the ingest door is closed and no NLB
 exists. `edge.aws.receiver_eips: false` turns them off.
 
-See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
-for node pools and images, admin UI exposure, teardown, lifecycle tags and
-upgrades.
+See [aws-operations.md](aws-operations.md) for node pools and images, admin
+UI exposure and upgrades, and [aws-teardown.md](aws-teardown.md) for teardown
+and lifecycle tags.

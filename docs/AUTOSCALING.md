@@ -73,18 +73,15 @@ work is dfe-infra#146 and is not closed by the trigger choice above.
 | Target | Node autoscaler | Notes |
 | ------ | --------------- | ----- |
 | On-prem Rancher/RKE2 (the baseline) | **None today: static node pool.** cluster-autoscaler IF the node layer gains a provisioning API (Rancher node pools on a cloud provider, Harvester, etc.) | Karpenter is NOT an option here -- it needs a cloud provisioning API. A fixed node pool is the sovereign/air-gap default: capacity planning replaces node autoscaling, and KEDA still does the pod side. |
-| AWS EKS | **Karpenter** | The practised choice when a DFE deployment lands on EKS. |
-| Azure AKS | **Karpenter via Node Auto Provisioning** (managed addon) | NAP mode, not self-hosted Karpenter. |
-| GCP GKE | **GKE Node Auto-Provisioning** (native) | No native Karpenter on GCP -- do not plan for it. |
+| AWS EKS | **Karpenter**, the node-pools chart's `karpenter-aws` renderer | The one renderer built today. |
+| Azure AKS | **Node Auto Provisioning** (managed Karpenter) | A planned renderer, dfe-infra#806. |
+| GCP GKE | **ComputeClass plus OpenTofu node pools** | A planned renderer, dfe-infra#806. GCP has no supported Karpenter. |
 | Multi-cloud / mixed | **cluster-autoscaler** | The portable fallback; runs everywhere. |
 
 The table follows one rule, which covers every component whose best implementation differs by target (node autoscaler, gateway controller, secret store, load balancer, storage class): state the choice per target, keep the chart neutral with the choice in values or the target overlay, and name the portable fallback -- here cluster-autoscaler -- so no target is stranded.
 
 ## Where the choice lives
 
-Per the product rule (every deployment choice is a parameter): the node
-autoscaler is installed by the deployment's own bootstrap/overlay for its
-target, NEVER by the shared charts. No chart in `helm/charts/` may reference
-Karpenter, cluster-autoscaler, or any node-pool API -- a chart that assumes a
-node autoscaler quietly breaks the on-prem baseline, which is the first-class
-target the stack validates against.
+Node scaling is a pools interface. The resolver writes one pool class per workload, in fields every node autoscaler shares, and `helm/charts/node-pools` hands the classes to the renderer `pools.renderer` names. Karpenter on AWS (`karpenter-aws`) is the one renderer today. The AKS and GKE renderers are planned in dfe-infra#806.
+
+`argocd/appsets/layer2-platform.yaml` deploys the pools chart only to a cluster whose secret declares a cloud with a renderer, AWS today, so the on-prem baseline gets no pool object at all. Every other chart places a pod by the pool's `dfe.hyperi.io/workload` label and the cloud-neutral node labels, never by Karpenter's or a cloud's own (`scripts/tests/test_charts_select_only_the_pool_label.py`).
