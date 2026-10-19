@@ -20,7 +20,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
@@ -81,7 +81,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
@@ -142,7 +142,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
@@ -202,7 +202,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
@@ -262,7 +262,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
@@ -322,7 +322,7 @@ spec:
   # An alias carries its own AMI family, so amiFamily is left unset -- setting it
   # to anything but the alias's family or Custom is rejected by the CRD.
   amiSelectorTerms:
-    - alias: "al2023@v20261003"
+    - alias: "al2023@v20261012"
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: "dfe-test-karpenter"
