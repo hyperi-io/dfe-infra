@@ -357,7 +357,7 @@ def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_
     """A `parameters:` entry is a structured list this file's own tests parse
     as plain YAML before Go templating runs, so a per-element conditional
     cannot live there -- this is a `values:` block string instead, the same
-    pattern layer2-platform.yaml uses for karpenter-pools."""
+    pattern layer2-platform.yaml uses for the node pools."""
     doc = yaml.safe_load(LAYER2_DATA.read_text(encoding="utf-8"))
     kafka_source = doc["spec"]["template"]["spec"]["sources"][0]
     values_block = kafka_source["helm"]["values"]

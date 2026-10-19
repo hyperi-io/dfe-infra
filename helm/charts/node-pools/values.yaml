@@ -1,5 +1,5 @@
 project: dfe
-component: karpenter
+component: node-pools
 env: local
 cloud: local
 

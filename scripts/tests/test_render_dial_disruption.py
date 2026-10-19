@@ -13,7 +13,7 @@
     python3 -m pytest scripts/tests/test_render_dial_disruption.py -q
 
 The budgets the block becomes are tested in test_resolve_sizing.py, and their
-NodePool render in test_karpenter_pools.py.
+NodePool render in test_node_pools.py.
 """
 
 import subprocess

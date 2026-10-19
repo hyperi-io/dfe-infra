@@ -51,7 +51,7 @@ bootstrap/local.env
 /sizing/*.values.yaml
 /sizing/*.report.md
 /sizing/*.nodes.json
-/sizing/*.karpenter.json
+/sizing/*.pools.json
 /sizing.auto.tfvars.json
 
 # Scratch / temp

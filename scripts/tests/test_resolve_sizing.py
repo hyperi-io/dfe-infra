@@ -1108,13 +1108,13 @@ def test_expected_fail_a_toolbox_override_absent_from_the_region_is_refused(tmp_
     assert "sizing.overrides.toolbox.instance_type" in capsys.readouterr().err
 
 
-# karpenter-pools' own values.yaml documents its per-class fields in a COMMENT
+# node-pools' own values.yaml documents its per-class fields in a COMMENT
 # above `classes: {}` (empty on purpose -- every field is filled by the
 # resolver), so those names never appear as literal `key:` lines there the way
 # kafka's and clickhouse-cluster's own defaults do. Checked against this fixed
 # contract instead, which mirrors the render guards in
-# helm/charts/karpenter-pools/templates/_pools.tpl and templates/karpenter/_karpenter.tpl.
-KARPENTER_VALUES_FIELDS = {
+# helm/charts/node-pools/templates/_pools.tpl and templates/karpenter/_karpenter.tpl.
+POOL_VALUES_FIELDS = {
     "pools",
     "renderer",
     "classes",
@@ -1179,7 +1179,7 @@ def test_the_values_overlay_names_only_keys_the_charts_declare(tmp_path: Path) -
         key = line.split(":", 1)[0].strip()
         # Under pools.classes, the key IS the use case (eks-system,
         # kafka-broker, ...) -- a map keyed by name, not a chart-declared field.
-        assert key in declared or key in KARPENTER_VALUES_FIELDS or key in resolve_sizing.USE_CASES, key
+        assert key in declared or key in POOL_VALUES_FIELDS or key in resolve_sizing.USE_CASES, key
 
 
 def _classes(values: str) -> str:
@@ -1188,7 +1188,7 @@ def _classes(values: str) -> str:
 
 
 def test_every_pool_class_carries_every_field_the_chart_guard_requires(tmp_path: Path) -> None:
-    """Mirrors the render guard in helm/charts/karpenter-pools/templates/karpenter/_karpenter.tpl."""
+    """Mirrors the render guard in helm/charts/node-pools/templates/karpenter/_karpenter.tpl."""
     _run(_dial(tmp_path), tmp_path)
     values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     assert '\npools:\n  renderer: "karpenter-aws"\n' in values
@@ -1257,7 +1257,7 @@ def test_the_pool_classes_are_written_where_bootstrap_can_read_them(tmp_path: Pa
     cluster through a deploy repo -- so the renderer and classes are written
     again as one line of JSON for the cluster-secret annotation."""
     _run(_dial(tmp_path), tmp_path)
-    body = (tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8")
+    body = (tmp_path / "sizing" / "scale.pools.json").read_text(encoding="utf-8")
     assert body.count("\n") == 1, "the annotation takes one line"
     pools = json.loads(body)
     assert set(pools) == {"renderer", "classes"}
@@ -1836,7 +1836,7 @@ def test_an_old_resolved_carrying_msk_broker_type_does_not_trip_the_renamed_lock
 
 
 # ---------------------------------------------------------------------------
-# Target overlays -- the per-target knob matrix
+# Target overlays -- the per-target dial matrix
 # ---------------------------------------------------------------------------
 
 TARGET_OVERLAY_NAMES = (
@@ -1852,15 +1852,15 @@ TARGET_OVERLAY_NAMES = (
 
 
 @pytest.mark.parametrize("name", TARGET_OVERLAY_NAMES)
-def test_every_target_overlay_parses_and_every_knob_carries_a_state_and_reason(name: str) -> None:
+def test_every_target_overlay_parses_and_every_dial_carries_a_state_and_reason(name: str) -> None:
     path = resolve_sizing.TARGETS_DIR / f"{name}.yaml"
     assert path.is_file(), path
     tree = resolve_sizing._load(path)
-    knobs = {key: value for key, value in tree.items() if isinstance(value, dict)}
-    assert knobs, f"{name}.yaml carries no knobs"
-    for knob, body in knobs.items():
-        assert body.get("state") in resolve_sizing.TARGET_KNOB_STATES, (name, knob)
-        assert body.get("reason", "").strip(), (name, knob)
+    dials = {key: value for key, value in tree.items() if isinstance(value, dict)}
+    assert dials, f"{name}.yaml carries no dials"
+    for dial, body in dials.items():
+        assert body.get("state") in resolve_sizing.TARGET_DIAL_STATES, (name, dial)
+        assert body.get("reason", "").strip(), (name, dial)
 
 
 def test_the_report_renders_the_aws_overlay_matrix(tmp_path: Path) -> None:
@@ -1937,7 +1937,7 @@ def test_expected_fail_a_family_with_no_generation_digit_is_refused() -> None:
         resolve_sizing.build_pool_classes({"general": choice}, {})
 
 
-def test_karpenter_generation_floor_with_one_family_is_its_own_generation_minus_one() -> None:
+def test_pool_generation_floor_with_one_family_is_its_own_generation_minus_one() -> None:
     choice = _choice(use_case="clickhouse", instance_type="r9gd.2xlarge", fallbacks=[])
     pools = resolve_sizing.build_pool_classes({"clickhouse": choice}, {})
     assert pools["clickhouse"]["aws"]["families"] == ["r9gd"]
@@ -2206,7 +2206,7 @@ def msk_case(tmp_path_factory) -> Path:
     return out
 
 
-def test_ci_burst_is_not_a_dial_knob(tmp_path: Path) -> None:
+def test_ci_burst_is_not_a_dial(tmp_path: Path) -> None:
     """Every populated resolve gets one -- there is no sizing field that opts out."""
     _run(_dial(tmp_path), tmp_path)
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
@@ -2276,7 +2276,7 @@ CHART_RENDER_BASES: dict[str, dict[str, object]] = {
             "objectStore": {"endpoint": "https://s3.us-west-2.amazonaws.com/dfe-clickhouse-test/"},
         },
     },
-    "karpenter-pools": {
+    "node-pools": {
         "pools": {
             "aws": {
                 "cluster": {
@@ -2394,7 +2394,7 @@ def _readiness_timeout_s() -> int:
 
 def _pools(out: Path) -> dict:
     """The pool classes bootstrap carries onto the cluster secret, by name."""
-    return json.loads((out / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))["classes"]
+    return json.loads((out / "sizing" / "scale.pools.json").read_text(encoding="utf-8"))["classes"]
 
 
 def test_the_app_set_figures_match_the_scale_profile() -> None:
@@ -2460,7 +2460,7 @@ def test_the_general_nodepool_renders_its_sized_limit_and_consolidation_delay(
         pytest.skip("helm is not on PATH")
     out = aws_golden_outputs[_case_name("aws", "economy", None)]
     fragment = out / "sizing" / "scale.values.yaml"
-    result = _helm_template("karpenter-pools", CHART_RENDER_BASES["karpenter-pools"], fragment)
+    result = _helm_template("node-pools", CHART_RENDER_BASES["node-pools"], fragment)
     assert result.returncode == 0, result.stderr
     docs = [d for d in yaml.safe_load_all(result.stdout) if d]
     nodepool = next(
@@ -2479,7 +2479,7 @@ def test_every_nodepool_renders_the_budgets_the_resolver_wrote(tmp_path: Path) -
     block = '    maintenance_window:\n      schedule: "30 22 * * 6"\n      duration: "3h30m"\n'
     assert _run(_with_disruption(_dial(tmp_path), block), tmp_path) == 0
     fragment = tmp_path / "sizing" / "scale.values.yaml"
-    result = _helm_template("karpenter-pools", CHART_RENDER_BASES["karpenter-pools"], fragment)
+    result = _helm_template("node-pools", CHART_RENDER_BASES["node-pools"], fragment)
     assert result.returncode == 0, result.stderr
     rendered = {
         d["metadata"]["name"]: d["spec"]["disruption"]["budgets"]

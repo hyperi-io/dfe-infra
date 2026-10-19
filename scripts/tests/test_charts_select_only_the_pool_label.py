@@ -46,7 +46,7 @@ from _charts import HELM, REPO_ROOT, chart_dir
 from _expect import expect, standalone, summary
 
 # The one chart whose job is to name the node autoscaler's own labels.
-POOL_CHART = chart_dir("karpenter-pools")
+POOL_CHART = chart_dir("node-pools")
 
 # The fields that place a pod on a node, by the key each one names.
 FIELDS = ("nodeSelector", "nodeAffinity", "tolerations", "topologySpreadConstraints")

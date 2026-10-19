@@ -169,8 +169,9 @@ names_chart() {
     [[ " ${1} " == *" ${2} "* || " ${1} " == *"/${2} "* ]]
 }
 
-# "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools),
-# operator (a data operator) or other -- and nothing when they cannot be listed.
+# "<role> <name>" per Application -- lb, karpenter, pools, operator (a data
+# operator) or other -- and nothing when they cannot be listed. pools goes by
+# the Application's name, which layer2-platform.yaml keeps while its chart moves.
 application_roles() {
     local listing name sources role
     listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.source.repoURL}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{" "}{.spec.sources[*].repoURL}{"\n"}{end}' 2>/dev/null)" || return 0
@@ -180,7 +181,7 @@ application_roles() {
             role=lb
         elif names_chart "${sources}" karpenter; then
             role=karpenter
-        elif [[ " ${sources} " == *"/karpenter-pools "* ]]; then
+        elif [[ "${name}" == karpenter-pools-* ]]; then
             role=pools
         elif names_chart "${sources}" strimzi-kafka-operator || names_chart "${sources}" clickhouse-operator-helm \
             || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
