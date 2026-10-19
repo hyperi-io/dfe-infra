@@ -5,13 +5,14 @@
 #                right Karpenter requirement, and that omitting it changes
 #                nothing for every pool that does not set it, that a test
 #                run's tags hold every pool to the run's instance sizes, that
-#                every pool bounds how long a drain waits, and that its
-#                disruption budgets render in the form the CRD takes.
+#                every pool bounds how long a drain waits, that its
+#                disruption budgets render in the form the CRD takes, and that
+#                the chart refuses a renderer or a class shape it does not carry.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""karpenter.pools.<name>.{minVcpu,minMemoryGib} -- gate-3-correctness.md P3.
+"""pools.classes.<name>.{minVcpu,minMemoryGib}, and the karpenter-aws renderer around them.
 
 families + generation bound WHICH instance line Karpenter may launch, never
 which SIZE on it: a workload sized up for its volume's EBS throughput baseline
@@ -37,20 +38,22 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHART = REPO_ROOT / "helm" / "charts" / "karpenter-pools"
+NODEPOOL = "templates/karpenter/nodepool.yaml"
+NODECLASS = "templates/karpenter/ec2nodeclass.yaml"
 
-# The cluster facts and root-volume fields validate.yaml refuses to render
-# without -- fixed here so every case below only has to state the pool.
+# The renderer, the cluster facts and the root-volume fields the guards refuse
+# to render without -- fixed here so every case below only has to state the pool.
 BASE_SETS = (
-    "karpenter.cluster.discoveryTag=dfe-test",
-    "karpenter.cluster.instanceProfile=dfe-test",
-    "karpenter.cluster.kmsKeyId=arn:aws:kms:us-west-2:000000000000:key/abc",
-    "karpenter.nodeClass.rootVolume.sizeGi=40",
-    "karpenter.nodeClass.rootVolume.iops=3000",
-    "karpenter.nodeClass.rootVolume.throughputMibS=125",
+    "pools.renderer=karpenter-aws",
+    "pools.aws.cluster.discoveryTag=dfe-test",
+    "pools.aws.cluster.instanceProfile=dfe-test",
+    "pools.aws.cluster.kmsKeyId=arn:aws:kms:us-west-2:000000000000:key/abc",
+    "pools.aws.nodeClass.rootVolume.sizeGi=40",
+    "pools.aws.nodeClass.rootVolume.iops=3000",
+    "pools.aws.nodeClass.rootVolume.throughputMibS=125",
 )
 
 BASE_POOL = {
-    "families": ["r9gd"],
     "arch": "arm64",
     "capacityTypes": ["on-demand"],
     "consolidation": {"policy": "WhenEmpty", "after": "10m"},
@@ -61,24 +64,29 @@ BASE_POOL = {
     ],
     "expireAfter": "Never",
     "limits": {"cpu": "32", "memory": "128Gi"},
-    "generationGt": "7",
+    "aws": {"families": ["r9gd"], "generationGt": "7"},
 }
+
+
+def helm(cmd: list[str]) -> subprocess.CompletedProcess:
+    """One helm invocation, its output read as UTF-8."""
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
 
 
 def nodepool_run(
     pool: dict, tags: dict[str, str] | None = None, sizes: list[str] | None = None, extra: tuple[str, ...] = ()
 ) -> subprocess.CompletedProcess:
     """helm template of the NodePool for one pool named `clickhouse`, with run tags, sizes and `extra` when given."""
-    cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/nodepool.yaml"]
+    cmd = ["helm", "template", "t", str(CHART), "--show-only", NODEPOOL]
     for s in BASE_SETS:
         cmd += ["--set", s]
-    cmd += ["--set-json", f"karpenter.pools={json.dumps({'clickhouse': pool})}"]
+    cmd += ["--set-json", f"pools.classes={json.dumps({'clickhouse': pool})}"]
     if tags is not None:
-        cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
+        cmd += ["--set-json", f"pools.aws.tags={json.dumps(tags)}"]
     if sizes is not None:
-        cmd += ["--set-json", f"karpenter.runInstanceSizes={json.dumps(sizes)}"]
+        cmd += ["--set-json", f"pools.aws.runInstanceSizes={json.dumps(sizes)}"]
     cmd += list(extra)
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    return helm(cmd)
 
 
 def render(
@@ -150,40 +158,46 @@ def test_a_dedicated_pool_renders_its_taint_and_a_shared_one_renders_none() -> N
     expect("a pool with no taint renders none", "taints" not in shared, shared)
 
 
-def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
-    """A chart whose `pools` stays at its own empty default renders no NodePool,
-    so every workload the managed groups cannot fit stays Pending."""
+def appset_values_block() -> str:
+    """The `values` string layer2-platform.yaml hands every chart it deploys."""
     appset = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
     doc = yaml.safe_load(appset.read_text(encoding="utf-8"))
-    block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    return doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+
+
+def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
+    """A chart whose `classes` stays at its own empty default renders no NodePool,
+    so every workload the managed groups cannot fit stays Pending."""
+    block = appset_values_block()
     expect("the appset reads the karpenter_pools annotation",
            'dfe.hyperi.io/karpenter_pools' in block, block)
-    expect("and lands it on karpenter.pools",
+    expect("and lands it on the pools root",
            "$pools | fromJson | toYaml | nindent" in block, block)
     expect("parsed rather than spliced, so a non-JSON annotation fails the render",
            "pools: {{ $pools }}" not in block, block)
     expect("only for the karpenter-pools app", 'eq .app "karpenter-pools"' in block, block)
     # The nindent is relative to this values STRING, not to the appset file, so
-    # prove the emitted block parses back as the chart's own `pools` map.
+    # prove the emitted block parses back beside pools.aws.
     indent = int(block.split("$pools | fromJson | toYaml | nindent ", 1)[1].split()[0].rstrip("}- "))
-    pools = {"clickhouse": BASE_POOL}
+    pools = {"classes": {"clickhouse": BASE_POOL}, "renderer": "karpenter-aws"}
     body = yaml.safe_dump(pools, default_flow_style=False, sort_keys=True).rstrip("\n")
     emitted = "\n".join(" " * indent + line for line in body.splitlines())
-    parsed = yaml.safe_load(f"karpenter:\n  cluster:\n    discoveryTag: t\n  pools:\n{emitted}\n")
-    expect("the pool map parses back at that indent", parsed["karpenter"]["pools"] == pools, parsed)
+    parsed = yaml.safe_load(f"pools:\n  aws:\n    cluster:\n      discoveryTag: t\n{emitted}\n")
+    expect("the renderer and classes parse back at that indent",
+           {k: v for k, v in parsed["pools"].items() if k != "aws"} == pools, parsed)
 
 
 def nodeclass_run(tags: dict[str, str] | None, user_data: str | None = None) -> subprocess.CompletedProcess:
-    """helm template of the EC2NodeClass for one pool, with karpenter.tags and the node script when given."""
-    cmd = ["helm", "template", "t", str(CHART), "--show-only", "templates/ec2nodeclass.yaml"]
+    """helm template of the EC2NodeClass for one pool, with pools.aws.tags and the node script when given."""
+    cmd = ["helm", "template", "t", str(CHART), "--show-only", NODECLASS]
     for s in BASE_SETS:
         cmd += ["--set", s]
-    cmd += ["--set-json", f"karpenter.pools={json.dumps({'clickhouse': BASE_POOL})}"]
+    cmd += ["--set-json", f"pools.classes={json.dumps({'clickhouse': BASE_POOL})}"]
     if tags is not None:
-        cmd += ["--set-json", f"karpenter.tags={json.dumps(tags)}"]
+        cmd += ["--set-json", f"pools.aws.tags={json.dumps(tags)}"]
     if user_data is not None:
-        cmd += ["--set-string", f"karpenter.cluster.userData={user_data}"]
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        cmd += ["--set-string", f"pools.aws.cluster.userData={user_data}"]
+    return helm(cmd)
 
 
 def render_nodeclass(tags: dict[str, str] | None, user_data: str | None = None) -> dict:
@@ -206,17 +220,15 @@ def test_the_registry_cache_script_reaches_every_node_class_decoded() -> None:
 
 def test_no_registry_cache_renders_no_user_data() -> None:
     spec = render_nodeclass(None)["spec"]
-    expect("an empty karpenter.cluster.userData renders no userData", "userData" not in spec, spec.get("userData"))
+    expect("an empty pools.aws.cluster.userData renders no userData", "userData" not in spec, spec.get("userData"))
 
 
-def appset_cluster_facts(annotations: dict[str, str]) -> dict:
-    """karpenter.cluster as layer2-platform.yaml's values block renders it for one cluster secret.
+def appset_values(annotations: dict[str, str]) -> dict:
+    """layer2-platform.yaml's values block, rendered for the karpenter-pools app on one cluster secret.
 
     The block reads cluster facts at .metadata and .app, which a chart template reaches under .Values.
     """
-    appset = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
-    block = yaml.safe_load(appset.read_text(encoding="utf-8"))["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
-    text = re.sub(r"(?<![\w$)\]])\.(metadata|app)\b", r".Values.\1", block)
+    text = re.sub(r"(?<![\w$)\]])\.(metadata|app)\b", r".Values.\1", appset_values_block())
     with tempfile.TemporaryDirectory() as tmp:
         chart = Path(tmp) / "block"
         (chart / "templates").mkdir(parents=True)
@@ -226,27 +238,36 @@ def appset_cluster_facts(annotations: dict[str, str]) -> dict:
         context.write_text(
             yaml.safe_dump({"metadata": {"annotations": annotations}, "app": "karpenter-pools"}), encoding="utf-8"
         )
-        out = subprocess.run(
-            ["helm", "template", "t", str(chart), "-f", str(context)], capture_output=True, text=True, check=False
-        )
+        out = helm(["helm", "template", "t", str(chart), "-f", str(context)])
     if out.returncode != 0:
         raise SystemExit(f"the values block does not render:\n{out.stderr}")
-    return yaml.safe_load(out.stdout)["karpenter"]["cluster"]
+    return yaml.safe_load(out.stdout)
 
 
 def test_the_appset_hands_the_node_script_to_the_chart_unchanged() -> None:
     encoded = base64.b64encode(NODE_SCRIPT.encode()).decode()
-    facts = appset_cluster_facts({"dfe.hyperi.io/node_user_data": encoded})
-    expect("the annotation lands on karpenter.cluster.userData", facts.get("userData") == encoded, facts)
-    facts = appset_cluster_facts({})
+    facts = appset_values({"dfe.hyperi.io/node_user_data": encoded})["pools"]["aws"]["cluster"]
+    expect("the annotation lands on pools.aws.cluster.userData", facts.get("userData") == encoded, facts)
+    facts = appset_values({})["pools"]["aws"]["cluster"]
     expect("an older cluster secret renders an empty userData", facts.get("userData") == "", facts)
+
+
+def test_the_appset_puts_the_run_tags_and_the_resolved_pools_where_the_chart_reads_them() -> None:
+    pools = {"renderer": "karpenter-aws", "classes": {"clickhouse": BASE_POOL}}
+    tags = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
+    rendered = appset_values(
+        {"dfe.hyperi.io/karpenter_pools": json.dumps(pools), "dfe.hyperi.io/run_tags": json.dumps(tags)}
+    )["pools"]
+    expect("the run tags land on pools.aws.tags", rendered["aws"].get("tags") == tags, rendered)
+    expect("the renderer and classes land on the pools root",
+           {k: rendered[k] for k in ("renderer", "classes")} == pools, rendered)
 
 
 def test_expected_fail_a_script_that_is_not_base64_is_refused() -> None:
     """sprig's b64dec renders its own error text in place of a script it cannot decode."""
     out = nodeclass_run(None, "#!/bin/bash")
     expect("helm refuses the render", out.returncode != 0, out.stdout)
-    expect("and names the value", "karpenter.cluster.userData is not base64" in out.stderr, out.stderr)
+    expect("and names the value", "pools.aws.cluster.userData is not base64" in out.stderr, out.stderr)
 
 
 def test_run_tags_reach_every_instance_karpenter_launches() -> None:
@@ -254,12 +275,12 @@ def test_run_tags_reach_every_instance_karpenter_launches() -> None:
     refuses an untagged RunInstances needs the run's tags on the node class."""
     tags = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
     spec = render_nodeclass(tags)["spec"]
-    expect("the node class carries karpenter.tags", spec.get("tags") == tags, spec.get("tags"))
+    expect("the node class carries pools.aws.tags", spec.get("tags") == tags, spec.get("tags"))
 
 
 def test_no_run_tags_render_no_tags_field() -> None:
     spec = render_nodeclass(None)["spec"]
-    expect("an empty karpenter.tags renders no tags field", "tags" not in spec, spec.get("tags"))
+    expect("an empty pools.aws.tags renders no tags field", "tags" not in spec, spec.get("tags"))
 
 
 RUN_TAGS = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
@@ -311,9 +332,9 @@ def test_every_pool_bounds_its_drain_by_default() -> None:
 
 
 def test_a_deployment_or_a_pool_sets_its_own_drain_bound() -> None:
-    chart_wide = ("--set", "karpenter.terminationGracePeriod=2h")
+    chart_wide = ("--set", "pools.terminationGracePeriod=2h")
     value = grace(render(BASE_POOL, extra=chart_wide))
-    expect("karpenter.terminationGracePeriod reaches every pool", value == "2h", value)
+    expect("pools.terminationGracePeriod reaches every pool", value == "2h", value)
     own = grace(render({**BASE_POOL, "terminationGracePeriod": "15m"}, extra=chart_wide))
     expect("a pool's own value wins over the chart's", own == "15m", own)
 
@@ -321,7 +342,7 @@ def test_a_deployment_or_a_pool_sets_its_own_drain_bound() -> None:
 def test_expected_fail_a_drain_bound_karpenter_would_refuse_fails_the_render() -> None:
     """The CRD refuses these at admission, which fails the whole pools sync."""
     for value in ("", "1d", "Never", "24"):
-        out = nodepool_run(BASE_POOL, extra=("--set-string", f"karpenter.terminationGracePeriod={value}"))
+        out = nodepool_run(BASE_POOL, extra=("--set-string", f"pools.terminationGracePeriod={value}"))
         expect(f"{value!r} is refused", out.returncode != 0, out.stdout)
         expect(f"and named for {value!r}", "resolves terminationGracePeriod" in out.stderr, out.stderr)
 
@@ -377,6 +398,46 @@ def test_expected_fail_a_budget_list_karpenter_would_misread_fails_the_render() 
         expect(f"and named for {pool_budgets!r}", said in out.stderr, out.stderr)
 
 
+def test_no_classes_render_nothing_whatever_the_renderer() -> None:
+    """A cloud with no pools leaves the classes empty, and the chart renders no object for it."""
+    for sets in ((), ("--set", "pools.renderer=karpenter-aws")):
+        out = helm(["helm", "template", "t", str(CHART), *sets])
+        expect(f"the chart renders with {sets or 'its defaults'}", out.returncode == 0, out.stderr)
+        docs = [d for d in yaml.safe_load_all(out.stdout) if d]
+        expect(f"and renders no object with {sets or 'its defaults'}", docs == [], docs)
+
+
+# Each case is one values shape the chart must refuse rather than render around,
+# with the phrase its guard names it by. A misplaced field renders nothing silently.
+REFUSED_SHAPES = (
+    (("--set", "pools.renderer=karpenter-awz"), 'pools.renderer is "karpenter-awz"'),
+    (("--set", "pools.renderer=gke"), 'pools.renderer is "gke"'),
+    (("--set", "pools.renderer="), "pools.renderer is empty"),
+    (("--set-json", 'pools.classes.clickhouse.families=["r9gd"]'), "clickhouse.families is an AWS field"),
+    (("--set", "pools.classes.clickhouse.generationGt=7"), "clickhouse.generationGt is an AWS field"),
+    (("--set", "pools.classes.clickhouse.nodeClass.instanceStorePolicy=RAID0"), "clickhouse.nodeClass is an AWS field"),
+    (("--set", "pools.classes.clickhouse.aws.arch=arm64"), "clickhouse.aws.arch is not a karpenter-aws field"),
+    (("--set", "pools.classes.clickhouse.capacity=on-demand"), "clickhouse.capacity is not a pool class field"),
+    (("--set", "pools.clickhouse.arch=arm64"), "pools.clickhouse is not a pools setting"),
+    (("--set", "pools.aws.subnets=private"), "pools.aws.subnets is not a karpenter-aws setting"),
+    (("--set", "pools.classes.clickhouse.aws=null"), "clickhouse.aws is empty"),
+)
+
+
+def test_expected_fail_a_renderer_or_a_class_shape_the_chart_does_not_carry_fails_the_render() -> None:
+    for extra, said in REFUSED_SHAPES:
+        out = nodepool_run(BASE_POOL, extra=extra)
+        expect(f"{extra!r} is refused", out.returncode != 0, out.stdout)
+        expect(f"and named for {extra!r}", said in out.stderr, out.stderr)
+
+
+def test_expected_fail_an_unknown_renderer_fails_even_with_no_class() -> None:
+    """A typo in the renderer is refused before it can render nothing in place of the pools."""
+    out = helm(["helm", "template", "t", str(CHART), "--set", "pools.renderer=karpenter"])
+    expect("the render fails", out.returncode != 0, out.stdout)
+    expect("and names the renderer", 'pools.renderer is "karpenter"' in out.stderr, out.stderr)
+
+
 def main() -> int:
     with standalone():
         test_every_budget_renders_in_order_with_its_reasons_and_schedule()
@@ -396,10 +457,14 @@ def main() -> int:
         test_the_registry_cache_script_reaches_every_node_class_decoded()
         test_no_registry_cache_renders_no_user_data()
         test_the_appset_hands_the_node_script_to_the_chart_unchanged()
+        test_the_appset_puts_the_run_tags_and_the_resolved_pools_where_the_chart_reads_them()
         test_expected_fail_a_script_that_is_not_base64_is_refused()
         test_a_test_run_holds_every_pool_to_the_run_sizes()
         test_expected_fail_no_run_tags_bound_no_size()
         test_a_deployment_overrides_the_run_sizes_or_turns_them_off()
+        test_no_classes_render_nothing_whatever_the_renderer()
+        test_expected_fail_a_renderer_or_a_class_shape_the_chart_does_not_carry_fails_the_render()
+        test_expected_fail_an_unknown_renderer_fails_even_with_no_class()
         return summary()
 
 

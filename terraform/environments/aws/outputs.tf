@@ -252,22 +252,22 @@ output "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT" {
 }
 
 output "DFE_KARPENTER_DISCOVERY_TAG" {
-  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_discovery_tag annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.discoveryTag."
+  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_discovery_tag annotation, which layer2-platform.yaml carries into karpenter-pools' pools.aws.cluster.discoveryTag."
   value       = module.cluster.karpenter.discovery_tag
 }
 
 output "DFE_KARPENTER_INSTANCE_PROFILE" {
-  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_instance_profile annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.instanceProfile."
+  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_instance_profile annotation, which layer2-platform.yaml carries into karpenter-pools' pools.aws.cluster.instanceProfile."
   value       = module.cluster.karpenter.instance_profile
 }
 
 output "DFE_KARPENTER_KMS_KEY_ID" {
-  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_kms_key_id annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.kmsKeyId -- the same deployment CMK as kms_key_arn below."
+  description = "Bootstrap reads this into the Argo cluster secret's dfe.hyperi.io/karpenter_kms_key_id annotation, which layer2-platform.yaml carries into karpenter-pools' pools.aws.cluster.kmsKeyId -- the same deployment CMK as kms_key_arn below."
   value       = module.cluster.kms_key_arn
 }
 
 output "DFE_NODE_USER_DATA" {
-  description = "The registry cache's containerd mirror script, base64, which every managed node already runs. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/node_user_data annotation, which layer2-platform.yaml carries into karpenter-pools' karpenter.cluster.userData so Karpenter's nodes run it too. Empty when nothing is cached."
+  description = "The registry cache's containerd mirror script, base64, which every managed node already runs. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/node_user_data annotation, which layer2-platform.yaml carries into karpenter-pools' pools.aws.cluster.userData so Karpenter's nodes run it too. Empty when nothing is cached."
   value       = local.node_user_data == "" ? "" : base64encode(local.node_user_data)
 }
 

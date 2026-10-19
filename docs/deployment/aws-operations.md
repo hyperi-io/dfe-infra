@@ -63,7 +63,7 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
   in `versions.yaml`, drift-checked) -- a dated AL2023 release, not `latest`,
   so a new image arrives as a `versions.yaml` bump through the usual 7-day
   cooldown rather than as unwatched drift on every reconcile. A deployment
-  under a different image policy overrides `karpenter.nodeClass.amiAlias` in
+  under a different image policy overrides `pools.aws.nodeClass.amiAlias` in
   a values overlay rather than editing this chart's default.
 - Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` does it with no registry credential, on every pin change (`helm-lint.yml`) and in the stack release gate (`release.yml`). `dfe-stack release-gate` reads the DFE images by digest before a release-maturity stack ships. A digest-pinned verdict is cached (`--verdict-cache`), so only unproven references are read.
 - Every third-party image a pin tags deploys as tag@sha256, and the check reads it by that digest. Forgejo's curl helper comes from the chart values that pin it, and Dex, MetalLB's FRR pair and Karpenter's digest-pinned controller from their chart's own values at the pinned version. `services-digests.karpenter` and `services.aws-load-balancer-controller-image` move Karpenter's chart and the load balancer controller to digests too, once a stack pins them.
@@ -182,7 +182,7 @@ tier, by which dial key. What is AWS's own:
   account defaults -- the default VPC and everything that comes with it,
   AWS-managed KMS aliases -- are never listed or touched.
 - `--expired` selects resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h), plus any non-default security group with no run tag inside a VPC so selected -- EKS creates its cluster security group untagged and outside tofu state, and the VPC cannot be deleted while it stands. Unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
-- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `karpenter.runInstanceSizes`. Outside a run there is a template only when the registry cache writes a node script, because adding one to an existing node group replaces the group.
+- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `pools.aws.runInstanceSizes`. Outside a run there is a template only when the registry cache writes a node script, because adding one to an existing node group replaces the group.
 - Stack, re-size and platform upgrades follow
   [upgrades.md](upgrades.md); the operator order across charts is data,
   not judgement -- `upgrade-order.yaml` at the repo root.

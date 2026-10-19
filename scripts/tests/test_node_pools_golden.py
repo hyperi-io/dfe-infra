@@ -19,7 +19,9 @@ lines between documents, which Helm 4.3 writes and Helm 4.1 does not.
 
 One more case, RUN_CASE, renders what no sizing case reaches: a maintenance
 window's scheduled budget, a test run's tags and node script, and the pool fields
-only a deployer's own overlay sets.
+only a deployer's own overlay sets. Each sizing case is also rendered the way Argo
+deploys it, from the resolver's JSON on the cluster secret through
+layer2-platform.yaml's values block, and held to the same golden.
 
     python3 -m pytest scripts/tests/test_node_pools_golden.py -q
 
@@ -37,13 +39,16 @@ Needs `helm` on PATH.
 
 import base64
 import difflib
+import json
 import os
 import re
 from pathlib import Path
 
 import pytest
+from test_karpenter_pools import appset_values, helm
 from test_resolve_sizing import (
     CHART_RENDER_BASES,
+    CHARTS_DIR,
     HELM_BIN,
     _dial,
     _helm_template,
@@ -73,18 +78,22 @@ RUN_NODE_SCRIPT = "#!/bin/bash\nset -euo pipefail\necho mirrors\n"
 # Applied after the resolver's overlay: a test run's cluster facts, then one pool
 # carrying every field no resolve writes, generationIn dropped for its floor.
 RUN_OVERLAY: dict[str, object] = {
-    "karpenter": {
-        "cluster": {"userData": base64.b64encode(RUN_NODE_SCRIPT.encode()).decode()},
-        "tags": {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"},
-        "pools": {
+    "pools": {
+        "aws": {
+            "cluster": {"userData": base64.b64encode(RUN_NODE_SCRIPT.encode()).decode()},
+            "tags": {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"},
+        },
+        "classes": {
             "general": {
                 "weight": 10,
                 "minVcpu": 4,
                 "minMemoryGib": 16,
-                "generationIn": None,
-                "generationGt": "7",
                 "terminationGracePeriod": "2h",
-                "nodeClass": {"metadata": {"httpPutResponseHopLimit": 2}},
+                "aws": {
+                    "generationIn": None,
+                    "generationGt": "7",
+                    "nodeClass": {"metadata": {"httpPutResponseHopLimit": 2}},
+                },
             }
         },
     }
@@ -134,6 +143,32 @@ def test_each_golden_is_the_live_render(tmp_path: Path, case: str) -> None:
     assert committed == live, f"{case} moved -- if every line is meant, run {REWRITE}\n{moved}"
 
 
+@pytest.mark.parametrize("case", sorted(SIZING_CASES))
+def test_the_appset_path_renders_each_golden(tmp_path: Path, case: str) -> None:
+    """What Argo deploys: the resolver's JSON and the cluster facts on the cluster
+    secret, through layer2-platform.yaml's values block, render the same bytes."""
+    if HELM_BIN is None:
+        pytest.skip("helm is not on PATH")
+    dial = SIZING_CASES[case]
+    _run(_dial(tmp_path, **dial), tmp_path, cloud=dial["cloud"])
+    cluster = CHART_RENDER_BASES[CHART]["pools"]["aws"]["cluster"]
+    resolved = (tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8").strip()
+    values = appset_values(
+        {
+            "dfe.hyperi.io/karpenter_discovery_tag": cluster["discoveryTag"],
+            "dfe.hyperi.io/karpenter_instance_profile": cluster["instanceProfile"],
+            "dfe.hyperi.io/karpenter_kms_key_id": cluster["kmsKeyId"],
+            "dfe.hyperi.io/karpenter_pools": resolved,
+        }
+    )
+    path = tmp_path / "appset-values.json"
+    path.write_text(json.dumps(values), encoding="utf-8")
+    result = helm(["helm", "template", "t", str(CHARTS_DIR / CHART), "-f", str(path)])
+    assert result.returncode == 0, result.stderr
+    golden = (GOLDENS / f"{case}.yaml").read_text(encoding="utf-8")
+    assert normalise(case, result.stdout) == golden
+
+
 def test_no_golden_is_left_without_its_case() -> None:
     """A golden for a case the matrix dropped is a frozen render nothing checks."""
     stale = sorted(set(GOLDENS.glob("*.yaml")) - {GOLDENS / f"{case}.yaml" for case in CASES})
@@ -149,7 +184,7 @@ def test_source_lines_and_document_spacing_move_no_golden() -> None:
     case = min(CASES)
     golden = (GOLDENS / f"{case}.yaml").read_text(encoding="utf-8")
     body = golden.removeprefix(HEADER.format(case=case))
-    sourced = re.sub(r"^---\n", "---\n# Source: karpenter-pools/templates/nodepool.yaml\n", body, flags=re.M)
+    sourced = re.sub(r"^---\n", "---\n# Source: karpenter-pools/templates/karpenter/nodepool.yaml\n", body, flags=re.M)
     spaced = sourced.replace("\n---\n", "\n\n---\n")
     assert spaced.count("\n\n---\n") > 1, "the rebuilt render spaced no document"
     assert normalise(case, spaced) == golden

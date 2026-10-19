@@ -1,5 +1,8 @@
-{{- $k := .Values.karpenter -}}
-{{- range $name, $pool := $k.pools }}
+{{- /* The guards run here first: Helm renders this file before templates/validate.yaml. */ -}}
+{{- include "pools.validate" (dict "ctx" .) -}}
+{{- if eq .Values.pools.renderer "karpenter-aws" -}}
+{{- $p := .Values.pools -}}
+{{- range $name, $class := $p.classes }}
 ---
 apiVersion: karpenter.sh/v1
 kind: NodePool
@@ -8,20 +11,20 @@ metadata:
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
-  {{- with $pool.weight }}
+  {{- with $class.weight }}
   # Higher wins for a pod that matches more than one pool.
   weight: {{ . }}
   {{- end }}
   # The ceiling the pool stops buying at.
   limits:
-    {{- toYaml $pool.limits | nindent 4 }}
+    {{- toYaml $class.limits | nindent 4 }}
   disruption:
-    consolidationPolicy: {{ $pool.consolidation.policy }}
-    consolidateAfter: {{ $pool.consolidation.after | quote }}
+    consolidationPolicy: {{ $class.consolidation.policy }}
+    consolidateAfter: {{ $class.consolidation.after | quote }}
     # Karpenter takes the most restrictive active budget naming a reason, and a
     # scheduled one is active from each schedule hit (UTC) for its duration.
     budgets:
-      {{- range $pool.budgets }}
+      {{- range $class.budgets }}
       - nodes: {{ .nodes | quote }}
         {{- with .reasons }}
         reasons:
@@ -37,7 +40,7 @@ spec:
         {{- end }}
       {{- end }}
   template:
-    {{- with $pool.labels }}
+    {{- with $class.labels }}
     metadata:
       labels:
         {{- toYaml . | nindent 8 }}
@@ -45,8 +48,8 @@ spec:
     spec:
       # Stated even when it is Never, because the CRD's own default is 720h and
       # an omission reads as "no expiry" while meaning a forced replacement.
-      expireAfter: {{ $pool.expireAfter | quote }}
-      terminationGracePeriod: {{ include "karpenter-pools.terminationGracePeriod" (dict "ctx" $ "pool" $pool) | quote }}
+      expireAfter: {{ $class.expireAfter | quote }}
+      terminationGracePeriod: {{ include "karpenter-aws.terminationGracePeriod" (dict "ctx" $ "class" $class) | quote }}
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
@@ -55,27 +58,27 @@ spec:
         - key: kubernetes.io/arch
           operator: In
           values:
-            - {{ $pool.arch | quote }}
+            - {{ $class.arch | quote }}
         - key: karpenter.sh/capacity-type
           operator: In
           values:
-            {{- range $pool.capacityTypes }}
+            {{- range $class.capacityTypes }}
             - {{ . | quote }}
             {{- end }}
         # The resolver's family alone: Karpenter launches the cheapest family listed, so an older one here is the one it picks.
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            {{- range $pool.families }}
+            {{- range $class.aws.families }}
             - {{ . | quote }}
             {{- end }}
-        {{- if $pool.generationIn }}
+        {{- if $class.aws.generationIn }}
         # The pinned override: this pool stays on the named generation rather
         # than following the shape policy's floor.
         - key: karpenter.k8s.aws/instance-generation
           operator: In
           values:
-            {{- range $pool.generationIn }}
+            {{- range $class.aws.generationIn }}
             - {{ . | quote }}
             {{- end }}
         {{- else }}
@@ -84,9 +87,9 @@ spec:
         - key: karpenter.k8s.aws/instance-generation
           operator: Gt
           values:
-            - {{ $pool.generationGt | quote }}
+            - {{ $class.aws.generationGt | quote }}
         {{- end }}
-        {{- with $pool.minVcpu }}
+        {{- with $class.minVcpu }}
         # families + generation alone bound WHICH instance line, not which SIZE
         # on it -- a workload sized up for its volume's EBS baseline (a bigger
         # instance sustains more IOPS/throughput at the same family) still fits
@@ -98,25 +101,26 @@ spec:
           values:
             - {{ sub (int .) 1 | quote }}
         {{- end }}
-        {{- with $pool.minMemoryGib }}
+        {{- with $class.minMemoryGib }}
         - key: karpenter.k8s.aws/instance-memory
           operator: Gt
           values:
             # instance-memory is in MiB; the pool states GiB, so 1024x - 1.
             - {{ sub (mul (int .) 1024) 1 | quote }}
         {{- end }}
-        {{- if and $k.tags $k.runInstanceSizes }}
+        {{- if and $p.aws.tags $p.aws.runInstanceSizes }}
         # Set only during a test run, whose account may deny every other size at
         # RunInstances (values.yaml, runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
           operator: In
           values:
-            {{- range $k.runInstanceSizes }}
+            {{- range $p.aws.runInstanceSizes }}
             - {{ . | quote }}
             {{- end }}
         {{- end }}
-      {{- with $pool.taints }}
+      {{- with $class.taints }}
       taints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
 {{- end }}

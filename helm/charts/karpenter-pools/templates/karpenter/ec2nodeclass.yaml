@@ -1,6 +1,9 @@
-{{- $k := .Values.karpenter -}}
-{{- range $name, $pool := $k.pools }}
-{{- $nc := include "karpenter-pools.nodeClass" (dict "ctx" $ "pool" $pool) | fromYaml }}
+{{- /* The guards run here first: Helm renders this file before templates/validate.yaml. */ -}}
+{{- include "pools.validate" (dict "ctx" .) -}}
+{{- if eq .Values.pools.renderer "karpenter-aws" -}}
+{{- $p := .Values.pools -}}
+{{- range $name, $class := $p.classes }}
+{{- $nc := include "karpenter-aws.nodeClass" (dict "ctx" $ "class" $class) | fromYaml }}
 ---
 # One EC2NodeClass per pool, not one shared: the instance-store policy and the
 # root volume differ per workload, and a shared class would carry the widest of
@@ -18,25 +21,25 @@ spec:
     - alias: {{ $nc.amiAlias | quote }}
   # A profile, not a role: Karpenter manages an instance profile it is given a
   # role for, and this one is the tofu's to create, tag and delete.
-  instanceProfile: {{ $k.cluster.instanceProfile | quote }}
-  {{- with $k.cluster.userData }}
+  instanceProfile: {{ $p.aws.cluster.instanceProfile | quote }}
+  {{- with $p.aws.cluster.userData }}
   # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
   userData: |
     {{- b64dec . | nindent 4 }}
   {{- end }}
-  {{- with $k.tags }}
+  {{- with $p.aws.tags }}
   tags:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   # Private subnets only -- the tag is written on those and on nothing else.
   subnetSelectorTerms:
     - tags:
-        karpenter.sh/discovery: {{ $k.cluster.discoveryTag | quote }}
+        karpenter.sh/discovery: {{ $p.aws.cluster.discoveryTag | quote }}
   # The EKS cluster security group, which is what admits a node to the control
   # plane.
   securityGroupSelectorTerms:
     - tags:
-        karpenter.sh/discovery: {{ $k.cluster.discoveryTag | quote }}
+        karpenter.sh/discovery: {{ $p.aws.cluster.discoveryTag | quote }}
   {{- with $nc.instanceStorePolicy }}
   instanceStorePolicy: {{ . }}
   {{- end }}
@@ -56,6 +59,7 @@ spec:
         throughput: {{ $nc.rootVolume.throughputMibS }}
         encrypted: true
         # The deployment's own key, the same one EKS secrets and Kafka take.
-        kmsKeyID: {{ $k.cluster.kmsKeyId | quote }}
+        kmsKeyID: {{ $p.aws.cluster.kmsKeyId | quote }}
         deleteOnTermination: true
+{{- end }}
 {{- end }}

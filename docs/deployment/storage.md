@@ -198,7 +198,7 @@ provisioned to the instance's own EBS ceiling, with 14.5x the IOPS.
 the container at `/var/lib/clickhouse/disks/s3_object_cache` (concatenated with
 the operator's own mounts, per the CRD's own comment on that field) with a
 `nodeSelector` on `dfe.hyperi.io/workload: clickhouse` -- the label
-`build_karpenter_pools` (`scripts/resolve_sizing.py`) gives every pool it
+`build_pool_classes` (`scripts/resolve_sizing.py`) gives every pool it
 builds, named after the pool's own use case. The data PVC keeps its default
 mount and now holds only the `s3_object` metadata_path. The resolver's own
 `clickhouse.storage.size` default does not shrink to reflect that yet -- it is

@@ -244,32 +244,33 @@ spec:
               {{- end }}
               {{- if eq .app "karpenter-pools" }}
               {{- $pools := index .metadata.annotations "dfe.hyperi.io/karpenter_pools" }}
-              # The three facts karpenter.cluster.* names, carried onto the
-              # cluster secret by bootstrap.sh from the kubernetes-cluster
-              # module's `karpenter` output. Without them the chart's own
-              # guards refuse to render (helm/charts/karpenter-pools/templates/_pools.tpl).
-              karpenter:
-                cluster:
-                  discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
-                  instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
-                  kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
-                  # The registry cache's node script, base64; absent renders no userData.
-                  userData: {{ index .metadata.annotations "dfe.hyperi.io/node_user_data" | default "" | quote }}
+              pools:
+                aws:
+                  # The three facts pools.aws.cluster.* names, carried onto the
+                  # cluster secret by bootstrap.sh from the kubernetes-cluster
+                  # module's `karpenter` output. Without them the chart's own
+                  # guards refuse to render (helm/charts/karpenter-pools/templates/karpenter/_karpenter.tpl).
+                  cluster:
+                    discoveryTag: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_discovery_tag" | quote }}
+                    instanceProfile: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_instance_profile" | quote }}
+                    kmsKeyId: {{ index .metadata.annotations "dfe.hyperi.io/karpenter_kms_key_id" | quote }}
+                    # The registry cache's node script, base64. Absent renders no userData.
+                    userData: {{ index .metadata.annotations "dfe.hyperi.io/node_user_data" | default "" | quote }}
+                  # A test run's id and expiry, parsed for the same reason the pools
+                  # are and re-emitted as JSON so an ISO expiry stays a string. The
+                  # annotation is absent outside a run.
+                  {{- with index .metadata.annotations "dfe.hyperi.io/run_tags" }}
+                  tags: {{ . | fromJson | toJson }}
+                  {{- end }}
                 {{- if $pools }}
-                # The pools the resolver sized, carried as one line of JSON on
-                # the cluster secret. Parsed rather than spliced, so an
-                # annotation that is not JSON fails this render instead of
-                # injecting arbitrary values into the Application. Absent, the
-                # chart's own `pools: {}` default renders no NodePool, so every
-                # workload the managed groups cannot fit stays Pending.
-                pools:
-                  {{- $pools | fromJson | toYaml | nindent 4 }}
-                {{- end }}
-                # A test run's id and expiry, parsed for the same reason the pools
-                # are and re-emitted as JSON so an ISO expiry stays a string; the
-                # annotation is absent outside a run.
-                {{- with index .metadata.annotations "dfe.hyperi.io/run_tags" }}
-                tags: {{ . | fromJson | toJson }}
+                # The renderer and the pool classes the resolver sized, carried
+                # as one line of JSON on the cluster secret. Parsed rather than
+                # spliced, so an annotation that is not JSON fails this render
+                # instead of injecting arbitrary values into the Application.
+                # Absent, the chart's own `classes: {}` default renders no
+                # NodePool, so every workload the managed groups cannot fit
+                # stays Pending.
+                {{- $pools | fromJson | toYaml | nindent 2 }}
                 {{- end }}
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}

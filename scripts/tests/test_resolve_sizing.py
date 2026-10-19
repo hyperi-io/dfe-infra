@@ -32,8 +32,6 @@ Re-capture with `python3 scripts/resolve_sizing.py capture --region us-west-2
 --fixtures scripts/tests/fixtures/sizing`.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import os
@@ -979,8 +977,7 @@ def test_combined_sizes_no_controller_node_pool_or_shape(tmp_path: Path) -> None
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert "kraft-controller" not in doc["node_pools"]
     assert "kraft-controller" not in doc["resolved_shapes"]
-    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
-    assert "kraft-controller" not in pools
+    assert "kraft-controller" not in _pools(tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "| kraft-controller |" not in report
     assert "the quorum runs on the brokers themselves" in report
@@ -993,8 +990,7 @@ def test_separate_sizes_the_controller_node_pool_and_shape(tmp_path: Path) -> No
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["node_pools"]["kraft-controller"]["desired_size"] == 3
     assert doc["resolved_shapes"]["kraft-controller"]["instance_types"]
-    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
-    assert "kraft-controller" in pools
+    assert "kraft-controller" in _pools(tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "| kraft-controller |" in report
 
@@ -1092,8 +1088,7 @@ def test_the_toolbox_resolves_into_resolved_shapes_and_nowhere_else(tmp_path: Pa
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["resolved_shapes"]["toolbox"]["instance_types"][0].startswith("t")
     assert "toolbox" not in doc["node_pools"]
-    karpenter = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
-    assert "toolbox" not in karpenter
+    assert "toolbox" not in _pools(tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "| toolbox |" not in report
     resolved = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
@@ -1113,15 +1108,18 @@ def test_expected_fail_a_toolbox_override_absent_from_the_region_is_refused(tmp_
     assert "sizing.overrides.toolbox.instance_type" in capsys.readouterr().err
 
 
-# karpenter-pools' own values.yaml documents its per-pool fields in a COMMENT
-# above `pools: {}` (empty on purpose -- every field is filled by the
+# karpenter-pools' own values.yaml documents its per-class fields in a COMMENT
+# above `classes: {}` (empty on purpose -- every field is filled by the
 # resolver), so those names never appear as literal `key:` lines there the way
 # kafka's and clickhouse-cluster's own defaults do. Checked against this fixed
-# contract instead, which mirrors the render guard in
-# helm/charts/karpenter-pools/templates/_pools.tpl exactly.
+# contract instead, which mirrors the render guards in
+# helm/charts/karpenter-pools/templates/_pools.tpl and templates/karpenter/_karpenter.tpl.
 KARPENTER_VALUES_FIELDS = {
-    "karpenter",
     "pools",
+    "renderer",
+    "classes",
+    # The karpenter-aws renderer's own block in each class, and what it holds.
+    "aws",
     "families",
     "arch",
     "capacityTypes",
@@ -1179,16 +1177,22 @@ def test_the_values_overlay_names_only_keys_the_charts_declare(tmp_path: Path) -
         if not stripped or stripped == "-" or stripped.startswith(("##", "- ")):
             continue
         key = line.split(":", 1)[0].strip()
-        # Under karpenter.pools, the key IS the use case (eks-system,
+        # Under pools.classes, the key IS the use case (eks-system,
         # kafka-broker, ...) -- a map keyed by name, not a chart-declared field.
         assert key in declared or key in KARPENTER_VALUES_FIELDS or key in resolve_sizing.USE_CASES, key
 
 
-def test_every_karpenter_pool_carries_every_field_the_chart_guard_requires(tmp_path: Path) -> None:
-    """Mirrors helm/charts/karpenter-pools/templates/_pools.tpl's own render guard."""
+def _classes(values: str) -> str:
+    """The `pools.classes` block of a values overlay, as text."""
+    return values.split("\npools:", 1)[1].split("\n  classes:", 1)[1]
+
+
+def test_every_pool_class_carries_every_field_the_chart_guard_requires(tmp_path: Path) -> None:
+    """Mirrors the render guard in helm/charts/karpenter-pools/templates/karpenter/_karpenter.tpl."""
     _run(_dial(tmp_path), tmp_path)
     values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
-    karpenter_block = values.split("\nkarpenter:", 1)[1]
+    assert '\npools:\n  renderer: "karpenter-aws"\n' in values
+    classes = _classes(values)
     for required in (
         "families:",
         "arch:",
@@ -1200,11 +1204,20 @@ def test_every_karpenter_pool_carries_every_field_the_chart_guard_requires(tmp_p
         "expireAfter:",
         "limits:",
     ):
-        assert required in karpenter_block, required
-    # Every pool names a generation floor or a pin -- never neither, and never
-    # both -- exactly as templates/_pools.tpl's guard demands.
-    for pool_body in re.split(r"^    \S+:$", karpenter_block.split("pools:", 1)[1], flags=re.M)[1:]:
-        assert ("generationGt:" in pool_body) != ("generationIn:" in pool_body)
+        assert required in classes, required
+    # Every class names a generation floor or a pin under aws -- never neither,
+    # and never both -- exactly as the chart's guard demands.
+    for class_body in re.split(r"^    \S+:$", classes, flags=re.M)[1:]:
+        aws = class_body.split("\n      aws:\n", 1)[1]
+        assert ("generationGt:" in aws) != ("generationIn:" in aws)
+
+
+def test_every_aws_only_field_sits_under_the_class_aws_block(tmp_path: Path) -> None:
+    """The chart refuses an AWS field beside the shared ones, so the resolver never writes one there."""
+    _run(_dial(tmp_path), tmp_path)
+    for name, body in _pools(tmp_path).items():
+        assert not {"families", "generationGt", "generationIn", "nodeClass"} & set(body), name
+        assert set(body["aws"]) <= {"families", "generationGt", "generationIn", "nodeClass"}, name
 
 
 def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(tmp_path: Path) -> None:
@@ -1229,7 +1242,7 @@ def test_every_dedicated_karpenter_pool_carries_the_same_taint(tmp_path: Path) -
     for a separate controller pool so every dedicated use case has one to
     check."""
     _run(_dial(tmp_path, controller_pool="separate"), tmp_path)
-    pools = json.loads((tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    pools = _pools(tmp_path)
     for use_case in resolve_sizing.DEDICATED_USE_CASES:
         assert pools[use_case]["taints"] == [
             {"key": resolve_sizing.WORKLOAD_LABEL, "value": use_case, "effect": "NoSchedule"}
@@ -1239,17 +1252,19 @@ def test_every_dedicated_karpenter_pool_carries_the_same_taint(tmp_path: Path) -
             assert "taints" not in body, use_case
 
 
-def test_the_karpenter_pools_are_written_where_bootstrap_can_read_them(tmp_path: Path) -> None:
+def test_the_pool_classes_are_written_where_bootstrap_can_read_them(tmp_path: Path) -> None:
     """bootstrap.sh ships no YAML parser, and the values overlay only reaches a
-    cluster through a deploy repo -- so the pools are written again as one line
-    of JSON for the cluster-secret annotation."""
+    cluster through a deploy repo -- so the renderer and classes are written
+    again as one line of JSON for the cluster-secret annotation."""
     _run(_dial(tmp_path), tmp_path)
     body = (tmp_path / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8")
     assert body.count("\n") == 1, "the annotation takes one line"
     pools = json.loads(body)
+    assert set(pools) == {"renderer", "classes"}
+    assert pools["renderer"] == resolve_sizing.POOL_RENDERER
     values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
-    for name in pools:
-        assert f"    {name}:" in values, name
+    for name in pools["classes"]:
+        assert f"\n    {name}:\n" in _classes(values), name
     assert "'" not in body, "a single quote would break the annotation's own quoting"
 
 
@@ -1884,9 +1899,9 @@ def test_karpenter_admits_only_the_chosen_family_not_the_older_fallbacks() -> No
         instance_type="m9g.8xlarge",
         fallbacks=["m8g.8xlarge", "m7g.8xlarge", "m6g.8xlarge"],
     )
-    pools = resolve_sizing.build_karpenter_pools({"general": choice}, {})
-    assert pools["general"]["families"] == ["m9g"]
-    assert pools["general"]["generationGt"] == "8"
+    pools = resolve_sizing.build_pool_classes({"general": choice}, {})
+    assert pools["general"]["aws"]["families"] == ["m9g"]
+    assert pools["general"]["aws"]["generationGt"] == "8"
 
 
 def test_karpenter_admits_the_older_family_newest_within_chose() -> None:
@@ -1897,9 +1912,9 @@ def test_karpenter_admits_the_older_family_newest_within_chose() -> None:
         fallbacks=["m9g.large", "m7g.large"],
         price_policy="newest-within",
     )
-    pools = resolve_sizing.build_karpenter_pools({"general": choice}, {})
-    assert pools["general"]["families"] == ["m8g"]
-    assert pools["general"]["generationGt"] == "7"
+    pools = resolve_sizing.build_pool_classes({"general": choice}, {})
+    assert pools["general"]["aws"]["families"] == ["m8g"]
+    assert pools["general"]["aws"]["generationGt"] == "7"
 
 
 def test_karpenter_admits_the_window_cheapest_of_compared() -> None:
@@ -1911,33 +1926,33 @@ def test_karpenter_admits_the_window_cheapest_of_compared() -> None:
         price_policy="cheapest-of",
     )
     cloud_entry = {"use_cases": {"ci-burst": {"price_policy": "cheapest-of", "price_generations": 2}}}
-    pool = resolve_sizing.build_karpenter_pools({"ci-burst": choice}, cloud_entry)["ci-burst"]
-    assert pool["families"] == ["c8gd", "c9gd"]
-    assert pool["generationGt"] == "7"
+    pool = resolve_sizing.build_pool_classes({"ci-burst": choice}, cloud_entry)["ci-burst"]
+    assert pool["aws"]["families"] == ["c8gd", "c9gd"]
+    assert pool["aws"]["generationGt"] == "7"
 
 
 def test_expected_fail_a_family_with_no_generation_digit_is_refused() -> None:
     choice = _choice(use_case="general", instance_type="mac.large", fallbacks=[])
     with pytest.raises(resolve_sizing.ResolveError, match="no generation digit"):
-        resolve_sizing.build_karpenter_pools({"general": choice}, {})
+        resolve_sizing.build_pool_classes({"general": choice}, {})
 
 
 def test_karpenter_generation_floor_with_one_family_is_its_own_generation_minus_one() -> None:
     choice = _choice(use_case="clickhouse", instance_type="r9gd.2xlarge", fallbacks=[])
-    pools = resolve_sizing.build_karpenter_pools({"clickhouse": choice}, {})
-    assert pools["clickhouse"]["families"] == ["r9gd"]
-    assert pools["clickhouse"]["generationGt"] == "8"
+    pools = resolve_sizing.build_pool_classes({"clickhouse": choice}, {})
+    assert pools["clickhouse"]["aws"]["families"] == ["r9gd"]
+    assert pools["clickhouse"]["aws"]["generationGt"] == "8"
 
 
 def test_karpenter_places_nothing_for_msk_broker() -> None:
     """MSK runs its own brokers -- there is no EC2 instance to place."""
     choice = _choice(use_case="msk-broker", instance_type="express.m7g.large", fallbacks=[])
-    assert resolve_sizing.build_karpenter_pools({"msk-broker": choice}, {}) == {}
+    assert resolve_sizing.build_pool_classes({"msk-broker": choice}, {}) == {}
 
 
 def test_karpenter_ci_burst_pool_is_spot_first() -> None:
     choice = _choice(use_case="ci-burst", instance_type="c9gd.4xlarge", fallbacks=["c8gd.4xlarge"])
-    pool = resolve_sizing.build_karpenter_pools({"ci-burst": choice}, {})["ci-burst"]
+    pool = resolve_sizing.build_pool_classes({"ci-burst": choice}, {})["ci-burst"]
     assert pool["capacityTypes"] == ["spot", "on-demand"]
     assert pool["budgets"] == [{"nodes": "100%"}]
 
@@ -1952,9 +1967,9 @@ DAILY_0200_4H = render_dial.MaintenanceWindow(minute=0, hour=2, weekday=None, mi
 
 
 def _budgets(use_case: str, disruption: render_dial.Disruption | None = None) -> list[dict]:
-    """The budgets build_karpenter_pools gives one pool of `use_case`."""
+    """The budgets build_pool_classes gives one pool of `use_case`."""
     choice = _choice(use_case=use_case, instance_type="m9g.large", fallbacks=[])
-    pools = resolve_sizing.build_karpenter_pools({use_case: choice}, {}, None, disruption)
+    pools = resolve_sizing.build_pool_classes({use_case: choice}, {}, None, disruption)
     return pools[use_case]["budgets"]
 
 
@@ -2105,9 +2120,9 @@ def test_karpenter_a_pinned_policy_emits_generation_in_not_generation_gt() -> No
     cloud_entry = {
         "use_cases": {"general": {"generation_policy": "pinned", "generation_pin": "7", "arch": "arm64"}}
     }
-    pool = resolve_sizing.build_karpenter_pools({"general": choice}, cloud_entry)["general"]
-    assert pool["generationIn"] == ["7"]
-    assert "generationGt" not in pool
+    pool = resolve_sizing.build_pool_classes({"general": choice}, cloud_entry)["general"]
+    assert pool["aws"]["generationIn"] == ["7"]
+    assert "generationGt" not in pool["aws"]
 
 
 def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin() -> None:
@@ -2122,9 +2137,9 @@ def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin()
     cloud_entry = {
         "use_cases": {"kafka-broker": {"generation_policy": "pinned", "generation_pin": "8", "arch": "arm64"}}
     }
-    pool = resolve_sizing.build_karpenter_pools({"kafka-broker": choice}, cloud_entry)["kafka-broker"]
-    assert pool["families"] == ["m9g"]
-    assert pool["generationIn"] == ["9"]
+    pool = resolve_sizing.build_pool_classes({"kafka-broker": choice}, cloud_entry)["kafka-broker"]
+    assert pool["aws"]["families"] == ["m9g"]
+    assert pool["aws"]["generationIn"] == ["9"]
 
 
 def test_the_tofu_descriptions_name_the_graviton4_pin_only_while_the_shapes_carry_it() -> None:
@@ -2150,9 +2165,9 @@ def test_karpenter_root_volume_carries_raid0_only_where_the_shape_asks_for_it() 
             "clickhouse": {"volumes": {"cache": {"instance_store": "required"}}},
         }
     }
-    pool = resolve_sizing.build_karpenter_pools({"clickhouse": choice}, cloud_entry)["clickhouse"]
-    assert pool["nodeClass"]["instanceStorePolicy"] == "RAID0"
-    assert pool["nodeClass"]["rootVolume"]["sizeGi"] == 40
+    pool = resolve_sizing.build_pool_classes({"clickhouse": choice}, cloud_entry)["clickhouse"]
+    assert pool["aws"]["nodeClass"]["instanceStorePolicy"] == "RAID0"
+    assert pool["aws"]["nodeClass"]["rootVolume"]["sizeGi"] == 40
 
 
 def test_karpenter_a_pool_demand_above_the_sized_fleet_raises_both_limits() -> None:
@@ -2161,13 +2176,13 @@ def test_karpenter_a_pool_demand_above_the_sized_fleet_raises_both_limits() -> N
     choice = _choice(
         use_case="general", instance_type="m9g.xlarge", vcpu=4, memory_gib=16.0, count=1
     )
-    sized_only = resolve_sizing.build_karpenter_pools({"general": choice}, {})["general"]
+    sized_only = resolve_sizing.build_pool_classes({"general": choice}, {})["general"]
     assert sized_only["limits"] == {"cpu": "8", "memory": "32Gi"}
     # 11.2 vCPU is three 4-vCPU nodes, and the pool may hold twice that.
-    demanded = resolve_sizing.build_karpenter_pools({"general": choice}, {}, {"general": 11.2})
+    demanded = resolve_sizing.build_pool_classes({"general": choice}, {}, {"general": 11.2})
     assert demanded["general"]["limits"] == {"cpu": "24", "memory": "96Gi"}
     # A demand the sized fleet already covers changes nothing.
-    small = resolve_sizing.build_karpenter_pools({"general": choice}, {}, {"general": 2.0})
+    small = resolve_sizing.build_pool_classes({"general": choice}, {}, {"general": 2.0})
     assert small["general"]["limits"] == sized_only["limits"]
 
 
@@ -2201,19 +2216,17 @@ def test_ci_burst_is_not_a_dial_knob(tmp_path: Path) -> None:
     assert "ci-burst" not in doc["node_pools"]
 
 
-def test_msk_plus_ci_burst_carries_exactly_five_karpenter_pools(msk_case: Path) -> None:
+def test_msk_plus_ci_burst_carries_exactly_five_pool_classes(msk_case: Path) -> None:
     values = (msk_case / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
-    karpenter_block = values.split("\nkarpenter:", 1)[1]
-    pools_block = karpenter_block.split("pools:", 1)[1]
-    pool_names = set(re.findall(r"^    (\S+):$", pools_block, re.M))
-    assert pool_names == {"eks-system", "general", "clickhouse", "keeper", "ci-burst"}
+    class_names = set(re.findall(r"^    (\S+):$", _classes(values), re.M))
+    assert class_names == {"eks-system", "general", "clickhouse", "keeper", "ci-burst"}
 
 
-def test_msk_broker_keeps_its_ec2_shape_out_of_karpenter(msk_case: Path) -> None:
+def test_msk_broker_keeps_its_ec2_shape_out_of_the_pools(msk_case: Path) -> None:
     doc = json.loads((msk_case / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
     assert doc["msk-broker"]["instance_types"][0].startswith("express.")
     values = (msk_case / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
-    assert "msk-broker" not in values.split("\nkarpenter:", 1)[1]
+    assert "msk-broker" not in values.split("\npools:", 1)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -2264,11 +2277,13 @@ CHART_RENDER_BASES: dict[str, dict[str, object]] = {
         },
     },
     "karpenter-pools": {
-        "karpenter": {
-            "cluster": {
-                "discoveryTag": "dfe-test",
-                "instanceProfile": "dfe-test-karpenter",
-                "kmsKeyId": "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000",
+        "pools": {
+            "aws": {
+                "cluster": {
+                    "discoveryTag": "dfe-test",
+                    "instanceProfile": "dfe-test-karpenter",
+                    "kmsKeyId": "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000",
+                }
             }
         }
     },
@@ -2378,7 +2393,8 @@ def _readiness_timeout_s() -> int:
 
 
 def _pools(out: Path) -> dict:
-    return json.loads((out / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))
+    """The pool classes bootstrap carries onto the cluster secret, by name."""
+    return json.loads((out / "sizing" / "scale.karpenter.json").read_text(encoding="utf-8"))["classes"]
 
 
 def test_the_app_set_figures_match_the_scale_profile() -> None:

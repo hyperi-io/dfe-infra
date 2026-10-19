@@ -129,21 +129,21 @@
 #                            networkModel; empty omits the annotation and
 #                            common.yaml's range stands
 #   DFE_KARPENTER_DISCOVERY_TAG      the karpenter.sh/discovery tag value, for
-#                            karpenter-pools' karpenter.cluster.discoveryTag;
-#                            empty omits the annotation (non-AWS clouds)
+#                            karpenter-pools' pools.aws.cluster.discoveryTag.
+#                            Empty omits the annotation (non-AWS clouds)
 #   DFE_KARPENTER_INSTANCE_PROFILE   the pre-provisioned node instance profile,
-#                            for karpenter-pools' karpenter.cluster.instanceProfile;
-#                            empty omits the annotation (non-AWS clouds)
+#                            for karpenter-pools' pools.aws.cluster.instanceProfile.
+#                            Empty omits the annotation (non-AWS clouds)
 #   DFE_KARPENTER_KMS_KEY_ID the deployment CMK every node root volume is
 #                            encrypted with, for
-#                            karpenter-pools' karpenter.cluster.kmsKeyId; empty
+#                            karpenter-pools' pools.aws.cluster.kmsKeyId. Empty
 #                            omits the annotation (non-AWS clouds)
 #   DFE_NODE_USER_DATA       the registry cache's containerd mirror script,
-#                            base64, for karpenter-pools' karpenter.cluster.userData;
-#                            empty omits the annotation (nothing cached)
+#                            base64, for karpenter-pools' pools.aws.cluster.userData.
+#                            Empty omits the annotation (nothing cached)
 #   DFE_RUN_TAGS             a test run's id and expiry tags as one line of JSON,
-#                            for karpenter-pools' karpenter.tags and the load
-#                            balancer controller's defaultTags; empty omits the
+#                            for karpenter-pools' pools.aws.tags and the load
+#                            balancer controller's defaultTags. Empty omits the
 #                            annotation (every deployment that is not a test run)
 #   DFE_RESOURCE_TAGS        the cloud root's whole tag set (governance plus run)
 #                            as one line of JSON, for the gateway chart's
