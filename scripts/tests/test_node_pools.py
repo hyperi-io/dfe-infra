@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
-#  File:         test_karpenter_pools.py
+#  File:         test_node_pools.py
 #  Purpose:      Prove the optional minVcpu/minMemoryGib pool floor renders the
 #                right Karpenter requirement, and that omitting it changes
 #                nothing for every pool that does not set it, that a test
 #                run's tags hold every pool to the run's instance sizes, that
 #                every pool bounds how long a drain waits, that its
 #                disruption budgets render in the form the CRD takes, and that
-#                the chart refuses a renderer or a class shape it does not carry.
+#                the chart refuses a renderer, a class shape or a nested key it
+#                does not carry, and a Karpenter cluster with no classes.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -19,7 +20,7 @@ which SIZE on it: a workload sized up for its volume's EBS throughput baseline
 still satisfies a smaller instance's cpu/memory REQUEST, which is all
 Karpenter's own bin-packing looks at. minVcpu/minMemoryGib close that gap.
 
-    python3 scripts/tests/test_karpenter_pools.py
+    python3 scripts/tests/test_node_pools.py
 
 Needs `helm` on PATH. No test runner, matching the other checks here.
 """
@@ -37,7 +38,7 @@ import yaml
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CHART = REPO_ROOT / "helm" / "charts" / "karpenter-pools"
+CHART = REPO_ROOT / "helm" / "charts" / "node-pools"
 NODEPOOL = "templates/karpenter/nodepool.yaml"
 NODECLASS = "templates/karpenter/ec2nodeclass.yaml"
 
@@ -169,8 +170,8 @@ def test_the_appset_carries_the_pools_through_from_the_cluster_secret() -> None:
     """A chart whose `classes` stays at its own empty default renders no NodePool,
     so every workload the managed groups cannot fit stays Pending."""
     block = appset_values_block()
-    expect("the appset reads the karpenter_pools annotation",
-           'dfe.hyperi.io/karpenter_pools' in block, block)
+    expect("the appset reads the node_pools annotation",
+           'dfe.hyperi.io/node_pools' in block, block)
     expect("and lands it on the pools root",
            "$pools | fromJson | toYaml | nindent" in block, block)
     expect("parsed rather than spliced, so a non-JSON annotation fails the render",
@@ -256,7 +257,7 @@ def test_the_appset_puts_the_run_tags_and_the_resolved_pools_where_the_chart_rea
     pools = {"renderer": "karpenter-aws", "classes": {"clickhouse": BASE_POOL}}
     tags = {"dfe-e2e": "run-1", "expires-at": "2026-10-08T12:00:00Z"}
     rendered = appset_values(
-        {"dfe.hyperi.io/karpenter_pools": json.dumps(pools), "dfe.hyperi.io/run_tags": json.dumps(tags)}
+        {"dfe.hyperi.io/node_pools": json.dumps(pools), "dfe.hyperi.io/run_tags": json.dumps(tags)}
     )["pools"]
     expect("the run tags land on pools.aws.tags", rendered["aws"].get("tags") == tags, rendered)
     expect("the renderer and classes land on the pools root",
@@ -388,6 +389,8 @@ REFUSED_BUDGETS = (
         ],
         "no always-on budget for Drifted",
     ),
+    ([{"nodes": "1", "reason": ["Empty"]}], "budgets[0].reason is not a budget field"),
+    ({"nodes": "1"}, "budgets is not a list"),
 )
 
 
@@ -407,6 +410,53 @@ def test_no_classes_render_nothing_whatever_the_renderer() -> None:
         expect(f"and renders no object with {sets or 'its defaults'}", docs == [], docs)
 
 
+def test_expected_fail_a_karpenter_cluster_with_no_classes_fails_the_render() -> None:
+    """Argo prunes what a render leaves out, so no classes beside the cluster facts would delete every NodePool."""
+    for sets in (
+        ("--set", "pools.aws.cluster.discoveryTag=dfe-test"),
+        ("--set", "pools.aws.cluster.discoveryTag=dfe-test", "--set", "pools.renderer=karpenter-aws"),
+    ):
+        out = helm(["helm", "template", "t", str(CHART), *sets])
+        expect(f"the render fails with {sets}", out.returncode != 0, out.stdout)
+        expect(f"and names the annotation the classes arrive on, with {sets}",
+               "dfe.hyperi.io/node_pools" in out.stderr, out.stderr)
+
+
+# The three Karpenter facts bootstrap.sh writes on every AWS cluster secret.
+CLUSTER_FACTS = {
+    "dfe.hyperi.io/karpenter_discovery_tag": "dfe-test",
+    "dfe.hyperi.io/karpenter_instance_profile": "dfe-test",
+    "dfe.hyperi.io/karpenter_kms_key_id": "arn:aws:kms:us-west-2:000000000000:key/abc",
+}
+
+
+def appset_render(annotations: dict[str, str]) -> subprocess.CompletedProcess:
+    """The chart rendered from layer2-platform.yaml's values block on one cluster secret."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "appset-values.json"
+        path.write_text(json.dumps(appset_values(annotations)), encoding="utf-8")
+        return helm(["helm", "template", "t", str(CHART), "-f", str(path)])
+
+
+def test_expected_fail_a_cluster_secret_without_the_pool_annotation_fails_the_sync() -> None:
+    """A secret that carries no node_pools, or only the annotation's previous name, renders no NodePool unguarded."""
+    root = {"rootVolume": {"sizeGi": 40, "iops": 3000, "throughputMibS": 125}}
+    pool = {**BASE_POOL, "aws": {**BASE_POOL["aws"], "nodeClass": root}}
+    pools = json.dumps({"renderer": "karpenter-aws", "classes": {"clickhouse": pool}})
+    for label, annotations in (
+        ("absent", CLUSTER_FACTS),
+        ("under its previous name", {**CLUSTER_FACTS, "dfe.hyperi.io/karpenter_pools": pools}),
+    ):
+        out = appset_render(annotations)
+        expect(f"an annotation {label} fails the render", out.returncode != 0, out.stdout)
+        expect(f"and says why, {label}", "rendering no NodePool would delete every live one" in out.stderr,
+               out.stderr)
+    out = appset_render({**CLUSTER_FACTS, "dfe.hyperi.io/node_pools": pools})
+    expect("the annotation under its own name renders the pool", out.returncode == 0, out.stderr)
+    kinds = sorted(d["kind"] for d in yaml.safe_load_all(out.stdout) if d)
+    expect("one NodePool and one EC2NodeClass", kinds == ["EC2NodeClass", "NodePool"], kinds)
+
+
 # Each case is one values shape the chart must refuse rather than render around,
 # with the phrase its guard names it by. A misplaced field renders nothing silently.
 REFUSED_SHAPES = (
@@ -421,6 +471,38 @@ REFUSED_SHAPES = (
     (("--set", "pools.clickhouse.arch=arm64"), "pools.clickhouse is not a pools setting"),
     (("--set", "pools.aws.subnets=private"), "pools.aws.subnets is not a karpenter-aws setting"),
     (("--set", "pools.classes.clickhouse.aws=null"), "clickhouse.aws is empty"),
+    (("--set", "pools.classes.clickhouse.limits.memry=64Gi"), "clickhouse.limits.memry is not a pool limit"),
+    (
+        ("--set", "pools.classes.clickhouse.consolidation.afterr=10m"),
+        "clickhouse.consolidation.afterr is not a consolidation field",
+    ),
+    (
+        ("--set-json", 'pools.classes.clickhouse.taints=[{"key":"k","value":"v","effect":"NoSchedule","operator":"Equal"}]'),
+        "clickhouse.taints[0].operator is not a taint field",
+    ),
+    (("--set-json", 'pools.classes.clickhouse.taints={"key":"k"}'), "clickhouse.taints is not a list"),
+    (("--set", "pools.aws.cluster.kmsKey=abc"), "pools.aws.cluster.kmsKey is not a cluster fact"),
+    (
+        ("--set", "pools.aws.nodeClass.rootvolume.sizeGi=40"),
+        "pools.aws.nodeClass.rootvolume is not an EC2NodeClass setting",
+    ),
+    (
+        ("--set", "pools.aws.nodeClass.rootVolume.size=40"),
+        "pools.aws.nodeClass.rootVolume.size is not a root volume setting",
+    ),
+    (
+        ("--set", "pools.aws.nodeClass.metadata.httpToken=required"),
+        "pools.aws.nodeClass.metadata.httpToken is not an instance metadata setting",
+    ),
+    (
+        ("--set", "pools.classes.clickhouse.aws.nodeClass.amiAlis=al2023@v20261003"),
+        "pools.classes.clickhouse.aws.nodeClass.amiAlis is not an EC2NodeClass setting",
+    ),
+    (
+        ("--set", "pools.classes.clickhouse.aws.nodeClass.rootVolume.iop=3000"),
+        "pools.classes.clickhouse.aws.nodeClass.rootVolume.iop is not a root volume setting",
+    ),
+    (("--set", "karpenter.nodeClass.amiAlias=al2023@v20261003"), "karpenter is not a values root"),
 )
 
 
@@ -463,6 +545,8 @@ def main() -> int:
         test_expected_fail_no_run_tags_bound_no_size()
         test_a_deployment_overrides_the_run_sizes_or_turns_them_off()
         test_no_classes_render_nothing_whatever_the_renderer()
+        test_expected_fail_a_karpenter_cluster_with_no_classes_fails_the_render()
+        test_expected_fail_a_cluster_secret_without_the_pool_annotation_fails_the_sync()
         test_expected_fail_a_renderer_or_a_class_shape_the_chart_does_not_carry_fails_the_render()
         test_expected_fail_an_unknown_renderer_fails_even_with_no_class()
         return summary()

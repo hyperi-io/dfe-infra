@@ -471,6 +471,36 @@ def test_regressed_appversions_are_caught() -> None:
         )
 
 
+def test_a_moved_node_pools_pin_is_reported_as_drift() -> None:
+    """The node image alias and the Karpenter release the pool chart is written for, each moved off its pin."""
+    versions = drift.load_versions()
+    moved = {
+        "helm/charts/node-pools/values.yaml": (
+            f"al2023@{versions['operators.karpenter-al2023-ami']}",
+            "al2023@v20200101",
+        ),
+        "helm/charts/node-pools/Chart.yaml": (f'"{versions["operators.karpenter"]}"', '"0.0.1"'),
+    }
+    real_read = drift.read_source
+
+    def poisoned(file_path: Path) -> str:
+        text = real_read(file_path)
+        pin = moved.get(file_path.as_posix())
+        return text.replace(*pin) if pin else text
+
+    out = io.StringIO()
+    try:
+        drift.read_source = poisoned
+        with contextlib.redirect_stderr(out), contextlib.redirect_stdout(out):
+            rc = drift.main([])
+    finally:
+        drift.read_source = real_read
+    report = out.getvalue()
+    expect("the run fails", rc != 0, f"rc={rc}")
+    for label in ("node-pools AL2023 AMI alias", "node-pools chart appVersion"):
+        expect(f"{label} is reported as drift", f"[DRIFT]  {label}:" in report, report)
+
+
 def test_the_metallb_pin_is_accounted_for_by_a_reason() -> None:
     """bootstrap.sh is its only reader, so there is no mirror to check it against."""
     versions = drift.load_versions()

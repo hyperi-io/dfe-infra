@@ -286,6 +286,12 @@ def test_the_logged_apps_are_receiver_loader_engine_hunt_runner_and_every_transf
     assert not any("hyperdx" in name or "keda" in name or "kafka" in name for _, name in chosen)
 
 
+def test_the_fetchers_are_logged_the_per_source_ones_included() -> None:
+    assert dg.logged("dfe-fetcher")
+    assert dg.logged("dfe-fetcher-flowfetch")
+    assert not dg.logged("dfe-fetchers")
+
+
 def test_the_engine_namespace_is_where_its_pod_runs() -> None:
     assert dg.engine_namespace(PODS) == "dfe"
     assert dg.engine_namespace(PODS[:2]) == ""
@@ -1127,9 +1133,41 @@ def test_a_failed_smoke_captures_diagnostics_before_the_destroy(
     assert capture[capture.index("--dir") + 1] == str(root)
     assert capture[capture.index("--label") + 1] == "smoke"
     assert capture[capture.index("--kubeconfig") + 1] == str(kubeconfig)
+    # A stage that failed at once still reads the default window.
+    assert capture[capture.index("--log-minutes") + 1] == str(dg.LOG_MINUTES)
     # The subcommand's own parser has to accept every flag the cycle hands it.
     parsed = dfeops.build_parser().parse_args(capture[2:])
     assert (parsed.dir, parsed.label) == (str(root), "smoke")
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "minutes"),
+    [(0.0, dg.LOG_MINUTES), (29 * 60.0, dg.LOG_MINUTES), (30 * 60.0 + 1, 32), (76 * 60.0, 77)],
+)
+def test_the_bundle_after_a_failed_stage_reads_back_past_its_start(
+    elapsed: float, minutes: int
+) -> None:
+    """A stage longer than the default window is read back to its start, and never less."""
+    assert dfeops.stage_log_minutes(elapsed) == minutes
+    assert dfeops.stage_log_minutes(elapsed) * 60 > elapsed
+
+
+def test_a_failed_stage_hands_diagnostics_the_window_its_length_gives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[float] = []
+
+    def window(elapsed: float) -> int:
+        seen.append(elapsed)
+        return 77
+
+    monkeypatch.setattr(dfeops, "stage_log_minutes", window)
+    _rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy")
+    capture = next(cmd for cmd in ran if cmd[2] == "diagnostics")
+    assert capture[capture.index("--log-minutes") + 1] == "77"
+    assert dfeops.build_parser().parse_args(capture[2:]).log_minutes == 77
+    (elapsed,) = seen
+    assert 0 <= elapsed < 60
 
 
 def test_a_terraform_cycle_hands_diagnostics_its_terraform_dir(

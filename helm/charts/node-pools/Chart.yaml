@@ -1,6 +1,6 @@
 apiVersion: v2
-name: karpenter-pools
-description: Karpenter NodePools and EC2NodeClasses, one pair per workload class
+name: node-pools
+description: The deployment's node pools, one per workload class, rendered for the cluster's node autoscaler
 type: application
 version: 0.1.0
 appVersion: "1.14.1"

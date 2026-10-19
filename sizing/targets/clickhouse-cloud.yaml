@@ -1,7 +1,7 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/clickhouse-cloud.yaml
-## Purpose:   The per-target knob matrix for `--target clickhouse-cloud` -- a
-##            validated stub, not a built target. Every sizing knob it would
+## Purpose:   The per-target dial matrix for `--target clickhouse-cloud` -- a
+##            validated stub, not a built target. Every sizing dial it would
 ##            change, marked blocked until the target itself exists.
 ## Language:  YAML
 ##
@@ -10,7 +10,7 @@
 
 ## Read by scripts/resolve_sizing.py's build_report -- see the module
 ## docstring's TARGETS_DIR paragraph. `status` names the stub so the report
-## does not read as a finished target; every knob below carries a `state` of
+## does not read as a finished target, and every dial below carries a `state` of
 ## `blocked`, `renamed` or `managed`, plus the one-sentence `reason`. NO LISTS:
 ## nested maps and scalars only, parsed by scripts/yaml_subset.py.
 ##

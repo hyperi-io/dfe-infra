@@ -23,7 +23,7 @@ spec:
   # role for, and this one is the tofu's to create, tag and delete.
   instanceProfile: {{ $p.aws.cluster.instanceProfile | quote }}
   {{- with $p.aws.cluster.userData }}
-  # The registry cache's containerd mirrors; Karpenter merges its own NodeConfig with it.
+  # The registry cache's containerd mirrors, which Karpenter merges its own NodeConfig with.
   userData: |
     {{- b64dec . | nindent 4 }}
   {{- end }}
@@ -48,8 +48,8 @@ spec:
     httpTokens: {{ $nc.metadata.httpTokens }}
     httpPutResponseHopLimit: {{ $nc.metadata.httpPutResponseHopLimit }}
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:

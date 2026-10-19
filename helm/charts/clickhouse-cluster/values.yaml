@@ -244,7 +244,7 @@ clickhouse:
       # the node's local NVMe instead, leaving the PVC to hold only the part
       # metadata. instance-store needs cacheSize set and clickhouse.mode:
       # cluster, and it needs a node that actually carries local NVMe -- the
-      # karpenter-pools chart's `clickhouse` pool, whose instanceStorePolicy:
+      # node-pools chart's `clickhouse` pool, whose instanceStorePolicy:
       # RAID0 is what makes that NVMe available to a pod at all. Unlike a gp3
       # PVC, which reattaches to whatever node picks the pod back up, an
       # emptyDir is destroyed with the pod: a node replacement empties the

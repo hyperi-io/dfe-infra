@@ -70,8 +70,8 @@ CONDITIONAL_FACTS = (
     ),
     ("DFE_NODE_USER_DATA", "dfe.hyperi.io/node_user_data", "layer2-platform.yaml", "userData"),
     (
-        "DFE_KARPENTER_POOLS",
-        "dfe.hyperi.io/karpenter_pools",
+        "DFE_NODE_POOLS",
+        "dfe.hyperi.io/node_pools",
         "layer2-platform.yaml",
         "pools",
     ),
@@ -116,7 +116,7 @@ CONDITIONAL_FACTS = (
 # single-quoted where every other one here is double-quoted, and it is the
 # escaped copy that goes in the scalar rather than the raw value.
 SINGLE_QUOTED = {
-    "DFE_KARPENTER_POOLS": "DFE_KARPENTER_POOLS_YAML",
+    "DFE_NODE_POOLS": "DFE_NODE_POOLS_YAML",
     "DFE_RUN_TAGS": "DFE_RUN_TAGS_YAML",
     "DFE_RESOURCE_TAGS": "DFE_RESOURCE_TAGS_YAML",
 }

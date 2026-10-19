@@ -83,16 +83,27 @@ NAMES = {
 PATHS = {
     "dfe-toolbox": "helm/charts/dfe-toolbox",
     "envoy-gateway-config": "helm/edge/gateway",
-    "karpenter-pools": "helm/charts/karpenter-pools",
+    "karpenter-pools": "helm/charts/node-pools",
     "network-policies": "helm/charts/network-policies",
+}
+
+# The deploy-repo overlay each of those names reads. Like PATHS, an entry here
+# moves only when the file a deployer writes is meant to move.
+OVERLAYS = {
+    "dfe-toolbox": {"$values/infra/dfe-toolbox.yaml"},
+    "envoy-gateway-config": {"$values/infra/envoy-gateway-config.yaml"},
+    "karpenter-pools": {"$values/infra/node-pools.yaml"},
+    "network-policies": {"$values/infra/network-policies.yaml"},
 }
 
 # The expression a path must use. A bare `.chart` field lookup would fail the
 # render on an element that states none, because goTemplateOptions is
 # missingkey=error; `index` answers nil for an absent key instead, which is the
-# same read layer2-platform.yaml already does for the karpenter_pools annotation
+# same read layer2-platform.yaml already does for the node_pools annotation
 # bootstrap.sh writes only sometimes.
 CHART_EXPR = '{{ index . "chart" | default (printf "charts/%s" .app) }}'
+# The same read for the overlay an element names apart from its app.
+OVERLAY_EXPR = '{{ index . "overlay" | default .app }}'
 
 # The deploy-repo glob the tunnel is enabled by. The engine writes one of these
 # files to turn culvert on, and exactly one appset may fan it out.
@@ -206,12 +217,27 @@ def test_an_element_stating_no_chart_falls_back_to_its_app_name() -> None:
            generated()["network-policies"] == "helm/charts/network-policies", generated())
 
 
-def test_the_deployer_overlay_follows_the_name_not_the_directory() -> None:
+def generated_overlays() -> dict[str, set[str]]:
+    """app name -> the per-app deploy-repo overlays it reads, across every element-driven appset."""
+    out: dict[str, set[str]] = {}
+    for _, appset in element_appsets():
+        files = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
+        per_app = [f for f in files if f.startswith("$values/infra/") and "{{" in f]
+        for element in elements(appset):
+            for template in per_app:
+                rendered = template.replace(OVERLAY_EXPR, element.get("overlay", element["app"]))
+                out.setdefault(element["app"], set()).add(rendered.replace("{{ .app }}", element["app"]))
+    return out
+
+
+def test_every_deployer_overlay_is_pinned() -> None:
     """A moved chart must not orphan the `infra/<app>.yaml` a deployer wrote."""
+    expect("the generated overlays are the pinned set", generated_overlays() == OVERLAYS,
+           generated_overlays())
     for name, appset in element_appsets():
         files = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
-        expect(f"{name} keys the deployer overlay on the app name",
-               "$values/infra/{{ .app }}.yaml" in files, files)
+        expect(f"{name} never looks the overlay key up as a field",
+               not any("{{ .overlay }}" in f for f in files), files)
 
 
 def test_every_edge_applicationset_is_gated_on_the_module_switch() -> None:
@@ -545,7 +571,7 @@ def main() -> int:
         test_every_generated_application_name_is_pinned()
         test_every_generated_chart_path_is_pinned()
         test_an_element_stating_no_chart_falls_back_to_its_app_name()
-        test_the_deployer_overlay_follows_the_name_not_the_directory()
+        test_every_deployer_overlay_is_pinned()
         test_every_edge_applicationset_is_gated_on_the_module_switch()
         test_every_first_party_chart_is_reachable_through_the_shared_resolver()
         test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs()

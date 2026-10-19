@@ -9,7 +9,7 @@ kind: EC2NodeClass
 metadata:
   name: ci-burst
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -39,8 +39,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -61,7 +61,7 @@ kind: EC2NodeClass
 metadata:
   name: clickhouse
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -91,8 +91,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -113,7 +113,7 @@ kind: EC2NodeClass
 metadata:
   name: eks-system
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -142,8 +142,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -164,7 +164,7 @@ kind: EC2NodeClass
 metadata:
   name: general
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -193,8 +193,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -215,7 +215,7 @@ kind: EC2NodeClass
 metadata:
   name: kafka-broker
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -244,8 +244,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -266,7 +266,7 @@ kind: EC2NodeClass
 metadata:
   name: keeper
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -295,8 +295,8 @@ spec:
     httpTokens: required
     httpPutResponseHopLimit: 1
   blockDeviceMappings:
-    # /dev/xvda is the root device AL2023 exposes; rootVolume marks it as the one
-    # kubelet keeps its state on.
+    # /dev/xvda is the root device AL2023 exposes, and rootVolume marks it as the
+    # one kubelet keeps its state on.
     - deviceName: /dev/xvda
       rootVolume: true
       ebs:
@@ -314,7 +314,7 @@ kind: NodePool
 metadata:
   name: ci-burst
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -373,7 +373,7 @@ kind: NodePool
 metadata:
   name: clickhouse
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -443,7 +443,7 @@ kind: NodePool
 metadata:
   name: eks-system
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -509,7 +509,7 @@ kind: NodePool
 metadata:
   name: general
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -575,7 +575,7 @@ kind: NodePool
 metadata:
   name: kafka-broker
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
@@ -645,7 +645,7 @@ kind: NodePool
 metadata:
   name: keeper
   labels:
-    app.kubernetes.io/name: "dfe-karpenter"
+    app.kubernetes.io/name: "dfe-node-pools"
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"

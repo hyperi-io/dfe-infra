@@ -1,15 +1,15 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/msk.yaml
-## Purpose:   The per-target knob matrix for `--target msk` -- a managed Kafka
+## Purpose:   The per-target dial matrix for `--target msk` -- a managed Kafka
 ##            deployment against terraform/modules/managed-kafka/msk. Every
-##            sizing knob the target changes or refuses, and why.
+##            sizing dial the target changes or refuses, and why.
 ## Language:  YAML
 ##
 ## License:   BUSL-1.1
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## docstring's TARGETS_DIR paragraph. Every dial below carries a `state` of
 ## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
 ## prints beside it. NO LISTS: nested maps and scalars only, parsed by
 ## scripts/yaml_subset.py.

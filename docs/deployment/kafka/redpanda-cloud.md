@@ -64,7 +64,7 @@ acknowledgement when the client sends `acks=all` (scalo default). Set
 
 The `redpanda` provider authenticates with a Redpanda Cloud service-account
 client ID + secret (Organization IAM). Two shapes below: Serverless (fewest
-knobs) and Dedicated/BYOC (full topic + cluster config). The topic resource
+dials) and Dedicated/BYOC (full topic + cluster config). The topic resource
 targets the cluster's `cluster_api_url`, and the SCRAM user is a `redpanda_user`
 with `mechanism = "scram-sha-512"`.
 
