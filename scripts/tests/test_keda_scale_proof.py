@@ -108,7 +108,12 @@ if "exec" in args:
     with open(os.environ["FAKE_KUBECTL_EXECS"], "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"args": args, "stdin": sent}) + "\\n")
     query = sent + " ".join(args)
-    print(fixture.get("own_rows", 1) if "NOT mapContains" in query else 1)
+    if "NOT mapContains" in query:
+        if fixture.get("own_rows_refused"):
+            sys.exit(1)
+        print(fixture.get("own_rows", 1))
+    else:
+        print(1)
     sys.exit(0)
 if any("custom-columns" in arg for arg in args):
     for line in take("rolling", fixture.get("rolling"), ""):
@@ -599,17 +604,54 @@ def test_a_real_app_that_does_not_scale_back_in_fails_by_name() -> None:
     )
 
 
-def test_an_app_that_writes_no_pressure_of_its_own_is_said() -> None:
-    """Injected pressure scales an app whose own gauge is missing, so the log has to say so."""
+def test_an_app_that_writes_no_pressure_of_its_own_fails() -> None:
+    """Injected pressure scales an app whose own gauge is missing, and the shim reads no rows as 0."""
     fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0)
     out = run_proof(fixture)
 
-    expect("it still passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
     expect(
-        "the gap is named",
-        "WARN: dfe-loader wrote no pressure row of its own" in out.stdout,
+        "naming the app and what it means",
+        "FAIL: no scaling_pressure rows from dfe-loader in the last 120s, so KEDA's pressure "
+        "trigger reads 0 and it scales on CPU only" in out.stdout,
         out.stdout,
     )
+
+
+def test_an_app_writing_its_own_pressure_says_how_much() -> None:
+    """The control: a real gauge is counted and the proof goes on to scale in."""
+    fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=8)
+    out = run_proof(fixture)
+
+    expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "the count is logged",
+        "dfe-loader wrote 8 scaling_pressure row(s) of its own in the last 120s" in out.stdout,
+        out.stdout,
+    )
+
+
+def test_an_own_pressure_count_that_cannot_run_fails() -> None:
+    """A count the datastore refused is not a count of zero, and not a pass either."""
+    fixture = phase_two(
+        [pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows_refused=True
+    )
+    out = run_proof(fixture)
+
+    expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "saying the count could not run",
+        "scaling_pressure rows from dfe-loader could not be counted" in out.stdout,
+        out.stdout,
+    )
+
+
+def test_the_own_pressure_window_is_a_dial() -> None:
+    """A cluster whose apps export less often can widen the window."""
+    fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0)
+    out = run_proof(fixture, DFE_KEDA_OWN_PRESSURE_WINDOW="300")
+
+    expect("the window is named", "in the last 300s" in out.stdout, out.stdout)
 
 
 def test_a_floor_of_zero_adds_keda_activation_to_the_bound() -> None:

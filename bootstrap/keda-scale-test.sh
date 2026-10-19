@@ -19,6 +19,8 @@
 #
 # At scale-out every HPA's readings are logged, and the pressure reading must be at or
 # over its target, so a scale that cpu drove cannot pass for one the pressure drove.
+# Each real app must also write scaling_pressure rows of its own: the shim reads no rows
+# as 0, so an app without the gauge scales on cpu alone.
 #
 # An external ClickHouse (ClickHouse Cloud) has no pod to exec into, so the rows go in
 # through the engine's own container, to the server the shim reads.
@@ -51,6 +53,8 @@ TARGET="keda-scale-test-$$-${RANDOM}"
 OTEL_DB="dfe"
 # Every injected row carries this attribute: cleanup deletes on it, and an app's own rows lack it.
 SCALE_TEST_ATTR="dfe_scale_test"
+# How far back an app's own scaling_pressure rows are looked for.
+OWN_PRESSURE_WINDOW="${DFE_KEDA_OWN_PRESSURE_WINDOW:-120}"
 TEST_TARGET_VALUE=50
 # How often a bounded wait re-reads the Deployments it is waiting on.
 WAIT_INTERVAL="${DFE_WAIT_INTERVAL:-5}"
@@ -345,18 +349,23 @@ scale_out_reading() {
     return 0
 }
 
-own_pressure_warn() {
-    # Say when set entry ${1} wrote no pressure row of its own: outside this proof its trigger reads 0.
+own_pressure_check() {
+    # FAIL set entry ${1} when it wrote no pressure row of its own, under the shim's own match for the gauge name.
     local service="${SET_SERVICE[$1]}" own
-    own="$(ch_query "SELECT count() FROM ${OTEL_DB}.otel_metrics_gauge WHERE ServiceName = '${service}' AND (MetricName = 'scaling_pressure' OR endsWith(MetricName, '_scaling_pressure')) AND NOT mapContains(Attributes, '${SCALE_TEST_ATTR}') AND TimeUnix >= now() - INTERVAL 120 SECOND" 2>/dev/null || true)"
-    if [[ "${own:-0}" == 0 ]]; then
-        log "WARN: ${service} wrote no pressure row of its own in the last 120s, so outside this proof its pressure trigger reads 0 and only its other triggers scale it"
+    if ! own="$(ch_query "SELECT count() FROM ${OTEL_DB}.otel_metrics_gauge WHERE ServiceName = '${service}' AND (MetricName = 'scaling_pressure' OR endsWith(MetricName, '_scaling_pressure')) AND NOT mapContains(Attributes, '${SCALE_TEST_ATTR}') AND TimeUnix >= now() - INTERVAL ${OWN_PRESSURE_WINDOW} SECOND" 2>/dev/null)"; then
+        echo "=== FAIL: the scaling_pressure rows from ${service} could not be counted, so whether KEDA's pressure trigger sees it is unknown ==="
+        return 1
     fi
+    if [[ "${own:-0}" == 0 ]]; then
+        echo "=== FAIL: no scaling_pressure rows from ${service} in the last ${OWN_PRESSURE_WINDOW}s, so KEDA's pressure trigger reads 0 and it scales on CPU only ==="
+        return 1
+    fi
+    log "${service} wrote ${own} scaling_pressure row(s) of its own in the last ${OWN_PRESSURE_WINDOW}s"
 }
 
 prove_set() {
     # Drive every app in the set from its floor to one above it and back, together.
-    # ${1} yes also checks each app writes pressure of its own. Returns 0, 1 or EXIT_UNPROVEN.
+    # ${1} yes also FAILs an app that writes no pressure of its own. Returns 0, 1 or EXIT_UNPROVEN.
     local own_check="$1" i bound=0 one verdict=0 code
     i=0
     while (( i < ${#SET_DEP[@]} )); do
@@ -376,7 +385,11 @@ prove_set() {
             code=0
             scale_out_reading "${i}" || code=$?
             verdict="$(worse "${verdict}" "${code}")"
-            if [[ "${own_check}" == yes ]]; then own_pressure_warn "${i}"; fi
+            if [[ "${own_check}" == yes ]]; then
+                code=0
+                own_pressure_check "${i}" || code=$?
+                verdict="$(worse "${verdict}" "${code}")"
+            fi
         else
             code=0
             scale_out_verdict "${SET_SO[i]}" "${SET_DEP[i]}" "$(( SET_MIN[i] + 1 ))" "${SET_SERVICE[i]}" "${bound}" "${SET_TARGET[i]}" || code=$?
