@@ -11,6 +11,19 @@
 setup() {
     REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
     SCRIPT="${REPO_ROOT}/bootstrap/bootstrap.sh"
+    # bootstrap.sh's own pools guard, cut out of the script as it ships, run under its strict mode.
+    GUARD="${BATS_TEST_TMPDIR}/pools-guard.sh"
+    {
+        echo 'set -euo pipefail'
+        sed -n '/^# A cluster with a.*Karpenter/,/^fi$/p' "${SCRIPT}"
+        echo 'echo "pools guard passed"'
+    } > "${GUARD}"
+}
+
+# The guard run with no Karpenter fact and no pools, then the facts in ${@}.
+run_guard() {
+    run env -i PATH="${PATH}" DFE_NODE_POOLS="" DFE_SIZING_DIR=/srv/resolve \
+        DFE_NODE_POOLS_FILE=/srv/resolve/sizing/scale.pools.json "$@" bash "${GUARD}"
 }
 
 @test "the sizing directory defaults to the cloud's own terraform root" {
@@ -41,8 +54,30 @@ setup() {
 }
 
 @test "a Karpenter cluster with no pools is refused rather than deployed" {
-    run grep -F 'if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_NODE_POOLS}" ]]; then' "${SCRIPT}"
+    grep -qF 'no NodePools were found' "${GUARD}"
+    run_guard DFE_KARPENTER_DISCOVERY_TAG=dfe-test
+    [ "$status" -eq 1 ]
+    [[ "${output}" == *"this cluster runs Karpenter and no NodePools were found"* ]]
+}
+
+@test "any one Karpenter fact without the pools is refused, not only the discovery tag" {
+    local fact
+    for fact in DFE_KARPENTER_INSTANCE_PROFILE=dfe-test \
+        DFE_KARPENTER_KMS_KEY_ID=arn:aws:kms:us-west-2:000000000000:key/abc; do
+        run_guard "${fact}"
+        [ "$status" -eq 1 ]
+        [[ "${output}" == *"no NodePools were found"* ]]
+    done
+}
+
+@test "no Karpenter fact, or the pools beside them, passes the guard" {
+    run_guard
     [ "$status" -eq 0 ]
+    [[ "${output}" == "pools guard passed" ]]
+    run_guard DFE_KARPENTER_DISCOVERY_TAG=dfe-test DFE_KARPENTER_INSTANCE_PROFILE=dfe-test \
+        DFE_KARPENTER_KMS_KEY_ID=arn:aws:kms:us-west-2:000000000000:key/abc DFE_NODE_POOLS='{"renderer":"karpenter-aws"}'
+    [ "$status" -eq 0 ]
+    [[ "${output}" == "pools guard passed" ]]
 }
 
 @test "the refusal names the path it looked in" {

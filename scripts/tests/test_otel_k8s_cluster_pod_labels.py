@@ -186,3 +186,15 @@ def test_the_gateway_pod_carries_its_part_of_label_outside_the_selector(project:
         "matchLabels": {"app.kubernetes.io/name": f"{project}-otel-collector-gateway"}
     }
     assert deployment["spec"]["selector"]["matchLabels"].items() <= labels.items()
+
+
+@pytest.mark.parametrize("project", ["dfe", "acme"])
+def test_the_daemonset_pod_carries_its_part_of_label_outside_the_selector(project: str) -> None:
+    """The processor reads part-of off the pod, and a live DaemonSet refuses a changed selector."""
+    daemonset_doc = only(render(f"project={project}"), "DaemonSet")
+    labels = daemonset_doc["spec"]["template"]["metadata"]["labels"]
+    assert labels["app.kubernetes.io/part-of"] == project, labels
+    assert daemonset_doc["spec"]["selector"] == {
+        "matchLabels": {"app.kubernetes.io/name": f"{project}-otel-collector-daemonset"}
+    }
+    assert daemonset_doc["spec"]["selector"]["matchLabels"].items() <= labels.items()

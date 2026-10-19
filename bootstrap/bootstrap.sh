@@ -745,10 +745,10 @@ if [[ -z "${DFE_NODE_POOLS:-}" && -f "${DFE_NODE_POOLS_FILE}" ]]; then
   echo "Node pools: ${DFE_NODE_POOLS_FILE}"
 fi
 export DFE_NODE_POOLS="${DFE_NODE_POOLS:-}"
-# A cluster with a Karpenter discovery tag is a cluster running the controller,
-# and the pools are the only thing that tells it what it may launch. Refused
-# here rather than left for the chart to fail at sync.
-if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}" && -z "${DFE_NODE_POOLS}" ]]; then
+# A cluster with any of the three Karpenter facts is a cluster running the
+# controller, and the pools are the only thing that tells it what it may launch.
+# Refused here rather than left for the chart to fail at sync.
+if [[ -n "${DFE_KARPENTER_DISCOVERY_TAG:-}${DFE_KARPENTER_INSTANCE_PROFILE:-}${DFE_KARPENTER_KMS_KEY_ID:-}" && -z "${DFE_NODE_POOLS}" ]]; then
   echo "ERROR: this cluster runs Karpenter and no NodePools were found." >&2
   echo "       Looked for: ${DFE_NODE_POOLS_FILE}" >&2
   echo "       Resolve them with scripts/resolve_sizing.py --out ${DFE_SIZING_DIR}," >&2
