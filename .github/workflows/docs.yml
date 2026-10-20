@@ -1,0 +1,70 @@
+# Builds the DFE docs site from every released stack's pins, plus the unlisted
+# /next/ preview from each member's default branch, and deploys it to the docs
+# Worker. A pull request that touches the site builds it and deploys nothing.
+name: Docs Site
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 02:17 AEST: /next/ follows the members' default branches.
+    - cron: "17 16 * * *"
+  # A new stack release is a new version in the menu.
+  workflow_run:
+    workflows: ["Stack Release"]
+    types: [completed]
+    branches: [main]
+  # Not a required check, so a path filter here cannot block a merge.
+  pull_request:
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled midway. A newer push to a pull request replaces its older build.
+concurrency:
+  group: docs-site-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  site:
+    name: build, and deploy from main
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 these steps run on.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 24 is the Active LTS major hyperi-ci's versions.yaml sets for TypeScript CI.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # npm ci checks every tarball against the lockfile's integrity hash. The build needs no install script.
+      - name: Install from the committed lockfile
+        working-directory: docs-site
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # Anonymous fetches only: every member repository is public.
+      - name: Gather each member's docs at its pinned ref
+        run: python3 docs-site/scripts/aggregate.py --next
+
+      - name: Stray report
+        run: cat docs-site/content/_reports/*.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build every version and merge them
+        run: python3 docs-site/scripts/build_site.py
+
+      - name: Deploy to the docs Worker
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        working-directory: docs-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy
