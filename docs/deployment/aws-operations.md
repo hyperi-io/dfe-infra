@@ -113,4 +113,3 @@ tier, by which dial key. What is AWS's own:
 - `render_dial.py` validates every boolean and enum in the dial's `edge:` block
   and reports which surfaces it marks public, but the values that reach the
   chart are whatever a deploy-repo overlay pastes in from it.
-
