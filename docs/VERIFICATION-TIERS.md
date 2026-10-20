@@ -13,7 +13,7 @@ ClickHouse and read back.
   - **a. local** -- each interdependent repo cloned and run as a process on a
     dev machine (NOT a container, NOT k8s), against a local `dfe-deploy` clone,
     backed by the capped local ClickHouse + Kafka. See
-    [each repo's local-dev doc](#local-dev).
+    [each repo's local-dev doc](#local-dev-docs).
   - **b. docker** -- the `dfe-docker` compose profiles.
   - **c. k8s** -- dfe-infra (RKE2 + ArgoCD), across the three profiles
     `slim` / `single` / `scale`.
@@ -22,7 +22,7 @@ ClickHouse and read back.
   - **dfe.main** -- the receiver/loader event path (Kafka -> `dfe.main`).
 
 BOTH paths must land rows in ClickHouse and be read back. A `200` from a Service
-is not proof; driving the product is (see [Driving the product](#driving)).
+is not proof, but driving the product is (see [Driving the product](#driving-the-product----the-hard-rule)).
 
 ## The tiers
 
@@ -52,7 +52,7 @@ One target, both data paths, end to end. Run the one that matches what you
 changed.
 
 - **T1a local** -- boot every interdependent repo as a process, both paths. The
-  procedure is [dfe-engine `docs/LOCAL-DEV.md`](#local-dev) plus each repo's own <!-- doc-paths: ignore -->
+  procedure is [dfe-engine `docs/LOCAL-DEV.md`](#local-dev-docs) plus each repo's own <!-- doc-paths: ignore -->
   local-dev doc; the local ClickHouse + Kafka come from the capped
   `local-services` daemons.
 
