@@ -1,0 +1,45 @@
+{
+  "name": "dfe-docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The DFE suite documentation site: every member repo's docs/ at the tags a released stack pins.",
+  "scripts": {
+    "aggregate": "python3 scripts/aggregate.py",
+    "build": "python3 scripts/build_site.py",
+    "docusaurus": "docusaurus",
+    "start": "docusaurus start",
+    "serve": "docusaurus serve --dir build",
+    "clear": "docusaurus clear"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "@docusaurus/theme-mermaid": "3.10.2",
+    "@easyops-cn/docusaurus-search-local": "0.55.3",
+    "@mdx-js/react": "3.1.1",
+    "docusaurus-plugin-openapi-docs": "5.2.0",
+    "docusaurus-plugin-sass": "0.2.7",
+    "docusaurus-theme-openapi-docs": "5.2.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sass": "1.105.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.2"
+  },
+  "browserslist": {
+    "production": [
+      ">0.5%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 3 chrome version",
+      "last 3 firefox version",
+      "last 5 safari version"
+    ]
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

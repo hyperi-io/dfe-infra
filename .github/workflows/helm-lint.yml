@@ -79,6 +79,8 @@ jobs:
             tests/e2e-ui/specs/engine/oidc-rba.spec.ts
             # dfe-sweep's committed defaults, which test_sweep_defaults.py validates.
             config/defaults.yaml
+            # test_docs_aggregate.py loads docs-site/scripts/aggregate.py and copies content-root/.
+            docs-site/**
 
       # The third-party arch check reads public registries, which rate-limit a shared
       # runner, so it runs only where its verdict can change: the pins it reads and the

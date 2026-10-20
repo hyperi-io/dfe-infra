@@ -59,10 +59,10 @@ INTERNAL = re.compile(
     re.IGNORECASE,
 )
 
-# The vendor-domain hosts the product names on purpose: the Kubernetes label and
-# annotation prefix, and the public brand-token site. Any other host under
-# hyperi.io is estate; an apex mail address (sales@hyperi.io) has no host label.
-PUBLIC_HOSTS = frozenset({"dfe.hyperi.io", "graphics.hyperi.io"})
+# The hosts under hyperi.io the product names on purpose: the label prefix, the
+# brand-token site and the docs site. Any other is estate, and an apex mail address
+# (sales@hyperi.io) has no host label.
+PUBLIC_HOSTS = frozenset({"dfe.hyperi.io", "graphics.hyperi.io", "dfe.docs.hyperi.io"})
 _VENDOR_HOST = re.compile(r"(?<![\w.-])((?:[\w-]+\.)+hyperi\.io)(?![\w-])", re.IGNORECASE)
 
 # versions.yaml and constraints/ are the version SSoT and are compared
@@ -167,6 +167,7 @@ def test_the_product_s_own_vendor_names_are_product_text() -> None:
         "dfe.hyperi.io/managed: \"true\"",
         "selected by dfe.hyperi.io/profile.",
         "verbatim from https://graphics.hyperi.io/tokens/tokens.css.",
+        '"pattern": "dfe.docs.hyperi.io",',
         "**Email**: sales@hyperi.io",
         "- **Security reports**: security@hyperi.io",
         'git config user.email "ci@hyperi.io"',
