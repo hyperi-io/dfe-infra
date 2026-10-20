@@ -159,7 +159,7 @@ dashboards:
   mountPath: /etc/hyperdx/dashboards
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.22.51"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.22.53"     # == versions.yaml apps.dfe-engine (drift-checked)
     # The init container runs the ENGINE image, so this is versions.yaml
     # digests.dfe-engine (drift-checked).
-    digest: "sha256:e0ec14ccbd2d8b020b42ce2aab04cbbf48211c366fd858d5a5abc7b91ac841c6"
+    digest: "sha256:a43ed846c50c263af7b2dc74b512dbcc7109e833efa1c3866b1a7924c7b9693a"
