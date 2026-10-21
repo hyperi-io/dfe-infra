@@ -94,6 +94,7 @@ jobs:
             versions.yaml
             # CHART_VALUES_IMAGES in check_image_arch.py
             helm/charts/forgejo/values.yaml
+            helm/charts/kafka/values.yaml
             scripts/check_image_arch.py
             scripts/image-arch-proven.json
             scripts/dfe-stack

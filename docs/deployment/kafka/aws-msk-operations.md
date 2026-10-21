@@ -49,11 +49,7 @@ authenticates with SASL/SCRAM-512 on 9096; the cluster enables both mechanisms s
 the Job can write the grants the apps rely on. Nothing is mounted into the Job --
 EKS Pod Identity supplies the credential.
 
-`apache/kafka` ships `kafka-acls.sh` and `kafka-topics.sh` but not the MSK IAM
-login module, so an init container fetches `aws-msk-iam-auth-<version>-all.jar`
-from its GitHub release and refuses it unless the sha256 matches the pinned one.
-An air-gapped deploy sets `url` to an internal mirror; the checksum still has to
-match.
+The Job runs `kafka.cliImage`, Strimzi's Kafka image from quay.io at the brokers' Kafka version. It ships `kafka-acls.sh` and `kafka-topics.sh` but not the MSK IAM login module, so an init container fetches `aws-msk-iam-auth-<version>-all.jar` from its GitHub release and refuses it unless the sha256 matches the pinned one. An air-gapped deploy sets `url` to an internal mirror, and the checksum still has to match.
 
 **On the standard AWS path, `kafka.mode` and `bootstrapIam` are wired, not
 set.** `bootstrap.sh` derives `DFE_KAFKA_MODE=external` from

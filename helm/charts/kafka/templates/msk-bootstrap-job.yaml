@@ -78,13 +78,12 @@ spec:
         - name: tmp
           emptyDir: {}
       initContainers:
-        # apache/kafka carries kafka-acls.sh and kafka-topics.sh but NOT the MSK
+        # kafka.cliImage carries kafka-acls.sh and kafka-topics.sh but NOT the MSK
         # IAM auth library, and there is no image that ships both. The same image
-        # is reused here so the Job has ONE image to review; its Alpine base
-        # provides wget and sha256sum, and curl is tried first for the deploys
-        # whose mirror needs it.
+        # is reused here so the Job has ONE image to review. It provides curl and
+        # sha256sum, and wget is the fallback for an override image with no curl.
         - name: fetch-iam-auth
-          image: "apache/kafka:{{ .Values.kafka.version }}{{ with .Values.kafka.imageDigest }}@{{ . }}{{ end }}"
+          image: {{ required "kafka.cliImage names the image the MSK bootstrap Job runs" .Values.kafka.cliImage | quote }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           resources:
             {{- toYaml $msk.bootstrap.resources | nindent 12 }}
@@ -116,7 +115,7 @@ spec:
               echo "aws-msk-iam-auth {{ $iam.version }} verified: ${GOT}"
       containers:
         - name: msk-bootstrap
-          image: "apache/kafka:{{ .Values.kafka.version }}{{ with .Values.kafka.imageDigest }}@{{ . }}{{ end }}"
+          image: {{ required "kafka.cliImage names the image the MSK bootstrap Job runs" .Values.kafka.cliImage | quote }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           resources:
             {{- toYaml $msk.bootstrap.resources | nindent 12 }}

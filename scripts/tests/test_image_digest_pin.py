@@ -28,7 +28,8 @@ Six things are checked:
    hyperdx dashboards init container -- carries the digest too.
 5. The engine's content init containers run OTHER apps' images, so each one is
    checked against the pin for the app it speaks for.
-6. Every upstream image a chart runs carries the digest versions.yaml certified.
+6. Every upstream image a chart runs carries the digest versions.yaml certified, or
+   for the MSK bootstrap Job, the digest kafka.cliImage pins.
 
     python3 scripts/tests/test_image_digest_pin.py
 
@@ -334,19 +335,16 @@ THIRD_PARTY_WORKLOADS = [
         "docker.redpanda.com/redpandadata/redpanda",
         "redpanda-version",
     ),
-    (
-        "kafka",
-        (
-            "appNamespace=dfe-aws",
-            "kafka.mode=external",
-            "kafka.provider=msk",
-            "kafka.external.bootstrap=b-1.dfe.example:9096",
-            "kafka.external.msk.bootstrapIam=b-1.dfe.example:9098",
-        ),
-        "apache/kafka",
-        "kafka-version",
-    ),
 ]
+
+# The MSK bootstrap Job's render: its image is kafka.cliImage, a chart-values pin with no versions.yaml key.
+MSK_BOOTSTRAP = (
+    "appNamespace=dfe-aws",
+    "kafka.mode=external",
+    "kafka.provider=msk",
+    "kafka.external.bootstrap=b-1.dfe.example:9096",
+    "kafka.external.msk.bootstrapIam=b-1.dfe.example:9098",
+)
 
 
 def test_every_upstream_image_a_chart_runs_carries_the_ssot_digest() -> None:
@@ -360,6 +358,19 @@ def test_every_upstream_image_a_chart_runs_carries_the_ssot_digest() -> None:
             rendered and all(i == want for i in rendered),
             f"wanted {want}, got {rendered}",
         )
+
+
+def test_the_msk_bootstrap_job_runs_the_digest_pinned_cli_image() -> None:
+    """Both of the Job's containers run kafka.cliImage exactly as the chart pins it."""
+    values = yaml.safe_load((CHARTS / "kafka" / "values.yaml").read_text(encoding="utf-8"))
+    want = values["kafka"]["cliImage"]
+    rendered = images([d for d in render("kafka", *MSK_BOOTSTRAP) if d.get("kind") == "Job"])
+    expect("the CLI pin names its digest", "@sha256:" in want, want)
+    expect(
+        "the init and main containers both run it",
+        len(rendered) == 2 and all(i == want for i in rendered),
+        f"wanted {want} twice, got {rendered}",
+    )
 
 
 def test_the_clickhouse_operator_crs_carry_the_digest_in_the_tag() -> None:

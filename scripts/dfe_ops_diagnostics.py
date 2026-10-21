@@ -56,7 +56,7 @@ A DFE namespace is one an Argo Application deploys into, one holding a logged ap
 argocd.
 
 The Kafka reads run from a short-lived pod beside dfe-engine, the way the integration
-smoke test reaches a managed broker: the kafka chart's own apache/kafka image, the
+smoke test reaches a managed broker: the kafka chart's own Kafka CLI image, the
 engine's bootstrap address and security protocol, and the engine's SASL Secret mounted as
 files, so no credential crosses kubectl. The engine's Deployment and the ConfigMaps it
 loads are read through jsonpaths naming those entries and no other. The pod and its
@@ -486,12 +486,11 @@ def bootstrap_ports(bootstrap: str) -> list[int]:
 
 
 def kafka_image(env: Mapping[str, str], values: str) -> str:
-    """DFE_KAFKA_CLI_IMAGE, else the kafka chart's own apache/kafka pin, else empty."""
+    """DFE_KAFKA_CLI_IMAGE, else the kafka chart's digest-pinned kafka.cliImage, else empty."""
     if env.get(KAFKA_CLI_IMAGE_ENV):
         return env[KAFKA_CLI_IMAGE_ENV]
-    version = yaml_subset.value_at(values, ("kafka", "version"))
-    digest = yaml_subset.value_at(values, ("kafka", "imageDigest"))
-    return f"apache/kafka:{version}@{digest}" if version and digest else ""
+    image = yaml_subset.value_at(values, ("kafka", "cliImage")) or ""
+    return image if "@sha256:" in image else ""
 
 
 def client_manifest(

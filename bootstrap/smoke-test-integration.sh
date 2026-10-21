@@ -415,20 +415,23 @@ kafka_broker_pod() {
   return 1
 }
 
-# The kafka chart's own apache/kafka pin, read from the chart so the managed-broker client cannot drift from it.
+# The kafka chart's own kafka.cliImage, read from the chart so the managed-broker client cannot drift from it.
 kafka_chart_image() {
-  local line version="" digest="" in_kafka=0
+  local line image="" in_kafka=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       kafka:*) in_kafka=1 ;;
       [![:space:]#]*) in_kafka=0 ;;
-      "  version: "*) [ "$in_kafka" -eq 1 ] && [ -z "$version" ] && version="${line#  version: }" ;;
-      "  imageDigest: "*) [ "$in_kafka" -eq 1 ] && [ -z "$digest" ] && digest="${line#  imageDigest: }" ;;
+      "  cliImage: "*) [ "$in_kafka" -eq 1 ] && [ -z "$image" ] && image="${line#  cliImage: }" ;;
     esac
   done < "$1"
-  version="${version//\"/}"
-  digest="${digest//\"/}"
-  [ -n "$version" ] && [ -n "$digest" ] && printf 'apache/kafka:%s@%s\n' "$version" "$digest"
+  image="${image%% *}"
+  image="${image//\"/}"
+  # A reference with no digest is a tag anyone can move, so it names no image.
+  case "$image" in
+    *@sha256:*) printf '%s\n' "$image" ;;
+    *) return 1 ;;
+  esac
 }
 
 # One NetworkPolicy port entry per distinct port the bootstrap list names, which a managed broker's brokers share.

@@ -205,11 +205,9 @@ def test_the_strimzi_broker_tag_joins_the_operator_and_kafka_pins() -> None:
     )
     no_kafka = {**_PINS, "services": {"kafbat": "v1.5.0"}}
     refs, _, _ = arch.image_refs(no_kafka, resolve_charts=False)
-    expect(
-        "no broker image is guessed without a Kafka pin",
-        not any(r.startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") for _, r in refs),
-        f"{refs}",
-    )
+    # The Kafka CLI shares the repository but is its own chart-values pin, read either way.
+    brokers = [r for label, r in refs if r.startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") and "(kafka CLI)" not in label]
+    expect("no broker image is guessed without a Kafka pin", brokers == [], f"{refs}")
 
 
 def test_prefixed_adds_a_missing_prefix_only() -> None:
@@ -320,6 +318,18 @@ def test_the_forgejo_curl_is_read_from_its_chart_values() -> None:
         "by the tag@digest the values pin",
         bool(curl) and curl[0].startswith("curlimages/curl:") and "@sha256:" in curl[0],
         f"{curl}",
+    )
+    expect("and nothing is broken", broken == [], f"{broken}")
+
+
+def test_the_kafka_cli_is_read_from_its_chart_values() -> None:
+    refs, _, broken = _refs(third_party_only=True)
+    cli = [ref for label, ref in refs if label.endswith("(kafka CLI)")]
+    expect("one Kafka CLI reference is read", len(cli) == 1, f"{refs}")
+    expect(
+        "by the Strimzi tag@digest the values pin",
+        bool(cli) and cli[0].startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") and "@sha256:" in cli[0],
+        f"{cli}",
     )
     expect("and nothing is broken", broken == [], f"{broken}")
 
