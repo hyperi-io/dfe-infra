@@ -110,7 +110,7 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [
       {
@@ -200,7 +200,8 @@
         "properties": {
           "name": {
             "description": "Beats or Agent source whose transform to apply, e.g. `filebeat.okta`.",
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "transport": {
             "description": "Which transport the inbound side uses: `bus` consumes `topics`, `direct`\naccepts pushes on `listen`.",
@@ -222,7 +223,8 @@
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "default": []
           },
           "batch_size": {
             "description": "Events pulled per batch.",
@@ -240,14 +242,16 @@
           },
           "group_id": {
             "description": "Kafka consumer group.",
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "brokers": {
             "description": "Broker list.",
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "default": []
           },
           "acknowledgements": {
             "description": "When the source is told its records are safe: a Kafka offset commit on\nthe bus, the answer to a push on direct.\n\n`enabled: true`, the default, holds it until every event built from a\nrecord is delivered, or dropped and counted, so a crash or a sink outage\nredelivers rather than loses. `enabled: false` releases it at receipt,\nbefore the transform runs, and loses what was in flight.",
@@ -256,13 +260,7 @@
               "enabled": true
             }
           }
-        },
-        "required": [
-          "name",
-          "topics",
-          "group_id",
-          "brokers"
-        ]
+        }
       },
       "Transport": {
         "description": "Which transport a side of the service uses.\n\n`bus` is Kafka between the stages; `direct` is a scalo Push listener inbound and a gRPC client outbound, needing no broker at all. The record and the transform are identical either way -- only who hands the record over changes. `kafka` and `grpc` are read as the same two, the names dfe-engine renders, and a config always writes `bus` and `direct` back.",
@@ -326,8 +324,9 @@
         "type": "object",
         "properties": {
           "topic": {
-            "description": "Where the events land: the topic produced to on the bus, and the\nrouting key every push carries on direct. Required on both.",
-            "type": "string"
+            "description": "Where the events land: the topic produced to on the bus, and the\nrouting key every push carries on direct. Required on both once the\nconfiguration names work.",
+            "type": "string",
+            "default": ""
           },
           "transport": {
             "description": "Which transport the outbound side uses: `bus` produces to `topic`,\n`direct` pushes to `endpoint` with `topic` as the routing key.",
@@ -357,10 +356,7 @@
             "minimum": 0,
             "default": 15728640
           }
-        },
-        "required": [
-          "topic"
-        ]
+        }
       },
       "GeoIpConfig": {
         "description": "GeoIP database provisioning configuration.\n\n`PartialEq` is part of the contract: a consumer nests this inside its own\nconfig and compares old against new to decide whether a reload needs a\nrestart. Comparing serialised forms instead would read every credential\nchange as no change, because [`SensitiveString`] redacts in `Serialize`.",

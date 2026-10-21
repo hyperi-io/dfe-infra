@@ -11,11 +11,27 @@ any -- is a per-deployment choice behind the `clickhouse-cluster` chart's
 | --- | --- | --- |
 | **Official ClickHouse operator** (clickhouse.com CRDs) | `mode: cluster` -- ClickHouseCluster CR + DFE-owned Keeper, ReplicatedMergeTree | Public default for the scale tier |
 | **ClickHouse Cloud** (or any BYO endpoint) | `mode: external` -- deploy nothing, connect to the supplied endpoint | Public default for managed deployments |
-| Standalone server | `mode: single` -- plain StatefulSet, no operator, MergeTree | Small/test tiers |
+| Standalone server | `mode: single` -- plain StatefulSet, no operator, Keeper embedded, a cluster of one | Small/test tiers |
 | **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22) |
 | Altinity operator | -- | **NOT tested.** Nothing in this stack has run under it |
 
 An external ClickHouse must run 24.10 or later, because the collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server refuses, so the collector cannot insert.
+
+## What a self-hosted server provides
+
+dfe-engine creates every table as an argumentless `Replicated*` engine inside a Replicated database, so it refuses a self-hosted server that lacks Keeper, the `{cluster}`, `{shard}` and `{replica}` macros, or a `remote_servers` cluster the `{cluster}` macro names. On a cluster of more than one server its SQL users and roles must also live in Keeper, as the first writable `user_directories` entry. Both modes this chart deploys provide all of it:
+
+| | `mode: cluster` | `mode: single` |
+| --- | --- | --- |
+| Keeper | The `KeeperCluster` the CR references, under an identity the operator mints | Embedded in the server on loopback 9181, under the identity in the `dfe-clickhouse-keeper-identity` Secret |
+| Macros and cluster | Written by the operator: `{cluster}` is `default`, holding every replica | `config.d/dfe-replication.xml`: `{cluster}` is `dfe`, holding the one server |
+| Access storage | The operator's base config lists `users_xml` then `replicated` | `dfe-replication.xml` replaces the image's list with `users_xml` then `replicated` |
+
+The `user_directories` list has to replace the image's default rather than add to it. An appended `<replicated>` sits behind `local_directory`, which then takes every `CREATE ROLE`. Keeper's log and snapshots live on the data PVC beside the tables, so the two are never lost apart. The Keeper identity is generated once and never rotated, because the server can read only the znodes created under it. Under another value the server exits with code 231 at start. Rationale and the reference config: dfe-schemas `docs/clickhouse-platform.md`. <!-- doc-paths: ignore -->
+
+In single mode `config.d/dfe-listen.xml` replaces the image's `docker_related_config.xml`, so Keeper, raft and interserver bind loopback and no other pod reaches them, and only 8123, 9000 and 8443 listen on the pod's address. Those three listen on IPv4 only, where the image's file listened on IPv6 as well, so single mode fails its probes on an IPv6-only cluster. With `tcp_port` removed, the replica has `is_local` 0 in `system.clusters`, so a hand-run `clusterAllReplicas('dfe', ...)`, which DFE never issues, dials the server as `default` and fails with `AUTHENTICATION_FAILED`.
+
+In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, and `network-policies` leaves the keeper pods out of `data-ingress-policy` (`operatorIngressScoped`). Only operator-labelled pods from any namespace ([accepted risk](../THREAT-MODEL.md#accepted-risks)) and the ClickHouse servers that reference the keeper reach 2181, 2281 and 9123, and only the other keepers reach raft on 9234. Policies are additive, so while `data-ingress-policy` selected them every DFE, data and operator namespace reached every port on the keepers. Pinned by `scripts/tests/test_keeper_ingress.py`.
 
 ## History and rationale
 
@@ -95,7 +111,7 @@ so the engine holds `clickhouse.storageModel`, `clickhouse.objectStore.*` and
 
 Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL: 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, an engine carrying dfe-engine#652 takes `PUT /api/v1/system/retention` from an admin and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
 
-The server's own system log tables are a separate knob, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart: 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the HyperDX ClickHouse log source searches) and `part_log`, 30 for `query_log`, in both cluster and single mode. `clickhouse.systemLogsOff` switches `trace_log` off by removing its config section; nothing in DFE reads it, and only single mode's image turns it on. A table already created stays and stops being written. The server applies a changed value at its next start by renaming the old table to `<table>_0` and creating a new one. The `_0` copy keeps its rows, so on an upgrade from a chart without these TTLs, list and drop them on each server:
+The server's own system log tables are a separate dial, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart: 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the HyperDX ClickHouse log source searches) and `part_log`, 30 for `query_log`, in both cluster and single mode. `clickhouse.systemLogsOff` switches `trace_log` off by removing its config section. Nothing in DFE reads it, and only single mode's image turns it on. A table already created stays and stops being written. The server applies a changed value at its next start by renaming the old table to `<table>_0` and creating a new one. The `_0` copy keeps its rows, so on an upgrade from a chart without these TTLs, list and drop them on each server:
 
 ```sql
 SELECT name, formatReadableSize(total_bytes) FROM system.tables
@@ -105,7 +121,7 @@ DROP TABLE system.query_log_0;   -- one per name listed
 
 The chart does not drop them: nothing in DFE writes to the `system` database. The `_0` tables stop growing the moment they are renamed.
 
-Both knobs, and `clickhouse.serverLog`, are server config, so they apply only where this chart runs the ClickHouse server (`mode: single` or `cluster`). On ClickHouse Cloud or any other `mode: external` server the chart renders no server config and the provider owns it; `SHOW CREATE TABLE system.query_log` shows the TTL in force there. The dfe-docker compose stack configures its own ClickHouse outside this chart.
+Both dials, and `clickhouse.serverLog`, are server config, so they apply only where this chart runs the ClickHouse server (`mode: single` or `cluster`). On ClickHouse Cloud or any other `mode: external` server the chart renders no server config and the provider owns it. `SHOW CREATE TABLE system.query_log` shows the TTL in force there. The dfe-docker compose stack configures its own ClickHouse outside this chart.
 
 ## Sizing the disk
 
@@ -143,8 +159,9 @@ Add the rows up for `D`. `F` for your own servers is `sum(bytes_on_disk)` over `
 
 ## Where the pieces live
 
-- Chart: `helm/charts/clickhouse-cluster` (modes above; keeper bundled for
-  cluster mode).
+- Chart: `helm/charts/clickhouse-cluster` (modes above, with a Keeper ensemble
+  for cluster mode and Keeper embedded in the server for single mode).
+- Keeper, macros, cluster and access storage per mode: `scripts/tests/test_clickhouse_replication.py`.
 - The storage matrix across both data stores: [storage.md](storage.md).
 - SSD tiering over a bulk volume, opt-in per deployment:
   [clickhouse-tiering.md](clickhouse-tiering.md).

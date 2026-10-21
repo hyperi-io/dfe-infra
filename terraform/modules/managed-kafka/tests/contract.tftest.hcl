@@ -320,7 +320,7 @@ run "msk_configuration_contents" {
 
   assert {
     condition     = strcontains(aws_msk_configuration.this.server_properties, "auto.create.topics.enable=false")
-    error_message = "auto.create.topics.enable must render false -- the bootstrap Job pre-creates the landing topics so their partitions and retention are ours to set"
+    error_message = "auto.create.topics.enable must render false -- dfe-engine creates the landing topics so their partitions and retention are ours to set"
   }
 
   assert {
@@ -617,7 +617,7 @@ run "msk_autoscaler_refuses_a_period_that_is_not_whole_minutes" {
 }
 
 // S2: the Lambda's env carries only what an increase can act on -- no
-// min_brokers, no scale-in knob of any kind.
+// min_brokers, no scale-in dial of any kind.
 run "msk_autoscaler_lambda_is_increase_only" {
   command = plan
 
@@ -637,7 +637,7 @@ run "msk_autoscaler_lambda_is_increase_only" {
 
   assert {
     condition     = length(aws_lambda_function.broker_scaler[0].environment[0].variables) == 3
-    error_message = "the Lambda's env must carry exactly CLUSTER_ARN, MAX_BROKERS and STEP -- an extra key here would be a scale-down or re-arm knob this design does not have"
+    error_message = "the Lambda's env must carry exactly CLUSTER_ARN, MAX_BROKERS and STEP -- an extra key here would be a scale-down or re-arm dial this design does not have"
   }
 
   assert {
@@ -874,5 +874,27 @@ run "msk_every_role_carries_the_permissions_boundary" {
       [for role in aws_iam_role.broker_scaler : role.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary"],
     ))
     error_message = "every aws_iam_role in the msk body must carry var.permissions_boundary"
+  }
+}
+
+run "msk_bootstrap_role_holds_only_the_acl_write_grants" {
+  command = plan
+
+  module {
+    source = "./msk"
+  }
+
+  assert {
+    condition     = length(data.aws_iam_policy_document.bootstrap.statement) == 1
+    error_message = "the bootstrap role grants at cluster scope only: the Job writes ACLs and creates no topic"
+  }
+
+  assert {
+    condition = toset(data.aws_iam_policy_document.bootstrap.statement[0].actions) == toset([
+      "kafka-cluster:Connect",
+      "kafka-cluster:DescribeCluster",
+      "kafka-cluster:AlterCluster",
+    ])
+    error_message = "an ACL write needs Connect, DescribeCluster and AlterCluster, and nothing more"
   }
 }

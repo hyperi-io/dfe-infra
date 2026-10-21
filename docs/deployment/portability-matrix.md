@@ -3,7 +3,7 @@
 DFE is ONE product deployed into many estates. Every major component sits behind
 a config-driven seam so a deployment swaps it without a code change -- the seam is
 always an existing k8s abstraction or a chart mode, never a fork. This page is the
-per-target instantiation of that contract; the seam DEFINITIONS (the knob each one
+per-target instantiation of that contract. The seam DEFINITIONS (the dial each one
 turns) live in [../architecture.md](../architecture.md) "Swappable components" and
 stay the SSoT.
 
@@ -48,7 +48,7 @@ managed endpoint.
 
 ## The matrix
 
-| Component | Seam (the knob) | On-prem RKE2 | AWS | Azure | GCP |
+| Component | Seam (the dial) | On-prem RKE2 | AWS | Azure | GCP |
 |---|---|---|---|---|---|
 | Kubernetes | vanilla-cluster contract (preflight) | RKE2 (standard) | EKS | AKS | GKE |
 | External DNS | external-dns provider / estate record | estate CoreDNS record | Route53 | Azure DNS | Cloud DNS |
@@ -112,10 +112,7 @@ managed endpoint.
 
 ## Node autoscaling
 
-Cluster Autoscaler (NOT Karpenter -- CA supports all our deploy types via its
-per-provider backends: cluster-api/on-prem, AWS ASG, Azure VMSS, GCP MIG). This is
-the LAST item of the reform and is spec'd separately in a follow-up GH issue, not
-built as part of this workstream.
+A pools interface, with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler: Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../AUTOSCALING.md](../AUTOSCALING.md) has the per-target table.
 
 ## Status
 

@@ -45,12 +45,17 @@ remain, printed for cleanup. A guarded run's teardown passes
 `--tag-filter <run key>=<run id>`, so it deletes that run's resources and no
 other run's.
 
+A resource carrying any --protected-tag (default `lifecycle=permanent`, the tag
+the account guardrails' own sweeper protects) is printed as `protected` and is
+never deleted or counted, whatever else selects it. A --protected-tag naming no
+key=value pair, or holding an item without one, is refused before any listing.
+
 --expired switches the selection to the run convention in cloud_run.py: a
 resource is eligible when it carries the run tag (default `dfe-e2e`) and its
 `expires-at` plus --grace is in the past. A resource without the run tag, with
 a future expiry, or with an expiry that does not parse is never selected,
 whatever else it carries, with one exception: a non-default security group
-with no run tag inside a VPC that is itself expired. That is how EKS leaves its
+with no run tag inside a VPC that is itself expired and not protected. That is how EKS leaves its
 cluster security group, outside tofu state, and DeleteVpc fails while it
 stands. --tag-filter still decides the tagged/untagged column but not
 eligibility. --grace defaults to 1h, the margin a last-resort
@@ -104,11 +109,13 @@ never in whatever region the shell defaults to.
 """
 
 import argparse
+import functools
 import json
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import NoReturn, Protocol
@@ -122,6 +129,8 @@ POLL_INTERVAL = 10
 ROUTE53_BATCH = 100  # changes per ChangeResourceRecordSets call, well inside the API's 1000
 
 DEFAULT_TAG_FILTER = "service-name=dfe,environment=test"
+# What the account guardrails' own sweeper protects, and their policies forbid a run to touch.
+DEFAULT_PROTECTED_TAGS = "lifecycle=permanent"
 DEFAULT_EXPIRED_GRACE = "1h"
 DEFAULT_SECURITY_GROUP = "default"  # every VPC's own group, which AWS refuses to delete and removes with the VPC
 
@@ -171,7 +180,8 @@ def _region_args(args: list[str], region: str) -> list[str]:
 def _call_aws(args: list[str], argv: list[str]) -> subprocess.CompletedProcess[str]:
     """One aws CLI call; a hang past AWS_TIMEOUT is a CloudSweepError like any other failure."""
     try:
-        result = aws_cli.run_aws(argv, timeout=AWS_TIMEOUT)
+        # Its own session, so a signal the cloud guard's teardown holds off cannot cut a delete short.
+        result = aws_cli.run_aws(argv, timeout=AWS_TIMEOUT, new_session=True)
     except subprocess.TimeoutExpired as exc:
         raise CloudSweepError(f"aws {' '.join(args)} did not answer within {AWS_TIMEOUT}s") from exc
     if result.returncode != 0:
@@ -896,15 +906,28 @@ def collect(
 # ---------------------------------------------------------------------------
 
 
+def _protected(resource: Resource, protected: dict[str, str]) -> bool:
+    """Whether the resource carries any protected key=value."""
+    return any(resource.tags.get(key) == value for key, value in protected.items())
+
+
 def filter_for_delete(
-    resources: list[Resource], *, include_untagged: bool, exclude_bucket: str | None
+    resources: list[Resource],
+    *,
+    include_untagged: bool,
+    exclude_bucket: str | None,
+    protected: dict[str, str] | None = None,
 ) -> list[Resource]:
-    """The subset --delete would remove and the exit code is judged against."""
+    """The subset --delete would remove and the exit code is judged against.
+
+    A resource carrying a protected tag (default DEFAULT_PROTECTED_TAGS) is never in it.
+    """
+    guard = parse_protected_tags(DEFAULT_PROTECTED_TAGS) if protected is None else protected
     eligible = []
     for r in resources:
         if r.kind == "s3-bucket" and r.id == exclude_bucket:
             continue
-        if r.kind in LISTED_ONLY:
+        if r.kind in LISTED_ONLY or _protected(r, guard):
             continue
         if not r.tagged and not include_untagged:
             continue
@@ -912,9 +935,13 @@ def filter_for_delete(
     return eligible
 
 
-def _expired_vpc_ids(resources: list[Resource], expiry: ExpirySelection) -> set[str]:
-    """The VPCs whose own run tags say their run is over."""
-    return {r.id for r in resources if r.kind == "vpc" and expiry.state(r) is cloud_run.ExpiryState.EXPIRED}
+def _expired_vpc_ids(resources: list[Resource], expiry: ExpirySelection, protected: dict[str, str]) -> set[str]:
+    """The VPCs whose own run tags say their run is over, less any carrying a protected tag."""
+    return {
+        r.id
+        for r in resources
+        if r.kind == "vpc" and not _protected(r, protected) and expiry.state(r) is cloud_run.ExpiryState.EXPIRED
+    }
 
 
 def _orphan_in_expired_vpc(resource: Resource, expired_vpcs: set[str], expiry: ExpirySelection) -> bool:
@@ -936,18 +963,26 @@ def _orphan_in_expired_vpc(resource: Resource, expired_vpcs: set[str], expiry: E
 
 
 def filter_expired(
-    resources: list[Resource], *, expiry: ExpirySelection, exclude_bucket: str | None
+    resources: list[Resource],
+    *,
+    expiry: ExpirySelection,
+    exclude_bucket: str | None,
+    protected: dict[str, str] | None = None,
 ) -> list[Resource]:
     """The subset --expired --delete would remove.
 
     That is every run-tagged resource past expiry plus grace, and the untagged
-    non-default security groups inside a VPC that is itself expired.
+    non-default security groups inside a VPC that is itself expired and
+    unprotected, less any resource carrying a protected tag (default
+    DEFAULT_PROTECTED_TAGS).
     """
-    expired_vpcs = _expired_vpc_ids(resources, expiry)
+    guard = parse_protected_tags(DEFAULT_PROTECTED_TAGS) if protected is None else protected
+    expired_vpcs = _expired_vpc_ids(resources, expiry, guard)
     return [
         r
         for r in resources
         if not (r.kind == "s3-bucket" and r.id == exclude_bucket)
+        and not _protected(r, guard)
         and (
             expiry.state(r) is cloud_run.ExpiryState.EXPIRED
             or _orphan_in_expired_vpc(r, expired_vpcs, expiry)
@@ -955,14 +990,19 @@ def filter_expired(
     ]
 
 
-def print_report(resources: list[Resource], expiry: ExpirySelection | None = None) -> None:
+def print_report(
+    resources: list[Resource], expiry: ExpirySelection | None = None, protected: dict[str, str] | None = None
+) -> None:
     if not resources:
         print("no resources found")
         return
-    expired_vpcs = _expired_vpc_ids(resources, expiry) if expiry is not None else set()
+    guard = parse_protected_tags(DEFAULT_PROTECTED_TAGS) if protected is None else protected
+    expired_vpcs = _expired_vpc_ids(resources, expiry, guard) if expiry is not None else set()
     for r in resources:
         if r.kind in LISTED_ONLY:
             tag_state = "listed-only"
+        elif _protected(r, guard):
+            tag_state = "protected"
         else:
             tag_state = "dfe-tagged" if r.tagged else "untagged"
         line = f"{r.kind:16s} {r.name:44s} age={_age(r.created):8s} {tag_state}"
@@ -1445,6 +1485,10 @@ DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
 }
 
 
+# Kinds deleted several at once. A secret delete is a DeleteSecret, then a ListSecrets every
+# POLL_INTERVAL until it is purged, far inside the 50/s and 100/s Secrets Manager allows per region.
+CONCURRENT_DELETES: dict[str, int] = {"secret": 4}
+
 # Deletes of more than one call, where a NotFound may name a nodegroup, a VPC, a record or an
 # object rather than the resource, so only the single-call kinds can read it as "already gone".
 COMPOUND_DELETES = frozenset({"eks-cluster", "internet-gateway", "route53-zone", "s3-bucket"})
@@ -1453,6 +1497,27 @@ COMPOUND_DELETES = frozenset({"eks-cluster", "internet-gateway", "route53-zone",
 def _already_gone(kind: str, exc: CloudSweepError) -> bool:
     """True when AWS answered NotFound to the one call that deletes a resource of `kind`."""
     return kind not in COMPOUND_DELETES and "NotFound" in str(exc)
+
+
+def _delete_one(kind: str, r: Resource, region: str) -> tuple[str, str]:
+    """(the line reporting one delete, its failure message or empty)."""
+    try:
+        DELETE_FNS[kind](r, region)
+    except CloudSweepError as exc:
+        if _already_gone(kind, exc):
+            return f"already gone {kind} {r.name}", ""
+        return f"FAILED to delete {kind} {r.name}: {exc}", f"{kind} {r.name}: {exc}"
+    return f"deleted {kind} {r.name}", ""
+
+
+def _outcomes(kind: str, batch: list[Resource], region: str) -> Iterator[tuple[str, str]]:
+    """Each delete of one kind as it lands, CONCURRENT_DELETES of them at once for the kinds it names."""
+    workers = min(CONCURRENT_DELETES.get(kind, 1), len(batch))
+    if workers <= 1:
+        yield from (_delete_one(kind, r, region) for r in batch)
+        return
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        yield from pool.map(functools.partial(_delete_one, kind, region=region), batch)
 
 
 def delete_resources(resources: list[Resource], region: str) -> list[str]:
@@ -1466,16 +1531,10 @@ def delete_resources(resources: list[Resource], region: str) -> list[str]:
         by_kind.setdefault(r.kind, []).append(r)
     failures: list[str] = []
     for kind in DELETE_ORDER:
-        for r in by_kind.get(kind, []):
-            try:
-                DELETE_FNS[kind](r, region)
-                print(f"deleted {kind} {r.name}")
-            except CloudSweepError as exc:
-                if _already_gone(kind, exc):
-                    print(f"already gone {kind} {r.name}")
-                    continue
-                failures.append(f"{kind} {r.name}: {exc}")
-                print(f"FAILED to delete {kind} {r.name}: {exc}", file=sys.stderr)
+        for line, failure in _outcomes(kind, by_kind.get(kind, []), region):
+            print(line, file=sys.stderr if failure else sys.stdout)
+            if failure:
+                failures.append(failure)
     unhandled = {r.kind for r in resources} - set(DELETE_FNS)
     for kind in unhandled:
         for r in by_kind.get(kind, []):
@@ -1630,6 +1689,26 @@ def parse_tag_filter(raw: str) -> dict[str, str]:
     return pairs
 
 
+def parse_protected_tags(raw: str) -> dict[str, str]:
+    """The --protected-tag pairs, refusing any spelling that would protect nothing.
+
+    Raises:
+        ValueError: `raw` names no pair, or an item lacks its key, its `=` or its value.
+    """
+    pairs: dict[str, str] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        key, sep, value = item.partition("=")
+        if not (key.strip() and sep and value.strip()):
+            raise ValueError(f"--protected-tag item {item!r} is not key=value")
+        pairs[key.strip()] = value.strip()
+    if not pairs:
+        raise ValueError(f"--protected-tag {raw!r} names no key=value pair")
+    return pairs
+
+
 def confirm_delete(eligible: list[Resource], *, skip_prompt: bool) -> bool:
     """Print the full eligible list and get an explicit "yes", unless --yes skips the prompt."""
     print(f"About to delete {len(eligible)} resource(s):")
@@ -1672,6 +1751,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tag-filter",
         default=DEFAULT_TAG_FILTER,
         help="comma-separated key=value pairs a resource must carry to count as dfe's",
+    )
+    parser.add_argument(
+        "--protected-tag",
+        default=DEFAULT_PROTECTED_TAGS,
+        help="comma-separated key=value pairs; a resource carrying any is printed as protected and never "
+        f"deleted or counted, whatever else selects it (default {DEFAULT_PROTECTED_TAGS}, the tag the "
+        "account guardrails' sweeper protects). A value naming no key=value pair is refused",
     )
     parser.add_argument(
         "--include-untagged",
@@ -1720,6 +1806,10 @@ def _refuse(message: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        parse_protected_tags(args.protected_tag)
+    except ValueError as exc:
+        return _refuse(f"{exc}: refusing rather than protecting nothing.")
     tag_filter = parse_tag_filter(args.tag_filter)
     if args.delete and not tag_filter and not (args.expired or args.include_untagged):
         return _refuse(
@@ -1753,9 +1843,12 @@ def main(argv: list[str] | None = None) -> int:
 def _eligible(
     resources: list[Resource], args: argparse.Namespace, expiry: ExpirySelection | None
 ) -> list[Resource]:
+    protected = parse_protected_tags(args.protected_tag)
     if expiry is not None:
-        return filter_expired(resources, expiry=expiry, exclude_bucket=args.exclude_bucket)
-    return filter_for_delete(resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket)
+        return filter_expired(resources, expiry=expiry, exclude_bucket=args.exclude_bucket, protected=protected)
+    return filter_for_delete(
+        resources, include_untagged=args.include_untagged, exclude_bucket=args.exclude_bucket, protected=protected
+    )
 
 
 def _sweep(
@@ -1777,7 +1870,7 @@ def _sweep(
 
     run_key = expiry.keys.run if expiry else None
     resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key, kinds=args.kind)
-    print_report(resources, expiry)
+    print_report(resources, expiry, parse_protected_tags(args.protected_tag))
     eligible = _eligible(resources, args, expiry)
 
     if args.delete and eligible:

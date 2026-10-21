@@ -81,6 +81,16 @@ target:
 ## until it lands.
 kubernetes_version: "1.36"
 
+## Node images. `python3 scripts/resolve_sizing.py images` writes the cloud's
+## recommended node image, at its newest dated release, into the root's
+## node-images.auto.tfvars.json, which beats terraform.tfvars. pin: "true" skips
+## that lookup and empties the file, so a value in terraform.tfvars holds -- the
+## hold for a bad provider image or a reproducible rebuild. A pin takes effect on
+## the next `images` run, because tofu never reads the dial. With neither, the
+## root's variable default applies (terraform/modules/kubernetes-cluster/CONTRACT.md).
+node_image:
+  pin: "false"               # true | false
+
 ## Egress. per-az puts a NAT gateway in every zone, so a zone failure and the
 ## cross-zone data charge both stay contained; single puts one in the first
 ## zone and is the cheaper tyre-kick default.
@@ -746,7 +756,7 @@ registry: ghcr.io/hyperi-io
 ## expands into the per-component version set. track-latest is the opt-in daemon
 ## roll to the newest certified stack tag.
 version:
-  pin: 2.2.1-rc.13
+  pin: 2.2.1-rc.17
   # track: latest
   # allow_prerelease: "false"
 
@@ -812,9 +822,9 @@ docker:
 
 ## ---------------------------------------------------------------------------
 ## k8s SLICE -- consumed by this repo's render_dial. Each field maps to one DFE_*
-## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap knobs are
-## the DeployContext seam expressed as dial fields -- change the cloud, change
-## these, everything else is the same orchestrator.
+## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap dials are
+## the DeployContext seam -- change the cloud, change these, everything else is
+## the same orchestrator.
 ## ---------------------------------------------------------------------------
 k8s:
   env: local                 # DFE_ENV
@@ -825,11 +835,25 @@ k8s:
   repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart repo Argo reads, with DFE_REPO_TOKEN only if your copy is private
   target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud
-  ## Cloud-swap knobs. Blank = the cluster/chart default (local-path, ClusterIP).
+  ## Cloud-swap dials. Blank = the cluster/chart default (local-path, ClusterIP).
   ## Set per cloud (see the AWS worked example below). These layer onto the
   ## per-cloud argocd/values/<cloud>.yaml the chart already carries.
   load_balancer_type: ""     # e.g. nlb (AWS), "" for the default Service type
   config_storage: ""         # e.g. s3 (AWS), "" for in-cluster config storage
+  ## Pool disruption intent: how fast the node pools may lose nodes. Each cloud's
+  ## pools renderer applies it in its own terms, and a cloud with no dynamic pools
+  ## ignores it.
+  ##   balanced     -- the standard rates, and the default.
+  ##   conservative -- elastic pools remove underused nodes at half the rate, and
+  ##                   a stateful node is replaced for drift only inside the
+  ##                   window. With no window, drift never replaces one.
+  ## With a window set, drift waits for it on every pool but ci-burst. Without one,
+  ## drift runs any time (balanced). Empty and underused nodes ignore the window.
+  disruption:
+    posture: balanced        # balanced | conservative
+    maintenance_window:
+      schedule: ""           # UTC cron, daily "M H * * *" or weekly "M H * * D" (0 is Sunday), e.g. "0 2 * * 6"
+      duration: ""           # hours and minutes, e.g. 4h or 3h30m, set together with schedule
 
 ## ---------------------------------------------------------------------------
 ## CLOUD worked example -- AWS. The genericised swap: to move this deployment to

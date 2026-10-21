@@ -21,6 +21,7 @@ Runner is asked to stop, or stops at a deadline a few seconds out.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -1931,6 +1932,96 @@ def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(tmp
                    deadline=time.monotonic() + 2, stop_timeout=1)
     assert ready.exists()
     assert time.monotonic() - started < 10
+
+
+class _DeadlineTeardown:
+    """A teardown whose one child sleeps past its deadline, as the workload teardown did."""
+
+    def __init__(self) -> None:
+        self.dispositions = ""
+        self.stopped_after = 0.0
+
+    def run(self) -> None:
+        probe = "import signal; print(int(signal.getsignal(signal.SIGTERM)), int(signal.getsignal(signal.SIGINT)))"
+        self.dispositions = subprocess.run(
+            [sys.executable, "-c", probe], capture_output=True, text=True, encoding="utf-8", check=True
+        ).stdout.strip()
+        started = time.monotonic()
+        with contextlib.suppress(guard_mod.DeadlineError):
+            guard_mod.Runner().run([sys.executable, "-c", "import time; time.sleep(60)"], new_session=True,
+                                   deadline=time.monotonic() + 1, stop_timeout=30)
+        self.stopped_after = time.monotonic() - started
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_expected_fail_a_child_the_teardown_starts_still_stops_on_its_deadline_sigterm() -> None:
+    """An ignored SIGTERM passes to every child, which only SIGKILL then ends, stop_timeout later."""
+    teardown = _DeadlineTeardown()
+    with guard_mod.teardown_on_exit(teardown):
+        pass
+    assert teardown.dispositions == f"{int(signal.SIG_DFL)} {int(signal.SIG_IGN)}", teardown.dispositions
+    assert teardown.stopped_after < 10, teardown.stopped_after
+
+
+# A guard whose teardown makes one sweep call, through the real teardown_on_exit.
+SWEEPS_IN_THE_TEARDOWN = (
+    "import sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "import cloud_sweep, dfe_ops_cloud_guard\n"
+    "class Sweep:\n"
+    "    def run(self):\n"
+    "        print(cloud_sweep.run_aws(['ec2', 'describe-network-interfaces'], 'us-west-2'), flush=True)\n"
+    "with dfe_ops_cloud_guard.teardown_on_exit(Sweep()):\n"
+    "    pass\n"
+)
+# An aws CLI that says it has started, then answers two seconds later.
+SLOW_AWS = "#!/usr/bin/env bash\nprintf '%s' \"$$\" > \"${FAKE_AWS_STARTED}\"\nsleep 2\nprintf '{\"ok\": true}\\n'\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+@pytest.mark.parametrize("signum", guard_mod.TEARDOWN_SIGNALS)
+def test_expected_fail_a_signal_to_the_guards_group_never_cuts_a_teardown_sweep_short(
+    tmp_path: Path, signum: int
+) -> None:
+    """The teardown catches the signal, so an aws child sharing the guard's group would die of it."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "aws").write_text(SLOW_AWS, encoding="utf-8")
+    (bin_dir / "aws").chmod(0o755)
+    started = tmp_path / "aws-started"
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_AWS_STARTED": str(started)}
+    guard = subprocess.Popen(
+        [sys.executable, "-c", SWEEPS_IN_THE_TEARDOWN, str(REPO_ROOT / "scripts")],
+        env=env, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8",
+    )
+    try:
+        give_up = time.monotonic() + 30
+        while not (started.is_file() and started.read_text(encoding="utf-8")) and time.monotonic() < give_up:
+            time.sleep(0.05)
+        assert started.is_file(), "the fake aws never started"
+        os.killpg(guard.pid, signum)
+        out, err = guard.communicate(timeout=30)
+    finally:
+        if guard.poll() is None:
+            os.killpg(guard.pid, signal.SIGKILL)
+            guard.wait()
+    assert guard.returncode == 0, err
+    assert "{'ok': True}" in out
+
+
+def test_the_guard_itself_outlives_a_sigterm_while_the_teardown_runs() -> None:
+    class Signalled:
+        survived = False
+
+        def run(self) -> None:
+            os.kill(os.getpid(), signal.SIGTERM)
+            Signalled.survived = True
+
+    with guard_mod.teardown_on_exit(Signalled()):
+        pass
+    assert Signalled.survived
+    assert signal.getsignal(signal.SIGTERM) is not guard_mod._hold_through_teardown
 
 
 def test_a_child_that_ends_before_its_deadline_returns_its_own_code() -> None:

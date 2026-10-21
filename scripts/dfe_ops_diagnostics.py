@@ -12,7 +12,7 @@
 """dfe-ops diagnostics -- what the DFE apps were doing when a stage failed.
 
     dfe-ops diagnostics --dir DIR --label LABEL [--kubeconfig F] [--context C] [--server S]
-                        [--log-minutes 30] [--budget 300]
+                        [--log-minutes 30] [--budget 300] [--from-terraform TF_DIR]
 
 `dfe-ops cycle --diagnostics-dir DIR` runs it when any stage from deploy+e2e on fails,
 before the destroy. The source acceptance runner runs it before it removes its source,
@@ -26,8 +26,10 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
                              resource not Synced and Healthy
   logs/<namespace>/<pod>.<container>.log
                              the last --log-minutes of each container of dfe-receiver,
-                             dfe-loader, dfe-engine, dfe-hunt-runner and every
-                             dfe-transform-* deployment, the per-source ones included
+                             dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner and every
+                             dfe-fetcher-* and dfe-transform-* deployment, the per-source ones
+                             included. The cycle passes the failed stage's own length when it
+                             ran longer than the default
   logs/<namespace>/<pod>.<container>.previous.log
                              the run before, for a container that restarted
   kafka/engine.txt           the bootstrap address, security protocol and SASL Secret name
@@ -37,8 +39,17 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
   kafka/client-pod.json      a redacted copy of the client pod and NetworkPolicy applied
   kafka/consumer-groups.txt  kafka-consumer-groups.sh --describe --all-groups
   kafka/end-offsets.txt      the end offset of every _land, _load and _dlq topic
+  kafka/broker-api-versions.txt
+                             kafka-broker-api-versions.sh: the API versions each broker serves
+  kafka/groups-list.txt      kafka-consumer-groups.sh --list
+  kafka/loader-group-state.txt, kafka/loader-group-offsets.txt
+                             --describe --group dfe-loader with --state, then --offsets
   kafka/summary.txt          per topic: its end offset, and each group's committed offset
-                             and lag, or that no group has one
+                             and lag, or that no group has one. A groups read that failed
+                             heads it as `groups read FAILED: <its first Error line>`
+  kafka/broker-logs/         with --from-terraform on an msk backend, MSK's broker logs from
+                             their S3 bucket, newest first and decompressed. S3 delivers them
+                             in batches minutes apart, so the last minutes may be missing
   index.txt                  every capture, the command behind it and how it ended
 
 A DFE namespace is one an Argo Application deploys into, one holding a logged app, or
@@ -53,6 +64,9 @@ egress NetworkPolicy are the only objects this writes. They are deleted before i
 returns, and the pod stops at activeDeadlineSeconds if the delete is lost. A deployment
 with no Kafka bus has neither.
 
+The broker logs are read with the runner's own AWS credentials (`aws s3 sync`), after the
+client pod is deleted, so a cluster whose API server answers nothing still leaves them.
+
 Every file passes through the failure-evidence `redact` before it is written, index.txt
 included. The run stops at --budget seconds, every command inside it is bounded, and a
 capture that fails or raises is one line in index.txt while the rest still run. It never
@@ -61,9 +75,11 @@ reads a Secret, and it exits 0 whatever it finds.
 
 import argparse
 import contextlib
+import gzip
 import json
 import os
 import shlex
+import shutil
 import sys
 import tempfile
 import time
@@ -92,7 +108,15 @@ MAX_RESOURCES = 20  # resources not Synced and Healthy named per Application
 # Share of the budget the log reads leave for the Kafka reads after them.
 KAFKA_SHARE = 0.35
 # Deployments whose logs are read: each name, and every `<name>-<suffix>` beside it.
-LOGGED_APPS = ("dfe-receiver", "dfe-loader", "dfe-engine", "dfe-hunt-runner", "dfe-transform")
+LOGGED_APPS = (
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-engine",
+    "dfe-hunt-runner",
+    "dfe-fetcher",
+    "dfe-transform",
+)
 ENGINE = "dfe-engine"
 ARGOCD = "argocd"
 APPLICATIONS = "applications.argoproj.io"
@@ -129,6 +153,24 @@ KAFKA_BIN = "/opt/kafka/bin"
 GROUPS_COMMAND = "kafka-consumer-groups.sh --describe --all-groups --timeout 10000"
 # kafka-get-offsets.sh reads --topic as a regular expression over every topic.
 OFFSETS_COMMAND = "kafka-get-offsets.sh --topic '.*_(land|load|dlq)'"
+LOADER_GROUP = "dfe-loader"  # dfe-loader's own default group, which no chart overrides
+# One call each, so the request a broker refuses is the read that fails. --list takes no --timeout.
+STEPWISE_READS = (
+    ("kafka/broker-api-versions.txt", "kafka-broker-api-versions.sh"),
+    ("kafka/groups-list.txt", "kafka-consumer-groups.sh --list"),
+    (
+        "kafka/loader-group-state.txt",
+        f"kafka-consumer-groups.sh --describe --group {LOADER_GROUP} --state --timeout 10000",
+    ),
+    (
+        "kafka/loader-group-offsets.txt",
+        f"kafka-consumer-groups.sh --describe --group {LOADER_GROUP} --offsets --timeout 10000",
+    ),
+)
+BROKER_LOGS = "kafka/broker-logs/"
+BROKER_LOG_TIMEOUT = 90.0  # seconds for the bucket's download
+BROKER_LOG_TOTAL = 16 * 1024 * 1024  # decompressed bytes every broker log of a bundle may keep
+TOFU_TIMEOUT = 30.0  # seconds one `tofu output` may take
 TOPIC_SUFFIXES = ("_land", "_load", "_dlq")
 # The Kafka clients' own waits, so an unreachable broker ends a read before its box does.
 CLIENT_TIMEOUTS = ("request.timeout.ms=20000", "default.api.timeout.ms=30000")
@@ -163,6 +205,8 @@ class Bundle:
     answered: int = 0
     files: set[str] = field(default_factory=set)
     log_left: int = LOG_TOTAL
+    # The terraform env dir whose outputs name the Kafka backend. Empty reads no broker logs.
+    tf_dir: str = ""
 
     def note(self, name: str, how: str, args: Iterable[str] = ()) -> None:
         """One index entry: where a capture went, how it ended and the command behind it."""
@@ -614,8 +658,24 @@ def _exec_args(client: KafkaClient, command: str) -> tuple[list[str], list[str]]
     return [*head, client_script(client.facts, command)], [*head, f"<client script: {command}>"]
 
 
+def _decoded(outcome: fe.Outcome | None) -> str:
+    return outcome.output.decode("utf-8", errors="replace") if outcome else ""
+
+
+def read_failure(outcome: fe.Outcome | None, budget: float) -> str:
+    """Why a Kafka read gave no answer to trust, as one line, or empty when it gave one.
+
+    The Kafka tools print a failure to stdout as an `Error` or `ERROR` line and can still exit 0.
+    """
+    lines = _decoded(outcome).splitlines()
+    said = next((line.strip() for line in lines if line.startswith(("Error", "ERROR"))), "")
+    if outcome is not None and outcome.ok:
+        return said
+    return said or fe.verdict(outcome, budget)
+
+
 def read_kafka(bundle: Bundle, client: KafkaClient) -> None:
-    """Wait for the client pod, then read every group's offsets and the topics' end offsets."""
+    """Wait for the client pod, then read the groups, the end offsets and each step alone."""
     wait = [
         "-n", client.facts.namespace, "wait", "--for=condition=Ready", f"pod/{client.pod}",
         f"--timeout={int(KAFKA_READY_TIMEOUT)}s",
@@ -624,17 +684,26 @@ def read_kafka(bundle: Bundle, client: KafkaClient) -> None:
     if ready is None or not ready.ok:
         bundle.note("kafka/consumer-groups.txt", "not run: the client pod never became Ready")
         return
-    answers = []
+    answers: dict[str, fe.Outcome | None] = {}
     for name, command in (
         ("kafka/consumer-groups.txt", GROUPS_COMMAND),
         ("kafka/end-offsets.txt", OFFSETS_COMMAND),
+        *STEPWISE_READS,
     ):
         argv, shown = _exec_args(client, command)
         outcome = bundle.capture(name, argv, shown=shown, timeout=KAFKA_EXEC_TIMEOUT)
-        answers.append(outcome.output.decode("utf-8", errors="replace") if outcome else "")
-    summary = "\n".join(kafka_summary_lines(*answers)) + "\n"
-    bundle.write("kafka/summary.txt", summary.encode("utf-8"))
-    bundle.note("kafka/summary.txt", "from the two reads above")
+        failed = read_failure(outcome, bundle.budget)
+        if failed and outcome is not None and outcome.ok:
+            bundle.note(name, f"answered, but the read FAILED: {failed}")
+        answers[name] = outcome
+    groups = answers["kafka/consumer-groups.txt"]
+    summary_lines = kafka_summary_lines(
+        _decoded(groups),
+        _decoded(answers["kafka/end-offsets.txt"]),
+        groups_failed=read_failure(groups, bundle.budget),
+    )
+    bundle.write("kafka/summary.txt", ("\n".join(summary_lines) + "\n").encode("utf-8"))
+    bundle.note("kafka/summary.txt", "from the groups and end-offsets reads above")
 
 
 def stop_kafka_client(bundle: Bundle, client: KafkaClient) -> None:
@@ -659,13 +728,20 @@ def stop_kafka_client(bundle: Bundle, client: KafkaClient) -> None:
         client.manifest.unlink(missing_ok=True)
 
 
-def kafka_summary_lines(groups: str, offsets: str) -> list[str]:
+def kafka_summary_lines(groups: str, offsets: str, groups_failed: str = "") -> list[str]:
     """Per _land, _load and _dlq topic: its end offset, and each group's commit and lag.
 
     Read off kafka-consumer-groups.sh (GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET
     LAG ...) and kafka-get-offsets.sh (topic:partition:offset). A group with no committed
     offset prints `-`, and a group that never committed is not printed at all.
+
+    Args:
+        groups: The groups read's output.
+        offsets: The end-offsets read's output.
+        groups_failed: Why the groups read failed, from read_failure. Set, it heads the
+            summary and no topic claims that no group has an offset on it.
     """
+    head = [f"groups read FAILED: {groups_failed}"] if groups_failed else []
     ends: dict[str, int] = {}
     for line in offsets.splitlines():
         topic, _, rest = line.strip().partition(":")
@@ -683,13 +759,16 @@ def kafka_summary_lines(groups: str, offsets: str) -> list[str]:
                 sums[slot] = (sums[slot] or 0) + int(raw)
     topics = sorted(topic for topic in {*ends, *committed} if topic.endswith(TOPIC_SUFFIXES))
     if not topics:
-        return ["neither Kafka read answered with a row"]
-    lines: list[str] = []
+        return [*head, "neither Kafka read answered with a row"]
+    lines = head
     for topic in topics:
         end = ends.get(topic)
         lines.append(f"{topic} end offset {'-' if end is None else end}")
         by_group = committed.get(topic) or {}
-        if not by_group:
+        if not by_group and groups_failed:
+            # A read that failed says nothing about which groups exist.
+            lines.append("  groups not known: the groups read FAILED")
+        elif not by_group:
             lines.append("  no consumer group has an offset on it")
         for group, (done, lag) in sorted(by_group.items()):
             if done is None:
@@ -698,6 +777,103 @@ def kafka_summary_lines(groups: str, offsets: str) -> list[str]:
                 shown = "-" if lag is None else lag
                 lines.append(f"  group {group}: committed {done}, lag {shown}")
     return lines
+
+
+# --- MSK's broker logs -----------------------------------------------------------------
+
+
+def _outside(bundle: Bundle, argv: list[str], *, timeout: float) -> fe.Outcome | None:
+    """`argv`, not kubectl, bounded by the captures' time left, or None once it is spent."""
+    left = bundle.deadline - time.monotonic()
+    if left <= 0:
+        return None
+    return fe.run_bounded(argv, timeout=min(timeout, left), limit=fe.STDERR_BYTES)
+
+
+def tofu_output(bundle: Bundle, name: str) -> str | None:
+    """One output of the --from-terraform dir, or None, recorded, when tofu did not give it."""
+    argv = ["tofu", f"-chdir={bundle.tf_dir}", "output", "-raw", name]
+    outcome = _outside(bundle, argv, timeout=TOFU_TIMEOUT)
+    if outcome is None or not outcome.ok:
+        how = fe.verdict(outcome, bundle.budget)
+        bundle.note(BROKER_LOGS, f"not run: {shlex.join(argv)}: {how}")
+        return None
+    return _decoded(outcome).strip()
+
+
+def _log_name(staging: Path, path: Path) -> str:
+    """The bundle path a downloaded log lands at: its key under BROKER_LOGS, `.gz` dropped."""
+    parts = [fe.safe_name(part) for part in path.relative_to(staging).parts]
+    parts[-1] = parts[-1].removesuffix(".gz")
+    return BROKER_LOGS + "/".join(parts)
+
+
+def _log_bytes(path: Path) -> bytes:
+    """The first LOG_BYTES of one log, decompressed when MSK delivered it gzipped."""
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rb") as handle:
+        return handle.read(LOG_BYTES)
+
+
+def keep_broker_logs(bundle: Bundle, staging: Path) -> tuple[int, int]:
+    """Write the downloaded logs into the bundle, newest first, up to BROKER_LOG_TOTAL bytes.
+
+    Returns:
+        How many were written, and how many the byte limit left out.
+    """
+    downloaded = [path for path in staging.rglob("*") if path.is_file()]
+    downloaded.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    kept = skipped = 0
+    left = BROKER_LOG_TOTAL
+    for path in downloaded:
+        name = _log_name(staging, path)
+        try:
+            data = _log_bytes(path)
+        except (OSError, EOFError) as exc:  # a truncated or corrupt object, one of many
+            bundle.note(name, f"not kept: {type(exc).__name__}: {exc}")
+            continue
+        if len(data) > left:
+            skipped += 1
+            continue
+        bundle.write(name, data)
+        left -= len(data)
+        kept += 1
+    return kept, skipped
+
+
+def copy_broker_logs(bundle: Bundle) -> None:
+    """MSK's broker logs from their S3 bucket into kafka/broker-logs/, on an msk backend.
+
+    The backend and the bucket are --from-terraform's outputs, and a failed copy is one line in
+    index.txt. S3 delivers in batches minutes apart, so the last minutes may be missing.
+    """
+    provider = tofu_output(bundle, "DFE_KAFKA_PROVIDER")
+    if provider is None:
+        return
+    if provider != "msk":
+        bundle.note(BROKER_LOGS, f"not run: the Kafka backend is {provider or 'none'}, not msk")
+        return
+    bucket = tofu_output(bundle, "DFE_KAFKA_BROKER_LOG_BUCKET")
+    if bucket is None:
+        return
+    if not bucket:
+        bundle.note(BROKER_LOGS, "not run: no broker-log bucket, so the logs are in CloudWatch")
+        return
+    staging = Path(tempfile.mkdtemp(prefix=f"{CLIENT_NAME}-broker-logs-"))
+    try:
+        quiet = ["--only-show-errors", "--no-progress"]
+        argv = ["aws", "s3", "sync", f"s3://{bucket}", str(staging), *quiet]
+        outcome = _outside(bundle, argv, timeout=BROKER_LOG_TIMEOUT)
+        kept, skipped = keep_broker_logs(bundle, staging)
+        over = f", {skipped} more past the {BROKER_LOG_TOTAL} byte limit" if skipped else ""
+        how = fe.verdict(outcome, bundle.budget)
+        bundle.note(
+            BROKER_LOGS,
+            f"aws s3 sync s3://{bucket}: {how}, {kept} log(s) kept{over}. S3 delivers in batches "
+            "minutes apart, so the last minutes may be missing",
+        )
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 # --- the run ------------------------------------------------------------------------
@@ -750,31 +926,48 @@ def capture_logs(bundle: Bundle, targets: list[dict], *, minutes: int, keep: flo
         bundle.note("logs/", f"+{len(skipped)} pods not read: {', '.join(skipped)}")
 
 
+def _collect_cluster(
+    bundle: Bundle,
+    pods: list[dict] | None,
+    targets: list[dict],
+    client: KafkaClient | None,
+    *,
+    minutes: int,
+) -> None:
+    """The captures that read the cluster, stopped after two reads it did not answer."""
+    wide = guarded(
+        bundle,
+        "workloads.txt",
+        lambda: bundle.capture("workloads.txt", ["get", "pods,deploy,rs", "-A", "-o", "wide"]),
+    )
+    if pods is None and not (wide and wide.ok):
+        bundle.note("(the rest)", "not run: the API server answered neither read above")
+        return
+    apps = guarded(bundle, "argo-applications.txt", lambda: capture_applications(bundle)) or []
+    guarded(bundle, "events/", lambda: capture_events(bundle, dfe_namespaces(apps, targets)))
+    keep = bundle.budget * KAFKA_SHARE if client and client.started else 0.0
+    guarded(bundle, "logs/", lambda: capture_logs(bundle, targets, minutes=minutes, keep=keep))
+    if client and client.started:
+        guarded(bundle, "kafka/", lambda: read_kafka(bundle, client))
+
+
 def collect(bundle: Bundle, *, minutes: int, image: str) -> None:
-    """Every capture, the client pod applied first so its image pulls while the rest run."""
+    """Every capture, the client pod applied first so its image pulls while the rest run.
+
+    MSK's broker logs come after the client pod's delete, from S3, so they need no cluster.
+    """
     listed = "(the pods the logs are read from)"
     pods = guarded(bundle, listed, lambda: bundle.items(listed, ["get", "pods", "-A"]))
     targets = log_targets(pods or [])
     namespace = engine_namespace(pods or [])
     client = guarded(bundle, "kafka/", lambda: start_kafka_client(bundle, namespace, image))
     try:
-        wide = guarded(
-            bundle,
-            "workloads.txt",
-            lambda: bundle.capture("workloads.txt", ["get", "pods,deploy,rs", "-A", "-o", "wide"]),
-        )
-        if pods is None and not (wide and wide.ok):
-            bundle.note("(the rest)", "not run: the API server answered neither read above")
-            return
-        apps = guarded(bundle, "argo-applications.txt", lambda: capture_applications(bundle)) or []
-        guarded(bundle, "events/", lambda: capture_events(bundle, dfe_namespaces(apps, targets)))
-        keep = bundle.budget * KAFKA_SHARE if client and client.started else 0.0
-        guarded(bundle, "logs/", lambda: capture_logs(bundle, targets, minutes=minutes, keep=keep))
-        if client and client.started:
-            guarded(bundle, "kafka/", lambda: read_kafka(bundle, client))
+        _collect_cluster(bundle, pods, targets, client, minutes=minutes)
     finally:
         if client:
             guarded(bundle, "(the client pod, deleted)", lambda: stop_kafka_client(bundle, client))
+    if bundle.tf_dir:
+        guarded(bundle, BROKER_LOGS, lambda: copy_broker_logs(bundle))
 
 
 def _kafka_values() -> str:
@@ -798,7 +991,8 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
         return 0
     prefix = kubectl_prefix(args) + (["--server", args.server] if args.server else [])
     reserve = min(CLEANUP_RESERVE, args.budget / 4)
-    bundle = Bundle(out, prefix, args.budget, start + args.budget - reserve, start + args.budget)
+    deadline, end = start + args.budget - reserve, start + args.budget
+    bundle = Bundle(out, prefix, args.budget, deadline, end, tf_dir=args.from_terraform)
     try:
         collect(bundle, minutes=args.log_minutes, image=kafka_image(os.environ, _kafka_values()))
     except Exception as exc:  # the bundle is evidence, never a reason to stop what runs after it
@@ -833,13 +1027,17 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
         description="Writes DIR/<UTC time>-<label>/: kubectl get pods,deploy,rs -A -o wide, the "
         "events of argocd and of every namespace an Argo Application deploys into, every "
         "Application's sync and health with each resource not Synced and Healthy, the last "
-        "--log-minutes of every container of dfe-receiver, dfe-loader, dfe-engine, "
-        "dfe-hunt-runner and each dfe-transform-* deployment with the previous run of any that "
+        "--log-minutes of every container of dfe-receiver, dfe-loader, dfe-archiver, dfe-engine, "
+        "dfe-hunt-runner and each dfe-fetcher-* and dfe-transform-* deployment with the previous "
+        "run of any that "
         "restarted, and every consumer group's offsets with the end offset of each _land, _load "
-        "and _dlq topic. The Kafka reads run from a short-lived pod beside dfe-engine that mounts "
-        "the engine's own SASL Secret, deleted before this returns. Every file is redacted, every "
-        "command is bounded, the whole run stops at --budget, and a capture that fails is "
-        "recorded in index.txt while the rest still run. Reads no Secret. Exits 0.",
+        "and _dlq topic, then the brokers' API versions and the loader group's list, state and "
+        "offsets one read at a time. The Kafka reads run from a short-lived pod beside dfe-engine "
+        "that mounts the engine's own SASL Secret, deleted before this returns. With "
+        "--from-terraform on an msk backend, MSK's broker logs are copied from their S3 bucket. "
+        "Every file is redacted, every command is bounded, the whole run stops at --budget, and "
+        "a capture that fails is recorded in index.txt while the rest still run. Reads no "
+        "Secret. Exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     diag.add_argument(
@@ -865,6 +1063,13 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
     )
     diag.add_argument(
         "--budget", type=_positive(float), default=BUDGET, help="seconds the whole bundle may take"
+    )
+    diag.add_argument(
+        "--from-terraform",
+        default="",
+        metavar="TF_DIR",
+        help="terraform env dir whose outputs name the Kafka backend and, on msk, the bucket "
+        "the broker logs are copied from. Empty copies none",
     )
     # Its output lands in a CI log beside the failed stage, and a banner costs time inside the box.
     diag.set_defaults(func=cmd_diagnostics, banner=False)

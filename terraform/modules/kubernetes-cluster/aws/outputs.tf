@@ -109,7 +109,7 @@ output "clickhouse_object_store_role_arn" {
 }
 
 output "karpenter" {
-  description = "What the karpenter chart and the karpenter-pools chart have to be told: the queue to watch, the profile a node launches with, and the tag its subnets and security groups are found by. AWS-only -- a body on another cloud names its own provisioner here or nothing at all."
+  description = "What the karpenter chart and the node-pools chart have to be told: the queue to watch, the profile a node launches with, and the tag its subnets and security groups are found by. AWS-only -- a body on another cloud names its own provisioner here or nothing at all."
   value = {
     interruption_queue  = aws_sqs_queue.karpenter.name
     instance_profile    = aws_iam_instance_profile.karpenter_node.name

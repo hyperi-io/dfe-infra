@@ -82,7 +82,7 @@ Usage:
 {{/*
 dfe-kafka.brokerMilliCpu -- the broker's CPU REQUEST in millicores.
 
-Millicores rather than cores so the thread-knob gate compares integers: a float
+Millicores rather than cores so the thread-dial gate compares integers: a float
 comparison on "500m" is where that gate would quietly stop biting.
 */}}
 {{- define "dfe-kafka.brokerMilliCpu" -}}

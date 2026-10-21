@@ -15,6 +15,9 @@ reload:
 commonLabels:
   dfe.hyperi.io/env: '{{ .Values.env }}'
   dfe.hyperi.io/cloud: '{{ .Values.cloud | default .Values.global.cloud }}'
+  # The app's chart name, which a per-config instance's app.kubernetes.io/name
+  # (<app>-<source>) is not. network-policies' appLabel selects on it.
+  dfe.hyperi.io/app: '{{ .Chart.Name }}'
 
 telemetry:
   # The OTLP endpoint common.yaml's telemetry.mode selects, over global.project

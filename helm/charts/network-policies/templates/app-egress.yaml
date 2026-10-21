@@ -11,18 +11,18 @@
 {{- $except := $eg.exceptCIDRs | default (include "network-policies.internalCIDRs" . | fromYamlArray) }}
 {{- range $ns := .Values.dfeNamespaces }}
 {{- range $app := $eg.apps }}
+{{- range $sel := include "network-policies.appSelectors" (dict "root" $ "app" $app) | fromYamlArray }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-internet-egress-{{ $app }}
+  name: allow-internet-egress-{{ $app }}{{ $sel.suffix }}
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
   podSelector:
-    matchLabels:
-      app.kubernetes.io/name: {{ $app }}
+    {{- toYaml $sel.podSelector | nindent 4 }}
   policyTypes:
     - Egress
   egress:
@@ -40,6 +40,7 @@ spec:
           protocol: {{ .protocol | default "TCP" }}
         {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

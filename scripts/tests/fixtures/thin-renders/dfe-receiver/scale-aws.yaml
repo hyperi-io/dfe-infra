@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -48,6 +50,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -63,6 +66,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -99,6 +103,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -126,6 +131,7 @@ spec:
         app.kubernetes.io/name: dfe-receiver
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-receiver>
+        dfe.hyperi.io/app: dfe-receiver
         dfe.hyperi.io/cloud: aws
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>
@@ -289,6 +295,7 @@ metadata:
     app.kubernetes.io/name: dfe-receiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-receiver>
+    dfe.hyperi.io/app: dfe-receiver
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-receiver-<pin:chart-version.dfe-receiver>

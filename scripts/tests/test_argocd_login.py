@@ -246,7 +246,27 @@ def test_the_mapped_groups_are_ones_the_fixture_idp_serves() -> None:
     assert mapped <= groups
 
 
+OFFLINE_KUBECONFIG = {
+    "apiVersion": "v1",
+    "kind": "Config",
+    "current-context": "offline",
+    "clusters": [{"name": "offline", "cluster": {"server": "https://127.0.0.1:1"}}],
+    "users": [{"name": "offline", "user": {"token": "offline"}}],
+    "contexts": [{"name": "offline", "context": {"cluster": "offline", "user": "offline"}}],
+}
+
+
+@pytest.fixture
+def offline_kubeconfig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A kubeconfig of its own for argocd, which builds a k8s client even with --policy-file."""
+    path = tmp_path / "offline-kubeconfig"
+    path.write_text(yaml.safe_dump(OFFLINE_KUBECONFIG), encoding="utf-8", newline="\n")
+    monkeypatch.setenv("KUBECONFIG", str(path))
+    return path
+
+
 @pytest.mark.skipif(shutil.which("argocd") is None, reason="needs the argocd CLI on PATH")
+@pytest.mark.usefixtures("offline_kubeconfig")
 @pytest.mark.parametrize(
     ("group", "action", "resource", "target", "allowed"),
     [

@@ -38,14 +38,15 @@ data:
         collection_interval: {{ .Values.clusterTelemetry.k8sCluster.collectionInterval }}
         auth_type: serviceAccount
         node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
-        allocatable_types_to_report: [cpu, memory, storage, ephemeral-storage]
+        # No storage: a node's allocatable carries no such key, so it emits no series.
+        allocatable_types_to_report: [cpu, memory, ephemeral-storage]
       {{- end }}
       {{- if .Values.clusterTelemetry.clickhouse.enabled }}
       # Server-side ClickHouse health. Column aliases become the metric names, so
       # each SELECT is a fixed set of named columns rather than a metric/value pair.
-      sqlquery/clickhouse:
+      sql_query/clickhouse:
         driver: clickhouse
-        datasource: "clickhouse://{{ .Values.clickhouse.user }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
+        datasource: "clickhouse://{{ include "otel-collector.clickhouseUser" . }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
         collection_interval: {{ .Values.clusterTelemetry.clickhouse.collectionInterval }}
         queries:
           # Instantaneous counters from system.metrics.
@@ -196,7 +197,7 @@ data:
                   regex: "true"
                 - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_part_of]
                   action: keep
-                  regex: dfe
+                  regex: {{ .Values.project | regexQuoteMeta | quote }}
                 {{- with .Values.clusterTelemetry.dfeServices.pushedCharts }}
                 - source_labels: [__meta_kubernetes_pod_label_helm_sh_chart]
                   action: drop
@@ -308,6 +309,24 @@ data:
           - key: service.name
             value: k8s-cluster
             action: upsert
+      # The owning pod's labels on every pod and container series, joined on the
+      # k8s.pod.uid the receiver sets, because its series arrive on no connection.
+      k8s_attributes/k8s_cluster:
+        auth_type: serviceAccount
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          # Already on every series it matches, and listed so the default set stays off.
+          metadata: [k8s.pod.uid]
+          # The label key is the attribute name the usage rollups filter on, set
+          # explicitly so a semconv feature gate cannot move it to k8s.pod.label(s).<key>.
+          labels:
+            - tag_name: app.kubernetes.io/part-of
+              key: app.kubernetes.io/part-of
+            - tag_name: dfe.hyperi.io/app
+              key: dfe.hyperi.io/app
       {{- end }}
       {{- if .Values.clusterTelemetry.clickhouse.enabled }}
       resource/clickhouse:
@@ -343,7 +362,7 @@ data:
         # host on the mode it was not written for.
         endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v%s" .Values.clickhouse.host .Values.clickhouse.nativePort (include "otel-collector.clickhouseQuery" .)) }}
         database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
-        username: {{ .Values.exporters.clickhouse.username | default .Values.clickhouse.user }}
+        username: {{ include "otel-collector.clickhouseUser" . }}
         password: ${env:CLICKHOUSE_PASSWORD}
         # dfe-schemas declares the otel tables and dfe-engine applies them at its
         # own startup, a wave before this collector. The exporter senses no
@@ -431,7 +450,7 @@ data:
         {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
         metrics/k8s_cluster:
           receivers: [k8s_cluster]
-          processors: [memory_limiter, resource/k8s_cluster, batch]
+          processors: [memory_limiter, k8s_attributes/k8s_cluster, resource/k8s_cluster, batch]
           exporters:
             - prometheus
             {{- if .Values.exporters.clickhouse.enabled }}
@@ -443,7 +462,7 @@ data:
         {{- end }}
         {{- if .Values.clusterTelemetry.clickhouse.enabled }}
         metrics/clickhouse:
-          receivers: [sqlquery/clickhouse]
+          receivers: [sql_query/clickhouse]
           processors: [memory_limiter, resource/clickhouse, batch]
           exporters:
             - prometheus
@@ -700,7 +719,7 @@ data:
         check_interval: 5s
         limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.daemonsetMemory" .) }}
         spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.daemonsetMemory" .) }}
-      k8sattributes:
+      k8s_attributes:
         auth_type: serviceAccount
         extract:
           metadata: [k8s.namespace.name, k8s.pod.name, k8s.node.name, k8s.deployment.name]
@@ -717,7 +736,7 @@ data:
               - set(attributes["service.name"], attributes["k8s.container.name"]) where attributes["service.name"] == nil and attributes["k8s.container.name"] != nil
               - set(attributes["service.name"], attributes["k8s.deployment.name"]) where attributes["service.name"] == nil and attributes["k8s.deployment.name"] != nil
               - set(attributes["service.name"], attributes["k8s.pod.name"]) where attributes["service.name"] == nil and attributes["k8s.pod.name"] != nil
-      # Node-scoped metrics carry no pod, so k8sattributes cannot enrich them and
+      # Node-scoped metrics carry no pod, so k8s_attributes cannot enrich them and
       # they arrive with an empty ServiceName. Both attributes are set here instead.
       resource/node:
         attributes:
@@ -749,7 +768,7 @@ data:
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [memory_limiter, k8sattributes, transform/log_service_name, batch]
+          processors: [memory_limiter, k8s_attributes, transform/log_service_name, batch]
           exporters: [otlp/gateway]
         metrics:
           receivers:
@@ -757,5 +776,5 @@ data:
             {{- if .Values.clusterTelemetry.kubeletStats.enabled }}
             - kubeletstats
             {{- end }}
-          processors: [memory_limiter, k8sattributes, resource/node, batch]
+          processors: [memory_limiter, k8s_attributes, resource/node, batch]
           exporters: [otlp/gateway]

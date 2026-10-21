@@ -1,2 +1,0 @@
-{{/* Renders nothing; exists so the guards run even when no pool is declared. */}}
-{{- include "karpenter-pools.validate" (dict "ctx" .) -}}

@@ -133,8 +133,8 @@ kafka:
     # cluster stops granting by default, nothing can write it unless it is already
     # permitted. The Job authenticates by SASL/IAM, where the IAM policy IS the
     # authorisation and no ACL has to exist yet, then writes the SCRAM principal's
-    # ACLs at on-prem parity and pre-creates the landing and DLQ topics, because
-    # the MSK configuration sets auto.create.topics.enable=false. The IAM identity
+    # ACLs at on-prem parity. dfe-engine then creates the landing and DLQ topics
+    # under those ACLs, since auto.create.topics.enable=false. The IAM identity
     # exists for THIS path alone -- every DFE app still authenticates with SCRAM.
     msk:
       # The SASL/IAM bootstrap string on port 9098 -- the managed-kafka/msk
@@ -326,13 +326,13 @@ kafka:
       minInsyncReplicas: 2
       # OFF at the cluster tier: dfe-infra#148 makes the partition count per
       # source an explicit value, and a broker-defaulted auto-created topic
-      # ignores it. The landing and DLQ topics are pre-created instead.
+      # ignores it. dfe-engine creates the landing and DLQ topics at startup instead.
       autoCreateTopics: false
-      # The four thread knobs above render only once the broker CPU REQUEST
+      # The four thread dials above render only once the broker CPU REQUEST
       # reaches this many vCPU. Below it they buy context switching and nothing
       # else, so a cluster-mode deploy on small brokers gets the durability and
       # sizing half of the profile without the thread half.
-      threadKnobVcpuFloor: 4
+      threadDialVcpuFloor: 4
     single:
       # ON at the single tier: it runs no topic operator, so nothing else can
       # create the receiver's dynamic {source}_land topics.

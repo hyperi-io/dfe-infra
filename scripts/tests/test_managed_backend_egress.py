@@ -19,6 +19,10 @@ or ConfigMaps carry the backend's address is a client, and network-policies --
 rendered from layer2-platform's own Application for the same facts -- has to
 open each client's ports in its namespace, or leave the namespace unisolated.
 
+A per-config app is rendered again as one instance bound to a source, under the
+<app>-<source> name dfe-engine gives it, so a policy naming the app is held to
+reach every instance of it and no other app's.
+
 The ports are offering.yaml's (terraform/modules/managed-backends), the one list
 the tofu roots read; the chart's copy is held equal to it here too.
 
@@ -40,6 +44,7 @@ from _weave import CONTRACTS, helm, render_app, weave
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OFFERING = REPO_ROOT / "terraform" / "modules" / "managed-backends" / "offering.yaml"
 CHART_VALUES = REPO_ROOT / "helm" / "charts" / "network-policies" / "values.yaml"
+MANIFEST = REPO_ROOT / "apps.yaml"
 APPSETS = Path("argocd/appsets")
 
 CELL = ("scale", "aws")
@@ -155,6 +160,41 @@ def policies(provider: str) -> tuple[dict, ...]:
     return tuple(d for d in docs if d.get("kind") == "NetworkPolicy")
 
 
+# The source each per-config instance below is bound to.
+SOURCE = "flowx"
+
+
+def per_config_apps() -> list[str]:
+    """The apps the manifest deploys once per source, each under its own name."""
+    apps = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))["apps"]
+    return sorted(name for name, shape in apps.items() if shape["multiplicity"] == "per_config")
+
+
+def instance_overlay(app: str) -> dict:
+    """The identity dfe-engine writes into a per-config instance's overlay.
+
+    dfe-engine appmgmt/instances.py initial_overlay names the instance <app>-<source>,
+    and its dfe-common component that name less the project prefix.
+    """
+    name = f"{app}-{SOURCE}"
+    return {
+        "fullnameOverride": name,
+        "component": name.removeprefix("dfe-"),
+        "otel": {"serviceName": name},
+    }
+
+
+@functools.cache
+def rendered_instance(app: str, provider: str) -> tuple[dict, ...]:
+    """One per-config instance of ``app``, bound to SOURCE, as its Application renders it."""
+    namespace = weave().Target("x", *CELL).namespace
+    overlay = instance_overlay(app)
+    docs = render_app(app, *CELL, annotations=facts(provider), instance=SOURCE, overlay=overlay)
+    for d in docs:
+        d.setdefault("metadata", {}).setdefault("namespace", namespace)
+    return tuple(docs)
+
+
 # --------------------------------------------------------------------- clients
 
 
@@ -189,7 +229,11 @@ def _workload_text(doc: dict, configmaps: dict[tuple[str, str], dict]) -> str:
 
 def clients(provider: str, host: str) -> list[tuple[str, dict, str]]:
     """(namespace, pod labels, Kind/name) of every workload given ``host``."""
-    docs = rendered(provider)
+    return clients_in(rendered(provider), host)
+
+
+def clients_in(docs: tuple[dict, ...], host: str) -> list[tuple[str, dict, str]]:
+    """(namespace, pod labels, Kind/name) of every workload in ``docs`` given ``host``."""
     configmaps = {
         (d["metadata"]["namespace"], d["metadata"]["name"]): d
         for d in docs
@@ -314,6 +358,44 @@ def test_every_clickhouse_client_can_dial_clickhouse_cloud(provider: str) -> Non
         if (missing := unreachable(provider, namespace, labels, ports))
     }
     assert blocked == {}, blocked
+
+
+PER_CONFIG = per_config_apps()
+INTERNET = yaml.safe_load(CHART_VALUES.read_text(encoding="utf-8"))["internetEgress"]
+
+
+def test_the_manifest_has_per_config_apps_to_check() -> None:
+    assert PER_CONFIG, "apps.yaml declares no per_config app"
+
+
+@pytest.mark.parametrize("provider", KAFKA_PROVIDERS)
+@pytest.mark.parametrize("app", PER_CONFIG)
+def test_a_per_config_instance_can_dial_the_broker(app: str, provider: str) -> None:
+    """An instance's app.kubernetes.io/name is <app>-<source>, which no app list names."""
+    found = clients_in(rendered_instance(app, provider), CLIENT_HOST)
+    assert [workload for _, _, workload in found] == [f"Deployment/{app}-{SOURCE}"], found
+    ports = offering()["backends"][provider]["client_ports"]
+    blocked = {
+        workload: missing
+        for namespace, labels, workload in found
+        if (missing := unreachable(provider, namespace, labels, ports))
+    }
+    assert blocked == {}, blocked
+
+
+@pytest.mark.parametrize("app", sorted(set(PER_CONFIG) & set(INTERNET["apps"])))
+def test_a_per_config_instance_takes_its_apps_internet_egress(app: str) -> None:
+    ((namespace, labels, _),) = clients_in(rendered_instance(app, "msk"), CLIENT_HOST)
+    ports = [p["port"] for p in INTERNET["ports"]]
+    assert unreachable("msk", namespace, labels, ports) == []
+
+
+@pytest.mark.parametrize("app", PER_CONFIG)
+def test_a_per_config_instance_takes_no_other_apps_egress(app: str) -> None:
+    """The ClickHouse clients' grant reaches no instance of an app that is not one."""
+    ((namespace, labels, _),) = clients_in(rendered_instance(app, "msk"), CLIENT_HOST)
+    ports = offering()["backends"]["clickhouse-cloud"]["client_ports"]
+    assert unreachable("msk", namespace, labels, ports) == ports
 
 
 @pytest.mark.parametrize("provider", KAFKA_PROVIDERS)

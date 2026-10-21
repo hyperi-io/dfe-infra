@@ -68,7 +68,7 @@ def test_a_dead_pipeline_still_fails_inside_the_bound() -> None:
     expect("and the suite fails with it", out.returncode != 0, f"rc={out.returncode}")
 
 
-def test_the_wait_is_bounded_and_the_bound_is_a_knob() -> None:
+def test_the_wait_is_bounded_and_the_bound_is_a_dial() -> None:
     """An unbounded poll would hang a deploy; DFE_OTEL_WAIT=0 is one sample."""
     out, counts = run_smoke({"otel_zero_answers": 99}, DFE_OTEL_WAIT="0")
 

@@ -8,7 +8,7 @@
 //
 // This file is the AWS half: the two identities, the interruption queue and the
 // tag Karpenter discovers its network by. The NodePools and EC2NodeClasses are
-// Kubernetes objects and live in helm/charts/karpenter-pools, rendered from the
+// Kubernetes objects and live in helm/charts/node-pools, rendered from the
 // resolver's values.
 //
 // The controller policy below is AWS's published one for the pinned provider

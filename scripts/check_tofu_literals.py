@@ -31,6 +31,14 @@ lookup key, an empty value and the any-address range are not values. ALLOWED
 holds the contract constants -- fixed by a vendor, a protocol or another
 component rather than chosen -- each with the reason it stays.
 
+A node image is caught by its VALUE as well, under any name and in any block:
+an AMI id, an EKS AMI type, a Karpenter alias, an image SSM parameter path, a
+GKE image type or an AKS OS SKU, and an AMI or SSM data source. A heredoc body
+is read word by word, except a description's or an error message's. A node
+image resolves through ``scripts/resolve_sizing.py images``
+(scripts/node_images.py), so tofu never looks one up itself, and its one
+literal is the root variable's default.
+
 Stdlib only, like every other script here: the scanner reads the HCL subset
 this tree uses, and a construct it cannot read fails loudly rather than being
 skipped.
@@ -47,6 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCOPE = re.compile(
     r"(?:^|_)("
     r"instance_types?|node_type|broker_type|machine_type|vm_size|ami_type|"
+    r"ami|image_type|image_id|node_image|"
     r"volume_type|disk_type|storage_type|capacity_type|tier|sku|profile|"
     r"size|sizes|size_gib|size_gb|disk_gb|"
     r"iops|throughput|capacity|headroom|mb_s|"
@@ -75,6 +84,35 @@ FALLBACK_CALLS = frozenset({"try", "coalesce", "coalescelist"})
 SCANNED_BLOCKS = frozenset({"resource", "data", "module", "variable", "locals"})
 UNSCANNED_BLOCKS = frozenset({"terraform", "provider", "output", "moved", "check", "import", "removed"})
 
+# A string that IS a node image, whatever name it sits under -- each matched whole.
+NODE_IMAGE_VALUES = (
+    re.compile(r"(?i:ami-(?:[0-9a-f]{8}|[0-9a-f]{17}))"),
+    re.compile(r"resolve:ssm:.*"),
+    re.compile(
+        r"/aws/service/(?:ami-amazon-linux-latest|ami-windows-latest|bottlerocket|canonical|debian|suse|"
+        r"eks/optimized-ami|ecs/optimized-ami)/.*"
+    ),
+    re.compile(r"(?:AL2|AL2023|BOTTLEROCKET|WINDOWS)_[A-Za-z0-9_]+"),
+    re.compile(r"(?:al2|al2023|bottlerocket|windows20\d\d)@.+"),
+    re.compile(r"(?i:cos|cos_containerd|ubuntu_containerd|windows_ltsc_containerd)"),
+    re.compile(
+        r"Ubuntu(?:2204|2404|2604)?|AzureLinux3?|AzureLinuxOSGuard|AzureContainerLinux|"
+        r"CBLMariner|Mariner|Flatcar|Windows20\d\d"
+    ),
+)
+
+# Data sources that look a node image up inside tofu, where a provider failure fails the plan.
+# An SSM read counts whatever parameter it names, because SSM is how AWS publishes image ids.
+NODE_IMAGE_DATA_SOURCES = frozenset(
+    {"aws_ami", "aws_ami_ids", "aws_ssm_parameter", "aws_ssm_parameters_by_path"}
+)
+
+# Prose for a reader, never a value tofu passes on, so an image a heredoc names there is documentation.
+PROSE_ATTRIBUTES = frozenset({"description", "error_message"})
+
+# One word of a heredoc body, split where YAML, JSON, shell and HCL separate a value from its key.
+_HEREDOC_WORD = re.compile(r"[^\s\"'`,;()\[\]{}=<>|]+")
+
 # The contract constants, keyed "<path>:<address>:<attribute>". A value here is
 # fixed by a vendor, a protocol or another component, and the reason says which.
 _AWS_ROOT = "terraform/environments/aws"
@@ -90,8 +128,9 @@ ALLOWED: dict[str, str] = {
     "terraform/environments/local/main.tf:locals:region": (
         "On-prem has no cloud region, so the region tag carries the cloud token."
     ),
-    f"{_CLUSTER}/eks.tf:locals:node_ami_type": (
-        "EKS's enum name for the arm64 Amazon Linux 2023 image, which the arm64 shape rule fixes."
+    f"{_AWS_ROOT}/variables.tf:variable.node_image:default.family": (
+        "The node-image cascade's last layer, EKS's recommended AL2023 arm64 AMI type, read only "
+        "when the resolver wrote nothing and tfvars set nothing."
     ),
     f"{_CLUSTER}/karpenter.tf:locals:karpenter_interruption_retention_seconds": (
         "Karpenter's published retention for its interruption queue."
@@ -157,6 +196,8 @@ class Hit:
     address: str
     attribute: str
     literal: str
+    # "image" for a node image caught by its value, "sizing" for everything else.
+    kind: str = "sizing"
 
     @property
     def key(self) -> str:
@@ -556,19 +597,108 @@ def _block_hits(block: Block, address: str, prefix: str) -> list[tuple[str, int,
     return hits
 
 
-def scan_text(text: str, path: str) -> list[Hit]:
-    """Every in-scope literal in one .tf file.
+def is_node_image(text: str) -> bool:
+    """Whether a string literal is, whole, a node image identifier."""
+    return any(pattern.fullmatch(text) for pattern in NODE_IMAGE_VALUES)
+
+
+def _heredoc_images(token: Token) -> list[Token]:
+    """Each word of a heredoc body that is a node image, on the line it sits."""
+    found: list[Token] = []
+    for word in _HEREDOC_WORD.finditer(token.text):
+        if is_node_image(word.group()):
+            # The body starts on the line after the `<<` that opens it.
+            line = token.line + 1 + token.text.count("\n", 0, word.start())
+            found.append(Token("string", word.group(), line))
+    return found
+
+
+def _image_values(tokens: list[Token], attribute: str) -> list[tuple[str, Token]]:
+    """Node-image strings in an expression, keyed by their path through object constructors."""
+    items = _object_items(tokens)
+    if items is not None:
+        found: list[tuple[str, Token]] = []
+        for key, value in items:
+            found.extend(_image_values(value, f"{attribute}.{key}"))
+        return found
+    strings = [(attribute, t) for t in tokens if t.kind == "string" and is_node_image(t.text)]
+    if attribute.rsplit(".", 1)[-1] in PROSE_ATTRIBUTES:
+        return strings
+    words = [
+        (attribute, word) for t in tokens if t.kind == "heredoc" for word in _heredoc_images(t)
+    ]
+    return [*strings, *words]
+
+
+def _block_images(block: Block, address: str, prefix: str) -> list[tuple[str, int, str, Token]]:
+    """Every node-image string anywhere in a block's body, nested blocks included."""
+    hits: list[tuple[str, int, str, Token]] = []
+    for attribute in block.attributes:
+        for path, token in _image_values(attribute.tokens, f"{prefix}{attribute.name}"):
+            hits.append((address, token.line, path, token))
+    for inner in block.blocks:
+        inner_name = inner.labels[0] if inner.kind == "dynamic" and inner.labels else inner.kind
+        hits.extend(_block_images(inner, address, f"{prefix}{inner_name}."))
+    return hits
+
+
+def _block_address(block: Block) -> str:
+    """The address a hit in this top-level block is reported and allowed under."""
+    if block.kind == "variable":
+        return f"variable.{block.labels[0]}"
+    if block.kind == "module":
+        return f"module.{block.labels[0]}"
+    if block.kind == "locals":
+        return "locals"
+    return ".".join([block.kind, *block.labels])
+
+
+def scan_images(text: str, path: str) -> list[Hit]:
+    """Every node image one .tf file names, in any block and under any name.
 
     Args:
         text: The file's content.
         path: Its path relative to the repository root, carried into each hit.
 
     Returns:
-        One Hit per literal value under a name in scope.
+        One Hit per node-image string, and one per data source that looks a
+        node image up inside tofu.
 
     Raises:
         ScanError: A construct outside the subset this scanner reads.
     """
+    hits: list[Hit] = []
+    for block in parse(text):
+        address = _block_address(block)
+        if block.kind == "data" and block.labels and block.labels[0] in NODE_IMAGE_DATA_SOURCES:
+            hits.append(Hit(path, block.line, address, "data source", block.labels[0], "image"))
+        for found_address, line, attribute, token in _block_images(block, address, ""):
+            hits.append(Hit(path, line, found_address, attribute, token.text, "image"))
+    return hits
+
+
+def scan_text(text: str, path: str) -> list[Hit]:
+    """Every in-scope literal and every node image in one .tf file.
+
+    Args:
+        text: The file's content.
+        path: Its path relative to the repository root, carried into each hit.
+
+    Returns:
+        One Hit per literal value under a name in scope, and one per node image
+        under any name. A literal that is both is reported once, as an image.
+
+    Raises:
+        ScanError: A construct outside the subset this scanner reads.
+    """
+    images = scan_images(text, path)
+    seen = {(hit.key, hit.line, hit.literal) for hit in images}
+    sized = [hit for hit in _scan_sizing(text, path) if (hit.key, hit.line, hit.literal) not in seen]
+    return sorted([*sized, *images], key=lambda hit: (hit.line, hit.key))
+
+
+def _scan_sizing(text: str, path: str) -> list[Hit]:
+    """Every literal under a name in scope in one .tf file."""
     hits: list[Hit] = []
     for block in parse(text):
         if block.kind in UNSCANNED_BLOCKS:
@@ -636,7 +766,13 @@ def main(repo_root: Path = REPO_ROOT) -> int:
     findings = [hit for hit in hits if hit.key not in ALLOWED]
     stale = sorted(set(ALLOWED) - {hit.key for hit in hits})
     for hit in findings:
-        print(f"{hit.path}:{hit.line}: {hit.address} {hit.attribute} = {hit.literal!r} -- move it to tfvars")
+        remedy = (
+            "a node image resolves through scripts/resolve_sizing.py images, and its one literal "
+            "is the root variable's default"
+            if hit.kind == "image"
+            else "move it to tfvars"
+        )
+        print(f"{hit.path}:{hit.line}: {hit.address} {hit.attribute} = {hit.literal!r} -- {remedy}")
     for key in stale:
         print(f"ALLOWED entry matches no literal any more, so drop it: {key}")
     if findings or stale:

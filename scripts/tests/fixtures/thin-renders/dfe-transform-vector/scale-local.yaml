@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -48,6 +50,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -63,6 +66,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -78,6 +82,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -93,6 +98,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -119,6 +125,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -147,6 +154,7 @@ spec:
         app.kubernetes.io/name: dfe-transform-vector
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+        dfe.hyperi.io/app: dfe-transform-vector
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>
@@ -157,12 +165,6 @@ spec:
         - --config
         - /etc/dfe-transform-vector/config.yaml
         env:
-        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
-          valueFrom:
-            secretKeyRef:
-              key: sasl.mechanism
-              name: dfe-kafka-user
-              optional: true
         - name: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
         - name: DFE_TRANSFORM_SINK_BROKERS
@@ -206,6 +208,11 @@ spec:
           valueFrom:
             secretKeyRef:
               key: password
+              name: dfe-kafka-user
+        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+          valueFrom:
+            secretKeyRef:
+              key: sasl.mechanism
               name: dfe-kafka-user
         image: registry.example.com/dfe/dfe-transform-vector:<pin:apps.dfe-transform-vector>@<pin:digests.dfe-transform-vector>
         imagePullPolicy: IfNotPresent
@@ -345,6 +352,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vector
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vector>
+    dfe.hyperi.io/app: dfe-transform-vector
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vector-<pin:chart-version.dfe-transform-vector>

@@ -407,6 +407,39 @@ def test_self_ranges_do_not_make_an_empty_group_listed() -> None:
     assert not passes(docs, "dfe-ui", OFF_ALL)
 
 
+# --- the Service names who each group admits, for dfe-ops's notice ---------------------
+@pytest.mark.parametrize(("args", "own"), [
+    ((), []),
+    (self_ranges(SELF), SELF),
+    ((*FENCE, *self_ranges(SELF)), SELF),
+    ((*EVERY_GROUP, *self_ranges(SELF)), SELF),
+], ids=["no list", "self ranges alone", "console list", "every group"])
+def test_the_ranges_annotation_is_what_each_groups_routes_admit(args: tuple[str, ...], own: list[str]) -> None:
+    docs = render("aws", *args)
+    ranges = json.loads(envoy_service(docs)["annotations"]["dfe.hyperi.io/edge-fence-ranges"])
+    assert ranges["selfRanges"] == own, ranges
+    rendered = set()
+    for r in web_routes(docs):
+        group = group_of(r["metadata"]["name"])
+        rendered.add(group)
+        rules = admitted(effective(docs, r))
+        assert bool(rules) == bool(ranges[group]), (r["metadata"]["name"], rules, ranges[group])
+        assert all(cidrs == ranges[group] for cidrs in rules), (r["metadata"]["name"], rules)
+    for group in {"console", "api", "admin"} - rendered:
+        assert ranges[group] == [], (group, ranges)
+
+
+def test_the_notes_name_the_self_ranges_a_closed_or_listed_group_still_admits() -> None:
+    closed = " ".join(notes("aws", *self_ranges(SELF)).split())
+    assert f"answer 403 to every address outside exposure.selfRanges ({SELF[0]}). Set" in closed, closed
+    listed = " ".join(notes("aws", *FENCE, *self_ranges(SELF)).split())
+    assert (f"Group console admits {','.join(CONSOLE)} and exposure.selfRanges ({SELF[0]}) "
+            "and refuses every other address") in listed, listed
+    nobody = " ".join(notes("aws").split())
+    assert "answer 403 to every address. Set" in nobody, nobody
+    assert "selfRanges" not in nobody, nobody
+
+
 @pytest.mark.parametrize("entry", ["0.0.0.0/0", "::/0"])
 def test_expected_fail_a_self_range_of_every_address_is_refused(entry: str) -> None:
     out = helm("aws", *self_ranges([entry]))

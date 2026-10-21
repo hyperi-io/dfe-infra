@@ -17,10 +17,10 @@ This file does two things:
 
 1. Sweeps every chart under helm/charts and helm/edge for a template that
    DEFINES `kind: ClusterSecretStore` at document root, and pins that set to
-   the three known definitions -- so a fourth one added later fails this test
+   the four known definitions -- so a fifth one added later fails this test
    until it is covered here, the same closed-set discipline `_charts.py`
    documents for its own chart-tree sweep.
-2. For each of the three, renders the chart and asserts the store's
+2. For each of the four, renders the chart and asserts the store's
    `conditions.namespaces` equals exactly the namespaces its
    ClusterExternalSecret(s) copy into -- derived from the same chart values,
    so the two cannot disagree.
@@ -50,6 +50,7 @@ KNOWN_STORE_TEMPLATES = {
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/clickhouse-admin-appns.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user-appns.yaml",
     REPO_ROOT / "helm/charts/ferretdb/templates/auth.yaml",
+    REPO_ROOT / "helm/charts/dfe-extras/templates/engine-service-clickhouse.yaml",
 }
 
 
@@ -217,6 +218,22 @@ def test_ferretdb_renders_no_store_with_no_app_namespace() -> None:
 def test_clickhouse_admin_store_still_serves_only_its_copies() -> None:
     docs = render("clickhouse-cluster", "appNamespace=dfe", namespace="clickhouse")
     assert_store_matches_its_copies(docs, "clickhouse-cluster")
+
+
+# --- dfe-extras: the collector's ClickHouse password ------------------------
+
+
+def test_the_collector_password_store_serves_only_the_collector() -> None:
+    from _weave import render_extras
+
+    docs = tuple(render_extras("dfe-engine", "scale", "aws"))
+    assert_store_matches_its_copies(docs, "dfe-extras collector password")
+    role = role_secrets(docs, store_role(docs, one(docs, "ClusterSecretStore")) or "")
+    expect(
+        "dfe-extras: the Role names only the collector's own Secret",
+        role == {"otel-writer-clickhouse"},
+        f"got {sorted(role)}",
+    )
 
 
 def main() -> int:

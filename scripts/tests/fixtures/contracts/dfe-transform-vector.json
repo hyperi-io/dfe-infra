@@ -20,9 +20,12 @@
       "port": 6000,
       "protocol": "TCP",
       "when": {
-        "kind": "equals",
+        "kind": "one_of",
         "path": "config.source.transport",
-        "value": "direct"
+        "values": [
+          "direct",
+          "grpc"
+        ]
       },
       "bound_from": "source.listen",
       "app_protocol": "kubernetes.io/h2c"
@@ -55,6 +58,11 @@
           "env_var": "DFE_TRANSFORM_SINK_SASL_PASSWORD",
           "key_name": "sink-password",
           "secret_key": "password"
+        },
+        {
+          "env_var": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+          "key_name": "mechanism",
+          "secret_key": "sasl.mechanism"
         }
       ]
     }
@@ -119,7 +127,7 @@
       "api_enabled": false,
       "api_address": "127.0.0.1:8686",
       "log_level": "info",
-      "version": "0.58.0",
+      "version": "0.59.0",
       "version_check": "warn"
     },
     "metrics": {
@@ -153,15 +161,15 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [],
     "apt_packages": []
   },
   "image_profile": "production",
   "oci_labels": {
-    "title": "",
-    "description": "",
+    "title": "dfe-transform-vector",
+    "description": "Vector subprocess wrapper for Kafka-to-Kafka transform pipelines",
     "vendor": "HYPERI PTY LIMITED",
     "label_namespace": "io.hyperi",
     "licenses": "BUSL-1.1",
@@ -299,7 +307,7 @@
           "api_enabled": false,
           "api_address": "127.0.0.1:8686",
           "log_level": "info",
-          "version": "0.58.0",
+          "version": "0.59.0",
           "version_check": "strict",
           "version_source": "preshipped"
         }
@@ -470,17 +478,23 @@
         }
       },
       "Transport": {
-        "description": "Which transport a stage uses.\n\nOne deployment runs one of them: `bus` is a broker between the stages,\n`direct` is gRPC between them and needs no broker at all. The record and the\ntransform are identical either way -- only who hands the record over changes.",
+        "description": "Which transport a stage uses.\n\nOne deployment runs one of them: `bus` is a broker between the stages,\n`direct` is gRPC between them and needs no broker at all. The record and the\ntransform are identical either way. Only who hands the record over changes.\n`kafka` and `grpc` read as the same two, the names the other DFE stages use,\nand a config always writes `bus` and `direct` back.",
         "oneOf": [
           {
             "description": "Kafka topics.",
             "type": "string",
-            "const": "bus"
+            "enum": [
+              "bus",
+              "kafka"
+            ]
           },
           {
             "description": "A scalo Push listener (source) or client (sink), bridged to Vector.",
             "type": "string",
-            "const": "direct"
+            "enum": [
+              "direct",
+              "grpc"
+            ]
           }
         ]
       },
@@ -505,7 +519,7 @@
             "default": false
           },
           "mechanism": {
-            "description": "SASL mechanism: plain, scram_sha_256, scram_sha_512.",
+            "description": "SASL mechanism: plain, scram_sha_256, scram_sha_512, or librdkafka's\nPLAIN, SCRAM-SHA-256, SCRAM-SHA-512, in any case.",
             "type": "string",
             "default": "scram_sha_512"
           },
@@ -842,7 +856,7 @@
           "version": {
             "description": "Expected Vector version (semver).\n\nDefaults to the version the image was built with\n([`crate::deployment::VECTOR_VERSION`]) rather than empty:\n[`check_vector_version`](crate::config::validate::check_vector_version)\nskips the comparison on an empty pin, which would make the default\n`version_check: strict` a check that cannot fire. With the default pin,\nstrict means the binary on PATH must be the one this image shipped.\n\nSet it explicitly (or set `version_check` to `warn`/`disabled`) when\ndeliberately running a different Vector to the pre-shipped one.",
             "type": "string",
-            "default": "0.58.0"
+            "default": "0.59.0"
           },
           "version_check": {
             "description": "Version check mode: strict, warn, disabled.",

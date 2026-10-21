@@ -149,8 +149,8 @@ spec:
                   repo: https://aws.github.io/eks-charts
                   version: "3.6.0"
                   chartDigest: ""
-                  imageTag: ""
-                  imageDigest: ""
+                  imageTag: "v3.6.0"
+                  imageDigest: "sha256:337a9bf9a99bbac372c8da20afad7b059e0bc89034f1087e325455b28c7fd488"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra
@@ -164,7 +164,7 @@ spec:
                 - chart: karpenter
                   repo: public.ecr.aws/karpenter
                   version: "1.14.1"
-                  chartDigest: ""
+                  chartDigest: "sha256:91434e00fb102d6ee0d1bd34a4457a32fe01a8fa833fe1a2a37da4f50272079b"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra

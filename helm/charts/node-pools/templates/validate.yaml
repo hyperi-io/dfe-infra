@@ -1,0 +1,2 @@
+{{/* Renders no object. It runs the guards on every render, whichever renderer the classes go to. */}}
+{{- include "pools.validate" (dict "ctx" .) -}}

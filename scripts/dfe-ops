@@ -92,7 +92,8 @@ Subcommands:
   bastion      up/join/peers/hub/shell/forward/down/status for the on-demand
                SSM-managed toolbox instance on a cloud-provisioned deployment
                (terraform/modules/toolbox/aws). up flips toolbox.enabled in
-               the dial and applies just that target; forward is NOT recorded
+               the dial, re-resolves the newest AL2023 AMI and applies just
+               that target; forward is NOT recorded
                by Session Manager (toolbox/aws/CONTRACT.md); down proves
                nothing remains rather than trusting the apply alone. hub
                routes the fleet tunnel's client range at the culvert pod and
@@ -139,15 +140,25 @@ Subcommands:
                is redacted.
                The cycle runs it once when a stage fails, before the destroy.
   diagnostics  Writes a timestamped bundle: the last 30 minutes of every
-               dfe-receiver, dfe-loader, dfe-engine, dfe-hunt-runner and
-               dfe-transform-* container's log, pods, Deployments and ReplicaSets,
-               the DFE namespaces' events, every Argo Application's sync and
-               health, and each consumer group's offsets beside the end offsets of
-               the _land, _load and _dlq topics, read from a short-lived client pod
-               that mounts the engine's own SASL Secret. Every file is redacted and
-               the whole run is time-boxed. With --diagnostics-dir the cycle runs
-               it when any stage from deploy+e2e on fails, and the source suite
-               before it removes its source.
+               dfe-receiver, dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner,
+               dfe-fetcher-* and dfe-transform-* container's log, pods, Deployments and
+               ReplicaSets, the DFE namespaces' events, every Argo Application's
+               sync and health, and each consumer group's offsets beside the end
+               offsets of the _land, _load and _dlq topics, read from a short-lived
+               client pod that mounts the engine's own SASL Secret. With
+               --from-terraform on an msk backend it also copies MSK's broker logs
+               from their S3 bucket. Every file is redacted and the whole run is
+               time-boxed. With --diagnostics-dir the cycle runs it when any stage
+               from deploy+e2e on fails, reading back to that stage's start when it
+               ran longer than 30 minutes, and the source suite before it removes its
+               source.
+  pod-logs     Follows every container's log in the named namespaces until it is
+               stopped, one file per container run, so a pod deleted or restarted
+               meanwhile still leaves its log. Reads through a kubectl proxy whose
+               filter admits only those namespaces' pods and pod logs, redacts every
+               line and caps each run, pod and follower in bytes. With
+               --diagnostics-dir the acceptance stage runs one on the app namespace
+               for its whole run and keeps it only when the stage fails.
   redact       Reads stdin and writes it to stdout a line at a time with every
                credential masked (the failure-evidence redactor), so a long-running
                command's output can be piped through it. Prints no banner of its
@@ -269,6 +280,7 @@ import hashlib
 import io
 import ipaddress
 import json
+import math
 import os
 import platform
 import re
@@ -308,6 +320,7 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #   capacity     -- resource.Quantity parsing and the memory readings the lane
 #                   gate and the pre-flight capacity check both judge.
 #   composition  -- which apps a profile deploys by default, from apps.yaml.
+#   dfe_ops_pod_logs -- `pod-logs`, and the follower the acceptance stage starts and stops.
 #   envfile      -- every tool parses an operator's env file the same way.
 #   private_file -- every credential file lands 0600 before its first byte.
 #   profiles     -- the deploy MODES and what follows from one (broker, substrate
@@ -322,6 +335,7 @@ import access_summary as access_summary_file  # noqa: E402
 import capacity  # noqa: E402
 import cloud_sweep  # noqa: E402
 import composition  # noqa: E402
+import dfe_ops_pod_logs as pod_logs  # noqa: E402
 import envfile  # noqa: E402
 import private_file  # noqa: E402
 import profiles  # noqa: E402
@@ -329,6 +343,7 @@ import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
 from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_diagnostics import BUDGET as DIAGNOSTICS_BUDGET  # noqa: E402
+from dfe_ops_diagnostics import LOG_MINUTES as DIAGNOSTICS_LOG_MINUTES  # noqa: E402
 from dfe_ops_diagnostics import add_diagnostics_subparser  # noqa: E402
 from dfe_ops_edge_probe import add_admin_probe_subparser, add_edge_probe_subparser  # noqa: E402
 from dfe_ops_failure_evidence import add_failure_evidence_subparser, safe_name  # noqa: E402
@@ -2006,7 +2021,23 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     carries the pytest suite in the engine repository over three supervised
     port-forwards -- ingest, the datastore for the assertions, and the engine
     API -- and hands it credentials read from the cluster's own secrets.
+
+    With --diagnostics-dir a `dfe-ops pod-logs` follower logs the app namespace
+    for the whole run, and what it wrote is kept only when the run fails.
     """
+    followers: list[pod_logs.Owned] = []
+    rc = 1
+    try:
+        rc = _acceptance(args, followers)
+    finally:
+        # A passing run keeps its pod logs too, so a green cycle can be audited.
+        for owned in followers:
+            pod_logs.finish(owned, keep=True)
+    return rc
+
+
+def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> int:
+    """cmd_acceptance's run, which adds the pod-log follower it starts to `followers`."""
     settings = dict(os.environ)
     terraform_fence = ""
     # Terraform first and env files over it, the precedence stack-deploy applies.
@@ -2038,6 +2069,13 @@ def cmd_acceptance(args: argparse.Namespace) -> int:
     # when the address is given directly and the certificate covers it.
     if server:
         kube += ["--server", server]
+    # Before the suites make anything, so a pod they create and remove still leaves its log.
+    if args.diagnostics_dir:
+        self_cmd = [sys.executable, str(Path(__file__).resolve())]
+        out = pod_logs.stage_dir(args.diagnostics_dir, "acceptance")
+        owned = pod_logs.spawn(self_cmd, out, [namespace], kube[1:])
+        if owned is not None:
+            followers.append(owned)
 
     steps = suite_steps(args.suite)
     # Before anything touches the cluster, and never a skip: a run without these proves nothing.
@@ -2827,6 +2865,8 @@ def _edge_fence_problem(kube: list[str], fence: str, terraform_fence: str) -> st
 # The gateway chart's own record of what each web exposure group admits, as
 # `console=<state>,api=<state>,admin=<state>`: off, open, deny, listed or allow-all.
 EDGE_FENCE_ANNOTATION = "dfe.hyperi.io/edge-fence"
+# Beside it, as JSON: the CIDRs each group's policies admit, and exposure.selfRanges.
+EDGE_FENCE_RANGES_ANNOTATION = "dfe.hyperi.io/edge-fence-ranges"
 EDGE_GROUP_SURFACES = {
     "console": "dfe-ui, HyperDX and the engine's browser families",
     "api": "the engine's CLI families and /openapi.json",
@@ -2851,6 +2891,67 @@ def edge_group_states(annotation: str) -> dict[str, str]:
     return states
 
 
+def edge_group_ranges(annotation: str) -> dict[str, list[str]]:
+    """The CIDR lists an edge-fence-ranges annotation carries, empty when it cannot be read.
+
+    Args:
+        annotation: The annotation's value.
+
+    Returns:
+        Each group name, and selfRanges, to the CIDRs listed under it.
+    """
+    try:
+        doc = json.loads(annotation) if annotation else {}
+    except ValueError:
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    return {str(key): [str(cidr) for cidr in value] for key, value in doc.items() if isinstance(value, list)}
+
+
+def _edge_group_line(group: str, state: str, ranges: dict[str, list[str]] | None) -> str:
+    """One group's notice line, or empty for a state that earns none.
+
+    Args:
+        group: The web exposure group.
+        state: Its state off the edge-fence annotation.
+        ranges: The edge-fence-ranges lists, or None where no Service carries them,
+            so what the group admits beyond its own list is not known.
+
+    Returns:
+        The line, naming every address the group's policies admit when known.
+    """
+    surfaces = EDGE_GROUP_SURFACES.get(group, group)
+    key = f"exposure.groups.{group}"
+    if state == "allow-all":
+        return (f"WARNING: {key} admits every address -- {surfaces} are open to the whole "
+                f"internet behind their own logins. Name the ranges that need them in {key}.allow")
+    if state not in ("deny", "listed"):
+        return ""
+    admitted = (ranges or {}).get(group, [])
+    own = set((ranges or {}).get("selfRanges", []))
+    selfs = [cidr for cidr in admitted if cidr in own]
+    listed = [cidr for cidr in admitted if cidr not in own]
+    if state == "deny":
+        if ranges is None:
+            reach = "answer 403 to every address outside exposure.selfRanges"
+        elif selfs:
+            reach = f"answer 403 to every address outside exposure.selfRanges ({', '.join(selfs)})"
+        else:
+            reach = "answer 403 to every address"
+        return (f"==> {group}: CLOSED -- the gateway is internet-facing and {key}.allow is "
+                f"empty, so {surfaces} {reach}. Set {key}.allow in the deploy repo's "
+                f"infra/common.yaml to open it")
+    parts = []
+    if listed:
+        parts.append(f"{', '.join(listed)} from {key}.allow")
+    if selfs:
+        parts.append(f"{', '.join(selfs)} from exposure.selfRanges")
+    if not parts:
+        return f"==> {group}: fenced to {key}.allow and exposure.selfRanges"
+    return f"==> {group}: fenced to {' and '.join(parts)} -- {surfaces} answer 403 to every other address"
+
+
 def edge_fence_notice(kube: list[str]) -> str:
     """What each web exposure group admits, read off the live Envoy Service, one line per group.
 
@@ -2865,23 +2966,20 @@ def edge_fence_notice(kube: list[str]) -> str:
     if rc != 0:
         return ""
     states: dict[str, str] = {}
+    ranges: dict[str, list[str]] | None = None
     for item in doc.get("items") or []:
-        annotation = ((item.get("metadata") or {}).get("annotations") or {}).get(EDGE_FENCE_ANNOTATION)
-        states |= edge_group_states(annotation or "")
-    lines = []
-    for group, state in states.items():
-        surfaces = EDGE_GROUP_SURFACES.get(group, group)
-        key = f"exposure.groups.{group}"
-        if state == "allow-all":
-            lines.append(f"WARNING: {key} admits every address -- {surfaces} are open to the whole "
-                         f"internet behind their own logins. Name the ranges that need them in {key}.allow")
-        elif state == "deny":
-            lines.append(f"==> {group}: CLOSED -- the gateway is internet-facing and {key}.allow is "
-                         f"empty, so {surfaces} answer 403. Set {key}.allow in the deploy repo's "
-                         f"infra/common.yaml to open it")
-        elif state == "listed":
-            lines.append(f"==> {group}: fenced to {key}.allow")
-    return "\n".join(lines)
+        annotations = (item.get("metadata") or {}).get("annotations") or {}
+        states |= edge_group_states(annotations.get(EDGE_FENCE_ANNOTATION) or "")
+        # The chart always writes every key, so nothing read means nothing known.
+        parsed = edge_group_ranges(annotations.get(EDGE_FENCE_RANGES_ANNOTATION) or "")
+        if not parsed:
+            continue
+        ranges = ranges if ranges is not None else {}
+        for key, cidrs in parsed.items():
+            merged = ranges.setdefault(key, [])
+            merged.extend(cidr for cidr in dict.fromkeys(cidrs) if cidr not in merged)
+    lines = [_edge_group_line(group, state, ranges) for group, state in states.items()]
+    return "\n".join(line for line in lines if line)
 
 
 def _route_hosts(kube: list[str], console: str) -> list[str]:
@@ -4491,13 +4589,23 @@ def _failure_evidence(
 PRE_DEPLOY_STAGES = ("capacity", "preflight")
 
 
-def _diagnostics(self_cmd: list[str], kube: list[str], root: str, stage: str, env: dict) -> None:
-    """Write the diagnostics bundle for a failed stage, stopped at DIAGNOSTICS_BOX.
+def stage_log_minutes(elapsed: float) -> int:
+    """Minutes of app log a failed stage's bundle reads: back past the stage's start, 30 at least."""
+    return max(DIAGNOSTICS_LOG_MINUTES, math.ceil(elapsed / 60) + 1)
 
-    Nothing it does reaches the cycle's verdict or its destroy: the stage has already failed.
+
+def _diagnostics(
+    self_cmd: list[str], kube: list[str], root: str, stage: str, env: dict, minutes: int
+) -> None:
+    """Write the diagnostics bundle for a failed stage or a passed cycle, stopped at DIAGNOSTICS_BOX.
+
+    Nothing it does reaches the cycle's verdict or its destroy.
     """
     print(f"\n=== diagnostics for stage {stage}: under {root} ===", file=sys.stderr)
-    capture = [*self_cmd, "diagnostics", "--dir", root, "--label", stage, *kube]
+    capture = [
+        *self_cmd, "diagnostics", "--dir", root, "--label", stage,
+        "--log-minutes", str(minutes), *kube,
+    ]
     try:
         rc = _run_boxed(capture, env=env, timeout=DIAGNOSTICS_BOX)
     except Exception as exc:  # a capture that breaks is a warning, never a skipped destroy
@@ -4617,7 +4725,8 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         ]
         if args.from_terraform:
             acceptance_cmd += ["--from-terraform", args.from_terraform]
-        # The source runner captures before it removes its source, which takes its transform pods.
+        # The stage follows its pods' logs, and the source runner captures before it removes its
+        # source, which takes that source's transform pods with it.
         if args.diagnostics_dir:
             acceptance_cmd += ["--diagnostics-dir", args.diagnostics_dir]
         stages.append(("acceptance", acceptance_cmd))
@@ -4643,9 +4752,18 @@ def cmd_cycle(args: argparse.Namespace) -> int:
                 aborted = True
                 print(f"=== cycle stage {name} FAILED (rc {rc}) -- skipping later test stages ===", file=sys.stderr)
                 if args.diagnostics_dir and name not in PRE_DEPLOY_STAGES:
-                    _diagnostics(self_cmd, passthrough_kube, args.diagnostics_dir, name, stage_env)
+                    # The terraform outputs name the Kafka backend, for MSK's broker logs.
+                    tf = ["--from-terraform", args.from_terraform] if args.from_terraform else []
+                    aim = [*passthrough_kube, *tf]
+                    minutes = stage_log_minutes(time.monotonic() - started)
+                    _diagnostics(self_cmd, aim, args.diagnostics_dir, name, stage_env, minutes)
                 _failure_evidence(self_cmd, passthrough_kube, _evidence_root(args), name, stage_env)
                 break
+        if not aborted and args.diagnostics_dir and results:
+            # A green cycle keeps the same bundle a failed stage does, taken before destroy.
+            tf = ["--from-terraform", args.from_terraform] if args.from_terraform else []
+            minutes = stage_log_minutes(sum(elapsed for _, _, elapsed in results))
+            _diagnostics(self_cmd, [*passthrough_kube, *tf], args.diagnostics_dir, "passed", stage_env, minutes)
     finally:
         # Destroy is NOT skipped on failure, nor on an exception above -- an aborted
         # cycle must not strand a half-deployed stack (and a cloud target must never
@@ -4874,9 +4992,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "--acceptance-shots-dir)")
     cy.add_argument("--diagnostics-dir", default=None, metavar="DIR",
                     help="given, a stage from deploy+e2e on that fails writes `dfe-ops diagnostics` "
-                         "bundles here before the destroy -- the apps' recent logs, workloads, "
-                         "events, Argo status and Kafka offsets -- and the source suite writes "
-                         "one before it removes its source. Unset, nothing is captured")
+                         "bundles here before the destroy -- the apps' logs back to the stage's "
+                         "start, workloads, events, Argo status and Kafka offsets -- the source "
+                         "suite writes one before it removes its source, and a failed acceptance "
+                         "stage keeps the `dfe-ops pod-logs` log of every container run in the app "
+                         "namespace for the whole stage. Unset, nothing is captured")
     cy.set_defaults(func=cmd_cycle)
 
     # teardown
@@ -5082,8 +5202,11 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--vault-cmd", default=DEFAULT_VAULT_CMD,
                     help="secrets CLI the credentials are read with: bao or vault")
     ac.add_argument("--diagnostics-dir", default=None, metavar="DIR",
-                    help="given, a source suite run with a failed step writes a `dfe-ops diagnostics` "
-                         "bundle here before it removes its source and that source's transform pods")
+                    help="given, `dfe-ops pod-logs` follows every container run in the app namespace "
+                         "for the whole run into <UTC time>-acceptance-pod-logs/ here, kept only "
+                         "when the run fails, and a source suite run with a failed step writes a "
+                         "`dfe-ops diagnostics` bundle here before it removes its source and that "
+                         "source's transform pods")
     ac.add_argument("pytest_args", nargs=argparse.REMAINDER,
                     help="arguments passed through to pytest in place of the named suite's own, for a suite that reads a source the deployment must already carry")
     ac.set_defaults(func=cmd_acceptance)
@@ -5240,6 +5363,10 @@ def build_parser() -> argparse.ArgumentParser:
     # diagnostics -- the apps' recent logs, workloads, events, Argo status and Kafka offsets a
     # failed cycle stage leaves. The cycle runs it; registered from dfe_ops_diagnostics.
     add_diagnostics_subparser(sub)
+
+    # pod-logs -- every container run in a namespace, logged while it runs, so a pod a stage
+    # deletes still leaves its log. The acceptance stage runs it; registered from dfe_ops_pod_logs.
+    pod_logs.add_pod_logs_subparser(sub)
 
     # redact -- stdin to stdout with credentials masked, so a command's output can be piped
     # through the failure-evidence redactor. Registered from dfe_ops_redact.

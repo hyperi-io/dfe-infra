@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -48,6 +50,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -63,6 +66,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -95,6 +99,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -122,6 +127,7 @@ spec:
         app.kubernetes.io/name: dfe-loader
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-loader>
+        dfe.hyperi.io/app: dfe-loader
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -144,7 +150,7 @@ spec:
           valueFrom:
             secretKeyRef:
               key: password
-              name: clickhouse-admin-password
+              name: loader-clickhouse
         envFrom:
         - configMapRef:
             name: dfe-loader-env
@@ -313,6 +319,7 @@ metadata:
     app.kubernetes.io/name: dfe-loader
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-loader>
+    dfe.hyperi.io/app: dfe-loader
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-loader-<pin:chart-version.dfe-loader>
@@ -341,7 +348,7 @@ apiVersion: v1
 data:
   DFE_LOADER_CLICKHOUSE_DATABASE: dfe
   DFE_LOADER_CLICKHOUSE_HOSTS: dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local:8443
-  DFE_LOADER_CLICKHOUSE_USERNAME: default
+  DFE_LOADER_CLICKHOUSE_USERNAME: dfe_loader
   DFE_LOADER_CLICKHOUSE__PROTOCOL: http
   DFE_LOADER_DLQ_MODE: disabled
   DFE_LOADER_GRPC__LISTEN: 0.0.0.0:6000

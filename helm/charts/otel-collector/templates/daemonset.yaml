@@ -17,6 +17,8 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
+        # Not in the selector, which a live DaemonSet cannot change.
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
       # Root, unlike every other DFE pod (see daemonset.podSecurityContext).
       # The shared helper reads .Values.podSecurityContext, so the daemonset's

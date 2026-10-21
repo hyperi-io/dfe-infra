@@ -20,7 +20,17 @@ a broker prints for `kafka-consumer-groups.sh` and the `dlq_retention_ms` its
 topic describe shows (604800000 when absent, an authorisation error when None).
 A pod with the role `other` ships
 the Kafka tools and runs no broker, as Strimzi's cruise-control pod does. Every
-exec into one of its pods is counted as `kafka_exec:<pod>`.
+exec into one of its pods is counted as `kafka_exec:<pod>`, and each groups read
+as `groups_asked:<group>` (`--all-groups` for every group). A redpanda pod answers
+`rpk topic describe -p` with `rpk_partitions` (one RF 3 partition at a high watermark
+of 5 when absent), `rpk group list` with `rpk_groups` and `rpk group describe <group>`
+with `rpk_describe`, each describe counted as `rpk_described:<group>`.
+
+An exec of `python3 -` in dfe-engine runs the script it is handed for real, against
+a stand-in `confluent_kafka` that answers OffsetFetch from `engine_offsets`: a group
+id to its `[topic, partition, offset]` rows, or `{"error": text}` to raise. Its env
+is `engine_env`, each run is counted as `engine_offsets` and the client config the
+script built lands in the counts as `engine_conf`. Absent, the exec prints an error.
 
 `hyperdx_ready` adds a dfe-hyperdx deployment whose node runtime answers /readyz
 with that verdict (the image has node and no wget or curl). `engine_schema` adds a
@@ -49,7 +59,7 @@ SMOKE = REPO_ROOT / "bootstrap" / "smoke-test-integration.sh"
 # times the freshness query returns 0 before it returns 1, which is the collector
 # that has not exported yet; the call count lands in FAKE_KUBECTL_CALLS.
 FAKE_KUBECTL = """#!/usr/bin/env python3
-import json, os, sys
+import json, os, re, subprocess, sys
 
 args = sys.argv[1:]
 with open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8") as fh:
@@ -61,6 +71,11 @@ try:
 except (OSError, ValueError):
     counts = {}
 kafka = fixture.get("kafka")
+# rpk topic describe -p at RF 3: REPLICAS prints as `[0 1 2]`, and HIGH-WATERMARK is always last.
+RPK_PARTITIONS = (
+    "PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK\\n"
+    "0          1       2      [0 1 2]   0                 5"
+)
 
 
 def bump(key):
@@ -104,6 +119,8 @@ def container_is(name):
 def kafka_tool(pod, script):
     broker = pod["role"] == "broker"
     if "kafka-consumer-groups.sh" in script:
+        asked = re.search(r"--group (\\S+)", script)
+        bump("groups_asked:" + (asked[1] if asked else "--all-groups"))
         if broker:
             print(kafka.get("group_output", ""))
         else:
@@ -128,10 +145,12 @@ def kafka_rpk(rest):
     if rest[:2] == ["topic", "list"]:
         print("\\n".join(kafka["topics"]))
     elif rest[:2] == ["topic", "describe"]:
-        print("PARTITION LOG-START-OFFSET HIGH-WATERMARK")
-        print("0 0 0 5")
+        print(kafka.get("rpk_partitions", RPK_PARTITIONS))
     elif rest[:2] == ["group", "list"]:
         print(kafka.get("rpk_groups", ""))
+    elif rest[:2] == ["group", "describe"]:
+        bump("rpk_described:" + rest[2])
+        print(kafka.get("rpk_describe", ""))
     sys.exit(0)
 
 
@@ -163,10 +182,38 @@ if "hyperdx_ready" in fixture and args[-3:] == ["get", "deploy", "dfe-hyperdx"]:
 if "engine_schema" in fixture and args[-3:] == ["get", "deploy", "dfe-engine"]:
     sys.exit(0)
 
+def engine_python():
+    bump("engine_offsets")
+    answer = fixture.get("engine_offsets")
+    if answer is None:
+        print("Error: KafkaException: this fixture has no engine_offsets")
+        sys.exit(1)
+    conf_file = os.environ["FAKE_ENGINE_CONF"]
+    env = {
+        "PATH": os.environ["PATH"],
+        "PYTHONPATH": os.environ["FAKE_CONFLUENT_KAFKA"],
+        "FAKE_ENGINE_OFFSETS": json.dumps(answer),
+        "FAKE_ENGINE_CONF": conf_file,
+        **fixture.get("engine_env", {}),
+    }
+    rest = args[args.index("python3") + 1:]
+    done = subprocess.run([sys.executable, *rest], input=sys.stdin.read(), capture_output=True,
+                          text=True, env=env, check=False)
+    if os.path.exists(conf_file):
+        with open(conf_file, encoding="utf-8") as fh:
+            counts["engine_conf"] = json.load(fh)
+        with open(counts_file, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh)
+    sys.stdout.write(done.stdout)
+    sys.exit(done.returncode)
+
+
 if "exec" in args:
     if exec_target() == "deploy/dfe-engine":
         if not container_is("dfe-engine"):
             sys.exit(1)
+        if "python3" in args:
+            engine_python()
         checks = {"clickhouse": True, "schema": fixture.get("engine_schema", False)}
         print(json.dumps({"status": "ready", "checks": checks}))
         sys.exit(0)
@@ -210,6 +257,48 @@ sys.exit(1)
 """
 
 
+# The confluent_kafka surface the engine's OffsetFetch script uses, answering from the fixture.
+FAKE_CONFLUENT_KAFKA = """
+class KafkaException(Exception):
+    pass
+
+
+class TopicPartition:
+    def __init__(self, topic, partition=-1, offset=-1001, error=None):
+        self.topic, self.partition, self.offset, self.error = topic, partition, offset, error
+
+
+class ConsumerGroupTopicPartitions:
+    def __init__(self, group_id, topic_partitions=None):
+        self.group_id, self.topic_partitions = group_id, topic_partitions
+"""
+FAKE_CONFLUENT_ADMIN = """
+import json, os
+from concurrent.futures import Future
+
+from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
+
+
+class AdminClient:
+    def __init__(self, conf):
+        with open(os.environ["FAKE_ENGINE_CONF"], "w", encoding="utf-8") as fh:
+            json.dump(conf, fh)
+
+    def list_consumer_group_offsets(self, request, **_kwargs):
+        answer = json.loads(os.environ["FAKE_ENGINE_OFFSETS"])
+        futures = {}
+        for item in request:
+            future = Future()
+            if "error" in answer:
+                future.set_exception(KafkaException(answer["error"]))
+            else:
+                rows = [TopicPartition(*row) for row in answer.get(item.group_id, [])]
+                future.set_result(ConsumerGroupTopicPartitions(item.group_id, rows))
+            futures[item.group_id] = future
+        return futures
+"""
+
+
 def run_smoke(fixture: dict, **env_overrides: str) -> tuple[subprocess.CompletedProcess, dict]:
     """The smoke suite against a fixed ClickHouse reading, and the call counts."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -220,11 +309,18 @@ def run_smoke(fixture: dict, **env_overrides: str) -> tuple[subprocess.Completed
         fixture_file = bindir / "fixture.json"
         fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
         counts_file = bindir / "counts.json"
+        package = bindir / "py" / "confluent_kafka"
+        (package / "admin").mkdir(parents=True)
+        (package / "__init__.py").write_text(FAKE_CONFLUENT_KAFKA, encoding="utf-8", newline="\n")
+        admin = package / "admin" / "__init__.py"
+        admin.write_text(FAKE_CONFLUENT_ADMIN, encoding="utf-8", newline="\n")
 
         env = dict(os.environ)
         env["PATH"] = f"{bindir}{os.pathsep}{env['PATH']}"
         env["FAKE_KUBECTL_FIXTURE"] = str(fixture_file)
         env["FAKE_KUBECTL_CALLS"] = str(counts_file)
+        env["FAKE_CONFLUENT_KAFKA"] = str(bindir / "py")
+        env["FAKE_ENGINE_CONF"] = str(bindir / "engine-conf.json")
         env["DFE_OTEL_WAIT_INTERVAL"] = "1"
         env.update(env_overrides)
         out = subprocess.run(

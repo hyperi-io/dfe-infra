@@ -3,7 +3,8 @@
 #  File:         test_smoke_kafka_broker_pod.py
 #  Purpose:      Prove CORE 3 of the integration smoke test runs its Kafka checks
 #                in a broker pod, found by label, and that its consumer-group
-#                check needs a real committed offset.
+#                check needs a real committed offset from the loader's own group,
+#                read by OffsetFetch from dfe-engine when the Kafka tool errors.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -33,6 +34,13 @@ LOADER_GROUP = (
     "dfe-loader  main_land  0          5               5               0\n"
     "dfe-loader  main_land  1          -               0               -"
 )
+# What kafka-consumer-groups.sh 4.3.1 printed against MSK Express in a cloud cycle, verbatim.
+MSK_GROUPS_ERROR = (
+    "\nError: Executing consumer group command failed due to java.util.concurrent."
+    "ExecutionException: org.apache.kafka.common.errors.UnknownServerException: The server "
+    "experienced an unexpected error when processing the request."
+)
+GROUP_CHECK = "consumer group dfe-loader is committed on main_land (loader CONSUMED)"
 TOPICS = [
     "main_land",
     "dfe_receiver_dlq",
@@ -86,8 +94,16 @@ SCALE_NAMESPACE = [
 NO_BROKER = [CRUISE_CONTROL, CRUISE_CONTROL_UI, ENTITY_OPERATOR, CLUSTER_OPERATOR]
 
 
-def smoke(pods: list, profile: str = "scale", **kafka: object) -> tuple[str, dict]:
-    fixture = {
+def smoke(
+    pods: list,
+    profile: str = "scale",
+    *,
+    engine_offsets: dict | None = None,
+    engine_env: dict | None = None,
+    engine_ready: bool = False,
+    **kafka: object,
+) -> tuple[str, dict]:
+    fixture: dict = {
         "otel_zero_answers": 0,
         "kafka": {
             "namespace": NS,
@@ -97,6 +113,13 @@ def smoke(pods: list, profile: str = "scale", **kafka: object) -> tuple[str, dic
             **kafka,
         },
     }
+    # A dfe-engine whose schema converged, so CORE 0 passes and only CORE 3 can fail the run.
+    if engine_ready:
+        fixture["engine_schema"] = True
+    if engine_offsets is not None:
+        fixture["engine_offsets"] = engine_offsets
+    if engine_env is not None:
+        fixture["engine_env"] = engine_env
     out, counts = run_smoke(fixture, DFE_OTEL_WAIT="0", DFE_PROFILE=profile)
     return out.stdout, counts
 
@@ -116,7 +139,7 @@ def test_the_checks_run_in_a_broker_and_not_in_cruise_control() -> None:
     )
     expect(
         "the loader's group is found",
-        "[PASS] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
+        f"[PASS] {GROUP_CHECK}: offset 5, read by kafka-consumer-groups.sh" in stdout,
         stdout,
     )
     expect(
@@ -169,29 +192,138 @@ def test_no_broker_skips_a_brokerless_tier() -> None:
 
 
 def test_a_tool_error_is_not_a_committed_group() -> None:
-    error = "Error: Executing consumer group command failed due to Timed out waiting for a node"
-    stdout, _ = smoke(SCALE_NAMESPACE, group_output=error)
+    stdout, counts = smoke(SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR)
 
+    expect("the group check fails", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
     expect(
-        "the group check fails",
-        "[FAIL] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
+        "it prints the tool's first line",
+        f"    kafka-consumer-groups.sh: {MSK_GROUPS_ERROR.strip()}\n" in stdout,
         stdout,
     )
+    expect("the fallback was asked", counts.get("engine_offsets") == 1, str(counts))
+    expect(
+        "and its failure is printed too",
+        "    dfe-engine OffsetFetch: Error: KafkaException: " in stdout,
+        stdout,
+    )
+
+
+def test_the_check_asks_for_the_loaders_group_by_name() -> None:
+    stdout, counts = smoke(SCALE_NAMESPACE)
+
+    expect("the check names the group", GROUP_CHECK in stdout, stdout)
+    asked = counts.get("groups_asked:dfe-loader")
+    expect("the tool is asked for dfe-loader", asked == 1, str(counts))
+    expect("never for every group", "groups_asked:--all-groups" not in counts, str(counts))
 
 
 def test_a_group_with_no_offset_on_the_topic_does_not_count() -> None:
     other_topic = LOADER_GROUP.replace("main_land", "other_land")
     nothing_committed = LOADER_GROUP.replace("5               5", "-               5")
+    # The archiver reads the _land topics too, and its commit is not the loader's.
+    other_group = LOADER_GROUP.replace("dfe-loader  main_land", "dfe-archiver  main_land")
     for name, output in (
         ("another topic", other_topic),
         ("no committed offset", nothing_committed),
+        ("another group's commit", other_group),
     ):
-        stdout, _ = smoke(SCALE_NAMESPACE, group_output=output)
+        stdout, counts = smoke(SCALE_NAMESPACE, group_output=output)
+        expect(f"{name} fails the check", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
         expect(
-            f"a group with {name} fails the check",
-            "[FAIL] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
+            f"{name}: the tool answered, so no fallback is asked",
+            "engine_offsets" not in counts,
+            str(counts),
+        )
+
+
+# The engine's own bus settings and credential, as dfe-engine-env and dfe-kafka-user set them.
+ENGINE_ENV = {
+    "DFE_KAFKA_BOOTSTRAP_SERVERS": "b-1.kafka.example.com:9096",
+    "DFE_KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
+    "DFE_KAFKA_SASL_MECHANISM": "SCRAM-SHA-512",
+    "DFE_KAFKA_SASL_USERNAME": "dfe-kafka-user",
+    "DFE_KAFKA_SASL_PASSWORD": "engine-held-pw",
+}
+
+
+def test_a_tool_error_falls_back_to_offset_fetch_which_passes_on_a_commit() -> None:
+    offsets = {
+        "dfe-loader": [
+            ["main_land", 0, 2],
+            ["main_land", 1, 1],
+            ["main_land", 2, -1001],
+            ["other_land", 0, 9],
+        ],
+        "dfe-archiver": [["main_land", 0, 40]],
+    }
+    stdout, counts = smoke(
+        SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR, engine_offsets=offsets,
+        engine_env=ENGINE_ENV,
+    )
+
+    expect(
+        "the fallback proves the loader's commit, and the PASS names it",
+        f"[PASS] {GROUP_CHECK}: offset 3, read by librdkafka OffsetFetch from dfe-engine\n"
+        f"    kafka-consumer-groups.sh failed first: {MSK_GROUPS_ERROR.strip()}\n" in stdout,
+        stdout,
+    )
+    expect(
+        "it dials with the engine's own settings and credential",
+        counts.get("engine_conf") == {
+            "bootstrap.servers": "b-1.kafka.example.com:9096",
+            "security.protocol": "SASL_SSL",
+            "sasl.mechanisms": "SCRAM-SHA-512",
+            "sasl.username": "dfe-kafka-user",
+            "sasl.password": "engine-held-pw",
+        },
+        str(counts.get("engine_conf")),
+    )
+    expect("no credential reaches the output", "engine-held-pw" not in stdout, stdout)
+
+
+def test_a_fallback_with_no_commit_on_the_topic_stays_a_fail() -> None:
+    for name, offsets in (
+        ("only another topic", {"dfe-loader": [["other_land", 0, 9]]}),
+        ("no committed offset", {"dfe-loader": [["main_land", 0, -1001]]}),
+        ("only another group", {"dfe-archiver": [["main_land", 0, 40]]}),
+    ):
+        stdout, _ = smoke(SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR, engine_offsets=offsets)
+        expect(f"{name} fails the check", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
+        expect(
+            f"{name}: what the fallback found is printed",
+            "    dfe-engine OffsetFetch: committed 0 over 0 partition(s) of main_land" in stdout,
             stdout,
         )
+
+
+def test_a_fallback_that_errors_stays_a_fail() -> None:
+    refused = {"error": "KafkaError{code=GROUP_AUTHORIZATION_FAILED}"}
+    stdout, _ = smoke(SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR, engine_offsets=refused)
+
+    expect("the group check fails", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
+    expect(
+        "the fallback's error is printed",
+        "    dfe-engine OffsetFetch: Error: KafkaException: "
+        "KafkaError{code=GROUP_AUTHORIZATION_FAILED}" in stdout,
+        stdout,
+    )
+
+
+def test_a_plaintext_engine_dials_with_no_sasl() -> None:
+    plaintext = {
+        "DFE_KAFKA_BOOTSTRAP_SERVERS": "dfe-kafka:9092",
+        "DFE_KAFKA_SECURITY_PROTOCOL": "PLAINTEXT",
+    }
+    _, counts = smoke(
+        SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR,
+        engine_offsets={"dfe-loader": [["main_land", 0, 1]]}, engine_env=plaintext,
+    )
+
+    expect(
+        "only the bootstrap list is set",
+        counts.get("engine_conf") == {"bootstrap.servers": "dfe-kafka:9092"},
+        str(counts.get("engine_conf")),
+    )
 
 
 def test_the_single_tier_broker_is_found_beside_a_pod_that_shares_its_name_label() -> None:
@@ -214,27 +346,71 @@ def test_a_redpanda_broker_is_found_by_its_label() -> None:
         "redpanda",
     )
     sidecar = pod("redpanda-console-7d9f", {"app.kubernetes.io/name": "console"}, "other")
-    stdout, counts = smoke([sidecar, broker], rpk_groups="BROKER GROUP STATE\n0 dfe-loader Stable")
+    stdout, counts = smoke(
+        [sidecar, broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER, engine_ready=True
+    )
 
     expect("the broker is used", execs(counts, "redpanda-0") > 0, str(counts))
     expect("the other pod is not", execs(counts, "redpanda-console-7d9f") == 0, str(counts))
     expect("the topic is found", "[PASS] topic main_land exists (created)" in stdout, stdout)
+    expect("its messages are counted", f"[PASS] {PRODUCED_CHECK}" in stdout, stdout)
     expect(
-        "the group is found",
-        "[PASS] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
+        "the loader's group is found",
+        f"[PASS] {GROUP_CHECK}: offset 5, read by rpk group describe" in stdout,
         stdout,
     )
+    expect("it is described by name", counts.get("rpk_described:dfe-loader") == 1, str(counts))
+    expect("the whole run passes", "Vertical integration verified." in stdout, stdout)
 
 
-def test_an_rpk_group_list_with_only_its_header_is_not_a_group() -> None:
+PRODUCED_CHECK = "topic main_land has messages (receiver PRODUCED)"
+
+
+def rpk_partitions(replicas: str, log_start: int, high_watermark: int) -> str:
+    """`rpk topic describe main_land -p` for one partition, REPLICAS printed as rpk does."""
+    header = "PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK"
+    return f"{header}\n0          0       1      {replicas}   {log_start}   {high_watermark}"
+
+
+def test_on_redpanda_produced_reads_the_high_watermark_whatever_the_replica_count() -> None:
     broker = pod("redpanda-0", {"cluster.redpanda.com/broker": "true"}, "redpanda")
-    stdout, _ = smoke([broker], rpk_groups="BROKER GROUP STATE")
+    for name, partitions, verdict in (
+        ("RF 3, high watermark 0", rpk_partitions("[0 1 2]", 0, 0), "FAIL"),
+        ("RF 1, log start 0 and high watermark 5", rpk_partitions("[0]", 0, 5), "PASS"),
+        ("RF 3, high watermark 7", rpk_partitions("[0 1 2]", 2, 7), "PASS"),
+    ):
+        stdout, _ = smoke(
+            [broker], rpk_groups=RPK_GROUPS, rpk_describe=RPK_LOADER, rpk_partitions=partitions,
+            engine_ready=True,
+        )
+        shown = f"[{verdict}] {PRODUCED_CHECK}" in stdout
+        expect(f"{name}: PRODUCED is a {verdict}", shown, stdout)
+        passed = "Vertical integration verified." in stdout
+        expect(f"{name}: the run's verdict follows it", passed == (verdict == "PASS"), stdout)
 
-    expect(
-        "the group check fails",
-        "[FAIL] a consumer group is committed on main_land (loader CONSUMED)" in stdout,
-        stdout,
-    )
+
+# What `rpk group list` prints with only the archiver's group on the broker.
+RPK_GROUPS = "BROKER  GROUP         STATE\n0       dfe-archiver  Stable"
+# What `rpk group describe dfe-loader` prints for a group with a commit of 5 on main_land.
+RPK_LOADER = (
+    "GROUP        dfe-loader\nCOORDINATOR  0\nSTATE        Stable\nMEMBERS      1\n"
+    "TOTAL-LAG    0\n\n"
+    "TOPIC      PARTITION  CURRENT-OFFSET  LOG-START-OFFSET  LOG-END-OFFSET  LAG  MEMBER-ID\n"
+    "main_land  0          5               0                 5               0    dfe-loader-1-a"
+)
+
+
+def test_on_redpanda_another_groups_presence_is_not_the_loaders_commit() -> None:
+    broker = pod("redpanda-0", {"cluster.redpanda.com/broker": "true"}, "redpanda")
+    never_committed = "GROUP        dfe-loader\nCOORDINATOR  0\nSTATE        Dead\nMEMBERS      0"
+    for name, describe in (
+        ("a group that never committed", never_committed),
+        ("another topic's commit", RPK_LOADER.replace("main_land", "other_land")),
+        ("no committed offset", RPK_LOADER.replace("5               0", "-               0")),
+    ):
+        stdout, counts = smoke([broker], rpk_groups=RPK_GROUPS, rpk_describe=describe)
+        expect(f"{name} fails the check", f"[FAIL] {GROUP_CHECK}\n" in stdout, stdout)
+        expect(f"{name}: no fallback is asked", "engine_offsets" not in counts, str(counts))
 
 
 DLQ_RETENTION = "DLQ retention is longer than the data-topic default"

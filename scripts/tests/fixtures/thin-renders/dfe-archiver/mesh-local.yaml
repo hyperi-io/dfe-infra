@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -31,6 +32,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -48,6 +50,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -63,6 +66,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -94,6 +98,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -121,6 +126,7 @@ spec:
         app.kubernetes.io/name: dfe-archiver
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-archiver>
+        dfe.hyperi.io/app: dfe-archiver
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>
@@ -295,6 +301,7 @@ metadata:
     app.kubernetes.io/name: dfe-archiver
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-archiver>
+    dfe.hyperi.io/app: dfe-archiver
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-archiver-<pin:chart-version.dfe-archiver>

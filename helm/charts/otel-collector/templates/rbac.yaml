@@ -1,4 +1,5 @@
-# RBAC for the k8sattributes processor (configmap.yaml). Without this the
+# RBAC for the k8s_attributes processors (configmap.yaml): the daemonset's, and
+# the gateway's on the k8s_cluster pipeline. Without this the
 # collector's ServiceAccount is forbidden to list/watch pods -> the DaemonSet
 # crashloops ("pods is forbidden"). Cluster-scoped: the processor enriches spans/
 # metrics with pod + namespace metadata cluster-wide.

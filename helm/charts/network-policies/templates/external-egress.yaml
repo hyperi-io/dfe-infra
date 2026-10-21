@@ -69,21 +69,18 @@
 {{- range $app := $apps }}
 {{- /* An app with its own entry under appPorts dials those ports and not the purpose's. */}}
 {{- $ports := index ($block.appPorts | default dict) $app | default $block.ports }}
+{{- range $sel := include "network-policies.appSelectors" (dict "root" $ "app" $app) | fromYamlArray }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-external-{{ $purpose }}-egress-{{ if eq $app "*" }}all{{ else }}{{ $app }}{{ end }}
+  name: allow-external-{{ $purpose }}-egress-{{ if eq $app "*" }}all{{ else }}{{ $app }}{{ end }}{{ $sel.suffix }}
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
   podSelector:
-    {{- if eq $app "*" }} {}
-    {{- else }}
-    matchLabels:
-      app.kubernetes.io/name: {{ $app }}
-    {{- end }}
+    {{- toYaml $sel.podSelector | nindent 4 }}
   policyTypes:
     - Egress
   egress:
@@ -101,6 +98,7 @@ spec:
           protocol: {{ .protocol | default "TCP" }}
         {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

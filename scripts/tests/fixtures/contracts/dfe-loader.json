@@ -101,7 +101,10 @@
       "protocol": "http",
       "insert_format": "rowbinary",
       "tables": [],
-      "tls": null
+      "tls": null,
+      "connect_timeout_ms": 5000,
+      "request_timeout_ms": 60000,
+      "insert_timeout_ms": 60000
     },
     "payload": {
       "pipeline_mode": "json_primary"
@@ -185,7 +188,7 @@
       ],
       "default_db": "dfe",
       "default_table": "main",
-      "org_id_field": "org_id",
+      "org_id_field": "_org_id",
       "org_routes": [],
       "source_to_table": {},
       "mapping_file": null,
@@ -330,7 +333,7 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [
       {
@@ -421,7 +424,10 @@
           "protocol": "http",
           "insert_format": "rowbinary",
           "tables": [],
-          "tls": null
+          "tls": null,
+          "connect_timeout_ms": 5000,
+          "request_timeout_ms": 60000,
+          "insert_timeout_ms": 60000
         }
       },
       "payload": {
@@ -549,7 +555,7 @@
           ],
           "default_db": "dfe",
           "default_table": "main",
-          "org_id_field": "org_id",
+          "org_id_field": "_org_id",
           "org_routes": [],
           "source_to_table": {},
           "mapping_file": null,
@@ -1056,6 +1062,27 @@
               }
             ],
             "default": null
+          },
+          "connect_timeout_ms": {
+            "description": "Bound on opening a TCP connection to `ClickHouse`, in milliseconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 5000
+          },
+          "request_timeout_ms": {
+            "description": "Starting bound on a query, which doubles after each timed-out query up to\n300 s, and bound on an insert waiting to hand over its next chunk, in\nmilliseconds.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 60000
+          },
+          "insert_timeout_ms": {
+            "description": "Bound on an insert waiting for the server's answer once its rows are\nsent, in milliseconds. A timed-out batch is held and retried.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 60000
           }
         }
       },
@@ -1518,13 +1545,13 @@
             "description": "Route to DLQ if a required field is absent.",
             "type": "object",
             "properties": {
-              "field": {
-                "description": "Name of the required field.",
-                "type": "string"
-              },
               "type": {
                 "type": "string",
                 "const": "drop_field_missing"
+              },
+              "field": {
+                "description": "Name of the required field.",
+                "type": "string"
               }
             },
             "required": [
@@ -1536,6 +1563,10 @@
             "description": "Route to DLQ if a field equals a specific value.",
             "type": "object",
             "properties": {
+              "type": {
+                "type": "string",
+                "const": "dlq_field_value"
+              },
               "field": {
                 "description": "Name of the field to check.",
                 "type": "string"
@@ -1543,10 +1574,6 @@
               "value": {
                 "description": "Value that triggers DLQ routing.",
                 "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "const": "dlq_field_value"
               }
             },
             "required": [
@@ -1617,12 +1644,12 @@
             "default": "main"
           },
           "org_id_field": {
-            "description": "Field to extract for _`org_id` column (stored in data for RLS)\nExample: \"`org_id`\" or \"tenant.id\"\nThis field is extracted and stored as _`org_id`, regardless of routing behaviour",
+            "description": "Field to extract for _`org_id` column (stored in data for RLS)\nDefault: \"_`org_id`\", the common-header tenant field\nThis field is extracted and stored as _`org_id`, regardless of routing behaviour",
             "type": [
               "string",
               "null"
             ],
-            "default": "org_id"
+            "default": "_org_id"
           },
           "org_routes": {
             "description": "Per-organisation database routing. Only orgs explicitly listed here receive\ntheir own database — all other orgs always go to `default_db`.\nExample: [{`org_id`: \"acme\"}, {`org_id`: \"bigcorp\", database: \"`bigcorp_dfe`\"}]",

@@ -1,0 +1,27 @@
+{
+  "_provenance": "The ServerConfig shape from https://docs.cloud.google.com/kubernetes-engine/docs/reference/rest/v1/ServerConfig (read 2026-10-18), as `gcloud container get-server-config --format json` prints it. Not a captured response: the field names are the API's, the values are illustrative.",
+  "defaultClusterVersion": "1.36.2-gke.1100000",
+  "defaultImageType": "COS_CONTAINERD",
+  "validImageTypes": [
+    "COS_CONTAINERD",
+    "UBUNTU_CONTAINERD",
+    "WINDOWS_LTSC_CONTAINERD"
+  ],
+  "validMasterVersions": [
+    "1.36.2-gke.1100000",
+    "1.35.6-gke.1200000"
+  ],
+  "validNodeVersions": [
+    "1.36.2-gke.1100000",
+    "1.35.6-gke.1200000"
+  ],
+  "channels": [
+    {
+      "channel": "REGULAR",
+      "defaultVersion": "1.36.2-gke.1100000",
+      "validVersions": [
+        "1.36.2-gke.1100000"
+      ]
+    }
+  ]
+}

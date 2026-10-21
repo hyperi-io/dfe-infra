@@ -79,6 +79,8 @@ jobs:
             tests/e2e-ui/specs/engine/oidc-rba.spec.ts
             # dfe-sweep's committed defaults, which test_sweep_defaults.py validates.
             config/defaults.yaml
+            # test_docs_aggregate.py loads docs-site/scripts/aggregate.py and copies content-root/.
+            docs-site/**
 
       # The third-party arch check reads public registries, which rate-limit a shared
       # runner, so it runs only where its verdict can change: the pins it reads and the
@@ -94,6 +96,7 @@ jobs:
             helm/charts/forgejo/values.yaml
             helm/charts/kafka/values.yaml
             scripts/check_image_arch.py
+            scripts/image-arch-proven.json
             scripts/dfe-stack
             scripts/check_suite_drift.py
             scripts/composition.py
@@ -152,7 +155,7 @@ jobs:
       - name: Ruff (scripts/)
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
-          version: "0.17.0"
+          version: "0.17.1"
           args: check
           src: scripts
 
@@ -224,6 +227,13 @@ jobs:
       # exits -- a missing constraints file, or one declaring a different stack.
       - name: Stack compatibility check (advisory)
         run: python3 scripts/dfe-stack compat-check
+
+      # Exits 0 on a lag, which it annotates as a warning: the bump is a reviewed
+      # versions.yaml change behind the release-age gate, never this step's to force.
+      - name: Karpenter AMI alias currency (advisory)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_karpenter_ami.py
 
       # dfe-ops is the CLI every deploy, verify, teardown and cycle runs
       # through, and has no extension, so no glob elsewhere ever compiles it.
@@ -490,7 +500,7 @@ jobs:
 
       - name: Every pinned third-party image ships linux/amd64 and linux/arm64
         id: gate
-        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json"
+        run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json" --seed scripts/image-arch-proven.json
 
       # Saved on a failed gate too: the file holds only the verdicts that passed.
       - name: Save the proven image verdicts

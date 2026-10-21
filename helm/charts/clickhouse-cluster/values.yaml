@@ -9,14 +9,14 @@ cloud: local
 appNamespace: ""
 
 # Further namespaces the admin credential is projected into (same ESO copy as
-# appNamespace). The otel collector's ClickHouse exporter authenticates with it.
-extraCredentialNamespaces:
-  - otel
+# appNamespace). Empty: only dfe-engine, in the app namespace, reads it, and the
+# collector writes as its own user.
+extraCredentialNamespaces: []
 
 clickhouse:
   # Deployment mode (DFE owns its data layer; deploy unless external given):
   #   cluster  -> ClickHouseCluster (operator) + DFE-owned Keeper, ReplicatedMergeTree
-  #   single   -> standalone clickhouse-server, no Keeper, MergeTree (small/test)
+  #   single   -> standalone clickhouse-server, Keeper embedded, a cluster of one (small/test)
   #   external -> deploy nothing; connect to a supplied CH (BYO / ClickHouse Cloud)
   # Profile sets the default (scale->cluster, standard->single); deployer overrides.
   #
@@ -98,6 +98,9 @@ clickhouse:
       periodSeconds: 5
       timeoutSeconds: 10
       failureThreshold: 10
+    # The four-letter commands Keeper answers on its client port, read-only only. The
+    # operator sends mntr to read each keeper's state and the probe above sends ruok.
+    fourLetterWords: "ruok,isro,mntr,srvr,stat"
     # Keeper's own log, written to the data PVC above. Same fields and bound as
     # clickhouse.serverLog; left unset, the operator keeps 50 trace-level files of
     # up to 1000M on it.
@@ -241,7 +244,7 @@ clickhouse:
       # the node's local NVMe instead, leaving the PVC to hold only the part
       # metadata. instance-store needs cacheSize set and clickhouse.mode:
       # cluster, and it needs a node that actually carries local NVMe -- the
-      # karpenter-pools chart's `clickhouse` pool, whose instanceStorePolicy:
+      # node-pools chart's `clickhouse` pool, whose instanceStorePolicy:
       # RAID0 is what makes that NVMe available to a pod at all. Unlike a gp3
       # PVC, which reattaches to whatever node picks the pod back up, an
       # emptyDir is destroyed with the pod: a node replacement empties the

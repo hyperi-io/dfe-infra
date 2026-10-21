@@ -6,19 +6,6 @@
 
 data "aws_partition" "current" {}
 
-// Always-latest alias, deliberately NOT pinned to a dated release the way
-// karpenter-pools.amiAlias is (al2023@v20260827). That pin exists because a
-// Karpenter node is long-lived and reconciles continuously, so "latest"
-// there means silent mid-life drift with no version an operator can point
-// at. This instance is created fresh on every `bastion up` and terminated on
-// every `bastion down` -- there is no "running node whose image moved under
-// it" failure mode to guard against, and an on-demand debugging box SHOULD
-// carry whatever AL2023 currently ships. See CONTRACT.md #8/P3-2 for the
-// full reasoning and the deliberate deviation from the Karpenter precedent.
-data "aws_ssm_parameter" "al2023_arm64" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
-}
-
 locals {
   instance_tags = merge(var.tags, {
     Name                      = var.name
@@ -246,7 +233,7 @@ resource "aws_iam_instance_profile" "this" {
 resource "aws_instance" "this" {
   count = var.enabled ? 1 : 0
 
-  ami           = data.aws_ssm_parameter.al2023_arm64.value
+  ami           = var.ami_id
   instance_type = var.instance_type
   subnet_id     = var.network.private_subnet_ids[0]
 

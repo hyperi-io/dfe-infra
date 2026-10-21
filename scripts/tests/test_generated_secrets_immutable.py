@@ -8,7 +8,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The Kafka broker user, the kafbat break-glass admin and the FerretDB backend password.
+"""The Kafka broker user, the kafbat break-glass admin, the FerretDB backend password and Keeper's identity.
 
 ESO's `refreshPolicy: CreatedOnce` re-runs the generator on any reconcile that finds no
 recorded sync or a target Secret whose data hash fails validation, and every run mints a
@@ -40,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # test_clickhouse_admin_password.py. A new one fails the sweep until it is added to a test.
 COVERED_TEMPLATES = {
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/admin-secret.yaml",
+    REPO_ROOT / "helm/charts/clickhouse-cluster/templates/keeper-identity-secret.yaml",
     REPO_ROOT / "helm/charts/ferretdb/templates/auth.yaml",
     REPO_ROOT / "helm/charts/kafbat/templates/externalsecret.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user.yaml",
@@ -66,6 +67,12 @@ FERRETDB = Case(
     "ferretdb",
     ("ferretdb.mode=deploy", "appNamespace=dfe-ui"),
     "dfe-ferretdb-password",
+)
+KEEPER_IDENTITY = Case(
+    "single-mode Keeper identity",
+    "clickhouse-cluster",
+    ("clickhouse.mode=single", "appNamespace=dfe"),
+    "dfe-clickhouse-keeper-identity",
 )
 
 
@@ -127,6 +134,11 @@ def test_the_kafbat_break_glass_password_cannot_be_reminted() -> None:
 
 def test_the_ferretdb_backend_password_cannot_be_reminted() -> None:
     check_written_once_and_immutable(FERRETDB)
+
+
+def test_the_single_mode_keeper_identity_cannot_be_reminted() -> None:
+    """A second value locks the server out of every znode the first one created."""
+    check_written_once_and_immutable(KEEPER_IDENTITY)
 
 
 def test_every_generator_backed_template_is_covered_by_a_test() -> None:

@@ -13,6 +13,7 @@
 """dfe-ops bastion -- the on-demand toolbox's operator surface.
 
     dfe-ops bastion up [--ttl MIN]     flip toolbox.enabled on in the dial,
+                                       re-resolve the newest AL2023 AMI,
                                        apply just the toolbox target, wait for
                                        SSM to report PingStatus Online, and
                                        admit this instance's own /32 on the
@@ -35,7 +36,9 @@
 
 `up`/`down` edit deployment.yaml (the dial) in place, then shell out to
 render_dial.py --tofu and tofu -- the same steps an operator would run by hand,
-just for the toolbox target alone. `up` applies; `down` DESTROYS that target,
+just for the toolbox target alone. `up` runs `resolve_sizing.py images --only
+instance_ami_id` between the two, so the rebuilt instance launches the newest
+AMI rather than the one the last resolve wrote. `up` applies and `down` DESTROYS that target,
 because an apply has to reconcile every other resource in the target set first
 and a failure there would leave the instance running and billing.
 `shell`/`forward` shell out to
@@ -81,7 +84,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DIAL = REPO_ROOT / "deployment.yaml"
 DIAL_TEMPLATE = REPO_ROOT / "deployment.example.yaml"
 RENDER_DIAL = REPO_ROOT / "scripts" / "render_dial.py"
+RESOLVE_SIZING = REPO_ROOT / "scripts" / "resolve_sizing.py"
 AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws"
+
+# The one key `up` re-resolves: the node groups' release and the forwarder's AMI wait for a full resolve.
+TOOLBOX_IMAGE_KEY = "instance_ami_id"
 SCRATCH_KUBECONFIG = REPO_ROOT / ".tmp" / "toolbox-eks-api.kubeconfig"
 
 # What `up`/`down` apply -- the toolbox module and nothing else at the aws root.
@@ -263,6 +270,26 @@ def _run_interactive(cmd: list[str]) -> int:
 
 def _render_dial_tofu() -> bool:
     result = _run([sys.executable, str(RENDER_DIAL), "--tofu"], cwd=REPO_ROOT)
+    return result.returncode == 0
+
+
+def _resolve_toolbox_image() -> bool:
+    """Re-read the newest AL2023 AMI into node-images.auto.tfvars.json before the apply.
+
+    The instance is rebuilt on every `up`, so the AMI an earlier resolve wrote
+    is stale by then, or absent on a deployment that never resolved one. A
+    lookup that fails drops the key and warns, and a pinned dial empties the
+    file, so the apply takes terraform.tfvars' instance_ami_id or refuses by
+    name rather than launching the old image. The exit status is non-zero only
+    for a dial it cannot read.
+    """
+    result = _run(
+        [
+            sys.executable, str(RESOLVE_SIZING), "images",
+            "--dial", str(DIAL), "--out", str(AWS_ROOT), "--only", TOOLBOX_IMAGE_KEY,
+        ],
+        cwd=REPO_ROOT,
+    )
     return result.returncode == 0
 
 
@@ -935,6 +962,14 @@ def cmd_bastion_up(args: argparse.Namespace) -> int:
 
     if not _render_dial_tofu():
         print("dfe-ops bastion: render_dial.py --tofu failed", file=sys.stderr)
+        return 1
+
+    if not _resolve_toolbox_image():
+        print(
+            f"dfe-ops bastion: resolve_sizing.py images could not read {DIAL.name}, so no AMI "
+            "was resolved and nothing was applied",
+            file=sys.stderr,
+        )
         return 1
 
     if not _apply_toolbox():

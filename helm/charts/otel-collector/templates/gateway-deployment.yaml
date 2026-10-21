@@ -15,6 +15,8 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gateway
+        # Not in the selector, which a live Deployment cannot change.
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       # The k8s_cluster receiver reads the API server, so the gateway needs the
@@ -22,6 +24,7 @@ spec:
       # is not bound to.
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- include "otel-collector.waitForEngine" . | nindent 6 }}
       containers:
         - name: otel-collector
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
@@ -33,14 +36,15 @@ spec:
             - name: GOMEMLIMIT
               value: {{ include "otel-collector.goMemLimit" (include "otel-collector.gatewayMemory" .) | quote }}
             {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled }}
-            # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD});
-            # the clickhouse-cluster chart projects the secret into this
-            # namespace. Shared by the ClickHouse exporter and the sqlquery receiver.
+            # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD}). The
+            # collector's own password, which dfe-extras copies into this
+            # namespace beside the engine. Shared by the ClickHouse exporter and
+            # the sql_query receiver.
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.exporters.clickhouse.passwordSecretName }}
-                  key: password
+                  name: {{ include "otel-collector.clickhouseSecret" . }}
+                  key: {{ .Values.exporters.clickhouse.passwordSecretKey | default (dig "serviceUsers" "otelWriter" "passwordSecretKey" "password" .Values.clickhouse) }}
             {{- end }}
             {{- if and .Values.clusterTelemetry.kafka.enabled .Values.clusterTelemetry.kafka.sasl.enabled }}
             # Requires the kafka chart to project dfe-kafka-user into this

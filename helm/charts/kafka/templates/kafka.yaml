@@ -3,7 +3,7 @@
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int $p.replicationFactor) $replicas }}
 {{- $isr := min (int $p.minInsyncReplicas) $replicas }}
-{{- $threadKnobs := ge (int (include "dfe-kafka.brokerMilliCpu" .)) (mul (int $p.threadKnobVcpuFloor) 1000) }}
+{{- $threadDials := ge (int (include "dfe-kafka.brokerMilliCpu" .)) (mul (int $p.threadDialVcpuFloor) 1000) }}
 # Strimzi KRaft + KafkaNodePool model (current API). replicas/storage/resources
 # live in the KafkaNodePool (see kafka-nodepool.yaml); the Kafka CR holds the
 # cluster-wide config only.
@@ -61,9 +61,9 @@ spec:
       # together or a produce is rejected and a follower stalls.
       message.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
       replica.fetch.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
-      {{- if $threadKnobs }}
+      {{- if $threadDials }}
       # Gated to a broker CPU request of at least
-      # kafka.profile.scale.threadKnobVcpuFloor vCPU -- below that these buy
+      # kafka.profile.scale.threadDialVcpuFloor vCPU -- below that these buy
       # context switching and nothing else.
       num.network.threads: {{ $p.numNetworkThreads }}
       num.io.threads: {{ $p.numIoThreads }}

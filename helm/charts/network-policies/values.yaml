@@ -36,6 +36,16 @@ operatorNamespaces:
   strimzi: strimzi
   clickhouse: clickhouse-operator-system
 
+# Data-namespace pods whose ingress their operator's own NetworkPolicy states whole, by the label
+# the operator writes on them. Policies are additive, so a pod data-ingress-policy selects takes
+# every port from every DFE, data and operator namespace, and nothing narrower can take that back.
+# Keeper is here because its client port holds every replicated table's coordination: the
+# ClickHouse operator admits it only from pods labelled as the operator, in any namespace, and the
+# clusters referencing the keeper (clickhouse-cluster's KeeperCluster turns that policy on).
+# Empty selects every pod as before.
+operatorIngressScoped:
+  clickhouse.com/role: [clickhouse-keeper]
+
 # Pod label that takes a workload OUT of the namespace-wide egress baseline.
 # NetworkPolicies are additive: a pod the baseline selects can always reach the
 # whole namespace, and nothing added later narrows that. A workload whose
@@ -43,6 +53,13 @@ operatorNamespaces:
 # WHOLE egress surface -- DNS and telemetry included, because it has no
 # baseline left. Set it empty to select every pod as before.
 egressScopedLabel: dfe.hyperi.io/egress-scoped
+
+# Pod label naming the app whatever its instance is called, which
+# argocd/values/apps/_common.yaml sets to the chart name on every thin-chart pod.
+# A per-config instance's app.kubernetes.io/name is <app>-<source>, so each policy
+# naming an app renders a second copy, "-instances", selecting on this label.
+# Workloads outside the thin charts carry only app.kubernetes.io/name.
+appLabel: dfe.hyperi.io/app
 
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system
@@ -111,7 +128,7 @@ podIdentityAgent:
 # internet route (cloud NAT gateway on private subnets, or node default route).
 internetEgress:
   enabled: true
-  # Apps (matched by app.kubernetes.io/name) granted internet egress.
+  # Apps (matched by app.kubernetes.io/name, then appLabel) granted internet egress.
   apps:
     - dfe-fetcher
     - dfe-archiver
@@ -147,7 +164,7 @@ internetEgress:
 #
 # Each purpose grants ONLY the ports that dependency speaks, so an app never
 # inherits another purpose's ports -- the fetcher does not get ClickHouse ports
-# because the loader needed them. `apps` matches app.kubernetes.io/name, and the
+# because the loader needed them. `apps` matches app.kubernetes.io/name or appLabel, and the
 # single entry "*" means every pod in the namespace. `appPorts` gives one app
 # ports of its own in place of the purpose's. `providers` is keyed by the
 # provider the declaration names (kafka.provider), and the entry for it replaces

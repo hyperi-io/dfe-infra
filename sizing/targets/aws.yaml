@@ -1,6 +1,6 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/aws.yaml
-## Purpose:   The per-target knob matrix for `cloud: aws` -- every sizing knob
+## Purpose:   The per-target dial matrix for `cloud: aws` -- every sizing dial
 ##            the target changes or refuses, and why, so the sizing report can
 ##            print the whole list rather than implying nothing was dropped on
 ##            this target's account.
@@ -10,13 +10,13 @@
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## docstring's TARGETS_DIR paragraph. Every dial below carries a `state` of
 ## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
 ## prints beside it. NO LISTS: nested maps and scalars only, parsed by
 ## scripts/yaml_subset.py.
 ##
 ## AWS is the one POPULATED target: nothing here is blocked, because the
-## resolver, tofu and Karpenter carry every knob between them rather than a
+## resolver, tofu and Karpenter carry every dial between them rather than a
 ## vendor's own control plane taking it away.
 
 node_shapes:
@@ -27,9 +27,9 @@ storage_classes:
   state: managed
   reason: "compute-shapes.yaml sets storage_class_owner: bootstrap for aws -- bootstrap.sh creates the baseline gp3 class (3,000 IOPS / 125 MiB/s, the free tier) whenever the deployment's own class is absent, so a PVC always has somewhere to bind; per-use-case classes carrying the resolved iops and throughput (A6 in resolve_sizing.py refuses an unset throughput or an iopsPerGB field) are a follow-on."
 
-karpenter_generation_floor:
+pool_generation_floor:
   state: managed
-  reason: "build_karpenter_pools admits only the family select_shape chose (under cheapest-of, the generations that policy compared) and floors generationGt one below it, or emits generationIn on a pinned policy. Karpenter launches the cheapest family a pool allows, so an older family on the list would be the one it launches; a new Graviton generation reaches the pools with the next resolve, as a reviewed diff."
+  reason: "build_pool_classes admits only the family select_shape chose (under cheapest-of, the generations that policy compared) and floors aws.generationGt one below it, or emits aws.generationIn on a pinned policy. Karpenter launches the cheapest family a pool allows, so an older family on the list would be the one it launches, and a new Graviton generation reaches the pools with the next resolve, as a reviewed diff."
 
 clickhouse_cache_volume:
   state: managed

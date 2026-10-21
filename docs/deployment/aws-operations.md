@@ -3,7 +3,7 @@ Project:   DFE (Data Fusion Engine) - product suite
 File:      docs/deployment/aws-operations.md
 Purpose:   Operator guide for running a DFE cluster on AWS once it exists --
            node pools and images, edge exposure, Kafka telemetry and
-           autoscaling, teardown, and upgrades.
+           autoscaling, and upgrades.
 Language:  Markdown
 License:   see repository LICENSE
 Copyright: HyperI / DFE contributors
@@ -11,8 +11,7 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS -- Operations
 
-Provisioning (the dial, sizing, Kafka and ClickHouse choices):
-[aws.md](aws.md).
+Provisioning (the dial, sizing, Kafka and ClickHouse choices): [aws.md](aws.md). Lifecycle tags and teardown: [aws-teardown.md](aws-teardown.md). Stack, re-size and platform upgrades follow [upgrades.md](upgrades.md), and the operator order across charts is data, not judgement -- `upgrade-order.yaml` at the repo root.
 
 ## Kafka telemetry and autoscaling
 
@@ -46,30 +45,27 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices):
 
 ## Nodes and images
 
-- The small always-on managed group (`node_pools.system` in the dial) carries
-  only Karpenter itself and the AWS Load Balancer Controller, both installed
-  at the same early sync wave -- neither can allocate anything until it runs.
-  Every OTHER workload the resolver sizes (kafka-broker, clickhouse, keeper,
-  and kraft-controller only where `kafka.controller_pool` is `separate`) gets
-  BOTH a fixed EKS managed node group, sized to the resolved floor, AND a
-  Karpenter pool over the same instance families for elastic capacity above
-  it -- the two are not an either/or split; the fixed group is what a stateful
-  workload keeps even if Karpenter cannot place a replacement. Every Karpenter
-  pool is arm64, and its generation floor sits one generation below the oldest
-  generation in its resolved instance family list, so a new Graviton
-  generation arrives as drift, with no plan change.
-- Karpenter's node image is a dated `amiAlias: al2023@v<YYYYMMDD>`
-  (`helm/charts/karpenter-pools/values.yaml`, `operators.karpenter-al2023-ami`
-  in `versions.yaml`, drift-checked) -- a dated AL2023 release, not `latest`,
-  so a new image arrives as a `versions.yaml` bump through the usual 7-day
-  cooldown rather than as unwatched drift on every reconcile. A deployment
-  under a different image policy overrides `karpenter.nodeClass.amiAlias` in
-  a values overlay rather than editing this chart's default.
+- The small always-on managed group (`node_pools.system` in the dial) carries only Karpenter and the AWS Load Balancer Controller, both at the same early sync wave. Each stateful workload the resolver sizes (kafka-broker, clickhouse, keeper, and kraft-controller where `kafka.controller_pool` is `separate`) gets a fixed EKS managed node group at the resolved floor AND a node pool over the same instance family above it. The fixed group is what it keeps when Karpenter cannot place a replacement. Every pool is arm64 and admits only the family the resolver picked, or the generations a cheapest-of policy compared, so a new Graviton generation arrives with the next resolve.
+- Karpenter's node image is a dated `amiAlias: al2023@v<YYYYMMDD>` in `helm/charts/node-pools/values.yaml`, drift-checked against `operators.karpenter-al2023-ami` in `versions.yaml`, so a new image arrives as a reviewed `versions.yaml` bump rather than as drift on a reconcile. A deployment with its own image policy sets `pools.aws.nodeClass.amiAlias` in its deploy repo's `infra/node-pools.yaml`.
 - Images are checked for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` does it with no registry credential, on every pin change (`helm-lint.yml`) and in the stack release gate (`release.yml`). `dfe-stack release-gate` reads the DFE images by digest before a release-maturity stack ships. A digest-pinned verdict is cached (`--verdict-cache`), so only unproven references are read.
 - Every third-party image a pin tags deploys as tag@sha256, and the check reads it by that digest. Forgejo's curl helper comes from the chart values that pin it, and Dex, MetalLB's FRR pair and Karpenter's digest-pinned controller from their chart's own values at the pinned version. `services-digests.karpenter` and `services.aws-load-balancer-controller-image` move Karpenter's chart and the load balancer controller to digests too, once a stack pins them.
 - Two pinned images still deploy by tag: the cluster-mode Redpanda broker, whose operator chart accepts only a bare semver tag, and Strimzi's broker, which its operator resolves.
 - Named in a chart render but never pulled, so not checked: Envoy Gateway's rate-limit image (the gateway uses only `rateLimit.local`), cert-manager's ACME HTTP-01 solver (every issuer here solves DNS-01), and Strimzi's Kafka Bridge, Kafka Connect build and other-version Kafka images (no chart renders a KafkaBridge or KafkaConnect, and the Kafka resource names only `services.kafka-version`).
 - The one exception the stack works around rather than ships: the Cruise Control UI's only credible third-party image is amd64-only, so DFE fetches its static release tarball at pod start instead of running that image at all.
+
+## Disruption budgets
+
+Each Karpenter pool gets one budget per reason from its class: how many nodes may be terminating at once.
+
+| Pool | Underutilized | Empty | Drifted |
+|---|---|---|---|
+| kafka-broker, kraft-controller, clickhouse, keeper | 0 | 1 | 1 |
+| eks-system, general | 25% | 25% | 10% |
+| ci-burst | 100% | 100% | 100% |
+
+- `k8s.disruption.maintenance_window` (a UTC cron `schedule`, daily or one weekday, and a `duration`) holds drift to the window on every pool but ci-burst. Karpenter has no "only inside" budget, so the resolver writes a zero Drifted budget from the window's close to its next open.
+- `k8s.disruption.posture: conservative` drops elastic Underutilized to 12% and replaces a stateful node for drift only inside the window. With no window, drift never replaces one.
+- Expiry is not budgeted. The elastic pools' 720h `expireAfter` replaces a node whether the window is open or not.
 
 ## Registry cache
 
@@ -118,58 +114,3 @@ tier, by which dial key. What is AWS's own:
 - `render_dial.py` validates every boolean and enum in the dial's `edge:` block
   and reports which surfaces it marks public, but the values that reach the
   chart are whatever a deploy-repo overlay pastes in from it.
-
-## Teardown and lifecycle tags
-
-- A full cloud cycle is batched, never run per finding
-  ([TESTING-CYCLE.md](../TESTING-CYCLE.md)). Two halves bear on teardown: the
-  managed cluster goes down first, being the long pole both ways, and teardown
-  starts when the last proof lands, not at the end of a session.
-- `tags.lifecycle: ephemeral` (tyre-kick, provision-test-destroy) is the one
-  governance tag that changes what gets built, not only what gets labelled.
-  It sets the CloudTrail bucket's `force_destroy`, the secret recovery
-  windows on both the deployment's own secrets and the Kafka SCRAM
-  credential (0 days instead of 30), and redpanda-cloud's `allow_deletion`
-  (true instead of the vendor's own default refusal) -- so a tyre-kick
-  deployment tears down cleanly and anything else keeps the vendor's normal
-  deletion protection, without a per-resource flag to remember. Every `dfe-ops`
-  command against an ephemeral dial also opens with one stderr line: the
-  resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
-  never a rate -- plus how long the cluster has been up, from the root's
-  `cluster_created_at` output. Nothing in the tree
-  dates a deployment -- a local state file's mtime dates the last apply, and
-  the S3 backend leaves none here -- so the control plane's own stamp is the
-  reading, and a dial with no cluster behind it reports the age unavailable.
-  Neither reading may fail the command.
-- **An untargeted `tofu destroy` on an MSK dial fails with `Client
-  configuration missing` until the Redpanda credentials are in the
-  environment.** The root declares `provider "redpanda"`, OpenTofu configures
-  every provider the configuration requires whether or not the dial selects
-  it, and that provider's client resolves `REDPANDA_CLIENT_ID` and
-  `REDPANDA_CLIENT_SECRET` or fails. Until the root stops requiring it, either
-  export those two with any value for the run, or destroy by target. Do NOT
-  reach for `-exclude`: it cannot be combined with `-target`.
-- `bootstrap/destroy.sh` deletes karpenter-pools once the load balancers are released and keeps Karpenter itself until every NodeClaim is gone (up to 600s), because a node left running holds its subnets through its network interfaces and `tofu destroy` fails on them. On a test run its last step terminates any node a Karpenter pool launched for that run and cluster.
-- Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
-  the Kubernetes workloads first -- anything that made a load balancer, a
-  volume or a DNS record did so through a controller, and `tofu destroy`
-  does not know about it. Then run `scripts/cloud_sweep.py --region
-  <region>` read-only to see what is left, add `--exclude-bucket <state
-  bucket>` so the state store is never a candidate, and only add `--delete`
-  once you have read the listing. `--delete` requires `--account <12-digit>`,
-  checked against `aws sts get-caller-identity` before anything is touched --
-  refused on a mismatch or a missing `--account`, the same guard both tofu
-  roots already carry against running against the wrong account. `--delete`
-  also prints the full eligible list and asks for a typed `yes` before
-  deleting anything; `--yes` skips that prompt for a CI run. `--include-untagged`
-  widens the sweep to every resource the listers found, tagged or not, turning
-  `--delete` into a region-wide wipe of the account (`--exclude-bucket` is the
-  one exemption); without it, `--delete` only ever removes resources carrying
-  the tag filter. The AWS
-  account defaults -- the default VPC and everything that comes with it,
-  AWS-managed KMS aliases -- are never listed or touched.
-- `--expired` selects resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h), plus any non-default security group with no run tag inside a VPC so selected -- EKS creates its cluster security group untagged and outside tofu state, and the VPC cannot be deleted while it stands. Unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
-- During a test run (`controller_tags` set) each managed node group launches through a launch template that puts the run's tags on its instances and root volumes, and every Karpenter pool is held to `karpenter.runInstanceSizes`. Outside a run there is a template only when the registry cache writes a node script, because adding one to an existing node group replaces the group.
-- Stack, re-size and platform upgrades follow
-  [upgrades.md](upgrades.md); the operator order across charts is data,
-  not judgement -- `upgrade-order.yaml` at the repo root.

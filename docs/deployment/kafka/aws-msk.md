@@ -226,8 +226,9 @@ output "bootstrap_brokers_sasl_iam" {
 Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics, and on
 a Provisioned cluster carrying the DFE configuration nothing else will either:
 `auto.create.topics.enable` is false, so that the partition count per source is an
-explicit number rather than a broker default. The kafka chart pre-creates them
-from the bootstrap Job below. If you would rather manage topics as IaC, the
+explicit number rather than a broker default. dfe-engine creates them at startup
+from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below
+writes. If you would rather manage topics as IaC, the
 community `Mongey/kafka` provider speaks both SCRAM and `aws-iam`:
 
 ```hcl

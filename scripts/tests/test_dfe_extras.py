@@ -312,10 +312,10 @@ SCENARIOS = [
             "env": {
                 "DFE_AUTH_HEADER_EMAIL": "x-oidc-subject",
                 "DFE_LOCAL_AUTH_PAGES": "true",
-                "CLICKHOUSE_USER": "hyperdx",
                 "NODE_EXTRA_CA_CERTS": "/etc/dfe/clickhouse-ca/ca.crt",
             },
-            "unset": ["DFE_ENGINE_JWKS_URL"],
+            # The admin user stays the engine's: HyperDX reads as each team's connection.
+            "unset": ["DFE_ENGINE_JWKS_URL", "CLICKHOUSE_USER"],
         },
         id="hyperdx-header-dev-and-tls",
     ),
@@ -359,11 +359,12 @@ SCENARIOS = [
     ),
     pytest.param(
         "dfe-loader", "single", "aws",
+        # A deployment's own admin user stays the engine's: the loader connects as its own.
         {"clickhouse": {"user": "loader", "tls": {"enabled": False}}},
         {
             "env": {
                 "DFE_LOADER_CLICKHOUSE_HOSTS": "dfe-clickhouse.clickhouse.svc.cluster.local:8123",
-                "DFE_LOADER_CLICKHOUSE_USERNAME": "loader",
+                "DFE_LOADER_CLICKHOUSE_USERNAME": "dfe_loader",
             },
             "unset": ["SSL_CERT_FILE", "DFE_LOADER_TRANSPORT"],
         },

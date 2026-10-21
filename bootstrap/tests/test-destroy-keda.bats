@@ -20,6 +20,9 @@
 #                      karpenter-pools is deleted; before that they always show
 #   nodeclaims-unreadable  listing the NodeClaims fails
 #   owner-patch-refused  patching an Application by its plain name fails
+#   pdbs               "<namespace>|<name>" PodDisruptionBudgets
+#   pods               "<namespace>|<name>|<karpenter.sh/do-not-disrupt>" pods
+#   held-apps          Application names the listing prints until the operators' are deleted
 # aws is a stub too: it logs every call to aws.log, answers the three describes
 # from security-groups.json, interfaces.json and instances.json, refuses every
 # delete with an error naming an account when aws-refuses exists, and refuses a
@@ -76,6 +79,15 @@ case "$*" in
     "-n argocd delete applications.argoproj.io "*karpenter-pools-dfe-aws-test*)
         : > "${STUB_DIR}/pools-deleted"
         ;;
+    "-n argocd delete applications.argoproj.io "*strimzi-kafka-operator-dfe-aws-test*)
+        : > "${STUB_DIR}/operators-deleted"
+        ;;
+    "get poddisruptionbudgets.policy -A "*)
+        [[ -f "${STUB_DIR}/pdbs" ]] && cat "${STUB_DIR}/pdbs"
+        ;;
+    "get pods -A "*)
+        [[ -f "${STUB_DIR}/pods" ]] && cat "${STUB_DIR}/pods"
+        ;;
     "get nodeclaims.karpenter.sh "*)
         [[ -f "${STUB_DIR}/nodeclaims-unreadable" ]] && exit 1
         [[ -f "${STUB_DIR}/nodeclaim-polls" ]] || exit 0
@@ -104,6 +116,9 @@ case "$*" in
     "-n argocd get applications.argoproj.io "*)
         if [[ -f "${STUB_DIR}/stuck" && ! -f "${STUB_DIR}/patched" ]]; then
             echo "application.argoproj.io/dfe-receiver"
+        fi
+        if [[ -f "${STUB_DIR}/held-apps" && ! -f "${STUB_DIR}/operators-deleted" ]]; then
+            cat "${STUB_DIR}/held-apps"
         fi
         ;;
     "delete ns argocd "*)
@@ -346,14 +361,14 @@ log() {
 }
 
 # Seconds of the clock the Application wait ran: from its first kubectl call to
-# the last settle pause before step 3, which is the 10 the script sleeps between.
+# step 4's first namespace delete, less the 10s and 5s settle pauses of steps 2 and 3.
 applications_wait_seconds() {
-    local first_poll step3
+    local first_poll step4
     first_poll="$(awk '$3 == "keda" { print $1; exit }' "${STUB_DIR}/trace.log")"
-    step3="$(awk '$3 == "strimzi" && $4 == "delete" { print $1; exit }' "${STUB_DIR}/trace.log")"
+    step4="$(awk '$2 == "delete" && $3 == "ns" { print $1; exit }' "${STUB_DIR}/trace.log")"
     [ -n "${first_poll}" ]
-    [ -n "${step3}" ]
-    echo $((step3 - 10 - first_poll))
+    [ -n "${step4}" ]
+    echo $((step4 - 15 - first_poll))
 }
 
 @test "the Application wait ends at its 300s budget when every kubectl call takes time" {
@@ -627,12 +642,13 @@ applicationset_owner() {
 }
 
 # An AWS deployment's Applications: both controllers, Karpenter's pools and one app,
-# with two NodeClaims that take ${1} listings to go once the pools are deleted.
+# with two NodeClaims that take ${1} listings to go once the pools are deleted. The
+# pools render from ${2}, the node-pools chart by default.
 karpenter_deployment() {
     printf '%s\n' \
         'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller' \
         'karpenter-dfe-aws-test karpenter' \
-        'karpenter-pools-dfe-aws-test  helm/charts/karpenter-pools' \
+        "karpenter-pools-dfe-aws-test  ${2:-helm/charts/node-pools}" \
         'dfe-receiver-default-dfe-aws-test  helm/charts/dfe-receiver' > "${STUB_DIR}/applications"
     echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
 }
@@ -677,6 +693,26 @@ instances() {
     [[ "${output}" != *"WARN"* ]]
 }
 
+@test "the pools are found by their Application name, whatever chart path they render from" {
+    # A cluster synced before the chart moved still carries the old path.
+    karpenter_deployment 2 helm/charts/karpenter-pools
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first released pools last_claims controller
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    released="$(last_line_of 'get services -A' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [[ "${first}" != *"karpenter-pools"* ]]
+    [ -n "${pools}" ]
+    [ "${released}" -lt "${pools}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
 @test "neither Karpenter Application goes with the first delete, and no delete names the controller" {
     karpenter_deployment 0
     run bash "${DESTROY}" --force
@@ -707,6 +743,225 @@ instances() {
     [ "$status" -eq 0 ]
     [[ "${output}" =~ WARN:\ Karpenter\ still\ holds\ NodeClaims\ the\ cluster\ would\ not\ list\ after\ ([0-9]+)s ]]
     [ "${BASH_REMATCH[1]}" -ge 600 ]
+}
+
+# The same Applications as layer1-addons.yaml and layer2-platform.yaml render them: a
+# digest-pinned chart is an OCI source carrying a repoURL and path "." but no chart.
+oci_controllers() {
+    printf '%s\n' \
+        'aws-load-balancer-controller-dfe-aws-test  .  oci://public.ecr.aws/eks/aws-load-balancer-controller' \
+        'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
+        'karpenter-pools-dfe-aws-test     helm/charts/node-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'dfe-receiver-default-dfe-aws-test  .  oci://ghcr.io/hyperi-io/charts/dfe-receiver' > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+@test "a digest-pinned Karpenter controller still outlives every NodeClaim its pools launched" {
+    oci_controllers 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first pools last_claims controller
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"dfe-receiver-default-dfe-aws-test"* ]]
+    [[ "${first}" != *"karpenter"* ]]
+    [[ "${first}" != *"aws-load-balancer-controller"* ]]
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' <<<"${log_text}")" -eq 0 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+# The digest-pinned controller beside the pools and network-policies, both of which
+# carry a deploy repo whose URL ends in /karpenter as their values source.
+deploy_repo_named_karpenter() {
+    printf '%s\n' \
+        'karpenter-dfe-aws-test  .  oci://public.ecr.aws/karpenter/karpenter' \
+        'karpenter-pools-dfe-aws-test     helm/charts/node-pools https://github.com/hyperi-io/dfe-infra.git https://git.example.com/acme/karpenter' \
+        'network-policies-dfe-aws-test     helm/charts/network-policies https://github.com/hyperi-io/dfe-infra.git https://git.example.com/acme/karpenter' \
+        > "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+}
+
+@test "pools deployed from a repo named karpenter still go before every NodeClaim, and the controller after" {
+    deploy_repo_named_karpenter 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text pools last_claims controller
+    log_text="$(log)"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    controller="$(line_of '-n argocd delete applications.argoproj.io --all' "${log_text}")"
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ -n "${controller}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${controller}" ]
+    [ "$(grep -c -- '^get nodeclaims.karpenter.sh' <<<"${log_text}")" -eq 3 ]
+    [ "$(grep -c -- 'delete applications.argoproj.io .*karpenter-dfe-aws-test' <<<"${log_text}")" -eq 0 ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "an app deployed from a repo named karpenter goes with the first delete, not with the controller" {
+    deploy_repo_named_karpenter 0
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local first
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' "${STUB_DIR}/kubectl.log")"
+    [[ "${first}" == "-n argocd delete applications.argoproj.io network-policies-dfe-aws-test --wait=false" ]]
+}
+
+@test "every namespace ESO or cert-manager clears a finalizer in goes before that controller does" {
+    # shellcheck disable=SC2016 # the stub expands $* when it runs, not here
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text argocd gateway cert_manager_ns cert_manager eso eso_ns
+    log_text="$(log)"
+    argocd="$(line_of 'delete ns argocd ' "${log_text}")"
+    gateway="$(line_of 'delete ns envoy-gateway-system ' "${log_text}")"
+    cert_manager="$(line_of 'helm uninstall cert-manager -n cert-manager' "${log_text}")"
+    cert_manager_ns="$(line_of 'delete ns cert-manager ' "${log_text}")"
+    eso="$(line_of 'helm uninstall external-secrets -n external-secrets' "${log_text}")"
+    eso_ns="$(line_of 'delete ns external-secrets ' "${log_text}")"
+    [ -n "${argocd}" ]
+    [ -n "${gateway}" ]
+    [ -n "${cert_manager}" ]
+    [ -n "${cert_manager_ns}" ]
+    [ -n "${eso}" ]
+    [ -n "${eso_ns}" ]
+    [ "${argocd}" -lt "${cert_manager}" ]
+    [ "${gateway}" -lt "${cert_manager}" ]
+    [ "${cert_manager}" -lt "${cert_manager_ns}" ]
+    [ "${cert_manager_ns}" -lt "${eso}" ]
+    [ "${eso}" -lt "${eso_ns}" ]
+    [ "$(grep -c -- '^delete ns cert-manager ' <<<"${log_text}")" -eq 1 ]
+}
+
+@test "the PodDisruptionBudgets and do-not-disrupt pods of a torn-down namespace go before the pools, and no other tenant's" {
+    karpenter_deployment 0
+    printf '%s\n' 'dfe-test|dfe-receiver' 'kube-system|coredns' > "${STUB_DIR}/pdbs"
+    printf '%s\n' 'dfe-test|dfe-loader-0|true' 'dfe-test|dfe-ui-1|' 'other-tenant|theirs|true' > "${STUB_DIR}/pods"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text released pdb annotated pools
+    log_text="$(log)"
+    released="$(last_line_of 'get services -A' "${log_text}")"
+    pdb="$(line_of '-n dfe-test delete poddisruptionbudgets.policy dfe-receiver --ignore-not-found --wait=false' "${log_text}")"
+    annotated="$(line_of '-n dfe-test annotate pod dfe-loader-0 karpenter.sh/do-not-disrupt-' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${pdb}" ]
+    [ -n "${annotated}" ]
+    [ -n "${pools}" ]
+    [ "${released}" -lt "${pdb}" ]
+    [ "${pdb}" -lt "${pools}" ]
+    [ "${annotated}" -lt "${pools}" ]
+    [[ "${log_text}" != *"-n kube-system delete poddisruptionbudgets"* ]]
+    [[ "${log_text}" != *"annotate pod dfe-ui-1"* ]]
+    [[ "${log_text}" != *"-n other-tenant annotate"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+# A scale deployment's three data operators beside the data app they finalize and the load balancer controller.
+data_operators() {
+    printf '%s\n' \
+        'strimzi-kafka-operator-dfe-aws-test strimzi-kafka-operator  https://strimzi.io/charts/' \
+        'clickhouse-operator-helm-dfe-aws-test clickhouse-operator-helm  ghcr.io/clickhouse' \
+        'redpanda-operator-dfe-aws-test operator  https://charts.redpanda.com' \
+        'kafka-dfe-aws-test    helm/charts/kafka https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        'aws-load-balancer-controller-dfe-aws-test aws-load-balancer-controller  https://aws.github.io/eks-charts' \
+        > "${STUB_DIR}/applications"
+    printf '%s\n' \
+        application.argoproj.io/strimzi-kafka-operator-dfe-aws-test \
+        application.argoproj.io/clickhouse-operator-helm-dfe-aws-test \
+        application.argoproj.io/redpanda-operator-dfe-aws-test > "${STUB_DIR}/held-apps"
+}
+
+@test "the data operators outlive step 1, and go in step 3 only after the CRs they finalize" {
+    data_operators
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first rest kafka redpanda operators
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"kafka-dfe-aws-test"* ]]
+    [[ "${first}" != *"operator"* ]]
+    rest="$(grep -- '^-n argocd delete applications.argoproj.io .*aws-load-balancer-controller-dfe-aws-test' <<<"${log_text}")"
+    [[ "${rest}" == *"kafka-dfe-aws-test"* ]]
+    [[ "${rest}" != *"operator-"* ]]
+    [[ "${log_text}" != *"-n argocd delete applications.argoproj.io --all"* ]]
+    kafka="$(line_of '-n strimzi delete kafka --all' "${log_text}")"
+    redpanda="$(line_of '-n strimzi delete redpandas.cluster.redpanda.com --all' "${log_text}")"
+    operators="$(line_of '-n argocd delete applications.argoproj.io strimzi-kafka-operator-dfe-aws-test clickhouse-operator-helm-dfe-aws-test redpanda-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${kafka}" ]
+    [ -n "${redpanda}" ]
+    [ -n "${operators}" ]
+    [ "${kafka}" -lt "${operators}" ]
+    [ "${redpanda}" -lt "${operators}" ]
+    # Neither wait counts an operator still held, so neither runs to its cap.
+    [[ "${output}" != *"WARN"* ]]
+}
+
+# The data operators and Karpenter on one cluster, with the PodDisruptionBudgets a
+# Kafka and a ClickHouseCluster carry and two NodeClaims that take ${1} listings to go.
+data_operators_on_karpenter() {
+    data_operators
+    printf '%s\n' \
+        'karpenter-dfe-aws-test karpenter' \
+        'karpenter-pools-dfe-aws-test  helm/charts/node-pools' >> "${STUB_DIR}/applications"
+    echo "${1}" > "${STUB_DIR}/nodeclaim-polls"
+    printf '%s\n' 'strimzi|dfe-kafka-kafka' 'clickhouse|dfe-clickhouse' > "${STUB_DIR}/pdbs"
+}
+
+@test "every data CR goes before its PodDisruptionBudget and the pools, and the operators only after the drain" {
+    data_operators_on_karpenter 2
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text pdb pools last_claims operators cr deleted
+    log_text="$(log)"
+    pdb="$(line_of '-n strimzi delete poddisruptionbudgets.policy dfe-kafka-kafka' "${log_text}")"
+    pools="$(line_of '-n argocd delete applications.argoproj.io karpenter-pools-dfe-aws-test --wait=false' "${log_text}")"
+    last_claims="$(last_line_of 'get nodeclaims.karpenter.sh -o name' "${log_text}")"
+    operators="$(line_of '-n argocd delete applications.argoproj.io strimzi-kafka-operator-dfe-aws-test clickhouse-operator-helm-dfe-aws-test redpanda-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${pdb}" ]
+    [ -n "${pools}" ]
+    [ -n "${last_claims}" ]
+    [ -n "${operators}" ]
+    # While a CR stands its operator puts back a PodDisruptionBudget deleted from under it.
+    for cr in '-n strimzi delete kafka' '-n strimzi delete redpandas.cluster.redpanda.com' \
+        '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
+        '-n clickhouse delete keepercluster' '-n clickhouse delete clickhouseinstallation'; do
+        deleted="$(line_of "${cr} --all --timeout=120s" "${log_text}")"
+        [ -n "${deleted}" ]
+        [ "${deleted}" -lt "${pdb}" ]
+    done
+    [ "${pdb}" -lt "${pools}" ]
+    [ "${pools}" -lt "${last_claims}" ]
+    [ "${last_claims}" -lt "${operators}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "the dry run names the data CRs before the drain blockers, and the operators after the pools" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local kafka clickhouse blockers pools operators
+    kafka="$(line_of 'kubectl -n strimzi delete kafka --all --timeout=120s' "${output}")"
+    clickhouse="$(line_of 'kubectl -n clickhouse delete clickhouseinstallation --all --timeout=120s' "${output}")"
+    blockers="$(line_of 'delete every PodDisruptionBudget' "${output}")"
+    pools="$(line_of 'delete karpenter-pools' "${output}")"
+    operators="$(line_of "delete the data operators' Applications" "${output}")"
+    [ -n "${kafka}" ]
+    [ -n "${clickhouse}" ]
+    [ "${kafka}" -lt "${blockers}" ]
+    [ "${clickhouse}" -lt "${blockers}" ]
+    [ "${blockers}" -lt "${pools}" ]
+    [ "${pools}" -lt "${operators}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
 }
 
 @test "a cluster without karpenter-pools never waits on NodeClaims" {

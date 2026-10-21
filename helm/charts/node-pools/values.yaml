@@ -1,0 +1,159 @@
+project: dfe
+component: node-pools
+env: local
+cloud: local
+
+# The deployment's node pools: one class per workload, in fields every node
+# autoscaler shares, with each renderer's own fields under its key. The renderer
+# and the classes come from the resolver's values overlay (sizing/<tier>.values.yaml)
+# and the cluster facts from the cloud root's outputs, so nothing here but a test
+# run's size bound names an instance type, a generation or a size. With no classes
+# this chart renders nothing.
+pools:
+
+  # What turns the classes into this cluster's node objects. The resolver writes
+  # it beside the classes. karpenter-aws (templates/karpenter/: one Karpenter
+  # NodePool and one EC2NodeClass per class) is the only renderer, so any other
+  # value fails the render, and so do classes with no renderer.
+  renderer: ""
+
+  # How long a draining node waits on a pod it may not evict -- one a
+  # PodDisruptionBudget or karpenter.sh/do-not-disrupt holds -- before Karpenter
+  # deletes it, counted from the node's deletion whatever started it. Unset, that
+  # drain waits forever. 24h is the bound EKS Auto Mode applies to its own nodes.
+  # A NodeClaim keeps the value it was created with, so a change reaches a
+  # running node only by replacing it as drift.
+  terminationGracePeriod: "24h"
+
+  # One entry per workload class, keyed by pool name.
+  #
+  #   arch                 arm64 on every cloud pool.
+  #   capacityTypes        ["on-demand"], or ["spot", "on-demand"] for work that
+  #                        can be retried.
+  #   consolidation        policy is WhenEmpty | WhenEmptyOrUnderutilized |
+  #                        Balanced, and after is how long the controller waits first.
+  #   budgets              list of disruption budgets, each {nodes, reasons,
+  #                        schedule, duration}. nodes is how many may be
+  #                        terminating at once, "1" or "25%". reasons names any of
+  #                        Underutilized, Empty and Drifted, and none means all
+  #                        three. schedule (UTC cron) and duration come together
+  #                        and make the budget active for that long after each
+  #                        hit. Karpenter takes the most restrictive active
+  #                        budget naming a reason and leaves a reason no active
+  #                        budget names unlimited, so templates/karpenter/_karpenter.tpl
+  #                        refuses a reason with no always-on budget. The
+  #                        resolver sets them from the dial's k8s.disruption.
+  #   expireAfter          a duration, or the literal Never. NEVER omitted: the
+  #                        CRD defaults it to 720h, so an omission is a forced
+  #                        30-day replacement rather than no expiry.
+  #   terminationGracePeriod  optional, this class's own pools.terminationGracePeriod.
+  #   minVcpu              optional floor on an instance's vCPU count. The
+  #                        instance line a renderer selects never bounds which
+  #                        SIZE on it -- a workload sized up for its volume's EBS
+  #                        baseline still fits a smaller instance's cpu/memory
+  #                        request, which is all Karpenter's own bin-packing
+  #                        looks at. Empty renders no floor.
+  #   minMemoryGib         optional floor on an instance's memory, in GiB. Same
+  #                        reasoning as minVcpu.
+  #   taints               list of {key, value, effect}.
+  #   labels               map applied to every node the pool makes.
+  #   limits               map of resource -> quantity. Required: a pool with no
+  #                        limit answers a runaway workload by buying nodes.
+  #   weight               optional tie-break. Higher wins for a pod that matches
+  #                        more than one pool.
+  #   aws                  the karpenter-aws renderer's own fields:
+  #     families           instance families, auto-selected by the shape resolver
+  #                        under the shape's generation policy (the newest arm64
+  #                        generation, or the one a shape pins): the family it
+  #                        picked, alone, or under a cheapest-of policy the
+  #                        generations that policy compared. Karpenter launches
+  #                        the cheapest family the list allows, so an older
+  #                        family listed as a fallback is the one it launches.
+  #                        A capacity shortfall falls back to another size of
+  #                        the same family.
+  #     generationGt       the floor, as Karpenter's Gt operand -- one BELOW the
+  #                        oldest generation the family list names. Karpenter ANDs
+  #                        the requirements, so a floor above a listed family
+  #                        deletes that family, and the guard refuses it.
+  #     generationIn       a pinned shape's generation, read off the families
+  #                        listed. When set it REPLACES generationGt.
+  #     nodeClass          optional per-class override of pools.aws.nodeClass.
+  classes: {}
+
+  # What only the karpenter-aws renderer reads.
+  aws:
+
+    # The three handles the kubernetes-cluster module's `karpenter` output carries,
+    # plus the deployment key from its `kms_key_arn`. A pool cannot render without
+    # them, and the guards say so by name rather than producing an EC2NodeClass
+    # that never reaches Ready.
+    cluster:
+      # The value of the karpenter.sh/discovery tag on the private subnets and the
+      # cluster security group. It is the cluster's own name.
+      discoveryTag: ""
+      # Pre-provisioned, so Karpenter never creates or deletes one.
+      instanceProfile: ""
+      # The deployment's customer-managed key, which every node root volume is
+      # encrypted with.
+      kmsKeyId: ""
+      # The registry cache's node script, base64, from the cloud root's
+      # DFE_NODE_USER_DATA. Every node runs it before kubelet starts, and empty
+      # renders no userData.
+      userData: ""
+
+    # Extra tags on every instance, volume and launch template Karpenter creates,
+    # on top of its own. A test run's id and expiry arrive here from the cluster
+    # secret, because the provider's default_tags never reaches what Karpenter
+    # launches and an account guardrail may refuse an untagged create.
+    tags: {}
+
+    # The instance sizes every pool is held to while `tags` is set, which is only
+    # during a test run. A test account's permissions boundary can deny any other
+    # size at RunInstances, and families + generation never bound the size, so
+    # without this Karpenter can choose one the account refuses. Outside a run no
+    # size is bound. A deployment whose boundary allows other sizes overrides the
+    # list, and an empty list turns the bound off.
+    runInstanceSizes:
+      - medium
+      - large
+      - xlarge
+      - 2xlarge
+
+    # What every EC2NodeClass inherits. A class overrides only what its workload
+    # forces -- ClickHouse and CI take the instance store, everything else does not.
+    nodeClass:
+      # An alias resolves the EKS-optimised image through SSM and carries its own
+      # family, so amiFamily is not set beside it. Pinned to a dated AL2023
+      # release (operators.karpenter-al2023-ami in versions.yaml, drift-checked)
+      # rather than `latest`: `latest` moved the node image on every reconcile
+      # with no cooldown and no version an operator could point at, which is
+      # exactly the unwatched-drift failure mode every other pin in this repo
+      # exists to avoid. A new release arrives as a versions.yaml bump through
+      # the same 7-day cooldown gate, not silently.
+      amiAlias: al2023@v20261012
+      metadata:
+        # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach
+        # 169.254.169.254 at all. Every AWS credential on this cluster is a Pod
+        # Identity association (Karpenter, the Load Balancer Controller, the EBS
+        # CSI driver, external-dns, cert-manager, the MSK bootstrap Job), so no
+        # pod's own AWS SDK call needs the node's IMDS. Hop limit 2 would be the
+        # thing that let a pod reach it, and from there the node role's own
+        # credentials -- which for Karpenter's node role carry AmazonEKS_CNI_Policy
+        # network-interface actions on "*". A container that needs the
+        # node's own IMDS (not the workload's identity) is the one case to raise
+        # this back to 2 for, and it should be that class's own override, not the
+        # shared default.
+        httpTokens: required
+        httpPutResponseHopLimit: 1
+      # Sized by the resolver from the instance's sustained baseline, not from a
+      # fixed number -- a 125 MiB/s root on a size whose baseline is 95 is a volume
+      # the instance cannot carry.
+      rootVolume:
+        sizeGi: ""
+        type: gp3
+        iops: ""
+        throughputMibS: ""
+      # RAID0 is the only value Karpenter accepts. Without it a `d` instance pays
+      # for its NVMe and uses none. With it containerd and kubelet move onto that
+      # NVMe and the root volume shrinks.
+      instanceStorePolicy: ""

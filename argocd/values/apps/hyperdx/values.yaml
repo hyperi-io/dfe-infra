@@ -19,8 +19,10 @@ secrets:
     existingSecret: '{{ .Values.sessionSecret.name }}'
   token-encryption:
     existingSecret: '{{ .Values.tokenEncryption.name }}'
+  # Off: HyperDX queries ClickHouse on the connection dfe-engine hands each team,
+  # and nothing it runs reads a password of its own.
   clickhouse:
-    existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
+    enabled: false
 
 extraEnv:
   # The telemetry.mode endpoint (apps/_common.yaml), on the collector's OTLP/HTTP
@@ -157,7 +159,7 @@ dashboards:
   mountPath: /etc/hyperdx/dashboards
   image:
     repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.22.44"     # == versions.yaml apps.dfe-engine (drift-checked)
+    tag: "v1.22.53"     # == versions.yaml apps.dfe-engine (drift-checked)
     # The init container runs the ENGINE image, so this is versions.yaml
     # digests.dfe-engine (drift-checked).
-    digest: "sha256:91c7f7cd058c51950821c4980d44a4d76f96fce97185eebdb5ab3a89b3122c80"
+    digest: "sha256:a43ed846c50c263af7b2dc74b512dbcc7109e833efa1c3866b1a7924c7b9693a"

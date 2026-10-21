@@ -358,7 +358,7 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a",
+  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
   "native_deps": {
     "apt_repos": [
       {
@@ -827,6 +827,7 @@
           "topic_suffix": "_land",
           "source_to_topic": {},
           "legacy_compat": false,
+          "source_org_id": "disallow",
           "dlq": {
             "enabled": true,
             "mode": "cascade",
@@ -2385,6 +2386,11 @@
             "type": "boolean",
             "default": false
           },
+          "source_org_id": {
+            "description": "Whether a sender may set `_org_id`, the field that picks the tenant downstream.",
+            "$ref": "#/$defs/SourceOrgId",
+            "default": "disallow"
+          },
           "dlq": {
             "description": "DLQ configuration.",
             "$ref": "#/$defs/DlqConfig",
@@ -2433,6 +2439,21 @@
         "required": [
           "field",
           "mode"
+        ]
+      },
+      "SourceOrgId": {
+        "description": "What the receiver does with an `_org_id` the sender put in the record.",
+        "oneOf": [
+          {
+            "description": "Remove it, so only DFE's own org rules set the tenant.",
+            "type": "string",
+            "const": "disallow"
+          },
+          {
+            "description": "Keep it.",
+            "type": "string",
+            "const": "allow"
+          }
         ]
       },
       "DlqConfig": {

@@ -61,8 +61,8 @@ metadata:
     # cached-object storage model (docs/deployment/storage.md). Blank on every
     # cloud but AWS, same as the cluster_name annotation above.
     ${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION}
-    # The karpenter-pools chart's three cluster facts; each renders blank on a
-    # non-AWS cloud, same as the cluster_name annotation above.
+    # The node-pools chart's three cluster facts, each blank on a non-AWS
+    # cloud, same as the cluster_name annotation above.
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}
     ${DFE_KARPENTER_INSTANCE_PROFILE_ANNOTATION}
     ${DFE_KARPENTER_KMS_KEY_ID_ANNOTATION}
@@ -74,10 +74,11 @@ metadata:
     # The registry cache's node script, base64, which layer2-platform.yaml
     # hands every EC2NodeClass. Blank when the cloud root caches nothing.
     ${DFE_NODE_USER_DATA_ANNOTATION}
-    # The pools themselves, as one line of JSON -- layer2-platform.yaml inlines
-    # it into karpenter.pools, which JSON is valid YAML flow style for. Blank
-    # renders no NodePool at all, so a pending workload stays pending.
-    ${DFE_KARPENTER_POOLS_ANNOTATION}
+    # The pool renderer and classes, as one line of JSON -- layer2-platform.yaml
+    # inlines it at the node-pools chart's pools root, which JSON is valid
+    # YAML flow style for. Blank beside the Karpenter facts above, the chart
+    # refuses to render.
+    ${DFE_NODE_POOLS_ANNOTATION}
     # A test run's id and expiry as one line of JSON, which layer1-addons.yaml
     # and layer2-platform.yaml hand to the load balancer controller and
     # Karpenter -- what they create never sees the provider's default_tags.

@@ -5,7 +5,8 @@
 {{- $spec := index ($.Values.exposure.groups | default dict) $g | default dict }}
 {{- if eq $f.state "deny" }}
 {{ upper $g }} CLOSED. envoyGateway.service.internetFacing is true and exposure.groups.{{ $g }}.allow
-is empty, so {{ index $surfaces $g }} answer 403 to every address. Set
+is empty, so {{ index $surfaces $g }} answer 403 to every address
+{{- with $f.allow }} outside exposure.selfRanges ({{ join "," . }}){{ end }}. Set
 exposure.groups.{{ $g }}.allow to the ranges that may reach them.
 {{- else if and (eq $f.state "allow-all") (not $spec.allow) }}
 WARNING: exposure.groups.{{ $g }}.allowPublic admits every address -- {{ index $surfaces $g }}
@@ -19,7 +20,7 @@ WARNING: exposure.groups.{{ $g }}.allow admits every address ({{ join "," $spec.
 {{- end }}
 Name the ranges that need them instead.
 {{- else if eq $f.state "listed" }}
-Group {{ $g }} admits {{ join "," $spec.allow }} and refuses every other address ({{ index $surfaces $g }}).
+Group {{ $g }} admits {{ join "," $spec.allow }}{{ with $.Values.exposure.selfRanges }} and exposure.selfRanges ({{ join "," . }}){{ end }} and refuses every other address ({{ index $surfaces $g }}).
 {{- end }}
 {{- end }}
 {{- with include "envoy-gateway-config.ingestRoutes" (dict "ctx" $) | fromJsonArray }}
@@ -28,14 +29,15 @@ Group {{ $g }} admits {{ join "," $spec.allow }} and refuses every other address
 {{- $routes := join "," . }}
 {{- if eq $f.state "deny" }}
 INGEST CLOSED. envoyGateway.service.internetFacing is true and exposure.groups.ingest.allow
-is empty, so the ingest routes ({{ $routes }}) answer 403 to every address. Set
+is empty, so the ingest routes ({{ $routes }}) answer 403 to every address
+{{- with $f.allow }} outside exposure.selfRanges ({{ join "," . }}){{ end }}. Set
 exposure.groups.ingest.allow to the senders' ranges.
 {{- else if eq $f.state "allow-all" }}
 WARNING: exposure.groups.ingest.allow admits every address ({{ join "," $spec.allow }}) --
 the ingest routes ({{ $routes }}) take data from any address that can reach the
 load balancer, behind their own caller check only. Name the senders' ranges instead.
 {{- else if eq $f.state "listed" }}
-Group ingest admits {{ join "," $spec.allow }} and refuses every other address ({{ $routes }}).
+Group ingest admits {{ join "," $spec.allow }}{{ with $.Values.exposure.selfRanges }} and exposure.selfRanges ({{ join "," . }}){{ end }} and refuses every other address ({{ $routes }}).
 {{- end }}
 {{- end }}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.trusted_proxy_cidrs) | fromJsonArray }}

@@ -10,6 +10,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -27,6 +28,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -42,6 +44,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -57,6 +60,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -72,6 +76,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -98,6 +103,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -126,6 +132,7 @@ spec:
         app.kubernetes.io/name: dfe-transform-vrl
         app.kubernetes.io/part-of: dfe
         app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+        dfe.hyperi.io/app: dfe-transform-vrl
         dfe.hyperi.io/cloud: local
         dfe.hyperi.io/env: dev
         helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>
@@ -136,12 +143,6 @@ spec:
         - --config
         - /etc/dfe-transform-vrl/config.yaml
         env:
-        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
-          valueFrom:
-            secretKeyRef:
-              key: sasl.mechanism
-              name: dfe-kafka-user
-              optional: true
         - name: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
         - name: DFE_TRANSFORM_SINK_BROKERS
@@ -183,6 +184,11 @@ spec:
           valueFrom:
             secretKeyRef:
               key: password
+              name: dfe-kafka-user
+        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+          valueFrom:
+            secretKeyRef:
+              key: sasl.mechanism
               name: dfe-kafka-user
         image: registry.example.com/dfe/dfe-transform-vrl:<pin:apps.dfe-transform-vrl>@<pin:digests.dfe-transform-vrl>
         imagePullPolicy: IfNotPresent
@@ -313,6 +319,7 @@ metadata:
     app.kubernetes.io/name: dfe-transform-vrl
     app.kubernetes.io/part-of: dfe
     app.kubernetes.io/version: <pin:apps.dfe-transform-vrl>
+    dfe.hyperi.io/app: dfe-transform-vrl
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
     helm.sh/chart: dfe-transform-vrl-<pin:chart-version.dfe-transform-vrl>

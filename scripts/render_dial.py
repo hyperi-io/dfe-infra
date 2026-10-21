@@ -47,6 +47,7 @@ import ipaddress
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import private_file
@@ -91,7 +92,7 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     # (real YAML booleans, an empty-or-numeric string), not a render_dial.py
     # translation, the same way ui.* is left for a real YAML/Helm parse to
     # type-check. bootstrap.sh carries these onto the cluster-secret
-    # annotations the same way it already does for the karpenter-pools
+    # annotations the same way it already does for the node-pools
     # facts, and argocd/appsets/layer2-platform.yaml reads them back for
     # this chart alone.
     (("toolbox", "pod", "enabled"), "DFE_TOOLBOX_POD_ENABLED"),
@@ -1018,6 +1019,11 @@ def _platform_version(cloud: str) -> str | None:
     turns this floor and the dial's own choice into the version that runs.
     Absent for a cloud with no stage yet, in which case the dial's own field
     is all there is.
+
+    A value is spelt the way bootstrap/check_platform.py's parse_requirement
+    reads it: `>=1.34` is a floor alone, and a range `1.34-1.36` is a floor and a
+    ceiling. The floor is the low side either way. The ceiling is what
+    check_platform.py warns above, and it never refuses a dial.
     """
     if not VERSIONS_FILE.is_file():
         return None
@@ -1034,8 +1040,16 @@ def _platform_version(cloud: str) -> str | None:
     for key in (_PLATFORM_KEY.get(cloud, cloud), "kubernetes"):
         value = _scalar(tree, ("stacks", current, "platform", key))
         if value is not None:
-            return value.removeprefix(">=").strip()
+            return _platform_floor(value)
     return None
+
+
+def _platform_floor(value: str) -> str:
+    """The floor of one platform requirement: `>=1.34` and `1.34-1.36` both give 1.34."""
+    # A leading `v` is a prefix, not a separator, as check_platform.py reads it.
+    bare = value.strip().removeprefix(">=").strip().removeprefix("v")
+    low, _, _ceiling = bare.partition("-")
+    return low.strip().removeprefix("v")
 
 
 def _version_at_least(version: str, floor: str) -> bool:
@@ -1120,6 +1134,126 @@ def _controller_pool(dial: dict[str, object]) -> str:
             f"kafka.controller_pool must be one of {', '.join(CONTROLLER_POOLS)}, got {value!r}"
         )
     return value
+
+
+# What k8s.disruption.posture may say, pool disruption intent each cloud's pools renderer applies.
+DISRUPTION_POSTURES = ("balanced", "conservative")
+DISRUPTION_AT = ("k8s", "disruption")
+MINUTES_PER_DAY = 1440
+
+# Daily or one weekday only: the drift hold outside any other schedule is not one cron line.
+_WINDOW_SCHEDULE = re.compile(r"^(?P<minute>\d{1,2}) (?P<hour>\d{1,2}) \* \* (?P<weekday>\*|[0-6])$")
+# Hours and minutes only, the units a window's length is written in.
+_WINDOW_DURATION = re.compile(r"^(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?$")
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceWindow:
+    """When drift may replace a node, opening on a UTC cron line.
+
+    Attributes:
+        minute: The minute past the hour the window opens.
+        hour: The hour it opens, UTC.
+        weekday: The day it opens on, 0 for Sunday, or None for every day.
+        minutes: How long it stays open.
+    """
+
+    minute: int
+    hour: int
+    weekday: int | None
+    minutes: int
+
+    @property
+    def period_minutes(self) -> int:
+        """How often the window comes round: a day, or a week when it names a weekday."""
+        return MINUTES_PER_DAY * (1 if self.weekday is None else 7)
+
+    @property
+    def schedule(self) -> str:
+        """The cron line the window opens on."""
+        return f"{self.minute} {self.hour} * * {'*' if self.weekday is None else self.weekday}"
+
+
+@dataclass(frozen=True, slots=True)
+class Disruption:
+    """The dial's k8s.disruption block, checked.
+
+    Attributes:
+        posture: One of DISRUPTION_POSTURES.
+        window: The maintenance window, or None when the dial sets none.
+    """
+
+    posture: str = "balanced"
+    window: MaintenanceWindow | None = None
+
+
+def _maintenance_window(dial: dict[str, object]) -> MaintenanceWindow | None:
+    """k8s.disruption.maintenance_window, or None when neither field is set."""
+    at_window = (*DISRUPTION_AT, "maintenance_window")
+    schedule = _scalar(dial, (*at_window, "schedule"))
+    duration = _scalar(dial, (*at_window, "duration"))
+    if schedule is None and duration is None:
+        return None
+    if schedule is None or duration is None:
+        raise DialError(
+            f"{'.'.join(at_window)} needs both schedule and duration, or neither -- a window is "
+            "when it opens and how long it stays open"
+        )
+    opens = _WINDOW_SCHEDULE.match(schedule)
+    if not opens or int(opens["minute"]) > 59 or int(opens["hour"]) > 23:
+        raise DialError(
+            f"{'.'.join(at_window)}.schedule must be 'M H * * *' for every day or 'M H * * D' for "
+            f"one weekday (0-6, 0 is Sunday), in UTC, got {schedule!r}"
+        )
+    weekday = None if opens["weekday"] == "*" else int(opens["weekday"])
+    length = _WINDOW_DURATION.match(duration)
+    minutes = int(length["hours"] or 0) * 60 + int(length["minutes"] or 0) if length else 0
+    window = MaintenanceWindow(int(opens["minute"]), int(opens["hour"]), weekday, minutes)
+    if not 0 < minutes < window.period_minutes:
+        raise DialError(
+            f"{'.'.join(at_window)}.duration must be hours and minutes such as 4h or 3h30m, above "
+            f"zero and under the {window.period_minutes // 60}h the window repeats on, got {duration!r}"
+        )
+    return window
+
+
+def read_disruption(dial: dict[str, object]) -> Disruption:
+    """Read k8s.disruption, the pools' disruption intent, refusing a bad posture or window by name.
+
+    Args:
+        dial: The parsed deployment dial.
+
+    Returns:
+        The posture, balanced when unset, and the maintenance window or None.
+
+    Raises:
+        DialError: The posture is outside DISRUPTION_POSTURES, or the window
+            is half set, repeats other than daily or on one weekday, or
+            lasts zero time or its whole period.
+    """
+    posture = _text(dial, (*DISRUPTION_AT, "posture"), "balanced")
+    if posture not in DISRUPTION_POSTURES:
+        raise DialError(
+            f"k8s.disruption.posture must be one of {', '.join(DISRUPTION_POSTURES)}, got {posture!r}"
+        )
+    return Disruption(posture, _maintenance_window(dial))
+
+
+def disruption_summary(disruption: Disruption) -> tuple[str, list[str]]:
+    """The render's one line for k8s.disruption, and a warning when stateful drift can never run."""
+    window = disruption.window
+    if window is None:
+        warnings = []
+        if disruption.posture == "conservative":
+            warnings.append(
+                "k8s.disruption.posture is conservative and sets no maintenance_window, so drift "
+                "never replaces a stateful node until a window is set"
+            )
+        return f"{disruption.posture}, drift any time", warnings
+    hours, minutes = divmod(window.minutes, 60)
+    length = (f"{hours}h" if hours else "") + (f"{minutes}m" if minutes else "")
+    line = f"{disruption.posture}, drift only inside {window.schedule} for {length} (UTC), ci-burst excepted"
+    return line, []
 
 
 def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
@@ -1885,6 +2019,7 @@ def main() -> int:
         ingest_line, ingest_warnings = ingest_fence(dial, ingest_door, ingest_on)
         _proxy_hop_cidrs(dial)
         controller_pool = _controller_pool(dial)
+        disruption_line, disruption_warnings = disruption_summary(read_disruption(dial))
     except DialError as error:
         print(f"render_dial: {error}", file=sys.stderr)
         return 1
@@ -1987,6 +2122,9 @@ def main() -> int:
         f"KRaft metadata quorum (kafka.controller_pool): {controller_pool}",
         file=sys.stderr,
     )
+    print(f"Pool disruption (k8s.disruption): {disruption_line}", file=sys.stderr)
+    for line in disruption_warnings:
+        print(f"render_dial: WARNING -- {line}", file=sys.stderr)
 
     print(file=sys.stderr)
     print("Deploy this dial with:", file=sys.stderr)

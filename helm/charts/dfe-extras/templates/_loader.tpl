@@ -87,10 +87,13 @@ ClickHouse TLS setup the loader cannot dial.
               value: "http"
             - name: DFE_LOADER_CLICKHOUSE_DATABASE
               value: {{ .Values.clickhouse.database | quote }}
-            {{- with .Values.clickhouse.user }}
-            - name: DFE_LOADER_CLICKHOUSE_USERNAME
-              value: {{ . | quote }}
+            {{- $loader := dig "serviceUsers" "loader" dict .Values.clickhouse }}
+            {{- if not $loader.user }}
+            {{- fail "clickhouse.serviceUsers.loader.user is empty: dfe-loader connects as its own user, never the admin account" }}
             {{- end }}
+            # Its own user, whose password is the Secret the contract's clickhouse group reads.
+            - name: DFE_LOADER_CLICKHOUSE_USERNAME
+              value: {{ $loader.user | quote }}
 {{- if (include "dfe-common.transportIsBus" .) }}
             # The per-app topic dfe-engine creates from the dfe-schemas topic set.
             - name: DFE_LOADER_DLQ_TOPIC

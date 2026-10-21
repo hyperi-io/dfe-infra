@@ -17,11 +17,11 @@ APPLICATIONS_WAIT=300
 LOAD_BALANCERS_WAIT=300
 # Seconds step 1 gives Karpenter to drain and terminate the nodes its pools launched.
 NODECLAIMS_WAIT=600
-# The namespaces steps 4 and 8 delete. With dfe-* and keda they are every
-# namespace this teardown removes, and the only ones step 1 touches.
+# The namespaces step 4 deletes, then steps 7 and 8. With dfe-* and keda they
+# are every namespace this teardown removes, and the only ones step 1 touches.
 DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
-PLATFORM_NAMESPACES=(argocd cert-manager external-secrets envoy-gateway-system)
-# Facts off the Argo CD cluster secret, which step 8 deletes, or the caller's DFE_* environment.
+PLATFORM_NAMESPACES=(argocd envoy-gateway-system cert-manager external-secrets)
+# Facts off the Argo CD cluster secret, which step 7 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
 CLUSTER_REGION=""
 CLUSTER_NAME=""
@@ -64,16 +64,22 @@ clear_stranded_keda_finalizers() {
     done
 }
 
-# Bounded by the clock, kubectl calls included, so an Application held up by
-# anything else cannot stall the teardown. The poll under way at the deadline
-# finishes, so the wait ends within one poll of APPLICATIONS_WAIT.
+# Bounded by the clock, kubectl calls included, and blind to the names in ${1},
+# which are held back. The poll under way at the deadline finishes, so the wait
+# ends within one poll of APPLICATIONS_WAIT.
 await_applications_gone() {
-    local started now deadline nap
+    local held="${1:-}" started now deadline nap app remaining
     started="$(date +%s)"
     deadline=$((started + APPLICATIONS_WAIT))
     while :; do
         clear_stranded_keda_finalizers
-        if [[ -z "$(kubectl -n argocd get applications.argoproj.io -o name 2>/dev/null)" ]]; then
+        remaining=""
+        while read -r app; do
+            if [[ -n "${app}" && " ${held} " != *" ${app#*/} "* ]]; then
+                remaining="${remaining} ${app}"
+            fi
+        done < <(kubectl -n argocd get applications.argoproj.io -o name 2>/dev/null || true)
+        if [[ -z "${remaining}" ]]; then
             return 0
         fi
         now="$(date +%s)"
@@ -124,7 +130,7 @@ torn_down_namespace() {
     return 1
 }
 
-# The cluster secret lives in the argocd namespace step 8 deletes, so it is read first.
+# The cluster secret lives in the argocd namespace step 7 deletes, so it is read first.
 # A bootstrap that stopped before writing it, or a second teardown, leaves none, and
 # then the caller's DFE_* facts stand in: `dfe-ops teardown --from-terraform` passes them.
 read_cluster_facts() {
@@ -157,23 +163,108 @@ release_applicationset_owners() {
     done < <(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.resources[*].kind}{"\n"}{end}' 2>/dev/null || true)
 }
 
-# "<role> <name>" per Application -- lb, karpenter, pools (karpenter-pools) or other -- and nothing when they cannot be listed.
+# Success when ${1}, an Application's sources, names chart ${2}. A digest-pinned
+# chart is an OCI source with no chart field, so its name ends the repoURL. A git
+# repoURL ending the same way names a repo.
+names_chart() {
+    local source sources
+    read -ra sources <<<"${1}"
+    for source in "${sources[@]}"; do
+        if [[ "${source}" == "${2}" || ( "${source}" == oci://* && "${source}" == */"${2}" ) ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# "<role> <name>" per Application -- lb, karpenter, pools, operator (a data
+# operator) or other -- and nothing when they cannot be listed. pools goes by
+# the Application's name, which layer2-platform.yaml keeps while its chart moves.
 application_roles() {
     local listing name sources role
-    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{"\n"}{end}' 2>/dev/null)" || return 0
+    listing="$(kubectl -n argocd get applications.argoproj.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.source.chart}{" "}{.spec.source.path}{" "}{.spec.source.repoURL}{" "}{.spec.sources[*].chart}{" "}{.spec.sources[*].path}{" "}{.spec.sources[*].repoURL}{"\n"}{end}' 2>/dev/null)" || return 0
     while read -r name sources; do
         [[ -n "${name}" ]] || continue
-        if [[ " ${sources} " == *" aws-load-balancer-controller "* ]]; then
-            role=lb
-        elif [[ " ${sources} " == *" karpenter "* ]]; then
-            role=karpenter
-        elif [[ " ${sources} " == *"/karpenter-pools "* ]]; then
+        if [[ "${name}" == karpenter-pools-* ]]; then
             role=pools
+        elif names_chart "${sources}" aws-load-balancer-controller; then
+            role=lb
+        elif names_chart "${sources}" karpenter; then
+            role=karpenter
+        elif names_chart "${sources}" strimzi-kafka-operator || names_chart "${sources}" clickhouse-operator-helm \
+            || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
+            role=operator
         else
             role=other
         fi
         echo "${role} ${name}"
     done <<<"${listing}"
+}
+
+# The names of the Applications in ${2} with role ${1}, space-separated.
+names_in_role() {
+    local want="${1}" role name names=""
+    while read -r role name; do
+        if [[ "${role}" == "${want}" && -n "${name}" ]]; then
+            names="${names} ${name}"
+        fi
+    done <<<"${2}"
+    echo "${names# }"
+}
+
+# Deletes without waiting every Application in ${1} but the data operators',
+# which step 3 deletes once their CRs are gone, or all of them when none is one.
+delete_applications_but_operators() {
+    local role name names=()
+    if [[ -z "$(names_in_role operator "${1}")" ]]; then
+        kubectl -n argocd delete applications.argoproj.io --all --wait=false 2>/dev/null || true
+        return 0
+    fi
+    while read -r role name; do
+        if [[ "${role}" != operator && -n "${name}" ]]; then
+            names+=("${name}")
+        fi
+    done <<<"${1}"
+    (( ${#names[@]} > 0 )) || return 0
+    kubectl -n argocd delete applications.argoproj.io "${names[@]}" --wait=false 2>/dev/null || true
+}
+
+# Only its operator clears a data CR's finalizer, and while a CR stands its
+# operator puts back any PodDisruptionBudget deleted from under it, so each CR
+# goes while step 1 keeps the operators running, before the drain. Bounded all the same.
+delete_data_resources() {
+    run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # The kafka chart's Redpanda cluster, on the redpanda provider.
+    run kubectl -n strimzi delete redpandas.cluster.redpanda.com --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # A CloudNativePG Cluster exists only on an install that predates its removal.
+    run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    # ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
+    # clickhouseinstallation the Altinity operator's, and any left keeps its
+    # finalizer and wedges step 4's namespace delete.
+    run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+    run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+}
+
+# A PodDisruptionBudget or karpenter.sh/do-not-disrupt in a namespace this
+# teardown removes protects nothing now but still holds a draining node, so
+# both go before the pools.
+release_drain_blockers() {
+    local ns name hold
+    while IFS='|' read -r ns name; do
+        if [[ -z "${name}" ]] || ! torn_down_namespace "${ns}"; then
+            continue
+        fi
+        kubectl -n "${ns}" delete poddisruptionbudgets.policy "${name}" --ignore-not-found --wait=false >/dev/null 2>&1 \
+            || echo "  WARN: could not delete PodDisruptionBudget ${ns}/${name}"
+    done < <(kubectl get poddisruptionbudgets.policy -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+    while IFS='|' read -r ns name hold; do
+        if [[ -z "${hold}" ]] || ! torn_down_namespace "${ns}"; then
+            continue
+        fi
+        kubectl -n "${ns}" annotate pod "${name}" karpenter.sh/do-not-disrupt- >/dev/null 2>&1 \
+            || echo "  WARN: could not take karpenter.sh/do-not-disrupt off pod ${ns}/${name}"
+    done < <(kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"|"}{.metadata.annotations.karpenter\.sh/do-not-disrupt}{"\n"}{end}' 2>/dev/null || true)
 }
 
 # Deletes without waiting the Applications in ${2} with role ${1}, failing when there are none.
@@ -435,7 +526,7 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     read_cluster_facts
 fi
 
-echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets"
+echo "==> [1/9] Deleting ArgoCD Applications + ApplicationSets, and the DFE data CRs"
 # Orphaned, so Argo stops generating Applications while each one stays, still
 # carrying the finalizer that deletes what it deployed, until it is deleted below.
 run kubectl -n argocd delete applicationset --all --cascade=orphan 2>/dev/null || true
@@ -450,26 +541,28 @@ fi
 run kubectl delete scaledobject --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete scaledjob --all -A --timeout=30s 2>/dev/null || true
 run kubectl delete triggerauthentication --all -A --timeout=30s 2>/dev/null || true
-# The load balancer controller's own Application goes last, once it has released
-# every load balancer the others took with them. Karpenter's pools go once the
-# load balancers are released, and its controller once their nodes are gone.
+# The load balancer controller's Application goes last, once it has released
+# every load balancer the others took. The data CRs, then Karpenter's pools,
+# follow the load balancers, its controller their nodes, the operators step 3.
 if [[ "${DRY_RUN}" != "true" ]]; then
     roles="$(application_roles)"
     delete_applications_in_role other "${roles}" || true
     release_load_balancers
+    delete_data_resources
+    release_drain_blockers
     if delete_applications_in_role pools "${roles}"; then
         await_nodeclaims_gone
     fi
+    # Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
+    # app.catalog.cattle.io and every Argo Application survives the teardown.
+    delete_applications_but_operators "${roles}"
+    await_applications_gone "$(names_in_role operator "${roles}")"
 else
-    echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, Karpenter's and karpenter-pools, then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+    echo "[DRY-RUN] delete every Application but the AWS Load Balancer Controller's, Karpenter's, karpenter-pools and the data operators', then every Gateway, LoadBalancer Service, Ingress and TargetGroupBinding in the namespaces this teardown removes, and wait up to ${LOAD_BALANCERS_WAIT}s for the controller's finalizers to clear"
+    delete_data_resources
+    echo "[DRY-RUN] delete every PodDisruptionBudget and take karpenter.sh/do-not-disrupt off every pod in the namespaces this teardown removes"
     echo "[DRY-RUN] delete karpenter-pools, and wait up to ${NODECLAIMS_WAIT}s for Karpenter to remove every NodeClaim before its controller goes"
-fi
-# Fully qualified: on a Rancher-managed cluster the bare `app` resolves to
-# app.catalog.cattle.io and every Argo Application survives the teardown.
-run kubectl -n argocd delete applications.argoproj.io --all --wait=false 2>/dev/null || true
-if [[ "${DRY_RUN}" != "true" ]]; then
-    await_applications_gone
-else
+    echo "[DRY-RUN] kubectl -n argocd delete applications.argoproj.io --all --wait=false, the data operators' excepted"
     echo "[DRY-RUN] wait for the Applications to go, clearing finalizer.keda.sh from any KEDA resource still terminating once no KEDA operator pod is running"
 fi
 
@@ -478,19 +571,15 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     sleep 10
 fi
 
-echo "==> [3/9] Deleting DFE data resources (CRDs)"
-# Bounded: step 1 may already have removed the operator that clears a CR's finalizer.
-run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-# A CloudNativePG Cluster exists only on an install that predates its removal.
-run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-# ClickHouseCluster/KeeperCluster are the clickhouse.com operator's kinds and
-# clickhouseinstallation is Altinity's; a CR left behind keeps its finalizer and
-# wedges the namespace delete below.
-run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+echo "==> [3/9] Deleting the data operators"
+# Step 1 deleted the CRs they finalize, so they go once the nodes have drained.
 if [[ "${DRY_RUN}" != "true" ]]; then
+    if delete_applications_in_role operator "${roles}"; then
+        await_applications_gone
+    fi
     sleep 5
+else
+    echo "[DRY-RUN] delete the data operators' Applications, and wait up to ${APPLICATIONS_WAIT}s for them to go"
 fi
 
 echo "==> [4/9] Deleting DFE namespaces"
@@ -564,14 +653,18 @@ fi
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
-echo "==> [7/9] Uninstalling Layer 1 (ESO, cert-manager)"
-run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
+echo "==> [7/9] Uninstalling Layer 1 (cert-manager, ESO)"
+# Only ESO clears an ExternalSecret's finalizer and only cert-manager an ACME
+# challenge's, so a namespace goes while both still run, and a controller's own
+# namespace once its release is uninstalled.
+delete_namespace argocd
+delete_namespace envoy-gateway-system
 run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
+delete_namespace cert-manager
+run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
 
 echo "==> [8/9] Cleaning up namespaces"
-for ns in "${PLATFORM_NAMESPACES[@]}"; do
-    delete_namespace "${ns}"
-done
+delete_namespace external-secrets
 # destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
 # already carried, and removing an adopted LoadBalancer provider would strand
 # every other tenant's Service on the cluster.

@@ -26,7 +26,7 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
               are never printed -- costs report as T-shirt buckets.
 
 Five artefacts come out, all under ``--out`` (the repo root by default), plus
-``sizing/<tier>.karpenter.json`` wherever Karpenter runs and
+``sizing/<tier>.pools.json`` wherever there are node pools to place and
 ``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
 
     shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
@@ -46,10 +46,11 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    node_pools.system with what it derives, so
                                    the two producers never collide on it.
     sizing/<tier>.values.yaml      the chart values overlay
-    sizing/<tier>.karpenter.json   the karpenter.pools half of that overlay, on
-                                   one line, for bootstrap.sh to carry onto the
-                                   cluster secret. Written only where there are
-                                   pools to place.
+    sizing/<tier>.pools.json       the pools half of that overlay -- the renderer
+                                   and the pool classes -- on one line, for
+                                   bootstrap.sh to carry onto the cluster
+                                   secret. Written only where there are pools
+                                   to place.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, in which cost bucket, and where
                                    the ceiling is
@@ -84,6 +85,18 @@ without one.
         --previous sizing/resolved.yaml --migrate
     python3 scripts/resolve_sizing.py capture --region us-west-2 \
         --fixtures scripts/tests/fixtures/sizing
+    python3 scripts/resolve_sizing.py images --dial deployment.yaml
+
+``images`` resolves the node images on any profile, separately from the sizing,
+because it reads the live provider wherever a resolve reads fixtures: each
+cloud's recommended node image at its newest version, written to
+``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
+elsewhere). A lookup that fails warns and writes no key, so tfvars or the
+variable default applies, and ``node_image.pin: "true"`` in the dial skips the
+lookups altogether and empties the file, ``--only`` or not. ``--only <key>``
+resolves that key and keeps the file's others, which is how ``dfe-ops bastion
+up`` refreshes the toolbox's AMI without moving the node groups' release or the
+forwarder's AMI. scripts/node_images.py carries the cascade and the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -110,8 +123,18 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import node_images
 from aws_cli import run_aws
-from render_dial import CONTROLLER_POOLS
+from render_dial import (
+    CONTROLLER_POOLS,
+    MINUTES_PER_DAY,
+    TOFU_ROOTS,
+    DialError,
+    Disruption,
+    MaintenanceWindow,
+    _kubernetes_version,
+    read_disruption,
+)
 from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
@@ -136,7 +159,7 @@ EXIT_REFUSED = 2
 # tell a cap breach (2) from a locked-field change (3) without parsing stderr.
 EXIT_LOCKED_CHANGE = 3
 
-# Where a per-target knob matrix (blocked / renamed / managed, each with its
+# Where a per-target dial matrix (blocked / renamed / managed, each with its
 # reason) is read from when one exists. Absent, the report says so and prints the
 # locked fields sizing.yaml already carries instead of implying nothing was
 # dropped.
@@ -458,6 +481,8 @@ class Dial:
     # writes these into tofu; this script merges them with what it derives, so
     # there is a single writer of the `node_pools` tofu variable.
     node_pools: dict[str, dict[str, object]] = field(default_factory=dict)
+    # k8s.disruption -- the posture and maintenance window every Karpenter pool's budgets follow.
+    disruption: Disruption = field(default_factory=Disruption)
 
 
 def _dial_number(tree: object, *path: str) -> float | None:
@@ -508,7 +533,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         resolved_cloud = "onprem"
     # The target overlay defaults to the cloud's own key -- what we run on AWS
     # is the aws overlay -- EXCEPT when Kafka itself is a fully vendor-managed
-    # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the knobs
+    # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the dials
     # that govern the BROKER, which is what a re-size actually needs to see
     # when there is no cloud-side shape to report on for it.
     default_target = kafka_provider if kafka_provider in SAAS_KAFKA_PROVIDERS else resolved_cloud
@@ -519,6 +544,10 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
             f"network.az_count must be between 2 and 6 -- below 2 there is no redundancy to speak "
             f"of, and no AWS region offers more than 6 -- got {az_count}"
         )
+    try:
+        disruption = read_disruption(tree)
+    except DialError as err:
+        raise ResolveError(str(err)) from err
     return Dial(
         path=path,
         tier=_scalar(tree, "profile") or "single",
@@ -542,6 +571,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         az_count=az_count,
         overrides=_read_overrides(tree),
         node_pools=_read_node_pools(tree),
+        disruption=disruption,
     )
 
 
@@ -687,7 +717,7 @@ class Core:
     root_volume_demand_mib_s: float = 0.0
     root_volume_demand_iops: int = 0
     # vCPU a shared pool's own workloads request, keyed by use case -- the
-    # demand build_karpenter_pools sizes a pool from when no Node carries it.
+    # demand build_pool_classes sizes a pool from when no Node carries it.
     pool_vcpu: dict[str, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     used: list[Ratio] = field(default_factory=list)
@@ -2586,8 +2616,12 @@ def _yaml_list(items: tuple[object, ...] | list[object], indent: int) -> list[st
 
 
 # ---------------------------------------------------------------------------
-# Karpenter -- the dynamic node pools, rendered from the same shape entries
+# Pool classes -- the dynamic node pools, rendered from the same shape entries
 # ---------------------------------------------------------------------------
+
+# The chart renderer the classes below are written for (pools.renderer), whose own
+# fields sit under each class's `aws` key.
+POOL_RENDERER = "karpenter-aws"
 
 # Karpenter's own accepted capacity-type labels -- never a resolver invention.
 CAPACITY_TYPE_ON_DEMAND = ("on-demand",)
@@ -2604,9 +2638,67 @@ _ELASTIC_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "30m"}
 _CI_BURST_CONSOLIDATION = {"policy": "WhenEmptyOrUnderutilized", "after": "60s"}
 
 # The pets: a fixed EKS managed node group already carries their floor count
-# (build_tfvars), and Karpenter's own budget stays conservative to match --
+# (build_tfvars), and Karpenter's own budgets stay conservative to match --
 # never more than one at a time, mirroring eks.tf's own max_unavailable = 1.
 STATEFUL_USE_CASES = ("kafka-broker", "kraft-controller", "clickhouse", "keeper")
+
+# How many nodes each disruption reason may have terminating, per pool class.
+# Karpenter takes the most restrictive budget naming a reason and leaves a reason
+# no active budget names unlimited, so each class names all three.
+_STATEFUL_BUDGETS = {"Underutilized": "0", "Empty": "1", "Drifted": "1"}
+_ELASTIC_BUDGETS = {"Underutilized": "25%", "Empty": "25%", "Drifted": "10%"}
+# Half the elastic Underutilized budget, rounded down because the CRD takes whole percents.
+_CONSERVATIVE_ELASTIC_UNDERUTILIZED = "12%"
+# Retryable work, matching compute-shapes.yaml's ci-burst entry: every reason, every node.
+_CI_BURST_BUDGETS = ({"nodes": "100%"},)
+
+
+def _drift_hold(window: MaintenanceWindow) -> dict[str, object]:
+    """A zero Drifted budget, active from the window's close until its next open.
+
+    An inactive Karpenter budget allows everything, so drift is held outside the
+    window rather than allowed inside it.
+    """
+    period = window.period_minutes
+    opens = (window.weekday or 0) * MINUTES_PER_DAY + window.hour * 60 + window.minute
+    closes = (opens + window.minutes) % period
+    weekday = "*" if window.weekday is None else str(closes // MINUTES_PER_DAY)
+    hours, minutes = divmod(period - window.minutes, 60)
+    return {
+        "nodes": "0",
+        "reasons": ["Drifted"],
+        "schedule": f"{closes % 60} {closes % MINUTES_PER_DAY // 60} * * {weekday}",
+        "duration": (f"{hours}h" if hours else "") + (f"{minutes}m" if minutes else ""),
+    }
+
+
+def _disruption_budgets(use_case: str, disruption: Disruption) -> list[dict[str, object]]:
+    """One pool's Karpenter disruption budgets, per reason, then the drift hold a window adds.
+
+    Args:
+        use_case: The workload class the pool exists for.
+        disruption: The dial's k8s.disruption posture and window.
+
+    Returns:
+        The budget list, in the shape the karpenter-aws NodePool template renders.
+    """
+    if use_case == "ci-burst":
+        return [dict(budget) for budget in _CI_BURST_BUDGETS]
+    stateful = use_case in STATEFUL_USE_CASES
+    nodes = dict(_STATEFUL_BUDGETS if stateful else _ELASTIC_BUDGETS)
+    if disruption.posture == "conservative":
+        if not stateful:
+            nodes["Underutilized"] = _CONSERVATIVE_ELASTIC_UNDERUTILIZED
+        elif disruption.window is None:
+            # Conservative replaces a stateful node for drift only inside a window, and there is none.
+            nodes["Drifted"] = "0"
+    budgets: list[dict[str, object]] = [
+        {"nodes": value, "reasons": [reason]} for reason, value in nodes.items()
+    ]
+    if disruption.window is not None:
+        budgets.append(_drift_hold(disruption.window))
+    return budgets
+
 
 _GENERATION_DIGIT = re.compile(r"\d+")
 
@@ -2667,10 +2759,10 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
     """This pool's own EC2NodeClass override -- its resolved root volume, and
     RAID0 where the shape's own volume profile asks for one.
 
-    Every pool overrides the chart's own (empty) nodeClass.rootVolume default
-    rather than sharing one: the root disk a workload actually carries is what
-    select_shape and _size_up_to_carry_the_volumes resolved for IT, and a
-    shared default would paper over a real difference between pools.
+    Every pool overrides the chart's own (empty) pools.aws.nodeClass.rootVolume
+    default rather than sharing one: the root disk a workload actually carries is
+    what select_shape and _size_up_to_carry_the_volumes resolved for IT, and a
+    shared default would hide a real difference between pools.
     """
     root = choice.volumes.get("root")
     node_class: dict[str, object] = {}
@@ -2689,22 +2781,26 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
     )
     if stores & {"raid0", "required"}:
         # RAID0 is the only value Karpenter's EC2NodeClass accepts -- see
-        # helm/charts/karpenter-pools/values.yaml's own comment on the field.
+        # helm/charts/node-pools/values.yaml's own comment on the field.
         node_class["instanceStorePolicy"] = "RAID0"
     return node_class
 
 
-def build_karpenter_pools(
+def build_pool_classes(
     choices: dict[str, Choice],
     cloud_entry: dict[str, object],
     pool_vcpu: dict[str, float] | None = None,
+    disruption: Disruption | None = None,
 ) -> dict[str, object]:
-    """Karpenter's NodePool/EC2NodeClass shaping, for every EC2-sourced choice.
+    """One pool class per EC2-sourced choice, for the POOL_RENDERER renderer.
 
-    Each pool renders from the shape the resolver chose and admits that
-    family alone (_karpenter_families), so a new generation reaches the pools
-    with the next resolve, as a reviewed diff. msk-broker is the one choice
-    this does not cover: MSK runs its own brokers, and there is no EC2
+    A class carries the fields every renderer reads -- arch, capacity types,
+    consolidation, the per-reason budgets, expiry, the workload label, taints
+    and limits -- and its EC2 families, generation and EC2NodeClass override
+    under `aws`. Each class renders from the shape the resolver chose and
+    admits that family alone (_karpenter_families), so a new generation reaches
+    the pools with the next resolve, as a reviewed diff. msk-broker is the one
+    choice this does not cover: MSK runs its own brokers, and there is no EC2
     instance for Karpenter to place.
 
     Args:
@@ -2714,9 +2810,12 @@ def build_karpenter_pools(
         pool_vcpu: vCPU a pool's own workloads request (Core.pool_vcpu). A
             pool whose demand needs more of its chosen shape than the sized
             count gets limits for that many nodes instead.
+        disruption: The dial's k8s.disruption, which shapes every pool's
+            budgets (_disruption_budgets). None is the balanced posture with
+            no window.
 
     Returns:
-        `{name: pool}`, ready to nest under `karpenter.pools`; empty when
+        `{name: class}`, ready to nest under `pools.classes`, or empty when
         there is nothing for Karpenter to place.
 
     Raises:
@@ -2724,6 +2823,7 @@ def build_karpenter_pools(
             same fail-safe select_shape applies to a name it cannot parse,
             rather than emitting a pool Karpenter's own render guard refuses.
     """
+    disruption = disruption if disruption is not None else Disruption()
     pools: dict[str, object] = {}
     for use_case, choice in choices.items():
         if use_case == "msk-broker":
@@ -2739,15 +2839,15 @@ def build_karpenter_pools(
         if use_case == "ci-burst":
             consolidation = dict(_CI_BURST_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_SPOT_FIRST)
-            budget_nodes, expire_after = "100%", "Never"
+            expire_after = "Never"
         elif use_case in STATEFUL_USE_CASES:
             consolidation = dict(_STATEFUL_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_ON_DEMAND)
-            budget_nodes, expire_after = "1", "Never"
+            expire_after = "Never"
         else:
             consolidation = dict(_ELASTIC_CONSOLIDATION)
             capacity_types = list(CAPACITY_TYPE_ON_DEMAND)
-            budget_nodes, expire_after = "25%", "720h"
+            expire_after = "720h"
 
         nodes = max(choice.count, 1)
         demand = (pool_vcpu or {}).get(use_case, 0.0)
@@ -2756,11 +2856,10 @@ def build_karpenter_pools(
             nodes = max(nodes, math.ceil(round(demand / choice.vcpu, 6)))
 
         pool: dict[str, object] = {
-            "families": families,
             "arch": str(entry.get("arch") or "arm64"),
             "capacityTypes": capacity_types,
             "consolidation": consolidation,
-            "budgetNodes": budget_nodes,
+            "budgets": _disruption_budgets(use_case, disruption),
             "expireAfter": expire_after,
             "labels": {WORKLOAD_LABEL: use_case},
             # Twice the nodes the sized fleet or the pool's own demand needs, in
@@ -2776,14 +2875,16 @@ def build_karpenter_pools(
         taints = _workload_taints(use_case, "NoSchedule")
         if taints:
             pool["taints"] = taints
+        aws: dict[str, object] = {"families": families}
         if policy == "pinned" and pin:
             # The admitted families' own generations, as an instance_type override can sit off the pin.
-            pool["generationIn"] = [str(g) for g in sorted(set(generations))]
+            aws["generationIn"] = [str(g) for g in sorted(set(generations))]
         else:
-            pool["generationGt"] = str(min(generations) - 1)
+            aws["generationGt"] = str(min(generations) - 1)
         node_class = _karpenter_node_class(entry, choice)
         if node_class:
-            pool["nodeClass"] = node_class
+            aws["nodeClass"] = node_class
+        pool["aws"] = aws
         pools[use_case] = pool
     return pools
 
@@ -2795,12 +2896,13 @@ def build_values(
     cloud_entry: dict[str, object] | None = None,
     storage_model: str = "auto",
     controller_pool: str = "combined",
+    disruption: Disruption | None = None,
 ) -> dict[str, object]:
     """The chart values overlay -- only keys the charts declare today.
 
     `choices` and `cloud_entry` are None on a cloud with no live shape
     resolution (onprem, or a stub cloud) -- Karpenter does not run there, and
-    the overlay carries no `karpenter` key at all rather than an empty one.
+    the overlay carries no `pools` key at all rather than an empty one.
 
     `storage_model` is the dial's own override (Dial.storage_model). auto
     writes no clickhouse.storageModel key at all, so the chart derives it from
@@ -2811,6 +2913,9 @@ def build_values(
     no kafka.controllerPool key at all, so the chart's own combined default
     holds and syncing this fragment onto a live cluster cannot move its
     metadata quorum; separate writes the sized pool with enabled true.
+
+    `disruption` is the dial's own k8s.disruption, which every Karpenter pool's
+    budgets follow (build_pool_classes).
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -2841,7 +2946,7 @@ def build_values(
         # validate.yaml refuses a KEDA ceiling below kafka.replicas outright --
         # the chart's own static default (6) is right at the floor and wrong
         # the moment the resolved broker count passes it. Twice the resolved
-        # count, same headroom convention build_karpenter_pools already uses
+        # count, same headroom convention build_pool_classes already uses
         # for its own NodePool limits, capped at the partition count so a
         # broker added at the ceiling still gets a share (partitions is always
         # a multiple of brokers, so it is never below broker.count either).
@@ -2928,9 +3033,9 @@ def build_values(
     if ch:
         out["clickhouse"] = ch
     if choices and cloud_entry is not None:
-        pools = build_karpenter_pools(choices, cloud_entry, core.pool_vcpu)
-        if pools:
-            out["karpenter"] = {"pools": pools}
+        classes = build_pool_classes(choices, cloud_entry, core.pool_vcpu, disruption)
+        if classes:
+            out["pools"] = {"renderer": POOL_RENDERER, "classes": classes}
     return out
 
 
@@ -3058,14 +3163,14 @@ def _ratio_table(core: Core) -> list[str]:
     return lines
 
 
-# The three states a target overlay may put a knob in -- see sizing/targets/.
-TARGET_KNOB_STATES = ("blocked", "renamed", "managed")
+# The three states a target overlay may put a dial in -- see sizing/targets/.
+TARGET_DIAL_STATES = ("blocked", "renamed", "managed")
 
 
 def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
-    """The per-target knob matrix, read from sizing/targets/<target>.yaml.
+    """The per-target dial matrix, read from sizing/targets/<target>.yaml.
 
-    Every knob a target's own provider or contract changes carries one of
+    Every dial a target's own provider or contract changes carries one of
     three states -- blocked, renamed or managed -- with the one-sentence
     reason a re-size and this report both trust. Absent, the section says so
     rather than implying nothing was dropped on that target's account.
@@ -3073,7 +3178,7 @@ def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
     if not overlay_path.is_file():
         return [
             "",
-            "A per-target knob matrix -- `blocked` / `renamed` / `managed` with the reason for each"
+            "A per-target dial matrix -- `blocked` / `renamed` / `managed` with the reason for each"
             f" -- is read from `{overlay_path.relative_to(REPO_ROOT)}` when one exists. There is none"
             f" for `{target}`, so the locked fields above are the whole list and nothing was dropped"
             " on a target's account.",
@@ -3082,16 +3187,16 @@ def _target_overlay_section(overlay_path: Path, target: str) -> list[str]:
     status = str(overlay.get("status", "")).strip()
     lines = [
         "",
-        f"Per-target knob matrix from `{overlay_path.relative_to(REPO_ROOT)}`"
+        f"Per-target dial matrix from `{overlay_path.relative_to(REPO_ROOT)}`"
         + (f" -- **{status}**." if status else "."),
         "",
     ]
-    knobs = {name: body for name, body in overlay.items() if isinstance(body, dict)}
-    if not knobs:
-        lines.append("No knobs recorded for this target.")
+    dials = {name: body for name, body in overlay.items() if isinstance(body, dict)}
+    if not dials:
+        lines.append("No dials recorded for this target.")
         return lines
-    lines += ["| Knob | State | Reason |", "|---|---|---|"]
-    for name, body in sorted(knobs.items()):
+    lines += ["| Dial | State | Reason |", "|---|---|---|"]
+    for name, body in sorted(dials.items()):
         state = str(body.get("state", "")).strip() or "?"
         reason = str(body.get("reason", "")).strip()
         lines.append(f"| `{name}` | {state} | {reason} |")
@@ -3224,7 +3329,7 @@ def build_report(
         )
     lines.append(f"- {_at(sizing, 'ceilings', 'professional_services_message')}")
 
-    lines += ["", "## The knobs this target manages or locks", ""]
+    lines += ["", "## The dials this target manages or locks", ""]
     locked = _at(sizing, "locked")
     if isinstance(locked, dict):
         lines += ["| Locked field | Why a re-size refuses it |", "|---|---|"]
@@ -3419,7 +3524,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         # ci-burst is not a core requirement -- size_core derives no node for it,
         # so it always resolves off the shape's own floor size -- but every
         # populated cloud carries retryable build/test work, so it always joins
-        # the resolve rather than needing its own dial knob.
+        # the resolve rather than needing a dial of its own.
         wanted.append("ci-burst")
         for use_case in wanted:
             entry = _at(cloud_entry, "use_cases", use_case)
@@ -3535,6 +3640,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         cloud_entry if populated else None,
         dial.storage_model,
         dial.controller_pool,
+        dial.disruption,
     )
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",
@@ -3546,19 +3652,19 @@ def run_resolve(args: argparse.Namespace) -> int:
     values_path.write_text("\n".join([*header, *_yaml_block(values)]) + "\n", encoding="utf-8")
     written.append(values_path)
 
-    karpenter = values.get("karpenter")
-    if isinstance(karpenter, dict) and karpenter.get("pools"):
-        # The SAME pools the values overlay carries, written again where
-        # bootstrap.sh can read them without a YAML parser -- it ships none,
+    pools = values.get("pools")
+    if isinstance(pools, dict) and pools.get("classes"):
+        # The SAME renderer and classes the values overlay carries, written again
+        # where bootstrap.sh can read them without a YAML parser -- it ships none,
         # and the overlay above only reaches a cluster through a deploy repo.
         # One line, because it lands verbatim in a cluster-secret annotation
         # the appset inlines as YAML flow (JSON is a subset of it).
-        karpenter_path = out / "sizing" / f"{core.tier}.karpenter.json"
-        karpenter_path.write_text(
-            json.dumps(karpenter["pools"], sort_keys=True, separators=(",", ":")) + "\n",
+        pools_path = out / "sizing" / f"{core.tier}.pools.json"
+        pools_path.write_text(
+            json.dumps(pools, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
-        written.append(karpenter_path)
+        written.append(pools_path)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
     report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")
@@ -3618,6 +3724,83 @@ def run_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _node_image_pin(tree: dict[str, object]) -> bool:
+    """The dial's node_image.pin, refusing anything but true or false."""
+    raw = (_scalar(tree, "node_image", "pin") or "false").lower()
+    if raw not in ("true", "false"):
+        raise ResolveError(f"node_image.pin must be true or false, got {raw!r}")
+    return raw == "true"
+
+
+def run_images(args: argparse.Namespace) -> int:
+    """Resolve the dial's node images and write them where its tofu root loads them."""
+    tree = _load(args.dial)
+    cloud = _scalar(tree, "target", "provision", "cloud")
+    if cloud is None:
+        print(
+            "resolve_sizing: the dial provisions no cloud, so there is no node image to resolve",
+            file=sys.stderr,
+        )
+        return 0
+    if cloud not in node_images.LOOKUPS:
+        # On-prem nodes are supplied, and no provider publishes a recommended image for them.
+        print(
+            f"resolve_sizing: no provider publishes a node image for {cloud}, so tfvars and the "
+            "variable default apply",
+            file=sys.stderr,
+        )
+        return 0
+    try:
+        kubernetes_version = _kubernetes_version(tree, cloud)
+    except DialError as err:
+        raise ResolveError(str(err)) from err
+    except ValueError as err:
+        # A version render_dial.py cannot read as dotted integers stops by name, not as a traceback.
+        raise ResolveError(
+            f"cannot compare kubernetes_version with versions.yaml's platform floor for {cloud}: {err}"
+        ) from err
+    region = _scalar(tree, "target", "provision", "region")
+    account = _scalar(tree, "target", "provision", "account")
+    if region is None or account is None:
+        raise ResolveError("target.provision needs a region and an account to resolve node images")
+    arch = _scalar(_load(args.shapes), "clouds", cloud, "arch")
+    if arch is None:
+        raise ResolveError(f"compute-shapes.yaml declares no clouds.{cloud}.arch")
+    out = args.out or TOFU_ROOTS / cloud
+    if not out.is_dir():
+        raise ResolveError(f"no tofu root at {out} -- pass --out to write the node images elsewhere")
+
+    pinned = _node_image_pin(tree)
+    keys = frozenset(args.only) if args.only else None
+    offered = {key for key, _lookup in node_images.LOOKUPS[cloud]}
+    if keys is not None and not keys <= offered:
+        raise ResolveError(
+            f"--only {', '.join(sorted(keys - offered))}: {cloud} resolves only "
+            f"{', '.join(sorted(offered))}"
+        )
+    target = node_images.Target(cloud, region, account, kubernetes_version, arch)
+    read = (
+        node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
+    )
+
+    def warn(message: str) -> None:
+        print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
+
+    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn, keys=keys)
+    # A pin empties the file whatever --only names, or an earlier key would still beat terraform.tfvars.
+    path = node_images.write_tfvars(out, values, keys=None if pinned else keys)
+    if pinned:
+        print(
+            "resolve_sizing: node_image.pin is true, so no lookup ran, the file is empty and the "
+        "tfvars value holds",
+            file=sys.stderr,
+        )
+    for key, value in sorted(values.items()):
+        print(f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}", file=sys.stderr)
+    print(f"resolve_sizing: wrote {path}", file=sys.stderr)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The CLI. `resolve` is the default, so the common call names no subcommand."""
     parser = argparse.ArgumentParser(
@@ -3653,6 +3836,28 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--region", default="us-west-2", help="the region to capture")
     capture.add_argument("--fixtures", type=Path, required=True, help="the fixtures directory")
     capture.set_defaults(func=run_capture)
+
+    images = sub.add_parser(
+        "images", help="resolve each node image the provider recommends, at its newest version"
+    )
+    images.add_argument("--dial", type=Path, required=True, help="the deployment dial")
+    images.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read")
+    images.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="where node-images.auto.tfvars.json is written (default: the cloud's tofu root)",
+    )
+    images.add_argument(
+        "--fixtures", type=Path, default=None, help="answer from recorded provider responses"
+    )
+    images.add_argument(
+        "--only",
+        action="append",
+        default=None,
+        help="resolve just this key and keep the file's others (repeatable), e.g. instance_ami_id",
+    )
+    images.set_defaults(func=run_images)
     return parser
 
 

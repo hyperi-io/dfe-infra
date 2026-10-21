@@ -80,6 +80,40 @@ variable "resolved_shapes" {
   }))
 }
 
+variable "node_image" {
+  description = "The image every EKS managed node group launches, a three-layer cascade. scripts/resolve_sizing.py images auto-selects it from the SSM parameter /aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended -- family the EKS AMI type, version its newest dated release -- and writes node-images.auto.tfvars.json, which loads after terraform.tfvars. A failed lookup, or node_image.pin: true in the dial, writes nothing, so a value in terraform.tfvars applies. This default is the last resort: EKS's recommended AL2023 arm64 type with no version, so a new group takes EKS's newest release at create."
+  type = object({
+    family  = string
+    version = optional(string)
+  })
+  default = {
+    family = "AL2023_ARM_64_STANDARD"
+  }
+  nullable = false
+}
+
+variable "instance_ami_id" {
+  description = "The AMI the toolbox instance launches. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the region from the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when the lookup failed or node_image.pin is true. dfe-ops bastion up re-resolves this key alone before every launch. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox is on."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.toolbox.enabled || var.instance_ami_id != null
+    error_message = "The toolbox is on and no AMI was resolved for it. Run scripts/resolve_sizing.py images, or set instance_ami_id in terraform.tfvars."
+  }
+}
+
+variable "forwarder_ami_id" {
+  description = "The AMI the tunnel forwarder launches, auto-selected from the same SSM parameter as instance_ami_id by a full scripts/resolve_sizing.py images run and never by bastion up's toolbox-only one, because a new AMI replaces the forwarder instance and every tunnel through it drops while it rebuilds. A value in terraform.tfvars applies only when the lookup failed or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only on edge.tunnel.address.mode forwarder."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.edge.tunnel.address.mode != "forwarder" || var.forwarder_ami_id != null
+    error_message = "The tunnel forwarder is on and no AMI was resolved for it. Run scripts/resolve_sizing.py images, or set forwarder_ami_id in terraform.tfvars."
+  }
+}
+
 variable "network" {
   description = "From tfvars (the dial's network block). nat = per-az at the scale tier, single below it. az_count is how many availability zones the VPC spans, 2-6, up to the region's own ceiling. subnet_newbits is how many bits each subnet adds to provision.cidr, which sets how many addresses each zone's subnets carry for nodes and pods."
   type = object({

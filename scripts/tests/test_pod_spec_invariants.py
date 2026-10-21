@@ -41,8 +41,6 @@ counted and printed: under pytest a printed skip is invisible, and a skip that
 reads like a pass is how a gate stops being one.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from functools import cache
@@ -82,7 +80,7 @@ def render(chart: Path, *sets: str, layers: tuple[Path, ...] = ()) -> list[dict]
     cmd += ["--set", "appNamespace=dfe-local", "--set", "kafka.mode=single"]
     for s in sets:
         cmd += ["--set", s]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if out.returncode != 0:
         return None
     return [d for d in yaml.safe_load_all(out.stdout) if d]

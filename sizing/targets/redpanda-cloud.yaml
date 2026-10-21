@@ -1,24 +1,24 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/redpanda-cloud.yaml
-## Purpose:   The per-target knob matrix for `--target redpanda-cloud` --
+## Purpose:   The per-target dial matrix for `--target redpanda-cloud` --
 ##            terraform/modules/managed-kafka/redpanda-cloud. Every sizing
-##            knob the target changes or refuses, and why.
+##            dial the target changes or refuses, and why.
 ## Language:  YAML
 ##
 ## License:   BUSL-1.1
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. Every knob below carries a `state` of
+## docstring's TARGETS_DIR paragraph. Every dial below carries a `state` of
 ## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
 ## prints beside it. NO LISTS: nested maps and scalars only, parsed by
 ## scripts/yaml_subset.py.
 ##
 ## Serverless is the only tier this organisation can create (Dedicated and
-## BYOC are Request-access and quote-only -- CONTRACT.md), so every knob below
+## BYOC are Request-access and quote-only -- CONTRACT.md), so every dial below
 ## is blocked on that one tier, not on the vendor's product line as a whole.
 ##
-## NOT A KNOB: the provider-by-tier default this target is expected to carry
+## NOT A DIAL: the provider-by-tier default this target is expected to carry
 ## once the aws overlay picks a Kafka provider by size is msk at Small and
 ## Medium, confluent-cloud at Large -- redpanda-cloud carries no tier default of
 ## its own yet. deployment.example.yaml documents the msk/confluent-cloud

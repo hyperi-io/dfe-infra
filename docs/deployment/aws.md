@@ -10,8 +10,8 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS
 
-Operations (teardown, node pools, edge exposure, Kafka telemetry, upgrades):
-[aws-operations.md](aws-operations.md).
+Operations: [aws-operations.md](aws-operations.md). Teardown:
+[aws-teardown.md](aws-teardown.md).
 
 DFE's AWS path provisions an EKS cluster with OpenTofu, then hands it to the
 same bootstrap and Argo CD layers every other cluster uses. Nothing about
@@ -27,7 +27,7 @@ A few things hold for every deployment:
   default (`network.nat: single`) or one per availability zone (`per-az`)
   when a zone failure or the cross-zone charge outweighs the extra gateway.
 - `network.az_count` (default 3, 2-6) sizes the VPC and is one of the six
-  fields `sizing.yaml` locks once resolved (see [Sizing knobs and locks](#sizing-knobs-and-locks)); a Strimzi/MSK broker count steps up
+  fields `sizing.yaml` locks once resolved (see [Sizing dials and locks](#sizing-dials-and-locks)). A Strimzi/MSK broker count steps up
   to at least the AZ count, so a deployment spanning more zones than the
   tyre-kick floor's three brokers still spreads one broker per zone.
 - The Kubernetes API's private endpoint is always on. `endpoint.public: true`
@@ -147,12 +147,11 @@ priced on this scale in [edge.md](edge.md).
 - `bootstrap.sh` reads `<out>/sizing/` from the same place, so resolving with
   the `--out` above needs nothing else said. A resolve run anywhere else has to
   set `DFE_SIZING_DIR` to that directory. On a cluster running Karpenter,
-  bootstrap REFUSES when `<tier>.karpenter.json` is not there: the chart's own
-  empty default renders no NodePool, the Application still reports Synced and
-  Healthy, and every workload the fixed managed node groups cannot fit stays
-  Pending with nothing reporting why.
+  bootstrap REFUSES when `<tier>.pools.json` is not there, and the node-pools
+  chart refuses to render with no pool classes rather than prune the
+  cluster's NodePools.
 
-### Sizing knobs and locks
+### Sizing dials and locks
 
 - `sizing.focus` buys headroom over the sized peak: `economy` (40%),
   `balanced` (60%) or `performance` (100%). None of the three trade away RF3
@@ -269,8 +268,8 @@ the egress ports.
   Standard cluster to Express later -- authenticated both ways: SASL/SCRAM
   for every DFE app, and SASL/IAM for the in-cluster bootstrap Job alone,
   since Kafka ACLs live in the data plane and tofu cannot write the first
-  one. That Job creates the landing and DLQ topics and the SCRAM principal's
-  ACLs, and exits non-zero on any failure.
+  one. That Job writes only the SCRAM principal's ACLs and exits non-zero on
+  any failure. dfe-engine creates the topics.
 - MSK's broker-count scaler, its telemetry sink and its rebalancing
   behaviour are operational detail, not part of the provider choice -- see
   [Kafka telemetry and autoscaling](aws-operations.md#kafka-telemetry-and-autoscaling)
@@ -278,7 +277,7 @@ the egress ports.
 
 ### Managed and SaaS Kafka bodies
 
-- `confluent-cloud` and `redpanda-cloud` module bodies exist under `terraform/modules/managed-kafka/`, contract-tested like `msk/`, and the AWS root now calls whichever one `kafka.provider` names -- all five tokens validate on both the resolver and the tofu root (`strimzi`, `redpanda`, `msk`, `confluent-cloud`, `redpanda-cloud`), each body behind its own `count`. Neither SaaS body sizes, versions or scales itself from a shape the resolver picks, but both take the same tuning `msk` does (`num_partitions`, `log_retention_ms`, `message_max_bytes`, `landing_topics`, since neither runs a bootstrap Job of its own to pre-create topics); `redpanda-cloud` additionally takes the shared SCRAM password and the ephemeral-lifecycle `allow_deletion` flag. Only `name`, `env` and `network` are true of every body regardless of provider. The vendor API credential is a provider environment variable, never a tfvar: `CONFLUENT_CLOUD_API_KEY` / `CONFLUENT_CLOUD_API_SECRET` for Confluent, `REDPANDA_CLIENT_ID` / `REDPANDA_CLIENT_SECRET` for Redpanda Cloud -- export both before `tofu plan`, since the `redpanda` provider checks for its pair at configure time regardless of which `kafka.provider` is selected. Confluent's default tier (Freight) is a Private Network Interface, not PrivateLink, and caps a topic's `max.message.bytes` at 20 MB, so it carries the chain's 16 MiB; Basic and Standard cap it at 8,388,608. The root's `DFE_KAFKA_MESSAGE_MAX_BYTES` output hands the same size to dfe-engine, so the topics the engine creates match the landing topics. Redpanda Cloud's only creatable tier is Serverless, over a PrivateLink-style endpoint, and its SCRAM password reuses MSK's own seed. Hand-written Terraform for both still lives in `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
+- `confluent-cloud` and `redpanda-cloud` module bodies exist under `terraform/modules/managed-kafka/`, contract-tested like `msk/`, and the AWS root now calls whichever one `kafka.provider` names -- all five tokens validate on both the resolver and the tofu root (`strimzi`, `redpanda`, `msk`, `confluent-cloud`, `redpanda-cloud`), each body behind its own `count`. Neither SaaS body sizes, versions or scales itself from a shape the resolver picks, but both take the same tuning `msk` does (`num_partitions`, `log_retention_ms`, `message_max_bytes`, `landing_topics`, since tofu creates their landing topics itself). `redpanda-cloud` also takes the shared SCRAM password and the ephemeral-lifecycle `allow_deletion` flag. Only `name`, `env` and `network` are true of every body regardless of provider. The vendor API credential is a provider environment variable, never a tfvar: `CONFLUENT_CLOUD_API_KEY` / `CONFLUENT_CLOUD_API_SECRET` for Confluent, `REDPANDA_CLIENT_ID` / `REDPANDA_CLIENT_SECRET` for Redpanda Cloud -- export both before `tofu plan`, since the `redpanda` provider checks for its pair at configure time regardless of which `kafka.provider` is selected. Confluent's default tier (Freight) is a Private Network Interface, not PrivateLink, and caps a topic's `max.message.bytes` at 20 MB, so it carries the chain's 16 MiB. Basic and Standard cap it at 8,388,608. The root's `DFE_KAFKA_MESSAGE_MAX_BYTES` output hands the same size to dfe-engine, so the topics the engine creates match the landing topics. Redpanda Cloud's only creatable tier is Serverless, over a PrivateLink-style endpoint, and its SCRAM password reuses MSK's own seed. Hand-written Terraform for both still lives in `docs/deployment/kafka/confluent-cloud.md` and `redpanda-cloud.md`.
 - `strimzi` runs in the cluster exactly as it does anywhere else. Its broker
   autoscaling is a KEDA `ScaledObject` on the `KafkaNodePool` `/scale`
   subresource, triggered on consumer lag by default, with scale-in off until
@@ -298,7 +297,7 @@ the egress ports.
   on that NVMe rather than sharing the data PVC -- see
   [storage.md](storage.md) for the mechanism and its default (`pvc`, bounded
   at 60% of the data PVC's space) for any shape with no such NVMe.
-- `clickhouse.mode: external` connects to a server you brought, ClickHouse Cloud first, and deploys none. The dial's `clickhouse.host` travels as `endpoints.clickhouse_host`, and the root hands it, the ports, TLS and the user to the cluster secret as `dfe.hyperi.io/clickhouse_*`, which layer2-data, layer2-platform and layer2-apps turn into clickhouse-cluster's, network-policies', the otel collector's and every app's `clickhouse` values. The password is `TF_VAR_clickhouse_external_password`, never a dial field: the secrets module seeds it at `<project>/<env>/clickhouse/external`, and clickhouse-cluster copies it into the app and otel namespaces as `clickhouse-admin-password`. `dfe-ops cloud-cycle` opens the service's IP access list to the cluster's NAT egress (`DFE_EGRESS_CIDRS`) and its runner after the apply and closes it at teardown (`scripts/clickhouse_cloud_access.py`).
+- `clickhouse.mode: external` connects to a server you brought, ClickHouse Cloud first, and deploys none. The dial's `clickhouse.host` travels as `endpoints.clickhouse_host`, and the root hands it, the ports, TLS and the user to the cluster secret as `dfe.hyperi.io/clickhouse_*`, which layer2-data, layer2-platform and layer2-apps turn into clickhouse-cluster's, network-policies', the otel collector's and every app's `clickhouse` values. The password is `TF_VAR_clickhouse_external_password`, never a dial field: the secrets module seeds it at `<project>/<env>/clickhouse/external`, and clickhouse-cluster copies it into the engine's namespace as `clickhouse-admin-password`. `dfe-ops cloud-cycle` opens the service's IP access list to the cluster's NAT egress (`DFE_EGRESS_CIDRS`) and its runner after the apply and closes it at teardown (`scripts/clickhouse_cloud_access.py`).
 - Retention starts from a 24-hour assumed consumer downtime on the sized
   (`scale`) tier, plus any `archiver_lag_hours`; `single` and `slim` are not
   sized and keep the chart's fixed 72-hour profile. DLQ topics hold 7
@@ -332,6 +331,6 @@ The receiver NLB is created with one Elastic IP per public subnet. Those
 addresses exist, and AWS bills them, while the ingest door is closed and no NLB
 exists. `edge.aws.receiver_eips: false` turns them off.
 
-See [Nodes, the edge and lifecycle](aws-operations.md) in aws-operations.md
-for node pools and images, admin UI exposure, teardown, lifecycle tags and
-upgrades.
+See [aws-operations.md](aws-operations.md) for node pools and images, admin
+UI exposure and upgrades, and [aws-teardown.md](aws-teardown.md) for teardown
+and lifecycle tags.
