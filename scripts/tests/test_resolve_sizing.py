@@ -872,7 +872,12 @@ def test_an_unresolved_shape_leaves_the_request_at_the_sized_vcpu() -> None:
 def test_only_a_decided_storage_rides_the_cluster_secret() -> None:
     """A pvc cache is the chart's default, not a decision, so a deploy-repo overlay may still place it."""
     instance_store = {"objectStore": {"cache": {"volume": "instance-store"}, "cacheSize": "87Gi"}}
-    assert resolve_sizing.clickhouse_storage({"clickhouse": instance_store}) == instance_store
+    assert resolve_sizing.clickhouse_storage({"clickhouse": instance_store}) == {
+        **instance_store,
+        "storageModel": "cached-object",
+    }
+    explicit = {**instance_store, "storageModel": "cached-object"}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": explicit}) == explicit
     pvc = {"objectStore": {"cache": {"volume": "pvc"}}}
     assert resolve_sizing.clickhouse_storage({"clickhouse": pvc}) == {}
     local = {"storageModel": "local", "objectStore": {"cache": {"volume": "pvc"}}}

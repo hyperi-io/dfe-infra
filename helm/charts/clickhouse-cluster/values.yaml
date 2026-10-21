@@ -231,9 +231,9 @@ clickhouse:
     # cache tracking the PVC it is given -- and a value here must sit BELOW
     # storage.size, because the cache and the part metadata share that PVC.
     # Under cache.volume: instance-store it is REQUIRED: an emptyDir has no PVC
-    # to size itself against, so the ratio below cannot apply, and this value
-    # also becomes the emptyDir's own sizeLimit (see templates/clickhouse.yaml)
-    # -- the two can never disagree because they are the same number.
+    # to size itself against, so the ratio below cannot apply. There it is the
+    # emptyDir's own sizeLimit (see templates/clickhouse.yaml), and max_size is
+    # cache.maxSizeRatioToSizeLimit of it, so the cache stops short of the limit.
     cacheSize: ""
     # cached-object only: the local read-through cache in front of the object
     # store, on the s3_object_cache disk.
@@ -252,6 +252,11 @@ clickhouse:
       # That is why the pool carries a disruption budget of one node at a
       # time. See docs/deployment/storage.md.
       volume: pvc
+      # instance-store only: the cache's max_size as a fraction of cacheSize,
+      # which is the emptyDir's sizeLimit. The kubelet evicts the pod once the
+      # volume passes its limit, and block rounding and the cache's own metadata
+      # sit on top of what max_size counts. Must be below 1.
+      maxSizeRatioToSizeLimit: 0.95
       # Cache parts as they are written, not only as they are read -- the default
       # false leaves every just-ingested part out of the cache, and hunts over
       # recent data are the primary read.

@@ -179,10 +179,9 @@ spec:
     {{- end }}
     {{- if $cacheOnInstanceStore }}
     volumes:
-      # The cache disk's actual backing store. sizeLimit is cacheSize itself --
-      # not a separate bound -- so the emptyDir and the ClickHouse-side
-      # max_size (set from the same value, templates/_storage.tpl) can never
-      # disagree about how big the cache is allowed to get.
+      # The cache disk's actual backing store, limited to cacheSize. The cache's
+      # own max_size is cache.maxSizeRatioToSizeLimit of it (templates/_storage.tpl),
+      # so the cache stops short of the limit the kubelet evicts at.
       - name: object-cache
         emptyDir:
           sizeLimit: {{ .Values.clickhouse.objectStore.cacheSize | quote }}

@@ -122,8 +122,10 @@ def test_the_resolver_writes_the_cache_placement_it_decided(resolved: Path) -> N
         (resolved / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     )
     storage = json.loads(_storage(resolved))
-    assert storage == {"objectStore": fragment["clickhouse"]["objectStore"]}
+    assert storage["objectStore"] == fragment["clickhouse"]["objectStore"]
     assert storage["objectStore"]["cache"] == {"volume": "instance-store"}
+    # The model rides with the cache, so no overlay can strand it.
+    assert storage["storageModel"] == "cached-object"
 
 
 def test_the_cache_leaves_room_on_the_array_it_shares(resolved: Path) -> None:
@@ -285,7 +287,7 @@ def test_a_fresh_aws_deploy_runs_cached_object_on_its_instance_store(resolved: P
     assert set(found) == {"s3_object", "s3_object_cache"}, found
     assert found["s3_object"]["endpoint"] == ENDPOINT
     assert found["s3_object"]["region"] == REGION
-    assert found["s3_object_cache"]["max_size"] == cache_size
+    assert 0 < _bytes(found["s3_object_cache"]["max_size"]) < _bytes(cache_size)
     pod = cluster(docs)["spec"]["podTemplate"]
     assert pod["volumes"] == [{"name": "object-cache", "emptyDir": {"sizeLimit": cache_size}}]
     assert pod["nodeSelector"]["dfe.hyperi.io/workload"] == "clickhouse"
@@ -311,12 +313,48 @@ def test_a_deploy_repo_overlay_cannot_move_what_the_first_sync_fixed(resolved: P
         }
     )
     docs = clickhouse_docs("aws", aws_facts(resolved), overlay)
-    found = disks(docs)
-    assert found["s3_object"]["endpoint"] == ENDPOINT
-    assert (
-        found["s3_object_cache"]["max_size"]
-        == json.loads(_storage(resolved))["objectStore"]["cacheSize"]
-    )
+    assert disks(docs)["s3_object"]["endpoint"] == ENDPOINT
+    limit = cluster(docs)["spec"]["podTemplate"]["volumes"][0]["emptyDir"]["sizeLimit"]
+    assert limit == json.loads(_storage(resolved))["objectStore"]["cacheSize"]
+
+
+def _bytes(quantity: object) -> int:
+    """A Kubernetes quantity, or a ClickHouse byte count, in bytes."""
+    text = str(quantity)
+    for suffix, factor in (("Ti", 2**40), ("Gi", 2**30), ("Mi", 2**20), ("Ki", 2**10)):
+        if text.endswith(suffix):
+            return int(text.removesuffix(suffix)) * factor
+    return int(text)
+
+
+def test_the_cache_stops_short_of_the_volume_it_lives_on(resolved: Path) -> None:
+    """The kubelet evicts a pod whose emptyDir passes its sizeLimit, and block rounding
+    and the cache's own metadata sit on top of what max_size counts."""
+    docs = clickhouse_docs("aws", aws_facts(resolved))
+    limit = cluster(docs)["spec"]["podTemplate"]["volumes"][0]["emptyDir"]["sizeLimit"]
+    max_size = disks(docs)["s3_object_cache"]["max_size"]
+    assert _bytes(max_size) < _bytes(limit), (max_size, limit)
+
+
+@pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
+def test_a_deploy_repo_storage_model_cannot_strand_the_cache(cloud: str, resolved: Path) -> None:
+    """The secret carries the model with the cache placement it decided, so an overlay's
+    `local` cannot leave an instance-store cache with no object store to front."""
+    overlay = yaml.safe_dump({"clickhouse": {"storageModel": "local"}})
+    facts = aws_facts(resolved) if cloud == "aws" else {STORAGE_KEY: _storage(resolved)}
+    docs = clickhouse_docs(cloud, facts, overlay)
+    if cloud == "aws":
+        assert set(disks(docs)) == {"s3_object", "s3_object_cache"}
+    else:
+        assert disks(docs) == {}
+
+
+@pytest.mark.parametrize("cloud", ["gcp", "azure"])
+def test_the_storage_keys_land_only_beside_a_bucket(cloud: str, resolved: Path) -> None:
+    """GCP and Azure shapes resolve an NVMe cache too, and no bucket reaches their chart yet."""
+    docs = clickhouse_docs(cloud, {STORAGE_KEY: _storage(resolved)})
+    assert disks(docs) == {}
+    assert "volumes" not in cluster(docs)["spec"].get("podTemplate", {})
 
 
 def test_an_on_prem_deploy_repo_endpoint_survives() -> None:

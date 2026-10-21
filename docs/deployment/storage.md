@@ -121,7 +121,7 @@ the bucket's URL onto the cluster secret as the
 authenticates as that role instead of the static-key ExternalSecret every
 other target uses (Dimension 4: credential binding, below).
 
-The cache placement the resolver decides travels the same way, because a fresh deploy repo has no overlay for it to arrive in: `resolve_sizing.py` writes `sizing/<tier>.clickhouse-storage.json`, `bootstrap.sh` carries it as `dfe.hyperi.io/clickhouse_storage`, and layer2-data hands clickhouse-cluster its `storageModel` and `objectStore` keys. layer2-data writes each of these only when its annotation is set. Where one is set it beats a deploy-repo overlay, as a value fixed at first deploy should. Where none is, an overlay's own `clickhouse.objectStore.endpoint` stands, which is how an on-prem MinIO reaches the chart.
+The cache placement the resolver decides travels the same way, because a fresh deploy repo has no overlay for it to arrive in: `resolve_sizing.py` writes `sizing/<tier>.clickhouse-storage.json`, `bootstrap.sh` carries it as `dfe.hyperi.io/clickhouse_storage`, and layer2-data hands clickhouse-cluster its `storageModel` and `objectStore` keys. They land with the bucket or not at all, the model always beside an instance-store cache, so the cache never arrives without an object store to front. With a bucket on the cluster secret they beat a deploy-repo overlay, as values fixed at first deploy should. With none, nothing storage-related is inlined, and an overlay's own `clickhouse.objectStore.endpoint` stands, which is how an on-prem MinIO reaches the chart.
 
 That bucket is unconditional, so **every AWS deploy derives `cached-object`**
 -- which is the preference order above applied, not an accident, but it is not
@@ -187,7 +187,7 @@ an older operator would deploy a broker that looks configured and tiers nothing.
 | Placement | Status | Proof | Constraint |
 | --- | --- | --- | --- |
 | `pvc` -- a subdirectory of the data PVC, bounded by `clickhouse.objectStore.cache.maxSizeRatioToTotalSpace` (0.6), or by `clickhouse.objectStore.cacheSize` when that is set | **default** | render-verified | The cache and the part metadata share `clickhouse.storage.size`, and ClickHouse refuses both bounds at once |
-| `instance-store` -- an `emptyDir` on the node's local NVMe, sized to `clickhouse.objectStore.cacheSize` (required) | **default** on AWS, where the resolver places it on every NVMe ClickHouse shape, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
+| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse shape, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
 | Dedicated disposable cache PVC | **follow-up** | unverified | A different mechanism to `instance-store` above -- see below |
 
 **Why `instance-store` over a bigger `pvc`.** A gp3 volume provisioned large

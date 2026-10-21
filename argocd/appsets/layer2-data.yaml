@@ -78,7 +78,10 @@ spec:
       # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
       # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode,
       # kafka.mode and storage model beat the profile file's tier defaults
-      # without editing dfe-infra.
+      # without editing dfe-infra. The one exception is a cluster secret that
+      # names a ClickHouse bucket: then the inline values below lock the bucket,
+      # its region and whatever storage model and cache placement the resolver
+      # decided, and the overlay cannot move them.
       #
       # Substrate therefore depends on the deploy repo resolving. On a bundled
       # deploy the git host is layer2-deploy-repo's own single-source Application,
@@ -220,23 +223,21 @@ spec:
                   port: {{ $chPort }}
                   user: {{ $chUser | quote }}
               {{- else if eq .app "clickhouse-cluster" }}
-              {{- /* Inline values beat every deploy-repo file, so each key is written only when its
-              annotation is set: a deploy-repo overlay's own endpoint, on-prem MinIO say, then stands. */}}
-              {{- $clickhouse := dict }}
-              {{- /* clickhouse.storageModel and the cache placement the resolver decided, fixed at first sync. */}}
-              {{- with index .metadata.annotations "dfe.hyperi.io/clickhouse_storage" | default "" }}
-              {{- $clickhouse = mustFromJson . }}
-              {{- end }}
+              {{- /* Inline values beat every deploy-repo file, so nothing here is written without a
+              bucket: a deploy-repo overlay's own endpoint, on-prem MinIO say, then stands. */}}
               {{- /* clickhouse.objectStore.endpoint: the aws root's bucket, and the one region its disk signs for. */}}
               {{- with index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}
+              {{- $clickhouse := dict }}
+              {{- /* clickhouse.storageModel and the cache placement land with the bucket or not at all: an instance-store cache needs one to front. */}}
+              {{- with index $.metadata.annotations "dfe.hyperi.io/clickhouse_storage" | default "" }}
+              {{- $clickhouse = mustFromJson . }}
+              {{- end }}
               {{- $objectStore := get $clickhouse "objectStore" | default (dict) }}
               {{- $_ := set $objectStore "endpoint" . }}
               {{- with index $.metadata.annotations "dfe.hyperi.io/region" | default "" }}
               {{- $_ := set $objectStore "region" . }}
               {{- end }}
               {{- $_ := set $clickhouse "objectStore" $objectStore }}
-              {{- end }}
-              {{- if $clickhouse }}
               clickhouse:
                 {{- toYaml $clickhouse | nindent 2 }}
               {{- end }}

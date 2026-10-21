@@ -2975,8 +2975,10 @@ def clickhouse_storage(values: dict[str, object]) -> dict[str, object]:
     """The storage model and cache placement a values overlay decided, or nothing.
 
     Both are fixed at first deploy, so they ride the cluster secret rather than
-    wait for a deploy repo. A cache left on the chart's own pvc default is no
-    decision and is not carried, so a deploy-repo overlay may still place it.
+    wait for a deploy repo, and layer2-data lands them only beside a bucket. A
+    cache left on the chart's own pvc default is no decision and is not carried.
+    An instance-store cache carries the model with it, cached-object where the
+    dial left it to derive, so no overlay can leave the cache with nothing to front.
 
     Args:
         values: What build_values returned.
@@ -2993,6 +2995,7 @@ def clickhouse_storage(values: dict[str, object]) -> dict[str, object]:
     store = ch.get("objectStore")
     if isinstance(store, dict) and _at(store, "cache", "volume") == "instance-store":
         out["objectStore"] = store
+        out.setdefault("storageModel", "cached-object")
     return out
 
 
