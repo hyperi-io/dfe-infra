@@ -297,6 +297,12 @@ the egress ports.
   on that NVMe rather than sharing the data PVC -- see
   [storage.md](storage.md) for the mechanism and its default (`pvc`, bounded
   at 60% of the data PVC's space) for any shape with no such NVMe.
+- Both node paths assemble that NVMe as one RAID0 array under the kubelet: the
+  Karpenter pool through `instanceStorePolicy`, the managed node group through a
+  nodeadm NodeConfig its launch template carries. The cache takes 0.8 of it
+  (`clickhouse.instance_store_cache_share`), and the bucket, the cache placement
+  and the storage model all reach the chart on the cluster secret, so a fresh
+  deploy repo needs no overlay for any of them.
 - `clickhouse.mode: external` connects to a server you brought, ClickHouse Cloud first, and deploys none. The dial's `clickhouse.host` travels as `endpoints.clickhouse_host`, and the root hands it, the ports, TLS and the user to the cluster secret as `dfe.hyperi.io/clickhouse_*`, which layer2-data, layer2-platform and layer2-apps turn into clickhouse-cluster's, network-policies', the otel collector's and every app's `clickhouse` values. The password is `TF_VAR_clickhouse_external_password`, never a dial field: the secrets module seeds it at `<project>/<env>/clickhouse/external`, and clickhouse-cluster copies it into the engine's namespace as `clickhouse-admin-password`. `dfe-ops cloud-cycle` opens the service's IP access list to the cluster's NAT egress (`DFE_EGRESS_CIDRS`) and its runner after the apply and closes it at teardown (`scripts/clickhouse_cloud_access.py`).
 - Retention starts from a 24-hour assumed consumer downtime on the sized
   (`scale`) tier, plus any `archiver_lag_hours`; `single` and `slim` are not

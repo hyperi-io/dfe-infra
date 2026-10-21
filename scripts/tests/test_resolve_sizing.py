@@ -824,6 +824,78 @@ def test_the_cache_volume_follows_the_shapes_instance_store() -> None:
     assert values["clickhouse"]["objectStore"] == {"cache": {"volume": "pvc"}}
 
 
+def test_the_cache_takes_its_share_of_the_instance_store() -> None:
+    """RAID0 puts containerd and the kubelet on the same array, so the cache leaves them room."""
+    core = _clickhouse_core()
+    core.instance_store_cache_share = 0.8
+    r9gd = _choice(
+        use_case="clickhouse",
+        instance_type="r9gd.2xlarge",
+        instance_store_gb=474,
+        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+    )
+    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None)
+    assert values["clickhouse"]["objectStore"]["cacheSize"] == "379Gi"
+
+
+@pytest.mark.parametrize(("vcpu", "reserved"), [(1, 60), (2, 70), (4, 80), (8, 90), (16, 110)])
+def test_kube_reserved_cpu_follows_nodeadm(vcpu: int, reserved: int) -> None:
+    """6% of the first core, 1% of the second, 0.5% of the next two, 0.25% above."""
+    assert resolve_sizing._kube_reserved_cpu_m(vcpu) == reserved
+
+
+def test_a_clickhouse_request_the_size_of_its_node_is_held_to_what_schedules() -> None:
+    """r8gd.large has 2 vCPU and a 2-vCPU request: the kubelet's own 70m alone stops it landing."""
+    core = _clickhouse_core()
+    core.nodes["clickhouse"].vcpu = 2
+    core.daemonset_cpu_m = 300
+    r8gd = _choice(use_case="clickhouse", instance_type="r8gd.large", vcpu=2, memory_gib=16.0)
+    resources = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r8gd}, None)["clickhouse"]["resources"]
+    assert resources["requests"]["cpu"] == "1630m"
+    assert resources["limits"]["cpu"] == "2"
+
+
+def test_a_clickhouse_request_that_fits_its_node_is_left_whole() -> None:
+    core = _clickhouse_core()
+    core.daemonset_cpu_m = 300
+    big = _choice(use_case="clickhouse", instance_type="r8gd.4xlarge", vcpu=16, memory_gib=128.0)
+    resources = resolve_sizing.build_values(core, "strimzi", {"clickhouse": big}, None)["clickhouse"]["resources"]
+    assert resources["requests"]["cpu"] == "8"
+
+
+def test_an_unresolved_shape_leaves_the_request_at_the_sized_vcpu() -> None:
+    """On-prem the resolver chose no shape, so there is no node to hold the request to."""
+    resources = resolve_sizing.build_values(_clickhouse_core(), "strimzi", None, None)["clickhouse"]["resources"]
+    assert resources["requests"]["cpu"] == "8"
+
+
+def test_only_a_decided_storage_rides_the_cluster_secret() -> None:
+    """A pvc cache is the chart's default, not a decision, so a deploy-repo overlay may still place it."""
+    instance_store = {"objectStore": {"cache": {"volume": "instance-store"}, "cacheSize": "87Gi"}}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": instance_store}) == {
+        **instance_store,
+        "storageModel": "cached-object",
+    }
+    explicit = {**instance_store, "storageModel": "cached-object"}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": explicit}) == explicit
+    pvc = {"objectStore": {"cache": {"volume": "pvc"}}}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": pvc}) == {}
+    local = {"storageModel": "local", "objectStore": {"cache": {"volume": "pvc"}}}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": local}) == {"storageModel": "local"}
+    assert resolve_sizing.clickhouse_storage({}) == {}
+
+
+def test_a_shape_that_wants_its_instance_store_tells_its_node_group(tmp_path: Path) -> None:
+    """Both node paths read one predicate, so a managed group and a Karpenter pool agree."""
+    _run(_dial(tmp_path), tmp_path)
+    shapes = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["resolved_shapes"]
+    pools = _pools(tmp_path)
+    for use_case, shape in shapes.items():
+        node_class = (pools.get(use_case) or {}).get("aws", {}).get("nodeClass", {})
+        assert shape.get("instance_store_policy") == node_class.get("instanceStorePolicy"), use_case
+    assert shapes["clickhouse"]["instance_store_policy"] == "RAID0"
+
+
 # ---------------------------------------------------------------------------
 # The storage_model dial. auto is the default and omits the chart key
 # entirely; cached-object and local are explicit overrides, and only they
@@ -1065,7 +1137,12 @@ def test_the_node_pool_objects_carry_every_attribute_the_variable_type_demands(t
     for pool in doc["node_pools"].values():
         assert set(pool) == demanded
     for shape in doc["resolved_shapes"].values():
-        assert {"instance_types", "arch"} <= set(shape) <= {"instance_types", "arch", "root_volume"}
+        assert {"instance_types", "arch"} <= set(shape) <= {
+            "instance_types",
+            "arch",
+            "root_volume",
+            "instance_store_policy",
+        }
         assert set(shape.get("root_volume", {"type": "", "size_gib": 0})) == {"type", "size_gib"}
 
 

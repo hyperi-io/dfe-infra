@@ -78,7 +78,10 @@ spec:
       # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
       # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode,
       # kafka.mode and storage model beat the profile file's tier defaults
-      # without editing dfe-infra.
+      # without editing dfe-infra. The one exception is a cluster secret that
+      # names a ClickHouse bucket: then the inline values below lock the bucket,
+      # its region and whatever storage model and cache placement the resolver
+      # decided, and the overlay cannot move them.
       #
       # Substrate therefore depends on the deploy repo resolving. On a bundled
       # deploy the git host is layer2-deploy-repo's own single-source Application,
@@ -134,17 +137,6 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
-              # The ClickHouse object-store bucket URL, from the aws root's
-              # object-store.tf. Empty leaves the chart's own default (also
-              # empty) untouched, so a non-AWS deploy or one that resolved
-              # storageModel: local renders exactly what it would without this
-              # parameter. Only clickhouse-cluster reads it; harmless elsewhere.
-              - name: clickhouse.objectStore.endpoint
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}'
-              # The S3 disk signs requests for one region; the deployment's own
-              # region is the right one whenever the endpoint above is set.
-              - name: clickhouse.objectStore.region
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/region" | default "" }}'
               # Whether dfe-internal-ca exists: the gateway chart that mints it is
               # deployed unless the edge label is "false" (layer2-edge.yaml, and
               # layer2-platform.yaml for a secret with no label, hence the "true"
@@ -230,6 +222,25 @@ spec:
                   host: {{ $chHost | quote }}
                   port: {{ $chPort }}
                   user: {{ $chUser | quote }}
+              {{- else if eq .app "clickhouse-cluster" }}
+              {{- /* Inline values beat every deploy-repo file, so nothing here is written without a
+              bucket: a deploy-repo overlay's own endpoint, on-prem MinIO say, then stands. */}}
+              {{- /* clickhouse.objectStore.endpoint: the aws root's bucket, and the one region its disk signs for. */}}
+              {{- with index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}
+              {{- $clickhouse := dict }}
+              {{- /* clickhouse.storageModel and the cache placement land with the bucket or not at all: an instance-store cache needs one to front. */}}
+              {{- with index $.metadata.annotations "dfe.hyperi.io/clickhouse_storage" | default "" }}
+              {{- $clickhouse = mustFromJson . }}
+              {{- end }}
+              {{- $objectStore := get $clickhouse "objectStore" | default (dict) }}
+              {{- $_ := set $objectStore "endpoint" . }}
+              {{- with index $.metadata.annotations "dfe.hyperi.io/region" | default "" }}
+              {{- $_ := set $objectStore "region" . }}
+              {{- end }}
+              {{- $_ := set $clickhouse "objectStore" $objectStore }}
+              clickhouse:
+                {{- toYaml $clickhouse | nindent 2 }}
+              {{- end }}
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}

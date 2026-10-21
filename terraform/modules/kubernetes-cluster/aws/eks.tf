@@ -196,33 +196,66 @@ resource "aws_iam_role_policy_attachment" "nodes" {
 
 locals {
   // A launch template is the only way a node group's instances carry a test
-  // run's tags (EKS copies no node group tag onto them) or run a script before
-  // kubelet. With neither there is no template and no node group changes.
+  // run's tags (EKS copies no node group tag onto them), run a script before
+  // kubelet, or assemble their instance store. With none of the three there is
+  // no template and no node group changes.
   node_launch_template = length(var.controller_tags) > 0 || var.node_user_data != ""
+
+  // The nodeadm localStorage strategy each pool's resolved shape asks for: the
+  // array its Karpenter pool's instanceStorePolicy assembles, under kubelet and containerd.
+  node_local_storage = {
+    for name, pool in var.node_pools : name => var.resolved_shapes[pool.shape_ref].instance_store_policy
+    if try(var.resolved_shapes[pool.shape_ref].instance_store_policy, null) != null
+  }
+
+  node_launch_templates = {
+    for name, pool in var.node_pools : name => pool
+    if local.node_launch_template || contains(keys(local.node_local_storage), name)
+  }
 
   // EKS merges a managed group's user data with its own NodeConfig only in MIME multi-part form.
   node_user_data_boundary = "==DFE-NODE=="
-  node_user_data_mime = var.node_user_data == "" ? null : join("\n", [
-    "MIME-Version: 1.0",
-    "Content-Type: multipart/mixed; boundary=\"${local.node_user_data_boundary}\"",
-    "",
+  node_script_part = var.node_user_data == "" ? [] : [
     "--${local.node_user_data_boundary}",
     "Content-Type: text/x-shellscript; charset=\"us-ascii\"",
     "",
     chomp(var.node_user_data),
     "",
-    "--${local.node_user_data_boundary}--",
-    "",
-  ])
+  ]
+  node_user_data_mime = {
+    for name in keys(local.node_launch_templates) : name => join("\n", concat(
+      [
+        "MIME-Version: 1.0",
+        "Content-Type: multipart/mixed; boundary=\"${local.node_user_data_boundary}\"",
+        "",
+      ],
+      contains(keys(local.node_local_storage), name) ? [
+        "--${local.node_user_data_boundary}",
+        "Content-Type: application/node.eks.aws",
+        "",
+        "---",
+        "apiVersion: node.eks.aws/v1alpha1",
+        "kind: NodeConfig",
+        "spec:",
+        "  instance:",
+        "    localStorage:",
+        "      strategy: ${local.node_local_storage[name]}",
+        "",
+      ] : [],
+      local.node_script_part,
+      ["--${local.node_user_data_boundary}--", ""],
+    ))
+    if var.node_user_data != "" || contains(keys(local.node_local_storage), name)
+  }
 }
 
 resource "aws_launch_template" "nodes" {
-  for_each = local.node_launch_template ? var.node_pools : {}
+  for_each = local.node_launch_templates
 
   name_prefix = "${var.name}-${each.key}-"
-  description = "Node group ${each.key}'s root volume, metadata options, run tags and node script."
+  description = "Node group ${each.key}'s root volume, metadata options, run tags, node script and instance store."
 
-  user_data = local.node_user_data_mime == null ? null : base64encode(local.node_user_data_mime)
+  user_data = contains(keys(local.node_user_data_mime), each.key) ? base64encode(local.node_user_data_mime[each.key]) : null
 
   // EKS refuses a node group's disk_size beside a launch template, so the root
   // volume is sized here. /dev/xvda is the root device AL2023 exposes.
@@ -274,14 +307,14 @@ resource "aws_eks_node_group" "this" {
 
   instance_types = var.resolved_shapes[each.value.shape_ref].instance_types
   capacity_type  = each.value.capacity_type
-  disk_size      = local.node_launch_template ? null : each.value.disk_gb
+  disk_size      = contains(keys(local.node_launch_templates), each.key) ? null : each.value.disk_gb
   labels         = each.value.labels
 
-  // Only with run tags or a node script. Adding a launch template to a node
-  // group that has none replaces it, which is why a deployment with neither
-  // gets no block at all.
+  // Only with run tags, a node script or an instance store to assemble. Adding
+  // a launch template to a node group that has none replaces it, which is why a
+  // pool with none of the three gets no block at all.
   dynamic "launch_template" {
-    for_each = local.node_launch_template ? [aws_launch_template.nodes[each.key]] : []
+    for_each = contains(keys(local.node_launch_templates), each.key) ? [aws_launch_template.nodes[each.key]] : []
 
     content {
       id      = launch_template.value.id

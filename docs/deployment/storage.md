@@ -121,6 +121,8 @@ the bucket's URL onto the cluster secret as the
 authenticates as that role instead of the static-key ExternalSecret every
 other target uses (Dimension 4: credential binding, below).
 
+The cache placement the resolver decides travels the same way, because a fresh deploy repo has no overlay for it to arrive in: `resolve_sizing.py` writes `sizing/<tier>.clickhouse-storage.json`, `bootstrap.sh` carries it as `dfe.hyperi.io/clickhouse_storage`, and layer2-data hands clickhouse-cluster its `storageModel` and `objectStore` keys. They land with the bucket or not at all, the model always beside an instance-store cache, so the cache never arrives without an object store to front. With a bucket on the cluster secret they beat a deploy-repo overlay, as values fixed at first deploy should. With none, nothing storage-related is inlined, and an overlay's own `clickhouse.objectStore.endpoint` stands, which is how an on-prem MinIO reaches the chart.
+
 That bucket is unconditional, so **every AWS deploy derives `cached-object`**
 -- which is the preference order above applied, not an accident, but it is not
 the opt-in the ClickHouse table still records. The model is locked at first
@@ -185,7 +187,7 @@ an older operator would deploy a broker that looks configured and tiers nothing.
 | Placement | Status | Proof | Constraint |
 | --- | --- | --- | --- |
 | `pvc` -- a subdirectory of the data PVC, bounded by `clickhouse.objectStore.cache.maxSizeRatioToTotalSpace` (0.6), or by `clickhouse.objectStore.cacheSize` when that is set | **default** | render-verified | The cache and the part metadata share `clickhouse.storage.size`, and ClickHouse refuses both bounds at once |
-| `instance-store` -- an `emptyDir` on the node's local NVMe, sized to `clickhouse.objectStore.cacheSize` (required) | **opt-in**, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node that actually carries local NVMe |
+| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse shape, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
 | Dedicated disposable cache PVC | **follow-up** | unverified | A different mechanism to `instance-store` above -- see below |
 
 **Why `instance-store` over a bigger `pvc`.** A gp3 volume provisioned large
@@ -199,8 +201,15 @@ the container at `/var/lib/clickhouse/disks/s3_object_cache` (concatenated with
 the operator's own mounts, per the CRD's own comment on that field) with a
 `nodeSelector` on `dfe.hyperi.io/workload: clickhouse` -- the label
 `build_pool_classes` (`scripts/resolve_sizing.py`) gives every pool it
-builds, named after the pool's own use case. The data PVC keeps its default
-mount and now holds only the `s3_object` metadata_path. The resolver's own
+builds, named after the pool's own use case. The EKS managed node group for
+the same shape carries that label too, and assembles its NVMe the same way:
+the resolver marks the shape `instance_store_policy: RAID0`, and the node
+group's launch template hands nodeadm a NodeConfig asking for the RAID0 array
+under the kubelet and containerd, as Karpenter's `instanceStorePolicy` does.
+Because the array also holds images and pod logs, and the kubelet evicts at
+10% free on it, the resolver sets `cacheSize` to
+`clickhouse.instance_store_cache_share` (0.8) of the NVMe rather than all of
+it. The data PVC keeps its default mount and now holds only the `s3_object` metadata_path. The resolver's own
 `clickhouse.storage.size` default does not shrink to reflect that yet -- it is
 still sized for a PVC-resident cache -- so a deployer running `instance-store`
 can safely set it much smaller by hand; teaching the resolver that ratio is a

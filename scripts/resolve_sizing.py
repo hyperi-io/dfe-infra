@@ -26,7 +26,8 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
               are never printed -- costs report as T-shirt buckets.
 
 Five artefacts come out, all under ``--out`` (the repo root by default), plus
-``sizing/<tier>.pools.json`` wherever there are node pools to place and
+``sizing/<tier>.pools.json`` wherever there are node pools to place,
+``sizing/<tier>.clickhouse-storage.json`` wherever the storage is decided, and
 ``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
 
     shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
@@ -51,6 +52,11 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    bootstrap.sh to carry onto the cluster
                                    secret. Written only where there are pools
                                    to place.
+    sizing/<tier>.clickhouse-storage.json
+                                   clickhouse.storageModel and the instance-store
+                                   cache placement from that overlay, on one
+                                   line for the cluster secret. Written only
+                                   where the dial or the shape decided one.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, in which cost bucket, and where
                                    the ceiling is
@@ -115,6 +121,7 @@ CLI the operator already has.
 """
 
 import argparse
+import itertools
 import json
 import math
 import re
@@ -300,6 +307,49 @@ def _workload_taints(use_case: str, effect: str) -> list[dict[str, str]]:
     if use_case not in DEDICATED_USE_CASES:
         return []
     return [{"key": WORKLOAD_LABEL, "value": use_case, "effect": effect}]
+
+
+# The one local-storage strategy Karpenter's instanceStorePolicy accepts, and so
+# the one a managed node group's NodeConfig is given too.
+INSTANCE_STORE_POLICY = "RAID0"
+
+
+def _instance_store_policy(entry: dict[str, object]) -> str | None:
+    """RAID0 where a shape's own volume profile asks for its instance store, else None.
+
+    One answer for both paths a shape launches through: the Karpenter pool's
+    EC2NodeClass and the managed node group's NodeConfig.
+
+    Args:
+        entry: The use case's compute-shapes.yaml entry.
+
+    Returns:
+        INSTANCE_STORE_POLICY, or None for a shape that leaves its NVMe alone.
+    """
+    volumes = entry.get("volumes")
+    if not isinstance(volumes, dict):
+        return None
+    stores = {str(v.get("instance_store", "")) for v in volumes.values() if isinstance(v, dict)}
+    return INSTANCE_STORE_POLICY if stores & {"raid0", "required"} else None
+
+
+# nodeadm's kube-reserved CPU: basis points of each core range in turn
+# (amazon-eks-ami nodeadm/internal/kubelet/config.go, getCPUMillicoresToReserve).
+KUBE_RESERVED_CPU_BOUNDS_M = (0, 1000, 2000, 4000)
+KUBE_RESERVED_CPU_BASIS_POINTS = (600, 100, 50, 25)
+
+
+def _kube_reserved_cpu_m(vcpu: int) -> int:
+    """The millicores an EKS AL2023 kubelet keeps back on a node of ``vcpu`` cores."""
+    total = vcpu * 1000
+    bounds = (*KUBE_RESERVED_CPU_BOUNDS_M, max(total, KUBE_RESERVED_CPU_BOUNDS_M[-1]))
+    reserved = 0
+    ranges = itertools.pairwise(bounds)
+    for (start, end), basis in zip(ranges, KUBE_RESERVED_CPU_BASIS_POINTS, strict=True):
+        if total > start:
+            reserved += (min(total, end) - start) * basis // 10000
+    return reserved
+
 
 # An instance type name: family letters, generation digits, the processor and
 # modifier letters, then the size -- m9g.large, r8gd.2xlarge, c8g.metal-24xl.
@@ -710,6 +760,11 @@ class Core:
     clickhouse_frequent_gib: float = 0.0
     clickhouse_ram_long_band_gib: float = 0.0
     clickhouse_memory_ratio: float = 0.8
+    # The share of a node's instance store the ClickHouse cache may fill, and the
+    # CPU every node's DaemonSets request -- sizing.yaml's
+    # clickhouse.instance_store_cache_share and floors.daemonset_cpu_millicores.
+    instance_store_cache_share: float = 1.0
+    daemonset_cpu_m: int = 0
     keeper_parts_per_s: float = 0.0
     # What a quiet root volume asks of the instance -- not what gp3's own free
     # minimum provisions it at. See sizing.yaml's floors.root_volume_demand_*
@@ -1015,6 +1070,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         f"{math.ceil(ingest_cores * parse_factor)} -- the single highest-value spot test."
     )
 
+    instance_store_cache_share = take("clickhouse", "instance_store_cache_share")
+    daemonset_cpu_m = int(take("floors", "daemonset_cpu_millicores"))
+
     ch_headroom = take("clickhouse", "disk_headroom")
     ch_disk_gib = max(
         CHART_DEFAULTS["clickhouse_disk_gib"][0], math.ceil(compressed_gib / ch_headroom)
@@ -1116,6 +1174,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         clickhouse_frequent_gib=frequent_gib,
         clickhouse_ram_long_band_gib=ram_long_band,
         clickhouse_memory_ratio=memory_usable,
+        instance_store_cache_share=instance_store_cache_share,
+        daemonset_cpu_m=daemonset_cpu_m,
         keeper_parts_per_s=parts_per_s,
         root_volume_demand_mib_s=root_volume_demand_mib_s,
         root_volume_demand_iops=root_volume_demand_iops,
@@ -2493,8 +2553,8 @@ def _root_volume(choice: Choice) -> dict[str, object] | None:
     return {"type": str(root["type"]), "size_gib": int(root["size_gib"])}
 
 
-def _resolved_shape(choice: Choice) -> dict[str, object]:
-    """One resolved_shapes entry: the types best-first, the arch, and the root volume."""
+def _resolved_shape(choice: Choice, entry: dict[str, object] | None = None) -> dict[str, object]:
+    """One resolved_shapes entry: types best-first, arch, root volume and instance-store policy."""
     shape: dict[str, object] = {
         "instance_types": [choice.instance_type, *choice.fallbacks],
         "arch": "arm64",
@@ -2502,6 +2562,9 @@ def _resolved_shape(choice: Choice) -> dict[str, object]:
     root_volume = _root_volume(choice)
     if root_volume is not None:
         shape["root_volume"] = root_volume
+    policy = _instance_store_policy(entry) if entry is not None else None
+    if policy is not None:
+        shape["instance_store_policy"] = policy
     return shape
 
 
@@ -2510,6 +2573,7 @@ def build_tfvars(
     choices: dict[str, Choice],
     dial: Dial,
     standalone: dict[str, Choice] | None = None,
+    cloud_entry: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """The tofu inputs -- only the two keys the AWS root's variables.tf declares.
 
@@ -2524,7 +2588,8 @@ def build_tfvars(
     variable, and this is it.
 
     `standalone` holds the STANDALONE_USE_CASES choices, which join
-    resolved_shapes and never node_pools.
+    resolved_shapes and never node_pools. `cloud_entry` is the cloud's
+    compute-shapes.yaml map, read for each shape's instance-store policy.
     """
     pools: dict[str, object] = dict(dial.node_pools)
     for use_case, choice in choices.items():
@@ -2544,10 +2609,11 @@ def build_tfvars(
             "taints": _workload_taints(use_case, "NO_SCHEDULE"),
         }
     shaped = {**choices, **(standalone or {})}
-    return {
-        "node_pools": pools,
-        "resolved_shapes": {use_case: _resolved_shape(choice) for use_case, choice in shaped.items()},
-    }
+    resolved_shapes: dict[str, object] = {}
+    for use_case, choice in shaped.items():
+        entry = _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
+        resolved_shapes[use_case] = _resolved_shape(choice, entry if isinstance(entry, dict) else None)
+    return {"node_pools": pools, "resolved_shapes": resolved_shapes}
 
 
 def build_node_requirements(core: Core) -> dict[str, dict[str, int]]:
@@ -2773,16 +2839,9 @@ def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str,
             "iops": int(root.get("iops", 0) or 0),
             "throughputMibS": int(root.get("throughput_mib_s", 0) or 0),
         }
-    volumes = entry.get("volumes")
-    stores = (
-        {str(v.get("instance_store", "")) for v in volumes.values() if isinstance(v, dict)}
-        if isinstance(volumes, dict)
-        else set()
-    )
-    if stores & {"raid0", "required"}:
-        # RAID0 is the only value Karpenter's EC2NodeClass accepts -- see
-        # helm/charts/node-pools/values.yaml's own comment on the field.
-        node_class["instanceStorePolicy"] = "RAID0"
+    policy = _instance_store_policy(entry)
+    if policy is not None:
+        node_class["instanceStorePolicy"] = policy
     return node_class
 
 
@@ -2889,6 +2948,57 @@ def build_pool_classes(
     return pools
 
 
+def _schedulable_cpu_request(vcpu: int, choice: Choice | None, core: Core) -> str:
+    """A dedicated pool's CPU request, held to what its shape schedules.
+
+    The kubelet keeps back a share of every core and each DaemonSet takes its own,
+    so a request of the shape's whole vCPU never lands. The pod has the node to
+    itself, so its limit stays at the sized vCPU and the request only admits it.
+
+    Args:
+        vcpu: The workload's sized vCPU.
+        choice: The shape resolved for its pool, or None where nothing was resolved.
+        core: The sized core, for the DaemonSet allowance.
+
+    Returns:
+        A Kubernetes CPU quantity: whole cores when they fit, millicores otherwise.
+    """
+    if choice is None or not choice.vcpu:
+        return str(vcpu)
+    schedulable_m = choice.vcpu * 1000 - _kube_reserved_cpu_m(choice.vcpu) - core.daemonset_cpu_m
+    if vcpu * 1000 <= schedulable_m:
+        return str(vcpu)
+    return f"{schedulable_m}m"
+
+
+def clickhouse_storage(values: dict[str, object]) -> dict[str, object]:
+    """The storage model and cache placement a values overlay decided, or nothing.
+
+    Both are fixed at first deploy, so they ride the cluster secret rather than
+    wait for a deploy repo, and layer2-data lands them only beside a bucket. A
+    cache left on the chart's own pvc default is no decision and is not carried.
+    An instance-store cache carries the model with it, cached-object where the
+    dial left it to derive, so no overlay can leave the cache with nothing to front.
+
+    Args:
+        values: What build_values returned.
+
+    Returns:
+        The ``clickhouse`` keys bootstrap.sh carries onto the cluster secret.
+    """
+    ch = values.get("clickhouse")
+    if not isinstance(ch, dict):
+        return {}
+    out: dict[str, object] = {}
+    if "storageModel" in ch:
+        out["storageModel"] = ch["storageModel"]
+    store = ch.get("objectStore")
+    if isinstance(store, dict) and _at(store, "cache", "volume") == "instance-store":
+        out["objectStore"] = store
+        out.setdefault("storageModel", "cached-object")
+    return out
+
+
 def build_values(
     core: Core,
     provider: str,
@@ -2967,9 +3077,13 @@ def build_values(
 
     ch: dict[str, object] = {}
     if clickhouse:
+        ch_choice = choices.get("clickhouse") if choices else None
         ch["replicas"] = clickhouse.count
         ch["resources"] = {
-            "requests": {"cpu": str(clickhouse.vcpu), "memory": f"{clickhouse.ram_gib}Gi"},
+            "requests": {
+                "cpu": _schedulable_cpu_request(clickhouse.vcpu, ch_choice, core),
+                "memory": f"{clickhouse.ram_gib}Gi",
+            },
             "limits": {"cpu": str(clickhouse.vcpu), "memory": f"{clickhouse.ram_gib}Gi"},
         }
         ch["storage"] = {"size": f"{clickhouse.disk_gib}Gi"}
@@ -2983,7 +3097,6 @@ def build_values(
         # -- is never what a populated cloud emits. A choice with no such
         # volume (no populated cloud does this for clickhouse today) falls back
         # to the chart's own pvc default. See docs/deployment/storage.md.
-        ch_choice = choices.get("clickhouse") if choices else None
         cache = ch_choice.volumes.get("cache") if ch_choice else None
         if storage_model == "local":
             # The explicit opt-out: keep local storage regardless of any NVMe
@@ -2999,9 +3112,12 @@ def build_values(
             # cache.volume: instance-store dial mounts, so the expensive
             # default -- a large gp3 cache on the data PVC -- is never what a
             # populated cloud emits. See docs/deployment/storage.md.
+            # RAID0 puts containerd's images and the kubelet's own directory on
+            # the same NVMe, which kubelet evicts from at 10% free.
+            cache_gib = math.floor(int(cache["size_gib"]) * core.instance_store_cache_share)
             ch["objectStore"] = {
                 "cache": {"volume": "instance-store"},
-                "cacheSize": f"{cache['size_gib']}Gi",
+                "cacheSize": f"{cache_gib}Gi",
             }
             if storage_model == "cached-object":
                 ch["storageModel"] = "cached-object"
@@ -3627,7 +3743,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         # of which tier was resolved.
         tfvars_path = out / "sizing.auto.tfvars.json"
         tfvars_path.write_text(
-            json.dumps(build_tfvars(core, choices, dial, standalone), indent=2) + "\n",
+            json.dumps(build_tfvars(core, choices, dial, standalone, cloud_entry), indent=2) + "\n",
             encoding="utf-8",
         )
         written.append(tfvars_path)
@@ -3665,6 +3781,20 @@ def run_resolve(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         written.append(pools_path)
+
+    # The storage half, on one line for the same reason: a fresh deploy repo has
+    # no overlay for it to arrive in, and it is fixed at the first sync.
+    storage_path = out / "sizing" / f"{core.tier}.clickhouse-storage.json"
+    storage = clickhouse_storage(values)
+    if storage:
+        storage_path.write_text(
+            json.dumps(storage, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        written.append(storage_path)
+    else:
+        # A stale copy from an earlier resolve would reach the next bootstrap.
+        storage_path.unlink(missing_ok=True)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
     report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")

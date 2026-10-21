@@ -529,6 +529,16 @@ clickhouse:
     read: 2026-09-13
     confidence: rule-of-thumb
     spot_test: Drive a heavy hunt to the memory limit and confirm it errors rather than OOMKills.
+  ## The cache shares its RAID0 array with containerd's images, pod logs and the
+  ## kubelet's own directory, and kubelet evicts at 10% free on it.
+  instance_store_cache_share:
+    value: 0.8
+    unit: fraction
+    applies_to: clickhouse
+    source: https://github.com/awslabs/amazon-eks-ami/blob/main/nodeadm/internal/kubelet/config.go
+    read: 2026-10-21
+    confidence: rule-of-thumb
+    spot_test: Fill the cache on a clickhouse node and read df on /mnt/k8s-disks against the 10% nodefs eviction threshold.
 
 ## ---------------------------------------------------------------------------
 ## ClickHouse Keeper -- capacity is irrelevant, IOPS is everything. Keeper
@@ -1005,6 +1015,17 @@ floors:
     read: 2026-09-13
     confidence: rule-of-thumb
     spot_test: Watch iostat on a running node's root volume over a normal day and read its sustained IOPS.
+  ## What every node's DaemonSets request before its workload lands: kube-proxy,
+  ## aws-node and its policy agent, the pod identity agent, the EBS CSI node
+  ## plugin and the otel agent. A dedicated pod's CPU request leaves it room.
+  daemonset_cpu_millicores:
+    value: 300
+    unit: millicores
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-10-21
+    confidence: rule-of-thumb
+    spot_test: Sum the CPU requests of the DaemonSet pods kubectl describe node lists on a clickhouse node.
 
 ## ---------------------------------------------------------------------------
 ## Ceilings. The generator REFUSES above its cap rather than extrapolating, and

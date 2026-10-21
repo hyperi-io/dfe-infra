@@ -30,6 +30,7 @@ Needs `helm` on PATH. No test runner, matching the other checks here.
 
 from __future__ import annotations
 
+import math
 import subprocess
 import sys
 import tempfile
@@ -546,6 +547,27 @@ def test_an_instance_store_cache_with_no_endpoint_names_the_endpoint() -> None:
            ))
 
 
+def test_an_instance_store_cache_stops_short_of_its_volume() -> None:
+    """The kubelet evicts at the emptyDir's sizeLimit, so max_size must sit below it."""
+    sets = (*CACHED_OBJECT_SETS, "clickhouse.objectStore.cache.volume=instance-store",
+            "clickhouse.objectStore.cacheSize=100Gi")
+    disk = one(render("clickhouse-cluster", *sets), "ClickHouseCluster")["spec"]["settings"][
+        "extraConfig"]["storage_configuration"]["disks"]["s3_object_cache"]
+    want = str(math.floor(float(100 * 2**30) * 0.95))
+    expect("max_size is 0.95 of the 100Gi limit", disk["max_size"] == want,
+           f"got {disk['max_size']}, want {want}")
+    for ratio in ("1", "0"):
+        expect(f"a fill ratio of {ratio} is refused",
+               "maxSizeRatioToSizeLimit must sit between 0 and 1" in render_error(
+                   "clickhouse-cluster", *sets,
+                   f"clickhouse.objectStore.cache.maxSizeRatioToSizeLimit={ratio}"))
+    expect("a cache size in a decimal unit is refused rather than guessed",
+           "must be a whole number of bytes, Ki, Mi, Gi or Ti" in render_error(
+               "clickhouse-cluster", *CACHED_OBJECT_SETS,
+               "clickhouse.objectStore.cache.volume=instance-store",
+               "clickhouse.objectStore.cacheSize=100G"))
+
+
 STORAGE_MODEL_ENDPOINT_SET = "clickhouse.objectStore.endpoint=https://dfe-ch.s3.ap-southeast-2.amazonaws.com/parts/"
 
 
@@ -756,6 +778,7 @@ def main() -> int:
         test_clickhouse_cached_object_reaches_single_mode()
         test_wait_for_async_insert_guard_catches_every_falsy_spelling()
         test_clickhouse_storage_model_guards()
+        test_an_instance_store_cache_stops_short_of_its_volume()
         test_storage_model_dial_the_six_cases()
         test_the_unclaimed_cells_are_refused_rather_than_rendered_inert()
         test_the_object_store_batch_delete_switch_is_tri_state()

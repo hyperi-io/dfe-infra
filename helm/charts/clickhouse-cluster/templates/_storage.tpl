@@ -109,6 +109,31 @@ or `instance-store` (cluster mode only -- see templates/clickhouse.yaml).
 {{- end }}
 
 {{/*
+dfe-clickhouse.quantityBytes -- a binary storage quantity (87Gi, 500Mi, 1024) as
+a plain byte count. Anything else fails the render rather than guessing a unit.
+*/}}
+{{- define "dfe-clickhouse.quantityBytes" -}}
+{{- $q := . | toString -}}
+{{- if regexMatch "^[0-9]+Ti$" $q -}}{{ mul (int64 (trimSuffix "Ti" $q)) 1099511627776 }}
+{{- else if regexMatch "^[0-9]+Gi$" $q -}}{{ mul (int64 (trimSuffix "Gi" $q)) 1073741824 }}
+{{- else if regexMatch "^[0-9]+Mi$" $q -}}{{ mul (int64 (trimSuffix "Mi" $q)) 1048576 }}
+{{- else if regexMatch "^[0-9]+Ki$" $q -}}{{ mul (int64 (trimSuffix "Ki" $q)) 1024 }}
+{{- else if regexMatch "^[0-9]+$" $q -}}{{ int64 $q }}
+{{- else -}}
+{{- fail (printf "clickhouse.objectStore.cacheSize must be a whole number of bytes, Ki, Mi, Gi or Ti under cache.volume=instance-store, got %q" $q) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+dfe-clickhouse.instanceStoreCacheBytes -- the cache's max_size on an instance
+store: cache.maxSizeRatioToSizeLimit of cacheSize, which is the emptyDir's limit.
+*/}}
+{{- define "dfe-clickhouse.instanceStoreCacheBytes" -}}
+{{- $limit := include "dfe-clickhouse.quantityBytes" .Values.clickhouse.objectStore.cacheSize | int64 -}}
+{{- int64 (floor (mulf (float64 $limit) (float64 .Values.clickhouse.objectStore.cache.maxSizeRatioToSizeLimit))) -}}
+{{- end }}
+
+{{/*
 dfe-clickhouse.validateCacheVolume -- reject a cache-volume placement that
 cannot be honoured, alongside validateStorageModel above.
 
@@ -137,6 +162,10 @@ cache on the data PVC despite the value claiming otherwise.
 {{- end -}}
 {{- if not .Values.clickhouse.objectStore.cacheSize -}}
 {{- fail "clickhouse.objectStore.cache.volume=instance-store needs clickhouse.objectStore.cacheSize set explicitly -- an emptyDir has no PVC to size a ratio against" -}}
+{{- end -}}
+{{- $fill := float64 .Values.clickhouse.objectStore.cache.maxSizeRatioToSizeLimit -}}
+{{- if or (le $fill 0.0) (ge $fill 1.0) -}}
+{{- fail (printf "clickhouse.objectStore.cache.maxSizeRatioToSizeLimit must sit between 0 and 1, got %v -- a cache filling its emptyDir gets the pod evicted" .Values.clickhouse.objectStore.cache.maxSizeRatioToSizeLimit) -}}
 {{- end -}}
 {{- if ne .Values.clickhouse.mode "cluster" -}}
 {{- fail (printf "clickhouse.objectStore.cache.volume=instance-store needs clickhouse.mode=cluster -- clickhouse-single.yaml mounts no such volume for mode=%s" .Values.clickhouse.mode) -}}
@@ -211,7 +240,9 @@ storage_configuration:
       {{- /* The server refuses max_size and max_size_ratio_to_total_space
       together with BAD_ARGUMENTS at startup, so this is either/or: a fixed
       cacheSize when the deployment names one, the ratio otherwise. */ -}}
-      {{- if .Values.clickhouse.objectStore.cacheSize }}
+      {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
+      max_size: {{ include "dfe-clickhouse.instanceStoreCacheBytes" . | quote }}
+      {{- else if .Values.clickhouse.objectStore.cacheSize }}
       max_size: {{ .Values.clickhouse.objectStore.cacheSize | quote }}
       {{- else }}
       max_size_ratio_to_total_space: {{ .Values.clickhouse.objectStore.cache.maxSizeRatioToTotalSpace }}
