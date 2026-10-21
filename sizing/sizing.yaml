@@ -536,7 +536,7 @@ clickhouse:
     unit: fraction
     applies_to: clickhouse
     source: https://github.com/awslabs/amazon-eks-ami/blob/main/nodeadm/internal/kubelet/config.go
-    read: 2026-10-22
+    read: 2026-10-21
     confidence: rule-of-thumb
     spot_test: Fill the cache on a clickhouse node and read df on /mnt/k8s-disks against the 10% nodefs eviction threshold.
 
@@ -1023,7 +1023,7 @@ floors:
     unit: millicores
     applies_to: all-workloads
     source: sizing/sizing.yaml
-    read: 2026-10-22
+    read: 2026-10-21
     confidence: rule-of-thumb
     spot_test: Sum the CPU requests of the DaemonSet pods kubectl describe node lists on a clickhouse node.
 
