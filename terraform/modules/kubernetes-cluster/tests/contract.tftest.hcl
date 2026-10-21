@@ -1798,6 +1798,170 @@ run "aws_node_script_rides_a_mime_launch_template" {
   }
 }
 
+// A shape whose instance store the resolver marked RAID0 gets the NodeConfig
+// part Karpenter's instanceStorePolicy writes, so the array sits under kubelet
+// and containerd on a managed node as it does on a Karpenter one.
+run "aws_instance_store_shape_assembles_its_nvme" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    resolved_shapes = {
+      eks-system = {
+        instance_types = ["m9g.large", "m8g.large"]
+        arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 40 }
+      }
+      clickhouse = {
+        instance_types        = ["r8gd.large"]
+        arch                  = "arm64"
+        root_volume           = { type = "gp3", size_gib = 40 }
+        instance_store_policy = "RAID0"
+      }
+    }
+
+    node_pools = {
+      system = {
+        shape_ref     = "eks-system"
+        min_size      = 2
+        max_size      = 3
+        desired_size  = 2
+        capacity_type = "ON_DEMAND"
+        disk_gb       = 40
+        labels        = {}
+        taints        = []
+      }
+      clickhouse = {
+        shape_ref     = "clickhouse"
+        min_size      = 3
+        max_size      = 3
+        desired_size  = 3
+        capacity_type = "ON_DEMAND"
+        disk_gb       = 40
+        labels        = { "dfe.hyperi.io/workload" = "clickhouse" }
+        taints        = [{ key = "dfe.hyperi.io/workload", value = "clickhouse", effect = "NO_SCHEDULE" }]
+      }
+    }
+  }
+
+  assert {
+    condition     = keys(aws_launch_template.nodes) == ["clickhouse"]
+    error_message = "only the pool whose shape carries an instance store policy needs a launch template outside a run"
+  }
+
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.nodes["clickhouse"].user_data), "--==DFE-NODE==\nContent-Type: application/node.eks.aws\n\n---\napiVersion: node.eks.aws/v1alpha1\nkind: NodeConfig\nspec:\n  instance:\n    localStorage:\n      strategy: RAID0\n\n--==DFE-NODE==--\n")
+    error_message = "the template must carry a NodeConfig asking nodeadm for the shape's RAID0 array, closed by the final boundary"
+  }
+
+  assert {
+    condition     = startswith(base64decode(aws_launch_template.nodes["clickhouse"].user_data), "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"==DFE-NODE==\"\n")
+    error_message = "EKS merges a NodeConfig with its own only in MIME multi-part form"
+  }
+
+  assert {
+    condition     = aws_eks_node_group.this["clickhouse"].launch_template[0].id == aws_launch_template.nodes["clickhouse"].id
+    error_message = "the clickhouse node group must launch through the template that carries its NodeConfig"
+  }
+
+  assert {
+    condition     = aws_launch_template.nodes["clickhouse"].block_device_mappings[0].ebs[0].volume_size == 40
+    error_message = "the template must still size the root device from disk_gb"
+  }
+
+  assert {
+    condition     = length(aws_eks_node_group.this["system"].launch_template) == 0 && aws_eks_node_group.this["system"].disk_size == 40
+    error_message = "a pool with no instance store policy must keep its shape: no template, its own disk size"
+  }
+}
+
+// With the registry-cache script as well, both parts ride one message, the
+// NodeConfig first, and a pool with no instance store carries the script alone.
+run "aws_instance_store_and_node_script_share_one_message" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    node_user_data = "#!/bin/bash\necho mirrors\n"
+
+    resolved_shapes = {
+      eks-system = {
+        instance_types = ["m9g.large", "m8g.large"]
+        arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 40 }
+      }
+      clickhouse = {
+        instance_types        = ["r8gd.large"]
+        arch                  = "arm64"
+        root_volume           = { type = "gp3", size_gib = 40 }
+        instance_store_policy = "RAID0"
+      }
+    }
+
+    node_pools = {
+      system = {
+        shape_ref     = "eks-system"
+        min_size      = 2
+        max_size      = 3
+        desired_size  = 2
+        capacity_type = "ON_DEMAND"
+        disk_gb       = 40
+        labels        = {}
+        taints        = []
+      }
+      clickhouse = {
+        shape_ref     = "clickhouse"
+        min_size      = 3
+        max_size      = 3
+        desired_size  = 3
+        capacity_type = "ON_DEMAND"
+        disk_gb       = 40
+        labels        = {}
+        taints        = []
+      }
+    }
+  }
+
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.nodes["clickhouse"].user_data), "      strategy: RAID0\n\n--==DFE-NODE==\nContent-Type: text/x-shellscript; charset=\"us-ascii\"\n\n#!/bin/bash\necho mirrors\n\n--==DFE-NODE==--\n")
+    error_message = "the NodeConfig and the script must ride one message, NodeConfig first"
+  }
+
+  assert {
+    condition     = !strcontains(base64decode(aws_launch_template.nodes["system"].user_data), "NodeConfig")
+    error_message = "a pool with no instance store policy must carry the script and no NodeConfig"
+  }
+}
+
+// Karpenter's instanceStorePolicy takes RAID0 alone, so anything else would
+// assemble a managed node's NVMe differently from its Karpenter pool's.
+run "aws_an_instance_store_policy_other_than_raid0_is_refused" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    resolved_shapes = {
+      eks-system = {
+        instance_types        = ["m9g.large", "m8g.large"]
+        arch                  = "arm64"
+        root_volume           = { type = "gp3", size_gib = 40 }
+        instance_store_policy = "Mount"
+      }
+    }
+  }
+
+  expect_failures = [var.resolved_shapes]
+}
+
 // The node image arrives through the cascade, so every managed group launches
 // exactly the family and the dated release the caller passed.
 run "aws_node_groups_launch_the_cascaded_image" {

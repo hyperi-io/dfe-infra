@@ -61,6 +61,10 @@ metadata:
     # cached-object storage model (docs/deployment/storage.md). Blank on every
     # cloud but AWS, same as the cluster_name annotation above.
     ${DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT_ANNOTATION}
+    # The storage model and cache placement the resolver decided, as one line
+    # of JSON that layer2-data.yaml hands clickhouse-cluster. Blank where the
+    # resolve decided neither, same as the endpoint above.
+    ${DFE_CLICKHOUSE_STORAGE_ANNOTATION}
     # The node-pools chart's three cluster facts, each blank on a non-AWS
     # cloud, same as the cluster_name annotation above.
     ${DFE_KARPENTER_DISCOVERY_TAG_ANNOTATION}

@@ -44,11 +44,19 @@ CONDITIONAL_FACTS = (
     # network-policies' networkModel and beats a deploy-repo overlay.
     ("DFE_POD_CIDR", "dfe.hyperi.io/pod_cidr", "layer2-platform.yaml", "podCIDR"),
     ("DFE_SERVICE_CIDR", "dfe.hyperi.io/service_cidr", "layer2-platform.yaml", "serviceCIDR"),
+    # test_clickhouse_object_store_chain.py renders the appset to prove both land
+    # on clickhouse-cluster, and that a deploy-repo endpoint stands without them.
     (
         "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT",
         "dfe.hyperi.io/clickhouse_object_store_endpoint",
         "layer2-data.yaml",
         "clickhouse.objectStore.endpoint",
+    ),
+    (
+        "DFE_CLICKHOUSE_STORAGE",
+        "dfe.hyperi.io/clickhouse_storage",
+        "layer2-data.yaml",
+        "clickhouse.storageModel",
     ),
     (
         "DFE_KARPENTER_DISCOVERY_TAG",
@@ -116,6 +124,7 @@ CONDITIONAL_FACTS = (
 # single-quoted where every other one here is double-quoted, and it is the
 # escaped copy that goes in the scalar rather than the raw value.
 SINGLE_QUOTED = {
+    "DFE_CLICKHOUSE_STORAGE": "DFE_CLICKHOUSE_STORAGE_YAML",
     "DFE_NODE_POOLS": "DFE_NODE_POOLS_YAML",
     "DFE_RUN_TAGS": "DFE_RUN_TAGS_YAML",
     "DFE_RESOURCE_TAGS": "DFE_RESOURCE_TAGS_YAML",

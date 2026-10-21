@@ -178,6 +178,12 @@
 #                            (docs/deployment/storage.md); empty omits the
 #                            annotation, which is every cloud but AWS, since
 #                            the aws root always provisions a bucket.
+#   DFE_CLICKHOUSE_STORAGE   clickhouse.storageModel and the instance-store cache
+#                            placement as one line of JSON, read from
+#                            ${DFE_SIZING_DIR}/sizing/<profile>.clickhouse-storage.json
+#                            when unset. Both are fixed at the first sync, so
+#                            they ride the cluster secret rather than wait for a
+#                            deploy repo; empty omits the annotation.
 #   DFE_CERTMANAGER_SECRET_ID  AppRole SecretID cert-manager authenticates to the
 #                            estate Vault/OpenBao PKI with, for the gateway
 #                            chart's tls.vault issuer mode. Set it and the edge
@@ -761,6 +767,18 @@ fi
 DFE_NODE_POOLS_YAML="${DFE_NODE_POOLS//\'/\'\'}"
 # shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
 export DFE_NODE_POOLS_ANNOTATION="${DFE_NODE_POOLS:+dfe.hyperi.io/node_pools: '${DFE_NODE_POOLS_YAML}'}"
+# ClickHouse's storage model and cache placement, from the same resolve, quoted
+# the same way as the pools. An explicit DFE_CLICKHOUSE_STORAGE wins.
+DFE_CLICKHOUSE_STORAGE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.clickhouse-storage.json"
+if [[ -z "${DFE_CLICKHOUSE_STORAGE:-}" && -f "${DFE_CLICKHOUSE_STORAGE_FILE}" ]]; then
+  DFE_CLICKHOUSE_STORAGE="$(tr -d '\n' < "${DFE_CLICKHOUSE_STORAGE_FILE}")"
+  echo "ClickHouse storage: ${DFE_CLICKHOUSE_STORAGE_FILE}"
+fi
+export DFE_CLICKHOUSE_STORAGE="${DFE_CLICKHOUSE_STORAGE:-}"
+# shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
+DFE_CLICKHOUSE_STORAGE_YAML="${DFE_CLICKHOUSE_STORAGE//\'/\'\'}"
+# shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
+export DFE_CLICKHOUSE_STORAGE_ANNOTATION="${DFE_CLICKHOUSE_STORAGE:+dfe.hyperi.io/clickhouse_storage: '${DFE_CLICKHOUSE_STORAGE_YAML}'}"
 # A test run's id and expiry as one line of JSON, quoted the same way as the pools.
 export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
 # shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion

@@ -134,17 +134,6 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
-              # The ClickHouse object-store bucket URL, from the aws root's
-              # object-store.tf. Empty leaves the chart's own default (also
-              # empty) untouched, so a non-AWS deploy or one that resolved
-              # storageModel: local renders exactly what it would without this
-              # parameter. Only clickhouse-cluster reads it; harmless elsewhere.
-              - name: clickhouse.objectStore.endpoint
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}'
-              # The S3 disk signs requests for one region; the deployment's own
-              # region is the right one whenever the endpoint above is set.
-              - name: clickhouse.objectStore.region
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/region" | default "" }}'
               # Whether dfe-internal-ca exists: the gateway chart that mints it is
               # deployed unless the edge label is "false" (layer2-edge.yaml, and
               # layer2-platform.yaml for a secret with no label, hence the "true"
@@ -230,6 +219,27 @@ spec:
                   host: {{ $chHost | quote }}
                   port: {{ $chPort }}
                   user: {{ $chUser | quote }}
+              {{- else if eq .app "clickhouse-cluster" }}
+              {{- /* Inline values beat every deploy-repo file, so each key is written only when its
+              annotation is set: a deploy-repo overlay's own endpoint, on-prem MinIO say, then stands. */}}
+              {{- $clickhouse := dict }}
+              {{- /* clickhouse.storageModel and the cache placement the resolver decided, fixed at first sync. */}}
+              {{- with index .metadata.annotations "dfe.hyperi.io/clickhouse_storage" | default "" }}
+              {{- $clickhouse = mustFromJson . }}
+              {{- end }}
+              {{- /* clickhouse.objectStore.endpoint: the aws root's bucket, and the one region its disk signs for. */}}
+              {{- with index .metadata.annotations "dfe.hyperi.io/clickhouse_object_store_endpoint" | default "" }}
+              {{- $objectStore := get $clickhouse "objectStore" | default (dict) }}
+              {{- $_ := set $objectStore "endpoint" . }}
+              {{- with index $.metadata.annotations "dfe.hyperi.io/region" | default "" }}
+              {{- $_ := set $objectStore "region" . }}
+              {{- end }}
+              {{- $_ := set $clickhouse "objectStore" $objectStore }}
+              {{- end }}
+              {{- if $clickhouse }}
+              clickhouse:
+                {{- toYaml $clickhouse | nindent 2 }}
+              {{- end }}
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
