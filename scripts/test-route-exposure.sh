@@ -387,7 +387,7 @@ BROWSER_PREFIXES=(
   /api/v1/library /api/v1/gitops /api/v1/lifecycle /api/v1/repository
 )
 CLI_PREFIXES=(
-  /api/v1/queries /api/v1/discovery /api/v1/sigma /api/v1/cel /api/v1/pipeline
+  /api/v1/queries /api/v1/sigma /api/v1/cel /api/v1/pipeline
   /api/v1/authoring /api/v1/app-contracts /api/v1/tasks /api/v1/synthetic-data
   /api/v1/sample /api/v1/samples /api/v1/hyperdx /api/v1/kafka/topics /openapi.json
 )
@@ -415,8 +415,8 @@ P="$(route_paths dfe-engine-cli-public --set ui.engine_api.cli_families_public=t
 for p in "${CLI_PREFIXES[@]}"; do
   assert_has "engine-cli" "${p}" "${P}"
 done
-# 13 families plus the spec: 36 across the two routes, the 22 browser ones unchanged.
-assert_count "engine-cli-total" 14 "$(printf '%s\n' "${P}" | grep -c .)"
+# 12 families plus the spec: 35 across the two routes, the 22 browser ones unchanged.
+assert_count "engine-cli-total" 13 "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${BROWSER_PREFIXES[@]}" /.well-known /api/v1/scim/v2; do
   assert_absent "engine-cli" "${p}" "${P}"
 done

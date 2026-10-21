@@ -558,7 +558,6 @@ routes:
     # The families the `dfe` CLI uses and no browser does.
     cliFamilies:
       - queries
-      - discovery
       - sigma
       - cel
       - pipeline
