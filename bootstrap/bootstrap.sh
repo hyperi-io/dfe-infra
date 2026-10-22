@@ -206,6 +206,12 @@
 #                            demanded-vs-allocatable table as a WARNING instead
 #                            of refusing. The warning still stands: the first
 #                            thing to give is the broker under peak.
+#   DFE_IMAGE_VOLUME_ENABLED=true  Kubernetes 1.34 only, for a stack that runs the
+#                            DocumentDB operator: say the ImageVolume feature gate
+#                            is on in the API server and every kubelet, when
+#                            check_platform.py cannot read it from the API server's
+#                            /metrics. Without it, a 1.34 cluster whose gate is off
+#                            or unreadable is refused.
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)

@@ -29,6 +29,7 @@ import contextlib
 import importlib.machinery
 import importlib.util
 import io
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -67,7 +68,33 @@ stacks:
     platform:
       kubernetes: "1.34-1.36"
       rke2: ">=v1.36"
+
+  # Pins the DocumentDB operator, so a cluster older than 1.35 has to carry the
+  # ImageVolume gate. `test-stack` pins none.
+  documentdb:
+    platform:
+      kubernetes: "1.34-1.36"
+    operators:
+      documentdb-operator: "1.0.0"
 """
+
+# Answers only `kubectl get --raw /metrics`, so any other call it receives fails loudly.
+FAKE_KUBECTL = """\
+#!/usr/bin/env python3
+import sys
+
+if sys.argv[1:] != ["get", "--raw", "/metrics"]:
+    sys.exit("unexpected kubectl call: " + " ".join(sys.argv[1:]))
+sys.stdout.write({stdout!r})
+sys.stderr.write({stderr!r})
+sys.exit({rc})
+"""
+
+GATE_ON = 'kubernetes_feature_enabled{name="ImageVolume",stage="BETA"} 1\n'
+GATE_OFF = 'kubernetes_feature_enabled{name="ImageVolume",stage="BETA"} 0\n'
+# A scrape that carries other gates and not this one.
+GATE_ABSENT = 'kubernetes_feature_enabled{name="WatchList",stage="BETA"} 1\n'
+FORBIDDEN = 'forbidden: user cannot get path "/metrics"\n'
 
 
 @contextlib.contextmanager
@@ -90,6 +117,40 @@ def _run(versions: Path, *argv: str) -> tuple[int, str, str]:
     finally:
         sys.argv = previous
     return rc, out.getvalue(), err.getvalue()
+
+
+@contextlib.contextmanager
+def _kubectl(stdout: str = "", stderr: str = "", rc: int = 0):
+    """A `kubectl` first on PATH that answers `get --raw /metrics` with the given output."""
+    with tempfile.TemporaryDirectory() as td:
+        script = Path(td) / "kubectl"
+        body = FAKE_KUBECTL.format(stdout=stdout, stderr=stderr, rc=rc)
+        script.write_text(body, encoding="utf-8", newline="\n")
+        script.chmod(0o755)
+        previous = os.environ["PATH"]
+        os.environ["PATH"] = f"{td}{os.pathsep}{previous}"
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = previous
+
+
+@contextlib.contextmanager
+def _override(value: str | None):
+    """DFE_IMAGE_VOLUME_ENABLED set to `value` for the block, or removed when None."""
+    name = check_platform.IMAGE_VOLUME_OVERRIDE_ENV
+    previous = os.environ.get(name)
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
 
 
 def _committed_platform() -> dict:
@@ -210,6 +271,87 @@ def test_rke2_is_not_checked_on_anything_else() -> None:
         rc, out, _ = _run(versions, "--actual", "1.35", "--stack", "rke2-ahead")
     expect("a non-RKE2 1.35 passes", rc == 0, f"got {rc}")
     expect("with no RKE2 verdict", "RKE2" not in out, out)
+
+
+# --- the ImageVolume gate -----------------------------------------------------
+def test_a_134_cluster_with_the_gate_on_passes() -> None:
+    with _fixture() as versions, _kubectl(stdout=GATE_ON), _override(None):
+        rc, out, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+    expect("1.34 with the gate on exits 0", rc == 0, f"got {rc}: {err}")
+    expect("and says the gate is on", "ImageVolume feature gate is on" in out, out)
+
+
+def test_a_134_cluster_with_the_gate_off_is_refused() -> None:
+    with _fixture() as versions, _kubectl(stdout=GATE_OFF), _override(None):
+        rc, out, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+    expect("1.34 with the gate off exits 3", rc == 3, f"got {rc}: {err}")
+    expect("and names the gate", "ImageVolume feature gate off" in err, err)
+    expect("and does not report the cluster as meeting the floor", "meets" not in out, out)
+
+
+def test_a_134_cluster_whose_gate_cannot_be_read_is_refused_naming_the_override() -> None:
+    with _fixture() as versions, _override(None):
+        with _kubectl(stderr=FORBIDDEN, rc=1):
+            rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+        expect("a /metrics refusal exits 3", rc == 3, f"got {rc}: {err}")
+        expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
+        with _kubectl(stdout=GATE_ABSENT):
+            rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+        expect("a scrape without the series is unreadable too", rc == 3, f"got {rc}: {err}")
+        expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
+
+
+def test_a_134_cluster_without_kubectl_is_refused_naming_the_override() -> None:
+    with _fixture() as versions, tempfile.TemporaryDirectory() as empty, _override(None):
+        previous = os.environ["PATH"]
+        os.environ["PATH"] = empty
+        try:
+            rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+        finally:
+            os.environ["PATH"] = previous
+    expect("no kubectl exits 3", rc == 3, f"got {rc}: {err}")
+    expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
+
+
+def test_the_override_admits_a_gate_that_cannot_be_read() -> None:
+    with _fixture() as versions, _kubectl(stderr=FORBIDDEN, rc=1), _override("true"):
+        rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+    expect("the override exits 0", rc == 0, f"got {rc}: {err}")
+    expect("and warns that the gate was not read", "WARNING" in err and "DFE_IMAGE_VOLUME_ENABLED" in err, err)
+
+
+def test_only_true_is_an_override() -> None:
+    """The message asks for `true`, so `1` or `yes` does not admit."""
+    with _fixture() as versions, _kubectl(stderr=FORBIDDEN, rc=1), _override("1"):
+        rc, _, _ = _run(versions, "--actual", "1.34", "--stack", "documentdb")
+    expect("a value other than true does not admit", rc == 3, f"got {rc}")
+
+
+def test_a_135_cluster_is_not_checked_for_the_gate() -> None:
+    """The kubectl here reports the gate off, so a read on 1.35 would show as a REFUSED."""
+    with _fixture() as versions, _kubectl(stdout=GATE_OFF), _override(None):
+        rc, out, err = _run(versions, "--actual", "1.35", "--stack", "documentdb")
+        rc_later, _, err_later = _run(versions, "--actual", "1.36", "--stack", "documentdb")
+    expect("1.35 exits 0", rc == 0, f"got {rc}: {err}")
+    expect("without a gate verdict", "ImageVolume" not in out + err, out + err)
+    expect("a later minor exits 0 too", rc_later == 0, f"got {rc_later}: {err_later}")
+
+
+def test_a_stack_without_the_documentdb_operator_is_not_checked_for_the_gate() -> None:
+    with _fixture() as versions, _kubectl(stdout=GATE_OFF), _override(None):
+        rc, out, err = _run(versions, "--actual", "1.34")
+    expect("1.34 on a stack with no DocumentDB exits 0", rc == 0, f"got {rc}: {err}")
+    expect("without a gate verdict", "ImageVolume" not in out + err, out + err)
+
+
+def test_the_override_is_documented_where_a_deployer_reads_it() -> None:
+    """bootstrap.sh's header lists the deploy variables, and the on-prem prerequisites name the check."""
+    name = check_platform.IMAGE_VOLUME_OVERRIDE_ENV
+    header = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
+    prerequisites = (REPO_ROOT / "docs" / "deployment" / "on-prem.md").read_text(encoding="utf-8")
+    expect("bootstrap.sh's header lists the override", f"#   {name}" in header)
+    expect("on-prem.md names the override", name in prerequisites)
+    expect("and the gate it reads", check_platform.IMAGE_VOLUME_GATE in prerequisites)
 
 
 # --- the committed stack ------------------------------------------------------
