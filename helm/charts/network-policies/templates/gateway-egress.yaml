@@ -18,6 +18,7 @@
        listener port, and this rule is what makes the pool reachable at all. */}}
 {{- $ports = append $ports (dict "port" .Values.mesh.port "protocol" "TCP") }}
 {{- end }}
+{{- $optOut := .Values.egressScopedLabel }}
 {{- if $gw.enabled }}
 {{- range .Values.dfeNamespaces }}
 ---
@@ -29,7 +30,15 @@ metadata:
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
+  # A pod carrying the opt-out states its whole egress itself, as for the baseline.
+  {{- if $optOut }}
+  podSelector:
+    matchExpressions:
+      - key: {{ $optOut }}
+        operator: DoesNotExist
+  {{- else }}
   podSelector: {}
+  {{- end }}
   policyTypes:
     - Egress
   egress:
