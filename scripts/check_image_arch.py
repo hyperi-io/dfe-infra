@@ -248,6 +248,19 @@ CHART_VALUES_IMAGES = {
     "forgejo setup Job curl": (Path("helm/charts/forgejo/values.yaml"), ("setup", "image")),
     # The MSK bootstrap Job, and the smoke test's and dfe-ops diagnostics' Kafka client pods.
     "kafka CLI": (Path("helm/charts/kafka/values.yaml"), ("kafka", "cliImage")),
+    # The images the DocumentDB CR names, until a stack pins them.
+    "DocumentDB extension": (
+        Path("helm/charts/documentdb/values.yaml"),
+        ("documentdb", "image", "documentDB"),
+    ),
+    "DocumentDB gateway": (
+        Path("helm/charts/documentdb/values.yaml"),
+        ("documentdb", "image", "gateway"),
+    ),
+    "DocumentDB PostgreSQL": (
+        Path("helm/charts/documentdb/values.yaml"),
+        ("documentdb", "image", "postgres"),
+    ),
 }
 
 # Strimzi runs its brokers from this repository, tagged

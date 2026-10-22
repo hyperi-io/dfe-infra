@@ -1,0 +1,83 @@
+{{- $ddb := .Values.documentdb }}
+{{- $name := include "dfe-common.fullname" . }}
+{{- $placement := .Values.nodeScheduling | default dict }}
+# HyperDX's document store. The operator renders a CloudNativePG Cluster from this:
+# instancesPerNode PostgreSQL instances with the DocumentDB extension mounted from
+# image.documentDB, the gateway injected beside each one, CloudNativePG's
+# PodDisruptionBudgets and failover, and the Service documentdb-service-<name>,
+# which follows the primary. No imagePullSecrets: every image here is public.
+apiVersion: documentdb.io/preview
+kind: DocumentDB
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  # One CloudNativePG cluster, the only value the CRD admits.
+  nodeCount: 1
+  instancesPerNode: {{ $ddb.instances }}
+  documentDBVersion: {{ $ddb.version | quote }}
+  image:
+    documentDB: {{ $ddb.image.documentDB | quote }}
+    gateway: {{ $ddb.image.gateway | quote }}
+    postgres: {{ $ddb.image.postgres | quote }}
+  documentDbCredentialSecret: {{ $ddb.auth.secretName }}
+  resource:
+    memory: {{ $ddb.resource.memory | quote }}
+    cpu: {{ $ddb.resource.cpu | quote }}
+    gateway:
+      cpu: {{ $ddb.resource.gateway.cpu | quote }}
+    storage:
+      pvcSize: {{ $ddb.storage.size | quote }}
+      {{- with ($ddb.storage.storageClass | default .Values.storageClass) }}
+      # Immutable once the cluster exists.
+      storageClass: {{ . | quote }}
+      {{- end }}
+      persistentVolumeReclaimPolicy: {{ $ddb.storage.reclaimPolicy }}
+  exposeViaService:
+    serviceType: ClusterIP
+  tls:
+    gateway:
+      mode: CertManager
+      certManager:
+        issuerRef:
+          name: {{ $name }}-ca
+          kind: Issuer
+          group: cert-manager.io
+        secretName: {{ $ddb.tls.gatewaySecretName }}
+        # The operator adds the Service's short names. hyperdx dials the full one.
+        dnsNames:
+          - documentdb-service-{{ $name }}.{{ .Release.Namespace }}.svc.cluster.local
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: {{ $ddb.affinity.podAntiAffinityType }}
+    topologyKey: {{ $ddb.affinity.topologyKey }}
+    additionalPodAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: {{ $ddb.affinity.zoneTopologyKey }}
+            labelSelector:
+              matchLabels:
+                cnpg.io/cluster: {{ $name }}
+    {{- with $placement.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $placement.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  postgres:
+    {{- with $ddb.postgresParameters }}
+    parameters:
+      {{- range $key, $value := . }}
+      {{ $key }}: {{ $value | quote }}
+      {{- end }}
+    {{- end }}
+    # The operator's bootstrap gives the documentdb superuser a password published
+    # in its source, and CloudNativePG's last pg_hba rule takes a password from any
+    # address. Nothing logs in as it with one: the gateway and the extension's own
+    # loopback connect over localhost, which pg_hba trusts.
+    postInitSQL:
+      - ALTER ROLE documentdb WITH PASSWORD NULL

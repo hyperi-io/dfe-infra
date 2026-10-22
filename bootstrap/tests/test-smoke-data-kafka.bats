@@ -61,6 +61,7 @@ case "$*" in
         done < "${STUB_DIR}/pods"
         exit 0 ;;
     "-n clickhouse get pods "*) echo pod/dfe-clickhouse-0; exit 0 ;;
+    "-n cnpg get dbs.documentdb.io "*) echo "Cluster in healthy state"; exit 0 ;;
     *"jsonpath="*) echo 1; exit 0 ;;
     "get ns "*) exit 0 ;;
 esac

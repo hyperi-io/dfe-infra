@@ -8,11 +8,11 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The Kafka broker user, the kafbat break-glass admin, the FerretDB backend password and Keeper's identity.
+"""The Kafka broker user, the kafbat break-glass admin, the DocumentDB gateway login and Keeper's identity.
 
 ESO's `refreshPolicy: CreatedOnce` re-runs the generator on any reconcile that finds no
 recorded sync or a target Secret whose data hash fails validation, and every run mints a
-new value. The consumer that read the first value at start (the broker, the backend) then
+new value. The consumer that read the first value at start (the broker, the gateway) then
 disagrees with one that reads a later copy. `target.immutable: true` makes ESO discard the
 new value and leave the Secret as it was, and flips an existing mutable Secret without
 writing a new value (ESO v2.5.0 to v2.11.0 `externalsecret_controller.go`, mutationFunc).
@@ -41,7 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COVERED_TEMPLATES = {
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/admin-secret.yaml",
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/keeper-identity-secret.yaml",
-    REPO_ROOT / "helm/charts/ferretdb/templates/auth.yaml",
+    REPO_ROOT / "helm/charts/documentdb/templates/auth.yaml",
     REPO_ROOT / "helm/charts/kafbat/templates/externalsecret.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user.yaml",
 }
@@ -62,11 +62,11 @@ class Case:
 
 KAFKA = Case("kafka single-tier broker user", "kafka", ("kafka.mode=single",), "dfe-kafka-user")
 KAFBAT = Case("kafbat break-glass admin", "kafbat", (), "dfe-kafbat-breakglass")
-FERRETDB = Case(
-    "ferretdb backend password",
-    "ferretdb",
-    ("ferretdb.mode=deploy", "appNamespace=dfe-ui"),
-    "dfe-ferretdb-password",
+DOCUMENTDB = Case(
+    "documentdb gateway login",
+    "documentdb",
+    ("appNamespace=dfe-ui",),
+    "dfe-documentdb-credentials",
 )
 KEEPER_IDENTITY = Case(
     "single-mode Keeper identity",
@@ -132,8 +132,9 @@ def test_the_kafbat_break_glass_password_cannot_be_reminted() -> None:
     check_written_once_and_immutable(KAFBAT)
 
 
-def test_the_ferretdb_backend_password_cannot_be_reminted() -> None:
-    check_written_once_and_immutable(FERRETDB)
+def test_the_documentdb_gateway_login_cannot_be_reminted() -> None:
+    """The gateway creates the user once, so a second value locks hyperdx out."""
+    check_written_once_and_immutable(DOCUMENTDB)
 
 
 def test_the_single_mode_keeper_identity_cannot_be_reminted() -> None:

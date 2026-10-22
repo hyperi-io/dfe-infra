@@ -83,8 +83,8 @@ kubectl -n argocd get app -w               # watch Layer 2 sync
 
 ```mermaid
 flowchart LR
-  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, Strimzi, ..."]
-  W2 --> W4["data platform<br/>FerretDB, Kafka, ClickHouse, OTel"]
+  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, DocumentDB, Strimzi, ..."]
+  W2 --> W4["data platform<br/>DocumentDB, Kafka, ClickHouse, OTel"]
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```
 

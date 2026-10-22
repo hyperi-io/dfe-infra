@@ -907,6 +907,26 @@ data_operators() {
     [[ "${output}" != *"WARN"* ]]
 }
 
+@test "the DocumentDB operator goes in step 3, after the DocumentDB CR it finalizes" {
+    printf '%s\n' \
+        'documentdb-operator-dfe-aws-test  . oci://ghcr.io/documentdb/documentdb-operator' \
+        'documentdb-dfe-aws-test    helm/charts/documentdb https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        > "${STUB_DIR}/applications"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first cr operator
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"documentdb-dfe-aws-test"* ]]
+    [[ "${first}" != *"documentdb-operator-dfe-aws-test"* ]]
+    cr="$(line_of '-n cnpg delete dbs.documentdb.io --all --timeout=120s' "${log_text}")"
+    operator="$(line_of '-n argocd delete applications.argoproj.io documentdb-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${cr}" ]
+    [ -n "${operator}" ]
+    [ "${cr}" -lt "${operator}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
 # The data operators and Karpenter on one cluster, with the PodDisruptionBudgets a
 # Kafka and a ClickHouseCluster carry and two NodeClaims that take ${1} listings to go.
 data_operators_on_karpenter() {
@@ -934,7 +954,7 @@ data_operators_on_karpenter() {
     [ -n "${operators}" ]
     # While a CR stands its operator puts back a PodDisruptionBudget deleted from under it.
     for cr in '-n strimzi delete kafka' '-n strimzi delete redpandas.cluster.redpanda.com' \
-        '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
+        '-n cnpg delete dbs.documentdb.io' '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
         '-n clickhouse delete keepercluster' '-n clickhouse delete clickhouseinstallation'; do
         deleted="$(line_of "${cr} --all --timeout=120s" "${log_text}")"
         [ -n "${deleted}" ]

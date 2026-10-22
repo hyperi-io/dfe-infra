@@ -124,12 +124,24 @@ drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 - bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain
   manifest image), `local-path-provisioner`, `metallb` (on-prem only).
 - operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`,
-  `reloader`, and the three OPERATOR chart pins
+  `reloader`, the three OPERATOR chart pins
   (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the
-  operator's own release line, distinct from the class-B service version).
+  operator's own release line, distinct from the class-B service version), and
+  `documentdb-operator` (see the DocumentDB store below).
 - data: `otel-collector`, `forgejo` (bundled deploy-repo fallback, k8s-only).
-  `postgresql` is no chart or image: it records the PostgreSQL major of
-  FerretDB's DocumentDB backend, which the AWS toolbox installs psql at.
+  `postgresql` is no chart or image: it records the PostgreSQL major the AWS
+  toolbox installs psql at.
+- the DocumentDB store, HyperDX's metadata on k8s (dfe-docker runs FerretDB,
+  class E below):
+  - the operator is the OCI chart `oci://ghcr.io/documentdb/documentdb-operator`
+    1.0.0, by digest, in `argocd/appsets/layer1-addons.yaml`. Its chart bundles
+    CloudNativePG and installs it into `cnpg-system`, and the operator, sidecar
+    injector and CloudNativePG images carry their digests in the tag overrides.
+  - `helm/charts/documentdb` renders the DocumentDB CR, whose values name the
+    extension, gateway and PostgreSQL 18.6 images tag@sha256.
+  - `check_versions_drift.py` reads every one of these pins. Their versions.yaml
+    keys start with the stack cut after 2.2.1-rc.17, and until then each check is
+    noted as pending rather than compared (`PENDING_MIRRORS`).
 
 ## Class D - third-party plain image, BOTH paths
 
@@ -141,25 +153,15 @@ image. One number, same image ref both sides.
 - SSoT: `services.kafbat` (v1.5.0@sha256:...). k8s: `helm/charts/kafbat` `image.tag`.
   docker: `KAFBAT_VERSION` -> `ghcr.io/kafbat/kafka-ui`. ALIGNED today.
 
-### FerretDB (Mongo-wire metadata store for HyperDX)
-
-- SSoT: `services.ferretdb` (2.7.0). k8s: `helm/charts/ferretdb` (image tag defaults
-  to Chart appVersion). docker: `HYPERDX_FERRETDB_VERSION` ->
-  `ghcr.io/ferretdb/ferretdb`.
-- ALIGNED today: chart appVersion + the values.yaml image digest match
-  `services.ferretdb` / `services-digests.ferretdb`, drift-checked.
-
-### postgres-documentdb (FerretDB 2.x PG backend)
-
-- SSoT: `services.documentdb-pg` (17-0.107.0-ferretdb-2.7.0). k8s:
-  `helm/charts/ferretdb` `documentdb.image` (a standalone StatefulSet beside
-  FerretDB). docker: `HYPERDX_POSTGRES_VERSION` ->
-  `ghcr.io/ferretdb/postgres-documentdb`.
-- ALIGNED today: the chart's tag and digest match `services.documentdb-pg` /
-  `services-digests.documentdb-pg`, drift-checked. It is the only PostgreSQL
-  the stack deploys.
-
 ## Class E - third-party plain image, docker-ONLY
+
+### FerretDB and its PostgreSQL backend (HyperDX's metadata, docker)
+
+- SSoT: `services.ferretdb` (2.7.0) and `services.documentdb-pg`
+  (17-0.107.0-ferretdb-2.7.0). docker: `HYPERDX_FERRETDB_VERSION` ->
+  `ghcr.io/ferretdb/ferretdb` and `HYPERDX_POSTGRES_VERSION` ->
+  `ghcr.io/ferretdb/postgres-documentdb`.
+- No k8s cascade: k8s runs the DocumentDB store (class C above).
 
 ### Envoy (dfe-proxy)
 
@@ -188,7 +190,7 @@ image. One number, same image ref both sides.
 - The loop-closer (`check_versions_drift.py` / `dfe-stack verify --rendered`):
   assert each OUR-chart templated image tag == the SSoT logical version, so a
   chart cannot drift from the manifest. Covers class A, class B (CH
-  server+keeper, kafka `kafka.version`) and class D (kafbat, ferretdb).
+  server+keeper, kafka `kafka.version`), class D (kafbat) and the DocumentDB store.
 
 ## Known gaps this audit surfaced (track, do not silently ignore)
 
@@ -198,11 +200,8 @@ image. One number, same image ref both sides.
    `${...:?}` MUST have an SSoT entry, and renaming the IMAGE without renaming
    that entry renders a valid tag@digest for the wrong repository - which is
    exactly how `envoyproxy/envoy:1.31-alpine@<nginx digest>` reached a VM.
-2. **CLOSED - FerretDB k8s matches SSoT.** `helm/charts/ferretdb` now bundles its
-   own postgres-documentdb backend and pins Chart appVersion 2.7.0 plus the
-   values.yaml image digest to `services.ferretdb` / `services-digests.ferretdb`,
-   matching the docker target. `check_versions_drift.py` asserts both, so
-   ferretdb is no longer excluded from the loop-closer.
+2. OPEN - the DocumentDB pins have no versions.yaml keys yet. The stack cut
+   after 2.2.1-rc.17 adds them, and the drift checks for them stop being pending.
 3. **Kafka/Redpanda operator ceiling.** `kafka-version` <= strimzi 1.2's
    supported set (4.3.1), `redpanda-version` paired with the redpanda operator
    chart. Both bounded in the org preset; bumped by hand with their operator.

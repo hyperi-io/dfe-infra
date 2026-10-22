@@ -233,8 +233,19 @@ longer than the cutover overlap can cover. Expect a small performance loss
 against the fork in a couple of specific use cases, and measure it during the
 overlap against the deployment's own heaviest queries.
 
+## HyperDX's document store
+
+From 2.2.1 HyperDX keeps its state in a DocumentDB cluster that the DocumentDB operator runs on CloudNativePG (`helm/charts/documentdb`), in place of FerretDB. The two keep documents in different PostgreSQL schemas, so nothing moves across in place. 2.2.1 is a fresh install: a deployment upgraded from an earlier stack starts HyperDX on an empty store, without the saved searches, alerts, users and unprovisioned dashboards it held. One that has to keep them copies them before HyperDX cuts over, with `mongodump` against the FerretDB endpoint and `mongorestore` into the gateway, the step upstream documents for moving data between DocumentDB clusters. The restore side needs TLS against the store's CA and SCRAM-SHA-256, the options hyperdx's own `mongodb.uri` carries.
+
+Between DocumentDB releases the upgrade is in place and two-phase. The binary moves first, with `documentdb.version` and the extension and gateway images in the chart's values, and reverting them rolls it back. The schema moves only when `spec.schemaVersion` is set, which runs `ALTER EXTENSION documentdb UPDATE` and cannot be undone. The chart sets no `schemaVersion`, so an image bump never migrates the schema by itself. Upstream's runbook: https://github.com/documentdb/documentdb-kubernetes-operator/blob/1.0.0/docs/operator-public-documentation/preview/operations/upgrades.md
+
+The operator mounts the extension as an image volume, which needs the Kubernetes ImageVolume feature: on by default from 1.35, behind a feature gate on 1.33 and 1.34. Without it the operator's admission webhook refuses the DocumentDB CR. The operator chart's CRDs reach the cluster through Argo CD, server-side, so an operator upgrade carries its CRD changes with it.
+
+The operator chart 1.0.0 bundles the cloudnative-pg chart 0.28.3, whose CRDs and RBAC are CloudNativePG 1.29.1's, while the operator runs 1.29.3. `helm/charts/documentdb` grants the EndpointSlice read 1.29.3 needs. The 1.29.1 CRDs drop three status fields 1.29.3 writes, one of them the target image of an in-progress PostgreSQL major upgrade, so a major upgrade waits for an operator chart that bundles matching CRDs.
+
 ## What cannot be rolled back
 
+- A DocumentDB schema update (`spec.schemaVersion`) is one way.
 - Kafka's `metadata.version` bump is one way, so the roll and the finalise are separate steps with a soak between them, and `apply` holds the metadata version so Strimzi cannot take that step on its own.
 - ClickHouse downgrades only within the same LTS line.
 - `apply --finalise` across 2.2.1-rc.1 drops the 2.2.0 value keys, after which no stack before 2.2.1-rc.1 renders the deploy repo until that commit is reverted ([Values](#values)).

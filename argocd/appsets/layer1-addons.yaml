@@ -1,5 +1,5 @@
-# Layer 1 addons: KEDA, metrics-server, Reloader, and external-dns where the
-# cluster declares a DNS provider.
+# Layer 1 addons: KEDA, metrics-server, Reloader, the DocumentDB operator, and
+# external-dns where the cluster declares a DNS provider.
 # Chart versions MUST match versions.yaml (the SSOT).
 # Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
 #
@@ -79,6 +79,54 @@ spec:
                   wave: "3"
                   appProject: infra
                   chartValuesYaml: ""
+                # The operator behind HyperDX's document store (layer2-data's
+                # documentdb). Its chart bundles CloudNativePG, which it requires
+                # and installs into cnpg-system, and needs cert-manager, which
+                # bootstrap installs first. OCI only, pinned by digest. The chart
+                # composes repository:tag, so each tag carries its image digest.
+                # CloudNativePG runs 1.29.3, the 1.29 line's last patch, over the
+                # chart's 1.29.1: it fixes GHSA-x8c2-3p4r-v9r6, GHSA-w3gf-xc94-wvmj
+                # and CVE-2026-84304. The EndpointSlice read it needs and the
+                # bundled chart lacks is granted by helm/charts/documentdb.
+                - chart: documentdb-operator
+                  repo: ghcr.io/documentdb
+                  version: "1.0.0"
+                  chartDigest: "sha256:6325eccd12db73ad2b3ffd2df294c79187c0521fb31b1f9a1c3061fa89f35114"
+                  namespace: documentdb-operator
+                  wave: "3"
+                  appProject: infra
+                  chartValuesYaml: |
+                    image:
+                      documentdbk8soperator:
+                        tag: "1.0.0@sha256:9d433fd486ac49de79565318e573de08ff67e8819d2f4a955f43dee6db8a5e14"
+                      sidecarinjector:
+                        tag: "1.0.0@sha256:53942efe095ebff72f6332c02d478476183bb5763885f870ac485a0d5e8d29e5"
+                    operator:
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 128Mi
+                        limits:
+                          memory: 256Mi
+                    sidecarInjector:
+                      resources:
+                        requests:
+                          cpu: 50m
+                          memory: 64Mi
+                        limits:
+                          memory: 128Mi
+                    cloudnative-pg:
+                      # The chart's own value, stated because the network policies
+                      # admit this namespace (operatorNamespaces.cnpg).
+                      namespaceOverride: cnpg-system
+                      image:
+                        tag: "1.29.3@sha256:cc0594bd9fd8cdd654dfbd91e4cf2c8fc1bfc4e3a09c4a90a2ab4ffc524f1db5"
+                      resources:
+                        requests:
+                          cpu: 100m
+                          memory: 256Mi
+                        limits:
+                          memory: 512Mi
                 # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
                 # (clickhouse.com CRDs) are cluster-only operators: deployed in the
                 # scale profile via appsets/layer-scale.yaml (cluster-label gated).

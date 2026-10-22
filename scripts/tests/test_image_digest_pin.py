@@ -29,7 +29,8 @@ Six things are checked:
 5. The engine's content init containers run OTHER apps' images, so each one is
    checked against the pin for the app it speaks for.
 6. Every upstream image a chart runs carries the digest versions.yaml certified, or
-   for the MSK bootstrap Job, the digest kafka.cliImage pins.
+   for the MSK bootstrap Job, the digest kafka.cliImage pins, and the DocumentDB CR
+   names its images tag@sha256.
 
     python3 scripts/tests/test_image_digest_pin.py
 
@@ -311,8 +312,6 @@ def _operator_images(docs: list[dict]) -> list[str]:
 # and the services: key pinning that image. The kafka chart is rendered once per
 # workload, because each mode deploys a different broker.
 THIRD_PARTY_WORKLOADS = [
-    ("ferretdb", (), "ghcr.io/ferretdb/ferretdb", "ferretdb"),
-    ("ferretdb", (), "ghcr.io/ferretdb/postgres-documentdb", "documentdb-pg"),
     ("forgejo", (), "code.forgejo.org/forgejo/forgejo", "forgejo"),
     ("otel-collector", (), "otel/opentelemetry-collector-contrib", "otel-collector"),
     (
@@ -364,6 +363,21 @@ def test_the_msk_bootstrap_job_runs_the_digest_pinned_cli_image() -> None:
         len(rendered) == 2 and all(i == want for i in rendered),
         f"wanted {want} twice, got {rendered}",
     )
+
+
+def test_the_documentdb_cr_names_each_image_by_digest() -> None:
+    """The operator pulls exactly the references the CR names, so each carries its digest."""
+    values = yaml.safe_load((CHARTS / "documentdb" / "values.yaml").read_text(encoding="utf-8"))
+    want = values["documentdb"]["image"]
+    (cr,) = [d for d in render("documentdb") if d.get("kind") == "DocumentDB"]
+    rendered = cr["spec"]["image"]
+    expect(
+        "every image the values pin names its digest",
+        sorted(want) == ["documentDB", "gateway", "postgres"]
+        and all(re.search(r":[^/@]+@sha256:[0-9a-f]{64}$", ref) for ref in want.values()),
+        f"{want}",
+    )
+    expect("the CR names them unchanged", rendered == want, f"wanted {want}, got {rendered}")
 
 
 def test_the_clickhouse_operator_crs_carry_the_digest_in_the_tag() -> None:

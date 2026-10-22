@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
-#  File:         test_ferretdb_egress.py
-#  Purpose:      Prove only dfe-hyperdx reaches FerretDB, only FerretDB reaches its
-#                PostgreSQL backend, and the edge tunnel reaches neither the backing
-#                services nor the gateway.
+#  File:         test_documentdb_egress.py
+#  Purpose:      Prove only dfe-hyperdx reaches the DocumentDB gateway, nothing outside
+#                the cluster's own instances and CloudNativePG reaches the rest of an
+#                instance, and the edge tunnel reaches neither the backing services
+#                nor the gateway.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Who can open a connection to FerretDB and to the PostgreSQL backend behind it.
+"""Who can open a connection to a DocumentDB instance, and on which port.
 
-FerretDB's one login is the backend's PostgreSQL superuser and FerretDB enforces no
-authorisation, so a pod holding that password owns the store at either port. Policies
-are additive, so a single policy proves nothing about a pod. Each check here judges a
-connection the way the CNI does, over every policy in the render: some egress rule
-selecting the source and some ingress rule selecting the destination must both admit
-it.
+Each instance pod runs PostgreSQL, which holds the documentdb superuser, with the
+DocumentDB gateway beside it. Policies are additive, so a single policy proves nothing
+about a pod. Each check here judges a connection the way the CNI does, over every
+policy in the render: some egress rule selecting the source and some ingress rule
+selecting the destination must both admit it.
 
 The sources are every workload the thin-chart goldens render, with their own
 NetworkPolicies, plus a pod carrying no labels at all, plus a pod in each namespace
-data-ingress-policy admits that carries no egress policy of its own. The destinations
-are the ferretdb chart's own pods, in the namespace layer2-data deploys it to.
+data-ingress-policy admits that carries no egress policy of its own. CloudNativePG
+creates the instance pods at runtime, so the destinations are modelled from the
+documentdb chart's DocumentDB resource and the label CloudNativePG writes on every
+instance of its cluster.
 
-    python3 scripts/tests/test_ferretdb_egress.py
+    python3 scripts/tests/test_documentdb_egress.py
 
 Needs `helm` on PATH.
 """
@@ -33,6 +35,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 from test_keeper_ingress import selects
@@ -44,20 +47,23 @@ from _gate import CELLS, NAMESPACE, WORKLOAD_KINDS, golden, references
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
 COMMON = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
+HYPERDX = yaml.safe_load((VALUES / "apps" / "hyperdx" / "values.yaml").read_text(encoding="utf-8"))
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
-FERRETDB_VALUES = yaml.safe_load(
-    (chart_dir("ferretdb") / "values.yaml").read_text(encoding="utf-8")
+DOCUMENTDB_VALUES = yaml.safe_load(
+    (chart_dir("documentdb") / "values.yaml").read_text(encoding="utf-8")
 )
 POLICY_VALUES = yaml.safe_load(
     (chart_dir("network-policies") / "values.yaml").read_text(encoding="utf-8")
 )
+ACCESS = POLICY_VALUES["documentdbAccess"]
 
 NS_LABEL = "kubernetes.io/metadata.name"
-PROXY = "dfe-ferretdb"
-BACKEND = "dfe-ferretdb-documentdb"
 READER = "dfe-hyperdx"
+# CloudNativePG's instance manager listens here, and PostgreSQL on its usual port.
+STATUS_PORT = 8000
+PG_PORT = 5432
 
-# Every purpose externalEgress opens on a declaration, at once: none may reach either port.
+# Every purpose externalEgress opens on a declaration, at once: none may reach an instance.
 DECLARED = (
     "clickhouse.mode=external",
     "kafka.mode=external",
@@ -67,7 +73,7 @@ DECLARED = (
     "elasticsearch.endpoint=https://es.example.com:9200",
 )
 VARIANTS = {"default": (), "every external declared": DECLARED}
-# Emptying the Keeper opt-out must not put FerretDB's pods back under data-ingress-policy.
+# Emptying the Keeper opt-out must not put the instances back under data-ingress-policy.
 INGRESS_VARIANTS = {"default": (), "the Keeper opt-out empty": ("operatorIngressScoped=null",)}
 
 
@@ -105,7 +111,7 @@ def deployed_namespace(app: str) -> str:
     raise SystemExit(f"layer2-data deploys no {app}")
 
 
-STORE_NS = deployed_namespace("ferretdb")
+STORE_NS = deployed_namespace("documentdb")
 
 
 @functools.cache
@@ -119,24 +125,9 @@ def render_policies(*sets: str) -> tuple[dict, ...]:
 
 @functools.cache
 def render_store() -> tuple[dict, ...]:
-    cmd = ["helm", "template", "ferretdb", str(chart_dir("ferretdb"))]
+    cmd = ["helm", "template", "documentdb", str(chart_dir("documentdb"))]
     cmd += ["-f", str(VALUES / "common.yaml"), "--namespace", STORE_NS]
     return tuple(run([*cmd, "--set", f"appNamespace={NAMESPACE}"]))
-
-
-def workload(docs: tuple[dict, ...] | list[dict], name: str) -> dict:
-    for doc in docs:
-        if doc.get("kind") in WORKLOAD_KINDS and doc["metadata"]["name"] == name:
-            return doc
-    raise SystemExit(f"no workload {name} in the render")
-
-
-def container_port(doc: dict, name: str) -> int:
-    for container in doc["spec"]["template"]["spec"]["containers"]:
-        for port in container.get("ports") or []:
-            if port.get("name") == name:
-                return port["containerPort"]
-    raise SystemExit(f"{doc['metadata']['name']} has no container port {name}")
 
 
 def template_labels(doc: dict) -> dict[str, str]:
@@ -147,26 +138,23 @@ def template_labels(doc: dict) -> dict[str, str]:
     return spec["template"]["metadata"].get("labels") or {}
 
 
-@dataclass(frozen=True, slots=True)
-class Store:
-    """FerretDB's proxy and backend pods, and the container port each serves."""
-
-    proxy: Pod
-    backend: Pod
-    mongo_port: int
-    pg_port: int
+def cluster_name() -> str:
+    """The name the chart gives its DocumentDB, which CloudNativePG labels its pods with."""
+    found = [d["metadata"]["name"] for d in render_store() if d.get("kind") == "DocumentDB"]
+    if len(found) != 1:
+        raise SystemExit(f"expected one DocumentDB in the render, got {found}")
+    return found[0]
 
 
-@functools.cache
-def store() -> Store:
-    docs = render_store()
-    proxy, backend = workload(docs, PROXY), workload(docs, BACKEND)
-    return Store(
-        Pod(PROXY, STORE_NS, template_labels(proxy), address(0)),
-        Pod(BACKEND, STORE_NS, template_labels(backend), address(1)),
-        container_port(proxy, "mongodb"),
-        container_port(backend, "postgres"),
-    )
+def instance(index: int) -> Pod:
+    """One instance pod of the cluster, as CloudNativePG labels it."""
+    labels = {ACCESS["clusterLabel"]: cluster_name()}
+    return Pod(f"{cluster_name()}-{index + 1}", STORE_NS, labels, address(index))
+
+
+def gateway_port() -> int:
+    """The port hyperdx dials, read from its connection string."""
+    return urlsplit(HYPERDX["mongodb"]["uri"]).port
 
 
 @functools.cache
@@ -262,14 +250,37 @@ def reaching(variant: tuple[str, ...], dest: Pod, port: int) -> set[str]:
     return {pod.name for pod, own in app_pods() if connects((*base, *own), pod, dest, port)}
 
 
+def policy_value(key: str) -> object:
+    """A network-policies value as Argo renders it: common.yaml over the chart default."""
+    return COMMON.get(key, POLICY_VALUES[key])
+
+
+def operator_pod() -> Pod:
+    return Pod("cloudnativepg", policy_value("operatorNamespaces")["cnpg"], {}, address(64))
+
+
 def test_the_destinations_are_the_charts_own() -> None:
-    s = store()
-    expect("FerretDB speaks Mongo wire on 27017", s.mongo_port == 27017, f"got {s.mongo_port}")
-    expect("its backend speaks PostgreSQL on 5432", s.pg_port == 5432, f"got {s.pg_port}")
+    name = cluster_name()
     expect(
-        "the backend's labels are not FerretDB's",
-        not selects({"matchLabels": s.proxy.labels}, s.backend.labels),
-        f"{s.proxy.labels} vs {s.backend.labels}",
+        "documentdbAccess names the chart's DocumentDB",
+        ACCESS["cluster"] == name,
+        f"{ACCESS['cluster']} vs {name}",
+    )
+    expect(
+        "documentdbAccess deploys where layer2-data puts the chart",
+        ACCESS["namespace"] == STORE_NS,
+        f"{ACCESS['namespace']} vs {STORE_NS}",
+    )
+    host = urlsplit(HYPERDX["mongodb"]["uri"]).hostname
+    expect(
+        "hyperdx dials the cluster's own Service",
+        host == f"documentdb-service-{name}.{STORE_NS}.svc.cluster.local",
+        f"got {host}",
+    )
+    expect(
+        "documentdbAccess opens the port hyperdx dials",
+        [p["port"] for p in ACCESS["ports"]] == [gateway_port()],
+        f"{ACCESS['ports']} vs {gateway_port()}",
     )
     expect(
         "the sources include the user-facing apps",
@@ -278,35 +289,50 @@ def test_the_destinations_are_the_charts_own() -> None:
     )
 
 
-def test_no_app_pod_reaches_the_postgresql_backend() -> None:
-    s = store()
+def test_no_app_pod_reaches_postgresql_or_the_status_port() -> None:
+    dest = instance(0)
     for name, variant in VARIANTS.items():
-        found = reaching(variant, s.backend, s.pg_port)
-        expect(
-            f"{name}: no app-namespace pod reaches {BACKEND}:{s.pg_port}",
-            found == set(),
-            f"got {sorted(found)}",
-        )
+        for port in (PG_PORT, STATUS_PORT):
+            found = reaching(variant, dest, port)
+            expect(
+                f"{name}: no app-namespace pod reaches {dest.name}:{port}",
+                found == set(),
+                f"got {sorted(found)}",
+            )
 
 
-def test_only_hyperdx_reaches_ferretdb() -> None:
-    s = store()
+def test_only_hyperdx_reaches_the_gateway() -> None:
+    dest = instance(0)
     for name, variant in VARIANTS.items():
-        found = reaching(variant, s.proxy, s.mongo_port)
+        found = reaching(variant, dest, gateway_port())
         expect(
-            f"{name}: only {READER} reaches {PROXY}:{s.mongo_port}",
+            f"{name}: only {READER} reaches {dest.name}:{gateway_port()}",
             found == {READER},
             f"got {sorted(found)}",
         )
 
 
-def test_ferretdb_still_reaches_its_backend() -> None:
-    """FerretDB dials the backend inside its own namespace, under that namespace's baseline."""
-    s = store()
+def test_the_instances_reach_each_other() -> None:
+    """A replica streams from the primary inside the store's own namespace."""
+    base = render_policies()
     expect(
-        f"{PROXY} reaches {BACKEND}:{s.pg_port}",
-        connects(render_policies(), s.proxy, s.backend, s.pg_port),
+        f"{instance(1).name} reaches {instance(0).name}:{PG_PORT}",
+        connects(base, instance(1), instance(0), PG_PORT),
     )
+
+
+def test_cloudnativepg_reaches_the_status_port_alone() -> None:
+    base = render_policies()
+    operator, dest = operator_pod(), instance(0)
+    expect(
+        f"CloudNativePG reaches {dest.name}:{STATUS_PORT}",
+        connects(base, operator, dest, STATUS_PORT),
+    )
+    for port in (PG_PORT, gateway_port()):
+        expect(
+            f"CloudNativePG cannot reach {dest.name}:{port}",
+            not connects(base, operator, dest, port),
+        )
 
 
 def backing_destinations() -> list[tuple[str, int]]:
@@ -319,6 +345,11 @@ def backing_destinations() -> list[tuple[str, int]]:
         ns = rule["to"][0]["namespaceSelector"]["matchLabels"][NS_LABEL]
         found += [(ns, p["port"]) for p in rule["ports"]]
     return found
+
+
+def test_the_backing_egress_opens_nothing_in_the_store_namespace() -> None:
+    found = [d for d in backing_destinations() if d[0] == STORE_NS]
+    expect(f"allow-dfe-backing-egress opens nothing in {STORE_NS}", found == [], f"got {found}")
 
 
 def test_the_tunnel_reaches_no_backing_service() -> None:
@@ -339,11 +370,6 @@ def test_the_tunnel_reaches_no_backing_service() -> None:
         )
 
 
-def policy_value(key: str) -> object:
-    """A network-policies value as Argo renders it: common.yaml over the chart default."""
-    return COMMON.get(key, POLICY_VALUES[key])
-
-
 def gateway_rule() -> dict:
     """The one rule of the app namespace's egress to the gateway's proxy pods."""
     policy = next(p for p in render_policies() if p["metadata"]["name"] == "allow-gateway-egress")
@@ -352,7 +378,7 @@ def gateway_rule() -> dict:
 
 def outside_pods() -> list[Pod]:
     """A pod in each namespace data-ingress-policy admits that has no egress policy of its
-    own, and a pod beside FerretDB that is not FerretDB."""
+    own, and a pod beside the instances that is not one of them."""
     proxy_labels = gateway_rule()["to"][0]["podSelector"]["matchLabels"]
     return [
         Pod("gateway proxy", str(policy_value("gatewayNamespace")), proxy_labels, address(60)),
@@ -364,23 +390,23 @@ def outside_pods() -> list[Pod]:
     ]
 
 
-def test_no_other_namespace_reaches_ferretdb_or_its_backend() -> None:
-    s = store()
+def test_no_other_namespace_reaches_an_instance() -> None:
+    dest = instance(0)
     for name, variant in INGRESS_VARIANTS.items():
         base = render_policies(*variant)
         for pod in outside_pods():
-            for dest, port in ((s.proxy, s.mongo_port), (s.backend, s.pg_port)):
+            for port in (gateway_port(), PG_PORT, STATUS_PORT):
                 expect(
                     f"{name}: the {pod.name} in {pod.namespace} cannot reach {dest.name}:{port}",
                     not connects(base, pod, dest, port),
                 )
         expect(
-            f"{name}: {READER} still reaches {PROXY}:{s.mongo_port}",
-            READER in reaching(variant, s.proxy, s.mongo_port),
+            f"{name}: {READER} still reaches {dest.name}:{gateway_port()}",
+            READER in reaching(variant, dest, gateway_port()),
         )
         expect(
-            f"{name}: {PROXY} still reaches {BACKEND}:{s.pg_port}",
-            connects(base, s.proxy, s.backend, s.pg_port),
+            f"{name}: {instance(1).name} still reaches {dest.name}:{PG_PORT}",
+            connects(base, instance(1), dest, PG_PORT),
         )
 
 
@@ -405,9 +431,9 @@ def test_the_tunnel_reaches_no_gateway_proxy() -> None:
         )
 
 
-def test_the_backend_password_reaches_hyperdx_alone() -> None:
-    """The app-namespace copy of the superuser password is read by its one client."""
-    secret = FERRETDB_VALUES["documentdb"]["auth"]["secretName"]
+def test_the_store_login_reaches_hyperdx_alone() -> None:
+    """The app-namespace copy of the store's login is read by its one client."""
+    secret = DOCUMENTDB_VALUES["documentdb"]["auth"]["secretName"]
     holders = set()
     for cell in CELLS:
         for kind, name, _optional, where in references(golden(*cell)):

@@ -50,16 +50,16 @@ carries those inputs is specified in
 
 ## Tech
 
-- **IaC:** OpenTofu (canonical; Terraform is being retired - see
-  hyperi-io/hyperi-developer#11). HCL under `terraform/` runs on either.
-- **GitOps:** ArgoCD ApplicationSets (matrix generator).
-- **Registry:** released images on GHCR (`ghcr.io/hyperi-io`); `DFE_REGISTRY`
+- IaC: OpenTofu, the canonical tool. Terraform is being retired (see
+  hyperi-io/hyperi-developer#11), and HCL under `terraform/` runs on either.
+- GitOps: ArgoCD ApplicationSets (matrix generator).
+- Registry: released images on GHCR (`ghcr.io/hyperi-io`). `DFE_REGISTRY`
   points a deployment at its own mirror (Harbor, ECR, ACR, GAR).
-- **Ingress/auth:** Envoy Gateway + OIDC SecurityPolicy.
-- **Data:** ClickHouse, FerretDB (own DocumentDB PostgreSQL); Strimzi Kafka (KRaft,
-  SASL/SCRAM); OTel -> ClickHouse -> HyperDX.
-- **Secrets:** ESO + OpenBao (on-prem) / cloud secret managers.
-- **Autoscaling:** KEDA from OTel metrics.
+- Ingress and auth: Envoy Gateway + OIDC SecurityPolicy.
+- Data: ClickHouse, DocumentDB on CloudNativePG (HyperDX's state), Strimzi Kafka (KRaft,
+  SASL/SCRAM), OTel -> ClickHouse -> HyperDX.
+- Secrets: ESO + OpenBao (on-prem) or cloud secret managers.
+- Autoscaling: KEDA from OTel metrics.
 
 ## Layout
 

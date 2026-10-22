@@ -10,8 +10,8 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """A ClusterSecretStore with no `conditions` serves every namespace in the
 cluster, not just the one its own ClusterExternalSecret copies into. The kafka
-single-user store and the ferretdb source store both carried this gap; the
-clickhouse admin store carried it before dfe-infra#477.
+single-user store and the document store's source store both carried this gap,
+and the clickhouse admin store carried it before dfe-infra#477.
 
 This file does two things:
 
@@ -49,7 +49,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 KNOWN_STORE_TEMPLATES = {
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/clickhouse-admin-appns.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user-appns.yaml",
-    REPO_ROOT / "helm/charts/ferretdb/templates/auth.yaml",
+    REPO_ROOT / "helm/charts/documentdb/templates/auth.yaml",
     REPO_ROOT / "helm/charts/dfe-extras/templates/engine-service-clickhouse.yaml",
 }
 
@@ -188,25 +188,25 @@ def test_kafka_cluster_mode_renders_no_single_tier_store() -> None:
     expect("kafka: cluster mode renders no single-tier store", not stores, f"got {stores}")
 
 
-# --- ferretdb -------------------------------------------------------------
+# --- documentdb -------------------------------------------------------------
 
 
-def test_ferretdb_store_serves_only_its_app_namespace() -> None:
-    docs = render("ferretdb", "ferretdb.mode=deploy", "appNamespace=dfe-ui", namespace="ferretdb")
-    assert_store_matches_its_copies(docs, "ferretdb default")
+def test_documentdb_store_serves_only_its_app_namespace() -> None:
+    docs = render("documentdb", "appNamespace=dfe-ui", namespace="cnpg")
+    assert_store_matches_its_copies(docs, "documentdb default")
     role = role_secrets(docs, store_role(docs, one(docs, "ClusterSecretStore")) or "")
     expect(
-        "ferretdb: the Role names only the backend password Secret",
-        role == {"dfe-ferretdb-password"},
+        "documentdb: the Role names only the login and the CA-only copy, never a keypair",
+        role == {"dfe-documentdb-credentials", "dfe-documentdb-ca-cert"},
         f"got {sorted(role)}",
     )
 
 
-def test_ferretdb_renders_no_store_with_no_app_namespace() -> None:
+def test_documentdb_renders_no_store_with_no_app_namespace() -> None:
     """No cross-namespace copy needed -> no store, no unfenced surface at all."""
-    docs = render("ferretdb", "ferretdb.mode=deploy", namespace="ferretdb")
+    docs = render("documentdb", namespace="cnpg")
     expect(
-        "ferretdb: no appNamespace renders no ClusterSecretStore",
+        "documentdb: no appNamespace renders no ClusterSecretStore",
         not every(docs, "ClusterSecretStore"),
         f"got {every(docs, 'ClusterSecretStore')}",
     )

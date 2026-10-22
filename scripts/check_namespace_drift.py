@@ -54,12 +54,26 @@ NETPOL_VALUES = REPO_ROOT / "helm" / "charts" / "network-policies" / "values.yam
 OPERATOR_CHARTS = {
     "clickhouse": "clickhouse-operator-helm",
     "strimzi": "strimzi-kafka-operator",
+    # A subchart at its own namespaceOverride.
+    "cnpg": "documentdb-operator/cloudnative-pg",
 }
 
 
 def _load_yaml(path: Path) -> object:
     with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh)
+
+
+def _subchart_namespaces(chart: str, values: object, found: dict[str, set[str]]) -> None:
+    """Record `<chart>/<subchart>` for each subchart the element's values move with namespaceOverride."""
+    if not isinstance(values, str):
+        return
+    parsed = yaml.safe_load(values)
+    if not isinstance(parsed, dict):
+        return
+    for subchart, body in parsed.items():
+        if isinstance(body, dict) and isinstance(body.get("namespaceOverride"), str):
+            found.setdefault(f"{chart}/{subchart}", set()).add(body["namespaceOverride"])
 
 
 def _walk_chart_elements(node: object, found: dict[str, set[str]]) -> None:
@@ -75,6 +89,7 @@ def _walk_chart_elements(node: object, found: dict[str, set[str]]) -> None:
             and "{{" not in namespace
         ):
             found.setdefault(chart, set()).add(namespace)
+            _subchart_namespaces(chart, node.get("chartValuesYaml"), found)
         for value in node.values():
             _walk_chart_elements(value, found)
     elif isinstance(node, list):

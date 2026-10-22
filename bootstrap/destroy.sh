@@ -19,7 +19,7 @@ LOAD_BALANCERS_WAIT=300
 NODECLAIMS_WAIT=600
 # The namespaces step 4 deletes, then steps 7 and 8. With dfe-* and keda they
 # are every namespace this teardown removes, and the only ones step 1 touches.
-DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
+DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system documentdb-operator otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
 PLATFORM_NAMESPACES=(argocd envoy-gateway-system cert-manager external-secrets)
 # Facts off the Argo CD cluster secret, which step 7 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
@@ -192,7 +192,7 @@ application_roles() {
         elif names_chart "${sources}" karpenter; then
             role=karpenter
         elif names_chart "${sources}" strimzi-kafka-operator || names_chart "${sources}" clickhouse-operator-helm \
-            || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
+            || names_chart "${sources}" documentdb-operator || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
             role=operator
         else
             role=other
@@ -236,7 +236,9 @@ delete_data_resources() {
     run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     # The kafka chart's Redpanda cluster, on the redpanda provider.
     run kubectl -n strimzi delete redpandas.cluster.redpanda.com --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-    # A CloudNativePG Cluster exists only on an install that predates its removal.
+    # HyperDX's store. Its operator clears the CR's finalizer, and the CloudNativePG
+    # Cluster it owns goes with it, or with the delete after it.
+    run kubectl -n cnpg delete dbs.documentdb.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     # ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
     # clickhouseinstallation the Altinity operator's, and any left keeps its

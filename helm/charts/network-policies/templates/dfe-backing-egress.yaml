@@ -1,12 +1,12 @@
 # DFE app egress to backing services -- the cross-namespace flows the baseline
 # egress policy intentionally omits (see baseline-egress.yaml header, "Add
-# per-service egress policies ... to ClickHouse, Kafka, FerretDB"). WITHOUT this the
+# per-service egress policies ... to ClickHouse, Kafka, DocumentDB"). WITHOUT this the
 # data plane (engine/receiver/loader/ui) cannot reach ClickHouse, Kafka, the
 # bundled Forgejo deploy repo, or HyperDX -- every pod that tries CrashLoopBackOffs
 # (proven live 2026-07-16: engine CH connect timed out, loader/receiver could not
 # reach their backing services). Applied to the DFE app namespaces only.
 {{- $optOut := .Values.egressScopedLabel }}
-{{- $store := .Values.ferretdbAccess }}
+{{- $store := .Values.documentdbAccess }}
 {{- range $ns := .Values.dfeNamespaces }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -54,15 +54,15 @@ spec:
               kubernetes.io/metadata.name: forgejo
       ports:
         - { port: 3000, protocol: TCP }
-{{- /* FerretDB is not here: its login is the backend's PostgreSQL superuser, so only
-       ferretdbAccess.apps reach it, and nothing in this namespace reaches the backend. */}}
+{{- /* DocumentDB is not here: a pod reaching its instances is a step from the PostgreSQL
+       superuser, so only documentdbAccess.apps reach the gateway. */}}
 {{- range $app := ($store | default dict).apps }}
 {{- range $sel := include "network-policies.appSelectors" (dict "root" $ "app" $app) | fromYamlArray }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-ferretdb-egress-{{ $app }}{{ $sel.suffix }}
+  name: allow-documentdb-egress-{{ $app }}{{ $sel.suffix }}
   namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
@@ -78,7 +78,7 @@ spec:
               kubernetes.io/metadata.name: {{ $store.namespace }}
           podSelector:
             matchLabels:
-              {{ $store.nameLabel }}: {{ $store.proxy }}
+              {{ $store.clusterLabel }}: {{ $store.cluster }}
       ports:
         {{- toYaml $store.ports | nindent 8 }}
 {{- end }}
