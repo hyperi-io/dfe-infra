@@ -25,6 +25,28 @@ if (!build) {
   throw new Error(`content/site.json lists no build named ${buildName}`);
 }
 const docsPath = `content/${build.name}`;
+// The stack a reader installs from this build: its own release, or the newest one for /next/.
+const stack = build.listed ? build.name : site.newest || build.name;
+const versionLabel = build.listed ? build.name : `${build.name} (unreleased)`;
+// release.yml cuts each stack as a dfe-infra tag, with its notes on the GitHub release.
+const releaseNotes = site.newest
+  ? `https://github.com/hyperi-io/dfe-infra/releases/tag/${site.newest}`
+  : null;
+const GRAPHICS = 'https://graphics.hyperi.io';
+const ARROW_SVG =
+  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>';
+
+// gen-api-docs names the spec's introduction page after its title, lowercased and hyphenated.
+function apiIntroPath(openapi) {
+  if (!openapi) {
+    return null;
+  }
+  const spec = JSON.parse(fs.readFileSync(path.join(CONTENT, openapi.spec), 'utf8'));
+  const slug = spec.info.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `/${path.posix.dirname(openapi.slice)}/${slug}/`;
+}
+const apiPath = apiIntroPath(build.openapi);
 
 // Every listed build, as a full-page load without this build's own baseUrl in front.
 const versionItems = site.builds
@@ -81,7 +103,10 @@ const openapiPlugins = build.openapi
 module.exports = {
   title: 'DFE documentation',
   tagline: 'The Data Fusion Engine suite',
-  favicon: 'img/product-dfe_square.svg',
+  favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
+  // The brand tokens and @font-face rules, read anonymously like every other build input.
+  stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
+  customFields: {stack, versionLabel, newest: site.newest, releaseNotes, apiPath},
   url: 'https://dfe.docs.hyperi.io',
   baseUrl: build.base_url,
   trailingSlash: true,
@@ -110,7 +135,7 @@ module.exports = {
           docItemComponent: '@theme/ApiItem',
         },
         blog: false,
-        pages: false,
+        pages: {},
         theme: {customCss: require.resolve('./src/css/custom.css')},
       },
     ],
@@ -134,17 +159,31 @@ module.exports = {
   ],
   themeConfig: {
     colorMode: {respectPrefersColorScheme: true},
+    announcementBar: releaseNotes
+      ? {
+          // Keyed on the release, so a reader who closed one sees the next.
+          id: `release-${site.newest}`,
+          content:
+            `<span class="announcement-tag">Latest</span>DFE ${site.newest} is the current release. ` +
+            `<a href="${releaseNotes}">Release notes${ARROW_SVG}</a>`,
+          backgroundColor: 'var(--dfe-accent)',
+          textColor: 'var(--dfe-navy)',
+          isCloseable: true,
+        }
+      : undefined,
     navbar: {
       style: 'dark',
       logo: {
         alt: 'Data Fusion Engine',
-        src: 'img/product-dfe-named-inline_bare.svg',
-        srcDark: 'img/product-dfe-named-inline_bare.svg',
+        src: `${GRAPHICS}/product-dfe-named-inline/dark/product-dfe-named-inline_bare.svg`,
       },
       items: [
+        {to: '/overview/', label: 'Docs', position: 'left'},
+        {to: '/quickstart/', label: 'Quickstart', position: 'left'},
+        ...(apiPath ? [{to: apiPath, label: 'API', position: 'left'}] : []),
         {
           type: 'dropdown',
-          label: build.listed ? build.name : `${build.name} (unreleased)`,
+          label: versionLabel,
           position: 'right',
           items: versionItems,
         },
@@ -153,13 +192,41 @@ module.exports = {
     },
     footer: {
       style: 'dark',
+      logo: {
+        alt: 'HyperI',
+        src: `${GRAPHICS}/hyperi-horizontal/dark/hyperi-horizontal_bare.svg`,
+        href: 'https://hyperi.io',
+      },
       links: [
-        {label: 'hyperi.io', href: 'https://hyperi.io'},
-        {label: 'GitHub', href: 'https://github.com/hyperi-io'},
+        {
+          title: 'Docs',
+          items: [
+            {label: 'Overview', to: '/overview/'},
+            {label: 'Quickstarts', to: '/quickstart/'},
+            ...(apiPath ? [{label: 'HTTP API reference', to: apiPath}] : []),
+            ...(releaseNotes ? [{label: 'Release notes', href: releaseNotes}] : []),
+          ],
+        },
+        {
+          title: 'Source',
+          items: [
+            {label: 'GitHub', href: 'https://github.com/hyperi-io'},
+            {label: 'dfe-infra', href: 'https://github.com/hyperi-io/dfe-infra'},
+            {label: 'dfe-docker', href: 'https://github.com/hyperi-io/dfe-docker'},
+          ],
+        },
+        {
+          title: 'HyperI',
+          items: [{label: 'hyperi.io', href: 'https://hyperi.io'}],
+        },
       ],
       copyright: `Copyright (c) ${new Date().getFullYear()} HYPERI PTY LIMITED`,
     },
     mermaid: {theme: {light: 'neutral', dark: 'dark'}},
-    prism: {additionalLanguages: ['bash', 'toml', 'sql', 'hcl', 'docker', 'ini', 'diff']},
+    prism: {
+      theme: require('./src/prism-theme.js'),
+      darkTheme: require('./src/prism-theme.js'),
+      additionalLanguages: ['bash', 'toml', 'sql', 'hcl', 'docker', 'ini', 'diff'],
+    },
   },
 };

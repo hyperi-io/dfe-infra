@@ -1,93 +1,343 @@
 /*
  * Project:      dfe-infra
  * File:         docs-site/src/css/custom.css
- * Purpose:      The HyperI theme over Infima: brand tokens, fonts, navbar and footer.
+ * Purpose:      The HyperI web style over Infima: brand roles, type, navbar, footer and code.
  * Language:     CSS
  *
  * License:      BUSL-1.1
  * Copyright:    (c) 2026 HYPERI PTY LIMITED
  */
 
-/* Fonts and token values from https://graphics.hyperi.io/tokens/tokens.css, which allows cross-origin loads. */
-@font-face {
-  font-family: "Inter";
-  src: url("https://graphics.hyperi.io/fonts/inter-variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "IBM Plex Mono";
-  src: url("https://graphics.hyperi.io/fonts/ibm-plex-mono-400.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "IBM Plex Mono";
-  src: url("https://graphics.hyperi.io/fonts/ibm-plex-mono-600.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
+/* Roles follow hyperi-graphics docs/web-style-reference.md. Each fallback is the token's value in tokens.css. */
 :root {
-  --hyperi-navy: #000647;
-  --hyperi-blue: #2ea4f6;
-  --hyperi-accent: #2ded88;
+  --role-canvas: var(--hyperi-light-canvas, #ffffff);
+  --role-raised: var(--hyperi-light-raised, #f5f5f8);
+  --role-border: var(--hyperi-light-border, #d9dae3);
+  --role-ink: var(--hyperi-light-ink, #000647);
+  --role-body: var(--hyperi-light-body, #000000);
+  --role-muted: var(--hyperi-light-muted, #666a91);
+  --role-link: var(--hyperi-light-link, #1e6db9);
+  --role-plate: var(--hyperi-light-plate, #000647);
+  --role-on-plate: var(--hyperi-light-on-plate, #ffffff);
+  --role-plate-hover: var(--hyperi-light-plate-hover, #0c2e73);
+  --role-accent-ink: var(--hyperi-light-accent-ink, #177a68);
 
-  /* The brand blue's darkest Infima step: 4.7:1 on white, where the brand blue itself is 2.7:1. */
-  --ifm-color-primary: #0877c4;
-  --ifm-color-primary-dark: #076bb0;
-  --ifm-color-primary-darker: #0765a7;
-  --ifm-color-primary-darkest: #065389;
-  --ifm-color-primary-light: #0983d8;
-  --ifm-color-primary-lighter: #0989e1;
-  --ifm-color-primary-lightest: #1499f5;
+  --dfe-navy: var(--hyperi-navy, #000647);
+  --dfe-accent: var(--hyperi-accent, #2ded88);
+  --dfe-font-display: var(--hyperi-font-marketing-display, "Martel Sans", "Helvetica Neue", Arial, sans-serif);
+  --dfe-font-sans: var(--hyperi-font-ui-sans, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --dfe-font-mono: var(--hyperi-font-ui-mono, "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
 
-  --ifm-font-family-base: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --ifm-font-family-monospace: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --ifm-heading-color: var(--hyperi-navy);
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(46, 164, 246, 0.12);
+  --dfe-space-1: var(--hyperi-space-1, 0.25rem);
+  --dfe-space-2: var(--hyperi-space-2, 0.5rem);
+  --dfe-space-3: var(--hyperi-space-3, 0.75rem);
+  --dfe-space-4: var(--hyperi-space-4, 1rem);
+  --dfe-space-6: var(--hyperi-space-6, 1.5rem);
+  --dfe-space-8: var(--hyperi-space-8, 2rem);
+  --dfe-space-12: var(--hyperi-space-12, 3rem);
+  --dfe-space-16: var(--hyperi-space-16, 4rem);
+  --dfe-space-24: var(--hyperi-space-24, 6rem);
+  --dfe-radius-sm: var(--hyperi-radius-sm, 0.25rem);
+  --dfe-radius-md: var(--hyperi-radius-md, 0.5rem);
+  --dfe-radius-lg: var(--hyperi-radius-lg, 1rem);
+  --dfe-radius-pill: var(--hyperi-radius-pill, 999px);
+  --dfe-text-xs: var(--hyperi-text-xs, 0.75rem);
+  --dfe-text-sm: var(--hyperi-text-sm, 0.875rem);
+  --dfe-text-base: var(--hyperi-text-base, 1rem);
+  --dfe-text-lg: var(--hyperi-text-lg, 1.125rem);
+  --dfe-text-xl: var(--hyperi-text-xl, 1.25rem);
+  --dfe-text-2xl: var(--hyperi-text-2xl, 1.5rem);
+  --dfe-text-3xl: var(--hyperi-text-3xl, 2rem);
+  --dfe-text-4xl: var(--hyperi-text-4xl, 2.5rem);
+  --dfe-text-5xl: var(--hyperi-text-5xl, 3.5rem);
+  --dfe-leading-tight: var(--hyperi-leading-tight, 1.15);
+  --dfe-leading-snug: var(--hyperi-leading-snug, 1.35);
+  --dfe-leading-normal: var(--hyperi-leading-normal, 1.6);
+  --dfe-tracking-eyebrow: var(--hyperi-tracking-eyebrow, 0.1em);
+  --dfe-stroke-hairline: var(--hyperi-stroke-hairline, 1px);
+  --dfe-stroke-focus: var(--hyperi-stroke-focus, 2px);
+  --dfe-container: var(--hyperi-layout-container, 75rem);
+  --dfe-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3Cpath d='M13 6l6 6-6 6'/%3E%3C/svg%3E");
+
+  --ifm-font-family-base: var(--dfe-font-sans);
+  --ifm-font-family-monospace: var(--dfe-font-mono);
+  --ifm-heading-font-family: var(--dfe-font-display);
+  --ifm-heading-font-weight: 800;
+  --ifm-heading-line-height: var(--dfe-leading-tight);
+  --ifm-line-height-base: var(--dfe-leading-normal);
+  --ifm-h1-font-size: var(--dfe-text-4xl);
+  --ifm-h2-font-size: var(--dfe-text-3xl);
+  --ifm-h3-font-size: var(--dfe-text-2xl);
+  --ifm-h4-font-size: var(--dfe-text-xl);
+  --ifm-h5-font-size: var(--dfe-text-base);
+  --ifm-h6-font-size: var(--dfe-text-sm);
+  --ifm-global-radius: var(--dfe-radius-md);
+  --ifm-code-border-radius: var(--dfe-radius-sm);
+  --ifm-pre-border-radius: var(--dfe-radius-md);
+  --ifm-pre-padding: var(--dfe-space-4);
+  --ifm-pre-line-height: var(--dfe-leading-normal);
+  --ifm-code-font-size: var(--dfe-text-sm);
+  --ifm-code-padding-horizontal: var(--dfe-space-1);
+  --ifm-navbar-height: var(--dfe-space-16);
+  --ifm-navbar-shadow: none;
 }
 
-/* html[...] to outrank Infima's own dark block, which sets the background at that specificity. */
-html[data-theme="dark"] {
-  --ifm-color-primary: #2ea4f6;
-  --ifm-color-primary-dark: #1298f5;
-  --ifm-color-primary-darker: #0a91ee;
-  --ifm-color-primary-darkest: #0877c4;
-  --ifm-color-primary-light: #4ab0f7;
-  --ifm-color-primary-lighter: #58b6f8;
-  --ifm-color-primary-lightest: #82c9fa;
-
-  /* The brand navy darkened for long-form reading, with the navy itself on raised surfaces. */
-  --ifm-background-color: #00031f;
-  --ifm-background-surface-color: var(--hyperi-navy);
-  --ifm-heading-color: #ffffff;
-  --docusaurus-highlighted-code-line-bg: rgba(46, 164, 246, 0.2);
+/* Dark mode, and every navy band on a light page: navbar, footer, landing hero. */
+html[data-theme='dark'],
+.navbar--dark,
+.footer--dark,
+.surface-navy {
+  --role-canvas: var(--hyperi-dark-canvas, #000324);
+  --role-raised: var(--hyperi-dark-raised, #000647);
+  --role-border: var(--hyperi-dark-border, #17559f);
+  --role-ink: var(--hyperi-dark-ink, #ffffff);
+  --role-body: var(--hyperi-dark-body, #d9dae3);
+  --role-muted: var(--hyperi-dark-muted, #999bb5);
+  --role-link: var(--hyperi-dark-link, #2ea4f6);
+  --role-plate: var(--hyperi-dark-plate, #2ea4f6);
+  --role-on-plate: var(--hyperi-dark-on-plate, #000647);
+  --role-plate-hover: var(--hyperi-dark-plate-hover, #6dbff9);
+  --role-accent-ink: var(--hyperi-dark-accent-ink, #2ded88);
 }
 
+/* A navy band is its own canvas, and a panel on it sinks to the dark canvas. */
+.navbar--dark,
+.footer--dark,
+.surface-navy {
+  --role-canvas: var(--hyperi-navy, #000647);
+  --role-raised: var(--hyperi-dark-canvas, #000324);
+}
+
+/* Re-declared on every scope that changes the roles, because a var() resolves where it is declared. */
+:root,
+html[data-theme='dark'],
+.navbar--dark,
+.footer--dark,
+.surface-navy {
+  --ifm-background-color: var(--role-canvas);
+  --ifm-background-surface-color: var(--role-raised);
+  --ifm-font-color-base: var(--role-body);
+  --ifm-color-content: var(--role-body);
+  --ifm-color-content-secondary: var(--role-muted);
+  --ifm-heading-color: var(--role-ink);
+  --ifm-color-primary: var(--role-link);
+  --ifm-color-primary-dark: var(--role-link);
+  --ifm-color-primary-darker: var(--role-link);
+  --ifm-color-primary-darkest: var(--role-link);
+  --ifm-color-primary-light: var(--role-link);
+  --ifm-color-primary-lighter: var(--role-link);
+  --ifm-color-primary-lightest: var(--role-link);
+  --ifm-link-color: var(--role-link);
+  --ifm-color-emphasis-100: var(--role-raised);
+  --ifm-color-emphasis-200: var(--role-border);
+  --ifm-color-emphasis-300: var(--role-border);
+  --ifm-code-background: var(--role-raised);
+  --ifm-toc-border-color: var(--role-border);
+  --ifm-table-border-color: var(--role-border);
+  --ifm-hr-background-color: var(--role-border);
+  --ifm-menu-color: var(--role-body);
+  --ifm-menu-color-active: var(--role-link);
+  --ifm-dropdown-link-color: var(--role-body);
+  --docusaurus-highlighted-code-line-bg: color-mix(in srgb, var(--role-link) 14%, transparent);
+}
+
+h4,
+h5,
+h6 {
+  font-family: var(--dfe-font-sans);
+  font-weight: 600;
+  line-height: var(--dfe-leading-snug);
+}
+
+/* Links in running text are underlined, and navigation links are not. */
+.markdown a {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+:focus-visible {
+  outline: var(--dfe-stroke-focus) solid var(--role-link);
+  outline-offset: var(--dfe-stroke-focus);
+}
+
+code {
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+pre code,
+.theme-code-block code {
+  border: 0;
+}
+
+.theme-code-block {
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  box-shadow: none;
+}
+
+.theme-code-block button {
+  color: var(--role-muted);
+  background: var(--role-raised);
+  border-color: var(--role-border);
+  border-radius: var(--dfe-radius-sm);
+}
+
+.theme-code-block button:hover {
+  color: var(--role-ink);
+}
+
+/* A touch screen has no hover to reveal the copy button, so it stays visible there. */
+@media (hover: none) {
+  .theme-code-block button {
+    opacity: 1 !important;
+  }
+}
+
+/* The paginator's own guillemets stand in for arrows, so an arrow icon replaces them. */
+.pagination-nav__link--prev .pagination-nav__label::before,
+.pagination-nav__link--next .pagination-nav__label::after {
+  content: '';
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  mask: var(--dfe-arrow) center / contain no-repeat;
+  vertical-align: -0.125em;
+}
+
+.pagination-nav__link--prev .pagination-nav__label::before {
+  margin-right: var(--dfe-space-2);
+  transform: scaleX(-1);
+}
+
+.pagination-nav__link--next .pagination-nav__label::after {
+  margin-left: var(--dfe-space-2);
+}
+
+/* The API pages' cards and inputs take the brand surfaces, over the plugin's grey. */
+:root,
+html[data-theme='dark'] {
+  --openapi-card-background-color: var(--role-raised) !important;
+  --openapi-input-background: var(--role-canvas);
+}
+
+.tabs {
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+.tabs__item {
+  border-radius: 0;
+  border-bottom: var(--dfe-stroke-focus) solid transparent;
+  padding: var(--dfe-space-2) var(--dfe-space-4);
+  color: var(--role-muted);
+  font-size: var(--dfe-text-sm);
+  font-weight: 600;
+}
+
+.tabs__item:hover {
+  background: none;
+  color: var(--role-ink);
+}
+
+.tabs__item--active {
+  border-bottom-color: var(--role-link);
+  color: var(--role-ink);
+}
+
+/* The header is a navy band in both modes. */
 .navbar--dark {
-  --ifm-navbar-background-color: var(--hyperi-navy);
-  --ifm-navbar-link-hover-color: var(--hyperi-accent);
+  --ifm-navbar-background-color: var(--dfe-navy);
+  --ifm-navbar-link-color: var(--role-body);
+  --ifm-navbar-link-hover-color: var(--dfe-accent);
+  --ifm-navbar-link-active-color: var(--dfe-accent);
+  --ifm-navbar-item-padding-horizontal: var(--dfe-space-3);
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
 }
 
-.footer--dark {
-  --ifm-footer-background-color: var(--hyperi-navy);
-  --ifm-footer-link-hover-color: var(--hyperi-accent);
+.navbar__link {
+  font-size: var(--dfe-text-sm);
+  font-weight: 600;
 }
 
 .navbar__logo {
-  height: 1.6rem;
+  height: var(--dfe-space-6);
 }
 
 /* The lockup is 11:1, so the collapsed navbar needs it smaller to leave room for search. */
 @media (max-width: 996px) {
   .navbar__logo {
-    height: 1.1rem;
+    height: var(--dfe-text-lg);
   }
+}
+
+.navbar-sidebar {
+  background-color: var(--role-canvas);
+}
+
+.announcement-tag {
+  display: inline-block;
+  margin-right: var(--dfe-space-2);
+  padding: 0 var(--dfe-space-2);
+  border-radius: var(--dfe-radius-pill);
+  background: var(--dfe-navy);
+  color: var(--dfe-accent);
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--dfe-tracking-eyebrow);
+  line-height: var(--dfe-space-6);
+  text-transform: uppercase;
+}
+
+div[class*='announcementBar'] {
+  font-size: var(--dfe-text-sm);
+}
+
+div[class*='announcementBar'] a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+div[class*='announcementBar'] svg {
+  margin-left: var(--dfe-space-1);
+  vertical-align: -0.125em;
+}
+
+/* The footer is a navy band in both modes. */
+.footer--dark {
+  --ifm-footer-background-color: var(--dfe-navy);
+  --ifm-footer-color: var(--role-muted);
+  --ifm-footer-link-color: var(--role-body);
+  --ifm-footer-link-hover-color: var(--dfe-accent);
+  --ifm-footer-title-color: var(--role-ink);
+  padding-block: var(--dfe-space-12);
+  border-top: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+.footer > .container {
+  max-width: var(--dfe-container);
+  padding-inline: var(--dfe-space-6);
+}
+
+/* The theme dims the footer logo to half, and a mark is never shown recoloured. */
+.footer a[class*='footerLogoLink'] {
+  opacity: 1;
+}
+
+.footer__logo {
+  height: var(--dfe-space-8);
+}
+
+.footer__title {
+  font-family: var(--dfe-font-sans);
+  font-size: var(--dfe-text-sm);
+  font-weight: 600;
+}
+
+.footer__item {
+  font-size: var(--dfe-text-sm);
+}
+
+.footer__copyright {
+  font-size: var(--dfe-text-xs);
 }
