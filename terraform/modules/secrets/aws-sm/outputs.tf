@@ -24,6 +24,11 @@ output "engine_role_arn" {
   value       = aws_iam_role.engine.arn
 }
 
+output "receiver_role_arn" {
+  description = "The role dfe-receiver's service account assumes. Reads the ingest bearer-token secrets under engine_name_prefix and nothing else, with the key used only through Secrets Manager."
+  value       = aws_iam_role.receiver.arn
+}
+
 output "engine_name_prefix" {
   description = "<path>/engine: every secret dfe-engine mints is named under it, and no seed is."
   value       = local.engine_name_prefix

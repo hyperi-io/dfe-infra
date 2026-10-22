@@ -43,7 +43,7 @@ GATEWAY_NAMESPACE = "envoy-gateway-system"
 
 # What the engine writes to values/dfe-receiver-<instance>-values.yaml on direct
 # after a routing sync: the default destination by name, and no loader address.
-ENGINE_OVERLAY = {"config": {"destinations": {"default": "loader", "rules": []}}}
+ENGINE_OVERLAY = {"config": {"destinations": {"default": "loader", "sources": {}}}}
 
 
 def of_kind(docs: list[dict], kind: str) -> list[dict]:
@@ -79,16 +79,16 @@ def service_address(endpoint: str) -> tuple[str, str, int | None]:
 def on_the_bus(cfg: dict) -> list[str]:
     """The destinations the receiver resolves to the bus, by its own rule.
 
-    Mirrors dfe-receiver src/config/mod.rs at v1.15.41: `resolved_destinations`
-    turns an undeclared `loader` into a bus destination when `loader.transport` is
-    kafka (its default), and `validate` refuses any bus destination when
-    `kafka.brokers` is empty.
+    Mirrors dfe-receiver src/config/mod.rs at v1.15.54: `referenced_names` is the
+    default and every `sources` entry, `resolved_destinations` turns an undeclared
+    `loader` into a bus destination when `loader.transport` is kafka (its
+    default), and `validate` refuses any bus destination when `kafka.brokers` is
+    empty.
     """
     destinations = cfg.get("destinations") or {}
     default = destinations.get("default", "kafka")
     names = [default] if isinstance(default, str) else list(default)
-    for rule in destinations.get("rules") or []:
-        target = rule.get("destination")
+    for target in (destinations.get("sources") or {}).values():
         names.extend([target] if isinstance(target, str) else target or [])
     loader_transport = (cfg.get("loader") or {}).get("transport", "kafka")
     bus = []
@@ -190,7 +190,7 @@ def test_the_overlay_keeps_what_it_set() -> None:
         "config": {
             "destinations": {
                 "default": "dfe-transform-vrl-auth",
-                "rules": [],
+                "sources": {},
                 "dfe-transform-vrl-auth": auth,
             },
             "loader": {"grpc_endpoint": "http://loader.elsewhere:7000", "transport": "kafka"},
@@ -200,7 +200,7 @@ def test_the_overlay_keeps_what_it_set() -> None:
     destinations = cfg.get("destinations") or {}
     expect("the overlay's default destination wins",
            destinations.get("default") == "dfe-transform-vrl-auth", f"got {destinations!r}")
-    expect("its rules survive", destinations.get("rules") == [], f"got {destinations!r}")
+    expect("its sources survive", destinations.get("sources") == {}, f"got {destinations!r}")
     expect("its declared destination survives",
            destinations.get("dfe-transform-vrl-auth")
            == {"grpc": {"endpoint": "http://dfe-transform-vrl-auth:6000"}},

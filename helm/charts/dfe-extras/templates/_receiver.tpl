@@ -36,4 +36,9 @@ dfe-receiver-env carries these entries, each only while its condition holds.
             - name: DFE_RECEIVER_DLQ_MODE
               value: {{ .Values.dlq.mode | quote }}
 {{- end }}
+{{- if eq (toString (dig "provider" "" (.Values.secrets | default dict))) "aws" }}
+            # The region of the Secrets Manager store each bearer listener's aws: secret_source reads.
+            - name: AWS_REGION
+              value: {{ required "secrets.region is empty: with secrets.provider aws the receiver cannot read its bearer-token secrets" .Values.secrets.region | quote }}
+{{- end }}
 {{- end -}}

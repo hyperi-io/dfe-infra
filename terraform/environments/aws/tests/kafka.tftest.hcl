@@ -147,7 +147,7 @@ override_module {
 
 // The store is planned for real, because its own validation refuses a kafka seed
 // that asks for a username the root did not hand it. Only the values the aws
-// provider checks the shape of are pinned, for each of its two roles.
+// provider checks the shape of are pinned, for each of its three roles.
 override_data {
   target = module.secrets.data.aws_iam_policy_document.eso
 
@@ -177,6 +177,22 @@ override_resource {
 
   values = {
     arn = "arn:aws:iam::000000000000:role/dfe-example-engine-secrets"
+  }
+}
+
+override_data {
+  target = module.secrets.data.aws_iam_policy_document.receiver
+
+  values = {
+    json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+  }
+}
+
+override_resource {
+  target = module.secrets.aws_iam_role.receiver
+
+  values = {
+    arn = "arn:aws:iam::000000000000:role/dfe-example-receiver-secrets"
   }
 }
 

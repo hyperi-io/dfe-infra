@@ -3,8 +3,8 @@
 #  File:         test_engine_secrets_store.py
 #  Purpose:      Prove the aws root's engine store facts reach dfe-engine as a
 #                Secrets Manager store, its sidecars leave its service account,
-#                its egress opens for the store and keeps the Pod Identity agent,
-#                and nothing moves off AWS.
+#                its egress and dfe-receiver's open for the store and keep the
+#                Pod Identity agent, and nothing moves off AWS.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -16,8 +16,11 @@ service account. bootstrap.sh writes the prefix and the deployment key onto the
 cluster secret, layer2-apps.yaml hands them to the engine's values, and
 dfe-extras turns them into the engine's DFE_SECRETS_* env. The hunt runner and
 the keda shim then need accounts of their own, or EKS Pod Identity hands them
-the engine's write grant. layer2-platform.yaml opens the engine's egress for the
-store, and the Pod Identity agent has to stay reachable through every except.
+the engine's write grant. dfe-receiver takes the store's region, which Pod
+Identity does not inject. layer2-platform.yaml opens the engine's egress for the
+store, and dfe-receiver's beside it, since the receiver reads the bearer tokens the
+engine writes there. The Pod Identity agent has to stay reachable through every
+except for both.
 
     python3 -m pytest scripts/tests/test_engine_secrets_store.py -q
 
@@ -64,6 +67,7 @@ NO_KEY = {k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/kms_key_arn"
 
 POD_IDENTITY = ipaddress.ip_address("169.254.170.23")
 ENGINE_LABELS = {"app.kubernetes.io/name": "dfe-engine"}
+RECEIVER_LABELS = {"app.kubernetes.io/name": "dfe-receiver"}
 
 RenderError = weave().WeaveError
 
@@ -190,12 +194,27 @@ def test_without_the_prefix_the_engine_keeps_its_files() -> None:
     assert "DFE_SECRETS_PROVIDER" not in env
 
 
-@pytest.mark.parametrize("service", ["dfe-loader", "dfe-receiver", "hyperdx", "dfe-ui"])
+@pytest.mark.parametrize("service", ["dfe-loader", "hyperdx", "dfe-ui"])
 def test_no_other_app_moves_with_the_engines_store(service: str) -> None:
-    """layer2-apps hands the store to dfe-engine alone."""
+    """layer2-apps hands the store to dfe-engine, and its region to dfe-receiver."""
     assert render_extras(service, "scale", "aws", annotations=AWS_FACTS) == render_extras(
         service, "scale", "aws", annotations=NO_STORE
     )
+
+
+def test_the_receiver_takes_the_stores_region_and_nothing_else() -> None:
+    """An aws: secret_source resolves no region on its own, and Pod Identity injects none."""
+    with_store = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=AWS_FACTS))
+    without = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=NO_STORE))
+    env = ("ConfigMap", "dfe-receiver-env")
+    assert "AWS_REGION" not in without[env]["data"]
+    assert with_store[env]["data"].pop("AWS_REGION") == "us-west-2"
+    assert with_store == without
+
+
+def test_expected_fail_a_receiver_store_with_no_region_fails_the_render() -> None:
+    with pytest.raises(RenderError, match=re.escape("secrets.region is empty")):
+        render_extras("dfe-receiver", "single", "aws", overlay={"secrets": {"provider": "aws", "region": ""}})
 
 
 @pytest.mark.parametrize(
@@ -301,23 +320,26 @@ def _selects(selector: dict, labels: dict[str, str]) -> bool:
     return True
 
 
-def engine_egress(facts: dict[str, str]) -> list[dict]:
-    """Every egress rule of every policy that selects the engine's pod, in its namespace."""
+def app_egress(facts: dict[str, str], labels: dict[str, str]) -> list[dict]:
+    """Every egress rule of every policy that selects a pod carrying ``labels``, in the app namespace."""
     return [
         rule
         for p in network_policies(facts)
         if p["metadata"]["namespace"] == "dfe"
         and "Egress" in p["spec"].get("policyTypes", [])
-        and _selects(p["spec"]["podSelector"], ENGINE_LABELS)
+        and _selects(p["spec"]["podSelector"], labels)
         for rule in p["spec"].get("egress") or []
     ]
 
 
 def test_the_store_opens_the_engines_secrets_egress_on_443_alone() -> None:
+    """The engine writes the store, and the receiver reads the bearer tokens the engine writes there."""
     policies = [p for p in network_policies(AWS_FACTS) if p["metadata"]["name"].startswith("allow-external-secrets-")]
     assert [p["spec"]["podSelector"] for p in policies] == [
         {"matchLabels": ENGINE_LABELS},
         {"matchLabels": {"dfe.hyperi.io/app": "dfe-engine"}},
+        {"matchLabels": RECEIVER_LABELS},
+        {"matchLabels": {"dfe.hyperi.io/app": "dfe-receiver"}},
     ]
     ports = {(port["port"], port["protocol"]) for p in policies for r in p["spec"]["egress"] for port in r["ports"]}
     assert ports == {(443, "TCP")}
@@ -327,16 +349,25 @@ def test_without_the_store_no_secrets_egress_renders() -> None:
     assert not [p for p in network_policies(NO_STORE) if p["metadata"]["name"].startswith("allow-external-secrets-")]
 
 
-@pytest.mark.parametrize("facts", [AWS_FACTS, NO_STORE], ids=["store", "no-store"])
-def test_the_engine_reaches_the_pod_identity_agent_through_every_except(facts: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    ("facts", "labels"),
+    [(AWS_FACTS, ENGINE_LABELS), (NO_STORE, ENGINE_LABELS), (AWS_FACTS, RECEIVER_LABELS)],
+    # The receiver calls the agent only to read the store, so it has no carve-out to keep without one.
+    ids=["store-engine", "no-store-engine", "store-receiver"],
+)
+def test_the_app_reaches_the_pod_identity_agent_through_every_except(
+    facts: dict[str, str], labels: dict[str, str]
+) -> None:
     """The VPC CNI agent enforces an except as a deny and resolves by longest prefix.
 
     Kubernetes ORs the rules, so the /32 allow wins there regardless. The agent
     instead turns every except on the pod into a deny entry and lets the longest
     prefix decide (aws/aws-network-policy-agent#326), so the agent's address must
-    be named by an allow at /32 and by no except as specific as that.
+    be named by an allow at /32 and by no except as specific as that. The engine
+    writes the store through its Pod Identity and the receiver reads its bearer
+    tokens through its own.
     """
-    rules = engine_egress(facts)
+    rules = app_egress(facts, labels)
     allows = [
         (ipaddress.ip_network(peer["ipBlock"]["cidr"]), rule)
         for rule in rules
@@ -347,7 +378,7 @@ def test_the_engine_reaches_the_pod_identity_agent_through_every_except(facts: d
         (net, rule) for net, rule in allows
         if net.prefixlen == 32 and {(p["port"], p.get("protocol", "TCP")) for p in rule["ports"]} == {(80, "TCP")}
     ]
-    assert agent, f"no rule selecting the engine allows {POD_IDENTITY}/32 on TCP 80"
+    assert agent, f"no rule selecting {labels} allows {POD_IDENTITY}/32 on TCP 80"
     assert all("except" not in peer["ipBlock"] for _net, rule in agent for peer in rule["to"])
     excepts = [
         ipaddress.ip_network(cidr)
@@ -357,5 +388,5 @@ def test_the_engine_reaches_the_pod_identity_agent_through_every_except(facts: d
     ]
     covering = [net for net in excepts if POD_IDENTITY in net]
     assert all(net.prefixlen < 32 for net in covering), covering
-    # The carve-out reaches the engine on aws, so the longest-prefix rule is what keeps the agent.
+    # The carve-out reaches the app on aws, so the longest-prefix rule is what keeps the agent.
     assert covering, "no except covers the agent, so this test no longer exercises the carve-out"
