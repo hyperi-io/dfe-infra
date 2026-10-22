@@ -705,6 +705,10 @@ spec:
           value: /deploy-repo/repo/current/config/hunts
         - name: DFE_HUNTS_RULES_DIR
           value: /deploy-repo/repo/current/config/rules
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME
@@ -924,6 +928,10 @@ spec:
               name: query-reader-clickhouse
         - name: DFE_KEDA_SHIM_PORT
           value: '8080'
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME

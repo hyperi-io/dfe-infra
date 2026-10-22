@@ -451,6 +451,32 @@ automountServiceAccountToken: false
 kind: ServiceAccount
 metadata:
   labels:
+    app.kubernetes.io/component: hunt-runner
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-hunt-runner
+---
+apiVersion: v1
+automountServiceAccountToken: false
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: keda-shim
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-keda-shim
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-keda-shim
+---
+apiVersion: v1
+automountServiceAccountToken: false
+kind: ServiceAccount
+metadata:
+  labels:
     app.kubernetes.io/instance: dfe-engine-default-in-cluster
     app.kubernetes.io/managed-by: helm
     app.kubernetes.io/name: dfe-engine
@@ -459,6 +485,20 @@ metadata:
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
   name: otel-writer-clickhouse-reader
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-ingest-bearer-tokens
+type: Opaque
 ---
 apiVersion: v1
 data:
@@ -504,6 +544,7 @@ data:
   DFE_HUNTS_RULES_DIR: /config/rules
   DFE_HYPERDX_BASE_URL: http://dfe-hyperdx.dfe.svc.cluster.local:8000
   DFE_HYPERDX_ENABLED: 'true'
+  DFE_INGEST_BEARER_SECRET: dfe-ingest-bearer-tokens
   DFE_LIBRARY_SEED_DIR: /etc/dfe-engine/content/library
   DFE_MESH_ENABLED: 'true'
   DFE_MESH_NAMESPACE: envoy-gateway-system
@@ -540,6 +581,29 @@ metadata:
     app.kubernetes.io/version: <pin:apps.dfe-engine>
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
+  name: dfe-ingest-bearer-tokens-writer
+rules:
+- apiGroups:
+  - ''
+  resourceNames:
+  - dfe-ingest-bearer-tokens
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
   name: otel-writer-clickhouse-reader
 rules:
 - apiGroups:
@@ -550,6 +614,27 @@ rules:
   - secrets
   verbs:
   - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-ingest-bearer-tokens-writer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dfe-ingest-bearer-tokens-writer
+subjects:
+- kind: ServiceAccount
+  name: dfe-engine
+  namespace: dfe
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -656,6 +741,10 @@ spec:
           value: /deploy-repo/repo/current/config/hunts
         - name: DFE_HUNTS_RULES_DIR
           value: /deploy-repo/repo/current/config/rules
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME
@@ -802,7 +891,7 @@ spec:
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: dfe-engine
+      serviceAccountName: dfe-hunt-runner
       volumes:
       - emptyDir: {}
         name: config
@@ -875,6 +964,10 @@ spec:
               name: query-reader-clickhouse
         - name: DFE_KEDA_SHIM_PORT
           value: '8080'
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME
@@ -951,7 +1044,7 @@ spec:
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: dfe-engine
+      serviceAccountName: dfe-keda-shim
       volumes:
       - emptyDir: {}
         name: tmp

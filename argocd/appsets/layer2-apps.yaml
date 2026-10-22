@@ -474,6 +474,14 @@ spec:
           kind: Deployment
           jsonPointers:
             - /spec/replicas
+        # dfe-engine writes dfe-receiver's bearer tokens into this Secret, which
+        # dfe-extras renders with no data, so a sync must never take them back.
+        # The name is common.yaml's ingestBearer.secretName, which an appset
+        # cannot read, and test_ingest_bearer_secret.py holds the two equal.
+        - kind: Secret
+          name: dfe-ingest-bearer-tokens
+          jsonPointers:
+            - /data
       syncPolicy:
         automated:
           prune: true

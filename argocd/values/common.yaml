@@ -179,6 +179,14 @@ otel:
 api:
   docsEnabled: ""
 
+# The Secret dfe-engine writes dfe-receiver's ingest bearer tokens into, one key
+# per listener, while the engine keeps what it mints on its own volume, which no
+# receiver pod can mount. dfe-extras renders it empty beside the engine, with a
+# Role granting the engine get and update on it alone, and dfe-receiver mounts
+# it read-only. Two charts read this key, so it lives here.
+ingestBearer:
+  secretName: dfe-ingest-bearer-tokens
+
 # Consumer-facing Kafka endpoint. Default = the single tier's own broker Service,
 # matching the clickhouse block below. The cluster tier's broker is operator-owned
 # and named differently, so profile-scale.yaml overrides this.

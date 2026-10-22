@@ -288,6 +288,11 @@ thin chart's env.
             # crashes minting the JWT signing key at startup. (Same fix as dfe-docker.)
             - name: DFE_SECRETS_PATH
               value: {{ .Values.config.mountPath }}/.secrets
+            # No receiver pod can mount that volume, so the engine also writes
+            # dfe-receiver's bearer tokens into this Secret, which the receiver
+            # mounts (engine-ingest-bearer-secret.yaml).
+            - name: DFE_INGEST_BEARER_SECRET
+              value: {{ .Values.ingestBearer.secretName | quote }}
             {{- end }}
             # Auth stores (accounts/groups/api-keys, + oidc-providers) -- same
             # trap as DFE_SECRETS_PATH: without this the auth bootstrap falls

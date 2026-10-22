@@ -93,6 +93,21 @@ extraObjects:
     {{- end -}}
     {{- end -}}
 
+# The ingest bearer tokens dfe-engine writes into ingestBearer.secretName while it
+# keeps what it mints on its own volume, one file per listener, the file: sources
+# the engine compiles. A directory mount, never subPath, so a rewritten key reaches
+# the file the receiver re-reads. Optional, because an engine store in Secrets
+# Manager renders no Secret and the receiver reads aws: sources instead.
+extraVolumes:
+  - name: ingest-bearer-tokens
+    secret:
+      secretName: '{{ .Values.ingestBearer.secretName }}'
+      optional: true
+extraVolumeMounts:
+  - name: ingest-bearer-tokens
+    mountPath: /var/run/secrets/dfe/ingest-bearer-tokens
+    readOnly: true
+
 # Keys written into the config file that no overlay beats: the
 # PushEvents server dfe-fetcher sends to on the direct transport, and the buffer
 # figure the app reads only with acknowledgements off. The app's own default for
