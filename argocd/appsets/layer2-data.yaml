@@ -249,6 +249,22 @@ spec:
                 {{- toYaml $clickhouse | nindent 2 }}
               {{- end }}
               {{- end }}
+              {{- if or (eq .app "kafka") (eq .app "clickhouse-cluster") }}
+              {{- with index .metadata.annotations "dfe.hyperi.io/node_pools" | default "" }}
+              {{- $dedicated := list }}
+              {{- range $name, $pool := get (mustFromJson .) "classes" | default dict }}
+              {{- if get $pool "taints" }}
+              {{- $dedicated = append $dedicated $name }}
+              {{- end }}
+              {{- end }}
+              {{- if $dedicated }}
+              # The tainted pools on the cluster secret, which each data workload
+              # then requires. A cluster secret naming none adds no requirement.
+              nodeScheduling:
+                dedicatedPools: {{ $dedicated | toJson }}
+              {{- end }}
+              {{- end }}
+              {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}
               {{- if $pullSecret }}
               # Only the secret bootstrap.sh created. An absent annotation names none: images pull anonymously.

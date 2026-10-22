@@ -97,6 +97,30 @@ comparison on "500m" is where that gate would quietly stop biting.
 {{- end }}
 
 {{/*
+dfe-kafka.poolSelector -- the node labels one workload's pods require, as YAML:
+its pool's dfe.hyperi.io/workload label where nodeScheduling.dedicatedPools names
+the pool, then a deployer's nodeScheduling.nodeSelector over it. Empty where the
+cluster runs no such pool and the deployer names no selector.
+
+layer2-data hands dedicatedPools the tainted pools on the cluster secret, so a
+cluster without them never gets a requirement its pods could wait on.
+
+Usage:
+  {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}
+*/}}
+{{- define "dfe-kafka.poolSelector" -}}
+{{- $scheduling := .root.Values.nodeScheduling | default dict -}}
+{{- $selector := dict -}}
+{{- if has .pool ($scheduling.dedicatedPools | default list) -}}
+{{- $_ := set $selector "dfe.hyperi.io/workload" .pool -}}
+{{- end -}}
+{{- with $scheduling.nodeSelector -}}
+{{- $selector = mergeOverwrite $selector (deepCopy .) -}}
+{{- end -}}
+{{- with $selector }}{{ toYaml . }}{{ end -}}
+{{- end }}
+
+{{/*
 dfe-kafka.partitions -- the ONE partition count, for the broker's num.partitions
 AND for every landing topic the chart creates.
 

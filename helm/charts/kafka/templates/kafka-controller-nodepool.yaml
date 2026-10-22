@@ -47,13 +47,13 @@ spec:
   template:
     pod:
       {{- if .Values.nodeScheduling }}
-      {{- if .Values.nodeScheduling.nodeSelector }}
+      {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kraft-controller") | fromYaml }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  {{- range $key, $val := .Values.nodeScheduling.nodeSelector }}
+                  {{- range $key, $val := . }}
                   - key: {{ $key }}
                     operator: In
                     values:

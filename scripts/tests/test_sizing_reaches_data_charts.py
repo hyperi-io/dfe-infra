@@ -35,7 +35,7 @@ import pytest
 import yaml
 
 from _forgejo_job import run_job
-from _weave import helm, weave
+from _weave import data_application, helm, render_data
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
@@ -132,41 +132,17 @@ def _seed(out: Path) -> dict[str, str]:
 
 
 def _application(app: str, facts: dict[str, str]) -> tuple[dict, dict]:
-    """layer2-data's Application for one chart, every field rendered, and its list element."""
+    """layer2-data's Application for one chart on a scale AWS cluster, and its list element."""
     if shutil.which(helm()) is None:
         pytest.skip("helm is not on PATH")
-    w = weave()
-    doc = w.load_appset(REPO_ROOT, APPSET)
-    element = next(
-        e
-        for generator in doc["spec"]["generators"]
-        for nested in generator["matrix"]["generators"]
-        for e in (nested.get("list") or {}).get("elements") or []
-        if e["app"] == app
-    )
-    target = w.Target(app, "scale", "aws", annotations=tuple(sorted(facts.items())))
-    rendered = w.expand_template(
-        doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
-    )
-    return rendered, element
+    return data_application(app, "scale", "aws", facts)
 
 
 def data_docs(app: str, deploy: Path, facts: dict[str, str] | None = None) -> list[dict]:
-    """One layer2-data chart as its Application renders it over the deploy repo at ``deploy``."""
-    rendered, element = _application(app, facts or {})
-    source = rendered["spec"]["sources"][0]
-    chart = REPO_ROOT / source["path"]
-    chain = []
-    for raw in source["helm"].get("valueFiles") or []:
-        path = (
-            deploy / raw.removeprefix("$values/")
-            if raw.startswith("$values/")
-            else (chart / raw).resolve()
-        )
-        chain.append({"written": raw, "path": path, "present": path.is_file()})
-    return weave().render_source(
-        source, chart=chart, release=app, namespace=element["namespace"], chain=chain, helm=helm()
-    )
+    """One layer2-data chart on a scale AWS cluster, rendered over the deploy repo at ``deploy``."""
+    if shutil.which(helm()) is None:
+        pytest.skip("helm is not on PATH")
+    return render_data(app, "scale", "aws", deploy, facts)
 
 
 def _kind(docs: list[dict], kind: str) -> dict:

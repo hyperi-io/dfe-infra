@@ -613,3 +613,7 @@ nodeScheduling:
       operator: Equal
       value: kraft-controller
       effect: NoSchedule
+  # The dedicated pools this cluster runs, which layer2-data reads off the
+  # cluster secret. A pool named here is REQUIRED by its pods (brokers on
+  # kafka-broker, a separate quorum on kraft-controller). Empty requires none.
+  dedicatedPools: []

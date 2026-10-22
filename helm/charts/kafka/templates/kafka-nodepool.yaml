@@ -46,13 +46,14 @@ spec:
   template:
     pod:
       {{- if .Values.nodeScheduling }}
-      {{- if .Values.nodeScheduling.nodeSelector }}
+      {{- /* The broker pool, which carries the controller role too in combined mode. */}}
+      {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  {{- range $key, $val := .Values.nodeScheduling.nodeSelector }}
+                  {{- range $key, $val := . }}
                   - key: {{ $key }}
                     operator: In
                     values:
