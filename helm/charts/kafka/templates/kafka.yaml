@@ -62,7 +62,7 @@ spec:
       message.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
       replica.fetch.max.bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
       {{- if $threadDials }}
-      # Gated to a broker CPU request of at least
+      # Gated to a broker CPU limit of at least
       # kafka.profile.scale.threadDialVcpuFloor vCPU -- below that these buy
       # context switching and nothing else.
       num.network.threads: {{ $p.numNetworkThreads }}

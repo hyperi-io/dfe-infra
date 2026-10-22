@@ -96,12 +96,10 @@ priced on this scale in [edge.md](edge.md).
   `m8g.large` for eks-system, `m8g.xlarge` for general, `r8gd.large` for
   clickhouse, `m8g.large` for keeper, three `express.m7g.large` for
   msk-broker, and `c8gd.4xlarge` for ci-burst. With Kafka running in-cluster
-  (`kafka.provider: strimzi`) the same floor loses that line and stays S:
-  kafka-broker and eks-system both sit on `m8g.large` -- clickhouse, keeper,
-  general and ci-burst are unchanged. That is
-  the default combined quorum, which sizes no controller node at all;
-  `kafka.controller_pool: separate` adds three `m8g.medium` controllers on
-  top of it. Both buckets come from on-demand Linux pricing in the AWS Pricing
+  (`kafka.provider: strimzi`) the same floor loses that line and stays S,
+  with kafka-broker on `m8g.xlarge`: its 8 GiB is more than an `m8g.large`
+  leaves a pod. That is the default combined quorum.
+  `kafka.controller_pool: separate` adds three `m8g.large` controllers. Both buckets come from on-demand Linux pricing in the AWS Pricing
   API, read 2026-09-13 -- rates drift, and the resolver's own
   `sizing/<profile>.report.md` (written under `--out`) is the current answer,
   not this paragraph. At the floor the resolver's A4 check WARNS rather than
@@ -130,8 +128,8 @@ priced on this scale in [edge.md](edge.md).
   and merges the pools it derives on top, and `render_dial.py --tofu` emits
   neither key at all -- so the two producers never collide on the same
   tfvars variable. Under
-  `<out>/sizing/`: `<tier>.values.yaml` (only the keys the ClickHouse and
-  Kafka charts read), `<tier>.report.md` (what was sized, from which ratio,
+  `<out>/sizing/`: `<tier>.values.yaml`, its `<tier>.data-charts.values.yaml`
+  subset, `<tier>.report.md` (what was sized, from which ratio,
   in which cost bucket) and `resolved.yaml` (the baseline the next resolve diffs
   against) -- plus `<tier>.nodes.json` on an on-prem resolve, the demand
   `bootstrap.sh`'s preflight checks the cluster's real nodes against.
@@ -142,10 +140,9 @@ priced on this scale in [edge.md](edge.md).
   `<out>/sizing/` into the deployment repo's own `sizing/` and commit it there,
   so a re-size has something to check itself against: `dfe-ops upgrade --dial`
   diffs a re-resolve against `<deploy>/sizing/resolved.yaml`, never against `--out`.
-  The values fragment slots into a deploy repo's own overlay for the
-  data-layer charts.
-- `bootstrap.sh` reads `<out>/sizing/` from the same place, so resolving with
-  the `--out` above needs nothing else said. A resolve run anywhere else has to
+  layer2-data reads its `<tier>.data-charts.values.yaml` under `infra/`.
+- `bootstrap.sh` reads `<out>/sizing/` from the same place, and seeds the
+  data-charts file into a bundled repo. A resolve run anywhere else has to
   set `DFE_SIZING_DIR` to that directory. On a cluster running Karpenter,
   bootstrap REFUSES when `<tier>.pools.json` is not there, and the node-pools
   chart refuses to render with no pool classes rather than prune the

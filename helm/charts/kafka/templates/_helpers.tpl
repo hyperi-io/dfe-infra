@@ -80,13 +80,17 @@ Usage:
 {{- end }}
 
 {{/*
-dfe-kafka.brokerMilliCpu -- the broker's CPU REQUEST in millicores.
+dfe-kafka.brokerMilliCpu -- the cores the broker may run on, in millicores: its
+CPU LIMIT, or its request where no limit is set.
 
+The limit, because a dedicated broker node's kubelet and DaemonSets keep the
+request under the node's cores while the broker still runs on all of them.
 Millicores rather than cores so the thread-dial gate compares integers: a float
 comparison on "500m" is where that gate would quietly stop biting.
 */}}
 {{- define "dfe-kafka.brokerMilliCpu" -}}
-{{- $c := .Values.kafka.resources.requests.cpu | toString -}}
+{{- $r := .Values.kafka.resources -}}
+{{- $c := (dig "limits" "cpu" "" $r) | default (dig "requests" "cpu" "0" $r) | toString -}}
 {{- if hasSuffix "m" $c -}}{{ int64 (trimSuffix "m" $c) }}
 {{- else -}}{{ int64 (mulf (float64 $c) 1000.0) }}
 {{- end -}}

@@ -328,10 +328,11 @@ kafka:
       # source an explicit value, and a broker-defaulted auto-created topic
       # ignores it. dfe-engine creates the landing and DLQ topics at startup instead.
       autoCreateTopics: false
-      # The four thread dials above render only once the broker CPU REQUEST
-      # reaches this many vCPU. Below it they buy context switching and nothing
-      # else, so a cluster-mode deploy on small brokers gets the durability and
-      # sizing half of the profile without the thread half.
+      # The four thread dials above render only once the broker CPU LIMIT (the
+      # request where no limit is set) reaches this many vCPU. Below it they buy
+      # context switching and nothing else, so a cluster-mode deploy on small
+      # brokers gets the durability and sizing half of the profile without the
+      # thread half.
       threadDialVcpuFloor: 4
     single:
       # ON at the single tier: it runs no topic operator, so nothing else can

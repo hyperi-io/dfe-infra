@@ -27,8 +27,9 @@ Two stages, because the ratios are target-agnostic and the shapes are not:
 
 Five artefacts come out, all under ``--out`` (the repo root by default), plus
 ``sizing/<tier>.pools.json`` wherever there are node pools to place,
-``sizing/<tier>.clickhouse-storage.json`` wherever the storage is decided, and
-``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
+``sizing/<tier>.clickhouse-storage.json`` wherever the storage is decided,
+``sizing/<tier>.data-charts.values.yaml`` wherever Kafka or ClickHouse is sized,
+and ``sizing/<tier>.nodes.json`` on a ``cloud: onprem`` dial:
 
     shapes/resolved/<cloud>-<region>.json   the committed shape answer, merged
                                    over what is already there so another
@@ -57,6 +58,11 @@ Five artefacts come out, all under ``--out`` (the repo root by default), plus
                                    cache placement from that overlay, on one
                                    line for the cluster secret. Written only
                                    where the dial or the shape decided one.
+    sizing/<tier>.data-charts.values.yaml
+                                   the Kafka and ClickHouse keys of that overlay
+                                   a later edit may move, which layer2-data
+                                   reads from the deploy repo's sizing/ under
+                                   its infra/ overlays.
     sizing/<tier>.report.md        what was sized, from which ratio, at which
                                    confidence, in which cost bucket, and where
                                    the ceiling is
@@ -349,6 +355,14 @@ def _kube_reserved_cpu_m(vcpu: int) -> int:
         if total > start:
             reserved += (min(total, end) - start) * basis // 10000
     return reserved
+
+
+# nodeadm's kube-reserved memory, 11 MiB a pod plus 255 MiB, and its hard eviction
+# threshold (amazon-eks-ami nodeadm/internal/kubelet/config.go,
+# getMemoryMebibytesToReserve and evictionHard memory.available).
+KUBE_RESERVED_MEMORY_MIB_PER_POD = 11
+KUBE_RESERVED_MEMORY_BASE_MIB = 255
+EVICTION_HARD_MEMORY_MIB = 100
 
 
 # An instance type name: family letters, generation digits, the processor and
@@ -765,6 +779,11 @@ class Core:
     # clickhouse.instance_store_cache_share and floors.daemonset_cpu_millicores.
     instance_store_cache_share: float = 1.0
     daemonset_cpu_m: int = 0
+    # What a node's memory loses before a pod sees it -- sizing.yaml's
+    # floors.daemonset_memory_mib, node_memory_overhead_fraction and node_max_pods.
+    daemonset_memory_mib: int = 0
+    node_memory_overhead: float = 0.0
+    node_max_pods: int = 0
     keeper_parts_per_s: float = 0.0
     # What a quiet root volume asks of the instance -- not what gp3's own free
     # minimum provisions it at. See sizing.yaml's floors.root_volume_demand_*
@@ -1072,6 +1091,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     instance_store_cache_share = take("clickhouse", "instance_store_cache_share")
     daemonset_cpu_m = int(take("floors", "daemonset_cpu_millicores"))
+    daemonset_memory_mib = int(take("floors", "daemonset_memory_mib"))
+    node_memory_overhead = take("floors", "node_memory_overhead_fraction")
+    node_max_pods = int(take("floors", "node_max_pods"))
 
     ch_headroom = take("clickhouse", "disk_headroom")
     ch_disk_gib = max(
@@ -1176,6 +1198,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         clickhouse_memory_ratio=memory_usable,
         instance_store_cache_share=instance_store_cache_share,
         daemonset_cpu_m=daemonset_cpu_m,
+        daemonset_memory_mib=daemonset_memory_mib,
+        node_memory_overhead=node_memory_overhead,
+        node_max_pods=node_max_pods,
         keeper_parts_per_s=parts_per_s,
         root_volume_demand_mib_s=root_volume_demand_mib_s,
         root_volume_demand_iops=root_volume_demand_iops,
@@ -1655,6 +1680,16 @@ def _focus_policies(sizing: dict[str, object], focus: str) -> tuple[str, str]:
     return generation, storage
 
 
+def _allocatable_memory_mib(memory_gib: float, core: Core) -> int:
+    """The MiB a node of ``memory_gib`` leaves its pods: less the kernel's share,
+    the kubelet's reserve, the hard eviction threshold and the DaemonSets."""
+    capacity = math.floor(memory_gib * 1024 * (1 - core.node_memory_overhead))
+    kube_reserved = (
+        KUBE_RESERVED_MEMORY_MIB_PER_POD * core.node_max_pods + KUBE_RESERVED_MEMORY_BASE_MIB
+    )
+    return capacity - kube_reserved - EVICTION_HARD_MEMORY_MIB - core.daemonset_memory_mib
+
+
 def select_shape(
     use_case: str,
     entry: dict[str, object],
@@ -1664,6 +1699,8 @@ def select_shape(
     notes: list[str],
     root_volume_demand_mib_s: float,
     root_volume_demand_iops: int,
+    *,
+    core: Core | None = None,
 ) -> Choice:
     """Pick the concrete type for one use case, from the YAML plus the live API.
 
@@ -1677,6 +1714,8 @@ def select_shape(
         root_volume_demand_mib_s: What a quiet root volume asks of the
             instance -- sizing.yaml's floors.root_volume_demand_mib_s.
         root_volume_demand_iops: Its IOPS counterpart.
+        core: The sized core, whose node reserve the demanded memory has to fit
+            inside. None compares the demand with the type's whole memory.
 
     Returns:
         The chosen type, its fallback ladder and the price that chose it.
@@ -1710,7 +1749,14 @@ def select_shape(
     want_vcpu = max(demand.vcpu, floor_vcpu)
     want_memory = max(float(demand.ram_gib), floor_memory)
 
-    candidates = [
+    # The memory request equals the limit, so it schedules only where the node
+    # leaves that much after the kernel, the kubelet and the DaemonSets.
+    def leaves_room(t: InstanceType) -> bool:
+        if core is None or not demand.ram_gib:
+            return True
+        return _allocatable_memory_mib(t.memory_gib, core) >= demand.ram_gib * 1024
+
+    sized = [
         t
         for t in catalogue.types.values()
         if t.family == family
@@ -1719,10 +1765,12 @@ def select_shape(
         and t.memory_gib >= want_memory
         and catalogue.offered_everywhere(t.name)
     ]
+    candidates = [t for t in sized if leaves_room(t)]
     if not candidates:
         raise ResolveError(
             f"{use_case}: no {family}-family type with modifiers {modifiers or '()'} carries "
-            f"{want_vcpu} vCPU and {want_memory:.0f} GiB in every one of {', '.join(catalogue.azs)}"
+            f"{want_vcpu} vCPU and {want_memory:.0f} GiB a pod can use in every one of "
+            f"{', '.join(catalogue.azs)}"
         )
 
     # The generation policy first, then the size, then the price policy across
@@ -1782,6 +1830,22 @@ def select_shape(
         root_volume_demand_mib_s,
         root_volume_demand_iops,
     )
+
+    chosen_prefix = chosen.name.split(".", 1)[0]
+    passed_over = [
+        t
+        for t in sized
+        if t.name.split(".", 1)[0] == chosen_prefix
+        and t.vcpu < chosen.vcpu
+        and not leaves_room(t)
+    ]
+    if core is not None and passed_over:
+        tight = max(passed_over, key=lambda t: (t.vcpu, t.memory_gib, t.name))
+        notes.append(
+            f"{use_case}: {demand.ram_gib} GiB is more than {tight.name} leaves a pod "
+            f"({_allocatable_memory_mib(tight.memory_gib, core):,} MiB after the kernel, the "
+            f"kubelet and the DaemonSets), so it takes {chosen.name}"
+        )
 
     # `ladder` is the smallest type PER GENERATION that meets the raw demand,
     # built before the volume step-up above ran. A fallback smaller than the
@@ -2205,7 +2269,7 @@ def _derive_baseline_throughput(
 
 
 # ---------------------------------------------------------------------------
-# The silent-cap assertions, A1-A7
+# The silent-cap assertions, A1-A8
 # ---------------------------------------------------------------------------
 
 
@@ -2426,6 +2490,29 @@ def assert_caps(
                 )
             )
     return findings
+
+
+def assert_schedulable(choice: Choice, demand: Node | None, core: Core) -> list[Finding]:
+    """A8: the sized memory fits what the chosen node leaves a pod.
+
+    select_shape already sizes past a node too small, so this fires on a
+    deployer's instance_type override, which takes the type it names.
+    """
+    if demand is None or not demand.ram_gib:
+        return []
+    room = _allocatable_memory_mib(choice.memory_gib, core)
+    if demand.ram_gib * 1024 <= room:
+        return []
+    return [
+        Finding(
+            "A8",
+            choice.use_case,
+            f"{demand.ram_gib} GiB is requested and {choice.instance_type} leaves a pod "
+            f"{room:,} MiB after the kernel, the kubelet and the DaemonSets, so the pod never "
+            "schedules",
+            True,
+        )
+    ]
 
 
 def _smallest_sustained(catalogue: Catalogue, choice: Choice) -> str | None:
@@ -2999,6 +3086,35 @@ def clickhouse_storage(values: dict[str, object]) -> dict[str, object]:
     return out
 
 
+# Keys the data-chart base leaves out. The storage keys are fixed at the first sync
+# and ride the cluster secret. The message size is one chain with the apps, which
+# never read the base.
+DATA_CHART_EXCLUDED = {"clickhouse": ("objectStore", "storageModel"), "kafka": ("messageMaxBytes",)}
+
+
+def data_chart_values(values: dict[str, object]) -> dict[str, object]:
+    """The sizing layer2-data reads as its lowest deploy-repo layer, or nothing.
+
+    It sits under the deploy repo's own infra/ overlays, so a deployer's or the
+    engine's edit to any key here wins over it.
+
+    Args:
+        values: What build_values returned.
+
+    Returns:
+        The ``kafka`` and ``clickhouse`` keys, without DATA_CHART_EXCLUDED.
+    """
+    out: dict[str, object] = {}
+    for chart_key, excluded in DATA_CHART_EXCLUDED.items():
+        block = values.get(chart_key)
+        if not isinstance(block, dict):
+            continue
+        kept = {key: value for key, value in block.items() if key not in excluded}
+        if kept:
+            out[chart_key] = kept
+    return out
+
+
 def build_values(
     core: Core,
     provider: str,
@@ -3047,8 +3163,14 @@ def build_values(
             "archiverLagH": int(core.archiver_lag_hours),
             "usableFraction": CHART_DEFAULTS["usable_fraction"][0],
         }
+        broker_choice = choices.get("kafka-broker") if choices else None
+        # The limit is what the kafka chart's thread dials read, so a broker held
+        # under its node's cores by the request keeps them.
         kafka["resources"] = {
-            "requests": {"cpu": str(broker.vcpu), "memory": f"{broker.ram_gib}Gi"},
+            "requests": {
+                "cpu": _schedulable_cpu_request(broker.vcpu, broker_choice, core),
+                "memory": f"{broker.ram_gib}Gi",
+            },
             "limits": {"cpu": str(broker.vcpu), "memory": f"{broker.ram_gib}Gi"},
         }
         kafka["storage"] = {"size": f"{broker.disk_gib}Gi"}
@@ -3069,7 +3191,12 @@ def build_values(
             "enabled": True,
             "replicas": controller.count,
             "resources": {
-                "requests": {"cpu": str(controller.vcpu), "memory": f"{controller.ram_gib}Gi"},
+                "requests": {
+                    "cpu": _schedulable_cpu_request(
+                        controller.vcpu, choices.get("kraft-controller") if choices else None, core
+                    ),
+                    "memory": f"{controller.ram_gib}Gi",
+                },
                 "limits": {"cpu": str(controller.vcpu * 2), "memory": f"{controller.ram_gib}Gi"},
             },
             "storage": {"size": f"{controller.disk_gib}Gi"},
@@ -3578,6 +3705,7 @@ def _resolve_standalone(
             notes,
             core.root_volume_demand_mib_s,
             core.root_volume_demand_iops,
+            core=core,
         )
         _apply_shape_overrides(choice, dial.overrides, core, catalogue)
         resolved[use_case] = choice
@@ -3672,6 +3800,7 @@ def run_resolve(args: argparse.Namespace) -> int:
                     notes,
                     core.root_volume_demand_mib_s,
                     core.root_volume_demand_iops,
+                    core=core,
                 )
             else:
                 notes.append(
@@ -3681,6 +3810,8 @@ def run_resolve(args: argparse.Namespace) -> int:
                 continue
             _apply_shape_overrides(choice, dial.overrides, core, catalogue)
             choices[use_case] = choice
+            if source == "ec2":
+                findings.extend(assert_schedulable(choice, core.nodes.get(use_case), core))
             findings.extend(
                 assert_caps(
                     choice,
@@ -3795,6 +3926,21 @@ def run_resolve(args: argparse.Namespace) -> int:
     else:
         # A stale copy from an earlier resolve would reach the next bootstrap.
         storage_path.unlink(missing_ok=True)
+
+    # The deploy repo's sizing/ copy of this is what layer2-data layers under
+    # infra/, and bootstrap.sh seeds it into a bundled deploy repo.
+    base_path = out / "sizing" / f"{core.tier}.data-charts.values.yaml"
+    base = data_chart_values(values)
+    if base:
+        base_header = [
+            "## Written by scripts/resolve_sizing.py -- do not edit by hand.",
+            "## layer2-data reads this under the deploy repo's infra/ overlays, which win over it.",
+            "",
+        ]
+        base_path.write_text("\n".join([*base_header, *_yaml_block(base)]) + "\n", encoding="utf-8")
+        written.append(base_path)
+    else:
+        base_path.unlink(missing_ok=True)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
     report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")

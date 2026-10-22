@@ -28,6 +28,7 @@ values merge in this order (later wins):
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
 argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / mesh)
+deploy repo sizing/<tier>.data-charts.values.yaml   resolver sizing, layer2-data only
 deploy repo infra/common.yaml        deployment-wide (every appset)
 deploy repo infra/<chart>.yaml       one data-layer or platform chart
 deploy repo values/<app>-...yaml     engine-authored overlay (Layer 2 apps)

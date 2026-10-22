@@ -1026,6 +1026,36 @@ floors:
     read: 2026-10-21
     confidence: rule-of-thumb
     spot_test: Sum the CPU requests of the DaemonSet pods kubectl describe node lists on a clickhouse node.
+  ## The memory half of the same allowance: the otel agent alone requests 256 MiB.
+  daemonset_memory_mib:
+    value: 512
+    unit: mib
+    applies_to: all-workloads
+    source: sizing/sizing.yaml
+    read: 2026-10-22
+    confidence: rule-of-thumb
+    spot_test: Sum the memory requests of the DaemonSet pods kubectl describe node lists on a kafka-broker node.
+  ## What the kernel and firmware hold back before the kubelet counts a node's
+  ## memory, as Karpenter assumes it until it has seen the type launch.
+  node_memory_overhead_fraction:
+    value: 0.075
+    unit: fraction
+    applies_to: all-workloads
+    source: https://karpenter.sh/docs/reference/settings/
+    read: 2026-10-22
+    confidence: vendor-documented
+    spot_test: Compare status.capacity.memory on a dedicated node with its type's MemoryInfo.SizeInMiB.
+  ## nodeadm reserves 11 MiB a pod plus 255 MiB at the max pods its ENI limits
+  ## give. The resolver reads no ENI limits, so it reserves at nodeadm's own
+  ## 110-pod fallback.
+  node_max_pods:
+    value: 110
+    unit: pods
+    applies_to: all-workloads
+    source: https://github.com/awslabs/amazon-eks-ami/blob/main/nodeadm/internal/kubelet/eni_max_pods.go
+    read: 2026-10-22
+    confidence: rule-of-thumb
+    spot_test: Read status.allocatable.memory off a kafka-broker and a clickhouse node against the resolver's figure.
 
 ## ---------------------------------------------------------------------------
 ## Ceilings. The generator REFUSES above its cap rather than extrapolating, and

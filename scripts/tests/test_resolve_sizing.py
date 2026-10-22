@@ -2770,13 +2770,12 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     so the physical xlarge floor is gone and every use case falls through to
     its OWN real floor:
 
-    - kafka-broker and eks-system land on `m8g.large` (2 vCPU / 8 GiB) --
-      sizing.yaml's own kafka_broker_vcpu/_ram_gib floor, unreachable before
-      because root's inflated demand always forced xlarge first.
-    - kraft-controller lands on `m8g.medium` (1 vCPU / 4 GiB) --
-      kraft_controller.vcpu_floor/ram_gib_floor, its true floor since it is
-      sized by PARTITION COUNT, never throughput, and root is now the only
-      demand it carries.
+    - eks-system lands on `m8g.large` (2 vCPU / 8 GiB). kafka-broker takes
+      `m8g.xlarge` (4 vCPU / 16 GiB): sizing.yaml's kafka_broker_ram_gib floor
+      of 8 GiB is more than an `m8g.large` leaves a pod once the kernel, the
+      kubelet and the DaemonSets have their share.
+    - kraft-controller takes `m8g.large` for the same reason: its 4 GiB
+      ram_gib_floor is more than an `m8g.medium` leaves a pod.
     - clickhouse lands on `r8gd.large` (2 vCPU / 16 GiB) for the same reason
       as kafka-broker.
     - keeper now lands on `m8g.large` too: its IOPS demand tracks the
@@ -2792,8 +2791,8 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
       were never inflated by this bug in the first place.
 
     Verified against the fixture catalogue: total compute S, the shape table
-    reading eks-system XS, general S, kafka-broker S, kraft-controller S,
-    keeper S, clickhouse M and ci-burst L. Both earlier gates cut this floor on
+    reading eks-system XS, general S, kafka-broker M, kraft-controller S,
+    keeper S, clickhouse M and ci-burst M. Both earlier gates cut this floor on
     the same counting error one level up: a figure standing in for a demand
     that was never actually tied to what the deployment carries. The dial asks
     for a separate controller pool because the controller line is one of the
@@ -2812,17 +2811,17 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     ) == {
         "eks-system": "XS",
         "general": "S",
-        "kafka-broker": "S",
+        "kafka-broker": "M",
         "kraft-controller": "S",
         "clickhouse": "M",
         "keeper": "S",
-        "ci-burst": "L",
+        "ci-burst": "M",
     }, report
 
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}
-    assert shapes["kafka-broker"] == "m8g.large", shapes
-    assert shapes["kraft-controller"] == "m8g.medium", shapes
+    assert shapes["kafka-broker"] == "m8g.xlarge", shapes
+    assert shapes["kraft-controller"] == "m8g.large", shapes
     assert shapes["clickhouse"] == "r8gd.large", shapes
     # Keeper's IOPS demand now scales with ingest: at the floor that is the
     # idle floor (100) plus root's 300, comfortably under m8g.large's 3,600

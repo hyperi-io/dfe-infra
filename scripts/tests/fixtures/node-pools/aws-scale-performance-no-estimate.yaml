@@ -585,8 +585,8 @@ metadata:
 spec:
   # The ceiling the pool stops buying at.
   limits:
-    cpu: "12"
-    memory: 48Gi
+    cpu: "24"
+    memory: 96Gi
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: "10m"

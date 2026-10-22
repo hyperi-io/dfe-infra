@@ -49,10 +49,12 @@ ignore = [
 ]
 
 [lint.isort]
-# _bootstrap, _charts, _expect, _gate, _oci, _smoke, _spread and _weave are the shared
-# test helpers sitting beside the tests that import them, so they belong in the
-# first-party group rather than beside PyPI packages.
-known-first-party = ["_bootstrap", "_charts", "_expect", "_gate", "_oci", "_smoke", "_spread", "_weave"]
+# _bootstrap, _charts, _expect, _forgejo_job, _gate, _oci, _smoke, _spread and _weave are
+# the shared test helpers sitting beside the tests that import them, so they belong in
+# the first-party group rather than beside PyPI packages.
+known-first-party = [
+    "_bootstrap", "_charts", "_expect", "_forgejo_job", "_gate", "_oci", "_smoke", "_spread", "_weave",
+]
 
 [lint.per-file-ignores]
 # Test helpers load the script under test by path, which needs the import
