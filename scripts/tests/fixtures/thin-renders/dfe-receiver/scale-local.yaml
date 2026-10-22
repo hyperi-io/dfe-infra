@@ -226,6 +226,9 @@ spec:
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
           name: serviceaccount-files
           readOnly: true
+        - mountPath: /var/run/secrets/dfe/ingest-bearer-tokens
+          name: ingest-bearer-tokens
+          readOnly: true
       enableServiceLinks: false
       initContainers:
       - command:
@@ -286,6 +289,10 @@ spec:
               - fieldRef:
                   fieldPath: metadata.namespace
                 path: namespace
+      - name: ingest-bearer-tokens
+        secret:
+          optional: true
+          secretName: dfe-ingest-bearer-tokens
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject

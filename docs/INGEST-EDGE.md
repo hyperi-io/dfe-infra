@@ -37,6 +37,8 @@ On AWS the TCP load balancer also takes the Elastic IPs the cloud root allocates
 
 The allow list is not authentication. The engine writes each bearer listener's `auth` (`server`, `grpc`, `otlp`, `splunk_hec`, `prometheus_rw`), and a listener no ingest credential lists runs `mode: none`, accepting unauthenticated posts from every address `allow` names and landing them in the default org. Create an ingest credential listing the listener and the engine switches it to `mode: bearer`, reading the tokens from the deployment's secrets backend. A hand edit to that `auth` is drift the engine re-syncs.
 
+An ingest credential minted through the engine reaches the receiver without an overlay. On an AWS engine store the receiver reads it from Secrets Manager. Everywhere else the engine writes each listener's tokens into the `dfe-ingest-bearer-tokens` Secret (`ingestBearer.secretName` in `argocd/values/common.yaml`), which dfe-extras renders empty with a Role granting the engine `get` and `update` on it alone, and the receiver mounts it read-only at `/var/run/secrets/dfe/ingest-bearer-tokens`. A new or rotated token takes effect after the kubelet's next sync of that mount plus the receiver's bearer refresh, 300 seconds by default.
+
 A fresh deploy exposes one listener, `http` 8080, the documented core data path (`POST /ingest`). `/livez` and `/readyz` share the http listener, so exposing ingest exposes both probe paths. Every other public listener in the receiver's contract opens with its own `config.<name>.enabled`, and on `door: loadbalancer` reaches the load balancer and the policy with it:
 
 | `<name>` | Ports |

@@ -383,6 +383,10 @@ extras:
         jwtExpireMinutes: ""
         maxSessionMinutes: ""
         docsEnabled: ""
+      # The Secret the engine writes dfe-receiver's bearer tokens into off a
+      # Secrets Manager store (argocd/values/common.yaml's ingestBearer).
+      ingestBearer:
+        secretName: dfe-ingest-bearer-tokens
       networkModel:
         podCIDR: ""
       authConfig:
