@@ -187,6 +187,7 @@ What the cluster must supply:
 | Contract item | Why | Preflight check |
 | --- | --- | --- |
 | Reachable API server inside the stack's `platform.kubernetes` (versions.yaml) | the deploy target, and the support window | FAIL below the floor, as `bootstrap/check_platform.py` does at bootstrap |
+| The `ImageVolume` feature gate on a cluster below 1.35, when the stack pins the DocumentDB operator | the operator mounts its extension as an image volume, so its pods fail to start without it | FAIL unless the API server's `/metrics` reports it on, or `DFE_IMAGE_VOLUME_ENABLED=true` is set, as bootstrap does |
 | Admin-ish RBAC (create ns/CRD/clusterrole/deploy/secret) | bootstrap installs operators | FAIL if not |
 | >= 1 Ready node (3 for `scale`) with headroom | scheduling | WARN under guidance floors |
 | The workload node label, when the overlay selects on one | pods sit Pending forever without it -- looks like a chart fault, is the wrong cluster | FAIL if no Ready node carries it |
