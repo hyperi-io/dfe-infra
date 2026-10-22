@@ -318,8 +318,11 @@ apps:
     routing:
       compiler: receiver
       values_paths:
-        # Which source a record belongs to, and where a matched record goes.
+        # Which source a record belongs to, which orgs each ingest credential's
+        # records may land in, and where a labelled record goes.
         routing: config.routing
+        rules: config.rules
+        ingest_bindings: config.ingest_bindings
         destinations: config.destinations
     # The flat DFE_RECEIVER_* env (dfe-receiver-env and the contract's kafka
     # group) outranks the config file, and configOverrides merges over it.
@@ -507,9 +510,11 @@ apps:
     routing:
       compiler: fetcher
       values_paths:
-        # What it polls, and where the records it pulls are sent.
+        # What it polls, where the records it pulls are sent, and their org.
         sources: config.sources
         output: config.output
+        org_id: config.org_id
+        default_org_id: config.default_org_id
       scope: instance
     # What dfe-fetcher can fetch. Each name is the config key its stanza sits
     # under in config.sources, and the engine refuses a source whose declared

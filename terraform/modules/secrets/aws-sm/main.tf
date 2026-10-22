@@ -2,7 +2,8 @@
 // reaches it. This is the swap the local path's OpenBao body describes: the
 // store changes and the ClusterSecretStore's provider block changes, while
 // every ExternalSecret and every reader downstream is unchanged. dfe-engine has
-// a second identity, which writes the secrets it mints under engine/.
+// a second identity, which writes the secrets it mints under engine/, and
+// dfe-receiver a third, which reads the ingest bearer tokens the engine writes there.
 
 data "aws_region" "current" {}
 
@@ -54,6 +55,12 @@ locals {
 
   // The engine's thin chart names its service account after the component (scalo-service).
   engine_service_account = "dfe-engine"
+
+  // The engine writes one <id>:<token> secret per receiver listener under this, and the receiver reads them.
+  bearer_tokens_arn_prefix = "${local.engine_arn_prefix}/ingest/bearer-tokens"
+
+  // The receiver's thin chart names its service account after the component, as the engine's does.
+  receiver_service_account = "dfe-receiver"
 }
 
 // A generated value NEVER leaves this module -- it goes into the store and into
@@ -244,4 +251,58 @@ resource "aws_eks_pod_identity_association" "engine" {
   service_account = local.engine_service_account
 
   role_arn = aws_iam_role.engine.arn
+}
+
+// ---------------------------------------------------------------------------
+// The identity dfe-receiver reads its ingest bearer tokens with
+// ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "receiver" {
+  name                 = "${var.cluster_name}-receiver-secrets"
+  path                 = var.iam_path
+  assume_role_policy   = var.pod_identity_trust_policy_json
+  permissions_boundary = var.permissions_boundary
+}
+
+data "aws_iam_policy_document" "receiver" {
+  // Each listener's secret_source names its secret, so the receiver reads by name and lists nothing.
+  statement {
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["${local.bearer_tokens_arn_prefix}/*"]
+  }
+
+  // Decrypt only, through Secrets Manager, for the bearer-token secrets alone.
+  statement {
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [var.kms_key_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = ["${local.bearer_tokens_arn_prefix}/*"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "receiver" {
+  name   = "${var.cluster_name}-receiver-secrets"
+  role   = aws_iam_role.receiver.name
+  policy = data.aws_iam_policy_document.receiver.json
+}
+
+resource "aws_eks_pod_identity_association" "receiver" {
+  cluster_name = var.cluster_name
+
+  namespace       = var.engine_namespace
+  service_account = local.receiver_service_account
+
+  role_arn = aws_iam_role.receiver.arn
 }

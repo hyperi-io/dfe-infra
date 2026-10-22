@@ -98,12 +98,12 @@ variable "kms_key_arn" {
 }
 
 variable "cluster_name" {
-  description = "The EKS cluster whose external-secrets and dfe-engine service accounts get their identities."
+  description = "The EKS cluster whose external-secrets, dfe-engine and dfe-receiver service accounts get their identities."
   type        = string
 }
 
 variable "engine_namespace" {
-  description = "The namespace dfe-engine runs in, the naming module's k8s_namespace, which bootstrap writes onto the cluster secret as dfe_namespace."
+  description = "The namespace dfe-engine and dfe-receiver run in, the naming module's k8s_namespace, which bootstrap writes onto the cluster secret as dfe_namespace."
   type        = string
 
   validation {

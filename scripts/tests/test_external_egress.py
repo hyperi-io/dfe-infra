@@ -63,6 +63,8 @@ KAFKA_APPS = {
     # The MSK bootstrap Job, in the strimzi namespace rather than beside the apps.
     "dfe-kafka",
 }
+# The engine writes what it mints to the store, and the receiver reads its bearer tokens there.
+SECRETS_APPS = {"dfe-engine", "dfe-receiver"}
 
 
 def render(*sets: str) -> list[dict]:
@@ -222,16 +224,16 @@ def test_oidc_is_engine_only_on_443() -> None:
 
 def test_secret_backend_derives_from_the_address() -> None:
     policies = external(render("vault.address=https://bao.example.com:8200"), "secrets")
-    expect("secret backend is the engine alone", apps_of(policies) == {"dfe-engine"},
-           f"got {sorted(apps_of(policies))}")
+    expect("secret backend is the engine and the receiver's bearer tokens alone",
+           apps_of(policies) == SECRETS_APPS, f"got {sorted(apps_of(policies))}")
     expect("secret backend grants the OpenBao and KMS ports",
            ports_of(policies) == {8200, 443}, f"got {sorted(ports_of(policies))}")
 
 
-def test_an_aws_store_opens_the_engine_on_https_alone() -> None:
+def test_an_aws_store_opens_the_engine_and_receiver_on_https_alone() -> None:
     """Secrets Manager and KMS answer on 443 only, so the OpenBao port stays shut."""
     policies = external(render("secrets.provider=aws"), "secrets")
-    expect("an aws store is the engine alone", apps_of(policies) == {"dfe-engine"},
+    expect("an aws store is the engine and the receiver alone", apps_of(policies) == SECRETS_APPS,
            f"got {sorted(apps_of(policies))}")
     expect("an aws store grants only 443", ports_of(policies) == {443},
            f"got {sorted(ports_of(policies))}")
@@ -393,7 +395,7 @@ def main() -> int:
         test_kafka_internal_modes_open_nothing()
         test_oidc_is_engine_only_on_443()
         test_secret_backend_derives_from_the_address()
-        test_an_aws_store_opens_the_engine_on_https_alone()
+        test_an_aws_store_opens_the_engine_and_receiver_on_https_alone()
         test_elasticsearch_does_not_reach_the_transform()
         test_external_otel_is_namespace_wide()
         test_otel_endpoint_override_also_declares()

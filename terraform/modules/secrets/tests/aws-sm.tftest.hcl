@@ -374,6 +374,11 @@ run "the_eso_role_carries_the_permissions_boundary" {
     condition     = aws_iam_role.engine.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && aws_iam_role.engine.path == "/dfe-e2e/"
     error_message = "the dfe-engine aws_iam_role must carry var.permissions_boundary and sit under var.iam_path"
   }
+
+  assert {
+    condition     = aws_iam_role.receiver.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && aws_iam_role.receiver.path == "/dfe-e2e/"
+    error_message = "the dfe-receiver aws_iam_role must carry var.permissions_boundary and sit under var.iam_path"
+  }
 }
 
 // dfe-engine mints its signing key and ClickHouse passwords into the store, so it
@@ -514,6 +519,94 @@ run "eso_is_denied_the_engine_prefix" {
       && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/*"])
     ])
     error_message = "ESO's read grant spans the path, so it must be denied <path>/engine/ explicitly"
+  }
+}
+
+// dfe-receiver reads the <id>:<token> secret the engine writes per listener, by
+// name, and no other secret the engine mints.
+run "the_receiver_reads_the_bearer_tokens_and_nothing_else" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.receiver.statement :
+      s.effect == "Allow"
+      && s.actions == toset(["secretsmanager:GetSecretValue"])
+      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*"])
+    ])
+    error_message = "the receiver role must read <path>/engine/ingest/bearer-tokens/ and nothing wider"
+  }
+
+  assert {
+    condition = length(data.aws_iam_policy_document.receiver.statement) == 2 && alltrue([
+      for s in data.aws_iam_policy_document.receiver.statement :
+      s.effect == "Allow"
+      && length(setintersection(s.actions, ["secretsmanager:CreateSecret", "secretsmanager:UpdateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DeleteSecret", "secretsmanager:ListSecrets", "kms:GenerateDataKey"])) == 0
+      && alltrue([for a in s.actions : !strcontains(a, "*")])
+      && !contains(s.resources, "*")
+    ])
+    error_message = "the receiver role holds two statements, read and decrypt, and writes, lists or encrypts nothing"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.receiver.statement :
+      s.actions == toset(["kms:Decrypt"])
+      && s.resources == toset(["arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"])
+      && anytrue([
+        for c in s.condition :
+        c.test == "StringEquals" && c.variable == "kms:ViaService"
+        && length(c.values) == 1 && contains(c.values, "secretsmanager.us-west-2.amazonaws.com")
+      ])
+      && anytrue([
+        for c in s.condition :
+        c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN"
+        && length(c.values) == 1 && contains(c.values, "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*")
+      ])
+    ])
+    error_message = "the receiver's KMS grant must be Decrypt alone, through secretsmanager.<region>, for the bearer-token secrets alone"
+  }
+}
+
+run "the_receiver_grant_follows_the_store_prefix" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  variables {
+    prefix = "org-secrets"
+  }
+
+  assert {
+    condition = anytrue([
+      for s in data.aws_iam_policy_document.receiver.statement :
+      s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/engine/ingest/bearer-tokens/*"])
+    ])
+    error_message = "the receiver's read grant must carry the store prefix, as the engine's names do"
+  }
+}
+
+run "the_receiver_role_binds_its_own_service_account" {
+  command = plan
+
+  module {
+    source = "./aws-sm"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.receiver.namespace == "dfe-test" && aws_eks_pod_identity_association.receiver.service_account == "dfe-receiver"
+    error_message = "the receiver role must be associated with the dfe-receiver service account in engine_namespace"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.receiver.cluster_name == "dfe-contract"
+    error_message = "the receiver association must name the deployment's own cluster"
   }
 }
 

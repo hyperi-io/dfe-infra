@@ -31,8 +31,10 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CLUSTER_AWS = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws"
 EDGE_AWS = REPO_ROOT / "terraform" / "modules" / "edge" / "aws"
+SECRETS_AWS = REPO_ROOT / "terraform" / "modules" / "secrets" / "aws-sm"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 CHARTS = REPO_ROOT / "helm" / "charts"
+GOLDENS = REPO_ROOT / "scripts" / "tests" / "fixtures" / "thin-renders"
 
 
 def association(tf_file: Path, name: str) -> dict[str, str]:
@@ -65,6 +67,34 @@ def variable_default(variables_tf: Path, name: str) -> str:
     if match is None:
         raise AssertionError(f"no default for var.{name} in {variables_tf}")
     return match.group(1)
+
+
+def local_value(tf_file: Path, name: str) -> str:
+    """The string a module's locals block gives `name`."""
+    match = re.search(rf'^\s*{re.escape(name)}\s*=\s*"([^"]+)"', tf_file.read_text(encoding="utf-8"), re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"no string local {name} in {tf_file}")
+    return match.group(1)
+
+
+def test_the_receiver_role_binds_the_account_its_thin_chart_runs_as() -> None:
+    """dfe-receiver reads its ingest bearer tokens through this association, so an
+    account its pods do not run as leaves every bearer listener with no tokens."""
+    main_tf = SECRETS_AWS / "main.tf"
+    body = main_tf.read_text(encoding="utf-8")
+    start = body.index('resource "aws_eks_pod_identity_association" "receiver"')
+    block = body[start : body.index("\n}\n", start)]
+    expect("the association binds the receiver's service account local",
+           re.search(r"^\s*service_account\s*=\s*local\.receiver_service_account$", block, re.MULTILINE)
+           is not None, block)
+    account = local_value(main_tf, "receiver_service_account")
+
+    renders = sorted((GOLDENS / "dfe-receiver").glob("*-aws.yaml"))
+    expect("the receiver has aws goldens to read", bool(renders), str(GOLDENS))
+    for golden in renders:
+        found = set(re.findall(r"^\s*serviceAccountName: (\S+)$", golden.read_text(encoding="utf-8"), re.MULTILINE))
+        expect(f"{golden.name} runs the receiver as the account the association binds",
+               found == {account}, f"golden {sorted(found)!r} vs tofu {account!r}")
 
 
 def test_external_dns_binds_the_account_the_appset_names() -> None:
@@ -137,6 +167,7 @@ def test_keeper_gets_its_own_account_and_no_association() -> None:
 
 def main() -> int:
     with standalone():
+        test_the_receiver_role_binds_the_account_its_thin_chart_runs_as()
         test_external_dns_binds_the_account_the_appset_names()
         test_clickhouse_object_store_binds_the_account_the_chart_creates()
         test_keeper_gets_its_own_account_and_no_association()

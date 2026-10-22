@@ -287,13 +287,15 @@ externalEgress:
     ports:
       - { port: 443, protocol: TCP }
 
-  # The store the engine writes what it mints to. ESO is not here -- it runs in
-  # external-secrets with no policy. layer2-platform declares provider aws from
-  # the cluster secret's engine_secrets_prefix; no chart injects an OpenBao
-  # address into the engine yet, so that half opens on the declaration alone.
+  # The store the engine writes what it mints to, and dfe-receiver reads its
+  # ingest bearer tokens from. ESO is not here -- it runs in external-secrets with
+  # no policy. layer2-platform declares provider aws from the cluster secret's
+  # engine_secrets_prefix. No chart injects an OpenBao address into the engine
+  # yet, so that half opens on the declaration alone.
   secrets:
     apps:
       - dfe-engine
+      - dfe-receiver
     ports:
       - { port: 8200, protocol: TCP }   # OpenBao / Vault API
       - { port: 443,  protocol: TCP }   # cloud KMS and secret-manager APIs
