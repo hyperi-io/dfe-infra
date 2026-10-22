@@ -162,6 +162,7 @@ image. One number, same image ref both sides.
   `ghcr.io/ferretdb/ferretdb` and `HYPERDX_POSTGRES_VERSION` ->
   `ghcr.io/ferretdb/postgres-documentdb`.
 - No k8s cascade: k8s runs the DocumentDB store (class C above).
+- dfe-docker moves to DocumentDB Local: `services.documentdb-local` (pg18-1.0.0) renders as `HYPERDX_DOCUMENTDB_VERSION` -> `ghcr.io/documentdb/documentdb/documentdb-local`. Its key starts with the stack cut after 2.2.1-rc.17, and the FerretDB pair goes once dfe-docker no longer reads it.
 
 ### Envoy (dfe-proxy)
 
