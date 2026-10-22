@@ -1,0 +1,416 @@
+/*
+ * Project:      dfe-infra
+ * File:         docs-site/src/components/landing/landing.module.css
+ * Purpose:      The landing page layout and components, from the role and scale variables in custom.css.
+ * Language:     CSS
+ *
+ * License:      BUSL-1.1
+ * Copyright:    (c) 2026 HYPERI PTY LIMITED
+ */
+
+.container {
+  max-width: var(--dfe-container);
+  margin-inline: auto;
+  padding-inline: var(--dfe-space-6);
+}
+
+.eyebrow {
+  margin: 0 0 var(--dfe-space-3);
+  color: var(--role-accent-ink);
+  font-family: var(--dfe-font-sans);
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--dfe-tracking-eyebrow);
+  line-height: var(--dfe-leading-snug);
+  text-transform: uppercase;
+}
+
+.textLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dfe-space-2);
+  color: var(--role-link);
+  font-size: var(--dfe-text-sm);
+  font-weight: 600;
+}
+
+.textLink:hover {
+  color: var(--role-link);
+}
+
+/* The minifier merges rules that share declarations and can reorder them, so a variant outranks its base by specificity, never by order. */
+
+/* Hero: a navy band holding the copy and the quickstart panel. */
+.hero {
+  padding-block: var(--dfe-space-16);
+  background: var(--role-canvas);
+  color: var(--role-body);
+}
+
+/* The quickstart takes the wider column, so a command reads on one line where it can. */
+.heroGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--dfe-space-12);
+  align-items: start;
+}
+
+.heroTitle {
+  margin: 0 0 var(--dfe-space-4);
+  color: var(--role-ink);
+  font-family: var(--dfe-font-display);
+  font-size: var(--dfe-text-5xl);
+  font-weight: 800;
+  line-height: var(--dfe-leading-tight);
+}
+
+.tagline {
+  margin: 0 0 var(--dfe-space-8);
+  color: var(--role-body);
+  font-size: var(--dfe-text-xl);
+  line-height: var(--dfe-leading-snug);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dfe-space-3);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dfe-space-2);
+  padding: var(--dfe-space-3) var(--dfe-space-6);
+  border: var(--dfe-stroke-hairline) solid transparent;
+  border-radius: var(--dfe-radius-md);
+  font-family: var(--dfe-font-sans);
+  font-size: var(--dfe-text-base);
+  font-weight: 600;
+  line-height: var(--dfe-leading-snug);
+  text-decoration: none;
+}
+
+.button:hover {
+  text-decoration: none;
+}
+
+.button.buttonPrimary,
+.button.buttonPrimary:hover {
+  color: var(--role-on-plate);
+}
+
+.button.buttonPrimary {
+  background: var(--role-plate);
+}
+
+.button.buttonPrimary:hover {
+  background: var(--role-plate-hover);
+}
+
+.button.buttonSecondary,
+.button.buttonSecondary:hover {
+  border-color: var(--role-link);
+  color: var(--role-ink);
+}
+
+.button.buttonSecondary {
+  background: transparent;
+}
+
+.button.buttonSecondary:hover {
+  background: var(--role-raised);
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dfe-space-2);
+  margin: var(--dfe-space-8) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badge {
+  display: inline-flex;
+  padding: var(--dfe-space-1) var(--dfe-space-3);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border-radius: var(--dfe-radius-pill);
+  color: var(--role-body);
+  font-size: var(--dfe-text-sm);
+  text-decoration: none;
+}
+
+.badge:hover {
+  border-color: var(--role-link);
+  color: var(--role-body);
+  text-decoration: none;
+}
+
+.quickstart {
+  padding: var(--dfe-space-6);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border-radius: var(--dfe-radius-lg);
+  background: var(--role-raised);
+}
+
+.quickstartTitle {
+  margin: 0 0 var(--dfe-space-4);
+  color: var(--role-ink);
+  font-family: var(--dfe-font-display);
+  font-size: var(--dfe-text-2xl);
+  font-weight: 800;
+  line-height: var(--dfe-leading-snug);
+}
+
+.quickstartTabs {
+  margin-bottom: 0;
+}
+
+.quickstartLead {
+  margin: 0 0 var(--dfe-space-3);
+  color: var(--role-body);
+  font-size: var(--dfe-text-sm);
+}
+
+.quickstart :global(.theme-code-block) {
+  margin-bottom: var(--dfe-space-4);
+}
+
+/* Copying is the point of this panel, so the buttons stay visible, up in the title row clear of the code. */
+.quickstart :global(.theme-code-block) button {
+  opacity: 1 !important;
+}
+
+.quickstart :global(.theme-code-block) div[class*='codeBlockTitle'] {
+  padding: var(--dfe-space-2) var(--dfe-space-4);
+  border-bottom-color: var(--role-border);
+  color: var(--role-muted);
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--dfe-tracking-eyebrow);
+  line-height: var(--dfe-space-6);
+  text-transform: uppercase;
+}
+
+/* The title row is space-2 + space-6 + space-2 tall, so this centres the button in it. */
+.quickstart :global(.theme-code-block) div[class*='buttonGroup'] {
+  top: calc(var(--dfe-space-1) - var(--dfe-space-8) - var(--dfe-space-2) - var(--dfe-stroke-hairline));
+}
+
+.quickstart :global(.theme-code-block) pre code {
+  font-size: var(--dfe-text-xs);
+}
+
+/* Sections alternate canvas and raised, and a card takes whichever surface its section does not. */
+.section {
+  padding-block: var(--dfe-space-16);
+  background: var(--role-canvas);
+}
+
+.section.sectionRaised {
+  background: var(--role-raised);
+}
+
+.sectionHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--dfe-space-6);
+  margin-bottom: var(--dfe-space-12);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--role-ink);
+  font-family: var(--dfe-font-display);
+  font-size: var(--dfe-text-3xl);
+  font-weight: 800;
+  line-height: var(--dfe-leading-tight);
+}
+
+.sectionLead {
+  max-width: calc(var(--dfe-container) / 2);
+  margin: var(--dfe-space-3) 0 0;
+  color: var(--role-muted);
+  font-size: var(--dfe-text-lg);
+}
+
+.gridThree,
+.gridCapabilities {
+  display: grid;
+  gap: var(--dfe-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gridThree {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Five cards: three across, then two wider, so neither row leaves a gap. */
+.gridCapabilities {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.gridCapabilities > li {
+  grid-column: span 2;
+}
+
+.gridCapabilities > li:nth-child(n + 4) {
+  grid-column: span 3;
+}
+
+.gridThree > li,
+.gridCapabilities > li {
+  display: flex;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dfe-space-3);
+  width: 100%;
+  padding: var(--dfe-space-6);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border-radius: var(--dfe-radius-lg);
+  background: var(--role-raised);
+  color: var(--role-body);
+}
+
+.sectionRaised .card {
+  background: var(--role-canvas);
+}
+
+.card .eyebrow {
+  margin: 0;
+}
+
+.linkCard,
+.linkCard:hover {
+  color: var(--role-body);
+  text-decoration: none;
+}
+
+.linkCard:hover {
+  border-color: var(--role-link);
+}
+
+.cardTitle {
+  margin: 0;
+  color: var(--role-ink);
+  font-family: var(--dfe-font-sans);
+  font-size: var(--dfe-text-lg);
+  font-weight: 600;
+  line-height: var(--dfe-leading-snug);
+}
+
+.cardText {
+  margin: 0;
+  color: var(--role-muted);
+  font-size: var(--dfe-text-sm);
+}
+
+.cardAction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dfe-space-2);
+  margin-top: auto;
+  padding-top: var(--dfe-space-2);
+  color: var(--role-link);
+  font-size: var(--dfe-text-sm);
+  font-weight: 600;
+}
+
+.iconTile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dfe-space-8);
+  height: var(--dfe-space-8);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border-radius: var(--dfe-radius-md);
+  background: var(--role-canvas);
+  color: var(--role-link);
+  font-size: var(--dfe-text-lg);
+}
+
+.sectionRaised .iconTile,
+.sectionRaised .chip {
+  background: var(--role-raised);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dfe-space-2);
+  margin: auto 0 0;
+  padding: var(--dfe-space-2) 0 0;
+  list-style: none;
+}
+
+.chip {
+  padding: var(--dfe-space-1) var(--dfe-space-2);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border-radius: var(--dfe-radius-sm);
+  background: var(--role-canvas);
+  color: var(--role-muted);
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  line-height: var(--dfe-leading-snug);
+}
+
+.closing {
+  padding-block: var(--dfe-space-16);
+  background: var(--role-canvas);
+}
+
+.closingInner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dfe-space-8);
+  text-align: center;
+}
+
+.closingInner .sectionLead {
+  margin: 0;
+}
+
+.closingInner .actions {
+  justify-content: center;
+}
+
+@media (max-width: 996px) {
+  .hero {
+    padding-block: var(--dfe-space-12);
+  }
+
+  .heroGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .heroTitle {
+    font-size: var(--dfe-text-4xl);
+  }
+
+  .section,
+  .closing {
+    padding-block: var(--dfe-space-12);
+  }
+
+  .gridThree {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gridCapabilities {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gridCapabilities > li,
+  .gridCapabilities > li:nth-child(n + 4) {
+    grid-column: span 1;
+  }
+}
