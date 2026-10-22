@@ -235,27 +235,23 @@ true
 
 {{/*
 dfe-engine.sidecarServiceAccount -- the account the hunt runner or keda shim runs
-as. Takes (dict "ctx" . "name" <workload name>).
+as: one of its own, rendered by dfe-engine.sidecarServiceAccountObject, that
+carries nothing. Takes (dict "ctx" . "name" <workload name>).
 
-On aws the engine's account carries its Secrets Manager write grant through EKS
-Pod Identity, so each of these takes an account of its own, rendered by
-dfe-engine.sidecarServiceAccountObject, that carries nothing.
+The engine's account carries its grants: Secrets Manager writes through EKS Pod
+Identity on aws, and get and update on the ingest bearer Secret elsewhere. Neither
+sidecar calls the Kubernetes API or a secrets store.
 */}}
 {{- define "dfe-engine.sidecarServiceAccount" -}}
-{{- if include "dfe-engine.secretsOnAws" .ctx -}}
 {{ .name }}
-{{- else -}}
-{{ include "dfe-common.serviceAccountName" .ctx }}
-{{- end -}}
 {{- end -}}
 
 {{/*
 dfe-engine.sidecarServiceAccountObject -- the ServiceAccount
-sidecarServiceAccount names on aws, and nothing elsewhere. Takes (dict "ctx" .
-"name" <workload name> "component" <app.kubernetes.io/component>).
+sidecarServiceAccount names. Takes (dict "ctx" . "name" <workload name>
+"component" <app.kubernetes.io/component>).
 */}}
 {{- define "dfe-engine.sidecarServiceAccountObject" -}}
-{{- if include "dfe-engine.secretsOnAws" .ctx }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -270,7 +266,6 @@ metadata:
 # Neither workload calls the Kubernetes API.
 automountServiceAccountToken: false
 ---
-{{- end }}
 {{- end -}}
 
 {{/*

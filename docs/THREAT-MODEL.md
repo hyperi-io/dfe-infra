@@ -65,7 +65,7 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 
 ## Secrets dfe-engine mints
 
-The engine's JWT signing key, its ClickHouse service and tenant passwords and the OIDC client secrets an operator enters are reached through the engine alone. On AWS they sit in Secrets Manager under `<path>/engine/`, encrypted with the deployment key, and only the engine's Pod Identity role can read or write that prefix: external-secrets is denied it, and the hunt runner and keda shim run as service accounts with no AWS identity and no Kubernetes API token. Elsewhere they are files on the engine's own volume. A flaw that exposes them is graded as an engine compromise.
+The engine's JWT signing key, its ClickHouse service and tenant passwords and the OIDC client secrets an operator enters are reached through the engine alone. On AWS they sit in Secrets Manager under `<path>/engine/`, encrypted with the deployment key, and only the engine's Pod Identity role can read or write that prefix: external-secrets is denied it. Elsewhere they are files on the engine's own volume. On every cloud the hunt runner and keda shim run as service accounts of their own, with no AWS identity and no Kubernetes API token, so none of the engine's grants reaches them. A flaw that exposes them is graded as an engine compromise.
 
 dfe-receiver's ingest bearer tokens follow the same store. Off AWS the engine also writes them into the `dfe-ingest-bearer-tokens` Secret, through a Role granting its service account `get` and `update` on that one Secret and nothing else, and the receiver mounts it read-only. A flaw that reads that Secret yields every ingest credential, so it is graded as a receiver authentication bypass.
 

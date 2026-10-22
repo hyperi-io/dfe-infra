@@ -151,6 +151,8 @@ spec:
             - name: DFE_HUNTS_RULES_DIR
               value: {{ .Values.config.mountPath }}/rules
             {{- end }}
+            # Its account mounts no token, so scalo's logs take the namespace from here.
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
             # ensure_schema() reads the tree the engine image ships.
             {{- with (include "dfe-extras.otelEndpoint" .) }}

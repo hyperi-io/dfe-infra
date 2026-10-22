@@ -466,6 +466,32 @@ automountServiceAccountToken: false
 kind: ServiceAccount
 metadata:
   labels:
+    app.kubernetes.io/component: hunt-runner
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-hunt-runner
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-hunt-runner
+---
+apiVersion: v1
+automountServiceAccountToken: false
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: keda-shim
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-keda-shim
+    app.kubernetes.io/part-of: dfe
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-keda-shim
+---
+apiVersion: v1
+automountServiceAccountToken: false
+kind: ServiceAccount
+metadata:
+  labels:
     app.kubernetes.io/instance: dfe-engine-default-in-cluster
     app.kubernetes.io/managed-by: helm
     app.kubernetes.io/name: dfe-engine
@@ -733,6 +759,10 @@ spec:
           value: /deploy-repo/repo/current/config/hunts
         - name: DFE_HUNTS_RULES_DIR
           value: /deploy-repo/repo/current/config/rules
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME
@@ -879,7 +909,7 @@ spec:
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: dfe-engine
+      serviceAccountName: dfe-hunt-runner
       volumes:
       - emptyDir: {}
         name: config
@@ -952,6 +982,10 @@ spec:
               name: query-reader-clickhouse
         - name: DFE_KEDA_SHIM_PORT
           value: '8080'
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
         - name: OTEL_SERVICE_NAME
@@ -1028,7 +1062,7 @@ spec:
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
-      serviceAccountName: dfe-engine
+      serviceAccountName: dfe-keda-shim
       volumes:
       - emptyDir: {}
         name: tmp

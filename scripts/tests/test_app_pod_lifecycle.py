@@ -23,10 +23,9 @@ token. scalo falls back to that mount for the pod's namespace, so POD_NAMESPACE
 arrives from the downward API instead. Its version check derives the instance
 id from ca.crt and namespace in the same directory, so those two files are
 projected there on their own, and a pod start does not read as a new install.
-dfe-engine is the control plane, not a data-plane app, and keeps its token, as
-do the hunt runner and keda shim dfe-extras renders beside it on the engine's
-account. Where the engine keeps its secrets in Secrets Manager they run as
-accounts of their own, which mount none.
+dfe-engine is the control plane, not a data-plane app, and keeps its token. The
+hunt runner and keda shim dfe-extras renders beside it run as accounts of their
+own, which mount none.
 
 The defaults are read from the goldens under fixtures/thin-renders, which
 test_thin_renders.py holds equal to what Argo deploys. The dials render live
@@ -225,10 +224,9 @@ def test_the_token_dial_turns_the_token_back_on_for_that_app() -> None:
 
 
 def test_the_engine_keeps_its_token() -> None:
-    """The engine mounts the kubelet's token, and so does a sidecar on the engine's account.
+    """The engine mounts the kubelet's token, and each sidecar runs as an account of its own that mounts none.
 
-    A sidecar on an account of its own (the engine's secrets in Secrets Manager)
-    mounts none. Nothing else sits at the token's path either way.
+    So only the engine's pod holds the engine's grants. Nothing else sits at the token's path.
     """
     for where, docs in goldens(CONTROL_PLANE):
         accounts = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ServiceAccount"}
@@ -256,8 +254,8 @@ def test_the_engine_keeps_its_token() -> None:
                 mounted = accounts.get(account, {}).get("automountServiceAccountToken", True)
             on_engine_account = account == CONTROL_PLANE
             expect(
-                f"{at} runs as {CONTROL_PLANE} or as its own account",
-                on_engine_account or (account == name and name != CONTROL_PLANE),
+                f"{at} runs as its own account",
+                account == name,
                 f"got {account!r}",
             )
             expect(

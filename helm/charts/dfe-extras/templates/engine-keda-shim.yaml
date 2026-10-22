@@ -71,6 +71,8 @@ spec:
             {{- include "dfe-engine.serviceClickhouseAuthEnv" $reader | nindent 12 }}
             - name: DFE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
+            # Its account mounts no token, so scalo's logs take the namespace from here.
+            {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             {{- with (include "dfe-extras.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; whole stack -> HyperDX
               value: {{ . | quote }}

@@ -265,13 +265,13 @@ def test_the_runner_still_reads_the_shared_signing_key() -> None:
     assert jwt["valueFrom"]["secretKeyRef"]["name"] == "dfe-engine-jwt"
 
 
-def test_without_the_store_the_sidecars_keep_the_engines_account() -> None:
+def test_without_the_store_the_sidecars_still_run_as_their_own_accounts() -> None:
+    """Off Secrets Manager the engine's account holds the ingest bearer Secret's grant instead."""
     docs = render_extras("dfe-engine", "scale", "aws", annotations=NO_STORE)
-    assert service_account(docs, "dfe-hunt-runner") == "dfe-engine"
-    assert service_account(docs, "dfe-keda-shim") == "dfe-engine"
-    # The only account left is the one ESO reads the collector's password through.
-    accounts = [k[1] for k in keyed(docs) if k[0] == "ServiceAccount"]
-    assert accounts == ["otel-writer-clickhouse-reader"]
+    assert service_account(docs, "dfe-hunt-runner") == "dfe-hunt-runner"
+    assert service_account(docs, "dfe-keda-shim") == "dfe-keda-shim"
+    accounts = sorted(k[1] for k in keyed(docs) if k[0] == "ServiceAccount")
+    assert accounts == ["dfe-hunt-runner", "dfe-keda-shim", "otel-writer-clickhouse-reader"]
 
 
 # ---------------------------------------------------------------- the egress

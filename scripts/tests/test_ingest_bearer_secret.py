@@ -108,6 +108,34 @@ def test_expected_fail_an_empty_name_fails_the_render() -> None:
         render_extras("dfe-engine", "single", "local", overlay={"ingestBearer": {"secretName": ""}})
 
 
+@pytest.mark.parametrize("facts", [{}, AWS_STORE], ids=["file-store", "secrets-manager-store"])
+@pytest.mark.parametrize("cloud", ["local", "gcp", "aws"])
+def test_the_sidecars_run_as_accounts_of_their_own_with_no_token(cloud: str, facts: dict[str, str]) -> None:
+    docs = render_extras("dfe-engine", "scale", cloud, annotations=facts)
+    accounts = keyed(docs)
+    for name in ("dfe-hunt-runner", "dfe-keda-shim"):
+        assert pod_spec(docs, name)["serviceAccountName"] == name
+        assert accounts[("ServiceAccount", name)]["automountServiceAccountToken"] is False
+
+
+def test_only_the_engines_pod_runs_as_the_account_the_secret_is_bound_to() -> None:
+    docs = render_app("dfe-engine", "scale", "local")
+    bound = keyed(docs)[("RoleBinding", f"{SECRET}-writer")]["subjects"][0]["name"]
+    runners = sorted(
+        d["metadata"]["name"]
+        for d in docs
+        if d.get("kind") == "Deployment" and d["spec"]["template"]["spec"].get("serviceAccountName") == bound
+    )
+    assert runners == ["dfe-engine"]
+
+
+@pytest.mark.parametrize("sidecar", ["dfe-hunt-runner", "dfe-keda-shim"])
+def test_a_sidecar_with_no_token_still_logs_its_namespace(sidecar: str) -> None:
+    container = pod_spec(render_extras("dfe-engine", "scale", "local"), sidecar)["containers"][0]
+    namespace = next(e for e in container["env"] if e["name"] == "POD_NAMESPACE")
+    assert namespace["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.namespace"}}
+
+
 @pytest.mark.parametrize("service", ["dfe-loader", "dfe-receiver", "hyperdx", "dfe-ui"])
 def test_no_other_app_renders_the_secret_or_its_grant(service: str) -> None:
     assert not [d for d in render_extras(service, "scale", "local") if SECRET in d["metadata"]["name"]]
