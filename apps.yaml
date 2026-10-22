@@ -324,6 +324,13 @@ apps:
         rules: config.rules
         ingest_bindings: config.ingest_bindings
         destinations: config.destinations
+        # Each bearer listener's auth: bearer on the secret the engine writes for it
+        # while an ingest credential lists it, none otherwise.
+        server_auth: config.server.auth
+        grpc_auth: config.grpc.auth
+        otlp_auth: config.otlp.auth
+        splunk_hec_auth: config.splunk_hec.auth
+        prometheus_rw_auth: config.prometheus_rw.auth
     # The flat DFE_RECEIVER_* env (dfe-receiver-env and the contract's kafka
     # group) outranks the config file, and configOverrides merges over it.
     deployment_owned:

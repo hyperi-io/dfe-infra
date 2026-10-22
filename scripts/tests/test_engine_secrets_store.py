@@ -16,7 +16,8 @@ service account. bootstrap.sh writes the prefix and the deployment key onto the
 cluster secret, layer2-apps.yaml hands them to the engine's values, and
 dfe-extras turns them into the engine's DFE_SECRETS_* env. The hunt runner and
 the keda shim then need accounts of their own, or EKS Pod Identity hands them
-the engine's write grant. layer2-platform.yaml opens the engine's egress for the
+the engine's write grant. dfe-receiver takes the store's region, which Pod
+Identity does not inject. layer2-platform.yaml opens the engine's egress for the
 store, and dfe-receiver's beside it, since the receiver reads the bearer tokens the
 engine writes there. The Pod Identity agent has to stay reachable through every
 except for both.
@@ -193,12 +194,27 @@ def test_without_the_prefix_the_engine_keeps_its_files() -> None:
     assert "DFE_SECRETS_PROVIDER" not in env
 
 
-@pytest.mark.parametrize("service", ["dfe-loader", "dfe-receiver", "hyperdx", "dfe-ui"])
+@pytest.mark.parametrize("service", ["dfe-loader", "hyperdx", "dfe-ui"])
 def test_no_other_app_moves_with_the_engines_store(service: str) -> None:
-    """layer2-apps hands the store to dfe-engine alone."""
+    """layer2-apps hands the store to dfe-engine, and its region to dfe-receiver."""
     assert render_extras(service, "scale", "aws", annotations=AWS_FACTS) == render_extras(
         service, "scale", "aws", annotations=NO_STORE
     )
+
+
+def test_the_receiver_takes_the_stores_region_and_nothing_else() -> None:
+    """An aws: secret_source resolves no region on its own, and Pod Identity injects none."""
+    with_store = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=AWS_FACTS))
+    without = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=NO_STORE))
+    env = ("ConfigMap", "dfe-receiver-env")
+    assert "AWS_REGION" not in without[env]["data"]
+    assert with_store[env]["data"].pop("AWS_REGION") == "us-west-2"
+    assert with_store == without
+
+
+def test_expected_fail_a_receiver_store_with_no_region_fails_the_render() -> None:
+    with pytest.raises(RenderError, match=re.escape("secrets.region is empty")):
+        render_extras("dfe-receiver", "single", "aws", overlay={"secrets": {"provider": "aws", "region": ""}})
 
 
 @pytest.mark.parametrize(

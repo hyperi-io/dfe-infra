@@ -128,12 +128,6 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-receiver
-        - name: DFE_RECEIVER_BEARER_TOKENS
-          valueFrom:
-            secretKeyRef:
-              key: bearer-tokens
-              name: dfe-receiver-auth
-              optional: true
         envFrom:
         - configMapRef:
             name: dfe-receiver-env

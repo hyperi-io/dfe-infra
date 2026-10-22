@@ -444,6 +444,13 @@ spec:
                 tags: {{ index .metadata.annotations "dfe.hyperi.io/resource_tags" | default "{}" | fromJson | toJson }}
                 recoveryWindowDays: 0
               {{- end }}
+              {{- if and (index .metadata.annotations "dfe.hyperi.io/engine_secrets_prefix" | default "") (eq .deploy.service "dfe-receiver") }}
+              # The store the receiver reads the engine's bearer-token secrets from.
+              # Pod Identity injects credentials and no region.
+              secrets:
+                provider: aws
+                region: {{ index .metadata.annotations "dfe.hyperi.io/region" | quote }}
+              {{- end }}
         # This repo again, at the revision dfe-extras is read at: Argo reads one
         # revision per repo URL, and a second ref at another revision is read
         # from the wrong tree without a word.
