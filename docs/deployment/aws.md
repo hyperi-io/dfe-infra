@@ -222,14 +222,6 @@ priced on this scale in [edge.md](edge.md).
   the two default end-to-end tests; `--check-only` runs the preflight
   alone, with no cluster contact. `bootstrap/bridge.py` is the reader it
   imports, not a command an operator runs.
-- The AWS path is an rc.14 deployment: the pins it needs -- karpenter, the
-  load balancer controller, `aws-msk-iam-auth`, the toolbox images, the AWS
-  tofu providers -- live in the `2.2.0-rc.14` stack block, which sits on
-  the rc.14 cut branch until that cut merges to `main` and moves `current`.
-  So deploy with `--stack 2.2.0-rc.14` from a checkout carrying that block;
-  on a tree whose `current` is still rc.13 the drift check prints NOTE
-  lines for those keys instead of failing, and `dfe-ops bastion up` refuses
-  because the toolbox tool versions are empty.
 - Set `DFE_VAULT_ADDR` / `DFE_VAULT_ROLE_ID` only when `secrets.backend` is
   `openbao`. `k8s.repo_url` is the dfe-infra chart repo Argo reads. A private
   copy needs `DFE_REPO_TOKEN` (an HTTPS token with read access; `bootstrap.sh`
