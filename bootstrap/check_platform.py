@@ -28,7 +28,8 @@ A stack that pins `operators.documentdb-operator` also needs the ImageVolume
 feature gate on a cluster older than IMAGE_VOLUME_DEFAULT_FROM. The gate is read
 from the API server's /metrics, so the kubelets stay the operator's to confirm.
 A cluster with the gate off, or whose /metrics cannot be read, is refused unless
-DFE_IMAGE_VOLUME_ENABLED=true says the gate is on.
+DFE_IMAGE_VOLUME_ENABLED=true says the gate is on. `dfe-ops preflight` asks for the
+same verdict, read from the cluster it is aimed at.
 
 Exits 3 when the cluster is below a floor or lacks that gate, 0 when it meets
 them. A cluster above the ceiling warns and proceeds: untested is not the same
@@ -41,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -109,15 +111,23 @@ def documentdb_enabled(stack: dict) -> bool:
     return bool((stack.get("operators") or {}).get("documentdb-operator"))
 
 
-def read_gate(name: str) -> bool | None:
+def image_volume_required(stack: dict, actual: tuple[int, ...]) -> bool:
+    """Whether a stack on a cluster at `actual` needs the ImageVolume gate checked."""
+    gate_from = as_tuple(IMAGE_VOLUME_DEFAULT_FROM)
+    return documentdb_enabled(stack) and actual[: len(gate_from)] < gate_from
+
+
+def read_gate(name: str, kubectl_args: Sequence[str] = ()) -> bool | None:
     """Whether the API server reports feature gate `name` on, None when it cannot say.
 
     Reads the kubernetes_feature_enabled series from /metrics, which needs `get` on
     that non-resource URL. A missing kubectl, a refusal, a timeout and a scrape
     without the series all return None, because none of them says the gate is off.
+    `kubectl_args` go ahead of the verb, to aim the read at a cluster other than the
+    current kubecontext (`--kubeconfig`, `--context`).
     """
     try:
-        done = run_kubectl(["get", "--raw", "/metrics"], timeout=METRICS_TIMEOUT_SECONDS)
+        done = run_kubectl([*kubectl_args, "get", "--raw", "/metrics"], timeout=METRICS_TIMEOUT_SECONDS)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if done.returncode != 0:
@@ -128,21 +138,28 @@ def read_gate(name: str) -> bool | None:
     return None
 
 
-def check_image_volume(stack_name: str, actual: str) -> int:
-    """Exit code for a DocumentDB stack on a cluster older than IMAGE_VOLUME_DEFAULT_FROM."""
-    gate, override = IMAGE_VOLUME_GATE, IMAGE_VOLUME_OVERRIDE_ENV
-    if os.environ.get(override) == "true":
-        print(
-            f"WARNING: {override}=true -- taking the {gate} feature gate as on in the API "
-            f"server and every kubelet, without reading it from the cluster.",
-            file=sys.stderr,
-        )
-        return 0
+def image_volume_verdict(
+    stack_name: str,
+    actual: str,
+    kubectl_args: Sequence[str] = (),
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, str]:
+    """(level, message) for a DocumentDB stack on a cluster older than IMAGE_VOLUME_DEFAULT_FROM.
 
-    state = read_gate(gate)
+    The level is "ok" when the API server reports the gate on, "warn" when the override
+    admits a gate that was not read, and "fail" otherwise. `environ` is where the override
+    is looked up (os.environ when None) and `kubectl_args` aims the /metrics read.
+    """
+    gate, override = IMAGE_VOLUME_GATE, IMAGE_VOLUME_OVERRIDE_ENV
+    if (os.environ if environ is None else environ).get(override) == "true":
+        return "warn", (
+            f"{override}=true -- taking the {gate} feature gate as on in the API "
+            f"server and every kubelet, without reading it from the cluster."
+        )
+
+    state = read_gate(gate, kubectl_args)
     if state:
-        print(f"platform: {gate} feature gate is on in the API server (stack {stack_name})")
-        return 0
+        return "ok", f"{gate} feature gate is on in the API server (stack {stack_name})"
 
     needs = (
         f"stack {stack_name} runs the DocumentDB operator, which mounts its extension "
@@ -150,21 +167,27 @@ def check_image_volume(stack_name: str, actual: str) -> int:
     )
     upgrade = f"Kubernetes {IMAGE_VOLUME_DEFAULT_FROM} or later"
     if state is False:
-        print(
-            f"REFUSED: cluster is Kubernetes {actual} with the {gate} feature gate off, and "
+        return "fail", (
+            f"cluster is Kubernetes {actual} with the {gate} feature gate off, and "
             f"{needs}.\n"
-            f"         Turn it on in the API server and every kubelet, or use {upgrade}.",
-            file=sys.stderr,
+            f"         Turn it on in the API server and every kubelet, or use {upgrade}."
         )
+    return "fail", (
+        f"cluster is Kubernetes {actual} and the {gate} feature gate could not "
+        f"be read from the API server (kubectl get --raw /metrics), and {needs}.\n"
+        f"         If it is on in the API server and every kubelet, run again with "
+        f"{override}=true. Otherwise turn it on, or use {upgrade}."
+    )
+
+
+def check_image_volume(stack_name: str, actual: str) -> int:
+    """Print the verdict for the current kubecontext and return its exit code."""
+    level, message = image_volume_verdict(stack_name, actual)
+    if level == "ok":
+        print(f"platform: {message}")
     else:
-        print(
-            f"REFUSED: cluster is Kubernetes {actual} and the {gate} feature gate could not "
-            f"be read from the API server (kubectl get --raw /metrics), and {needs}.\n"
-            f"         If it is on in the API server and every kubelet, run again with "
-            f"{override}=true. Otherwise turn it on, or use {upgrade}.",
-            file=sys.stderr,
-        )
-    return 3
+        print(f"{'WARNING' if level == 'warn' else 'REFUSED'}: {message}", file=sys.stderr)
+    return 3 if level == "fail" else 0
 
 
 def main() -> int:
@@ -224,8 +247,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    gate_from = as_tuple(IMAGE_VOLUME_DEFAULT_FROM)
-    if documentdb_enabled(stack) and actual_t[: len(gate_from)] < gate_from:
+    if image_volume_required(stack, actual_t):
         gate_rc = check_image_volume(stack_name, actual)
         if gate_rc:
             return gate_rc

@@ -3692,21 +3692,28 @@ def _current_stack() -> str:
     return out.strip() if rc == 0 else ""
 
 
-def _platform_k8s_requirement() -> str:
-    """The current stack's `platform.kubernetes` string, empty if unreadable.
-
-    Preflight and bootstrap/check_platform.py have to refuse the same clusters,
-    so preflight reads the same key instead of carrying a literal floor that
-    goes stale the moment the stack moves.
-    """
+def _current_stack_entry() -> tuple[str, dict]:
+    """The `current` stack's (name, versions.yaml entry), ("", {}) if unreadable."""
     sys.path.insert(0, str(BOOTSTRAP))
     from check_platform import load_versions
 
     try:
         root = load_versions(REPO_ROOT / "versions.yaml")
     except OSError:
-        return ""
-    stack = (root.get("stacks") or {}).get(root.get("current")) or {}
+        return "", {}
+    name = str(root.get("current") or "")
+    return name, (root.get("stacks") or {}).get(name) or {}
+
+
+def _platform_k8s_requirement() -> str:
+    """The current stack's `platform.kubernetes` string, empty if unreadable.
+
+    Preflight and bootstrap/check_platform.py have to refuse the same clusters,
+    so preflight reads the same key instead of carrying a literal floor that
+    goes stale the moment the stack moves. The ImageVolume gate is the other half:
+    cmd_preflight asks check_platform for its verdict instead of restating it.
+    """
+    _, stack = _current_stack_entry()
     return str((stack.get("platform") or {}).get("kubernetes") or "")
 
 
@@ -4024,7 +4031,12 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         )
         return 2
     sys.path.insert(0, str(BOOTSTRAP))
-    from check_platform import as_tuple, parse_requirement
+    from check_platform import (
+        as_tuple,
+        image_volume_required,
+        image_volume_verdict,
+        parse_requirement,
+    )
 
     floor_text = parse_requirement(min_k8s)[0]
     floor = as_tuple(floor_text)
@@ -4042,6 +4054,16 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         fail(f"API server {git_version} is below the supported floor {floor_text}")
     if "+rke2" in git_version:
         ok("RKE2 distribution detected (the on-prem baseline)")
+    # bootstrap's ImageVolume verdict, read from the cluster `base` aims at, with the
+    # override taken from the env file the way stack-deploy hands it to bootstrap.
+    stack_name, stack = _current_stack_entry()
+    if not stack:
+        warn("no current stack could be read from versions.yaml, so the ImageVolume feature gate was not checked")
+    elif image_volume_required(stack, sv):
+        level, msg = image_volume_verdict(
+            stack_name, f"{sv[0]}.{sv[1]}", base[1:], {**os.environ, **file_env}
+        )
+        {"ok": ok, "warn": warn, "fail": fail}[level](msg)
 
     # 2. Nodes: Ready, capacity, and the workload-label trap.
     rc, nodes_json, err = _kubectl_json(base, "get", "nodes")
