@@ -94,7 +94,9 @@
 #   DFE_SIZING_DIR           where resolve_sizing.py's --out pointed, which is
 #                            the directory `sizing/` hangs off. Defaults to
 #                            terraform/environments/<cloud> where that exists,
-#                            matching the resolve the deployment docs give.
+#                            matching the resolve the deployment docs give. Its
+#                            <profile>.data-charts.values.yaml is seeded into a
+#                            bundled deploy repo's sizing/ for layer2-data.
 #   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
 #   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
 #   DFE_ENGINE_SECRETS_PREFIX  aws only: where dfe-engine's role writes what it
@@ -779,6 +781,12 @@ export DFE_CLICKHOUSE_STORAGE="${DFE_CLICKHOUSE_STORAGE:-}"
 DFE_CLICKHOUSE_STORAGE_YAML="${DFE_CLICKHOUSE_STORAGE//\'/\'\'}"
 # shellcheck disable=SC2016 # the single quotes sit inside double quotes, so the variable expands
 export DFE_CLICKHOUSE_STORAGE_ANNOTATION="${DFE_CLICKHOUSE_STORAGE:+dfe.hyperi.io/clickhouse_storage: '${DFE_CLICKHOUSE_STORAGE_YAML}'}"
+# The resolver's Kafka and ClickHouse sizing, which layer2-data reads from the
+# deploy repo's sizing/ under its infra/ overlays. [4c/7] seeds a bundled repo.
+DFE_SIZING_BASE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.data-charts.values.yaml"
+if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
+  echo "Data-chart sizing: ${DFE_SIZING_BASE_FILE}"
+fi
 # A test run's id and expiry as one line of JSON, quoted the same way as the pools.
 export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
 # shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
@@ -1221,6 +1229,16 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --dry-run=client -o yaml | dfe_apply_secret
   echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
 
+  # The sizing the setup Job seeds into the repo's first commit. Applied empty
+  # where the resolve wrote none, so an earlier resolve's file cannot seed.
+  sizing_seed_args=()
+  if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
+    sizing_seed_args=(--from-file="${DFE_SIZING_BASE_FILE##*/}=${DFE_SIZING_BASE_FILE}")
+  fi
+  kubectl -n forgejo create configmap dfe-deploy-repo-sizing ${sizing_seed_args[@]+"${sizing_seed_args[@]}"} \
+    --dry-run=client -o yaml | kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -
+  echo "  Deploy-repo sizing seed (forgejo ns): ${sizing_seed_args[*]:-none}"
+
   # The Forgejo -> Argo push webhook's shared secret. Forgejo signs the delivery
   # with it and Argo verifies against argocd-secret's webhook.gogs.secret, so
   # both ends carry the one value; minted once and reused, like the password
@@ -1282,6 +1300,11 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
     echo "  Engine write cred dfe-deploy-repo-auth ready in ${DFE_NAMESPACE}"
   else
     echo "  WARNING: external deploy repo with no DFE_CONFIG_REPO_TOKEN -- the engine CANNOT push (gitcrud) over SSH; it needs an HTTPS token. Set DFE_CONFIG_REPO_TOKEN for engine writes."
+  fi
+  # Nothing here writes an external repo, so its copy of the sizing is the deployer's commit.
+  if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
+    echo "  NOTE: layer2-data sizes Kafka and ClickHouse from sizing/${DFE_SIZING_BASE_FILE##*/} in ${DFE_CONFIG_REPO_URL}."
+    echo "        Commit ${DFE_SIZING_DIR}/sizing/ there, or the data charts run at their chart defaults."
   fi
 fi
 

@@ -58,6 +58,7 @@ target-agnostic core derived here, then concrete shapes from
 | `shapes/resolved/<cloud>-<region>.json` | the committed shape answer, merged over what is there, so API drift is a reviewed diff. Keyed by region: instance-generation availability is not one worldwide |
 | `sizing.auto.tfvars.json` | `node_pools` and `resolved_shapes`, and nothing the root does not declare. Written at the ROOT of `--out`, beside `render_dial.py --tofu`'s own `dial.auto.tfvars.json` -- OpenTofu auto-loads `*.auto.tfvars.json` only from the root module directory, never a subdirectory. This script is the single writer of `node_pools`: it merges the dial's own `node_pools.system` (a group the deployer sizes by hand) with the pools it derives, so the two producers never collide on the same variable. `resolved_shapes` also carries the `toolbox` shape, which the toolbox instance and the tunnel forwarder launch on and which never becomes a pool, and every shape's `root_volume` type and size |
 | `sizing/<tier>.values.yaml` | only keys the two charts already read |
+| `sizing/<tier>.data-charts.values.yaml` | the Kafka and ClickHouse keys of that overlay a later edit may move. layer2-data reads the deploy repo's copy under its `infra/` overlays, and bootstrap seeds it into a bundled deploy repo |
 | `sizing/<tier>.report.md` | what was sized, from which ratio, at which confidence, in which cost bucket, and where the ceiling is. Prices choose the shapes and are never printed -- see `docs/deployment/aws.md#how-costs-are-described` |
 
 `--fixtures scripts/tests/fixtures/sizing` resolves against captured answers
@@ -72,10 +73,10 @@ so a ratio edit here shows every deployment it moves.
 
 ## Adding to it
 
-- **A ratio**: add the map with all seven fields, then run
+- A ratio needs the map with all seven fields, then
   `python3 scripts/validate_sizing.py`.
-- **A Kafka provider**: add a key under `kafka:` carrying at least
-  `ram_formula` and `disk_formula` -- memory is per provider because Redpanda
-  bypasses the page cache that JVM brokers live on -- and add its ceiling under
-  `ceilings:`. Add the name to `APPLIES_TO` in the validator.
-- **A cloud**: nothing here. Clouds live in `shapes/compute-shapes.yaml`.
+- A Kafka provider is a key under `kafka:` carrying at least `ram_formula` and
+  `disk_formula` -- memory is per provider because Redpanda bypasses the page
+  cache that JVM brokers live on -- plus its ceiling under `ceilings:` and its
+  name in the validator's `APPLIES_TO`.
+- A cloud needs nothing here. Clouds live in `shapes/compute-shapes.yaml`.

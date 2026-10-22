@@ -50,6 +50,12 @@ deployRepo:
   # adding one reaches an existing deploy while a deleted values file stays
   # deleted.
   seedMarker: .seeded-apps
+  # The resolver's sizing, which bootstrap.sh writes into this ConfigMap and the
+  # setup Job seeds under sizing/ in the repo's first commit. Each key is a file
+  # name, and a file the repo already holds is left as it is.
+  sizingSeed:
+    configMapName: dfe-deploy-repo-sizing
+    mountPath: /seed/sizing
 
 # The push hook that refreshes Argo CD, instead of waiting out its 300 s poll
 # plus 60 s jitter -- the 5 to 9 minutes an engine source write takes to reach a

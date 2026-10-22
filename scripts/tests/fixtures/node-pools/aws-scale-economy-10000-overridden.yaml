@@ -99,7 +99,7 @@ spec:
         volumeSize: "40Gi"
         volumeType: gp3
         iops: 3000
-        throughput: 125
+        throughput: 750
         encrypted: true
         # The deployment's own key, the same one EKS secrets and Kafka take.
         kmsKeyID: "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
@@ -383,8 +383,8 @@ metadata:
 spec:
   # The ceiling the pool stops buying at.
   limits:
-    cpu: "96"
-    memory: 768Gi
+    cpu: "192"
+    memory: 1536Gi
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: "10m"

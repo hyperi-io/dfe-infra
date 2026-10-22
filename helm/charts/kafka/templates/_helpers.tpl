@@ -80,16 +80,44 @@ Usage:
 {{- end }}
 
 {{/*
-dfe-kafka.brokerMilliCpu -- the broker's CPU REQUEST in millicores.
+dfe-kafka.brokerMilliCpu -- the cores the broker may run on, in millicores: its
+CPU LIMIT, or its request where no limit is set.
 
+The limit, because a dedicated broker node's kubelet and DaemonSets keep the
+request under the node's cores while the broker still runs on all of them.
 Millicores rather than cores so the thread-dial gate compares integers: a float
 comparison on "500m" is where that gate would quietly stop biting.
 */}}
 {{- define "dfe-kafka.brokerMilliCpu" -}}
-{{- $c := .Values.kafka.resources.requests.cpu | toString -}}
+{{- $r := .Values.kafka.resources -}}
+{{- $c := (dig "limits" "cpu" "" $r) | default (dig "requests" "cpu" "0" $r) | toString -}}
 {{- if hasSuffix "m" $c -}}{{ int64 (trimSuffix "m" $c) }}
 {{- else -}}{{ int64 (mulf (float64 $c) 1000.0) }}
 {{- end -}}
+{{- end }}
+
+{{/*
+dfe-kafka.poolSelector -- the node labels one workload's pods require, as YAML:
+its pool's dfe.hyperi.io/workload label where nodeScheduling.dedicatedPools names
+the pool, then a deployer's nodeScheduling.nodeSelector over it. Empty where the
+cluster runs no such pool and the deployer names no selector.
+
+layer2-data hands dedicatedPools the tainted pools on the cluster secret, so a
+cluster without them never gets a requirement its pods could wait on.
+
+Usage:
+  {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}
+*/}}
+{{- define "dfe-kafka.poolSelector" -}}
+{{- $scheduling := .root.Values.nodeScheduling | default dict -}}
+{{- $selector := dict -}}
+{{- if has .pool ($scheduling.dedicatedPools | default list) -}}
+{{- $_ := set $selector "dfe.hyperi.io/workload" .pool -}}
+{{- end -}}
+{{- with $scheduling.nodeSelector -}}
+{{- $selector = mergeOverwrite $selector (deepCopy .) -}}
+{{- end -}}
+{{- with $selector }}{{ toYaml . }}{{ end -}}
 {{- end }}
 
 {{/*

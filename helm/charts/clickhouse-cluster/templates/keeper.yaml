@@ -68,9 +68,9 @@ spec:
     serviceAccountName: {{ . }}
     {{- end }}
     {{- if .Values.nodeScheduling }}
-    {{- if .Values.nodeScheduling.nodeSelector }}
+    {{- with include "dfe-clickhouse.poolSelector" (dict "root" $ "pool" "keeper") | fromYaml }}
     nodeSelector:
-      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
     {{- end }}
     {{- if .Values.nodeScheduling.tolerations }}
     tolerations:

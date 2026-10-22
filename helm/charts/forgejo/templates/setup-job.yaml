@@ -21,11 +21,22 @@ spec:
     spec:
       restartPolicy: Never
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      volumes:
+        # Written by bootstrap.sh before Argo CD runs. optional, so a deploy with
+        # no resolved sizing mounts an empty directory and seeds nothing.
+        - name: sizing-seed
+          configMap:
+            name: {{ .Values.deployRepo.sizingSeed.configMapName | quote }}
+            optional: true
       containers:
         - name: repo-setup
           image: {{ .Values.setup.image | quote }}
           resources:
             {{- toYaml .Values.setup.resources | nindent 12 }}
+          volumeMounts:
+            - name: sizing-seed
+              mountPath: {{ .Values.deployRepo.sizingSeed.mountPath | quote }}
+              readOnly: true
           command:
             - /bin/sh
             - -c
@@ -38,9 +49,11 @@ spec:
                 sleep 5
               done
               echo "Ensuring deploy repo '${REPO}' exists..."
+              # Created empty: an empty repo has no branch for Argo CD to resolve,
+              # so no Application reads it before the first commit below.
               code=$(curl -s -o /dev/null -w "%{http_code}" -u "${GITEA_USER}:${GITEA_PASS}" \
                 -X POST -H "Content-Type: application/json" \
-                -d "{\"name\":\"${REPO}\",\"private\":${PRIVATE},\"default_branch\":\"${BRANCH}\",\"auto_init\":true}" \
+                -d "{\"name\":\"${REPO}\",\"private\":${PRIVATE},\"default_branch\":\"${BRANCH}\",\"auto_init\":false}" \
                 "$GITEA/api/v1/user/repos")
               if [ "$code" = "201" ] || [ "$code" = "409" ]; then
                 echo "deploy repo ready (HTTP $code)"
@@ -48,12 +61,36 @@ spec:
                 echo "deploy repo creation failed (HTTP $code)"; exit 1
               fi
 
-              # Seed the default app set. One values/<svc>-<inst>-values.yaml is
-              # what enables an app, so an unseeded repo deploys nothing.
               AUTH="${GITEA_USER}:${GITEA_PASS}"
               REPO_API="$GITEA/api/v1/repos/${GITEA_USER}/${REPO}"
               API="$REPO_API/contents"
 
+              # The resolver's sizing goes first, so the commit that gives the repo
+              # a branch already carries it and layer2-data never syncs without it.
+              # Seeded only where absent: a deploy repo's own copy stands.
+              for path in "${SIZING_SEED_DIR}"/*; do
+                [ -f "${path}" ] || continue
+                file="sizing/$(basename "${path}")"
+                if curl -s -u "$AUTH" "$API/${file}?ref=${BRANCH}" | grep -q '"sha":'; then
+                  echo "  ${file} already in the deploy repo -- left as it is"
+                  continue
+                fi
+                body=$(base64 < "${path}" | tr -d '\n')
+                code=$(curl -s -o /dev/null -w "%{http_code}" -u "$AUTH" \
+                  -X POST -H "Content-Type: application/json" \
+                  -d "{\"content\":\"${body}\",\"branch\":\"${BRANCH}\",\"message\":\"seed ${file}\"}" \
+                  "$API/${file}")
+                if [ "$code" = "201" ]; then
+                  echo "  seeded ${file}"
+                else
+                  # Seeding the apps now would give the repo a branch without it.
+                  echo "  FAILED ${file} (HTTP $code)"; exit 1
+                fi
+              done
+
+              # Seed the default app set. One values/<svc>-<inst>-values.yaml is
+              # what enables an app, so an unseeded repo deploys nothing.
+              #
               # The marker records what this deployment has already been OFFERED,
               # which is a different question from what values/ currently holds:
               # deleting a values file is how an operator turns an app off, and a
@@ -181,6 +218,8 @@ spec:
               value: {{ .Values.deployRepo.seedInstance | quote }}
             - name: MARKER
               value: {{ .Values.deployRepo.seedMarker | quote }}
+            - name: SIZING_SEED_DIR
+              value: {{ .Values.deployRepo.sizingSeed.mountPath | quote }}
             - name: GITEA_USER
               valueFrom:
                 secretKeyRef:

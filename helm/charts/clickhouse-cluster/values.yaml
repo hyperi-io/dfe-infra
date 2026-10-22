@@ -429,3 +429,8 @@ nodeScheduling:
       operator: Equal
       value: keeper
       effect: NoSchedule
+  # The dedicated pools this cluster runs, which layer2-data reads off the
+  # cluster secret. A pool named here is REQUIRED by its pods (servers on
+  # clickhouse, Keeper on keeper). Empty requires none, except that an
+  # instance-store cache always requires the clickhouse pool's NVMe.
+  dedicatedPools: []

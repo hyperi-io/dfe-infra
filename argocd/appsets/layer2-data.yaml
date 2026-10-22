@@ -77,11 +77,11 @@ spec:
       # Multi-source, the same shape layer2-apps uses: source 1 = the pinned
       # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
       # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode,
-      # kafka.mode and storage model beat the profile file's tier defaults
-      # without editing dfe-infra. The one exception is a cluster secret that
-      # names a ClickHouse bucket: then the inline values below lock the bucket,
-      # its region and whatever storage model and cache placement the resolver
-      # decided, and the overlay cannot move them.
+      # kafka.mode and storage model beat the profile file's tier defaults and
+      # the resolver's sizing without editing dfe-infra. The one exception is a
+      # cluster secret that names a ClickHouse bucket: then the inline values
+      # below lock the bucket, its region and whatever storage model and cache
+      # placement the resolver decided, and the overlay cannot move them.
       #
       # Substrate therefore depends on the deploy repo resolving. On a bundled
       # deploy the git host is layer2-deploy-repo's own single-source Application,
@@ -96,6 +96,13 @@ spec:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # The resolver's Kafka and ClickHouse sizing, as the deploy repo's
+              # sizing/ holds it. It sits under the infra/ files below, so a
+              # deployer's or the engine's edit to a sized key wins. A bundled
+              # deploy repo is seeded with it in its first commit, and an
+              # external one carries the resolver's sizing/ as committed.
+              # Optional, like both below.
+              - '$values/sizing/{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.data-charts.values.yaml'
               # infra/common.yaml is the deployer's own common.yaml -- shared
               # facts declared once and read by every appset; infra/<chart>.yaml
               # is the per-chart overlay. Both optional.
@@ -240,6 +247,22 @@ spec:
               {{- $_ := set $clickhouse "objectStore" $objectStore }}
               clickhouse:
                 {{- toYaml $clickhouse | nindent 2 }}
+              {{- end }}
+              {{- end }}
+              {{- if or (eq .app "kafka") (eq .app "clickhouse-cluster") }}
+              {{- with index .metadata.annotations "dfe.hyperi.io/node_pools" | default "" }}
+              {{- $dedicated := list }}
+              {{- range $name, $pool := get (mustFromJson .) "classes" | default dict }}
+              {{- if get $pool "taints" }}
+              {{- $dedicated = append $dedicated $name }}
+              {{- end }}
+              {{- end }}
+              {{- if $dedicated }}
+              # The tainted pools on the cluster secret, which each data workload
+              # then requires. A cluster secret naming none adds no requirement.
+              nodeScheduling:
+                dedicatedPools: {{ $dedicated | toJson }}
+              {{- end }}
               {{- end }}
               {{- end }}
               {{- $pullSecret := index .metadata.annotations "dfe.hyperi.io/image_pull_secret" | default "" }}

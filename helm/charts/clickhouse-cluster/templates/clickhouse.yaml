@@ -144,19 +144,11 @@ spec:
     {{- end }}
     {{- /* instance-store needs a hard requirement, not a preference: the cache
     is only real NVMe on the node-pools chart's own `clickhouse` pool
-    (build_pool_classes labels every pool's nodes after its use case),
-    so start from that label and let a deployer's own nodeScheduling.nodeSelector
-    add to or override it. */ -}}
-    {{- $nodeSelector := dict }}
-    {{- if $cacheOnInstanceStore }}
-    {{- $nodeSelector = mergeOverwrite (deepCopy $nodeSelector) (dict "dfe.hyperi.io/workload" "clickhouse") }}
-    {{- end }}
-    {{- if and .Values.nodeScheduling .Values.nodeScheduling.nodeSelector }}
-    {{- $nodeSelector = mergeOverwrite (deepCopy $nodeSelector) .Values.nodeScheduling.nodeSelector }}
-    {{- end }}
-    {{- if $nodeSelector }}
+    (build_pool_classes labels every pool's nodes after its use case), so it
+    requires that pool whether or not the cluster secret names it. */ -}}
+    {{- with include "dfe-clickhouse.poolSelector" (dict "root" $ "pool" "clickhouse" "always" $cacheOnInstanceStore) | fromYaml }}
     nodeSelector:
-      {{- toYaml $nodeSelector | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
     {{- end }}
     {{- if and .Values.nodeScheduling .Values.nodeScheduling.tolerations }}
     tolerations:

@@ -39,6 +39,10 @@ published_chart() pulls the thin chart the registry serves, by the digest
 versions.yaml chart-digests pins, for render_app to take as ``chart``. It uses
 whatever credentials helm already holds, which a private chart needs.
 
+render_data is one argocd/appsets/layer2-data.yaml chart as its Application
+renders it over a deploy repo laid out on disk, and data_application is that
+Application itself.
+
 The leading underscore keeps pytest from collecting this module as a test file.
 """
 
@@ -355,6 +359,63 @@ def render_app(service: str, profile: str, cloud: str, **options: object) -> lis
         inputs = _inputs(service, options)
         target = _target(service, profile, cloud, options)
         return weave().render_app(target, inputs).docs
+
+
+DATA_APPSET = APPSETS / "layer2-data.yaml"
+
+
+def data_application(
+    app: str, profile: str, cloud: str, annotations: dict[str, str] | None = None
+) -> tuple[dict, dict]:
+    """layer2-data's Application for one chart, every field rendered, and its list element."""
+    w = weave()
+    doc = w.load_appset(REPO_ROOT, DATA_APPSET)
+    element = next(
+        e
+        for generator in doc["spec"]["generators"]
+        for nested in generator["matrix"]["generators"]
+        for e in (nested.get("list") or {}).get("elements") or []
+        if e["app"] == app
+    )
+    target = w.Target(app, profile, cloud, annotations=tuple(sorted((annotations or {}).items())))
+    rendered = w.expand_template(
+        doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
+    )
+    return rendered, element
+
+
+def render_data(
+    app: str,
+    profile: str,
+    cloud: str,
+    deploy: Path,
+    annotations: dict[str, str] | None = None,
+    extra_values: dict | None = None,
+) -> list[dict]:
+    """One layer2-data chart's objects, rendered over the deploy repo at ``deploy``.
+
+    ``extra_values`` are layered after every value file and before the inline
+    values, for a key no deploy-repo overlay would carry.
+    """
+    rendered, element = data_application(app, profile, cloud, annotations)
+    source = rendered["spec"]["sources"][0]
+    chart = REPO_ROOT / source["path"]
+    chain = []
+    for raw in source["helm"].get("valueFiles") or []:
+        path = (
+            deploy / raw.removeprefix("$values/")
+            if raw.startswith("$values/")
+            else (chart / raw).resolve()
+        )
+        chain.append({"written": raw, "path": path, "present": path.is_file()})
+    with tempfile.TemporaryDirectory(prefix="dfe-weave-extra-") as tmp:
+        if extra_values:
+            extra = Path(tmp) / "extra-values.yaml"
+            extra.write_text(yaml.safe_dump(extra_values), encoding="utf-8", newline="\n")
+            chain.append({"written": "extra", "path": extra, "present": True})
+        return weave().render_source(
+            source, chart=chart, release=app, namespace=element["namespace"], chain=chain, helm=helm()
+        )
 
 
 def render_extras(service: str, profile: str, cloud: str, **options: object) -> list[dict]:

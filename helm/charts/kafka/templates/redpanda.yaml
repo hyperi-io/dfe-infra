@@ -97,9 +97,9 @@ spec:
         # placeholder (redpanda-superusers-secret.yaml).
         secretRef: {{ .Values.kafka.name }}-superusers
     {{- if .Values.nodeScheduling }}
-    {{- if .Values.nodeScheduling.nodeSelector }}
+    {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}
     nodeSelector:
-      {{- toYaml .Values.nodeScheduling.nodeSelector | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
     {{- end }}
     {{- if .Values.nodeScheduling.tolerations }}
     tolerations:
