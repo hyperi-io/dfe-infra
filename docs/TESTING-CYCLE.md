@@ -86,6 +86,8 @@ Every backend a run names is its AWS instance, and the plan refuses one on anoth
 
 An MSK cluster is the slowest thing a run builds: one took 41m14s to create on 2026-10-14, and the EKS cluster sat built and idle for about 27 minutes of that wait. Brokers bill by the broker-hour and the cluster, nodes and NAT gateways bill by the hour through all of it, for no test value. So iterate on `confluent-cloud` or `redpanda-cloud`, and run `msk` once, after the shared external-Kafka changes have already passed on one of them.
 
+An MSK cluster can't be paused either, so it bills from create to delete whether a test is running or not. One MSK run costs more than every other test cycle combined. So MSK was tested once, as thoroughly as that run allowed, with 2.2.1. It is not re-tested unless that is explicitly approved: as a last resort, for a change that truly needs a real MSK cluster to prove, or alongside AWS if they want to be involved in that testing.
+
 ## Upgrading a persistent deploy instead of cycling it
 
 A reference deploy is not cycled: destroying it is the whole thing we do not

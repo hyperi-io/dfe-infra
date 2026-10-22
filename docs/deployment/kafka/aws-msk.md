@@ -31,6 +31,8 @@ DFE supports as distinct providers:
 Read the opinionated baseline in [README.md](README.md) first -- this guide only
 covers what MSK lets you apply and how.
 
+MSK Provisioned is the slowest backend to create and delete, and a cluster can't be paused, so it bills for every hour it exists. Plan any test environment around that. DFE was tested on MSK once, with 2.2.1, and is not re-tested there without explicit approval: only where a change needs a real MSK cluster to prove, or alongside AWS if they want to be involved ([TESTING-CYCLE.md](../../TESTING-CYCLE.md#msk-runs-last-and-rarely)).
+
 ## What MSK lets you set vs locks down
 
 ### MSK Provisioned
