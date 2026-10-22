@@ -243,6 +243,8 @@ The operator mounts the extension as an image volume, which needs the Kubernetes
 
 The operator chart 1.0.0 bundles the cloudnative-pg chart 0.28.3, whose CRDs and RBAC are CloudNativePG 1.29.1's, while the operator runs 1.29.3. `helm/charts/documentdb` grants the EndpointSlice read 1.29.3 needs. The 1.29.1 CRDs drop three status fields 1.29.3 writes, one of them the target image of an in-progress PostgreSQL major upgrade, so a major upgrade waits for an operator chart that bundles matching CRDs.
 
+CloudNativePG 1.29 is end-of-life upstream, and 1.29.3 its last release. DFE moves to a supported line with the DocumentDB operator chart's next CloudNativePG bump.
+
 ## What cannot be rolled back
 
 - A DocumentDB schema update (`spec.schemaVersion`) is one way.

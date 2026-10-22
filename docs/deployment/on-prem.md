@@ -24,6 +24,7 @@ All component versions come from `versions.yaml` (the SSoT).
 ## Prerequisites
 
 - A kubeconfig for the target RKE2 cluster -- `kubectl get nodes` works.
+- Kubernetes 1.35 or later, or 1.34 with the `ImageVolume` feature gate on in the API server and every kubelet. The DocumentDB operator mounts its extension into HyperDX's store as an image volume, and its admission webhook refuses the store without one. `bootstrap/check_platform.py` refuses anything below 1.34 and does not check the gate.
 - Nodes for DFE to run on, labelled `dfe.hyperi.io/workload=dfe`. The `local`
   overlay (`argocd/values/local.yaml`) pins DFE to them with a hard nodeSelector
   and tolerates a matching `NoSchedule` taint, so a pool tainted at provisioning

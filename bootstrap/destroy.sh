@@ -21,6 +21,9 @@ NODECLAIMS_WAIT=600
 # are every namespace this teardown removes, and the only ones step 1 touches.
 DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system documentdb-operator otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
 PLATFORM_NAMESPACES=(argocd envoy-gateway-system cert-manager external-secrets)
+# The labels the DocumentDB operator puts on each volume of HyperDX's store, which
+# helm/charts/documentdb names dfe-documentdb in the cnpg namespace.
+DOCUMENTDB_VOLUMES="documentdb.io/cluster=dfe-documentdb,documentdb.io/namespace=cnpg"
 # Facts off the Argo CD cluster secret, which step 7 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
 CLUSTER_REGION=""
@@ -246,6 +249,29 @@ delete_data_resources() {
     run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+}
+
+# The store's volumes are Retain, so its disks would outlive the teardown. With
+# the operator gone nothing puts Retain back, and Delete hands each volume and its
+# disk to the provisioner, now or when the namespace delete releases its claim.
+release_documentdb_volumes() {
+    local volumes pv
+    if ! volumes="$(kubectl get persistentvolumes -l "${DOCUMENTDB_VOLUMES}" -o name 2>/dev/null)"; then
+        echo "  WARN: could not list the volumes labelled ${DOCUMENTDB_VOLUMES}, so any the store kept stay"
+        return 0
+    fi
+    if [[ -z "${volumes}" ]]; then
+        echo "  no volume labelled ${DOCUMENTDB_VOLUMES} is left"
+        return 0
+    fi
+    while read -r pv; do
+        [[ -n "${pv}" ]] || continue
+        if kubectl patch "${pv}" --type merge -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' >/dev/null 2>&1; then
+            echo "  ${pv} of HyperDX's store set to Delete, so it goes with its disk"
+        else
+            echo "  WARN: could not set ${pv} of HyperDX's store to Delete, so it and its disk stay"
+        fi
+    done <<<"${volumes}"
 }
 
 # A PodDisruptionBudget or karpenter.sh/do-not-disrupt in a namespace this
@@ -580,8 +606,10 @@ if [[ "${DRY_RUN}" != "true" ]]; then
         await_applications_gone
     fi
     sleep 5
+    release_documentdb_volumes
 else
     echo "[DRY-RUN] delete the data operators' Applications, and wait up to ${APPLICATIONS_WAIT}s for them to go"
+    echo "[DRY-RUN] set every PersistentVolume labelled ${DOCUMENTDB_VOLUMES} to reclaim policy Delete, so each goes with its disk"
 fi
 
 echo "==> [4/9] Deleting DFE namespaces"

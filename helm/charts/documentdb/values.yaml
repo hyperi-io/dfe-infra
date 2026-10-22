@@ -27,7 +27,8 @@ documentdb:
   # a digest-pinned image reference carries no version it can parse.
   version: "1.0.0"
   image:
-    # Mounted into PostgreSQL as an image volume, which needs Kubernetes 1.35+.
+    # Mounted into PostgreSQL as an image volume: Kubernetes 1.35+, or 1.34
+    # with the ImageVolume feature gate on.
     documentDB: "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb:1.0.0@sha256:6b2b014a754ca96ab0f028a1015bd735caa8eda0ec153e3e64dc5dab3ee83bf9"
     gateway: "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway:1.0.0@sha256:63e89a22501ac35927137759f2da32e28d80ced626f555c62c4a17c4cc7bfb27"
     # The operator's documented base: a CNPG trixie image, which the extension's
@@ -46,7 +47,8 @@ documentdb:
   storage:
     size: 5Gi
     storageClass: ""  # empty -> top-level storageClass -> cluster default
-    # The operator's default. A teardown leaves Retain volumes behind.
+    # The operator's default. bootstrap/destroy.sh sets this store's volumes to
+    # Delete once the operator has gone, so a teardown leaves no disk behind.
     reclaimPolicy: Retain
   # CloudNativePG's own anti-affinity, on hosts, plus a zone preference. Preferred,
   # so a single-node or single-zone cluster still schedules both instances.
