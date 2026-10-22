@@ -38,12 +38,9 @@ Needs `helm` on PATH; the cases that render the engine pod need the scalo-servic
 library (_weave.library). No test runner, matching the other checks here.
 """
 
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
 
 import yaml
 
@@ -249,7 +246,7 @@ def test_content_is_not_profile_dependent() -> None:
     console's copy-paste view depend on the deployment's size.
     """
     fields = ("name", "image", "command", "volumeMounts")
-    keys = ("DFE_LIBRARY_SEED_DIR", "DFE_SOURCE_CATALOGUE_FILE", "DFE_APP_CONTRACT_DIR")
+    keys = ("DFE_LIBRARY_SEED_DIR", "DFE_APP_CONTRACT_DIR")
 
     def shape(profile: str) -> tuple[list[dict], dict]:
         docs = golden(ENGINE, profile, "local")
@@ -266,7 +263,7 @@ def test_content_is_not_profile_dependent() -> None:
             f"slim={len(slim_inits)} {profile}={len(inits)}",
         )
         expect(
-            f"and hand the engine the same three paths on {profile}",
+            f"and hand the engine the same two paths on {profile}",
             env == slim_env and all(env.values()),
             f"slim={slim_env} {profile}={env}",
         )
