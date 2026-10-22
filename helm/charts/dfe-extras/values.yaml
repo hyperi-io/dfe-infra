@@ -283,12 +283,10 @@ extras:
         provider: ""
         messageMaxBytes: ""
         topicReplicationFactor: ""
-      # Read for the role each entry carries: a catalogue entry sets
-      # DFE_SOURCE_CATALOGUE_FILE. The refs the engine's content init containers
-      # pull belong to the thin chart's values.
+      # The refs the engine's content init containers pull belong to the thin
+      # chart's values.
       content:
         mountPath: /etc/dfe-engine/content
-        catalogueFile: sources.yaml
         entries:
           - { name: dfe-receiver-contract, kind: emit, role: contract, app: dfe-receiver }
           - { name: dfe-loader-contract, kind: emit, role: contract, app: dfe-loader }
@@ -297,7 +295,6 @@ extras:
           - { name: dfe-transform-vrl-contract, kind: emit, role: contract, app: dfe-transform-vrl }
           - { name: dfe-transform-vector-contract, kind: emit, role: contract, app: dfe-transform-vector }
           - { name: dfe-transform-elastic-contract, kind: emit, role: contract, app: dfe-transform-elastic }
-          - { name: dfe-transform-elastic-catalogue, kind: emit, role: catalogue, app: dfe-transform-elastic }
       config:
         mountPath: /config
       clickhouse:

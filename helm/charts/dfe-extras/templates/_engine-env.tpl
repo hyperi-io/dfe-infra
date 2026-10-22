@@ -180,12 +180,6 @@ thin chart's env.
             # rather than failing, so an entry added later needs no env change.
             - name: DFE_APP_CONTRACT_DIR
               value: {{ .Values.content.mountPath }}/contract
-            {{- with (include "dfe-engine.catalogueFile" .) }}
-            # Set only where a content entry materialises one: a path naming a
-            # file nothing wrote is refused rather than answered with no sources.
-            - name: DFE_SOURCE_CATALOGUE_FILE
-              value: {{ . | quote }}
-            {{- end }}
             - name: DFE_SCHEMAS_DIR
               value: {{ .Values.config.mountPath }}/schemas
             - name: DFE_FIELDMAPS_DIR

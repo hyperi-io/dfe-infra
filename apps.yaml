@@ -768,13 +768,10 @@ apps:
     idle_when:
       - config.source.name
       - config.source.topics
-    # It ships a catalogue of compiled-in transforms and selects one by name.
+    # It ships compiled-in transforms and selects one by name.
     variant_path: config.source.name
-    # The catalogue reaches a deployment from the app's own image, which prints
-    # it with `emit-catalogue`, mounted where DFE_SOURCE_CATALOGUE_FILE says.
+    # The dfe-schemas source catalogue selects these transforms, one entry per source.
     catalogue:
-      file: sources.yaml
-      entries_key: sources
       variant_pattern: "filebeat.{entry}.{transform}"
       # The transform rewrites every vendor's events into ECS, so ECS is the
       # base for every entry; the vendor-shaped meta/<package>/<stream> is the
