@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_ferretdb_egress.py
-#  Purpose:      Prove only dfe-hyperdx reaches FerretDB, no app pod reaches its
-#                PostgreSQL backend, and the edge tunnel reaches no backing service.
+#  Purpose:      Prove only dfe-hyperdx reaches FerretDB, only FerretDB reaches its
+#                PostgreSQL backend, and the edge tunnel reaches neither the backing
+#                services nor the gateway.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -17,8 +18,9 @@ selecting the source and some ingress rule selecting the destination must both a
 it.
 
 The sources are every workload the thin-chart goldens render, with their own
-NetworkPolicies, plus a pod carrying no labels at all. The destinations are the
-ferretdb chart's own pods, in the namespace layer2-data deploys it to.
+NetworkPolicies, plus a pod carrying no labels at all, plus a pod in each namespace
+data-ingress-policy admits that carries no egress policy of its own. The destinations
+are the ferretdb chart's own pods, in the namespace layer2-data deploys it to.
 
     python3 scripts/tests/test_ferretdb_egress.py
 
@@ -46,6 +48,9 @@ LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 FERRETDB_VALUES = yaml.safe_load(
     (chart_dir("ferretdb") / "values.yaml").read_text(encoding="utf-8")
 )
+POLICY_VALUES = yaml.safe_load(
+    (chart_dir("network-policies") / "values.yaml").read_text(encoding="utf-8")
+)
 
 NS_LABEL = "kubernetes.io/metadata.name"
 PROXY = "dfe-ferretdb"
@@ -62,6 +67,8 @@ DECLARED = (
     "elasticsearch.endpoint=https://es.example.com:9200",
 )
 VARIANTS = {"default": (), "every external declared": DECLARED}
+# Emptying the Keeper opt-out must not put FerretDB's pods back under data-ingress-policy.
+INGRESS_VARIANTS = {"default": (), "the Keeper opt-out empty": ("operatorIngressScoped=null",)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +336,72 @@ def test_the_tunnel_reaches_no_backing_service() -> None:
         expect(
             f"a pod without the opt-out still reaches {ns}:{port}",
             connects((*base, *other_own), other, dest, port),
+        )
+
+
+def policy_value(key: str) -> object:
+    """A network-policies value as Argo renders it: common.yaml over the chart default."""
+    return COMMON.get(key, POLICY_VALUES[key])
+
+
+def gateway_rule() -> dict:
+    """The one rule of the app namespace's egress to the gateway's proxy pods."""
+    policy = next(p for p in render_policies() if p["metadata"]["name"] == "allow-gateway-egress")
+    return policy["spec"]["egress"][0]
+
+
+def outside_pods() -> list[Pod]:
+    """A pod in each namespace data-ingress-policy admits that has no egress policy of its
+    own, and a pod beside FerretDB that is not FerretDB."""
+    proxy_labels = gateway_rule()["to"][0]["podSelector"]["matchLabels"]
+    return [
+        Pod("gateway proxy", str(policy_value("gatewayNamespace")), proxy_labels, address(60)),
+        Pod("collector", str(policy_value("otelNamespace")), {}, address(61)),
+        Pod(
+            "clickhouse operator", policy_value("operatorNamespaces")["clickhouse"], {}, address(62)
+        ),
+        Pod("cnpg neighbour", STORE_NS, {}, address(63)),
+    ]
+
+
+def test_no_other_namespace_reaches_ferretdb_or_its_backend() -> None:
+    s = store()
+    for name, variant in INGRESS_VARIANTS.items():
+        base = render_policies(*variant)
+        for pod in outside_pods():
+            for dest, port in ((s.proxy, s.mongo_port), (s.backend, s.pg_port)):
+                expect(
+                    f"{name}: the {pod.name} in {pod.namespace} cannot reach {dest.name}:{port}",
+                    not connects(base, pod, dest, port),
+                )
+        expect(
+            f"{name}: {READER} still reaches {PROXY}:{s.mongo_port}",
+            READER in reaching(variant, s.proxy, s.mongo_port),
+        )
+        expect(
+            f"{name}: {PROXY} still reaches {BACKEND}:{s.pg_port}",
+            connects(base, s.proxy, s.backend, s.pg_port),
+        )
+
+
+def test_the_tunnel_reaches_no_gateway_proxy() -> None:
+    """docs/deployment/edge-vpn.md: the opt-out leaves culvert's own policy as its whole egress."""
+    pods = {pod.name: (pod, own) for pod, own in app_pods()}
+    tunnel, tunnel_own = pods["dfe-culvert"]
+    other, other_own = pods["unlabelled"]
+    rule = gateway_rule()
+    labels = rule["to"][0]["podSelector"]["matchLabels"]
+    proxy = Pod("gateway proxy", str(policy_value("gatewayNamespace")), labels, address(70))
+    base = render_policies()
+    for entry in rule["ports"]:
+        port = entry["port"]
+        expect(
+            f"dfe-culvert cannot reach the gateway proxy on {port}",
+            not connects((*base, *tunnel_own), tunnel, proxy, port),
+        )
+        expect(
+            f"a pod without the opt-out still reaches the gateway proxy on {port}",
+            connects((*base, *other_own), other, proxy, port),
         )
 
 

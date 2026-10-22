@@ -1,20 +1,31 @@
-{{- range .Values.dataNamespaces }}
+{{- $fenced := include "network-policies.ferretdbFenced" . }}
+{{- range $ns := .Values.dataNamespaces }}
+{{- $left := list }}
+{{- range $key, $values := $.Values.operatorIngressScoped }}
+{{- $left = append $left (dict "key" $key "values" $values) }}
+{{- end }}
+{{- with $.Values.ferretdbAccess }}
+{{- if and $fenced (eq $ns .namespace) }}
+{{- /* FerretDB's two pods take their whole ingress from ferretdb-ingress.yaml. */}}
+{{- $left = append $left (dict "key" .nameLabel "values" (list .proxy .backend)) }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: data-ingress-policy
-  namespace: {{ . }}
+  namespace: {{ $ns }}
   labels:
     {{- include "dfe-common.labels" $ | nindent 4 }}
 spec:
-  {{- with $.Values.operatorIngressScoped }}
+  {{- if $left }}
   podSelector:
     matchExpressions:
-      {{- range $key, $values := . }}
-      - key: {{ $key | quote }}
+      {{- range $left }}
+      - key: {{ .key | quote }}
         operator: NotIn
-        values: {{ toJson $values }}
+        values: {{ toJson .values }}
       {{- end }}
   {{- else }}
   podSelector: {}

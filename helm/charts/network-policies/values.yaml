@@ -46,8 +46,9 @@ operatorNamespaces:
 operatorIngressScoped:
   clickhouse.com/role: [clickhouse-keeper]
 
-# Pod label that takes a workload OUT of the namespace-wide egress baseline and
-# the namespace-wide backing-service egress (allow-dfe-backing-egress).
+# Pod label that takes a workload OUT of the namespace-wide egress policies: the
+# baseline, the backing services (allow-dfe-backing-egress) and the gateway
+# (allow-gateway-egress).
 # NetworkPolicies are additive: a pod the baseline selects can always reach the
 # whole namespace, and nothing added later narrows that. A workload whose
 # egress must be narrower carries this label and its own chart then states its
@@ -62,20 +63,23 @@ egressScopedLabel: dfe.hyperi.io/egress-scoped
 # Workloads outside the thin charts carry only app.kubernetes.io/name.
 appLabel: dfe.hyperi.io/app
 
-# FerretDB's Mongo-wire port, open to the apps listed here alone. Its one login is
-# the PostgreSQL superuser of the backend beside it and FerretDB enforces no
-# authorisation, so a pod reaching this port with that password reads every
-# database in the store. No app pod reaches the backend's 5432: FerretDB dials it
-# inside its own namespace.
-ferretdbEgress:
+# Who reaches FerretDB and its PostgreSQL backend. FerretDB's one login is the
+# backend's PostgreSQL superuser and FerretDB enforces no authorisation, so a pod
+# holding that password owns the store at either port. The apps listed here alone
+# reach FerretDB, and FerretDB alone reaches the backend. Both pods leave
+# data-ingress-policy and take their whole ingress from ferretdb-ingress.yaml.
+ferretdbAccess:
   # appsets/layer2-data.yaml deploys the ferretdb chart here.
   namespace: cnpg
-  # The proxy pods (ferretdb chart, dfe-common.selectorLabels), not the backend's.
-  podLabels:
-    app.kubernetes.io/name: dfe-ferretdb
-  # The container port, which is what NetworkPolicy sees after DNAT.
+  # The label both workloads carry (dfe-common.selectorLabels, documentdb.yaml).
+  nameLabel: app.kubernetes.io/name
+  proxy: dfe-ferretdb
+  backend: dfe-ferretdb-documentdb
+  # Container ports, which is what NetworkPolicy sees after DNAT.
   ports:
     - { port: 27017, protocol: TCP }
+  backendPorts:
+    - { port: 5432, protocol: TCP }
   apps:
     - dfe-hyperdx   # mongodb.uri in argocd/values/apps/hyperdx/values.yaml
 

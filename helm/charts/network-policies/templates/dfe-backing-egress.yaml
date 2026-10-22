@@ -6,7 +6,7 @@
 # (proven live 2026-07-16: engine CH connect timed out, loader/receiver could not
 # reach their backing services). Applied to the DFE app namespaces only.
 {{- $optOut := .Values.egressScopedLabel }}
-{{- $store := .Values.ferretdbEgress }}
+{{- $store := .Values.ferretdbAccess }}
 {{- range $ns := .Values.dfeNamespaces }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -55,8 +55,8 @@ spec:
       ports:
         - { port: 3000, protocol: TCP }
 {{- /* FerretDB is not here: its login is the backend's PostgreSQL superuser, so only
-       ferretdbEgress.apps reach it, and nothing in this namespace reaches the backend. */}}
-{{- range $app := $store.apps }}
+       ferretdbAccess.apps reach it, and nothing in this namespace reaches the backend. */}}
+{{- range $app := ($store | default dict).apps }}
 {{- range $sel := include "network-policies.appSelectors" (dict "root" $ "app" $app) | fromYamlArray }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -78,7 +78,7 @@ spec:
               kubernetes.io/metadata.name: {{ $store.namespace }}
           podSelector:
             matchLabels:
-              {{- toYaml $store.podLabels | nindent 14 }}
+              {{ $store.nameLabel }}: {{ $store.proxy }}
       ports:
         {{- toYaml $store.ports | nindent 8 }}
 {{- end }}

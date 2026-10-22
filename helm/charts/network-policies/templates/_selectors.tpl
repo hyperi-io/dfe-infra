@@ -22,3 +22,14 @@ Usage:
 {{- toYaml $out -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+network-policies.ferretdbFenced -- "true" when ferretdbAccess takes FerretDB's pods out
+of data-ingress-policy, which is exactly when ferretdb-ingress.yaml renders their own.
+Its namespace must be a data namespace: that is where data-ingress-policy renders.
+*/}}
+{{- define "network-policies.ferretdbFenced" -}}
+{{- with .Values.ferretdbAccess -}}
+{{- if has .namespace $.Values.dataNamespaces }}true{{ end -}}
+{{- end -}}
+{{- end }}
