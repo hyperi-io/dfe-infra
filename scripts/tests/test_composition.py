@@ -46,7 +46,9 @@ ON_DEMAND = ("dfe-fetcher", "dfe-transform-vector", "culvert")
 
 # Compose declares its services in a committed file and creates none at run time,
 # so the apps a source would otherwise deploy start idle instead, one each.
-COMPOSE_IDLE: dict[str, tuple[str, ...]] = {"docker-single": ("dfe-fetcher",)}
+COMPOSE_IDLE: dict[str, tuple[str, ...]] = {
+    "docker-single": ("dfe-fetcher", "dfe-transform-vector"),
+}
 
 # Seeded empty wherever a transform runs, rather than arriving with a source.
 # Each declares `idle_when` and carries the matching predicate in its own code,

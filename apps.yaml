@@ -636,7 +636,11 @@ apps:
     endpoints:
       push: {port: 6000}
     hot_reload: true
-    default_in: []
+    default_in: [docker-single]
+    # Idle on the bus until it has topics, set directly or derived from dfe_source.
+    idle_when:
+      - config.source.topics
+      - config.dfe_source
     consumes:
       config: config.yaml
     # This app derives topics and consumer group from its own dfe_source field.
