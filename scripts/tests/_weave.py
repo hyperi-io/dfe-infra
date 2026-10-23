@@ -36,8 +36,9 @@ published carry RENDER_DIGEST, because the appset refuses to render them.
 appset() gives that path to a test calling dfe-weave itself.
 
 published_chart() pulls the thin chart the registry serves, by the digest
-versions.yaml chart-digests pins, for render_app to take as ``chart``. It uses
-whatever credentials helm already holds, which a private chart needs.
+versions.yaml chart-digests pins, for render_app to take as ``chart``. Every pull
+is anonymous: helm runs with an empty registry config and an empty Docker config,
+so a chart that stopped being public fails here as it fails a deploy.
 
 render_data is one argocd/appsets/layer2-data.yaml chart as its Application
 renders it over a deploy repo laid out on disk, and data_application is that
@@ -100,6 +101,38 @@ def helm() -> str:
 
 
 @functools.cache
+def _anonymous() -> tuple[tempfile.TemporaryDirectory, dict[str, str]]:
+    """The environment a registry pull runs helm in, with no credential for it to read.
+
+    helm reads Docker's config for credentials when its own registry config holds
+    none, so both point at one empty scratch directory.
+    """
+    scratch = tempfile.TemporaryDirectory(prefix="dfe-weave-anonymous-")
+    config = Path(scratch.name) / "registry.json"
+    config.write_text("{}\n", encoding="utf-8", newline="\n")
+    env = {**os.environ, "HELM_REGISTRY_CONFIG": str(config), "DOCKER_CONFIG": scratch.name}
+    return scratch, env
+
+
+def _pull(reference: str, destination: str) -> str | None:
+    """Pull and untar ``reference`` into ``destination`` anonymously: None, or why it failed."""
+    cmd = [helm(), "pull", reference, "--untar", "--destination", destination]
+    try:
+        out = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=_anonymous()[1],
+        )
+    except OSError as exc:
+        return f"cannot run {cmd[0]}: {exc}"
+    return out.stderr.strip() if out.returncode != 0 else None
+
+
+@functools.cache
 def _pulled_library() -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
     """The pinned library pulled into a scratch directory, or why it could not be.
 
@@ -109,15 +142,9 @@ def _pulled_library() -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
     """
     scratch = tempfile.TemporaryDirectory(prefix="dfe-weave-library-")
     reference = f"{LIBRARY_CHART}@{LIBRARY_DIGEST}"
-    cmd = [helm(), "pull", reference, "--untar", "--destination", scratch.name]
-    try:
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-        )
-    except OSError as exc:
-        return None, f"cannot run {cmd[0]}: {exc}"
-    if out.returncode != 0:
-        return None, out.stderr.strip()
+    failed = _pull(reference, scratch.name)
+    if failed is not None:
+        return None, failed
     chart = Path(scratch.name) / "scalo-service"
     meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
     if str(meta.get("version")) != LIBRARY_VERSION:
@@ -192,15 +219,9 @@ def _pulled_chart(
     name = chart_name(service)
     scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-{name}-")
     reference = f"{CHART_REGISTRY}/{name}@{digest}"
-    cmd = [helm(), "pull", reference, "--untar", "--destination", scratch.name]
-    try:
-        out = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
-        )
-    except OSError as exc:
-        return None, f"cannot run {cmd[0]}: {exc}"
-    if out.returncode != 0:
-        return None, out.stderr.strip()
+    failed = _pull(reference, scratch.name)
+    if failed is not None:
+        return None, failed
     chart = Path(scratch.name) / name
     meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
     if meta.get("name") != name:
