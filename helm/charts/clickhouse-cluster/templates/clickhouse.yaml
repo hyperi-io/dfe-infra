@@ -30,14 +30,11 @@ spec:
       {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 6 }}
     {{- end }}
     {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
-    # Concatenated with the operator's own mounts (the CRD's own comment on
-    # this field) -- dataVolumeClaimSpec below keeps its default mount at
-    # /var/lib/clickhouse, so the s3_object metadata_path stays on the PVC and
-    # only this one subdirectory moves to the emptyDir declared under
-    # podTemplate.volumes.
+    # Appended to the operator's own mounts, and outside the data PVC at
+    # /var/lib/clickhouse -- see dfe-clickhouse.instanceStoreCacheMount.
     volumeMounts:
       - name: object-cache
-        mountPath: /var/lib/clickhouse/disks/s3_object_cache
+        mountPath: {{ include "dfe-clickhouse.instanceStoreCacheMount" . }}
     {{- end }}
   # Must be durable in every storage model. Under a tiered family this is the HOT
   # tier and holds the only copy of the parts on it; under a cached family it
