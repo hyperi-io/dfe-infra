@@ -1256,37 +1256,6 @@ def disruption_summary(disruption: Disruption) -> tuple[str, list[str]]:
     return line, []
 
 
-def _landing_topics(dial: dict[str, object]) -> dict[str, dict[str, int]]:
-    """Topics tofu must pre-create for a managed body with no bootstrap Job.
-
-    msk's landing topics are chart work -- its own in-cluster bootstrap Job
-    creates the same topics the Strimzi path does, from the SAME chart values,
-    so this is never read for msk. confluent-cloud and redpanda-cloud have no
-    such Job (CONTRACT.md: "the vendor's provider writes the ACLs and the
-    topics itself"), so tofu creates them here or dfe-loader crash-loops on a
-    bare deploy -- it treats a missing ``*_land`` topic as fatal.
-    """
-    topics = _node(dial, ("kafka", "landing_topics"))
-    built: dict[str, dict[str, int]] = {}
-    for name, body in topics.items():
-        if isinstance(body, str):
-            if body.strip() not in ("", "{}"):
-                raise DialError(f"kafka.landing_topics.{name} is a mapping, not {body!r}")
-            body = {}
-        elif not isinstance(body, dict):
-            raise DialError(f"kafka.landing_topics.{name} must be a mapping")
-        entry: dict[str, int] = {}
-        for field in ("partitions", "retention_ms"):
-            raw = _scalar(body, (field,))
-            if raw is None:
-                continue
-            if not raw.isdigit():
-                raise DialError(f"kafka.landing_topics.{name}.{field} must be a whole number, got {raw!r}")
-            entry[field] = int(raw)
-        built[name] = entry
-    return built
-
-
 # The broker scaler's sizing when the dial names none: the broker ceiling, the
 # per-broker MB/s the alarm threshold scales with, the margin above full
 # utilisation it fires at, and the alarm window -- three 300s periods in breach,
@@ -1556,7 +1525,7 @@ def _saas_kafka_settings(
     Args:
         dial: The parsed dial.
         provider: confluent-cloud or redpanda-cloud.
-        message_max_bytes: The size every landing topic is created with.
+        message_max_bytes: The size dfe-engine creates every topic at.
 
     Returns:
         The keys to merge into the root's kafka variable.
@@ -1585,8 +1554,8 @@ def _saas_kafka_settings(
             raise DialError(
                 f"kafka.msk.message_max_bytes is {message_max_bytes}, above the "
                 f"{CONFLUENT_BASIC_MAX_MESSAGE_BYTES} a Confluent basic cluster accepts for a "
-                f"topic, and Confluent refuses the topics only at apply, after the cluster "
-                f"exists. Lower kafka.msk.message_max_bytes to "
+                f"topic, and Confluent refuses the topics dfe-engine creates only after the "
+                f"cluster exists. Lower kafka.msk.message_max_bytes to "
                 f"{CONFLUENT_BASIC_MAX_MESSAGE_BYTES} or less, or set kafka.confluent_tier to "
                 f"freight or enterprise"
             )
@@ -1622,41 +1591,30 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
     """Who runs the brokers, and what tofu creates when the root builds the body.
 
     strimzi and redpanda run inside the cluster, so the root builds nothing and
-    no kafka block below is rendered at all. The three managed bodies --
-    msk, confluent-cloud, redpanda-cloud -- apply the SAME canonical tuning
-    (num_partitions, log_retention_ms, message_max_bytes:
-    terraform/modules/managed-kafka/CONTRACT.md), read from kafka.msk below
-    whichever one is selected; none of them is defaulted here, because a
-    defaulted value rots into a stale one silently. Only msk's shape, broker
-    count, version, SCRAM user and bootstrap Job are msk-only -- the two SaaS
-    bodies size, version and tune themselves. landing_topics is read for the
-    two SaaS bodies only; msk's bootstrap_job above covers the same ground.
-    The two SaaS bodies also take the keys _saas_kafka_settings reads.
+    no kafka block below is rendered at all. msk takes its broker shape, count,
+    version, tuning (num_partitions, log_retention_ms, message_max_bytes:
+    terraform/modules/managed-kafka/CONTRACT.md), SCRAM user and bootstrap Job
+    from kafka.msk. The two SaaS bodies size, version and tune themselves and
+    create no topic -- dfe-engine creates every one -- so they take only
+    kafka.msk.message_max_bytes and kafka.msk.log_retention_ms, which the engine
+    creates the topics with, and the keys _saas_kafka_settings reads. None of
+    the values is defaulted here, because a defaulted value rots into a stale
+    one silently.
     """
     provider = _required(dial, ("kafka", "provider"))
     if provider not in MANAGED_KAFKA_PROVIDERS:
         return {"provider": provider}
 
     at = ("kafka", "msk")
-    tuning = {
-        "num_partitions": _number(dial, (*at, "num_partitions")),
-        "log_retention_ms": _number(dial, (*at, "log_retention_ms")),
-        "message_max_bytes": _number(dial, (*at, "message_max_bytes")),
-    }
+    message_max_bytes = _number(dial, (*at, "message_max_bytes"))
+    log_retention_ms = _number(dial, (*at, "log_retention_ms"))
 
     if provider != "msk":
-        landing_topics = _landing_topics(dial)
-        if not landing_topics:
-            raise DialError(
-                f"kafka.provider is {provider!r}, which has no bootstrap Job of its own, so "
-                f"kafka.landing_topics must name at least one topic -- an empty map ships a "
-                f"cluster dfe-loader crash-loops against"
-            )
         return {
             "provider": provider,
-            **tuning,
-            "landing_topics": landing_topics,
-            **_saas_kafka_settings(dial, provider, tuning["message_max_bytes"]),
+            "message_max_bytes": message_max_bytes,
+            "log_retention_ms": log_retention_ms,
+            **_saas_kafka_settings(dial, provider, message_max_bytes),
         }
 
     return {
@@ -1665,7 +1623,9 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
             "shape_ref": _required(dial, (*at, "shape_ref")),
             "broker_count": _number(dial, (*at, "broker_count")),
             "broker_version": _required(dial, (*at, "broker_version")),
-            **tuning,
+            "num_partitions": _number(dial, (*at, "num_partitions")),
+            "log_retention_ms": log_retention_ms,
+            "message_max_bytes": message_max_bytes,
             "scram_username": _required(dial, (*at, "scram_username")),
             "bootstrap_job": {
                 "namespace": _required(dial, (*at, "bootstrap_job", "namespace")),

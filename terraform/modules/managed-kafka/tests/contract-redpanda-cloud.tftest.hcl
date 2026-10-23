@@ -83,17 +83,6 @@ variables {
 
   // No module default: render_dial.py sends serverless unless the dial names another.
   tier = "serverless"
-
-  // No module default: the same numbers a customer dial carries, so a
-  // contract run proves what render_dial.py actually sends.
-  num_partitions    = 12
-  log_retention_ms  = 259200000
-  message_max_bytes = 16777216
-
-  landing_topics = {
-    dfe_land = {}
-    dfe_dlq  = { retention_ms = 604800000 }
-  }
 }
 
 run "redpanda_cloud_contract_outputs" {
@@ -274,13 +263,6 @@ run "redpanda_cloud_acls_at_on_prem_parity" {
   assert {
     condition     = redpanda_user.this.mechanism == "scram-sha-512"
     error_message = "the user must be SCRAM-SHA-512, matching the on-prem principal"
-  }
-
-  // Pre-created, because dfe-loader treats a missing landing topic as fatal and
-  // Redpanda Cloud accepts no auto-create setting on any tier.
-  assert {
-    condition     = length(redpanda_topic.landing) == 2
-    error_message = "every landing topic must be pre-created"
   }
 }
 

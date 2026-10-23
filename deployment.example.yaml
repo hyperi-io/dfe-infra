@@ -624,13 +624,11 @@ sizing:
 
 ## KAFKA -- who runs the brokers. strimzi and redpanda run inside the cluster and
 ## tofu creates nothing for them; msk, confluent-cloud and redpanda-cloud are the
-## managed bodies the aws root creates. num_partitions, log_retention_ms and
-## message_max_bytes below are read for WHICHEVER of the three is selected --
-## every managed body applies the same canonical profile
-## (terraform/modules/managed-kafka/CONTRACT.md) -- but the rest of the msk:
-## block (shape_ref, broker_count, broker_version, scram_username,
-## bootstrap_job) is msk-only: the two SaaS bodies size, version and tune the
-## cluster themselves and take no block of their own. The same token is the
+## managed bodies the aws root creates. log_retention_ms and message_max_bytes
+## below are read for WHICHEVER of the three is selected, and dfe-engine creates
+## every topic with them -- nothing here creates a topic. The rest of the msk:
+## block is msk-only: the two SaaS bodies size, version and tune the cluster
+## themselves and take no block of their own. The same token is the
 ## last segment of the credential's store key (<project>/<env>/kafka/<provider>),
 ## which is how the kafka chart reads the password back.
 kafka:
@@ -673,9 +671,9 @@ kafka:
     log_retention_ms: 259200000   # three days in front of the archiver
     message_max_bytes: 16777216   # 16 MiB, the one size the whole chain carries
     scram_username: dfe-kafka-user  # matches the kafka chart's user.name
-    ## The in-cluster Job that pre-creates the landing topics and writes the
-    ## first ACLs -- the one thing tofu cannot do, because Kafka ACLs live in the
-    ## data plane. namespace is where the kafka app is deployed
+    ## The in-cluster Job that writes the first ACLs -- the one thing tofu
+    ## cannot do, because Kafka ACLs live in the data plane. It creates no
+    ## topic. namespace is where the kafka app is deployed
     ## (argocd/appsets/layer2-data.yaml); bootstrap.sh and that appset wire
     ## mode=external and this broker's bootstrapIam onto the chart automatically
     ## for kafka.provider: msk, so service_account only needs to match what the
@@ -698,18 +696,6 @@ kafka:
       headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
       period_seconds: 300      # the alarm's period; a multiple of 60, since MSK publishes BytesInPerSec once a minute
       evaluation_periods: 3    # periods in breach before a scale-out; with the period, the stabilisation window
-  ## Topics tofu pre-creates when a managed body is provisioned
-  ## (confluent-cloud, redpanda-cloud), before DFE is deployed onto it at all.
-  ## The DFE bootstrap topic set is NOT this list -- dfe-schemas declares it and
-  ## dfe-engine creates it at startup, on every tier and every provider. An
-  ## empty map ({}) takes num_partitions/log_retention_ms above, and a topic may
-  ## override either:
-  ##   landing_topics:
-  ##     main_land: {}
-  ##     okta_land:
-  ##       partitions: 24
-  landing_topics:
-    main_land: {}
 
 ## CLICKHOUSE -- where the datastore runs. in_cluster (the default) deploys DFE's
 ## own server, single or clustered by the profile. external connects to one you

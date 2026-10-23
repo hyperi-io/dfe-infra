@@ -136,15 +136,6 @@ variable "scram_password_version" {
   default     = 1
 }
 
-variable "landing_topics" {
-  description = "The topics created before DFE starts, keyed by topic name. dfe-loader treats a missing *_land topic as fatal, and Redpanda BYOC and Dedicated do not accept auto.create.topics.enable at all, so every path here pre-creates them. A null partition count or retention takes the tuning value below."
-  type = map(object({
-    partitions   = optional(number)
-    retention_ms = optional(number)
-  }))
-  default = {}
-}
-
 variable "consumer_group_prefix" {
   description = "The consumer groups the SCRAM principal may read. The on-prem grant fences groups to this prefix rather than allowing all of them, and this body matches it."
   type        = string
@@ -152,39 +143,9 @@ variable "consumer_group_prefix" {
 }
 
 variable "allow_deletion" {
-  description = "Whether tofu may destroy the cluster, the user and the topics. The provider defaults every one of these to false, which makes tofu destroy refuse; a provision-test-destroy proof needs true, and a customer deployment sets it false."
+  description = "Whether tofu may destroy the cluster, the user and the ACLs. The provider defaults every one of these to false, which makes tofu destroy refuse; a provision-test-destroy proof needs true, and a customer deployment sets it false."
   type        = bool
   default     = true
-}
-
-variable "num_partitions" {
-  description = "Default partitions for a landing topic that does not name its own. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling. No default: the caller's dial states it, so a value cannot drift from msk's and confluent-cloud's copies of the same setting silently."
-  type        = number
-
-  validation {
-    condition     = var.num_partitions > 0
-    error_message = "num_partitions must be positive."
-  }
-}
-
-variable "log_retention_ms" {
-  description = "How long a landing topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days. No default: the caller's dial states it, so a value cannot drift from msk's and confluent-cloud's copies of the same setting silently."
-  type        = number
-
-  validation {
-    condition     = var.log_retention_ms > 0
-    error_message = "log_retention_ms must be positive."
-  }
-}
-
-variable "message_max_bytes" {
-  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Redpanda Cloud holds the broker-wide setting. No default: the caller's dial states it, so a value cannot drift from msk's and confluent-cloud's copies of the same setting silently."
-  type        = number
-
-  validation {
-    condition     = var.message_max_bytes > 0
-    error_message = "message_max_bytes must be positive."
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +186,7 @@ variable "kms_key_arn" {
 }
 
 variable "eks_cluster_name" {
-  description = "NOT APPLIED. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs and topics directly, so no workload identity is minted."
+  description = "NOT APPLIED. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs directly, so no workload identity is minted."
   type        = string
   default     = ""
 }

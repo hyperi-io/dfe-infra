@@ -65,6 +65,11 @@
 #                            producing apps' record limits follow it. Empty on
 #                            an in-cluster broker, where every app keeps its
 #                            own default.
+#   DFE_KAFKA_RETENTION_MS   the topic retention a managed broker's dial
+#                            names, from the aws root's output. The engine
+#                            creates its own topics with it. Empty on an
+#                            in-cluster broker, where the broker's setting
+#                            applies.
 #   DFE_CLICKHOUSE_MODE      in_cluster | external, from the aws root's output.
 #                            external points every chart at DFE_CLICKHOUSE_HOST
 #                            and deploys no ClickHouse; empty or in_cluster
@@ -472,6 +477,13 @@ export DFE_KAFKA_CREDENTIAL_REF="${DFE_KAFKA_CREDENTIAL_REF:-}"
 export DFE_KAFKA_MESSAGE_MAX_BYTES="${DFE_KAFKA_MESSAGE_MAX_BYTES:-}"
 if [[ -n "${DFE_KAFKA_MESSAGE_MAX_BYTES}" && ! "${DFE_KAFKA_MESSAGE_MAX_BYTES}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: DFE_KAFKA_MESSAGE_MAX_BYTES must be a positive whole number of bytes (got '${DFE_KAFKA_MESSAGE_MAX_BYTES}')" >&2
+  exit 1
+fi
+# The managed broker's topic retention. A SaaS topic left at the provider
+# default keeps the vendor's retention, not the dial's.
+export DFE_KAFKA_RETENTION_MS="${DFE_KAFKA_RETENTION_MS:-}"
+if [[ -n "${DFE_KAFKA_RETENTION_MS}" && ! "${DFE_KAFKA_RETENTION_MS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: DFE_KAFKA_RETENTION_MS must be a positive whole number of milliseconds (got '${DFE_KAFKA_RETENTION_MS}')" >&2
   exit 1
 fi
 # kafka.mode flips to "external" only for a managed broker (msk,

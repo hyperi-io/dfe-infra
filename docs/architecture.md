@@ -87,11 +87,10 @@ What that leaves this repo:
 
 - **The clusters themselves.** ClickHouse and Kafka are deployed, sized, backed
   up and upgraded here. Only the schema inside them moved.
-- **The managed-broker landing topics.** `terraform/modules/managed-kafka/`
-  creates a landing topic for confluent-cloud and redpanda-cloud, driven by
-  `kafka.landing_topics`. It provisions a managed cloud broker before DFE
-  exists on it, the same shape as the MSK ACL job, so the guard allow-lists
-  that one directory by name. Whether the path should go at all is #355.
+- **The managed-broker ACLs.** `terraform/modules/managed-kafka/` writes the
+  DFE principal's grants on confluent-cloud and redpanda-cloud, topic Create
+  among them, and creates no topic. dfe-engine creates those topics at startup
+  like every other provider's.
 - **The MSK first ACL.** `msk-bootstrap-job.yaml` writes the SCRAM principal's
   ACLs over SASL/IAM, because on a cluster that has stopped granting by default
   nothing can write the FIRST ACL unless it is already permitted. It creates no

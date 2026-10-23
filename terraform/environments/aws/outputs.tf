@@ -103,10 +103,19 @@ output "DFE_KAFKA_BOOTSTRAP_ROLE_ARN" {
 }
 
 output "DFE_KAFKA_MESSAGE_MAX_BYTES" {
-  description = "The message_max_bytes this root handed the selected managed body, as a string. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/kafka_message_max_bytes annotation, which layer2-apps.yaml carries into the dfe-engine chart's kafka.messageMaxBytes, so the topics the engine creates take the same ceiling as the landing topics rather than the provider's default. Empty on an in-cluster broker, where the engine keeps its own default."
+  description = "The dial's message_max_bytes for the selected managed body, as a string. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/kafka_message_max_bytes annotation, which layer2-apps.yaml carries into the dfe-engine chart's kafka.messageMaxBytes, so every topic the engine creates takes the size the clients carry rather than the provider's default. Empty on an in-cluster broker, where the engine keeps its own default."
   value = (
     var.kafka.provider == "msk" ? tostring(var.kafka.msk.message_max_bytes) :
     contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) ? tostring(var.kafka.message_max_bytes) :
+    ""
+  )
+}
+
+output "DFE_KAFKA_RETENTION_MS" {
+  description = "The dial's log_retention_ms for the selected managed body, as a string. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/kafka_retention_ms annotation, which layer2-apps.yaml carries into the dfe-engine chart's kafka.topicRetentionMs, so every topic the engine creates keeps the dial's retention rather than the provider's default. Empty on an in-cluster broker, where the broker's own setting applies."
+  value = (
+    var.kafka.provider == "msk" ? tostring(var.kafka.msk.log_retention_ms) :
+    contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) ? tostring(var.kafka.log_retention_ms) :
     ""
   )
 }

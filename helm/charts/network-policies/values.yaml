@@ -295,7 +295,7 @@ externalEgress:
           dfe-kafka:
             - { port: 9098, protocol: TCP }   # SASL/IAM, the bootstrap Job alone
       # Neither SaaS provider has a bootstrap Job: the vendor's tofu provider
-      # writes the ACLs and topics, so nothing in strimzi dials the broker.
+      # writes the ACLs, so nothing in strimzi dials the broker.
       confluent-cloud:
         ports:
           - { port: 9092, protocol: TCP }   # Kafka over TLS, bootstrap and brokers

@@ -2,9 +2,8 @@
 // it is the only tier this organisation can create -- Dedicated and BYOC are
 // Request-access and quote-only, and variables.tf refuses them at plan.
 //
-// The vendor runs the brokers, so nothing here sizes, tunes or versions them:
-// the canonical broker profile applies to the Kafka we run, and what survives
-// on this path is the per-topic half.
+// The vendor runs the brokers, so nothing here sizes, tunes or versions them,
+// and dfe-engine creates the topics.
 
 data "aws_caller_identity" "current" {}
 
@@ -27,7 +26,7 @@ locals {
   }
 
   // On private connectivity the data plane is reachable only through the
-  // endpoint, so the topics, the user and the ACLs are written against the
+  // endpoint, so the user and the ACLs are written against the
   // private URL -- which means tofu itself has to run inside the VPC, or behind
   // a Route 53 Resolver rule that forwards the cluster domain into it.
   cluster_api_url = local.private ? redpanda_serverless_cluster.this.dataplane_api.private_url : redpanda_serverless_cluster.this.dataplane_api.url

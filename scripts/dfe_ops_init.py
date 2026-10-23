@@ -256,7 +256,6 @@ class Answers:
     kafka_provider: str = "strimzi"
     controller_pool: str = "combined"
     msk_broker_count: str = "3"
-    kafka_extra_topic: str = ""
     clickhouse_storage_model: str = "auto"
     clickhouse_instance_override: str = ""
     ui_public: dict[str, bool] = field(
@@ -385,12 +384,6 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
 
         a.msk_broker_count = ask(
             io, "msk_broker_count", "MSK broker count", a.msk_broker_count, validate=validate_count,
-        )
-    elif a.kafka_provider in ("confluent-cloud", "redpanda-cloud"):
-        a.kafka_extra_topic = ask(
-            io, "kafka_extra_topic",
-            "Extra landing topic beyond main_land (blank = main_land only)",
-            a.kafka_extra_topic,
         )
 
 
@@ -642,19 +635,15 @@ def _kafka_block(a: Answers) -> str:
             "      headroom: 1.3\n"
         )
 
-    # confluent-cloud / redpanda-cloud: tuning (still nested under kafka.msk --
-    # render_dial.py reads it from there for every managed body) + landing_topics.
-    topics = "    main_land: {}\n"
-    if a.kafka_extra_topic:
-        topics += f"    {a.kafka_extra_topic}: {{}}\n"
+    # confluent-cloud / redpanda-cloud: the retention and message size dfe-engine
+    # creates the topics with, under kafka.msk because render_dial.py reads them
+    # there for every managed body.
     return (
         "kafka:\n"
         f"  provider: {a.kafka_provider}\n"
         "  msk:\n"
-        "    num_partitions: 12\n"
         "    log_retention_ms: 259200000\n"
         "    message_max_bytes: 16777216\n"
-        "  landing_topics:\n" + topics
     )
 
 

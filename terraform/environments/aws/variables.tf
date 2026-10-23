@@ -250,7 +250,7 @@ variable "lambda_runtimes" {
 }
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. num_partitions, log_retention_ms, message_max_bytes and landing_topics are read for whichever managed body is selected -- every one applies the SAME canonical tuning (managed-kafka/CONTRACT.md). The msk block is read only when provider is msk and carries what is msk-only: the broker shape, count, version, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. Beyond name, env, network and the shared tuning, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region, an optional standing environment and the REST endpoint wait, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics at apply, after the cluster exists."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. No body creates a topic: dfe-engine creates every one at startup. The msk block is read only when provider is msk and carries the broker shape, count, version, tuning, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. The top-level message_max_bytes and log_retention_ms are read for either of them: the DFE_KAFKA_MESSAGE_MAX_BYTES and DFE_KAFKA_RETENTION_MS outputs hand them to dfe-engine, and confluent-cloud checks the size against its tier's ceiling. Beyond name, env and network, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region, an optional standing environment and the REST endpoint wait, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics dfe-engine creates, after the cluster exists."
   type = object({
     provider = string
     msk = optional(object({
@@ -279,18 +279,11 @@ variable "kafka" {
       })
     }))
     // Read only when provider is confluent-cloud or redpanda-cloud -- msk's
-    // equivalents live inside msk above, and its landing topics are its own
-    // in-cluster bootstrap Job's (CONTRACT.md: neither SaaS body has one, so
-    // tofu creates their topics itself).
-    num_partitions    = optional(number)
-    log_retention_ms  = optional(number)
+    // equivalents live inside msk above.
     message_max_bytes = optional(number)
-    landing_topics = optional(map(object({
-      partitions   = optional(number)
-      retention_ms = optional(number)
-    })), {})
-    // Read only for the two SaaS bodies. Private connectivity has the topics and
-    // ACLs written from inside the VPC, so a run from outside it asks for public.
+    log_retention_ms  = optional(number)
+    // Read only for the two SaaS bodies. Private connectivity has the ACLs
+    // written from inside the VPC, so a run from outside it asks for public.
     connectivity = optional(string, "private")
     // Read only when provider is confluent-cloud, which render_dial.py always
     // sends a tier for. An empty environment id has the body create one of its own.
@@ -320,18 +313,13 @@ variable "kafka" {
   }
 
   validation {
-    condition = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || (
-      var.kafka.num_partitions != null && var.kafka.log_retention_ms != null && var.kafka.message_max_bytes != null
-    )
-    error_message = "kafka.provider is a managed SaaS body, so num_partitions, log_retention_ms and message_max_bytes have to be present -- the module defaults none of them."
+    condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || (var.kafka.message_max_bytes != null && var.kafka.log_retention_ms != null)
+    error_message = "kafka.provider is a managed SaaS body, so message_max_bytes and log_retention_ms have to be present -- dfe-engine creates the topics with both, and nothing defaults either."
   }
 
   validation {
-    // Neither SaaS body has a bootstrap Job of its own -- the vendor's
-    // provider writes the topics -- so an empty map here is a cluster with no
-    // landing topic, and dfe-loader treats a missing *_land topic as fatal.
-    condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || length(var.kafka.landing_topics) > 0
-    error_message = "kafka.provider is a managed SaaS body with no bootstrap Job of its own, so landing_topics must name at least one topic -- an empty map ships a cluster dfe-loader crash-loops against."
+    condition     = var.kafka.log_retention_ms == null || coalesce(var.kafka.log_retention_ms, 0) > 0
+    error_message = "kafka.log_retention_ms must be positive."
   }
 
   validation {

@@ -33,8 +33,7 @@ renderer, not the wizard.
 3. **Kafka provider and quorum.** One of `strimzi`, `redpanda`, `msk`,
    `confluent-cloud`, `redpanda-cloud`, pre-selected by tier: `msk` on AWS
    Small/Medium, `confluent-cloud` at Large, `strimzi` on-prem. `msk` asks
-   the broker count; the two SaaS providers ask for an extra landing topic
-   beyond `main_land`. An in-cluster broker also asks
+   the broker count. An in-cluster broker also asks
    `kafka.controller_pool`: `combined` (the default, and the chart's own)
    keeps the KRaft metadata quorum on the brokers, `separate` gives it a
    sized pool. Moving it on a live cluster re-forms the quorum, so

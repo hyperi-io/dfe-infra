@@ -50,15 +50,16 @@ Net: on Confluent Cloud the DFE opinion reduces to a per-topic config of
 `compression.type=producer`, `cleanup.policy=delete`, `max.message.bytes` at the
 default. RF3, KRaft, unclean-election-off, and segment sizing are all handled by
 the platform (and already match the DFE intent). Note that some topic configs are
-not editable after create -- set them right at creation and use
-`lifecycle { prevent_destroy = true }` on production topics.
+not editable after create. dfe-engine creates every topic at startup, so they
+are set at creation from its settings (see Wiring back to DFE).
 
 ## Terraform / OpenTofu -- Confluent Cloud (API-key PLAIN)
 
-Standard cluster (multi-AZ, RF3) with a service account, a cluster-scoped API
-key, and one topic carrying the DFE defaults. The `confluent` provider needs a
-CLOUD API key (org-level, for management); the topic resource needs a KAFKA API
-key (cluster-level, for the data plane) -- both are shown.
+Standard cluster (multi-AZ, RF3) with the DFE service account, its
+cluster-scoped API key, and the ACLs a manager account writes for it. The
+`confluent` provider needs a CLOUD API key (org-level, for management) and DFE a
+KAFKA API key (cluster-level, for the data plane) -- both are shown. There is no
+topic resource: dfe-engine creates every topic.
 
 ```hcl
 terraform {
@@ -96,18 +97,6 @@ resource "confluent_service_account" "dfe_app" {
   description  = "DFE producer/consumer service account"
 }
 
-resource "confluent_role_binding" "dfe_app_write" {
-  principal   = "User:${confluent_service_account.dfe_app.id}"
-  role_name   = "DeveloperWrite"
-  crn_pattern = "${confluent_kafka_cluster.dfe.rbac_crn}/kafka=${confluent_kafka_cluster.dfe.id}/topic=dfe-*"
-}
-
-resource "confluent_role_binding" "dfe_app_read" {
-  principal   = "User:${confluent_service_account.dfe_app.id}"
-  role_name   = "DeveloperRead"
-  crn_pattern = "${confluent_kafka_cluster.dfe.rbac_crn}/kafka=${confluent_kafka_cluster.dfe.id}/group=dfe-*"
-}
-
 resource "confluent_api_key" "dfe_app_kafka" {
   display_name = "dfe-app-kafka-key"
   owner {
@@ -123,27 +112,60 @@ resource "confluent_api_key" "dfe_app_kafka" {
   }
 }
 
-# --- A topic carrying the DFE defaults (the settable subset) ---
-resource "confluent_kafka_topic" "example" {
+# --- A manager account writes the ACLs, and DFE never runs as it ---
+resource "confluent_service_account" "dfe_manager" {
+  display_name = "dfe-manager"
+}
+
+resource "confluent_role_binding" "dfe_manager" {
+  principal   = "User:${confluent_service_account.dfe_manager.id}"
+  role_name   = "CloudClusterAdmin"
+  crn_pattern = confluent_kafka_cluster.dfe.rbac_crn
+}
+
+resource "confluent_api_key" "dfe_manager_kafka" {
+  display_name = "dfe-manager-kafka-key"
+  depends_on   = [confluent_role_binding.dfe_manager]
+  owner {
+    id          = confluent_service_account.dfe_manager.id
+    api_version = confluent_service_account.dfe_manager.api_version
+    kind        = confluent_service_account.dfe_manager.kind
+  }
+  managed_resource {
+    id          = confluent_kafka_cluster.dfe.id
+    api_version = confluent_kafka_cluster.dfe.api_version
+    kind        = confluent_kafka_cluster.dfe.kind
+    environment { id = confluent_environment.dfe.id }
+  }
+}
+
+# --- The DFE principal's grants, as managed-kafka/confluent-cloud/acls.tf ---
+# Topic * with every call dfe-engine makes, since it creates every topic at
+# startup, and consumer groups fenced to the dfe- prefix. No topic resource.
+locals {
+  dfe_acls = merge(
+    { for op in ["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"] :
+    "topic-${lower(op)}" => { type = "TOPIC", name = "*", pattern = "LITERAL", op = op } },
+    { for op in ["READ", "DESCRIBE"] :
+    "group-${lower(op)}" => { type = "GROUP", name = "dfe-", pattern = "PREFIXED", op = op } },
+  )
+}
+
+resource "confluent_kafka_acl" "dfe_app" {
+  for_each = local.dfe_acls
   kafka_cluster { id = confluent_kafka_cluster.dfe.id }
-  topic_name       = "dfe-example"
-  partitions_count = 12 # DFE default (TF default is 6); increase-only
-  rest_endpoint    = confluent_kafka_cluster.dfe.rest_endpoint
-
-  config = {
-    "min.insync.replicas" = "2"          # allowed range is 1 or 2 -- use 2
-    "compression.type"    = "producer"
-    "cleanup.policy"      = "delete"
-    "retention.ms"        = "259200000"  # 72h
-    "max.message.bytes"   = "1048576"    # ~1 MiB, aligned with scalo client budgets
-  }
-
+  resource_type = each.value.type
+  resource_name = each.value.name
+  pattern_type  = each.value.pattern
+  principal     = "User:${confluent_service_account.dfe_app.id}"
+  host          = "*"
+  operation     = each.value.op
+  permission    = "ALLOW"
+  rest_endpoint = confluent_kafka_cluster.dfe.rest_endpoint
   credentials {
-    key    = confluent_api_key.dfe_app_kafka.id
-    secret = confluent_api_key.dfe_app_kafka.secret
+    key    = confluent_api_key.dfe_manager_kafka.id
+    secret = confluent_api_key.dfe_manager_kafka.secret
   }
-
-  lifecycle { prevent_destroy = true }
 }
 
 output "bootstrap_endpoint" {
@@ -169,6 +191,7 @@ that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
   provider, not from `auth.type`).
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
 - Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its own default size, which a cluster capped below it refuses. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
+- Topic retention: set the dfe-engine chart's `kafka.topicRetentionMs`, or the topics keep Confluent's default. On the AWS path tofu sets it through `DFE_KAFKA_RETENTION_MS`.
 - Replication: set the dfe-engine chart's `kafka.topicReplicationFactor` to 3. Confluent Cloud refuses any other factor and creates no topic on first write, so a source whose topics are refused never takes data. The layer 2 appsets set it for every external broker.
 
 Note: Confluent Cloud auto-provisions a billable Flink compute pool on cluster

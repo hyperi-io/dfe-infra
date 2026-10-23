@@ -357,10 +357,8 @@ run "a_confluent_broker_refuses_a_missing_tier" {
     kafka = {
       provider             = "confluent-cloud"
       connectivity         = "public"
-      num_partitions       = 12
-      log_retention_ms     = 259200000
       message_max_bytes    = 8388608
-      landing_topics       = { main_land = {} }
+      log_retention_ms     = 259200000
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
 
@@ -380,10 +378,8 @@ run "a_redpanda_broker_refuses_a_missing_tier" {
     kafka = {
       provider          = "redpanda-cloud"
       connectivity      = "public"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
       message_max_bytes = 16777216
-      landing_topics    = { main_land = {} }
+      log_retention_ms  = 259200000
     }
 
     seeds = {

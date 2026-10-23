@@ -524,7 +524,7 @@ TOPIC_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
     """A managed broker refuses a record above its provider default, so the
-    engine's own topics take the size the landing topics were created at."""
+    engine creates its topics at the size the deployment hands it."""
     for profile in BUS_PROFILES:
         expect(
             f"{profile}: unset leaves the engine's own default",
@@ -549,6 +549,38 @@ def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     err = refusal("single", annotations={**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "16MiB"})
     expect(
         "the render refuses it by name", "kafka.messageMaxBytes" in err, f"refusal={err[-300:]!r}"
+    )
+
+
+TOPIC_RETENTION_ENV = "DFE_KAFKA_TOPIC_RETENTION_MS"
+TOPIC_RETENTION_ANNOTATION = "dfe.hyperi.io/kafka_retention_ms"
+
+
+def test_the_topic_retention_reaches_the_engine_only_when_set() -> None:
+    """A SaaS broker's default retention is the vendor's, so the engine creates
+    its topics with the retention the deployment hands it."""
+    for profile in BUS_PROFILES:
+        expect(
+            f"{profile}: unset leaves the broker's own retention",
+            TOPIC_RETENTION_ENV not in engine_env(golden(ENGINE, profile, "local")),
+            "the variable was rendered with nothing behind it",
+        )
+    managed = {**MANAGED_BROKER, TOPIC_RETENTION_ANNOTATION: "259200000"}
+    got = literal_env("single", annotations=managed).get(TOPIC_RETENTION_ENV)
+    expect("the cluster secret's retention reaches the container",
+           got == "259200000", f"got {got!r}")
+    got = literal_env("single", overlay={"kafka": {"topicRetentionMs": 259200000}}).get(
+        TOPIC_RETENTION_ENV
+    )
+    expect("a number from a values file renders as whole milliseconds",
+           got == "259200000", f"got {got!r}")
+
+
+def test_a_topic_retention_that_is_not_milliseconds_fails_the_render() -> None:
+    """A unit suffix would reach the engine as a setting it cannot parse."""
+    err = refusal("single", annotations={**MANAGED_BROKER, TOPIC_RETENTION_ANNOTATION: "3d"})
+    expect(
+        "the render refuses it by name", "kafka.topicRetentionMs" in err, f"refusal={err[-300:]!r}"
     )
 
 

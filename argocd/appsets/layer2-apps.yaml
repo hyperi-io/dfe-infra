@@ -212,7 +212,8 @@ spec:
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
               {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
-              {{- if or $kafkaMode $kafkaMessageMaxBytes }}
+              {{- $kafkaRetentionMs := index .metadata.annotations "dfe.hyperi.io/kafka_retention_ms" }}
+              {{- if or $kafkaMode $kafkaMessageMaxBytes $kafkaRetentionMs }}
               kafka:
                 {{- if $kafkaMode }}
                 # A managed broker (msk, confluent-cloud, redpanda-cloud) is the
@@ -243,6 +244,11 @@ spec:
                 # and dfe-receiver's body limit; the block below derives the
                 # limits only an app's own config file or env carries.
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
+                {{- end }}
+                {{- if $kafkaRetentionMs }}
+                # The dial's topic retention, which dfe-extras hands dfe-engine
+                # for the topics it creates.
+                topicRetentionMs: {{ $kafkaRetentionMs | quote }}
                 {{- end }}
               {{- end }}
               {{- if $kafkaMessageMaxBytes }}
@@ -363,7 +369,8 @@ spec:
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
               {{- $kafkaSecurityProtocol := index .metadata.annotations "dfe.hyperi.io/kafka_security_protocol" }}
               {{- $kafkaMessageMaxBytes := index .metadata.annotations "dfe.hyperi.io/kafka_message_max_bytes" }}
-              {{- if or $kafkaMode $kafkaMessageMaxBytes }}
+              {{- $kafkaRetentionMs := index .metadata.annotations "dfe.hyperi.io/kafka_retention_ms" }}
+              {{- if or $kafkaMode $kafkaMessageMaxBytes $kafkaRetentionMs }}
               kafka:
                 {{- if $kafkaMode }}
                 mode: {{ $kafkaMode | quote }}
@@ -379,6 +386,9 @@ spec:
                 {{- end }}
                 {{- if $kafkaMessageMaxBytes }}
                 messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}
+                {{- end }}
+                {{- if $kafkaRetentionMs }}
+                topicRetentionMs: {{ $kafkaRetentionMs | quote }}
                 {{- end }}
               {{- end }}
               {{- if $kafkaMessageMaxBytes }}
