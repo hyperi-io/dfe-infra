@@ -250,7 +250,7 @@ variable "lambda_runtimes" {
 }
 
 variable "kafka" {
-  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. No body creates a topic: dfe-engine creates every one at startup. The msk block is read only when provider is msk and carries the broker shape, count, version, tuning, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. The top-level message_max_bytes is read for either of them: the DFE_KAFKA_MESSAGE_MAX_BYTES output hands it to dfe-engine, and confluent-cloud checks it against its tier's ceiling. Beyond name, env and network, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region, an optional standing environment and the REST endpoint wait, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics dfe-engine creates, after the cluster exists."
+  description = "Who runs the brokers. strimzi and redpanda run inside the cluster and this root creates nothing for them; msk, confluent-cloud and redpanda-cloud are the managed bodies it does create. No body creates a topic: dfe-engine creates every one at startup. The msk block is read only when provider is msk and carries the broker shape, count, version, tuning, SCRAM user and bootstrap Job, none of which the module defaults for a deployment that arrives through the renderer. confluent-cloud and redpanda-cloud take no such block: both size, version and tune the cluster themselves. The top-level message_max_bytes and log_retention_ms are read for either of them: the DFE_KAFKA_MESSAGE_MAX_BYTES and DFE_KAFKA_RETENTION_MS outputs hand them to dfe-engine, and confluent-cloud checks the size against its tier's ceiling. Beyond name, env and network, each takes connectivity (private unless the dial asks for public), confluent-cloud its tier, the deployment's region, an optional standing environment and the REST endpoint wait, and redpanda-cloud its tier and an optional standing resource group. Both tiers are pinned in tfvars, since neither vendor publishes a newer generation to resolve. A message_max_bytes above 8388608 is refused on a Confluent basic or standard tier, because Confluent refuses the topics dfe-engine creates, after the cluster exists."
   type = object({
     provider = string
     msk = optional(object({
@@ -279,8 +279,9 @@ variable "kafka" {
       })
     }))
     // Read only when provider is confluent-cloud or redpanda-cloud -- msk's
-    // equivalent lives inside msk above.
+    // equivalents live inside msk above.
     message_max_bytes = optional(number)
+    log_retention_ms  = optional(number)
     // Read only for the two SaaS bodies. Private connectivity has the ACLs
     // written from inside the VPC, so a run from outside it asks for public.
     connectivity = optional(string, "private")
@@ -312,8 +313,13 @@ variable "kafka" {
   }
 
   validation {
-    condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || var.kafka.message_max_bytes != null
-    error_message = "kafka.provider is a managed SaaS body, so message_max_bytes has to be present -- dfe-engine creates the topics at that size, and nothing defaults it."
+    condition     = !contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) || (var.kafka.message_max_bytes != null && var.kafka.log_retention_ms != null)
+    error_message = "kafka.provider is a managed SaaS body, so message_max_bytes and log_retention_ms have to be present -- dfe-engine creates the topics with both, and nothing defaults either."
+  }
+
+  validation {
+    condition     = var.kafka.log_retention_ms == null || coalesce(var.kafka.log_retention_ms, 0) > 0
+    error_message = "kafka.log_retention_ms must be positive."
   }
 
   validation {

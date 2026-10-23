@@ -396,12 +396,14 @@ def test_a_redpanda_cloud_broker_renders_no_msk_block() -> None:
     assert kafka["provider"] == "redpanda-cloud"
 
 
-def test_a_saas_broker_gets_the_message_size_and_no_topic() -> None:
-    """dfe-engine creates every topic, so a SaaS body takes the size it creates them at and nothing else."""
+def test_a_saas_broker_gets_the_engines_topic_settings_and_no_topic() -> None:
+    """dfe-engine creates every topic, so a SaaS body takes the size and retention it
+    creates them with and nothing else."""
     for provider in ("confluent-cloud", "redpanda-cloud"):
         kafka = render(replace=("provider: msk", f"provider: {provider}"))["kafka"]
         assert kafka["message_max_bytes"] == 16777216, provider
-        for key in ("num_partitions", "log_retention_ms", "landing_topics"):
+        assert kafka["log_retention_ms"] == 259200000, provider
+        for key in ("num_partitions", "landing_topics"):
             assert key not in kafka, (provider, key)
 
 
@@ -409,6 +411,7 @@ def test_msk_reads_no_top_level_tuning() -> None:
     """msk's tuning lives inside msk:."""
     kafka = render()["kafka"]
     assert "message_max_bytes" not in kafka
+    assert "log_retention_ms" not in kafka
     assert kafka["msk"]["num_partitions"] == 12
     assert kafka["msk"]["log_retention_ms"] == 259200000
 

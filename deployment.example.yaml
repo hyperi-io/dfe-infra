@@ -624,9 +624,9 @@ sizing:
 
 ## KAFKA -- who runs the brokers. strimzi and redpanda run inside the cluster and
 ## tofu creates nothing for them; msk, confluent-cloud and redpanda-cloud are the
-## managed bodies the aws root creates. message_max_bytes below is read for
-## WHICHEVER of the three is selected, and dfe-engine creates every topic at that
-## size on every provider -- nothing here creates a topic. The rest of the msk:
+## managed bodies the aws root creates. log_retention_ms and message_max_bytes
+## below are read for WHICHEVER of the three is selected, and dfe-engine creates
+## every topic with them -- nothing here creates a topic. The rest of the msk:
 ## block is msk-only: the two SaaS bodies size, version and tune the cluster
 ## themselves and take no block of their own. The same token is the
 ## last segment of the credential's store key (<project>/<env>/kafka/<provider>),

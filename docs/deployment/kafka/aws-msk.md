@@ -230,39 +230,8 @@ a Provisioned cluster carrying the DFE configuration nothing else will either:
 `auto.create.topics.enable` is false, so that the partition count per source is an
 explicit number rather than a broker default. dfe-engine creates them at startup
 from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below
-writes. If you would rather manage topics as IaC, the
-community `Mongey/kafka` provider speaks both SCRAM and `aws-iam`:
-
-```hcl
-terraform {
-  required_providers {
-    kafka = { source = "Mongey/kafka", version = "0.13.1" } # verify + pin
-  }
-}
-
-# IAM (Serverless) example:
-provider "kafka" {
-  bootstrap_servers = split(",", aws_msk_serverless_cluster.dfe.bootstrap_brokers_sasl_iam)
-  tls_enabled       = true
-  sasl_mechanism    = "aws-iam"
-  sasl_aws_region   = var.aws_region
-}
-
-resource "kafka_topic" "example" {
-  name               = "dfe-example"
-  partitions         = 12   # DFE default -- set per topic on Serverless
-  replication_factor = 3    # Provisioned forces 3; Serverless manages replicas
-  config = {
-    "compression.type"  = "producer"
-    "retention.ms"      = "259200000" # 72h
-    "cleanup.policy"    = "delete"
-    "max.message.bytes" = "1048576"
-  }
-}
-```
-
-For MSK Provisioned with SCRAM, set `sasl_mechanism = "scram-sha512"`,
-`sasl_username`, and `sasl_password` on the provider instead.
+writes. Leave them to it: a topic created any other way keeps its own
+partitions and configs, which the engine does not reshape.
 
 See [aws-msk-operations.md](aws-msk-operations.md) for the bootstrap Job
 that writes the ACLs (and what you set to drive it by hand),

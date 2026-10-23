@@ -65,8 +65,9 @@ acknowledgement when the client sends `acks=all` (scalo default). Set
 The `redpanda` provider authenticates with a Redpanda Cloud service-account
 client ID + secret (Organization IAM). Two shapes below: Serverless (fewest
 dials) and Dedicated/BYOC (full topic + cluster config). The SCRAM user is a
-`redpanda_user` with `mechanism = "scram-sha-512"`, against the cluster's
-`cluster_api_url`. There is no topic resource: dfe-engine creates every topic.
+`redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the
+cluster's `cluster_api_url`. There is no topic resource: dfe-engine creates
+every topic.
 
 ```hcl
 terraform {
@@ -122,11 +123,32 @@ resource "redpanda_user" "dfe_app" {
   cluster_api_url = redpanda_serverless_cluster.dfe.cluster_api_url
 }
 
-# --- No topic resource ---
-# dfe-engine creates every topic at startup from the dfe-schemas manifest, so
-# the user needs topic Create, Describe, Read, Write, Alter, Delete,
-# DescribeConfigs and AlterConfigs: the grant set
-# terraform/modules/managed-kafka/redpanda-cloud/acls.tf writes.
+# --- The user's grants, as managed-kafka/redpanda-cloud/acls.tf ---
+# Topic * with every call dfe-engine makes, since it creates every topic at
+# startup, and consumer groups fenced to the dfe- prefix. No topic resource.
+resource "redpanda_acl" "dfe_topics" {
+  for_each              = toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
+  resource_type         = "TOPIC"
+  resource_name         = "*"
+  resource_pattern_type = "LITERAL"
+  principal             = "User:${redpanda_user.dfe_app.name}"
+  host                  = "*"
+  operation             = each.value
+  permission_type       = "ALLOW"
+  cluster_api_url       = redpanda_serverless_cluster.dfe.cluster_api_url
+}
+
+resource "redpanda_acl" "dfe_groups" {
+  for_each              = toset(["READ", "DESCRIBE"])
+  resource_type         = "GROUP"
+  resource_name         = "dfe-"
+  resource_pattern_type = "PREFIXED"
+  principal             = "User:${redpanda_user.dfe_app.name}"
+  host                  = "*"
+  operation             = each.value
+  permission_type       = "ALLOW"
+  cluster_api_url       = redpanda_serverless_cluster.dfe.cluster_api_url
+}
 
 output "cluster_api_url" {
   value = redpanda_serverless_cluster.dfe.cluster_api_url

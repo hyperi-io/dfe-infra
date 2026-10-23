@@ -1596,9 +1596,10 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
     terraform/modules/managed-kafka/CONTRACT.md), SCRAM user and bootstrap Job
     from kafka.msk. The two SaaS bodies size, version and tune themselves and
     create no topic -- dfe-engine creates every one -- so they take only
-    kafka.msk.message_max_bytes, the size the engine creates the topics at, and
-    the keys _saas_kafka_settings reads. None of the sizes is defaulted here,
-    because a defaulted value rots into a stale one silently.
+    kafka.msk.message_max_bytes and kafka.msk.log_retention_ms, which the engine
+    creates the topics with, and the keys _saas_kafka_settings reads. None of
+    the values is defaulted here, because a defaulted value rots into a stale
+    one silently.
     """
     provider = _required(dial, ("kafka", "provider"))
     if provider not in MANAGED_KAFKA_PROVIDERS:
@@ -1606,11 +1607,13 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
 
     at = ("kafka", "msk")
     message_max_bytes = _number(dial, (*at, "message_max_bytes"))
+    log_retention_ms = _number(dial, (*at, "log_retention_ms"))
 
     if provider != "msk":
         return {
             "provider": provider,
             "message_max_bytes": message_max_bytes,
+            "log_retention_ms": log_retention_ms,
             **_saas_kafka_settings(dial, provider, message_max_bytes),
         }
 
@@ -1621,7 +1624,7 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
             "broker_count": _number(dial, (*at, "broker_count")),
             "broker_version": _required(dial, (*at, "broker_version")),
             "num_partitions": _number(dial, (*at, "num_partitions")),
-            "log_retention_ms": _number(dial, (*at, "log_retention_ms")),
+            "log_retention_ms": log_retention_ms,
             "message_max_bytes": message_max_bytes,
             "scram_username": _required(dial, (*at, "scram_username")),
             "bootstrap_job": {

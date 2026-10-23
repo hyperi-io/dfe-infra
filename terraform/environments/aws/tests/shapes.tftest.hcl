@@ -358,6 +358,7 @@ run "a_confluent_broker_refuses_a_missing_tier" {
       provider             = "confluent-cloud"
       connectivity         = "public"
       message_max_bytes    = 8388608
+      log_retention_ms     = 259200000
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
 
@@ -378,6 +379,7 @@ run "a_redpanda_broker_refuses_a_missing_tier" {
       provider          = "redpanda-cloud"
       connectivity      = "public"
       message_max_bytes = 16777216
+      log_retention_ms  = 259200000
     }
 
     seeds = {

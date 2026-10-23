@@ -111,6 +111,15 @@ output "DFE_KAFKA_MESSAGE_MAX_BYTES" {
   )
 }
 
+output "DFE_KAFKA_RETENTION_MS" {
+  description = "The dial's log_retention_ms for the selected managed body, as a string. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/kafka_retention_ms annotation, which layer2-apps.yaml carries into the dfe-engine chart's kafka.topicRetentionMs, so every topic the engine creates keeps the dial's retention rather than the provider's default. Empty on an in-cluster broker, where the broker's own setting applies."
+  value = (
+    var.kafka.provider == "msk" ? tostring(var.kafka.msk.log_retention_ms) :
+    contains(["confluent-cloud", "redpanda-cloud"], var.kafka.provider) ? tostring(var.kafka.log_retention_ms) :
+    ""
+  )
+}
+
 output "DFE_OTEL_ENDPOINT" {
   value = var.endpoints.otel_endpoint
 }

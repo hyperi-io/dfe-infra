@@ -635,13 +635,14 @@ def _kafka_block(a: Answers) -> str:
             "      headroom: 1.3\n"
         )
 
-    # confluent-cloud / redpanda-cloud: the message size dfe-engine creates the
-    # topics at, under kafka.msk because render_dial.py reads it there for every
-    # managed body.
+    # confluent-cloud / redpanda-cloud: the retention and message size dfe-engine
+    # creates the topics with, under kafka.msk because render_dial.py reads them
+    # there for every managed body.
     return (
         "kafka:\n"
         f"  provider: {a.kafka_provider}\n"
         "  msk:\n"
+        "    log_retention_ms: 259200000\n"
         "    message_max_bytes: 16777216\n"
     )
 

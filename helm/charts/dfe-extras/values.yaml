@@ -283,6 +283,7 @@ extras:
         provider: ""
         messageMaxBytes: ""
         topicReplicationFactor: ""
+        topicRetentionMs: ""
       # The refs the engine's content init containers pull belong to the thin
       # chart's values.
       content:
