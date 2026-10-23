@@ -96,7 +96,7 @@ variable "node_image" {
 }
 
 variable "instance_ami_id" {
-  description = "The AMI the toolbox instance launches. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the family of the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 that clears versions.yaml's node-images cooldown, skip-list and floor, and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when the lookup failed or node_image.pin is true. dfe-ops bastion up re-resolves this key alone before every launch. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox is on."
+  description = "The AMI the toolbox instance launches. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the family of the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 that clears versions.yaml's node-images cooldown, skip-list and floor, and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when nothing was resolved or recorded, or node_image.pin is true. dfe-ops bastion up re-resolves this key alone before every launch. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox is on."
   type        = string
   default     = null
 
@@ -107,7 +107,7 @@ variable "instance_ami_id" {
 }
 
 variable "forwarder_ami_id" {
-  description = "The AMI the tunnel forwarder launches, auto-selected behind the same release gates as instance_ami_id by a full scripts/resolve_sizing.py images run and never by bastion up's toolbox-only one, because a new AMI replaces the forwarder instance and every tunnel through it drops while it rebuilds. A value in terraform.tfvars applies only when the lookup failed or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only on edge.tunnel.address.mode forwarder."
+  description = "The AMI the tunnel forwarder launches, auto-selected behind the same release gates as instance_ami_id by a full scripts/resolve_sizing.py images run and never by bastion up's toolbox-only one, because a new AMI replaces the forwarder instance and every tunnel through it drops while it rebuilds. A value in terraform.tfvars applies only when nothing was resolved or recorded, or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only on edge.tunnel.address.mode forwarder."
   type        = string
   default     = null
 

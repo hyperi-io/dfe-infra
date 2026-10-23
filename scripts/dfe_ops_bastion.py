@@ -274,14 +274,14 @@ def _render_dial_tofu() -> bool:
 
 
 def _resolve_toolbox_image() -> bool:
-    """Re-read the newest AL2023 AMI into node-images.auto.tfvars.json before the apply.
+    """Re-read the newest gated AL2023 AMI into node-images.auto.tfvars.json before the apply.
 
     The instance is rebuilt on every `up`, so the AMI an earlier resolve wrote
     is stale by then, or absent on a deployment that never resolved one. A
-    lookup that fails drops the key and warns, and a pinned dial empties the
-    file, so the apply takes terraform.tfvars' instance_ami_id or refuses by
-    name rather than launching the old image. The exit status is non-zero only
-    for a dial it cannot read.
+    lookup that fails holds the AMI sizing/node-images.json records, or drops
+    the key when nothing is recorded, and a pinned dial empties the file, so the
+    apply takes terraform.tfvars' instance_ami_id or refuses by name. The exit
+    status is non-zero only for a dial it cannot read.
     """
     result = _run(
         [

@@ -23,8 +23,9 @@ The minor is the stack's ``platform.kubernetes`` ceiling, the newest minor the
 stack is proven on, read the way bootstrap/check_platform.py reads it. The
 newest release comes from one of two sources:
 
-    github  awslabs/amazon-eks-ami's releases, through ``gh api`` -- the
-            default, because CI has a token and no AWS credential
+    github  awslabs/amazon-eks-ami's releases, read anonymously over HTTPS
+            (GH_TOKEN, where set, raises the rate limit) -- the default,
+            because CI has no AWS credential
     ssm     the EKS ``recommended`` SSM parameter for the minor in a region,
             through scripts/node_images.py -- the per-region authority, which
             needs AWS credentials
@@ -40,14 +41,12 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 import node_images
-from aws_cli import run_cli
 from yaml_subset import YamlSubsetError, at
 from yaml_subset import parse as parse_yaml_subset
 
@@ -97,41 +96,31 @@ def stack_facts(versions: Path, stack: str | None) -> tuple[str, str, str]:
 
 
 def newest_from_releases(releases: object, minor: str, arch: str) -> Newest | None:
-    """The newest published release that ships the AL2023 standard image for this minor."""
+    """The newest published release that ships the AL2023 standard image for this minor.
+
+    Raises:
+        node_images.ImageLookupError: An entry is not a GitHub release object.
+    """
     if not isinstance(releases, list):
         return None
-    wanted = f"amazon-eks-node-al2023-{arch}-standard-{minor}-v"
-    published = [
-        r for r in releases
-        if isinstance(r, dict) and not r.get("draft") and not r.get("prerelease")
-    ]
-    for release in sorted(published, key=lambda r: str(r.get("published_at", "")), reverse=True):
-        names = release.get("ami_names")
-        if isinstance(names, list) and any(str(n).startswith(wanted) for n in names):
-            return Newest(str(release.get("tag_name", "")), str(release.get("published_at", "")), "github")
+    wanted = node_images.EKS_IMAGE_NAME.format(arch=arch, minor=minor, tag="")
+    for release in node_images.releases_from(releases):
+        if release.prerelease or release.published is None:
+            continue
+        if any(name.startswith(wanted) for name in release.ami_names):
+            return Newest(release.tag, release.published.isoformat(), "github")
     return None
 
 
 def fetch_releases() -> object:
-    """The newest amazon-eks-ami releases, the same read node_images.py gates.
+    """The newest amazon-eks-ami releases, the same anonymous HTTPS read node_images.py gates.
 
     Raises:
-        node_images.ImageLookupError: gh is missing or refused the read.
+        node_images.ImageLookupError: GitHub is unreachable, rate-limits the
+            read or answers no release list.
     """
-    args = list(node_images.EKS_RELEASES_ARGS)
-    try:
-        done = run_cli("gh", args, timeout=60)
-    except FileNotFoundError as err:
-        raise node_images.ImageLookupError("the gh CLI is not on PATH") from err
-    except subprocess.TimeoutExpired as err:
-        raise node_images.ImageLookupError("gh api took over 60s") from err
-    if done.returncode != 0:
-        tail = done.stderr.strip().splitlines()[-1:] or ["no stderr"]
-        raise node_images.ImageLookupError(f"gh api {EKS_AMI_REPO} releases failed: {tail[0]}")
-    try:
-        return json.loads(done.stdout or "[]")
-    except json.JSONDecodeError as err:
-        raise node_images.ImageLookupError(f"gh api answered no JSON: {err}") from err
+    url, pages = node_images.EKS_RELEASES_ARGS
+    return json.loads(node_images.github_pages(url, int(pages), timeout=60))
 
 
 def published_at(releases: object, tag: str) -> str:
@@ -163,9 +152,15 @@ def _say(level: str, message: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Report the pin's lag. Exits 0 whatever it finds: this is a warning, never a gate."""
-    parser = argparse.ArgumentParser(prog="check_karpenter_ami.py", description=__doc__.splitlines()[0])
-    parser.add_argument("--stack", default=None, help="the stack to read (default: the current pointer)")
-    parser.add_argument("--versions", type=Path, default=VERSIONS_FILE, help="versions.yaml to read")
+    parser = argparse.ArgumentParser(
+        prog="check_karpenter_ami.py", description=__doc__.splitlines()[0]
+    )
+    parser.add_argument(
+        "--stack", default=None, help="the stack to read (default: the current pointer)"
+    )
+    parser.add_argument(
+        "--versions", type=Path, default=VERSIONS_FILE, help="versions.yaml to read"
+    )
     parser.add_argument("--minor", default=None, help="override the stack's Kubernetes minor")
     parser.add_argument("--arch", default="arm64", help="the node architecture (default arm64)")
     parser.add_argument("--source", choices=("github", "ssm"), default="github")
@@ -198,7 +193,9 @@ def main(argv: list[str] | None = None) -> int:
                 if args.releases_json
                 else fetch_releases()
             )
-            newest = newest_from_releases(releases, minor, node_images.AWS_ARCH.get(args.arch, args.arch))
+            newest = newest_from_releases(
+                releases, minor, node_images.AWS_ARCH.get(args.arch, args.arch)
+            )
     except (node_images.ImageLookupError, OSError, json.JSONDecodeError) as err:
         _say("notice", f"Karpenter AMI pin not checked -- {err}. This is a skip, not a pass.")
         return 0

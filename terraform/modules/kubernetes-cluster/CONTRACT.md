@@ -93,9 +93,9 @@ A node image is a cascade, highest first, and OpenTofu orders the layers itself:
 2. A value in `terraform.tfvars`, which applies when the lookup failed or when the dial sets `node_image.pin: "true"` to skip it and empty the file -- the hold for a bad provider image or a reproducible rebuild. The pin takes effect on the next `images` run, because tofu never reads the dial.
 3. The root's variable default, on a cloud whose image carries no version. The aws root has none: a node group with no release takes EKS's newest ungated, so a plan neither layer answers is refused by name.
 
-The lookup runs in the resolver, never in a tofu data source, because a failing data source fails the whole plan and layer 2 would never get its turn. A failed lookup writes no key and warns once. The check refuses a node image literal, an image SSM path or an AMI data source anywhere in a `.tf` file.
+The lookup runs in the resolver, never in a tofu data source, because a failing data source fails the whole plan and layer 2 would never get its turn. The check refuses a node image literal, an image SSM path or an AMI data source anywhere in a `.tf` file.
 
-Worker-node images are the one version class that moves without a DFE release, so on `aws/` every image clears release gates first. The knobs are `versions.yaml`'s `node-images` block, and `scripts/node_images.py` lists the gates and which image each applies to. The newest candidate that clears every gate wins. When none does, the value the deploy repo's `sizing/node-images.json` records holds, unless it is now skip-listed or below the floor.
+Worker-node images are the one version class that moves without a DFE release, so on `aws/` every image clears release gates first. The knobs are `versions.yaml`'s `node-images` block, and `scripts/node_images.py` lists the gates and which image each applies to. The newest candidate that clears every gate wins. When none does, or the lookup fails (GitHub or AWS unreachable, rate-limited or malformed), the value the deploy repo's `sizing/node-images.json` records holds, unless it is now skip-listed or below the floor. With nothing recorded, no key is written and the plan refuses by name.
 
 Long-lived nodes take a DATED release, so their image moves only on the next resolve and apply.
 

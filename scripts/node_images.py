@@ -45,27 +45,38 @@ block holds the knobs, and the gates are:
                            default SSM parameter: a, c and g only, because b, d,
                            e and f read GitHub notes only the EKS AMI publishes
 
-The newest candidate that clears every gate wins. When none does, the value the
+The newest candidate that clears every gate wins. When none does, or the lookup
+fails (GitHub or AWS unreachable, rate-limited or malformed), the value the
 previous resolve recorded (``sizing/node-images.json``, which a deploy repo
 commits) holds unless it is now skip-listed or below the floor, and is never
-replaced by the newest release. A lookup that fails writes no key and warns.
+replaced by the newest release. With nothing recorded, the key is left out and
+the plan refuses by name.
 
     gcp     GKE's server config ``defaultImageType`` for the location
     azure   AKS's version-tracking Linux OS SKU, once the location lists the
             minor as generally available
 
+GitHub is read anonymously over HTTPS, one releases page and one issue search a
+run, with ``GH_TOKEN`` or ``GITHUB_TOKEN`` sent only to raise the rate limit.
+
 Stdlib only, like every other script here. Every provider read goes through one
-``Reader``, so a test hands it recorded responses and the CLI hands it the live
-``aws``/``gh``/``gcloud``/``az`` binaries.
+``Reader``, so a test hands it recorded responses and the CLI hands it GitHub's
+REST API and the live ``aws``/``gcloud``/``az`` binaries.
 """
 
 import json
+import os
 import re
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from http.client import HTTPMessage
 from pathlib import Path
+from typing import IO
 
 from aws_cli import run_cli
 from yaml_subset import YamlSubsetError, at
@@ -89,7 +100,9 @@ type Reader = Callable[[str, str, list[str]], str]
 AWS_ARCH = {"arm64": "arm64", "amd64": "x86_64", "x86_64": "x86_64"}
 
 # https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
-EKS_RECOMMENDED = "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/recommended"
+EKS_RECOMMENDED = (
+    "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/recommended"
+)
 
 # One release's image in a region, the parameter Karpenter's alias resolves through.
 EKS_IMAGE_ID = (
@@ -115,28 +128,31 @@ AL2023_NAME = re.compile(
 AKS_LINUX_OS_SKU = "Ubuntu"
 
 EKS_AMI_REPO = "awslabs/amazon-eks-ami"
+GITHUB_API = "https://api.github.com"
 
-# Each release cut to what the gates read: its AL2023 standard image names, its
-# per-minor release versions and its warning admonitions.
-EKS_RELEASES_JQ = (
-    "[.[] | {tag_name, published_at, draft, prerelease, ami_names: "
-    '([.body // "" | scan("amazon-eks-node-al2023-[a-z0-9_]+-standard-[0-9.]+-v[0-9]{8}")] '
-    "| unique), "
-    'release_versions: ([.body // "" | scan("[0-9]+\\\\.[0-9]+\\\\.[0-9]+-[0-9]{8}")] | unique), '
-    'admonitions: [.body // "" | scan("(?m)^> \\\\[!(?:IMPORTANT|WARNING|CAUTION)\\\\][^\\\\n]*'
-    '(?:\\\\n>[^\\\\n]*)*")]}]'
-)
+# Sent on every GitHub read, which refuses a request without one.
+GITHUB_USER_AGENT = "dfe-infra-node-images"
 
-# One read of the newest hundred releases, over a year of them, so the gates read GitHub once a run.
-EKS_RELEASES_ARGS = ["api", f"repos/{EKS_AMI_REPO}/releases?per_page=100", "--jq", EKS_RELEASES_JQ]
+# The reader binary name for a GitHub REST read: args are the URL and the most pages to follow.
+HTTPS = "https"
+
+# The newest hundred releases in one page, over a year of them, inside the anonymous rate limit.
+EKS_RELEASES_ARGS = [f"{GITHUB_API}/repos/{EKS_AMI_REPO}/releases?per_page=100", "1"]
 EKS_RELEASES_FIXTURE = "eks-ami-releases.json"
 
-# Every open issue, one compact JSON object a line across pages, pull requests left out.
-EKS_ISSUES_ARGS = [
-    "api", f"repos/{EKS_AMI_REPO}/issues?state=open&per_page=100", "--paginate",
-    "--jq", ".[] | select(.pull_request == null) | {number, title}",
-]
-EKS_ISSUES_FIXTURE = "eks-ami-open-issues.jsonl"
+# One search for every open issue, pull requests left out, following its pages.
+EKS_ISSUES_QUERY = urllib.parse.urlencode(
+    {"q": f"repo:{EKS_AMI_REPO} is:issue is:open", "per_page": "100"}
+)
+EKS_ISSUES_ARGS = [f"{GITHUB_API}/search/issues?{EKS_ISSUES_QUERY}", "10"]
+EKS_ISSUES_FIXTURE = "eks-ami-open-issues.json"
+
+# What the gates read from a release body: its AL2023 standard image names, its
+# per-minor release versions and its warning admonitions.
+BODY_AMI_NAME = re.compile(r"amazon-eks-node-al2023-[a-z0-9_]+-standard-[0-9.]+-v[0-9]{8}")
+BODY_RELEASE_VERSION = re.compile(r"\b[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}\b")
+BODY_ADMONITION = re.compile(r"(?m)^> \[!(?:IMPORTANT|WARNING|CAUTION)\][^\n]*(?:\n>[^\n]*)*")
+LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 # A hedge that warns of a fault in the release itself.
 WARNING_PHRASE = re.compile(r"\b(?:might cause|may cause|may experience|known issue)", re.I)
@@ -354,8 +370,16 @@ def _minor(target: Target) -> str:
 def _ssm_value(target: Target, read: Reader, fixture: str, name: str) -> str:
     """The value of one public SSM parameter in the target's region."""
     args = [
-        "ssm", "get-parameter", "--region", target.region, "--name", name,
-        "--query", "Parameter.Value", "--output", "text",
+        "ssm",
+        "get-parameter",
+        "--region",
+        target.region,
+        "--name",
+        name,
+        "--query",
+        "Parameter.Value",
+        "--output",
+        "text",
     ]
     return read(fixture, "aws", args).strip()
 
@@ -378,24 +402,25 @@ def _age_refusal(published: datetime | None, now: datetime, cooldown_days: int) 
 # --- the EKS-optimised AL2023 image ---------------------------------------------
 
 
-def parse_releases(raw: str) -> list[Release]:
-    """The releases EKS_RELEASES_JQ answered, newest published first.
+def releases_from(entries: list[object]) -> list[Release]:
+    """GitHub release objects as the gates read them, newest published first.
 
     Raises:
-        ImageLookupError: The answer is not the trimmed release list.
+        ImageLookupError: An entry is not a release object.
     """
     releases: list[Release] = []
-    for entry in _json_list(raw, f"{EKS_AMI_REPO} releases"):
+    for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("tag_name"), str):
             raise ImageLookupError(f"{EKS_AMI_REPO} releases carry an entry with no tag_name")
+        body = str(entry.get("body") or "").replace("\r", "")
         releases.append(
             Release(
                 tag=entry["tag_name"],
                 published=_timestamp(entry.get("published_at")),
                 prerelease=bool(entry.get("prerelease")) or bool(entry.get("draft")),
-                ami_names=tuple(str(n) for n in entry.get("ami_names") or ()),
-                release_versions=tuple(str(v) for v in entry.get("release_versions") or ()),
-                admonitions=tuple(str(a).replace("\r", "") for a in entry.get("admonitions") or ()),
+                ami_names=tuple(sorted(set(BODY_AMI_NAME.findall(body)))),
+                release_versions=tuple(sorted(set(BODY_RELEASE_VERSION.findall(body)))),
+                admonitions=tuple(BODY_ADMONITION.findall(body)),
             )
         )
     # An undated release sorts last, below every dated one.
@@ -403,20 +428,23 @@ def parse_releases(raw: str) -> list[Release]:
     return releases
 
 
-def open_issue_titles(raw: str) -> list[str]:
-    """The titles of the open issues EKS_ISSUES_ARGS answered, one JSON object a line.
+def parse_releases(raw: str) -> list[Release]:
+    """The releases EKS_RELEASES_ARGS answered, newest published first.
 
     Raises:
-        ImageLookupError: A line is not an issue object.
+        ImageLookupError: The answer is not a list of release objects.
+    """
+    return releases_from(_json_list(raw, f"{EKS_AMI_REPO} releases"))
+
+
+def open_issue_titles(raw: str) -> list[str]:
+    """The titles of the open issues EKS_ISSUES_ARGS answered, each as ``#<number> <title>``.
+
+    Raises:
+        ImageLookupError: The answer is not a list of issue objects.
     """
     titles: list[str] = []
-    for line in raw.splitlines():
-        if not line.strip():
-            continue
-        try:
-            issue = json.loads(line)
-        except json.JSONDecodeError as err:
-            raise ImageLookupError(f"{EKS_AMI_REPO} open issues are not JSON lines: {err}") from err
+    for issue in _json_list(raw, f"{EKS_AMI_REPO} open issues"):
         if not isinstance(issue, dict) or not isinstance(issue.get("title"), str):
             raise ImageLookupError(f"{EKS_AMI_REPO} open issues carry an entry with no title")
         titles.append(f"#{issue.get('number')} {issue['title']}")
@@ -497,8 +525,8 @@ def eks_release(
     """
     minor = _minor(target)
     arch = _aws_arch(target)
-    releases = parse_releases(read(EKS_RELEASES_FIXTURE, "gh", list(EKS_RELEASES_ARGS)))
-    titles = open_issue_titles(read(EKS_ISSUES_FIXTURE, "gh", list(EKS_ISSUES_ARGS)))
+    releases = parse_releases(read(EKS_RELEASES_FIXTURE, HTTPS, list(EKS_RELEASES_ARGS)))
+    titles = open_issue_titles(read(EKS_ISSUES_FIXTURE, HTTPS, list(EKS_ISSUES_ARGS)))
     refused: list[str] = []
     for release in releases:
         name = EKS_IMAGE_NAME.format(arch=arch, minor=minor, tag=release.tag)
@@ -631,9 +659,19 @@ def al2023_image(target: Target, read: Reader, policy: GatePolicy, now: datetime
     if not AMI_ID.match(default_id):
         raise ImageLookupError(f"{parameter} answered {default_id!r}, not an AMI id")
     args = [
-        "ec2", "describe-images", "--region", target.region, "--owners", "amazon",
-        "--filters", f"Name=name,Values=al2023-ami-2023.*-{arch}", "Name=state,Values=available",
-        "--query", "Images[].{id:ImageId,name:Name,created:CreationDate}", "--output", "json",
+        "ec2",
+        "describe-images",
+        "--region",
+        target.region,
+        "--owners",
+        "amazon",
+        "--filters",
+        f"Name=name,Values=al2023-ami-2023.*-{arch}",
+        "Name=state,Values=available",
+        "--query",
+        "Images[].{id:ImageId,name:Name,created:CreationDate}",
+        "--output",
+        "json",
     ]
     images = _al2023_images(read(f"aws-{target.region}-al2023-images-{arch}.json", "aws", args))
     default = next((image for image in images if image.image_id == default_id), None)
@@ -674,8 +712,14 @@ def gke_node_image(target: Target, read: Reader) -> dict[str, str]:
             version on the minor.
     """
     args = [
-        "container", "get-server-config", "--location", target.region,
-        "--project", target.account, "--format", "json",
+        "container",
+        "get-server-config",
+        "--location",
+        target.region,
+        "--project",
+        target.account,
+        "--format",
+        "json",
     ]
     fixture = f"gcp-{target.region}-gke-server-config.json"
     doc = _json(read(fixture, "gcloud", args), "GKE server config")
@@ -717,15 +761,25 @@ def aks_node_image(target: Target, read: Reader) -> dict[str, str]:
             only in preview or not at all.
     """
     args = [
-        "aks", "get-versions", "--location", target.region,
-        "--subscription", target.account, "--output", "json",
+        "aks",
+        "get-versions",
+        "--location",
+        target.region,
+        "--subscription",
+        target.account,
+        "--output",
+        "json",
     ]
     doc = _json(read(f"azure-{target.region}-aks-versions.json", "az", args), "AKS versions")
     values = doc.get("values")
     if not isinstance(values, list):
         raise ImageLookupError("AKS versions carry no values list")
     entry = next(
-        (v for v in values if isinstance(v, dict) and v.get("version") == target.kubernetes_version),
+        (
+            v
+            for v in values
+            if isinstance(v, dict) and v.get("version") == target.kubernetes_version
+        ),
         None,
     )
     if entry is None:
@@ -861,9 +915,10 @@ def resolve(
         note: Called once per newer candidate a gate refused, when given.
 
     Returns:
-        The keys to write. A failed lookup leaves its key out, so tfvars
-        applies or the plan refuses by name. A key whose candidates all fail a
-        gate holds its recorded value. A pin, or a cloud with no provider
+        The keys to write. A key whose lookup failed, or whose candidates all
+        fail a gate, holds its recorded value. With nothing recorded, or a
+        recorded value the gates now refuse, the key is left out, so tfvars
+        applies or the plan refuses by name. A pin, or a cloud with no provider
         lookup, returns nothing.
     """
     empty = Resolution({}, {}, frozenset())
@@ -880,24 +935,24 @@ def resolve(
             continue
         try:
             pick = lookup(ctx)
-        except NoEligibleImageError as err:
-            why = " / ".join(err.refusals) or "no candidate at or above the floor"
+        except ImageLookupError as err:
+            refusals = err.refusals if isinstance(err, NoEligibleImageError) else []
+            why = f"{err}: {' / '.join(refusals)}" if refusals else str(err)
             entry = recorded.get(key)
             if entry is None or "value" not in entry:
-                warn(f"{key} not resolved ({err}: {why}) and nothing was recorded to hold")
+                warn(
+                    f"{key} not resolved ({why}) and nothing was recorded to hold -- tfvars "
+                    "applies, or the plan refuses by name"
+                )
                 continue
             refusal = held_refusal(key, entry, policy)
             if refusal is not None:
                 refused.add(key)
-                warn(f"{key} not resolved ({err}: {why}), and its recorded value is refused: "
-                     f"{refusal}")
+                warn(f"{key} not resolved ({why}), and its recorded value is refused: {refusal}")
                 continue
             values[key] = entry["value"]
             record[key] = {"value": entry["value"], "release": entry.get("release", "")}
-            warn(f"{key} holds its recorded {entry.get('release', '')} ({err}: {why})")
-            continue
-        except ImageLookupError as err:
-            warn(f"{key} not resolved ({err}) -- tfvars applies, or the plan refuses by name")
+            warn(f"{key} holds its recorded {entry.get('release', '')} ({why})")
             continue
         values[key] = pick.value
         record[key] = {"value": pick.value, "release": pick.release}
@@ -908,10 +963,94 @@ def resolve(
     return Resolution(values, record, frozenset(refused))
 
 
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect, dropping the token when it leaves the host it was meant for."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        old_host = urllib.parse.urlsplit(req.full_url).netloc
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != old_host:
+            new.remove_header("Authorization")
+        return new
+
+
+def _github_headers() -> dict[str, str]:
+    """GitHub's REST headers, with a token from the environment only when one is set."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": GITHUB_USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def github_pages(url: str, max_pages: int, timeout: float) -> str:
+    """Every item a GitHub REST list or search answers, following its next links.
+
+    Returns:
+        The items of every page read, as one JSON array.
+
+    Raises:
+        ImageLookupError: GitHub is unreachable, rate-limits the read (403 or
+            429), answers another error, or answers something that is not a
+            list or a complete search.
+    """
+    opener = urllib.request.build_opener(_SameHostRedirect())
+    items: list[object] = []
+    next_url: str | None = url
+    for _page in range(max_pages):
+        if next_url is None:
+            break
+        request = urllib.request.Request(next_url, headers=_github_headers())
+        try:
+            with opener.open(request, timeout=timeout) as response:
+                body = response.read().decode("utf-8", errors="replace")
+                link = response.headers.get("Link") or ""
+        except urllib.error.HTTPError as err:
+            if err.code in (403, 429):
+                raise ImageLookupError(f"GitHub rate-limited {next_url} (HTTP {err.code})") from err
+            raise ImageLookupError(f"GitHub answered HTTP {err.code} for {next_url}") from err
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            raise ImageLookupError(f"GitHub unreachable for {next_url}: {err}") from err
+        page = _json_page(body, next_url)
+        items.extend(page)
+        match = LINK_NEXT.search(link)
+        next_url = match[1] if match else None
+    return json.dumps(items)
+
+
+def _json_page(body: str, url: str) -> list[object]:
+    """One page's items: a list as it stands, or a complete search's ``items``."""
+    try:
+        page = json.loads(body)
+    except json.JSONDecodeError as err:
+        raise ImageLookupError(f"GitHub answered no JSON for {url}: {err}") from err
+    if isinstance(page, list):
+        return page
+    if isinstance(page, dict) and isinstance(page.get("items"), list):
+        if page.get("incomplete_results") is True:
+            raise ImageLookupError(f"GitHub's search timed out before it was complete for {url}")
+        return page["items"]
+    raise ImageLookupError(f"GitHub answered neither a list nor a search for {url}")
+
+
 def live_reader(timeout: float = 60.0) -> Reader:
-    """A reader that runs the provider's own CLI."""
+    """A reader that reads GitHub's REST API over HTTPS and runs the clouds' own CLIs."""
 
     def read(_fixture: str, tool: str, args: list[str]) -> str:
+        if tool == HTTPS:
+            return github_pages(args[0], int(args[1]), timeout)
         try:
             done = run_cli(tool, args, timeout=timeout)
         except FileNotFoundError as err:
@@ -959,7 +1098,8 @@ def write_tfvars(
     """Write the answered keys, replacing what an earlier resolve left for them.
 
     With ``keys`` None the whole file is replaced, so an empty answer writes
-    ``{}`` and nothing a previous resolve wrote outlives a failed lookup.
+    ``{}`` and nothing a previous resolve wrote outlives a lookup that neither
+    answered nor held a recorded value.
     ``resolve_sizing.py images`` writes a pin this way whatever ``--only``
     named, so nothing outlives a pin either. With ``keys`` named, only those
     are replaced -- dropped when unanswered -- and every other key in the file

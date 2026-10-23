@@ -10,10 +10,12 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/node_images.py and ``resolve_sizing.py images``.
 
-``eks-ami-releases.json`` and ``eks-ami-open-issues.jsonl`` are the verbatim
-answers of node_images.py's own two ``gh api`` reads of awslabs/amazon-eks-ami,
+``eks-ami-releases.json`` and ``eks-ami-open-issues.json`` are the answers of
+node_images.py's own two anonymous REST reads of awslabs/amazon-eks-ami,
 captured 2026-10-24, so every gate below runs against a real historical
-release. The ``recommended`` SSM fixtures and ``aws-us-west-2-al2023-ami-arm64.txt``
+release. Each release body is cut to its admonitions and the lines naming an
+image or a release version, which parse to the same Release as the full body,
+and each issue to its number and title. The ``recommended`` SSM fixtures and ``aws-us-west-2-al2023-ami-arm64.txt``
 are the verbatim us-west-2 public parameters, captured 2026-10-18. The
 per-release ``image_id`` fixture for v20261012 carries the AMI id the arm64
 ``recommended`` answer named. The v20261019 ``image_id`` and every AMI in
@@ -25,10 +27,15 @@ its own ``_provenance`` field.
     python3 -m pytest scripts/tests/test_node_images.py -q
 """
 
+import http.server
 import json
 import re
 import shutil
 import sys
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -66,7 +73,7 @@ RELEASES = node_images.parse_releases(
     (FIXTURES / "eks-ami-releases.json").read_text(encoding="utf-8")
 )
 TITLES = node_images.open_issue_titles(
-    (FIXTURES / "eks-ami-open-issues.jsonl").read_text(encoding="utf-8")
+    (FIXTURES / "eks-ami-open-issues.json").read_text(encoding="utf-8")
 )
 
 
@@ -253,9 +260,13 @@ def test_the_eks_lookup_reads_the_releases_the_issues_and_the_regions_parameter(
         return RECORDED(fixture, tool, args)
 
     node_images.eks_release(AWS, record, POLICY, NOW)
-    assert [tool for tool, _args in calls] == ["gh", "gh", "aws"]
-    assert calls[0][1][1] == "repos/awslabs/amazon-eks-ami/releases?per_page=100"
-    assert "--paginate" in calls[1][1]
+    assert [tool for tool, _args in calls] == ["https", "https", "aws"]
+    assert calls[0][1] == [
+        "https://api.github.com/repos/awslabs/amazon-eks-ami/releases?per_page=100",
+        "1",
+    ]
+    assert calls[1][1][0].startswith("https://api.github.com/search/issues?q=repo%3Aawslabs")
+    assert "is%3Aissue+is%3Aopen" in calls[1][1][0]
     args = calls[2][1]
     assert args[args.index("--name") + 1] == (
         "/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/arm64/standard/"
@@ -302,13 +313,31 @@ def test_expected_fail_an_ssm_failure_is_a_lookup_failure_not_a_gate() -> None:
     assert not isinstance(caught.value, node_images.NoEligibleImageError)
 
 
-def test_expected_fail_releases_that_are_not_the_trimmed_list_are_refused() -> None:
+def test_expected_fail_releases_that_are_not_a_release_list_are_refused() -> None:
     with pytest.raises(node_images.ImageLookupError, match="not a JSON array"):
         node_images.parse_releases('{"message": "Not Found"}')
     with pytest.raises(node_images.ImageLookupError, match="no tag_name"):
         node_images.parse_releases('[{"published_at": "2026-10-14T17:28:15Z"}]')
-    with pytest.raises(node_images.ImageLookupError, match="not JSON lines"):
+    with pytest.raises(node_images.ImageLookupError, match="not JSON"):
         node_images.open_issue_titles("[{")
+    with pytest.raises(node_images.ImageLookupError, match="no title"):
+        node_images.open_issue_titles('[{"number": 1}]')
+
+
+def test_a_release_body_parses_to_its_names_versions_and_warnings() -> None:
+    """The fields the gates read come out of the body GitHub answers, CRLF and all."""
+    body = (
+        "> [!WARNING]\r\n> This release may cause failures.\r\n\r\n"
+        "<td>amazon-eks-node-al2023-arm64-standard-1.36-v20261012</td>\r\n"
+        '<td rowspan="5">1.36.4-20261012</td>\r\n'
+        "<td>amazon-eks-node-al2023-arm64-nvidia-1.36-v20261012</td>\r\n"
+    )
+    entry = {"tag_name": "v20261012", "published_at": "2026-10-14T17:28:15Z", "body": body}
+    (release,) = node_images.releases_from([entry])
+    assert release.ami_names == ("amazon-eks-node-al2023-arm64-standard-1.36-v20261012",)
+    assert release.release_versions == ("1.36.4-20261012",)
+    assert release.admonitions == ("> [!WARNING]\n> This release may cause failures.",)
+    assert node_images.releases_from([{**entry, "body": None}])[0].ami_names == ()
 
 
 def test_expected_fail_a_version_that_is_not_a_minor_is_refused_before_any_read() -> None:
@@ -564,14 +593,71 @@ def test_a_cloud_with_no_provider_lookup_resolves_nothing() -> None:
     assert resolution.values == {}
 
 
-def test_expected_fail_a_failed_github_read_leaves_only_the_eks_keys_out(tmp_path: Path) -> None:
-    for name in FIXTURES.glob("aws-*al2023*"):
+RECORDED_EKS = {
+    "node_image": {
+        "value": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261012"},
+        "release": "v20261012",
+    },
+    "karpenter_ami_alias": {"value": "al2023@v20261012", "release": "v20261012"},
+}
+
+
+def _without_github(tmp_path: Path) -> node_images.Reader:
+    """The recorded answers with both GitHub reads missing, as an unreachable GitHub leaves them."""
+    for name in FIXTURES.glob("aws-*"):
         shutil.copy(name, tmp_path / name.name)
+    return node_images.fixture_reader(tmp_path)
+
+
+def test_expected_fail_a_failed_github_read_with_nothing_recorded_leaves_the_eks_keys_out(
+    tmp_path: Path,
+) -> None:
+    """With nothing to hold, the key stays out and the plan's own validation refuses by name."""
     warnings: list[str] = []
-    resolution = _resolve(node_images.fixture_reader(tmp_path), warnings=warnings)
+    resolution = _resolve(_without_github(tmp_path), warnings=warnings)
     assert set(resolution.values) == {"instance_ami_id", "forwarder_ami_id"}
     assert len(warnings) == 2
-    assert all("no recorded response" in w and "the plan refuses by name" in w for w in warnings)
+    assert all("nothing was recorded to hold" in w for w in warnings)
+    assert all("the plan refuses by name" in w for w in warnings)
+
+
+def test_a_failed_github_read_holds_the_recorded_release(tmp_path: Path) -> None:
+    warnings: list[str] = []
+    resolution = _resolve(_without_github(tmp_path), recorded=RECORDED_EKS, warnings=warnings)
+    assert resolution.values["node_image"] == RECORDED_EKS["node_image"]["value"]
+    assert resolution.values["karpenter_ami_alias"] == "al2023@v20261012"
+    assert resolution.record["node_image"] == RECORDED_EKS["node_image"]
+    assert resolution.refused == frozenset()
+    assert all(w.split(" (")[0].endswith("holds its recorded v20261012") for w in warnings)
+    assert all("no recorded response" in w for w in warnings)
+
+
+def test_a_rate_limited_github_holds_the_recorded_release() -> None:
+    def limited(fixture: str, tool: str, args: list[str]) -> str:
+        if tool == node_images.HTTPS:
+            raise node_images.ImageLookupError(f"GitHub rate-limited {args[0]} (HTTP 403)")
+        return RECORDED(fixture, tool, args)
+
+    warnings: list[str] = []
+    resolution = _resolve(limited, recorded=RECORDED_EKS, warnings=warnings)
+    assert resolution.values["node_image"] == RECORDED_EKS["node_image"]["value"]
+    assert any("holds its recorded v20261012" in w and "HTTP 403" in w for w in warnings)
+
+
+def test_a_failed_aws_read_holds_the_recorded_ami() -> None:
+    def denied(fixture: str, tool: str, args: list[str]) -> str:
+        if tool == "aws":
+            raise node_images.ImageLookupError("aws ssm get-parameter failed: ExpiredToken")
+        return RECORDED(fixture, tool, args)
+
+    ami = {
+        "value": "ami-02026101200000000",
+        "release": "al2023-ami-2023.12.20261012.0-kernel-6.12-arm64",
+    }
+    resolution = _resolve(denied, recorded={"instance_ami_id": ami, **RECORDED_EKS})
+    assert resolution.values["instance_ami_id"] == "ami-02026101200000000"
+    assert resolution.values["node_image"] == RECORDED_EKS["node_image"]["value"]
+    assert "forwarder_ami_id" not in resolution.values
 
 
 def test_a_key_no_candidate_clears_holds_its_recorded_value() -> None:
@@ -656,6 +742,103 @@ def test_expected_fail_a_cli_that_hangs_is_a_lookup_failure() -> None:
     read = node_images.live_reader(timeout=0.2)
     with pytest.raises(node_images.ImageLookupError, match=r"took over 0\.2s"):
         read("unused", "sleep", ["5", "5"])
+
+
+# --- the GitHub reader, against a real HTTP server on loopback ----------------
+
+
+@dataclass
+class _Served:
+    """What a loopback server answers per path, and every request it saw."""
+
+    pages: dict[str, tuple[int, dict[str, str], str]]
+    seen: list[tuple[str, dict[str, str]]] = field(default_factory=list)
+
+
+@contextmanager
+def _github(pages: dict[str, tuple[int, dict[str, str], str]]) -> Iterator[tuple[str, _Served]]:
+    """A loopback HTTP server standing in for api.github.com, and its base URL."""
+    served = _Served(pages)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            served.seen.append((self.path, dict(self.headers)))
+            status, headers, body = served.pages.get(self.path, (404, {}, "{}"))
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name, value.replace("BASE", base))
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield base, served
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_the_github_reader_follows_next_links_up_to_its_page_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    pages = {
+        "/search?page=1": (200, {"Link": '<BASE/search?page=2>; rel="next"'}, '{"items": [1, 2]}'),
+        "/search?page=2": (200, {"Link": '<BASE/search?page=3>; rel="next"'}, '{"items": [3]}'),
+        "/search?page=3": (200, {}, '{"items": [4]}'),
+    }
+    with _github(pages) as (base, served):
+        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 2, 5)) == [1, 2, 3]
+        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 10, 5)) == [1, 2, 3, 4]
+    headers = served.seen[0][1]
+    assert headers["User-Agent"] == node_images.GITHUB_USER_AGENT
+    assert "Authorization" not in headers
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "match"),
+    [
+        (403, '{"message": "API rate limit exceeded"}', r"rate-limited .* \(HTTP 403\)"),
+        (429, "{}", r"rate-limited .* \(HTTP 429\)"),
+        (500, "{}", "answered HTTP 500"),
+        (200, "<html>", "answered no JSON"),
+        (200, '{"message": "x"}', "neither a list nor a search"),
+        (200, '{"incomplete_results": true, "items": []}', "timed out before it was complete"),
+    ],
+    ids=["403", "429", "500", "not-json", "not-a-list", "incomplete-search"],
+)
+def test_expected_fail_a_github_answer_the_gates_cannot_use_is_a_lookup_failure(
+    status: int, body: str, match: str
+) -> None:
+    with _github({"/releases": (status, {}, body)}) as (base, _served):
+        with pytest.raises(node_images.ImageLookupError, match=match):
+            node_images.github_pages(f"{base}/releases", 1, 5)
+
+
+def test_expected_fail_an_unreachable_github_is_a_lookup_failure() -> None:
+    with _github({}) as (base, _served):
+        closed = base
+    with pytest.raises(node_images.ImageLookupError, match="GitHub unreachable"):
+        node_images.github_pages(f"{closed}/releases", 1, 5)
+
+
+def test_a_token_reaches_github_and_never_a_host_a_redirect_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "example-not-a-token")
+    with _github({"/elsewhere": (200, {}, "[1]")}) as (other, other_served):
+        redirect = {"/releases": (302, {"Location": f"{other}/elsewhere"}, "")}
+        with _github(redirect) as (base, served):
+            assert json.loads(node_images.github_pages(f"{base}/releases", 1, 5)) == [1]
+    assert served.seen[0][1]["Authorization"] == "Bearer example-not-a-token"
+    assert "Authorization" not in other_served.seen[0][1]
 
 
 # --- resolve_sizing.py images ------------------------------------------------
@@ -836,10 +1019,10 @@ def test_a_pinned_only_run_leaves_nothing_an_earlier_resolve_wrote(
     assert "node_image.pin is true" in capsys.readouterr().err
 
 
-def test_expected_fail_a_failed_only_lookup_drops_the_stale_key(
+def test_expected_fail_a_failed_lookup_with_nothing_recorded_drops_the_stale_key(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An AMI an earlier resolve wrote must not survive a lookup that could not confirm it."""
+    """A tfvars key no record stands behind is never held, so the plan refuses by name."""
     out = _root(tmp_path)
     path = _existing(out)
     empty = tmp_path / "no-answers"
@@ -849,7 +1032,31 @@ def test_expected_fail_a_failed_only_lookup_drops_the_stale_key(
         "forwarder_ami_id": "ami-11111111111111111",
         "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
     }
-    assert capsys.readouterr().err.count("WARNING node image") == 1
+    err = capsys.readouterr().err
+    assert err.count("WARNING node image") == 1
+    assert "nothing was recorded to hold" in err
+
+
+def test_a_failed_lookup_holds_the_recorded_ami(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AWS unreachable at bastion up: the AMI the record carries launches, and says so."""
+    out = _root(tmp_path)
+    path = _existing(out)
+    held = {
+        "value": "ami-02026101200000000",
+        "release": "al2023-ami-2023.12.20261012.0-kernel-6.12-arm64",
+    }
+    (out / "sizing").mkdir()
+    (out / "sizing" / "node-images.json").write_text(
+        json.dumps({"instance_ami_id": held}), encoding="utf-8"
+    )
+    empty = tmp_path / "no-answers"
+    empty.mkdir()
+    assert _images(_dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id") == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"] == held["value"]
+    assert node_images.read_record(out / "sizing" / "node-images.json") == {"instance_ami_id": held}
+    assert "WARNING node image instance_ami_id holds its recorded" in capsys.readouterr().err
 
 
 def test_expected_fail_only_a_key_the_cloud_does_not_resolve_is_refused(tmp_path: Path) -> None:
