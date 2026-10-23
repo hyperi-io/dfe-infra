@@ -56,15 +56,7 @@ step with the console's own error line.
 The same push and the same meta schema as `filebeat`, against
 dfe-transform-elastic instead. Three things differ.
 
-The app carries one compiled-in transform per Elastic data stream and an
-instance runs one of them, so the source's `transform` block needs a `variant`
-as well as an `engine`: `filebeat.cisco_ios.default`, which is
-dfe-transform-elastic's `sources.yaml` entry rendered through this repo's
-`apps.yaml` `catalogue.variant_pattern`, and which the deploy writes to the
-instance's own `config.source.name`. The console's Transform tab has no control
-for it, so `attach-transform` is an `api-fallback` whose detail names how far
-the console got. Without the variant the engine writes nothing to that key and
-the instance starts on no transform at all.
+The app carries one compiled-in transform per Elastic data stream and an instance runs one of them, so the source's `transform` block needs a `variant` as well as an `engine`: `filebeat.cisco_ios.default`, as the dfe-schemas catalogue lists it, which the deploy writes to the instance's own `config.source.name`. The console's Transform tab has no control for it, so `attach-transform` is an `api-fallback` whose detail names how far the console got. Without the variant the engine writes nothing to that key and the instance starts on no transform at all.
 
 And there is no `upload-program`: the app declares no file sets, so the step
 records `skipped` and the run writes nothing to the instance.
