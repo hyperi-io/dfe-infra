@@ -549,9 +549,7 @@ class ElasticCase(FilebeatCase):
     """
 
     TRANSFORM_ENGINE = "elastic"
-    # dfe-transform-elastic sources.yaml `filebeat.<entry>.<transform>`, which
-    # apps.yaml's catalogue.variant_pattern builds and the deploy writes to the
-    # app's own config.source.name.
+    # A variant dfe-transform-elastic compiles in, `filebeat.<package>.<transform>` as the dfe-schemas catalogue lists it, which the deploy writes to the app's own config.source.name.
     VARIANT = "filebeat.cisco_ios.default"
     DISPLAY = "Elastic transform source test"
     DESCRIPTION = (

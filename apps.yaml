@@ -194,42 +194,12 @@
 #   source's declared fetcher.source_type against this allow-list, so a family
 #   the app cannot fetch is refused at the API rather than at the pod.
 #
-# catalogue_packages
-#   family -> the source-catalogue packages that family polls, for the families
-#   whose name and the catalogue's name for the same vendor differ. An exact
-#   name match needs no entry, so this is the exceptions list and never a second
-#   copy of source_types. Every key must be one of the app's own source_types.
-#
 # keyed_source_types
 #   The families whose stanza is a map of instances keyed by id
 #   (sources.<family>.<id>) rather than one flat block (sources.<family>). The
 #   engine nests a source's stanza under the source's own name for these, the
 #   same stable name source_binding gives the instance. Absent means every family
 #   is flat. Every entry must be one of the app's own source_types.
-#
-# catalogue
-#   Present when the app SHIPS a catalogue of sources it already handles, which
-#   the engine offers through the API so a source can be created from an entry
-#   rather than typed. The file is the app's, so its conventions are declared
-#   here rather than known by the engine. Fields:
-#     file             filename the app publishes the catalogue under; a mounted
-#                      copy is matched to its owning app by this name
-#     entries_key      top-level key in that file holding the entries
-#     variant_pattern  how an entry becomes transform.variant, with {entry} and
-#                      {transform} substituted
-#   Three more fields name the schema files the table of a source created from
-#   an entry is built from. They are declared together or not at all, and a
-#   catalogue without them binds no table schema. Each pattern takes {package}
-#   and {data_stream}, the entry's own keys. The table is bound only when the
-#   entry's derived schema resolves and selects from meta_schema: the meta
-#   schema alone, or with the vendor fields on top, composes a CREATE wider than
-#   ClickHouse accepts for the widest vendors.
-#     meta_schema         the meta schema every entry's table is built on, as a
-#                         schema registry path without a file extension
-#     derived_pattern     the derived schema narrowing it to one stream's fields;
-#                         the deploy repo's copy wins over the one a release ships
-#     additional_pattern  the vendor fields appended after that selection, bound
-#                         only where the schemas tree carries them
 #
 # source_binding
 #   Present when an instance of this app IS a DFE source's processing step, which
@@ -552,16 +522,6 @@ apps:
       - object_store
     # Shapes, not vendors: each is a map of instances under sources.<family>.<id>.
     keyed_source_types: [rest, db, file]
-    # Where a family and a source catalogue spell the same vendor apart. Each
-    # pairing is the same product under two names, taken from the fetcher's own
-    # docs/capability-catalog.yaml description; a package whose family only
-    # looks similar is deliberately left out, because offering it would compile
-    # a fetcher stanza that cannot poll the source.
-    catalogue_packages:
-      onepassword: [1password]
-      duo: [cisco_duo]
-      go_modules: [golang]
-      m365: [o365]
     # The flat DFE_FETCHER_* env, which outranks the config file. The broker list
     # is not here: its variable renders empty once the overlay names one.
     deployment_owned:
@@ -768,17 +728,8 @@ apps:
     idle_when:
       - config.source.name
       - config.source.topics
-    # It ships compiled-in transforms and selects one by name.
+    # It ships a catalogue of compiled-in transforms and selects one by name.
     variant_path: config.source.name
-    # The dfe-schemas source catalogue selects these transforms, one entry per source.
-    catalogue:
-      variant_pattern: "filebeat.{entry}.{transform}"
-      # The transform rewrites every vendor's events into ECS, so ECS is the
-      # base for every entry; the vendor-shaped meta/<package>/<stream> is the
-      # record a fetcher writes with no transform in between.
-      meta_schema: meta/elastic/ecs
-      derived_pattern: "derived/{package}/{data_stream}"
-      additional_pattern: "additional/{package}/{data_stream}"
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
