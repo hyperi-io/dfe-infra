@@ -2616,8 +2616,6 @@ telemetry:
     retention_days: 2
 kafka:
   provider: strimzi
-  landing_topics:
-    main_land:
 state:
   bucket: example-tfstate
   key: dfe/test/aws.tfstate

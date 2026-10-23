@@ -7,9 +7,9 @@
 // SCRAM on any tier -- scalo derives the mechanism from the provider name, so
 // this costs no code change, but auth_type here is plain and never scram.
 //
-// The vendor runs the brokers, so nothing here sizes, tunes or versions them:
-// the canonical broker profile applies to the Kafka we run, and what survives
-// on this path is the per-topic half.
+// The vendor runs the brokers, so nothing here sizes, tunes or versions them,
+// and dfe-engine creates the topics. message_max_bytes is read only to check it
+// against the tier's per-topic ceiling.
 
 locals {
   private = var.connectivity == "private"
@@ -72,7 +72,7 @@ locals {
 check "message_size_within_confluent_ceiling" {
   assert {
     condition     = var.message_max_bytes <= local.confluent_max_message_bytes
-    error_message = "message_max_bytes is ${var.message_max_bytes}, above the ${local.confluent_max_message_bytes} Confluent Cloud allows for a topic's max.message.bytes on a ${var.tier} cluster (8388608 on Basic and Standard, 20971520 on Enterprise, Dedicated and Freight). Confluent will refuse the topics at apply. Lower the dial's message size, move to a tier with the higher ceiling, or put the deployment on a Kafka we run."
+    error_message = "message_max_bytes is ${var.message_max_bytes}, above the ${local.confluent_max_message_bytes} Confluent Cloud allows for a topic's max.message.bytes on a ${var.tier} cluster (8388608 on Basic and Standard, 20971520 on Enterprise, Dedicated and Freight). Confluent will refuse the topics dfe-engine creates at startup. Lower the dial's message size, move to a tier with the higher ceiling, or put the deployment on a Kafka we run."
   }
 }
 
@@ -154,9 +154,9 @@ resource "confluent_kafka_cluster" "this" {
 
 // Confluent's public REST endpoints share one ingress that resets TLS for any
 // cluster it holds no route for, and a new cluster's route reaches each load
-// balancer separately. An ACL or topic write fails the apply on a reset its
-// retries do not outlast, and on the 401 an unsynced key gets, so they wait
-// here for the manager key to list the topics with HTTP 200
+// balancer separately. An ACL write fails the apply on a reset its retries do
+// not outlast, and on the 401 an unsynced key gets, so the ACLs wait here for
+// the manager key to list the topics with HTTP 200
 // var.rest_ready.successes times in a row.
 //
 // Public only: the deployer cannot reach a private cluster's endpoint.

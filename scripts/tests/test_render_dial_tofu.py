@@ -89,8 +89,6 @@ kafka:
     bootstrap_job:
       namespace: strimzi
       service_account: dfe-kafka-bootstrap
-  landing_topics:
-    main_land:
 
 state:
   bucket: example-tfstate
@@ -310,7 +308,7 @@ def test_an_in_cluster_broker_renders_no_msk_block() -> None:
 # The line every autoscaling test inserts after -- unique in the fixture, and the
 # sibling key (autoscaling:) has to sit at msk:'s own 4-space depth, not
 # bootstrap_job's 6-space one.
-_AFTER_BOOTSTRAP_JOB = "      service_account: dfe-kafka-bootstrap\n  landing_topics:"
+_AFTER_BOOTSTRAP_JOB = "      service_account: dfe-kafka-bootstrap\n"
 
 
 def test_msk_autoscaling_sends_its_sizing_when_the_dial_sets_nothing() -> None:
@@ -331,8 +329,7 @@ def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
             "      per_broker_capacity_mb_s: 75\n"
             "      headroom: 1.5\n"
             "      period_seconds: 120\n"
-            "      evaluation_periods: 5\n"
-            "  landing_topics:",
+            "      evaluation_periods: 5\n",
         )
     )["kafka"]["msk"]["autoscaling"]
     assert autoscaling == {
@@ -353,8 +350,7 @@ def test_msk_autoscaling_rejects_a_non_numeric_max_brokers() -> None:
                 _AFTER_BOOTSTRAP_JOB,
                 "      service_account: dfe-kafka-bootstrap\n"
                 "    autoscaling:\n"
-                "      max_brokers: six\n"
-                "  landing_topics:",
+                "      max_brokers: six\n",
             )
         )
 
@@ -366,8 +362,7 @@ def test_msk_autoscaling_rejects_a_non_numeric_headroom() -> None:
                 _AFTER_BOOTSTRAP_JOB,
                 "      service_account: dfe-kafka-bootstrap\n"
                 "    autoscaling:\n"
-                "      headroom: lots\n"
-                "  landing_topics:",
+                "      headroom: lots\n",
             )
         )
 
@@ -401,32 +396,24 @@ def test_a_redpanda_cloud_broker_renders_no_msk_block() -> None:
     assert kafka["provider"] == "redpanda-cloud"
 
 
-def test_a_saas_broker_gets_the_same_tuning_and_landing_topics_msk_would() -> None:
-    """confluent-cloud and redpanda-cloud take no msk: block, but do take these."""
+def test_a_saas_broker_gets_the_engines_topic_settings_and_no_topic() -> None:
+    """dfe-engine creates every topic, so a SaaS body takes the size and retention it
+    creates them with and nothing else."""
     for provider in ("confluent-cloud", "redpanda-cloud"):
         kafka = render(replace=("provider: msk", f"provider: {provider}"))["kafka"]
-        assert kafka["num_partitions"] == 12
-        assert kafka["log_retention_ms"] == 259200000
-        assert kafka["message_max_bytes"] == 16777216
-        assert kafka["landing_topics"] == {"main_land": {}}
+        assert kafka["message_max_bytes"] == 16777216, provider
+        assert kafka["log_retention_ms"] == 259200000, provider
+        for key in ("num_partitions", "landing_topics"):
+            assert key not in kafka, (provider, key)
 
 
-def test_msk_reads_no_top_level_tuning_or_landing_topics() -> None:
-    """msk's tuning lives inside msk:, and its topics are its bootstrap Job's."""
+def test_msk_reads_no_top_level_tuning() -> None:
+    """msk's tuning lives inside msk:."""
     kafka = render()["kafka"]
-    assert "num_partitions" not in kafka
-    assert "landing_topics" not in kafka
-
-
-def test_a_saas_broker_with_no_landing_topics_is_refused_by_name() -> None:
-    """No bootstrap Job on this path means tofu is the only thing that can create one."""
-    without_topics = "\n".join(
-        line for line in DIAL.splitlines() if line.strip() not in ("landing_topics:", "main_land:")
-    )
-    with pytest.raises(render_dial.DialError, match=r"kafka\.landing_topics"):
-        render_dial._tofu_vars(
-            parse_dial(without_topics.replace("provider: msk", "provider: confluent-cloud"), source="test-dial")
-        )
+    assert "message_max_bytes" not in kafka
+    assert "log_retention_ms" not in kafka
+    assert kafka["msk"]["num_partitions"] == 12
+    assert kafka["msk"]["log_retention_ms"] == 259200000
 
 
 # Placeholder ids in each vendor's own shape: Confluent's env- prefix, Redpanda's UUID.
@@ -444,7 +431,7 @@ def saas_kafka(provider: str, *lines: str, size: int = 16777216) -> dict[str, ob
 
 
 def test_a_saas_broker_carries_its_connectivity_to_the_root() -> None:
-    """A cloud cycle cannot write topics and ACLs from outside the VPC, so it asks for public."""
+    """A cloud cycle cannot write ACLs from outside the VPC, so it asks for public."""
     for provider in ("confluent-cloud", "redpanda-cloud"):
         kafka = saas_kafka(provider, "connectivity: public", "confluent_tier: basic", size=8388608)
         assert kafka["connectivity"] == "public", provider

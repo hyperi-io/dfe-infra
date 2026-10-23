@@ -3,7 +3,7 @@
 #  File:         wait-rest-ready.sh
 #  Purpose:      Hold a Confluent Cloud apply until the cluster's REST endpoint
 #                lists its topics for the manager key, with HTTP 200, a number
-#                of times in a row, so the ACLs and topics written over it are
+#                of times in a row, so the ACLs written over it are
 #                not failed by a reset from an ingress that has no route to a
 #                new cluster yet, or by a 401 for a key that has not synced.
 #  Language:     Bash

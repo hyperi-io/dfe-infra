@@ -1,4 +1,5 @@
-// The DFE principal, its grants and the landing topics.
+// The DFE principal and its grants. dfe-engine creates every topic at startup,
+// under the topic Create grant below, so this body creates none.
 //
 // TWO service accounts, for the same reason MSK enables both SASL/IAM and
 // SASL/SCRAM: something has to be allowed to write the first ACL, and that
@@ -12,7 +13,7 @@
 // The credential is an API key and secret used as SASL PLAIN. Confluent has no
 // SCRAM on any tier.
 //
-// Topics and ACLs are data-plane resources reached over the REST endpoint, so
+// ACLs are data-plane resources reached over the REST endpoint, so
 // on private connectivity tofu has to run somewhere that can resolve and reach
 // it -- inside the VPC, or behind a resolver rule that forwards into it.
 
@@ -21,7 +22,7 @@ locals {
 
   group_grants = toset(["READ", "DESCRIBE"])
 
-  // Every ACL and topic this module writes, at one grant apiece.
+  // Every ACL this module writes, at one grant apiece.
   acls = merge(
     {
       for operation in local.topic_grants : "topic-${lower(operation)}" => {
@@ -48,7 +49,7 @@ locals {
 
 resource "confluent_service_account" "manager" {
   display_name = "${var.name}-manager"
-  description  = "Writes the topics and ACLs for ${var.name} (${var.env}). Never used by DFE."
+  description  = "Writes the ACLs for ${var.name} (${var.env}). Never used by DFE."
 }
 
 resource "confluent_role_binding" "manager" {
@@ -61,7 +62,7 @@ resource "confluent_role_binding" "manager" {
 
 resource "confluent_api_key" "manager" {
   // The role binding has to land before this key writes anything, which also
-  // orders every topic and ACL below behind it.
+  // orders every ACL below behind it.
   depends_on = [confluent_role_binding.manager]
 
   display_name = "${var.name}-manager-kafka-api-key"
@@ -121,7 +122,7 @@ resource "confluent_api_key" "dfe" {
 }
 
 // ---------------------------------------------------------------------------
-// The grants and the topics
+// The grants
 // ---------------------------------------------------------------------------
 
 resource "confluent_kafka_acl" "dfe" {
@@ -143,36 +144,6 @@ resource "confluent_kafka_acl" "dfe" {
   host       = "*"
   operation  = each.value.operation
   permission = "ALLOW"
-
-  rest_endpoint = confluent_kafka_cluster.this.rest_endpoint
-
-  credentials {
-    key    = confluent_api_key.manager.id
-    secret = confluent_api_key.manager.secret
-  }
-}
-
-// Pre-created, never conjured by the first produce: dfe-loader treats a missing
-// landing topic as fatal, and pre-creating is what makes the partition count
-// and the retention ours to set.
-resource "confluent_kafka_topic" "landing" {
-  for_each = var.landing_topics
-
-  // A topic create fails the apply on a reset or a 401, so it waits for the manager key to answer.
-  depends_on = [terraform_data.rest_ready]
-
-  kafka_cluster {
-    id = confluent_kafka_cluster.this.id
-  }
-
-  topic_name       = each.key
-  partitions_count = coalesce(each.value.partitions, var.num_partitions)
-
-  config = {
-    "cleanup.policy"    = "delete"
-    "retention.ms"      = tostring(coalesce(each.value.retention_ms, var.log_retention_ms))
-    "max.message.bytes" = tostring(var.message_max_bytes)
-  }
 
   rest_endpoint = confluent_kafka_cluster.this.rest_endpoint
 

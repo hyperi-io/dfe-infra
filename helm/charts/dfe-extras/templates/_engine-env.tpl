@@ -74,6 +74,12 @@ thin chart's env.
             - name: DFE_KAFKA_TOPIC_REPLICATION_FACTOR
               value: {{ . | quote }}
             {{- end }}
+            {{- with (include "dfe-engine.optionalCount" (dict "key" "kafka.topicRetentionMs" "value" .Values.kafka.topicRetentionMs "min" 1)) }}
+            # Every topic the engine creates takes this retention.ms. Unset leaves
+            # the broker's default, which on a SaaS broker is the vendor's.
+            - name: DFE_KAFKA_TOPIC_RETENTION_MS
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.kafka.saslSecretName }}
             # The same kafka.securityProtocol dial every data-plane chart reads,
             # defaulting to the in-cluster brokers' plain listener.

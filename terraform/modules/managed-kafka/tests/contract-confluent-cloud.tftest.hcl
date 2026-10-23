@@ -139,18 +139,8 @@ variables {
     public_subnet_ids  = ["subnet-00000000000000004", "subnet-00000000000000005", "subnet-00000000000000006"]
   }
 
-  landing_topics = {
-    dfe_land = {}
-    dfe_dlq  = { retention_ms = 604800000 }
-  }
-
-  // No module default: the same numbers a customer dial carries, so a
-  // contract run proves what render_dial.py actually sends.
-  num_partitions   = 12
-  log_retention_ms = 259200000
-
   // 8 MiB is inside every tier's ceiling for a topic's max.message.bytes. The
-  // size-ceiling runs at the end of this file move it.
+  // size-ceiling run at the end of this file moves it.
   message_max_bytes = 8388608
 
   // The tier render_dial.py sends when the dial names none.
@@ -286,12 +276,6 @@ run "confluent_cloud_freight_private_network_interface" {
   assert {
     condition     = length(confluent_private_link_attachment.this) == 0
     error_message = "Freight uses no PrivateLink attachment -- that is Enterprise's shape"
-  }
-
-  // Pre-created, because dfe-loader treats a missing landing topic as fatal.
-  assert {
-    condition     = length(confluent_kafka_topic.landing) == 2
-    error_message = "every landing topic must be pre-created"
   }
 
   // A private cluster answers no readiness probe from outside its network.
@@ -464,16 +448,16 @@ run "confluent_cloud_basic_public_proof" {
   }
 
   // The provider's wait fails the apply on one reset its retries do not outlast, so neither key
-  // takes it. Tofu writes the topics and ACLs with the manager key, and rest_ready waits for that.
+  // takes it. Tofu writes the ACLs with the manager key, and rest_ready waits for that.
   assert {
     condition     = confluent_api_key.manager.disable_wait_for_ready == true && confluent_api_key.dfe.disable_wait_for_ready == true
     error_message = "neither key takes the provider's wait on a public endpoint: terraform_data.rest_ready waits for the manager key instead"
   }
 
-  // A public cluster's REST endpoint is probed with the manager key before any ACL or topic is written.
+  // A public cluster's REST endpoint is probed with the manager key before any ACL is written.
   assert {
     condition     = length(terraform_data.rest_ready) == 1
-    error_message = "a public cluster's REST endpoint must answer the manager key before the ACLs and topics reach it"
+    error_message = "a public cluster's REST endpoint must answer the manager key before the ACLs reach it"
   }
 
   assert {
@@ -537,8 +521,8 @@ run "confluent_cloud_refuses_a_single_answer_as_ready" {
   ]
 }
 
-// The chain's 16 MiB is inside Freight's 20 MiB ceiling, so freight carries it
-// to every topic with no warning at plan.
+// The chain's 16 MiB is inside Freight's 20 MiB ceiling. A failed check fails
+// the run, so a clean plan is the proof.
 run "confluent_cloud_freight_carries_16_mib" {
   command = plan
 
@@ -548,11 +532,6 @@ run "confluent_cloud_freight_carries_16_mib" {
 
   variables {
     message_max_bytes = 16777216
-  }
-
-  assert {
-    condition     = alltrue([for t in values(confluent_kafka_topic.landing) : t.config["max.message.bytes"] == "16777216"])
-    error_message = "every landing topic must carry the size it was given"
   }
 }
 

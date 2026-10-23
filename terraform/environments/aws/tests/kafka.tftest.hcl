@@ -277,10 +277,8 @@ variables {
     provider             = "confluent-cloud"
     connectivity         = "public"
     confluent_tier       = "basic"
-    num_partitions       = 12
-    log_retention_ms     = 259200000
     message_max_bytes    = 8388608
-    landing_topics       = { main_land = {} }
+    log_retention_ms     = 259200000
     confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
   }
 
@@ -344,7 +342,12 @@ run "confluent_basic_public_reaches_the_body" {
 
   assert {
     condition     = output.DFE_KAFKA_MESSAGE_MAX_BYTES == "8388608"
-    error_message = "the size the topics were created with is the size the engine is told"
+    error_message = "the dial's message size is the size the engine creates the topics at"
+  }
+
+  assert {
+    condition     = output.DFE_KAFKA_RETENTION_MS == "259200000"
+    error_message = "the dial's retention is the retention the engine creates the topics with"
   }
 
   // The body refuses any cloud token but AWS, so a clean plan is proof the
@@ -355,8 +358,8 @@ run "confluent_basic_public_reaches_the_body" {
   }
 }
 
-// Above Basic's ceiling Confluent refuses the topics at apply, after the cluster
-// exists. The root refuses first.
+// Above Basic's ceiling Confluent refuses the topics dfe-engine creates, after
+// the cluster exists. The root refuses first.
 run "confluent_basic_refuses_a_message_size_above_8_mib" {
   command = plan
 
@@ -365,10 +368,8 @@ run "confluent_basic_refuses_a_message_size_above_8_mib" {
       provider             = "confluent-cloud"
       connectivity         = "public"
       confluent_tier       = "basic"
-      num_partitions       = 12
-      log_retention_ms     = 259200000
       message_max_bytes    = 16777216
-      landing_topics       = { main_land = {} }
+      log_retention_ms     = 259200000
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
   }
@@ -388,10 +389,52 @@ run "confluent_refuses_a_deployment_with_no_rest_wait" {
       provider          = "confluent-cloud"
       connectivity      = "public"
       confluent_tier    = "basic"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
       message_max_bytes = 8388608
-      landing_topics    = { main_land = {} }
+      log_retention_ms  = 259200000
+    }
+  }
+
+  expect_failures = [
+    var.kafka,
+  ]
+}
+
+// dfe-engine creates a SaaS body's topics at the dial's size and retention, so
+// the root refuses a deployment that arrives without either.
+run "a_saas_body_refuses_a_deployment_with_no_message_size" {
+  command = plan
+
+  variables {
+    kafka = {
+      provider         = "redpanda-cloud"
+      redpanda_tier    = "serverless"
+      log_retention_ms = 259200000
+    }
+
+    seeds = {
+      "kafka/redpanda-cloud" = { password = "" }
+      "ui/nextauth"          = { secret = "" }
+    }
+  }
+
+  expect_failures = [
+    var.kafka,
+  ]
+}
+
+run "a_saas_body_refuses_a_deployment_with_no_retention" {
+  command = plan
+
+  variables {
+    kafka = {
+      provider          = "redpanda-cloud"
+      redpanda_tier     = "serverless"
+      message_max_bytes = 16777216
+    }
+
+    seeds = {
+      "kafka/redpanda-cloud" = { password = "" }
+      "ui/nextauth"          = { secret = "" }
     }
   }
 
@@ -409,10 +452,8 @@ run "confluent_enterprise_keeps_16_mib" {
       provider             = "confluent-cloud"
       connectivity         = "public"
       confluent_tier       = "enterprise"
-      num_partitions       = 12
-      log_retention_ms     = 259200000
       message_max_bytes    = 16777216
-      landing_topics       = { main_land = {} }
+      log_retention_ms     = 259200000
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
   }
@@ -435,10 +476,8 @@ run "redpanda_public_reaches_the_body" {
       confluent_tier             = "basic"
       redpanda_tier              = "serverless"
       redpanda_resource_group_id = "11111111-2222-3333-4444-555555555555"
-      num_partitions             = 12
-      log_retention_ms           = 259200000
       message_max_bytes          = 16777216
-      landing_topics             = { main_land = {} }
+      log_retention_ms           = 259200000
     }
 
     seeds = {
@@ -455,6 +494,11 @@ run "redpanda_public_reaches_the_body" {
   assert {
     condition     = module.redpanda[0].network_attachment.security_group_id == ""
     error_message = "a public Redpanda cluster builds no PrivateLink endpoint"
+  }
+
+  assert {
+    condition     = output.DFE_KAFKA_RETENTION_MS == "259200000"
+    error_message = "redpanda-cloud hands the engine the dial's retention too"
   }
 
   assert {
@@ -539,6 +583,11 @@ run "msk_keeps_one_copy_of_the_credential" {
     condition     = output.DFE_KAFKA_PROVIDER == "msk" && output.DFE_SECRETS_BACKEND == "aws-sm"
     error_message = "an msk deployment keeps its secrets in Secrets Manager"
   }
+
+  assert {
+    condition     = output.DFE_KAFKA_RETENTION_MS == "259200000"
+    error_message = "msk hands the engine the retention its brokers were built with"
+  }
 }
 
 // Private stays the default for every deployment that does not ask.
@@ -549,10 +598,8 @@ run "an_unstated_connectivity_stays_private" {
     kafka = {
       provider          = "redpanda-cloud"
       redpanda_tier     = "serverless"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
       message_max_bytes = 16777216
-      landing_topics    = { main_land = {} }
+      log_retention_ms  = 259200000
     }
 
     seeds = {

@@ -136,6 +136,10 @@ metadata:
     # record limits. Empty on an in-cluster broker, where every app keeps its own
     # default.
     dfe.hyperi.io/kafka_message_max_bytes: "${DFE_KAFKA_MESSAGE_MAX_BYTES}"
+    # The topic retention a managed broker's dial names, read back by
+    # layer2-apps.yaml into dfe-engine's topic retention. Empty on an in-cluster
+    # broker, where the broker's own setting applies.
+    dfe.hyperi.io/kafka_retention_ms: "${DFE_KAFKA_RETENTION_MS}"
     # Where ClickHouse runs: external points clickhouse-cluster, network-policies,
     # the collector and every app at this host, and empty or in_cluster moves nothing.
     dfe.hyperi.io/clickhouse_mode: "${DFE_CLICKHOUSE_MODE}"

@@ -129,6 +129,13 @@ extras:
       cloud: local
       service:
         pushPort: 6000
+    dfe-transform-elastic:
+      project: dfe
+      component: transform-elastic
+      env: local
+      cloud: local
+      service:
+        pushPort: 6000
     culvert:
       project: dfe
       component: culvert
@@ -283,6 +290,7 @@ extras:
         provider: ""
         messageMaxBytes: ""
         topicReplicationFactor: ""
+        topicRetentionMs: ""
       # The refs the engine's content init containers pull belong to the thin
       # chart's values.
       content:

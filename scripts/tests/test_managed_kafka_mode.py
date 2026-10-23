@@ -289,8 +289,9 @@ MESSAGE_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 
 def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
-    """The engine's topics must match the landing topics, so the output reads the
-    same variable the root passes the selected body, never a second copy."""
+    """The engine creates every topic at the size the brokers were built for, so the
+    output reads the same variable the root passes a body that takes one, never a
+    second copy. redpanda-cloud takes none: the output is the only reader there."""
     main_tf = (AWS_ROOT / "main.tf").read_text(encoding="utf-8")
     outputs = (AWS_ROOT / "outputs.tf").read_text(encoding="utf-8")
     block = re.search(rf'output "{MESSAGE_SIZE_ENV}" \{{\n(.*?)\n\}}', outputs, re.S)
@@ -299,14 +300,15 @@ def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
     for module, source in (
         ("kafka", "var.kafka.msk.message_max_bytes"),
         ("confluent", "var.kafka.message_max_bytes"),
-        ("redpanda", "var.kafka.message_max_bytes"),
     ):
         module_block = re.search(rf'module "{module}" \{{\n(.*?)\n\}}', main_tf, re.S)
         passed = module_block is not None and re.search(
-            rf"message_max_bytes\s*=\s*{re.escape(source)}\n", module_block.group(1)
+            rf"^\s*message_max_bytes\s*=\s*{re.escape(source)}\s*$", module_block.group(1), re.M
         )
         expect(f"module {module} is given {source}", bool(passed), "the root passes something else")
         expect(f"and the output reads {source}", source in body, body)
+    expect("the output reads var.kafka.message_max_bytes for redpanda-cloud too",
+           '"redpanda-cloud"' in body and "var.kafka.message_max_bytes" in body, body)
     expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
 
 
@@ -341,6 +343,52 @@ def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
     expect("the engine creates its topics at the managed size",
            env.get("DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
            f"got {env.get('DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
+
+
+RETENTION_ENV = "DFE_KAFKA_RETENTION_MS"
+RETENTION_ANNOTATION = "dfe.hyperi.io/kafka_retention_ms"
+
+
+def test_the_root_hands_on_the_dials_retention() -> None:
+    """A SaaS broker's default retention is the vendor's, so the output hands the
+    engine the dial's, from the same variable each provider's dial fills."""
+    outputs = (AWS_ROOT / "outputs.tf").read_text(encoding="utf-8")
+    block = re.search(rf'output "{RETENTION_ENV}" \{{\n(.*?)\n\}}', outputs, re.S)
+    expect(f"the aws root emits {RETENTION_ENV}", block is not None, "no such output")
+    body = block.group(1) if block else ""
+    expect("msk reads its own block", "var.kafka.msk.log_retention_ms" in body, body)
+    expect("both SaaS bodies read the top-level value",
+           '"confluent-cloud", "redpanda-cloud"' in body and "var.kafka.log_retention_ms" in body,
+           body)
+    expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
+
+
+def test_the_retention_travels_bootstrap_to_the_engine_chart() -> None:
+    """Each hop spells the fact on its own, and a miss renders empty: the engine
+    then leaves its topics at the broker's default retention."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    expect(f"bootstrap.sh defaults {RETENTION_ENV} empty",
+           f'export {RETENTION_ENV}="${{{RETENTION_ENV}:-}}"' in script)
+    template = CLUSTER_SECRET.read_text(encoding="utf-8")
+    expect(f"the cluster secret carries {RETENTION_ANNOTATION}",
+           f'{RETENTION_ANNOTATION}: "${{{RETENTION_ENV}}}"' in template)
+    doc = yaml.safe_load((APPSETS / "layer2-apps.yaml").read_text(encoding="utf-8"))
+    values_block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
+    expect("layer2-apps reads the annotation",
+           f'$kafkaRetentionMs := index .metadata.annotations "{RETENTION_ANNOTATION}"'
+           in values_block, values_block)
+    expect("and lands it on kafka.topicRetentionMs",
+           "topicRetentionMs: {{ $kafkaRetentionMs | quote }}" in values_block, values_block)
+
+
+def test_the_managed_overlay_gives_the_engine_the_topic_retention() -> None:
+    """What the appset renders for a managed broker, as the engine's env carries it."""
+    facts = {**MANAGED_ANNOTATIONS, RETENTION_ANNOTATION: "259200000"}
+    docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
+    env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
+    expect("the engine creates its topics with the dial's retention",
+           env.get("DFE_KAFKA_TOPIC_RETENTION_MS") == "259200000",
+           f"got {env.get('DFE_KAFKA_TOPIC_RETENTION_MS')!r}")
     in_cluster = effective_env(golden("dfe-engine", *APP_CELL), "Deployment/dfe-engine")
     expect("an in-cluster broker leaves the engine's default",
            "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")

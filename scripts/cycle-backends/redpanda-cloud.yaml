@@ -9,16 +9,13 @@
 ## Applied over the e2e-runner dial by scripts/cycle_backend.py when a run names
 ## backend redpanda-cloud. Each run creates and destroys a Serverless cluster with
 ## a public endpoint, inside a standing resource group named by an e2e-runner
-## secret. The tuning sits under kafka.msk because render_dial.py reads it there
-## for every managed provider, and it is the shape deployment.example.yaml
-## documents (test_cycle_backend.py holds the two equal).
+## secret. The message size and retention sit under kafka.msk because
+## render_dial.py reads them there for every managed provider, and they are the
+## shape deployment.example.yaml documents (test_cycle_backend.py holds them equal).
 kafka:
   provider: redpanda-cloud
   connectivity: public
   redpanda_resource_group_id: env:DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID
   msk:
-    num_partitions: 12
     log_retention_ms: 259200000
     message_max_bytes: 16777216
-  landing_topics:
-    main_land: {}

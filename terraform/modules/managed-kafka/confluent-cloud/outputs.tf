@@ -55,6 +55,6 @@ output "cluster_id" {
 }
 
 output "bootstrap_role_arn" {
-  description = "Empty. There is no in-cluster bootstrap Job on this path -- the manager service account writes the ACLs and topics from tofu, so no workload identity is minted for one."
+  description = "Empty. There is no in-cluster bootstrap Job on this path -- the manager service account writes the ACLs from tofu, so no workload identity is minted for one."
   value       = ""
 }

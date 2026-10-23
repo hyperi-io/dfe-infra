@@ -372,13 +372,9 @@ module "confluent" {
   environment_id = var.kafka.confluent_environment_id
   rest_ready     = var.kafka.confluent_rest_ready
 
-  // The same canonical tuning msk applies, and the same landing topics its
-  // own bootstrap Job would create -- this body has none, so tofu creates
-  // them itself (CONTRACT.md).
-  num_partitions    = var.kafka.num_partitions
-  log_retention_ms  = var.kafka.log_retention_ms
+  // Checked against the tier's per-topic ceiling. dfe-engine creates the topics
+  // and applies the size, read from the DFE_KAFKA_MESSAGE_MAX_BYTES output.
   message_max_bytes = var.kafka.message_max_bytes
-  landing_topics    = var.kafka.landing_topics
 }
 
 // Same reasoning as confluent-cloud: Redpanda Cloud Serverless sizes and scales
@@ -404,14 +400,6 @@ module "redpanda" {
   resource_group_id = var.kafka.redpanda_resource_group_id
 
   scram_password = random_password.kafka_scram.result
-
-  // The same canonical tuning msk applies, and the same landing topics its
-  // own bootstrap Job would create -- this body has none, so tofu creates
-  // them itself (CONTRACT.md).
-  num_partitions    = var.kafka.num_partitions
-  log_retention_ms  = var.kafka.log_retention_ms
-  message_max_bytes = var.kafka.message_max_bytes
-  landing_topics    = var.kafka.landing_topics
 
   // The provider defaults this true, which makes tofu destroy refuse. Only an
   // ephemeral deployment gets that: CONTRACT.md's own words are "a customer

@@ -58,8 +58,7 @@ using the second.
 | `broker_count` | `number` | From tfvars. Three at the floor, and a multiple of the availability-zone count. Replication factor and minimum in-sync replicas are the profile's, not this module's. |
 | `kafka_version` | `string` | The broker version, in the provider's own spelling, pinned in tfvars: nothing resolves it, so the dial names the newest the vendor lists as active. No default, because a default rots into a deprecated line silently. |
 | `client_cidrs` | `list(string)` | Who may reach the brokers. Empty means the whole VPC the cluster module built. |
-| the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses; it does not decide what is applicable. No default in any body: the root's dial states every one, so a value cannot drift between the three copies silently. |
-| `landing_topics` | `map(object({ partitions, retention_ms }))` | Read by `confluent-cloud` and `redpanda-cloud` only, keyed by topic name, and REQUIRED (at least one entry) for either -- the root's own variable validation refuses a plan with an empty map on a SaaS provider. On msk dfe-engine creates the landing topics at startup, under the ACLs the bootstrap Job writes. Neither SaaS provider runs that Job, so tofu creates these itself, or dfe-loader crash-loops on a bare deploy (a missing `*_land` topic is fatal to it). A null `partitions` or `retention_ms` takes the tuning settings above. |
+| the tuning settings | `number` each | `num_partitions`, `log_retention_ms`, `message_max_bytes`. The canonical broker profile, already reduced to what this implementation accepts -- named and validated rather than an opaque map, because a map cannot be checked against a provider's read-only list and a setting silently dropped is the failure mode this contract exists to prevent. A body APPLIES what it is given and reports what its provider refuses, and does not decide what is applicable. `msk` takes all three, as broker settings. `confluent-cloud` takes `message_max_bytes` alone, to check it against the tier's per-topic ceiling, and `redpanda-cloud` takes none. No body creates a topic: dfe-engine creates every one at startup from the dfe-schemas manifest, on every provider, and the root hands it the size and retention as `DFE_KAFKA_MESSAGE_MAX_BYTES` and `DFE_KAFKA_RETENTION_MS`. No default in any body: the root's dial states every one, so a value cannot drift between the copies silently. |
 | `kms_key_arn` | `string` | The deployment's own key, from the cluster module. Encrypts the data at rest and the credential. |
 | `eks_cluster_name`, `pod_identity`, `pod_identity_trust_policy_json` | | The workload identity the bootstrap Job runs as, for a body whose provider needs one. |
 | `autoscaling` | `object({ enabled, max_brokers, step, per_broker_capacity_mb_s, headroom, period_seconds, evaluation_periods })` | `msk`-only, from tfvars: broker-count scaling, since AWS gives Express no native equivalent. `period_seconds` and `evaluation_periods` are the alarm window. Ignored by both SaaS bodies, whose vendor already elastic-scales. |
@@ -131,8 +130,8 @@ need no change. IAM exists for the in-cluster bootstrap Job alone: Kafka ACLs
 live in the data plane, so tofu cannot write them, and once the cluster stops
 granting by default nothing can create the FIRST ACL unless it is already
 permitted. Under SASL/IAM the IAM policy is the authorisation and no ACL has to
-exist, which is the way in. The Job -- the ACLs and the landing topics -- is
-chart work; this module outputs the role it runs as.
+exist, which is the way in. The Job writes ACLs, not topics, and is chart
+work. This module outputs the role it runs as.
 
 Three MSK-specific traps the body honours, and one that does not apply:
 
@@ -183,16 +182,16 @@ The vendor runs the brokers, so neither body sizes, tunes or versions them.
 `broker_shape_ref`, `resolved_shapes`, `broker_count`, `kafka_version`,
 `kms_key_arn`, `eks_cluster_name`, `pod_identity` and
 `pod_identity_trust_policy_json` are declared and NOT APPLIED; each variable's
-description names the vendor mechanism that replaces it. What survives of the
-canonical profile is the per-topic half -- `num_partitions`, `log_retention_ms`
-and `message_max_bytes` reach every landing topic.
+description names the vendor mechanism that replaces it. Neither body creates a
+topic. dfe-engine creates them at startup, under the topic Create grant each
+body writes, and applies the message size per topic.
 
 Both add a `cluster_id` output, the vendor's own handle. `msk/` needs none: its
 handle IS an ARN and `cluster_arn` carries it.
 
 Both return empty for `bootstrap_iam` and `bootstrap_role_arn`. There is no
 in-cluster bootstrap Job on either path -- the vendor's provider writes the
-ACLs and the topics itself. That is also why the data-plane resources reach the
+ACLs itself. That is also why the data-plane resources reach the
 vendor's own API, and on private connectivity that API is private: **tofu itself
 has to run inside the VPC**, or behind a resolver rule that forwards the
 cluster's domain into it. A cloud test cycle runs outside the VPC, so it sets
@@ -270,4 +269,4 @@ credential DFE runs as. The manager account holds `CloudClusterAdmin` and is
 tofu's alone; the DFE account holds the on-prem grant set and nothing more.
 Confluent's principal is the service account's `sa-` ID, not its display name.
 
-**Confluent caps a topic's `max.message.bytes` by cluster type**: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight in the cluster-type limits table (docs.confluent.io/cloud/current/clusters/cluster-types.html). So `freight` and `enterprise` carry the chain's 16 MiB and `basic` does not, and a topic that sets nothing takes Confluent's default of 2,097,164. The body applies what it is given rather than clamping it -- a setting quietly halved here is worse than one the vendor rejects out loud -- and a `check` block keyed on `tier` warns at plan. The refusal happens before the body: the aws root's `kafka` validation and `render_dial.py` both refuse a `message_max_bytes` above 8,388,608 on `basic` or `standard`, because Confluent rejects the topics only at apply, after the cluster exists.
+**Confluent caps a topic's `max.message.bytes` by cluster type**: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated (docs.confluent.io/cloud/current/topics/manage.html), and 20 MB on Freight in the cluster-type limits table (docs.confluent.io/cloud/current/clusters/cluster-types.html). So `freight` and `enterprise` carry the chain's 16 MiB and `basic` does not, and a topic that sets nothing takes Confluent's default of 2,097,164. dfe-engine applies what it is given rather than clamping it -- a setting quietly halved is worse than one the vendor rejects out loud -- and a `check` block keyed on `tier` warns at plan. The refusal happens before the body: the aws root's `kafka` validation and `render_dial.py` both refuse a `message_max_bytes` above 8,388,608 on `basic` or `standard`, because Confluent refuses the engine's topics only after the cluster exists.

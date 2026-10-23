@@ -109,6 +109,16 @@ or `instance-store` (cluster mode only -- see templates/clickhouse.yaml).
 {{- end }}
 
 {{/*
+dfe-clickhouse.instanceStoreCacheMount -- the instance-store emptyDir's mount
+path, outside the data PVC at /var/lib/clickhouse because a mount nested there
+leaves root-owned parents the non-root server cannot create its s3_object
+metadata_path under (docs/deployment/storage.md).
+*/}}
+{{- define "dfe-clickhouse.instanceStoreCacheMount" -}}
+/var/lib/clickhouse-cache
+{{- end }}
+
+{{/*
 dfe-clickhouse.quantityBytes -- a binary storage quantity (87Gi, 500Mi, 1024) as
 a plain byte count. Anything else fails the render rather than guessing a unit.
 */}}
@@ -236,7 +246,11 @@ storage_configuration:
     s3_object_cache:
       type: cache
       disk: s3_object
+      {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
+      path: {{ include "dfe-clickhouse.instanceStoreCacheMount" . }}/s3_object_cache/
+      {{- else }}
       path: /var/lib/clickhouse/disks/s3_object_cache/
+      {{- end }}
       {{- /* The server refuses max_size and max_size_ratio_to_total_space
       together with BAD_ARGUMENTS at startup, so this is either/or: a fixed
       cacheSize when the deployment names one, the ratio otherwise. */ -}}

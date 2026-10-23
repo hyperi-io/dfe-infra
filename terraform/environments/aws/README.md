@@ -75,7 +75,6 @@ Fill in, at minimum:
 | `tags` | All seven keys. The plan refuses on a missing one. |
 | `kafka.provider` | `msk` creates the managed broker below; `confluent-cloud` and `redpanda-cloud` create a SaaS broker (see Kafka, below); `strimzi` or `redpanda` run in the cluster and this root creates nothing for them. |
 | `kafka.msk.broker_version` | Defaulted nowhere. `aws kafka list-kafka-versions --region <region>` prints the ACTIVE ones -- take the newest, in MSK's `N.N.x.kraft` spelling. |
-| `kafka.landing_topics` | Required -- at least one topic -- when `kafka.provider` is `confluent-cloud` or `redpanda-cloud`. Neither runs a bootstrap Job of its own, so this root creates the topics tofu can reach; an empty map ships a cluster dfe-loader crash-loops against on a missing `*_land` topic. Ignored for `msk`, whose in-cluster Job creates the same topics from the chart's own values. |
 | `secrets.ref` | Optional. Empty puts the deployment's secrets at `<project>/<env>`, which is what a store holding one deployment wants. |
 | `eks_addon_versions` | Pinned in tfvars: `render_dial.py` writes the current stack's `eks-addons` from `versions.yaml`, built for the minor it names. On another `kubernetes_version`, set all five from `aws eks describe-addon-versions --kubernetes-version <minor>`. |
 | `lambda_runtimes` | Pinned in tfvars: `render_dial.py` writes the current stack's `lambda-runtimes` from `versions.yaml`, keyed by function. `msk-broker-scaler` is the MSK broker scaler's, read only when `kafka.provider` is `msk`. |
@@ -184,12 +183,15 @@ Token found` regardless of `kafka.provider`. A placeholder value is enough
 when redpanda-cloud is not the chosen provider -- nothing calls the API. The
 `confluent` provider carries no equivalent requirement.
 
-Two things this root does NOT do, both by construction:
+This root creates no Kafka topic on any provider: dfe-engine creates every one
+at startup from the dfe-schemas manifest.
 
-- **The landing topics and the Kafka ACLs.** They live in the Kafka data plane,
-  which OpenTofu has no client for and cannot reach in a private subnet. The
-  bootstrap Job does them, authenticating by SASL/IAM -- the one path where the
-  IAM policy is the authorisation and no ACL has to exist yet.
+Two things this root does NOT do on msk, both by construction:
+
+- **The Kafka ACLs.** They live in the Kafka data plane, which OpenTofu has no
+  client for and cannot reach in a private subnet. The bootstrap Job writes
+  them, authenticating by SASL/IAM -- the one path where the IAM policy is the
+  authorisation and no ACL has to exist yet.
 - **Render that Job.** The chart does, in the namespace and under the service
   account `kafka.msk.bootstrap_job` names. A Pod Identity association to a
   service account nothing renders grants nothing, and says so nowhere.

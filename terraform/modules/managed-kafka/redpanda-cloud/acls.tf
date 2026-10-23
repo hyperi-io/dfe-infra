@@ -1,4 +1,5 @@
-// The SCRAM principal, its grants and the landing topics.
+// The SCRAM principal and its grants. dfe-engine creates every topic at
+// startup, under the topic Create grant below, so this body creates none.
 //
 // One principal for the whole DFE fleet, at the grant set
 // helm/charts/kafka/templates/kafka-user.yaml gives on-prem: topic * with Read,
@@ -66,30 +67,6 @@ resource "redpanda_acl" "groups" {
   operation       = each.value
   permission_type = "ALLOW"
   cluster_api_url = local.cluster_api_url
-
-  allow_deletion = var.allow_deletion
-}
-
-// Pre-created, never conjured by the first produce: dfe-loader treats a missing
-// landing topic as fatal, and auto.create.topics.enable is not a setting
-// Redpanda Cloud accepts on any tier -- so the partition count and retention
-// are ours to set only if we create the topic.
-resource "redpanda_topic" "landing" {
-  for_each = var.landing_topics
-
-  name            = each.key
-  partition_count = coalesce(each.value.partitions, var.num_partitions)
-  cluster_api_url = local.cluster_api_url
-
-  // Null takes the cluster's own replication factor, which on Serverless is
-  // the vendor's to choose.
-  replication_factor = null
-
-  configuration = {
-    "cleanup.policy"    = "delete"
-    "retention.ms"      = tostring(coalesce(each.value.retention_ms, var.log_retention_ms))
-    "max.message.bytes" = tostring(var.message_max_bytes)
-  }
 
   allow_deletion = var.allow_deletion
 }

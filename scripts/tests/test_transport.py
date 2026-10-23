@@ -60,10 +60,8 @@ PUSH_STAGES = [
     "dfe-loader",
     "dfe-transform-vrl",
     "dfe-transform-vector",
+    "dfe-transform-elastic",
 ]
-
-# A stage apps.yaml runs on the bus alone, which binds no push listener on any tier.
-BUS_ONLY = "dfe-transform-elastic"
 
 # Every stage's Service carries its metrics listener, which dfe-engine reads the
 # stage's metric manifest from.
@@ -196,11 +194,6 @@ def test_the_push_service_renders_on_direct_only() -> None:
                     expect(f"{at} serves push on 6000 beside its metrics",
                            service_ports(docs_, stage) == [METRICS, PUSH],
                            f"got {service_ports(docs_, stage)!r}")
-    for profile in PROFILE_TRANSPORT:
-        for cloud in CLOUDS:
-            docs_ = golden(BUS_ONLY, profile, cloud)
-            expect(f"{BUS_ONLY} on {profile}/{cloud} binds no push listener",
-                   push_anywhere(docs_) == [], f"got {push_anywhere(docs_)}")
 
 
 def transform_config(docs_: list[dict], stage: str) -> dict:
