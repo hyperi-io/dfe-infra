@@ -115,8 +115,8 @@ spec:
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       initContainers:
         # Fetch, verify, unpack, and compute the one credential line. The server
-        # image is reused so this pod has ONE image to review; its Alpine base
-        # carries wget, sha256sum, tar and base64.
+        # image is reused so this pod has ONE image to review. Its Debian base
+        # carries curl, sha256sum, tar and base64.
         - name: fetch-ui
           image: "{{ $ui.image.repository }}:{{ $ui.image.tag }}@{{ $ui.image.digest }}"
           imagePullPolicy: {{ $ui.image.pullPolicy }}
