@@ -7,12 +7,14 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""source.beats -- the corpus through a Beats agent and Logstash, not a POST.
+"""source.beats -- the corpus through a real Beats agent, not a POST.
 
-The POSTed cases send a reconstructed Elastic Agent envelope. The common path is
-a Beats agent shipping lumberjack to Logstash and Logstash's http output posting
-its whole event at the receiver, and the Elastic ingest pipelines
-dfe-transform-elastic compiles in were written against that envelope.
+The POSTed cases send a reconstructed Elastic Agent envelope. A deployment gets
+the agent's own, two ways: a Beats agent shipping lumberjack to Logstash and
+Logstash's http output posting the event at the receiver (``--via logstash``),
+or the agent shipping lumberjack straight to the receiver's own listener
+(``--via beats``). The Elastic ingest pipelines dfe-transform-elastic compiles
+in were written against that envelope.
 
 This is a variation of the pushed cases rather than a case of its own: the same
 corpus lines, the same source, the same proof, reaching the receiver the other
@@ -28,20 +30,38 @@ from pathlib import Path
 
 from acceptance.clients import RECORD_TEXT
 
-# The Elastic line dfe-transform-elastic takes its compat ground truth from
-# (its scripts/compat.py runs 9.2.2), so the envelope pushed here is the one the
-# compiled pipelines were confirmed against.
-ELASTIC_VERSION = "9.2.2"
+# The shippers a site runs now. The Elasticsearch release dfe-transform-elastic
+# compiles its ingest pipelines from (9.2.2, its scripts/compat.py) is a separate
+# pin and does not move with them.
+SHIPPER_VERSION = "9.5.5"
 FILEBEAT_IMAGE = (
-    f"docker.elastic.co/beats/filebeat:{ELASTIC_VERSION}"
-    "@sha256:43a8fc2b64051c8e2538ee0d0e1a79fc6e13625d1ee22bc0888c856c86aba863"
+    f"docker.elastic.co/beats/filebeat:{SHIPPER_VERSION}"
+    "@sha256:4b2042fcbeb781800bc7271d400f764bb7d670310dfd4fe03ade53d6c7ab78aa"
 )
 LOGSTASH_IMAGE = (
-    f"docker.elastic.co/logstash/logstash:{ELASTIC_VERSION}"
-    "@sha256:f05daf67296ff20e708f1971f78161d86dc37c577bb2dea922782099e6d732ab"
+    f"docker.elastic.co/logstash/logstash:{SHIPPER_VERSION}"
+    "@sha256:d170c92166492ff82433395734121dcd2c73140038a03e252299384a01c9aae5"
 )
 # Lumberjack's own port, which is what both ends default to.
 BEATS_PORT = 5044
+# What filebeat writes as agent.type on every event it ships.
+AGENT_TYPE = "filebeat"
+# Not `default`, which dfe-transform-elastic writes where a record names none, so
+# a stored row carries this only where the stamp survived.
+DATA_STREAM_NAMESPACE = "acceptance"
+# The receiver's switches a --via beats run turns on and puts back afterwards. An
+# enabled listener refuses to start without client certificates unless told to
+# accept every client that can reach the port.
+RECEIVER_SERVICE = "dfe-receiver"
+LUMBERJACK_SWITCHES = {
+    "config.lumberjack.enabled": True,
+    "config.lumberjack.accept_unauthenticated": True,
+}
+# The same switches as the receiver reads them from its environment, for a
+# deployment whose engine refuses the write.
+LUMBERJACK_ENV = (
+    "DFE_RECEIVER_LUMBERJACK__ENABLED=true DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED=true"
+)
 # Where the corpus is mounted and what the agent tails, which is the file path
 # every event it ships carries.
 CORPUS_MOUNT = "/corpus"
@@ -60,12 +80,17 @@ FINGERPRINT_LENGTH = 64
 
 @dataclass(frozen=True, slots=True)
 class Pair:
-    """The two containers one run stands up, and where they send."""
+    """The containers one run stands up, and where they send.
+
+    ``lumberjack`` is the receiver's own listener, host:port, on a --via beats
+    run. Empty means filebeat ships to this run's own logstash.
+    """
 
     network: str
     receiver_url: str
     workdir: Path
     run_id: str
+    lumberjack: str = ""
 
     @property
     def logstash(self) -> str:
@@ -74,6 +99,16 @@ class Pair:
     @property
     def filebeat(self) -> str:
         return f"dfe-src-filebeat-{self.run_id}"
+
+    @property
+    def target(self) -> str:
+        """Where filebeat's lumberjack output connects."""
+        return self.lumberjack or f"{self.logstash}:{BEATS_PORT}"
+
+    @property
+    def containers(self) -> tuple[str, ...]:
+        """The containers this run starts, so teardown removes nothing it never made."""
+        return (self.filebeat,) if self.lumberjack else (self.filebeat, self.logstash)
 
 
 def docker(*argv: str, timeout: float = 180.0) -> tuple[int, str]:
@@ -109,8 +144,8 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
     # filestream needs an id of its own, and it identifies a file by a fingerprint
     # of the first 1024 bytes by default -- a corpus slice shorter than that is
     # never ingested at all, so the fingerprint is cut to the smallest it allows.
-    # The agent stamps the data stream the source matches, as an integration
-    # policy does, the run marker the counts read, and the run tag.
+    # The operator's config stamps the data stream the source matches, as an
+    # integration policy does, plus the run marker the counts read and the run tag.
     (pair.workdir / "filebeat.yml").write_text(
         "filebeat.inputs:\n"
         "  - type: filestream\n"
@@ -123,7 +158,7 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
         "          target: data_stream\n"
         "          fields:\n"
         f"            dataset: {dataset}\n"
-        "            namespace: default\n"
+        f"            namespace: {DATA_STREAM_NAMESPACE}\n"
         "            type: logs\n"
         "      - add_fields:\n"
         f"          target: {marker_field}\n"
@@ -132,12 +167,15 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
         "      - add_tags:\n"
         f'          tags: ["e2e_run:{pair.run_id}"]\n'
         "output.logstash:\n"
-        f'  hosts: ["{pair.logstash}:{BEATS_PORT}"]\n'
+        f'  hosts: ["{pair.target}"]\n'
         "logging.level: info\n",
         encoding="utf-8",
     )
+    if pair.lumberjack:
+        return corpus_dir
 
-    # Logstash adds nothing: the event it posts is the envelope filebeat built.
+    # Logstash adds nothing: the events it posts are the envelopes filebeat built,
+    # a pipeline batch to one JSON array, which the receiver splits per element.
     (pair.workdir / "logstash.conf").write_text(
         "input {\n"
         f"  beats {{ port => {BEATS_PORT} }}\n"
@@ -146,7 +184,7 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
         "  http {\n"
         f'    url => "{pair.receiver_url}"\n'
         '    http_method => "post"\n'
-        '    format => "json"\n'
+        '    format => "json_batch"\n'
         "  }\n"
         "}\n",
         encoding="utf-8",
@@ -169,14 +207,14 @@ def start_logstash(pair: Pair) -> tuple[bool, str]:
     while time.monotonic() < until:
         _, logs = docker("logs", pair.logstash)
         if LOGSTASH_READY_LINE in logs:
-            return True, f"logstash {ELASTIC_VERSION} listening on {BEATS_PORT}"
+            return True, f"logstash {SHIPPER_VERSION} listening on {BEATS_PORT}"
         time.sleep(5)
     _, logs = docker("logs", "--tail", "5", pair.logstash)
     return False, f"logstash never ran its pipeline within {LOGSTASH_READY_DEADLINE:.0f}s: {logs[-200:]}"
 
 
 def start_filebeat(pair: Pair) -> tuple[bool, str]:
-    """Filebeat tailing the corpus, shipping lumberjack to the logstash beside it.
+    """Filebeat tailing the corpus, shipping lumberjack to the pair's target.
 
     ``--strict.perms=false`` because the config is mounted from the host and
     filebeat otherwise refuses a file its own uid does not own.
@@ -189,7 +227,7 @@ def start_filebeat(pair: Pair) -> tuple[bool, str]:
     )
     if code != 0:
         return False, f"filebeat did not start: {out[:200]}"
-    return True, f"filebeat {ELASTIC_VERSION} tailing {AGENT_PATH}"
+    return True, f"filebeat {SHIPPER_VERSION} tailing {AGENT_PATH}, shipping to {pair.target}"
 
 
 def published(pair: Pair, wanted: int, deadline: float = SHIP_DEADLINE) -> tuple[int, str]:
@@ -246,12 +284,28 @@ def _published_events(logs: str) -> int:
 
 
 def stop(pair: Pair) -> str:
-    """Remove both containers, whether or not they ever ran."""
+    """Remove the containers this run starts, whether or not they ever ran."""
     removed = []
-    for name in (pair.filebeat, pair.logstash):
+    for name in pair.containers:
         code, _ = docker("rm", "-f", name, timeout=60.0)
         removed.append(f"{name} {'removed' if code == 0 else 'was not there'}")
     return "; ".join(removed)
+
+
+def _field(*path: str) -> str:
+    """One string field of the stored record, read by path."""
+    keys = ", ".join(f"'{key}'" for key in path)
+    return f"JSONExtractString({RECORD_TEXT}, {keys})"
+
+
+# The rows that came off the agent, by the field rather than a substring: the
+# JSON text escapes every / in the path.
+_AGENT_ROWS = f"WHERE {_field('log', 'file', 'path')} = '{AGENT_PATH}'"
+# Both fields as the agent's config sent them.
+_KEPT = (
+    f"{_field('agent', 'type')} = '{AGENT_TYPE}' "
+    f"AND {_field('data_stream', 'namespace')} = '{DATA_STREAM_NAMESPACE}'"
+)
 
 
 def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
@@ -264,8 +318,7 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     a transform rewrites each record into its own
     shape, so it is counted rather than assumed of every row.
     """
-    # By the field, not a substring: the JSON text escapes every / in the path.
-    where = f"WHERE JSONExtractString({RECORD_TEXT}, 'log', 'file', 'path') = '{AGENT_PATH}'"
+    where = _AGENT_ROWS
     carrying = store.scalar(f"SELECT count() FROM {table} {where}")
     if not carrying:
         return 0, [], f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent"
@@ -277,3 +330,72 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     except (ValueError, json.JSONDecodeError) as exc:
         return carrying, [], f"the stored record is not JSON: {exc}"
     return carrying, sorted(body), ""
+
+
+def kept_outcome(store, table: str) -> tuple[str, str]:
+    """Whether every row off the agent kept its agent.type and data stream namespace.
+
+    Elasticsearch stores both as they arrived, and the beats meta schema makes
+    a column of agent.type, so a transform writing its own name over it fills
+    that column wrongly.
+
+    Args:
+        store: The datastore.
+        table: The source's own table.
+
+    Returns:
+        The status and detail for ``Driver.record``.
+    """
+    carrying = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS}")
+    if not carrying:
+        return "failed", f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent"
+    kept = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS} AND {_KEPT}")
+    detail = (
+        f"{kept} of {carrying} agent row(s) kept agent.type {AGENT_TYPE} (filebeat's own) and "
+        f"data_stream.namespace {DATA_STREAM_NAMESPACE} (operator-stamped with add_fields)"
+    )
+    if kept == carrying:
+        return "done", detail
+    rows = store.query(
+        f"SELECT {_field('agent', 'type')}, {_field('data_stream', 'namespace')} "
+        f"FROM {table} {_AGENT_ROWS} AND NOT ({_KEPT}) LIMIT 1"
+    )
+    if rows and len(rows[0]) == 2:
+        detail += f". One landed with agent.type {rows[0][0]!r} and data_stream.namespace {rows[0][1]!r}"
+    return "failed", detail
+
+
+def held(config: object, paths) -> dict[str, object]:
+    """The values an instance's overlay already sets at *paths*, read off its config route.
+
+    A path the overlay does not set is absent from the result, so putting the
+    instance back means clearing it rather than writing a default over it.
+
+    Args:
+        config: The engine's ``GET /apps/<service>/<instance>/config`` body.
+        paths: The config paths asked about.
+
+    Returns:
+        Each set path and its value.
+    """
+    wanted = set(paths)
+    found: dict[str, object] = {}
+    if not isinstance(config, dict):
+        return found
+    for field in config.get("fields") or []:
+        if isinstance(field, dict) and field.get("path") in wanted and field.get("is_set"):
+            found[field["path"]] = field.get("value")
+    # A path the app's contract does not declare is reported here once it is set.
+    for field in config.get("unknown") or []:
+        if isinstance(field, dict) and field.get("path") in wanted:
+            found[field["path"]] = field.get("value")
+    return found
+
+
+def restore_plan(before: dict[str, object], paths) -> tuple[dict[str, object], list[str]]:
+    """The writes that put *paths* back as *before* found them.
+
+    Returns:
+        The values to write back, and the paths to clear to the app's default.
+    """
+    return dict(before), [path for path in paths if path not in before]

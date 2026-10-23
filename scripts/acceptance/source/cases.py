@@ -22,10 +22,11 @@ console, and is what lets an older console still pass a run.
 
 import argparse
 import re
+import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from acceptance.clients import Datastore, Engine
 from acceptance.onboarding import wizard
@@ -35,6 +36,8 @@ from acceptance.source.steps import STEP_TIMEOUT_MS
 # The bundled filebeat program is a few hundred kilobytes, so the editor write
 # and its commit get a longer bound than a form control.
 EDITOR_TIMEOUT_MS = STEP_TIMEOUT_MS * 4
+# The --via values that ship the corpus through a real filebeat rather than a POST.
+SHIPPED = ("logstash", "beats")
 # How long a committed file is waited for on the engine, since the console's own
 # notice is per panel and a panel the run has left keeps its copy.
 COMMIT_DEADLINE = 180.0
@@ -136,7 +139,7 @@ class FilebeatCase(Case):
     """
 
     META_SCHEMA = "meta/beats/filebeat"
-    META_SCHEMA_VERSION = "1.0.0"
+    META_SCHEMA_VERSION = "1.1.0"
     HEADER = "common-header/timeseries"
     HEADER_VERSION = "1.0.1"
     # Elastic's own identifier for the source, which the Agent sends on every record.
@@ -174,8 +177,11 @@ class FilebeatCase(Case):
         super().__init__(args)
         self.name = fetcher.new_name(self.prefix)
         self._posted = 0
-        #: The filebeat and logstash pair, on a --via logstash run only.
+        #: The agent's containers, on a run that ships through a real filebeat only.
         self._pair: beats.Pair | None = None
+        #: The receiver instance a --via beats run opened lumberjack on, and what
+        #: its overlay set at those paths before, so cleanup can put it back.
+        self._listener: tuple[str, dict[str, object]] | None = None
         #: Whether the source asks to be archived, which only a deployment running
         #: an archiver can honour.
         self._archive = True
@@ -418,8 +424,8 @@ class FilebeatCase(Case):
             run.run_id, steps.ROUTING_DEADLINE, self.MODULES,
         )
         run.driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
-        if run.args.via == "logstash":
-            self._feed_through_logstash(run, corpus)
+        if run.args.via in SHIPPED:
+            self._feed_through_agent(run, corpus)
             return
         self._posted = steps.post_corpus(
             run.receiver_url, run.verify, run.engine_repo, corpus,
@@ -430,31 +436,39 @@ class FilebeatCase(Case):
             f"posted {self._posted} corpus records marked {steps.MARKER}.run {run.run_id}",
         )
 
-    def _feed_through_logstash(self, run: Run, corpus: Path) -> None:
-        """The same corpus lines, shipped by a real filebeat through a real logstash.
+    def _feed_through_agent(self, run: Run, corpus: Path) -> None:
+        """The same corpus lines, shipped by a real filebeat.
 
-        The POSTed envelope is reconstructed; this pushes the one Logstash's http
-        output builds, with filebeat adding the data stream the source matches.
+        The POSTed envelope is reconstructed. ``--via logstash`` pushes the one
+        Logstash's http output builds, and ``--via beats`` the one filebeat sends
+        the receiver's own lumberjack listener, with the operator's filebeat
+        config adding the data stream the source matches either way.
         """
-        driver = run.driver
-        if not run.args.beats_network:
+        driver, args = run.driver, run.args
+        direct = args.via == "beats"
+        if not args.beats_network:
             driver.record("feed", "skipped",
-                          "--via logstash needs --beats-network, the docker network the stack runs on")
+                          f"--via {args.via} needs --beats-network, the docker network the stack runs on")
+            return
+        if direct and not self._open_lumberjack(run):
+            driver.record("feed", "failed", "the receiver has no lumberjack listener to ship to")
             return
         self._pair = beats.Pair(
-            network=run.args.beats_network, receiver_url=run.args.beats_receiver_url,
-            workdir=Path(run.args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
+            network=args.beats_network, receiver_url=args.beats_receiver_url,
+            workdir=Path(args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
+            lumberjack=args.beats_lumberjack if direct else "",
         )
-        lines = steps.corpus_lines(run.engine_repo, corpus, run.args.per_module, self.MODULES)
+        lines = steps.corpus_lines(run.engine_repo, corpus, args.per_module, self.MODULES)
         beats.write_inputs(
             self._pair, lines, self.MATCH_VALUE,
             steps.MARKER, steps.run_marker(run.run_id, steps.CORPUS),
         )
-        ready, detail = beats.start_logstash(self._pair)
-        driver.record("logstash", "done" if ready else "failed", detail)
-        if not ready:
-            driver.record("feed", "failed", "no logstash to ship through")
-            return
+        if not direct:
+            ready, detail = beats.start_logstash(self._pair)
+            driver.record("logstash", "done" if ready else "failed", detail)
+            if not ready:
+                driver.record("feed", "failed", "no logstash to ship through")
+                return
         shipping, detail = beats.start_filebeat(self._pair)
         driver.record("filebeat", "done" if shipping else "failed", detail)
         if not shipping:
@@ -462,9 +476,84 @@ class FilebeatCase(Case):
             return
         sent, detail = beats.published(self._pair, len(lines))
         self._posted = sent
+        route = (
+            f"lumberjack straight to the receiver at {self._pair.target}" if direct
+            else f"lumberjack to logstash and its http output to {self._pair.receiver_url}"
+        )
+        driver.record("feed", "done" if sent >= len(lines) else "failed", f"{detail}, {route}")
+
+    def _receiver_config(self, run: Run) -> str:
+        """The receiver's config route, or empty when the engine lists no instance of it."""
+        for entry in run.engine.call("GET", "/apps").body or []:
+            if isinstance(entry, dict) and entry.get("service") == beats.RECEIVER_SERVICE:
+                instances = [str(i) for i in entry.get("instances") or []]
+                if instances:
+                    return f"/apps/{beats.RECEIVER_SERVICE}/{instances[0]}/config"
+        return ""
+
+    def _open_lumberjack(self, run: Run) -> bool:
+        """Switch the receiver's lumberjack listener on through the engine, as an operator would.
+
+        Nothing is written that cannot be put back: the overlay's current values at
+        those paths are read first, and cleanup restores them.
+        """
+        driver = run.driver
+        route = self._receiver_config(run)
+        if not route:
+            driver.record("receiver-lumberjack", "failed",
+                          f"the engine lists no {beats.RECEIVER_SERVICE} instance")
+            return False
+        current = run.engine.call("GET", route)
+        if current.status != 200:
+            driver.record("receiver-lumberjack", "failed",
+                          f"could not read {route} to put it back afterwards: {current.status} {current.body}")
+            return False
+        before = beats.held(current.body, beats.LUMBERJACK_SWITCHES)
+        wrote = run.engine.call("PUT", route, {"changes": dict(beats.LUMBERJACK_SWITCHES)})
+        if wrote.status != 200:
+            driver.record(
+                "receiver-lumberjack", "failed",
+                f"the engine refused the switch: {wrote.status} {wrote.body}. Set {beats.LUMBERJACK_ENV} "
+                "in the receiver's environment instead",
+            )
+            return False
+        self._listener = (route, before)
         driver.record(
-            "feed", "done" if sent >= len(lines) else "failed",
-            f"{detail}, lumberjack to logstash and its http output to {self._pair.receiver_url}",
+            "receiver-lumberjack", "done",
+            f"{', '.join(beats.LUMBERJACK_SWITCHES)} set through {route} for this run, and "
+            f"put back by the teardown to what the overlay held ({before or 'nothing'})",
+        )
+        prefix = shlex.split(run.args.restart_exec)
+        status, detail = steps.restart_outcome(prefix, steps.reply_hints(wrote.body))
+        driver.record("receiver-restart", status, detail)
+        return status != "failed"
+
+    def _close_lumberjack(self, run: Run) -> wizard.StepResult:
+        """Put the receiver's lumberjack paths back as the run found them, and apply that."""
+        route, before = self._listener or ("", {})
+        rewrite, clears = beats.restore_plan(before, beats.LUMBERJACK_SWITCHES)
+        hints: list[str] = []
+        refused = []
+        if rewrite:
+            reply = run.engine.call("PUT", route, {"changes": rewrite})
+            hints += steps.reply_hints(reply.body)
+            if reply.status != 200:
+                refused.append(f"rewrite {reply.status} {reply.body}")
+        if clears:
+            query = urlencode({"path": clears}, doseq=True)
+            reply = run.engine.call("DELETE", f"{route}?{query}")
+            hints += steps.reply_hints(reply.body)
+            if reply.status != 200:
+                refused.append(f"clear {reply.status} {reply.body}")
+        if refused:
+            return wizard.StepResult(
+                "receiver-lumberjack-restored", "failed",
+                f"{route} was not put back ({', '.join(refused)}), so lumberjack may still be open",
+            )
+        status, detail = steps.restart_outcome(shlex.split(run.args.restart_exec), hints)
+        return wizard.StepResult(
+            "receiver-lumberjack-restored", "failed" if status == "failed" else "done",
+            f"{route} put back to {before or 'the app defaults'}, restart {status}: {detail}",
         )
 
     def prove(self, run: Run) -> None:
@@ -496,8 +585,9 @@ class FilebeatCase(Case):
             f"{transformed} of {self._posted} corpus rows carry {self.TRANSFORMED_COLUMN}, "
             f"which only the transform sets; the corpus expects {expected}",
         )
-        if run.args.via == "logstash":
+        if run.args.via in SHIPPED:
             self._record_envelope(run)
+            run.driver.record("envelope-kept", *beats.kept_outcome(run.store, self.name))
 
     def _record_envelope(self, run: Run) -> None:
         """Name the envelope that reached the table, off the rows themselves.
@@ -529,10 +619,13 @@ class FilebeatCase(Case):
         return re.compile(rf"{re.escape(self.service)}[\s\S]*Running")
 
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
-        """Take down anything this run stood up beside the stack."""
-        if self._pair is None:
-            return []
-        return [wizard.StepResult("beats-removed", "done", beats.stop(self._pair))]
+        """Take down anything this run stood up beside the stack, and put the receiver back."""
+        rows = []
+        if self._pair is not None:
+            rows.append(wizard.StepResult("beats-removed", "done", beats.stop(self._pair)))
+        if self._listener is not None:
+            rows.append(self._close_lumberjack(run))
+        return rows
 
 
 # --- elastic: the same lines, through a transform compiled into the image -----

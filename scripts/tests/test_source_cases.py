@@ -1155,7 +1155,7 @@ class TestTheShippersIdentifier:
         for body in bodies:
             assert set(body) == {"agent", "data_stream", "input", "message", "tags", "_e2e"}
             assert body["agent"] == {"type": "filebeat", "name": steps.AGENT_NAME,
-                                     "version": steps.beats.ELASTIC_VERSION}
+                                     "version": steps.beats.SHIPPER_VERSION}
             assert body["data_stream"] == {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"}
             assert body["input"] == {"type": "tcp"}
             assert "e2e_run:src-run" in body["tags"]
@@ -1405,6 +1405,43 @@ class TestTheQueriesAgainstClickHouse:
 
         assert (carrying, refused) == (1, "")
         assert keys == sorted(shipped)
+
+    @staticmethod
+    def off_the_agent(agent_type: str, namespace: str) -> dict:
+        """A stored row that came off the agent, carrying the two fields as they landed."""
+        return {
+            **TestTheQueriesAgainstClickHouse.TRANSFORMED,
+            "agent": {"type": agent_type, "version": steps.beats.SHIPPER_VERSION},
+            "data_stream": {"dataset": "cisco_ios.log", "namespace": namespace, "type": "logs"},
+            "log": {"file": {"path": steps.beats.AGENT_PATH}},
+        }
+
+    def test_rows_that_kept_the_agent_and_namespace_are_the_pass(self):
+        kept = self.off_the_agent("filebeat", steps.beats.DATA_STREAM_NAMESPACE)
+        # A probe POSTed for routing lands in the same table and is not judged.
+        store = LocalClickHouse("el1", [kept, kept, self.TRANSFORMED])
+
+        status, detail = steps.beats.kept_outcome(store, "el1")
+
+        assert status == "done", detail
+        assert detail.startswith("2 of 2 agent row(s)")
+
+    def test_expected_fail_rows_a_transform_rewrote_are_named(self):
+        """What a transform that stamps its own delivery labels leaves in the table."""
+        kept = self.off_the_agent("filebeat", steps.beats.DATA_STREAM_NAMESPACE)
+        rewritten = self.off_the_agent("dfe-receiver", "default")
+        store = LocalClickHouse("el1", [kept, rewritten])
+
+        status, detail = steps.beats.kept_outcome(store, "el1")
+
+        assert status == "failed"
+        assert detail.startswith("1 of 2 agent row(s)")
+        assert "agent.type 'dfe-receiver' and data_stream.namespace 'default'" in detail
+
+    def test_expected_fail_a_kept_agent_with_a_replaced_namespace_is_not_the_pass(self):
+        store = LocalClickHouse("el1", [self.off_the_agent("filebeat", "default")])
+
+        assert steps.beats.kept_outcome(store, "el1")[0] == "failed"
 
 
 class LandedRows(LocalClickHouse):
@@ -2165,6 +2202,176 @@ class TestTheLogstashVariation:
         case = cases.build(args)
 
         assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)) == []
+
+
+class ReceiverEngine(FakeEngine):
+    """A deployment with a receiver whose config route answers, and refuses where told to."""
+
+    ROUTE = "/apps/dfe-receiver/default/config"
+
+    def __init__(self, held: dict | None = None, refuse: int = 0, **kwargs) -> None:
+        super().__init__(**kwargs)
+        #: What the receiver's overlay sets at each path before the run.
+        self.held = dict(held or {})
+        self.refuse = refuse
+        self.changes: list[dict] = []
+        self.cleared: list[str] = []
+
+    def call(self, method, path, body=None):
+        if path == "/apps":
+            listed = super().call(method, path, body)
+            return reply(200, [*listed.body, {"service": "dfe-receiver", "instances": ["default"]}])
+        if not path.startswith(self.ROUTE):
+            return super().call(method, path, body)
+        self.calls.append((method, path))
+        if method == "GET":
+            fields = [{"path": p, "is_set": p in self.held, "value": self.held.get(p)}
+                      for p in steps.beats.LUMBERJACK_SWITCHES]
+            return reply(200, {"fields": fields, "unknown": []})
+        if self.refuse:
+            return reply(self.refuse, {"code": "chart_derived", "message": "the deployment decides this"})
+        if method == "PUT":
+            self.changes.append(dict((body or {}).get("changes") or {}))
+        if method == "DELETE":
+            self.cleared += re.findall(r"path=([^&]+)", path)
+        return reply(200, {"changed": True, "restart_required": [FakeEngine.RECEIVER_HINT]})
+
+
+class TestTheBeatsVariation:
+    """Filebeat alone, shipping lumberjack straight to the receiver's own listener."""
+
+    ARGS = ("--via", "beats", "--beats-network", "dfe_default", "--restart-exec", "make apply SERVICES=")
+
+    def _feed(self, monkeypatch, transform_repo, engine, restart_code=0):
+        started: list[str] = []
+        ran: list[list[str]] = []
+        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
+        monkeypatch.setattr(cases.beats, "start_logstash",
+                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
+        monkeypatch.setattr(cases.beats, "start_filebeat",
+                            lambda pair: (started.append(f"filebeat to {pair.target}"), (True, "up"))[1])
+        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+
+        def fake_run(argv, **_kwargs):
+            ran.append(list(argv))
+            return subprocess.CompletedProcess(argv, restart_code, "", "refused")
+
+        monkeypatch.setattr(steps.subprocess, "run", fake_run)
+        args = parse(*self.ARGS)
+        driver = FakeDriver(FakePage())
+        case = cases.build(args)
+        run = a_run(driver, engine, args, case.name, transform_repo, "https://rx.example")
+        run.args.shots_dir = str(transform_repo / "shots")
+        case.feed(run)
+        return driver, case, run, started, ran
+
+    def test_the_mode_is_one_the_runner_offers(self):
+        args = parse("--via", "beats")
+
+        assert args.via == "beats"
+        assert args.beats_lumberjack == "dfe-receiver:5044"
+
+    def test_it_opens_the_listener_restarts_the_receiver_and_ships_with_no_logstash(
+        self, monkeypatch, transform_repo
+    ):
+        engine = ReceiverEngine()
+        driver, _, _, started, ran = self._feed(monkeypatch, transform_repo, engine)
+
+        assert engine.changes == [dict(steps.beats.LUMBERJACK_SWITCHES)]
+        assert driver.status("receiver-lumberjack") == "done"
+        assert driver.status("receiver-restart") == "done"
+        assert ran == [["make", "apply", "SERVICES=", "dfe-receiver"]]
+        assert started == ["filebeat to dfe-receiver:5044"]
+        assert "logstash" not in driver.rows
+        assert driver.status("feed") == "done"
+        assert "straight to the receiver at dfe-receiver:5044" in driver.detail("feed")
+
+    def test_the_listener_is_open_before_filebeat_starts(self, monkeypatch, transform_repo):
+        driver, *_ = self._feed(monkeypatch, transform_repo, ReceiverEngine())
+
+        rows = driver.rows
+        assert rows.index("receiver-lumberjack") < rows.index("receiver-restart") < rows.index("filebeat")
+
+    def test_expected_fail_an_engine_refusing_the_switch_names_the_env_fallback(
+        self, monkeypatch, transform_repo
+    ):
+        driver, case, run, started, _ = self._feed(monkeypatch, transform_repo, ReceiverEngine(refuse=409))
+
+        assert driver.status("receiver-lumberjack") == "failed"
+        assert steps.beats.LUMBERJACK_ENV in driver.detail("receiver-lumberjack")
+        assert driver.status("feed") == "failed"
+        assert started == []
+        # Nothing was written, so there is nothing to put back.
+        assert case.cleanup(run) == []
+
+    def test_expected_fail_a_receiver_that_would_not_restart_ships_nothing(self, monkeypatch, transform_repo):
+        driver, *_, started, _ = self._feed(monkeypatch, transform_repo, ReceiverEngine(), restart_code=2)
+
+        assert driver.status("receiver-restart") == "failed"
+        assert driver.status("feed") == "failed"
+        assert started == []
+
+    def test_the_teardown_clears_what_the_overlay_never_set(self, monkeypatch, transform_repo):
+        engine = ReceiverEngine()
+        _, case, run, _, ran = self._feed(monkeypatch, transform_repo, engine)
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: "dfe-src-filebeat-src-test removed")
+
+        rows = case.cleanup(run)
+
+        assert [row.slug for row in rows] == ["beats-removed", "receiver-lumberjack-restored"]
+        assert rows[1].status == "done", rows[1].detail
+        assert sorted(engine.cleared) == sorted(steps.beats.LUMBERJACK_SWITCHES)
+        assert len(engine.changes) == 1, "nothing is written back that the overlay did not hold"
+        # The restore is applied the same way the switch was.
+        assert ran[-1] == ["make", "apply", "SERVICES=", "dfe-receiver"]
+
+    def test_the_teardown_writes_back_what_the_overlay_already_set(self, monkeypatch, transform_repo):
+        engine = ReceiverEngine(held={"config.lumberjack.enabled": False})
+        _, case, run, _, _ = self._feed(monkeypatch, transform_repo, engine)
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: "removed")
+
+        rows = case.cleanup(run)
+
+        assert engine.changes[-1] == {"config.lumberjack.enabled": False}
+        assert engine.cleared == ["config.lumberjack.accept_unauthenticated"]
+        assert rows[-1].status == "done", rows[-1].detail
+
+    def test_expected_fail_a_restore_the_engine_refused_says_the_listener_may_be_open(
+        self, monkeypatch, transform_repo
+    ):
+        engine = ReceiverEngine()
+        _, case, run, _, _ = self._feed(monkeypatch, transform_repo, engine)
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: "removed")
+        engine.refuse = 500
+
+        rows = case.cleanup(run)
+
+        assert rows[-1].status == "failed"
+        assert "may still be open" in rows[-1].detail
+
+    def test_the_proof_holds_both_shipped_routes_to_the_same_fields(self, shipping_corpus):
+        for via in cases.SHIPPED:
+            args = parse("--via", via)
+            driver = FakeDriver(FakePage())
+            case = cases.build(args)
+            run = a_run(driver, FakeEngine(), args, case.name, Path("/"), "https://rx.example")
+            run.store = ScriptedStore(5, 5)
+
+            case.prove(run)
+
+            assert driver.rows[-2:] == ["envelope", "envelope-kept"], via
+
+    def test_a_posted_run_is_not_held_to_the_agent_fields(self, shipping_corpus):
+        """The POSTed envelope carries no file path, so there is no agent row to judge."""
+        driver = FakeDriver(FakePage())
+        case = cases.build(parse())
+        run = a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example")
+        run.store = ScriptedStore(5, 5)
+
+        case.prove(run)
+
+        assert "envelope-kept" not in driver.rows
 
 
 class TestWhatTheRunTidiesUp:

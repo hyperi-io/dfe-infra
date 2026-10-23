@@ -501,7 +501,7 @@ def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
         The body the receiver is posted.
     """
     return {
-        "agent": {"type": "filebeat", "name": AGENT_NAME, "version": beats.ELASTIC_VERSION},
+        "agent": {"type": beats.AGENT_TYPE, "name": AGENT_NAME, "version": beats.SHIPPER_VERSION},
         "data_stream": {"dataset": dataset, "namespace": DATA_STREAM_NAMESPACE, "type": "logs"},
         "input": {"type": AGENT_INPUT},
         "message": line,
@@ -832,7 +832,7 @@ def refused_line(reply: subprocess.CompletedProcess[str]) -> str:
     return line
 
 
-def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
+def restart_outcome(prefix: list[str], reported: list[str]) -> tuple[str, str]:
     """Restart the apps the engine says cannot take a write where they stand.
 
     The engine computes this, so the runner does not have to: a hint appears only
@@ -843,17 +843,19 @@ def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
 
     Without it the app takes the new file and goes on consuming the topics it
     started with, so the source it was just given never moves a record.
+
+    Args:
+        prefix: The --restart-exec command prefix, split.
+        reported: The hints the engine's replies carried.
+
+    Returns:
+        The status and detail of the restart step.
     """
     hints = sorted({str(hint) for hint in reported if hint})
     if not hints:
-        driver.record("restart", "skipped", "the engine reports every write taken where it stands")
-        return
+        return "skipped", "the engine reports every write taken where it stands"
     if not prefix:
-        driver.record(
-            "restart", "failed",
-            f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}",
-        )
-        return
+        return "failed", f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}"
     done = []
     for hint in hints:
         service = hinted_service(hint)
@@ -862,11 +864,12 @@ def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
             errors="replace", check=False,
         )
         done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {refused_line(reply)}'}")
-    driver.record(
-        "restart",
-        "done" if all("restarted" in entry for entry in done) else "failed",
-        "; ".join(done),
-    )
+    return ("done" if all("restarted" in entry for entry in done) else "failed"), "; ".join(done)
+
+
+def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
+    """Record :func:`restart_outcome` as the run's restart step."""
+    driver.record("restart", *restart_outcome(prefix, reported))
 
 
 # --- HyperDX -----------------------------------------------------------------
