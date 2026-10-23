@@ -8,6 +8,8 @@
 //
 // No `main`: with no Worker script, every request is a static asset request.
 // The account comes from CLOUDFLARE_ACCOUNT_ID, never from this file.
+// The Worker, its custom domain and DNS are created by OpenTofu outside this
+// repo, so no routes here: a deploy that lists routes replaces that domain set.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "dfe-docs",
@@ -17,12 +19,7 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },
-  "routes": [
-    {
-      "pattern": "dfe.docs.hyperi.io",
-      "custom_domain": true
-    }
-  ],
+  // With no routes, wrangler turns workers.dev on unless this says otherwise.
   "workers_dev": false,
   "preview_urls": false
 }
