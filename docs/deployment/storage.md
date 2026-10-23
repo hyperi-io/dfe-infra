@@ -196,9 +196,8 @@ either dial value defaults to. On AWS the Karpenter `clickhouse` pool's shape
 (`shapes/compute-shapes.yaml`) already carries local NVMe sized for exactly
 this cache: at about 474 GB an r9gd.2xlarge's NVMe costs what gp3 costs
 provisioned to the instance's own EBS ceiling, with 14.5x the IOPS.
-`instance-store` mounts that NVMe as a plain pod-level `emptyDir`, mounted into
-the container at `/var/lib/clickhouse/disks/s3_object_cache` (concatenated with
-the operator's own mounts, per the CRD's own comment on that field) with a
+`instance-store` mounts that NVMe as a plain pod-level `emptyDir` at
+`/var/lib/clickhouse-cache` (see "Extra mounts" below), with a
 `nodeSelector` on `dfe.hyperi.io/workload: clickhouse` -- the label
 `build_pool_classes` (`scripts/resolve_sizing.py`) gives every pool it
 builds, named after the pool's own use case. The EKS managed node group for
@@ -225,16 +224,9 @@ why that pool already carries a disruption budget of one node at a time:
 losing more than one node's cache at once is the outage the budget buys
 against, not something `instance-store` is meant to prevent outright.
 
-The dedicated cache PVC is a different mechanism from `instance-store` above --
-it would use `additionalVolumeClaimTemplates`, and the operator registers a
-ClickHouse disk per additional volume claim, so a volume named
-`s3_object_cache` collides with the cache disk declaration and needs a
-distinct name. And the object disk's `metadata_path` sits at
-`/var/lib/clickhouse/disks/s3_object/`, which works only while there are no
-additional volumes of that kind -- adding one makes that directory the
-operator's root-owned mount parent, and the server dies on
-`create_directories`. `instance-store` sidesteps this entirely: it is a plain
-pod volume, not a PVC template, so the operator never registers it as a disk.
+**Extra mounts stay outside the data volume.** The container runtime creates a nested mount's missing directories root-owned inside the data PVC, and the non-root server cannot create anything else in them. A cache mounted at `/var/lib/clickhouse/disks/s3_object_cache` left `disks/` root-owned, so every replica exited unable to create the `s3_object` `metadata_path`. Hence `instance-store` mounts at `/var/lib/clickhouse-cache`, and `test_the_cache_mount_sits_outside_the_data_volume` fails a render that nests one.
+
+A dedicated cache PVC hits the same wall: the operator mounts each additional claim at `/var/lib/clickhouse/disks/<name>` and registers a disk of that name, which also rules out `s3_object_cache`.
 
 ## Dimension 4: object-store flavour
 

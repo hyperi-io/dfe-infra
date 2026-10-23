@@ -27,7 +27,7 @@ import math
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import yaml
@@ -334,6 +334,30 @@ def test_the_cache_stops_short_of_the_volume_it_lives_on(resolved: Path) -> None
     limit = cluster(docs)["spec"]["podTemplate"]["volumes"][0]["emptyDir"]["sizeLimit"]
     max_size = disks(docs)["s3_object_cache"]["max_size"]
     assert _bytes(max_size) < _bytes(limit), (max_size, limit)
+
+
+# The operator mounts the data PVC at both paths (buildMounts in its templates.go).
+OPERATOR_DATA_MOUNTS = (
+    PurePosixPath("/var/lib/clickhouse"),
+    PurePosixPath("/var/log/clickhouse-server"),
+)
+
+
+def test_the_cache_mount_sits_outside_the_data_volume(resolved: Path) -> None:
+    """A mount nested in the data PVC gets its missing parents created root-owned
+    there, and the non-root server then cannot create the s3_object metadata
+    directory beside them, so every replica exits on startup."""
+    docs = clickhouse_docs("aws", aws_facts(resolved))
+    mounts = cluster(docs)["spec"]["containerTemplate"]["volumeMounts"]
+    nested = [
+        m["mountPath"]
+        for m in mounts
+        if any(PurePosixPath(m["mountPath"]).is_relative_to(d) for d in OPERATOR_DATA_MOUNTS)
+    ]
+    assert nested == [], nested
+    cache = PurePosixPath(disks(docs)["s3_object_cache"]["path"])
+    holders = [m["name"] for m in mounts if cache.is_relative_to(m["mountPath"])]
+    assert holders == ["object-cache"], (cache, mounts)
 
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
