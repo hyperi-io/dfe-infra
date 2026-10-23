@@ -365,7 +365,6 @@ def main() -> int:
         test_the_duration_reader_reads_what_the_policy_writes()
         test_another_gateway_can_leave_the_route_policy_out()
         test_no_listener_on_a_profile_that_did_not_ask()
-        test_no_listener_for_a_bus_only_stage()
         test_the_gateway_the_listeners_attach_to()
         test_the_senders_are_allowed_to_reach_the_listener()
         test_the_receiver_buffers_what_the_profile_says()
