@@ -24,17 +24,17 @@ product was driven.
 
 The console creates the source -- Configuration tab (name, display name, description, Archive on, match `data_stream.dataset equals cisco_ios.log`, Elastic's own identifier for the source), Table Settings tab (the
 shipped `common-header/timeseries` 1.0.1 and `meta/beats/filebeat` 1.1.0), then
-the Transform tab that then becomes available (Define Transform -> `dfe-transform-vrl`). After
+the Transform tab (Define Transform -> `dfe-transform-vrl`). After
 the deploy the source's Processing tab puts the bundled
 `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the
 dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.
-The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream` (the dataset read off the archive path, `cisco_ios/log` -> `cisco_ios.log`), `input`, the vendor line as `message`, and `tags`. Every record also carries a root `_e2e` object, `{run: <run id>, kind: corpus|probe}`, and the counts read that rather than `tags`, because the bundled program replaces the tags and keeps root fields.
+The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream`, `input`, the vendor line as `message`, and `tags`. Every record also carries a root `_e2e` object, `{run: <run id>, kind: corpus|probe}`, and the counts read that rather than `tags`.
 
 One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella lines are not fed and this suite does not cover them.
 
-Archive stays off where the engine lists no `dfe-archiver` instance, as on the Compose slim tier: on direct the receiver also sends an archived record to the archiver, and with none it answers 503.
+Archive stays off where the engine lists no `dfe-archiver` instance: on direct the receiver also sends an archived record to the archiver, and with none it answers 503.
 
-Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e` rather than by rows gained, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` in its `_json` (`dataset`), the run's corpus rows carry `source_ip` (the program reads it out of the syslog body), a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
+Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e`, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` (`dataset`), the run's corpus rows carry `source_ip`, a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
 
 `reporting` is not taken at face value. The engine answers it off the otel
 tables, and on Compose one container serves the app and every instance of it, so
@@ -67,13 +67,13 @@ The cisco_ios lines the filebeat case posts are also the entry the variant names
 
 ## Pushing through a real filebeat (`--via logstash`, `--via beats`)
 
-The posted envelope is reconstructed. A deployment gets the agent's own, two ways: filebeat shipping lumberjack to Logstash and Logstash's http output posting the event at the receiver (`--via logstash`), or filebeat shipping lumberjack straight to the receiver's own listener (`--via beats`). The Elastic ingest pipelines dfe-transform-elastic compiles in were written against that envelope. Both are variations of the two pushed cases, so the same source, the same waits and the same proof all still apply.
+The posted envelope is reconstructed. A deployment gets the agent's own, two ways: filebeat shipping lumberjack to Logstash and Logstash's http output posting the event at the receiver (`--via logstash`), or filebeat shipping lumberjack straight to the receiver's own listener (`--via beats`). The Elastic ingest pipelines dfe-transform-elastic compiles in were written against that envelope. Both are variations of the two pushed cases.
 
 Both stand containers on the stack's docker network (`--beats-network`), write this run's corpus slice to a file filebeat tails, and wait for routing over HTTP before it ships. The shippers are 9.5.5, the release a site runs now. They do not track the 9.2.2 Elasticsearch release dfe-transform-elastic compiles its pipelines from. The filebeat config is the operator's: it stamps the `data_stream` the source is matched on with `add_fields`, as an integration policy does, with namespace `acceptance`, plus the `_e2e` corpus marker and an `e2e_run` tag. Teardown removes every container the run started (`beats-removed`).
 
 `--via logstash` adds Logstash, which adds nothing and posts each pipeline batch as one JSON array (`format => "json_batch"`) at `--beats-receiver-url`. The receiver splits the array into one record per element.
 
-`--via beats` ships to `--beats-lumberjack` (`dfe-receiver:5044`). The listener ships off, and an enabled one refuses to start without client certificates unless it accepts every client that can reach the port. So the run sets `config.lumberjack.enabled` and `config.lumberjack.accept_unauthenticated` through the engine's app config route, as an operator would (`receiver-lumberjack`), applies the restart that reports with `--restart-exec` (`receiver-restart`), and puts back whatever the overlay held there at teardown (`receiver-lumberjack-restored`). dfe-docker publishes no beats port by default, so only the stack's network reaches it. An engine that refuses the write fails the run and names the fallback: `DFE_RECEIVER_LUMBERJACK__ENABLED=true` and `DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED=true` in the receiver's environment.
+`--via beats` ships to `--beats-lumberjack` (`dfe-receiver:5044`). The listener ships off, and an enabled one refuses to start without client certificates unless it accepts every client that can reach the port. So the run sets `config.lumberjack.enabled` and `config.lumberjack.accept_unauthenticated` through the engine's app config route (`receiver-lumberjack`), applies the restart that reports with `--restart-exec` (`receiver-restart`), and puts back whatever the overlay held there at teardown (`receiver-lumberjack-restored`). dfe-docker publishes no beats port by default, so only the stack's network reaches it. An engine that refuses the write fails the run and names the fallback: `DFE_RECEIVER_LUMBERJACK__ENABLED=true` and `DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED=true` in the receiver's environment.
 
 `logstash` and `filebeat` say the containers came up, and `feed` carries filebeat's own acked count, so an agent that shipped nothing reads differently from a stack that took nothing. Two rows read the stored rows back. `envelope` names the fields one arrived with, plus `log.file.path`, which only a Beats agent sets. `envelope-kept` holds every row off the agent to `agent.type` `filebeat`, which filebeat sets, and `data_stream.namespace` `acceptance`, which the operator stamped. Elasticsearch stores both as they arrived, and the beats meta schema makes a column of `agent.type`.
 
