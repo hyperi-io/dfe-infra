@@ -708,18 +708,13 @@ _CONTRACT_ENTRIES = [
 ]
 
 
-# The source catalogue is emitted by an app image as well, so it is one more
-# copy of that app's pin -- a second entry for an app already in the list above.
-_CATALOGUE_ENTRIES = ["dfe-transform-elastic"]
-
 
 def content_ref_pattern(role: str, app: str, half: str) -> str:
     """One half of a content entry's `ref`, anchored on the entry's role and app.
 
     Every ref sits in one file, so a bare `ref:` anchor would hand the first
-    entry's value to every check. The role is part of the anchor because one app
-    can back two entries -- its contract and its catalogue -- and a check claims
-    its FIRST match only.
+    entry's value to every check. The role is part of the anchor so a second role
+    for an app gets its own check, since a check claims its FIRST match only.
     """
     head = (
         r"role: " + re.escape(role) + r"\n\s*app: " + re.escape(app)
@@ -737,7 +732,7 @@ CHECKS += [
         Path("argocd/values/apps/dfe-engine/values.yaml"),
         content_ref_pattern(role, app, half),
     )
-    for role, apps in (("contract", _CONTRACT_ENTRIES), ("catalogue", _CATALOGUE_ENTRIES))
+    for role, apps in (("contract", _CONTRACT_ENTRIES),)
     for app in apps
     for half in ("tag", "digest")
 ]

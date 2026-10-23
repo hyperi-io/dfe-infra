@@ -277,33 +277,6 @@ initContainers:
           echo "content: dfe-transform-elastic emitted no contract; the mount stays empty" >&2
         fi
     volumeMounts: *content-mounts
-  - name: content-dfe-transform-elastic-catalogue
-    image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
-    imagePullPolicy: *pull-policy
-    securityContext: *init-security
-    command:
-      - /bin/sh
-      - -c
-      - |
-        set -u
-        ref="{{ range .Values.content.entries }}{{ if eq .name "dfe-transform-elastic-catalogue" }}{{ .ref }}{{ end }}{{ end }}"
-        # Its entry is gone from content.entries: this pod runs the engine image.
-        if [ -z "$ref" ]; then
-          echo "content: dfe-transform-elastic-catalogue is not in content.entries; nothing to materialise"
-          exit 0
-        fi
-        dst="{{ .Values.content.mountPath }}/catalogue/{{ .Values.content.catalogueFile }}"
-        mkdir -p "{{ .Values.content.mountPath }}/catalogue"
-        # An image that predates emit-catalogue exits non-zero; the engine
-        # still starts, and its catalogue API reports the file as missing.
-        if dfe-transform-elastic emit-catalogue > "$dst.tmp"; then
-          mv "$dst.tmp" "$dst"
-          echo "content: dfe-transform-elastic emitted its catalogue to $dst"
-        else
-          rm -f "$dst.tmp"
-          echo "content: dfe-transform-elastic emitted no catalogue; the engine reports it missing" >&2
-        fi
-    volumeMounts: *content-mounts
   # Seeds the auth ConfigMaps authConfig names into the writable config volume.
   # It runs on every pod because a list item cannot follow authConfig, and it
   # copies nothing where authConfig names no ConfigMap.
@@ -408,7 +381,6 @@ extraVolumeMounts:
 # common.yaml sets (clickhouse.*) are not restated, as this file layers after it.
 content:
   mountPath: /etc/dfe-engine/content
-  catalogueFile: sources.yaml
   entries:
     - name: dfe-receiver-contract
       kind: emit
@@ -443,11 +415,6 @@ content:
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
-      app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.16@sha256:531cdb7d07120698ff728763c9fc4545eec3739de8ef8065ea020859e4241fc5"
-    - name: dfe-transform-elastic-catalogue
-      kind: emit
-      role: catalogue
       app: dfe-transform-elastic
       ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.16@sha256:531cdb7d07120698ff728763c9fc4545eec3739de8ef8065ea020859e4241fc5"
 # The env names this mount; the contract's writable path `config` mounts at /config.
