@@ -100,15 +100,20 @@ without one.
     python3 scripts/resolve_sizing.py images --dial deployment.yaml
 
 ``images`` resolves the node images on any profile, separately from the sizing,
-because it reads the live provider wherever a resolve reads fixtures: each
-cloud's recommended node image at its newest version, written to
-``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
-elsewhere). A lookup that fails warns and writes no key, so tfvars or the
-variable default applies, and ``node_image.pin: "true"`` in the dial skips the
-lookups altogether and empties the file, ``--only`` or not. ``--only <key>``
-resolves that key and keeps the file's others, which is how ``dfe-ops bastion
-up`` refreshes the toolbox's AMI without moving the node groups' release or the
-forwarder's AMI. scripts/node_images.py carries the cascade and the sources.
+because it reads the live provider wherever a resolve reads fixtures. On aws
+each image is the newest that clears the release gates in versions.yaml's
+``node-images`` block. Three artefacts come out under ``--out`` (the cloud's
+tofu root by default): ``node-images.auto.tfvars.json`` for tofu, and under
+``sizing/`` the record ``node-images.json`` and Karpenter's alias as the
+node-pools overlay ``node-pools.values.yaml``, both of which the deploy repo
+commits beside ``resolved.yaml``. When no image clears the gates, the value
+``--previous`` (default the record under ``--out``) carries holds. A lookup
+that fails warns and writes no key, so tfvars applies or the plan refuses by
+name, and ``node_image.pin: "true"`` in the dial skips the lookups altogether
+and empties the tfvars file, ``--only`` or not. ``--only <key>`` resolves that
+key and keeps the file's others, which is how ``dfe-ops bastion up`` refreshes
+the toolbox's AMI without moving the node groups' release or the forwarder's
+AMI. scripts/node_images.py carries the gates and the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -154,6 +159,7 @@ from yaml_subset import parse as parse_yaml_subset
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SIZING_FILE = REPO_ROOT / "sizing" / "sizing.yaml"
 SHAPES_FILE = REPO_ROOT / "shapes" / "compute-shapes.yaml"
+VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 
 # Only the scale tier is sized. single and slim are one node of everything with
 # fixed shapes, and nothing here touches them.
@@ -4000,6 +4006,15 @@ def run_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _utc_instant(raw: str) -> datetime:
+    """An ISO 8601 instant, read as UTC when it names no offset."""
+    try:
+        instant = datetime.fromisoformat(raw)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"not an ISO 8601 instant: {raw!r}") from err
+    return instant if instant.tzinfo else instant.replace(tzinfo=UTC)
+
+
 def _node_image_pin(tree: dict[str, object]) -> bool:
     """The dial's node_image.pin, refusing anything but true or false."""
     raw = (_scalar(tree, "node_image", "pin") or "false").lower()
@@ -4009,7 +4024,7 @@ def _node_image_pin(tree: dict[str, object]) -> bool:
 
 
 def run_images(args: argparse.Namespace) -> int:
-    """Resolve the dial's node images and write them where its tofu root loads them."""
+    """Resolve the dial's node images behind the release gates and write the three artefacts."""
     tree = _load(args.dial)
     cloud = _scalar(tree, "target", "provision", "cloud")
     if cloud is None:
@@ -4054,26 +4069,65 @@ def run_images(args: argparse.Namespace) -> int:
             f"--only {', '.join(sorted(keys - offered))}: {cloud} resolves only "
             f"{', '.join(sorted(offered))}"
         )
+    try:
+        policy = node_images.read_policy(args.versions)
+    except node_images.GatePolicyError as err:
+        raise ResolveError(str(err)) from err
     target = node_images.Target(cloud, region, account, kubernetes_version, arch)
     read = (
         node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
     )
+    sizing_dir = out / "sizing"
+    previous_path = args.previous or sizing_dir / node_images.RECORD_NAME
+    previous = node_images.read_record(previous_path)
 
     def warn(message: str) -> None:
         print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
 
-    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn, keys=keys)
+    def note(message: str) -> None:
+        print(f"resolve_sizing: node image {message}", file=sys.stderr)
+
+    resolution = node_images.resolve(
+        target,
+        pinned=pinned,
+        read=read,
+        warn=warn,
+        note=note,
+        policy=policy,
+        now=args.now or datetime.now(UTC),
+        recorded=previous,
+        keys=keys,
+    )
+    tfvars_keys = node_images.tfvars_keys(cloud)
+    tfvars = {key: value for key, value in resolution.values.items() if key in tfvars_keys}
     # A pin empties the file whatever --only names, or an earlier key would still beat terraform.tfvars.
-    path = node_images.write_tfvars(out, values, keys=None if pinned else keys)
+    scope = None if pinned or keys is None else keys & tfvars_keys
+    written = [node_images.write_tfvars(out, tfvars, keys=scope)]
     if pinned:
         print(
             "resolve_sizing: node_image.pin is true, so no lookup ran, the file is empty and the "
-        "tfvars value holds",
+            "tfvars value holds",
             file=sys.stderr,
         )
-    for key, value in sorted(values.items()):
-        print(f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}", file=sys.stderr)
-    print(f"resolve_sizing: wrote {path}", file=sys.stderr)
+    else:
+        # A deploy repo commits the record and the chart overlay, so a pin leaves both alone.
+        written.append(node_images.write_record(sizing_dir, resolution, previous))
+        if keys is None or node_images.CHART_KEYS & keys:
+            alias = node_images.read_record(sizing_dir / node_images.RECORD_NAME).get(
+                "karpenter_ami_alias", {}
+            )
+            overlay = node_images.write_node_pools_values(sizing_dir, alias.get("value"))
+            if overlay is not None:
+                written.append(overlay)
+    for key, value in sorted(resolution.values.items()):
+        release = resolution.record.get(key, {}).get("release", "")
+        source = f" ({release})" if release else ""
+        print(
+            f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}{source}",
+            file=sys.stderr,
+        )
+    for path in written:
+        print(f"resolve_sizing: wrote {path}", file=sys.stderr)
     return 0
 
 
@@ -4114,7 +4168,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture.set_defaults(func=run_capture)
 
     images = sub.add_parser(
-        "images", help="resolve each node image the provider recommends, at its newest version"
+        "images", help="resolve each node image, the newest that clears the release gates"
     )
     images.add_argument("--dial", type=Path, required=True, help="the deployment dial")
     images.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read")
@@ -4132,6 +4186,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help="resolve just this key and keep the file's others (repeatable), e.g. instance_ami_id",
+    )
+    images.add_argument(
+        "--versions", type=Path, default=VERSIONS_FILE, help="versions.yaml holding the release gates"
+    )
+    images.add_argument(
+        "--previous",
+        type=Path,
+        default=None,
+        help="the deploy repo's sizing/node-images.json, whose values hold when no image clears "
+        "the gates (default: the one under --out)",
+    )
+    images.add_argument(
+        "--now",
+        type=_utc_instant,
+        default=None,
+        help="the UTC instant the release-age cooldown is measured from, ISO 8601 (default: now)",
     )
     images.set_defaults(func=run_images)
     return parser

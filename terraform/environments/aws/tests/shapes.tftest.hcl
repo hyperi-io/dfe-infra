@@ -153,6 +153,7 @@ variables {
   }
 
   // What scripts/resolve_sizing.py images writes into node-images.auto.tfvars.json.
+  node_image       = { family = "AL2023_ARM_64_STANDARD", version = "1.36.4-20261012" }
   instance_ami_id  = "ami-0123456789abcdef0"
   forwarder_ami_id = "ami-0123456789abcdef1"
 
@@ -239,8 +240,7 @@ run "the_toolbox_and_the_forwarder_launch_on_the_resolved_shape" {
   }
 }
 
-// With no AMI from the resolver or tfvars, the forwarder is refused by name and
-// the node groups keep the root's own default image.
+// With no AMI from the resolver or tfvars, the forwarder is refused by name.
 run "a_forwarder_refuses_an_unresolved_ami" {
   command = plan
 
@@ -295,13 +295,26 @@ run "a_toolbox_refuses_an_unresolved_ami" {
   expect_failures = [var.instance_ami_id]
 }
 
-run "the_node_image_falls_back_to_the_roots_default" {
+// A group with no version would take EKS's newest release ungated, so neither an
+// absent image nor one without a release plans.
+run "a_plan_with_no_resolved_node_image_is_refused" {
   command = plan
 
-  assert {
-    condition     = var.node_image.family == "AL2023_ARM_64_STANDARD" && var.node_image.version == null
-    error_message = "with nothing resolved and nothing in tfvars, node_image must be the root's last-resort default"
+  variables {
+    node_image = null
   }
+
+  expect_failures = [var.node_image]
+}
+
+run "a_node_image_with_no_release_is_refused" {
+  command = plan
+
+  variables {
+    node_image = { family = "AL2023_ARM_64_STANDARD" }
+  }
+
+  expect_failures = [var.node_image]
 }
 
 run "a_forwarder_refuses_a_shape_the_resolver_did_not_write" {

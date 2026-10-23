@@ -76,18 +76,19 @@ target:
 ## compute none. Ignored entirely on the target.existing path.
 ## ---------------------------------------------------------------------------
 
-## Control-plane minor version. dfe-infra#285 adds a `platform:` stage to
-## versions.yaml and the renderer prefers it once present; this is the value
-## until it lands.
+## Control-plane minor version. Empty takes the newest minor versions.yaml's
+## platform range is tested on, which the EKS add-on pins are built for, and a
+## value below the range's floor is refused.
 kubernetes_version: "1.36"
 
-## Node images. `python3 scripts/resolve_sizing.py images` writes the cloud's
-## recommended node image, at its newest dated release, into the root's
-## node-images.auto.tfvars.json, which beats terraform.tfvars. pin: "true" skips
-## that lookup and empties the file, so a value in terraform.tfvars holds -- the
-## hold for a bad provider image or a reproducible rebuild. A pin takes effect on
-## the next `images` run, because tofu never reads the dial. With neither, the
-## root's variable default applies (terraform/modules/kubernetes-cluster/CONTRACT.md).
+## Node images. `python3 scripts/resolve_sizing.py images` writes the newest
+## image that clears versions.yaml's node-images release gates into the root's
+## node-images.auto.tfvars.json, which beats terraform.tfvars, and records it in
+## sizing/ for the deploy repo. pin: "true" skips that lookup and empties the
+## file, so a value in terraform.tfvars holds -- the hold for a bad provider
+## image or a reproducible rebuild. A pin takes effect on the next `images` run,
+## because tofu never reads the dial. With neither, the aws plan refuses by name
+## (terraform/modules/kubernetes-cluster/CONTRACT.md).
 node_image:
   pin: "false"               # true | false
 
@@ -664,10 +665,10 @@ kafka:
   msk:
     shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
     broker_count: 3           # >= 3, and a multiple of the zone count
-    ## The BROKER version, in MSK's own spelling, and defaulted nowhere: the
-    ## newest ACTIVE one is read from the vendor at build time, because a default
-    ## rots into a deprecated line silently. (`version:` above is the DFE stack
-    ## pin -- a different thing entirely.)
+    ## The BROKER version, in MSK's own spelling, and defaulted nowhere, because
+    ## a default rots into a deprecated line silently. Nothing resolves it: set
+    ## the newest ACTIVE one `aws kafka list-kafka-versions` prints. (`version:`
+    ## above is the DFE stack pin -- a different thing entirely.)
     broker_version: 4.2.x.kraft
     num_partitions: 12            # NOT yet wired to the chart's own partition count at these defaults (kafka.external.numPartitions) -- see helm/charts/kafka/values.yaml
     log_retention_ms: 259200000   # three days in front of the archiver

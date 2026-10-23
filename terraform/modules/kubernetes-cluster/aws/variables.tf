@@ -143,7 +143,7 @@ variable "resolved_shapes" {
 }
 
 variable "node_image" {
-  description = "The EKS-optimised image every managed node group launches, from the node-image cascade (CONTRACT.md): scripts/resolve_sizing.py images reads the SSM parameter /aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended, else tfvars, else the root's default. family is the EKS AMI type and version its dated release, so a node group's image moves only when a resolve and an apply move it. A null version leaves the release to EKS, which takes the newest for the cluster's minor when a group is created and holds it."
+  description = "The EKS-optimised image every managed node group launches, from the node-image cascade (CONTRACT.md): the newest awslabs/amazon-eks-ami release that clears the release gates in versions.yaml's node-images block, auto-selected by scripts/resolve_sizing.py images, else tfvars. family is the EKS AMI type and version its dated release, so a node group's image moves only when a resolve and an apply move it. A null version leaves the release to EKS, ungated, which is why the aws root refuses one."
   type = object({
     family  = string
     version = optional(string)

@@ -225,6 +225,9 @@ variables {
   profile            = "single"
   kubernetes_version = "1.36"
 
+  // What scripts/resolve_sizing.py images writes into node-images.auto.tfvars.json.
+  node_image = { family = "AL2023_ARM_64_STANDARD", version = "1.36.4-20261012" }
+
   node_pools = {
     system = {
       shape_ref     = "eks-system"

@@ -123,13 +123,12 @@ pools:
     # forces -- ClickHouse and CI take the instance store, everything else does not.
     nodeClass:
       # An alias resolves the EKS-optimised image through SSM and carries its own
-      # family, so amiFamily is not set beside it. Pinned to a dated AL2023
-      # release (operators.karpenter-al2023-ami in versions.yaml, drift-checked)
-      # rather than `latest`: `latest` moved the node image on every reconcile
-      # with no cooldown and no version an operator could point at, which is
-      # exactly the unwatched-drift failure mode every other pin in this repo
-      # exists to avoid. A new release arrives as a versions.yaml bump through
-      # the same 7-day cooldown gate, not silently.
+      # family, so amiFamily is not set beside it. A dated AL2023 release, never
+      # `latest`, which moves the node image on every reconcile with no gate.
+      # scripts/resolve_sizing.py images picks the newest release that clears
+      # versions.yaml's node-images gates into the deploy repo's
+      # sizing/node-pools.values.yaml, which overrides this. This default is the
+      # fallback with none recorded: operators.karpenter-al2023-ami, drift-checked.
       amiAlias: al2023@v20261012
       metadata:
         # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach

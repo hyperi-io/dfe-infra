@@ -136,6 +136,10 @@ spec:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
+              # What a resolver wrote for this app into the deploy repo's sizing/,
+              # such as node-pools.values.yaml's gated node image. It sits under
+              # the infra/ files below, so a deployer's own value wins. Optional.
+              - '$values/sizing/{{ index . "overlay" | default .app }}.values.yaml'
               # infra/common.yaml is the deployer's own common.yaml -- shared
               # facts declared once and read by every appset; infra/<app>.yaml
               # is the per-app overlay. Both optional. Keyed on the Application

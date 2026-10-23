@@ -82,19 +82,21 @@ variable "resolved_shapes" {
 }
 
 variable "node_image" {
-  description = "The image every EKS managed node group launches, a three-layer cascade. scripts/resolve_sizing.py images auto-selects it from the SSM parameter /aws/service/eks/optimized-ami/<kubernetes_version>/amazon-linux-2023/arm64/standard/recommended -- family the EKS AMI type, version its newest dated release -- and writes node-images.auto.tfvars.json, which loads after terraform.tfvars. A failed lookup, or node_image.pin: true in the dial, writes nothing, so a value in terraform.tfvars applies. This default is the last resort: EKS's recommended AL2023 arm64 type with no version, so a new group takes EKS's newest release at create."
+  description = "The image every EKS managed node group launches, family the EKS AMI type and version its dated release, auto-selected by scripts/resolve_sizing.py images as the newest awslabs/amazon-eks-ami release that clears the release gates in versions.yaml's node-images block and is published for kubernetes_version in the region (scripts/node_images.py names the gates), written to node-images.auto.tfvars.json, which beats terraform.tfvars. No default, because a group with no version takes EKS's newest release ungated, so a plan with neither the resolved value nor a tfvars one is refused by name."
   type = object({
     family  = string
     version = optional(string)
   })
-  default = {
-    family = "AL2023_ARM_64_STANDARD"
+  default = null
+
+  validation {
+    condition     = try(var.node_image.version, null) != null
+    error_message = "No node image release was resolved. Run scripts/resolve_sizing.py images, or set node_image with a dated version in terraform.tfvars."
   }
-  nullable = false
 }
 
 variable "instance_ami_id" {
-  description = "The AMI the toolbox instance launches. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the region from the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when the lookup failed or node_image.pin is true. dfe-ops bastion up re-resolves this key alone before every launch. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox is on."
+  description = "The AMI the toolbox instance launches. scripts/resolve_sizing.py images auto-selects the newest AL2023 arm64 AMI in the family of the SSM parameter /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 that clears versions.yaml's node-images cooldown, skip-list and floor, and writes node-images.auto.tfvars.json, which loads after terraform.tfvars, so a value there applies only when the lookup failed or node_image.pin is true. dfe-ops bastion up re-resolves this key alone before every launch. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only once the toolbox is on."
   type        = string
   default     = null
 
@@ -105,7 +107,7 @@ variable "instance_ami_id" {
 }
 
 variable "forwarder_ami_id" {
-  description = "The AMI the tunnel forwarder launches, auto-selected from the same SSM parameter as instance_ami_id by a full scripts/resolve_sizing.py images run and never by bastion up's toolbox-only one, because a new AMI replaces the forwarder instance and every tunnel through it drops while it rebuilds. A value in terraform.tfvars applies only when the lookup failed or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only on edge.tunnel.address.mode forwarder."
+  description = "The AMI the tunnel forwarder launches, auto-selected behind the same release gates as instance_ami_id by a full scripts/resolve_sizing.py images run and never by bastion up's toolbox-only one, because a new AMI replaces the forwarder instance and every tunnel through it drops while it rebuilds. A value in terraform.tfvars applies only when the lookup failed or node_image.pin is true. No default: an AMI id belongs to one region, so an unresolved one is refused by name, and only on edge.tunnel.address.mode forwarder."
   type        = string
   default     = null
 

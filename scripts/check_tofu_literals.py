@@ -36,8 +36,8 @@ an AMI id, an EKS AMI type, a Karpenter alias, an image SSM parameter path, a
 GKE image type or an AKS OS SKU, and an AMI or SSM data source. A heredoc body
 is read word by word, except a description's or an error message's. A node
 image resolves through ``scripts/resolve_sizing.py images``
-(scripts/node_images.py), so tofu never looks one up itself, and its one
-literal is the root variable's default.
+(scripts/node_images.py), so tofu never looks one up itself and the tree
+carries no image literal at all.
 
 Stdlib only, like every other script here: the scanner reads the HCL subset
 this tree uses, and a construct it cannot read fails loudly rather than being
@@ -127,10 +127,6 @@ ALLOWED: dict[str, str] = {
     f"{_AWS_ROOT}/main.tf:locals:kafka_secret_recovery_window_days": _SECRET_WINDOW,
     "terraform/environments/local/main.tf:locals:region": (
         "On-prem has no cloud region, so the region tag carries the cloud token."
-    ),
-    f"{_AWS_ROOT}/variables.tf:variable.node_image:default.family": (
-        "The node-image cascade's last layer, EKS's recommended AL2023 arm64 AMI type, read only "
-        "when the resolver wrote nothing and tfvars set nothing."
     ),
     f"{_CLUSTER}/karpenter.tf:locals:karpenter_interruption_retention_seconds": (
         "Karpenter's published retention for its interruption queue."

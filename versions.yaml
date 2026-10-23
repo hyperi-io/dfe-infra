@@ -30,6 +30,9 @@
 #              deliberately deferred. A key MUST be a `release`-maturity stack,
 #              and that stack's `support:` field reads `lts`.
 #
+# NODE IMAGES (top-level): `node-images` holds the release gates worker-node
+#   images pass, the one version class that moves between stacks.
+#
 # MATURITY LADDER (SemVer-aligned): alpha -> beta -> rc -> release.
 #   Each stack carries an explicit `maturity:` field. Git tags only ever use
 #   SemVer-standard prerelease ids (alpha/beta/rc) or NO tag for a release --
@@ -60,6 +63,25 @@ lts:
   # granularities (do not uncomment until real):
   #   "2.2.9": "2027-07-01"    # LTS for the 2.2 line
   #   "3.1.4": "2029-04-01"    # major-level LTS, Ubuntu-style
+
+# The release gates a worker-node image passes before scripts/resolve_sizing.py images
+# writes it, so a kernel or kubelet fix reaches nodes without a stack release. Outside
+# every stack, because a skip-list entry has to reach the next resolve without a stack
+# cut. scripts/node_images.py says which gate applies to which image.
+node-images:
+  # From the GitHub release's published_at or the AMI's CreationDate, never the tag date:
+  # v20260311 was published 47 days after its tag.
+  cooldown-days: "7"
+  # Kernel 6.12.111, the fix for the memory-reclaim panic in v20260930 and v20261003.
+  eks-ami-floor: ">=v20261012"
+  eks-ami-skip:
+    v20260625: "ENA driver 2.17.0g kernel panic and unexpected reboot"
+    v20260930: "kernel 6.12.110 panic during memory reclaim, awslabs/amazon-eks-ami#2845"
+    v20261003: "kernel 6.12.110 panic during memory reclaim, awslabs/amazon-eks-ami#2845"
+  # AL2023 2023.12.20261012.0, the release carrying kernel 6.12.111, by the date in its AMI name.
+  al2023-ami-floor: ">=20261012"
+  # Keyed by AL2023 release, such as 2023.12.20260928.0.
+  al2023-ami-skip: {}
 
 stacks:
 

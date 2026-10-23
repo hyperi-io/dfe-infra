@@ -75,12 +75,12 @@ variable "tunnel" {
     byte and does nothing else, and within a burstable family the baseline
     network bandwidth rises with the size.
 
-    address.ami_id is the newest AL2023 arm64 AMI in the region, auto-selected
-    by scripts/resolve_sizing.py images from the SSM parameter
+    address.ami_id is the newest AL2023 arm64 AMI in the region that clears
+    the release gates in versions.yaml's node-images block, auto-selected by
+    scripts/resolve_sizing.py images from the family of the SSM parameter
     /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64, else
-    the root's tfvars forwarder_ami_id. The forwarder is rebuilt rather than
-    carried through a long life, so the newest id at the last full resolve is
-    the right one. Read on mode forwarder alone, and refused there when null.
+    the root's tfvars forwarder_ami_id. Read on mode forwarder alone, and
+    refused there when null.
 
     address.zone pins the instance to one availability zone, because a hop to a
     node in another zone crosses a boundary billed per GB. Empty takes the
