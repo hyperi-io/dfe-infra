@@ -131,6 +131,14 @@ DIGEST_PINNED = {
     "services.aws-load-balancer-controller-image": (
         "public.ecr.aws/eks/aws-load-balancer-controller"
     ),
+    # layer1-addons.yaml runs the documentdb-operator chart's images at these tags.
+    "services.documentdb-operator-image": "ghcr.io/documentdb/documentdb-kubernetes-operator/operator",
+    "services.documentdb-sidecar": "ghcr.io/documentdb/documentdb-kubernetes-operator/sidecar",
+    "services.cloudnative-pg": "ghcr.io/cloudnative-pg/cloudnative-pg",
+    # helm/charts/documentdb renders each instance from these.
+    "services.documentdb": "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb",
+    "services.documentdb-gateway": "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway",
+    "services.documentdb-postgres": "ghcr.io/cloudnative-pg/postgresql",
 }
 
 # Chart-run images a stack may pin under DIGEST_PINNED: image repository -> that key.
