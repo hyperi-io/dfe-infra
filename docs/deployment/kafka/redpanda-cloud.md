@@ -66,7 +66,7 @@ The `redpanda` provider authenticates with a Redpanda Cloud service-account
 client ID + secret (Organization IAM). Two shapes below: Serverless (fewest
 dials) and Dedicated/BYOC (full topic + cluster config). The SCRAM user is a
 `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the
-cluster's `cluster_api_url`. There is no topic resource: dfe-engine creates
+cluster's Data Plane API URL (`dataplane_api.url`). There is no topic resource: dfe-engine creates
 every topic.
 
 ```hcl
@@ -74,7 +74,7 @@ terraform {
   required_providers {
     redpanda = {
       source  = "redpanda-data/redpanda"
-      version = "~> 1.0" # VERIFY latest + PIN exact; see README pinning note.
+      version = "~> 2.3" # the line managed-kafka/redpanda-cloud pins
     }
   }
 }
@@ -91,6 +91,11 @@ resource "redpanda_serverless_cluster" "dfe" {
   name              = "dfe-kafka-serverless"
   resource_group_id = redpanda_resource_group.dfe.id
   serverless_region = var.redpanda_serverless_region # e.g. "pro-us-east-1"
+}
+
+# The Data Plane API URL the user and ACL resources talk to.
+locals {
+  cluster_api_url = redpanda_serverless_cluster.dfe.dataplane_api.url
 }
 
 # ---------- Option B: Dedicated (managed on Redpanda's account) ----------
@@ -120,7 +125,7 @@ resource "redpanda_user" "dfe_app" {
   name            = "dfe-kafka-user"
   password        = var.dfe_kafka_password
   mechanism       = "scram-sha-512" # DFE contract (provider default is scram-sha-256)
-  cluster_api_url = redpanda_serverless_cluster.dfe.cluster_api_url
+  cluster_api_url = local.cluster_api_url
 }
 
 # --- The user's grants, as managed-kafka/redpanda-cloud/acls.tf ---
@@ -135,7 +140,7 @@ resource "redpanda_acl" "dfe_topics" {
   host                  = "*"
   operation             = each.value
   permission_type       = "ALLOW"
-  cluster_api_url       = redpanda_serverless_cluster.dfe.cluster_api_url
+  cluster_api_url       = local.cluster_api_url
 }
 
 resource "redpanda_acl" "dfe_groups" {
@@ -147,15 +152,15 @@ resource "redpanda_acl" "dfe_groups" {
   host                  = "*"
   operation             = each.value
   permission_type       = "ALLOW"
-  cluster_api_url       = redpanda_serverless_cluster.dfe.cluster_api_url
+  cluster_api_url       = local.cluster_api_url
 }
 
 output "cluster_api_url" {
-  value = redpanda_serverless_cluster.dfe.cluster_api_url
+  value = local.cluster_api_url
 }
 ```
 
-For the Dedicated / BYOC tier, swap the `cluster_api_url` references to
+For the Dedicated / BYOC tier, point the local at
 `redpanda_cluster.dfe.cluster_api_url`, and set cluster-level defaults
 (`log_segment_size = 536870912`, `log_retention_ms = 259200000`,
 `default_topic_partitions = 12`, `default_topic_replications = 3`) via the
