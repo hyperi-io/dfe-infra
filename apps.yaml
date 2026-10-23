@@ -704,12 +704,9 @@ apps:
   dfe-transform-elastic:
     multiplicity: per_config
     scale_deployed: true
-    # Bus only until its gRPC listener ships (dfe-transform-elastic#19); adding
-    # `direct` here and uncommenting the endpoint below is the whole change that
-    # lets a direct source name it.
-    transports: [bus]
-    # endpoints:
-    #   push: {port: 6000}          # dfe-transform-elastic#19
+    transports: [bus, direct]
+    endpoints:
+      push: {port: 6000}
     # A per_config transform instance exists while a source binds it, and not
     # otherwise: the engine removes any instance no active, deployed source
     # binds, so a tier listed here runs none until its first source does.
@@ -743,6 +740,8 @@ apps:
     # The source's broker list, applied after the file is read. The bare KAFKA_*
     # the bus profiles set reach scalo's KafkaConfig rather than the config file.
     deployment_owned:
+      config.source.transport: configOverrides.source.transport
+      config.sink.transport: configOverrides.sink.transport
       config.source.brokers: DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS
       # The push listener binds the port its contract opens.
       config.source.listen: contract port push

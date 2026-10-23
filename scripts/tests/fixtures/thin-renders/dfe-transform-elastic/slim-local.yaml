@@ -19,7 +19,7 @@ metadata:
 ---
 apiVersion: v1
 binaryData:
-  config.yaml: e30K
+  config.yaml: c2luazoKICBlbmRwb2ludDogaHR0cDovL2RmZS1sb2FkZXI6NjAwMAogIHRyYW5zcG9ydDogZGlyZWN0CnNvdXJjZToKICB0cmFuc3BvcnQ6IGRpcmVjdAo=
 kind: ConfigMap
 metadata:
   labels:
@@ -56,6 +56,11 @@ spec:
     port: 9090
     protocol: TCP
     targetPort: metrics
+  - appProtocol: kubernetes.io/h2c
+    name: push
+    port: 6000
+    protocol: TCP
+    targetPort: push
   selector:
     app.kubernetes.io/name: dfe-transform-elastic
   type: ClusterIP
@@ -89,7 +94,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
+        checksum/config: c86f913175a2c7bb254a25de36f1bc604dc04edc0cb12abc320b25bd8bc69f75
         prometheus.io/path: /metrics
         prometheus.io/port: '9090'
         prometheus.io/scrape: 'true'
@@ -131,6 +136,9 @@ spec:
         ports:
         - containerPort: 9090
           name: metrics
+          protocol: TCP
+        - containerPort: 6000
+          name: push
           protocol: TCP
         readinessProbe:
           failureThreshold: 2

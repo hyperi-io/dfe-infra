@@ -41,7 +41,7 @@ metadata:
 ---
 apiVersion: v1
 binaryData:
-  config.yaml: e30K
+  config.yaml: c2luazoKICBlbmRwb2ludDogaHR0cDovL2RmZS1sb2FkZXItbWVzaC5lbnZveS1nYXRld2F5LXN5c3RlbS5zdmMuY2x1c3Rlci5sb2NhbDo2MDAwCiAgdHJhbnNwb3J0OiBkaXJlY3QKc291cmNlOgogIHRyYW5zcG9ydDogZGlyZWN0Cg==
 kind: ConfigMap
 metadata:
   labels:
@@ -78,6 +78,11 @@ spec:
     port: 9090
     protocol: TCP
     targetPort: metrics
+  - appProtocol: kubernetes.io/h2c
+    name: push
+    port: 6000
+    protocol: TCP
+    targetPort: push
   selector:
     app.kubernetes.io/name: dfe-transform-elastic
   type: ClusterIP
@@ -111,7 +116,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
+        checksum/config: 11846770b2eaca4a97d6637b104e7f7a9e353f417f164246af2c31b06d833079
         prometheus.io/path: /metrics
         prometheus.io/port: '9090'
         prometheus.io/scrape: 'true'
@@ -153,6 +158,9 @@ spec:
         ports:
         - containerPort: 9090
           name: metrics
+          protocol: TCP
+        - containerPort: 6000
+          name: push
           protocol: TCP
         readinessProbe:
           failureThreshold: 2
@@ -286,3 +294,93 @@ spec:
       valueLocation: value
     metricType: Value
     type: metrics-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-transform-elastic-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-transform-elastic
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
+  name: dfe-transform-elastic-mesh
+  namespace: envoy-gateway-system
+spec:
+  ports:
+  - name: mesh
+    port: 6000
+    protocol: TCP
+    targetPort: 6000
+  selector:
+    gateway.envoyproxy.io/owning-gateway-name: dfe-mesh
+    gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
+  type: ClusterIP
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-transform-elastic-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-transform-elastic
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
+  name: dfe-transform-elastic-mesh
+spec:
+  healthCheck:
+    passive:
+      baseEjectionTime: 30s
+      consecutive5XxErrors: 5
+      interval: 3s
+      maxEjectionPercent: 50
+  mergeType: StrategicMerge
+  retry:
+    numRetries: 2
+    perRetry:
+      backOff:
+        baseInterval: 100ms
+        maxInterval: 1s
+    retryOn:
+      triggers:
+      - connect-failure
+      - resource-exhausted
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: GRPCRoute
+    name: dfe-transform-elastic-mesh
+  timeout:
+    http:
+      requestTimeout: 30s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-transform-elastic-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-transform-elastic
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-transform-elastic>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
+  name: dfe-transform-elastic-mesh
+spec:
+  hostnames:
+  - dfe-transform-elastic-mesh.envoy-gateway-system.svc.cluster.local
+  - dfe-transform-elastic-mesh.envoy-gateway-system
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: dfe-mesh
+    namespace: envoy-gateway-system
+  rules:
+  - backendRefs:
+    - group: ''
+      kind: Service
+      name: dfe-transform-elastic
+      port: 6000
