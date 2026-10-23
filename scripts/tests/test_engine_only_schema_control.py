@@ -85,9 +85,6 @@ ALLOWED_TOPIC_CREATE = {
     "scripts/tests/test_engine_only_schema_control.py",
     # Asserts the absence of the topic half, so it quotes the flags it forbids.
     "scripts/tests/test_msk_bootstrap.py",
-    # Provisions a managed cloud broker before DFE exists on it, the same shape as
-    # the MSK ACL job that stays. Whether the path should go at all is dfe-infra#355.
-    "terraform/modules/managed-kafka/",
 }
 
 # Every kafka.mode the chart renders, so a topic cannot come back on one tier.

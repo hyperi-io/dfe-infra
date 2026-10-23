@@ -50,15 +50,15 @@ Net: on Confluent Cloud the DFE opinion reduces to a per-topic config of
 `compression.type=producer`, `cleanup.policy=delete`, `max.message.bytes` at the
 default. RF3, KRaft, unclean-election-off, and segment sizing are all handled by
 the platform (and already match the DFE intent). Note that some topic configs are
-not editable after create -- set them right at creation and use
-`lifecycle { prevent_destroy = true }` on production topics.
+not editable after create. dfe-engine creates every topic at startup, so they
+are set at creation from its settings (see Wiring back to DFE).
 
 ## Terraform / OpenTofu -- Confluent Cloud (API-key PLAIN)
 
-Standard cluster (multi-AZ, RF3) with a service account, a cluster-scoped API
-key, and one topic carrying the DFE defaults. The `confluent` provider needs a
-CLOUD API key (org-level, for management); the topic resource needs a KAFKA API
-key (cluster-level, for the data plane) -- both are shown.
+Standard cluster (multi-AZ, RF3) with a service account and a cluster-scoped
+API key. The `confluent` provider needs a CLOUD API key (org-level, for
+management) and DFE a KAFKA API key (cluster-level, for the data plane) -- both
+are shown. There is no topic resource: dfe-engine creates every topic.
 
 ```hcl
 terraform {
@@ -123,28 +123,11 @@ resource "confluent_api_key" "dfe_app_kafka" {
   }
 }
 
-# --- A topic carrying the DFE defaults (the settable subset) ---
-resource "confluent_kafka_topic" "example" {
-  kafka_cluster { id = confluent_kafka_cluster.dfe.id }
-  topic_name       = "dfe-example"
-  partitions_count = 12 # DFE default (TF default is 6); increase-only
-  rest_endpoint    = confluent_kafka_cluster.dfe.rest_endpoint
-
-  config = {
-    "min.insync.replicas" = "2"          # allowed range is 1 or 2 -- use 2
-    "compression.type"    = "producer"
-    "cleanup.policy"      = "delete"
-    "retention.ms"        = "259200000"  # 72h
-    "max.message.bytes"   = "1048576"    # ~1 MiB, aligned with scalo client budgets
-  }
-
-  credentials {
-    key    = confluent_api_key.dfe_app_kafka.id
-    secret = confluent_api_key.dfe_app_kafka.secret
-  }
-
-  lifecycle { prevent_destroy = true }
-}
+# --- No topic resource ---
+# dfe-engine creates every topic at startup from the dfe-schemas manifest, so
+# its principal needs topic Create, Describe, Read, Write, Alter, Delete,
+# DescribeConfigs and AlterConfigs: the grant set
+# terraform/modules/managed-kafka/confluent-cloud/acls.tf writes.
 
 output "bootstrap_endpoint" {
   value = confluent_kafka_cluster.dfe.bootstrap_endpoint

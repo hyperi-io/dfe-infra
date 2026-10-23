@@ -131,15 +131,6 @@ variable "service_account_name" {
   default     = "dfe-kafka-user"
 }
 
-variable "landing_topics" {
-  description = "The topics created before DFE starts, keyed by topic name. dfe-loader treats a missing *_land topic as fatal, so every path pre-creates them rather than leaving it to the first produce. A null partition count or retention takes the tuning value below."
-  type = map(object({
-    partitions   = optional(number)
-    retention_ms = optional(number)
-  }))
-  default = {}
-}
-
 variable "consumer_group_prefix" {
   description = "The consumer groups the DFE principal may read. The on-prem grant fences groups to this prefix rather than allowing all of them, and this body matches it."
   type        = string
@@ -170,28 +161,8 @@ variable "private_network_interface_ids" {
   }
 }
 
-variable "num_partitions" {
-  description = "Default partitions for a landing topic that does not name its own. Derived by the chart from the same rule (S1.T7): a highly divisible multiple of the broker count, at least the consumer-parallelism ceiling. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
-  type        = number
-
-  validation {
-    condition     = var.num_partitions > 0
-    error_message = "num_partitions must be positive."
-  }
-}
-
-variable "log_retention_ms" {
-  description = "How long a landing topic keeps data by default, in milliseconds. The buffer has to survive the longest consumer outage plus the archiver's lag; 259200000 is three days. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
-  type        = number
-
-  validation {
-    condition     = var.log_retention_ms > 0
-    error_message = "log_retention_ms must be positive."
-  }
-}
-
 variable "message_max_bytes" {
-  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. Applied per topic as max.message.bytes, because Confluent Cloud holds the broker-wide setting. Confluent caps it per cluster type -- 8,388,608 on basic, 20,971,520 on enterprise and freight -- and the check block in main.tf says so at plan. No default: the caller's dial states it, so a value cannot drift from msk's and redpanda-cloud's copies of the same setting silently."
+  description = "The largest record the topics accept, and the same number the scalo producer and consumer carry. dfe-engine applies it per topic as max.message.bytes when it creates the topics, because Confluent Cloud holds the broker-wide setting, and the root hands it over as DFE_KAFKA_MESSAGE_MAX_BYTES. Confluent caps it per cluster type -- 8,388,608 on basic, 20,971,520 on enterprise and freight -- and the check block in main.tf says so at plan. No default: the caller's dial states it, so a value cannot drift from msk's copy of the same setting silently."
   type        = number
 
   validation {
@@ -212,7 +183,7 @@ variable "stream_governance_package" {
 }
 
 variable "rest_ready" {
-  description = "How the deployer waits, on a public cluster, for the REST endpoint to list the topics for the manager key before any ACL or topic is written: successes is the run of HTTP 200s in a row it needs, interval_seconds the wait between attempts, and timeout_seconds the ceiling after which the apply fails naming the host. A run in a row, because a new route reaches each of the shared ingress load balancers separately. Set in tfvars: render_dial.py sends its documented values when the dial names none. Unused on private connectivity, where the deployer cannot reach the endpoint."
+  description = "How the deployer waits, on a public cluster, for the REST endpoint to list the topics for the manager key before any ACL is written: successes is the run of HTTP 200s in a row it needs, interval_seconds the wait between attempts, and timeout_seconds the ceiling after which the apply fails naming the host. A run in a row, because a new route reaches each of the shared ingress load balancers separately. Set in tfvars: render_dial.py sends its documented values when the dial names none. Unused on private connectivity, where the deployer cannot reach the endpoint."
   type = object({
     successes        = number
     timeout_seconds  = number
@@ -274,7 +245,7 @@ variable "kms_key_arn" {
 }
 
 variable "eks_cluster_name" {
-  description = "NOT APPLIED. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs and topics directly, so no workload identity is minted."
+  description = "NOT APPLIED. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs directly, so no workload identity is minted."
   type        = string
   default     = ""
 }

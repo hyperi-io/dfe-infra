@@ -524,7 +524,7 @@ TOPIC_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
     """A managed broker refuses a record above its provider default, so the
-    engine's own topics take the size the landing topics were created at."""
+    engine creates its topics at the size the deployment hands it."""
     for profile in BUS_PROFILES:
         expect(
             f"{profile}: unset leaves the engine's own default",

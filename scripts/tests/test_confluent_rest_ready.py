@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_confluent_rest_ready.py
-#  Purpose:      Prove the confluent-cloud body holds its ACLs and topics behind
-#                a probe that lists the topics with the manager key, and that
+#  Purpose:      Prove the confluent-cloud body holds its ACLs behind a probe
+#                that lists the topics with the manager key, and that
 #                the probe counts only HTTP 200s in a row as ready.
 #  Language:     Python
 #
@@ -11,8 +11,8 @@
 """The REST endpoint probe in front of a public Confluent cluster's writes.
 
 Confluent's shared ingress resets TLS for a cluster it holds no route for, a key
-the endpoint has not synced gets a 401, and an ACL or topic write fails the apply
-on either, so main.tf runs scripts/wait-rest-ready.sh with the manager key before
+the endpoint has not synced gets a 401, and an ACL write fails the apply on
+either, so main.tf runs scripts/wait-rest-ready.sh with the manager key before
 any of them.
 
 contract-confluent-cloud.tftest.hcl proves the probe is planned on public
@@ -49,10 +49,7 @@ import check_tofu_literals  # noqa: E402
 import render_dial  # noqa: E402
 
 # Every resource that writes over the REST endpoint.
-REST_WRITERS = (
-    ("confluent_kafka_acl", "dfe"),
-    ("confluent_kafka_topic", "landing"),
-)
+REST_WRITERS = (("confluent_kafka_acl", "dfe"),)
 
 # A stand-in credential, in the shape Confluent issues one.
 KEY = "TESTKEY0000000AB"

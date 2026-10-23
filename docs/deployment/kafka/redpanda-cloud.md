@@ -64,9 +64,9 @@ acknowledgement when the client sends `acks=all` (scalo default). Set
 
 The `redpanda` provider authenticates with a Redpanda Cloud service-account
 client ID + secret (Organization IAM). Two shapes below: Serverless (fewest
-dials) and Dedicated/BYOC (full topic + cluster config). The topic resource
-targets the cluster's `cluster_api_url`, and the SCRAM user is a `redpanda_user`
-with `mechanism = "scram-sha-512"`.
+dials) and Dedicated/BYOC (full topic + cluster config). The SCRAM user is a
+`redpanda_user` with `mechanism = "scram-sha-512"`, against the cluster's
+`cluster_api_url`. There is no topic resource: dfe-engine creates every topic.
 
 ```hcl
 terraform {
@@ -122,20 +122,11 @@ resource "redpanda_user" "dfe_app" {
   cluster_api_url = redpanda_serverless_cluster.dfe.cluster_api_url
 }
 
-# --- A topic carrying the DFE defaults ---
-resource "redpanda_topic" "example" {
-  name               = "dfe-example"
-  partition_count    = 12 # DFE default
-  replication_factor = 3  # Dedicated/BYOC honour this; Serverless manages RF
-  cluster_api_url    = redpanda_serverless_cluster.dfe.cluster_api_url
-
-  configuration = {
-    "compression.type"  = "producer"
-    "cleanup.policy"    = "delete"
-    "retention.ms"      = "259200000" # 72h
-    "max.message.bytes" = "1048576"   # ~1 MiB, aligned with scalo client budgets
-  }
-}
+# --- No topic resource ---
+# dfe-engine creates every topic at startup from the dfe-schemas manifest, so
+# the user needs topic Create, Describe, Read, Write, Alter, Delete,
+# DescribeConfigs and AlterConfigs: the grant set
+# terraform/modules/managed-kafka/redpanda-cloud/acls.tf writes.
 
 output "cluster_api_url" {
   value = redpanda_serverless_cluster.dfe.cluster_api_url

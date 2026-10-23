@@ -277,10 +277,7 @@ variables {
     provider             = "confluent-cloud"
     connectivity         = "public"
     confluent_tier       = "basic"
-    num_partitions       = 12
-    log_retention_ms     = 259200000
     message_max_bytes    = 8388608
-    landing_topics       = { main_land = {} }
     confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
   }
 
@@ -344,7 +341,7 @@ run "confluent_basic_public_reaches_the_body" {
 
   assert {
     condition     = output.DFE_KAFKA_MESSAGE_MAX_BYTES == "8388608"
-    error_message = "the size the topics were created with is the size the engine is told"
+    error_message = "the dial's message size is the size the engine creates the topics at"
   }
 
   // The body refuses any cloud token but AWS, so a clean plan is proof the
@@ -355,8 +352,8 @@ run "confluent_basic_public_reaches_the_body" {
   }
 }
 
-// Above Basic's ceiling Confluent refuses the topics at apply, after the cluster
-// exists. The root refuses first.
+// Above Basic's ceiling Confluent refuses the topics dfe-engine creates, after
+// the cluster exists. The root refuses first.
 run "confluent_basic_refuses_a_message_size_above_8_mib" {
   command = plan
 
@@ -365,10 +362,7 @@ run "confluent_basic_refuses_a_message_size_above_8_mib" {
       provider             = "confluent-cloud"
       connectivity         = "public"
       confluent_tier       = "basic"
-      num_partitions       = 12
-      log_retention_ms     = 259200000
       message_max_bytes    = 16777216
-      landing_topics       = { main_land = {} }
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
   }
@@ -388,10 +382,29 @@ run "confluent_refuses_a_deployment_with_no_rest_wait" {
       provider          = "confluent-cloud"
       connectivity      = "public"
       confluent_tier    = "basic"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
       message_max_bytes = 8388608
-      landing_topics    = { main_land = {} }
+    }
+  }
+
+  expect_failures = [
+    var.kafka,
+  ]
+}
+
+// dfe-engine creates a SaaS body's topics at the dial's size, so the root
+// refuses a deployment that arrives without one.
+run "a_saas_body_refuses_a_deployment_with_no_message_size" {
+  command = plan
+
+  variables {
+    kafka = {
+      provider      = "redpanda-cloud"
+      redpanda_tier = "serverless"
+    }
+
+    seeds = {
+      "kafka/redpanda-cloud" = { password = "" }
+      "ui/nextauth"          = { secret = "" }
     }
   }
 
@@ -409,10 +422,7 @@ run "confluent_enterprise_keeps_16_mib" {
       provider             = "confluent-cloud"
       connectivity         = "public"
       confluent_tier       = "enterprise"
-      num_partitions       = 12
-      log_retention_ms     = 259200000
       message_max_bytes    = 16777216
-      landing_topics       = { main_land = {} }
       confluent_rest_ready = { successes = 12, timeout_seconds = 900, interval_seconds = 5 }
     }
   }
@@ -435,10 +445,7 @@ run "redpanda_public_reaches_the_body" {
       confluent_tier             = "basic"
       redpanda_tier              = "serverless"
       redpanda_resource_group_id = "11111111-2222-3333-4444-555555555555"
-      num_partitions             = 12
-      log_retention_ms           = 259200000
       message_max_bytes          = 16777216
-      landing_topics             = { main_land = {} }
     }
 
     seeds = {
@@ -549,10 +556,7 @@ run "an_unstated_connectivity_stays_private" {
     kafka = {
       provider          = "redpanda-cloud"
       redpanda_tier     = "serverless"
-      num_partitions    = 12
-      log_retention_ms  = 259200000
       message_max_bytes = 16777216
-      landing_topics    = { main_land = {} }
     }
 
     seeds = {

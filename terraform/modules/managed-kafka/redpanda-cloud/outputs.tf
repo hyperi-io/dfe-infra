@@ -44,6 +44,6 @@ output "cluster_id" {
 }
 
 output "bootstrap_role_arn" {
-  description = "Empty. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs and topics itself, so no identity is minted for one."
+  description = "Empty. There is no in-cluster bootstrap Job on this path -- the vendor provider writes the ACLs itself, so no identity is minted for one."
   value       = ""
 }

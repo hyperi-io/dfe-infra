@@ -289,8 +289,9 @@ MESSAGE_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 
 def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
-    """The engine's topics must match the landing topics, so the output reads the
-    same variable the root passes the selected body, never a second copy."""
+    """The engine creates every topic at the size the brokers were built for, so the
+    output reads the same variable the root passes a body that takes one, never a
+    second copy. redpanda-cloud takes none: the output is the only reader there."""
     main_tf = (AWS_ROOT / "main.tf").read_text(encoding="utf-8")
     outputs = (AWS_ROOT / "outputs.tf").read_text(encoding="utf-8")
     block = re.search(rf'output "{MESSAGE_SIZE_ENV}" \{{\n(.*?)\n\}}', outputs, re.S)
@@ -299,14 +300,15 @@ def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
     for module, source in (
         ("kafka", "var.kafka.msk.message_max_bytes"),
         ("confluent", "var.kafka.message_max_bytes"),
-        ("redpanda", "var.kafka.message_max_bytes"),
     ):
         module_block = re.search(rf'module "{module}" \{{\n(.*?)\n\}}', main_tf, re.S)
         passed = module_block is not None and re.search(
-            rf"message_max_bytes\s*=\s*{re.escape(source)}\n", module_block.group(1)
+            rf"^\s*message_max_bytes\s*=\s*{re.escape(source)}\s*$", module_block.group(1), re.M
         )
         expect(f"module {module} is given {source}", bool(passed), "the root passes something else")
         expect(f"and the output reads {source}", source in body, body)
+    expect("the output reads var.kafka.message_max_bytes for redpanda-cloud too",
+           '"redpanda-cloud"' in body and "var.kafka.message_max_bytes" in body, body)
     expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
 
 

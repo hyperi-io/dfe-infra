@@ -129,10 +129,7 @@ def test_confluent_cloud_is_public_basic_in_the_standing_environment(tmp_path: P
 
     assert variables["kafka"] == {
         "provider": "confluent-cloud",
-        "num_partitions": 12,
-        "log_retention_ms": 259200000,
         "message_max_bytes": 8388608,
-        "landing_topics": {"main_land": {}},
         "connectivity": "public",
         "confluent_tier": "basic",
         "confluent_environment_id": "env-example1",
@@ -147,10 +144,7 @@ def test_redpanda_cloud_is_public_serverless_in_the_standing_group(tmp_path: Pat
 
     assert variables["kafka"] == {
         "provider": "redpanda-cloud",
-        "num_partitions": 12,
-        "log_retention_ms": 259200000,
         "message_max_bytes": 16777216,
-        "landing_topics": {"main_land": {}},
         "connectivity": "public",
         "redpanda_tier": "serverless",
         "redpanda_resource_group_id": "00000000-0000-4000-8000-000000000000",
@@ -175,12 +169,11 @@ def test_clickhouse_cloud_is_the_standing_service_beside_the_dials_broker(tmp_pa
 
 
 @pytest.mark.parametrize("backend", ["confluent-cloud", "redpanda-cloud"])
-def test_a_saas_overlay_tunes_and_lands_as_the_example_dial_documents(backend: str) -> None:
+def test_a_saas_overlay_carries_the_message_size_alone(backend: str) -> None:
+    """dfe-engine creates every topic, so a SaaS overlay names no topic and no topic tuning."""
     kafka = cycle_backend.load_overlay(backend)["kafka"]
-    example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
-    for key in ("num_partitions", "log_retention_ms"):
-        assert kafka["msk"][key] == at(example, ("kafka", "msk", key)), key
-    assert kafka["landing_topics"] == at(example, ("kafka", "landing_topics"))
+    assert set(kafka["msk"]) == {"message_max_bytes"}
+    assert "landing_topics" not in kafka
 
 
 def test_redpanda_cloud_carries_the_message_size_the_example_dial_documents() -> None:

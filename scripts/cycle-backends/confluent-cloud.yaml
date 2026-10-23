@@ -9,17 +9,13 @@
 ## Applied over the e2e-runner dial by scripts/cycle_backend.py when a run names
 ## backend confluent-cloud. Each run creates and destroys a Basic cluster with a
 ## public endpoint, inside a standing environment named by an e2e-runner secret.
-## The tuning sits under kafka.msk because render_dial.py reads it there for every
-## managed provider. Basic caps a topic at 8388608 bytes, and render_dial.py and
-## the aws root both refuse a larger message_max_bytes on that tier.
+## The message size sits under kafka.msk because render_dial.py reads it there for
+## every managed provider. Basic caps a topic at 8388608 bytes, and render_dial.py
+## and the aws root both refuse a larger message_max_bytes on that tier.
 kafka:
   provider: confluent-cloud
   confluent_tier: basic
   connectivity: public
   confluent_environment_id: env:DFE_CYCLE_CONFLUENT_ENVIRONMENT_ID
   msk:
-    num_partitions: 12
-    log_retention_ms: 259200000
     message_max_bytes: 8388608
-  landing_topics:
-    main_land: {}

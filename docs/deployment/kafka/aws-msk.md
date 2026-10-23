@@ -265,7 +265,7 @@ For MSK Provisioned with SCRAM, set `sasl_mechanism = "scram-sha512"`,
 `sasl_username`, and `sasl_password` on the provider instead.
 
 See [aws-msk-operations.md](aws-msk-operations.md) for the bootstrap Job
-that writes ACLs and landing topics (and what you set to drive it by hand),
+that writes the ACLs (and what you set to drive it by hand),
 broker-count autoscaling, telemetry routing, and the broker security
 group's ports.
 
