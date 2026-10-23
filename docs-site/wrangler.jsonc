@@ -8,8 +8,8 @@
 //
 // No `main`: with no Worker script, every request is a static asset request.
 // The account comes from CLOUDFLARE_ACCOUNT_ID, never from this file.
-// The Worker, its custom domain and DNS are OpenTofu's in hyperi-infra, so no
-// routes here: a deploy that lists routes replaces the domain set tofu owns.
+// The Worker, its custom domain and DNS are created by OpenTofu outside this
+// repo, so no routes here: a deploy that lists routes replaces that domain set.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "dfe-docs",
