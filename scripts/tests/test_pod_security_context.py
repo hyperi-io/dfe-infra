@@ -40,7 +40,6 @@ LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lin
 # fsGroup and leaves runAsUser unset -- a shape the helper cannot express.
 FSGROUP_ONLY = {
     "helm/charts/clickhouse-cluster/templates/clickhouse-single.yaml",  # clickhouse uid 101
-    "helm/charts/ferretdb/templates/documentdb.yaml",  # postgres uid 999, gosu drop
     "helm/charts/forgejo/templates/deployment.yaml",  # forgejo uid 1000, chown init
 }
 

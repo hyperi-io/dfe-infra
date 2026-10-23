@@ -1,13 +1,13 @@
-{{- $fenced := include "network-policies.ferretdbFenced" . }}
+{{- $fenced := include "network-policies.documentdbFenced" . }}
 {{- range $ns := .Values.dataNamespaces }}
 {{- $left := list }}
 {{- range $key, $values := $.Values.operatorIngressScoped }}
 {{- $left = append $left (dict "key" $key "values" $values) }}
 {{- end }}
-{{- with $.Values.ferretdbAccess }}
+{{- with $.Values.documentdbAccess }}
 {{- if and $fenced (eq $ns .namespace) }}
-{{- /* FerretDB's two pods take their whole ingress from ferretdb-ingress.yaml. */}}
-{{- $left = append $left (dict "key" .nameLabel "values" (list .proxy .backend)) }}
+{{- /* The DocumentDB instances take their whole ingress from documentdb-ingress.yaml. */}}
+{{- $left = append $left (dict "key" .clusterLabel "values" (list .cluster)) }}
 {{- end }}
 {{- end }}
 ---

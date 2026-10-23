@@ -6,7 +6,7 @@ Defaults: runAsNonRoot, runAsUser/runAsGroup/fsGroup 1000, seccomp RuntimeDefaul
 Override per chart via .Values.podSecurityContext (e.g. otel-collector runs 10001,
 kafbat runs 100). IMPORTANT: an image whose USER is a NAME (not a numeric uid)
 is rejected by the kubelet under runAsNonRoot unless runAsUser is set numerically
-here — so ferretdb (uid 1000) and kafbat (uid 100) MUST carry an explicit runAsUser.
+here -- so kafbat (uid 100) MUST carry an explicit runAsUser.
 
 Set .Values.podSecurityContext.enabled=false for a privileged workload that
 manages its own securityContext (culvert). Every id is read with hasKey rather

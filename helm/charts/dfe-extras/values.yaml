@@ -228,8 +228,8 @@ extras:
             dataKey: ca.crt
       mongodb:
         # $(MONGO_PASSWORD) is kubelet-expanded, so MONGO_URI stays in the thin chart's env.
-        uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
-        passwordSecretName: dfe-ferretdb-password
+        uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@documentdb-service-dfe-documentdb.cnpg.svc.cluster.local:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256"
+        passwordSecretName: dfe-documentdb-credentials
         passwordSecretKey: password
       dfeAuth:
         enabled: true

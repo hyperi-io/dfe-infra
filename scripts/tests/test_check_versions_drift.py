@@ -610,7 +610,7 @@ def test_pending_mirrors_is_exactly_the_documented_set() -> None:
     """Widening this list is the cheapest way to make a real drift failure go
     away, so it has to be a reviewed edit rather than a quiet one."""
     expect("PENDING_MIRRORS holds the eighteen rc.14 patterns, the 2.2.1 eks-addons, the lambda-runtimes, "
-           "the three 2.2.1-rc.14 addon digests, and no more",
+           "the three 2.2.1-rc.14 addon digests, the fourteen DocumentDB pins, and no more",
            set(drift.PENDING_MIRRORS) == {
                "operators.karpenter",
                "operators.aws-load-balancer-controller",
@@ -635,6 +635,20 @@ def test_pending_mirrors_is_exactly_the_documented_set() -> None:
                "services-digests.karpenter",
                "services.aws-load-balancer-controller-image",
                "services-digests.aws-load-balancer-controller-image",
+               "operators.documentdb-operator",
+               "services-digests.documentdb-operator",
+               "services.documentdb-operator-image",
+               "services-digests.documentdb-operator-image",
+               "services.documentdb-sidecar",
+               "services-digests.documentdb-sidecar",
+               "services.cloudnative-pg",
+               "services-digests.cloudnative-pg",
+               "services.documentdb",
+               "services-digests.documentdb",
+               "services.documentdb-gateway",
+               "services-digests.documentdb-gateway",
+               "services.documentdb-postgres",
+               "services-digests.documentdb-postgres",
            },
            f"{sorted(drift.PENDING_MIRRORS)}")
 

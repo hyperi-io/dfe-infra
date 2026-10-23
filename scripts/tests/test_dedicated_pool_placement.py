@@ -180,7 +180,7 @@ def test_only_the_tainted_pools_reach_the_data_charts(separate: Path) -> None:
 
 
 def test_no_other_data_chart_is_handed_the_pools(separate: Path) -> None:
-    for app in ("ferretdb", "otel-collector", "kafbat", "links"):
+    for app in ("documentdb", "otel-collector", "kafbat", "links"):
         rendered, _ = data_application(app, "scale", "aws", _pools(separate))
         inline = yaml.safe_load(rendered["spec"]["sources"][0]["helm"].get("values") or "") or {}
         assert "nodeScheduling" not in inline, app

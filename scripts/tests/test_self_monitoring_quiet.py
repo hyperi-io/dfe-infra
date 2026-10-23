@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_self_monitoring_quiet.py
-#  Purpose:      Prove the ClickHouse operator and the FerretDB pair ship
-#                without the debug and per-probe chatter that filled otel_logs
+#  Purpose:      Prove the ClickHouse operator and the DocumentDB store ship
+#                without the debug and per-run chatter that filled otel_logs
 #                on an idle stack.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Assertions for the operator's log level and the FerretDB chart's log settings.
+"""Assertions for the operator's log level and the DocumentDB store's cron settings.
 
-On an idle stack the ClickHouse operator logged at DEBUG (dfe-infra#462), FerretDB
-logged every readiness probe at INFO, and pg_cron logged and recorded a DocumentDB
-job every 2 seconds (dfe-infra#463). Each is a value this repo passes; this file
-reads those values back out of the appsets and the ferretdb render.
+On an idle stack the ClickHouse operator logged at DEBUG (dfe-infra#462), and pg_cron
+logged and recorded a DocumentDB job every 2 seconds (dfe-infra#463). Each is a value
+this repo passes, and this file reads those values back out of the appsets and the
+documentdb render.
 
     python3 scripts/tests/test_self_monitoring_quiet.py
 
@@ -51,21 +51,15 @@ def operator_elements() -> list[tuple[str, dict, str]]:
     return found
 
 
-def render_ferretdb() -> list[dict]:
-    cmd = ["helm", "template", "ferretdb", str(chart_dir("ferretdb")), "--set", "appNamespace=x"]
+def documentdb_cr() -> dict:
+    cmd = ["helm", "template", "documentdb", str(chart_dir("documentdb")), "--set", "appNamespace=x"]
     out = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
     )
     if out.returncode != 0:
-        raise SystemExit(f"helm template failed for ferretdb:\n{out.stderr}")
-    return [d for d in yaml.safe_load_all(out.stdout) if d]
-
-
-def container(docs: list[dict], kind: str, name_suffix: str) -> dict:
-    for doc in docs:
-        if doc.get("kind") == kind and doc["metadata"]["name"].endswith(name_suffix):
-            return doc["spec"]["template"]["spec"]["containers"][0]
-    raise SystemExit(f"no {kind} named *{name_suffix} in the ferretdb render")
+        raise SystemExit(f"helm template failed for documentdb:\n{out.stderr}")
+    (cr,) = [d for d in yaml.safe_load_all(out.stdout) if d and d.get("kind") == "DocumentDB"]
+    return cr
 
 
 def test_the_operator_logs_at_info_in_every_appset_that_installs_it() -> None:
@@ -86,23 +80,15 @@ def test_the_operator_logs_at_info_in_every_appset_that_installs_it() -> None:
         )
 
 
-def test_ferretdb_logs_at_warn() -> None:
-    proxy = container(render_ferretdb(), "Deployment", "ferretdb")
-    env = {e["name"]: e.get("value") for e in proxy["env"]}
-    expect("FerretDB runs at WARN", env.get("FERRETDB_LOG_LEVEL") == "WARN", f"got {env!r}")
-
-
 def test_documentdb_neither_logs_nor_records_each_cron_run() -> None:
-    args = container(render_ferretdb(), "StatefulSet", "documentdb").get("args") or []
-    expect("documentdb keeps the image's own command first", args[:1] == ["postgres"], f"got {args}")
-    for setting in ("cron.log_run=off", "cron.log_statement=off"):
-        expect(f"documentdb starts with {setting}", setting in args, f"got {args}")
+    parameters = (documentdb_cr()["spec"].get("postgres") or {}).get("parameters") or {}
+    for key in ("cron.log_run", "cron.log_statement"):
+        expect(f"documentdb sets {key} off", parameters.get(key) == "off", f"got {parameters}")
 
 
 def main() -> int:
     with standalone():
         test_the_operator_logs_at_info_in_every_appset_that_installs_it()
-        test_ferretdb_logs_at_warn()
         test_documentdb_neither_logs_nor_records_each_cron_run()
         return summary()
 

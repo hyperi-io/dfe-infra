@@ -85,7 +85,7 @@ The same like-for-like rule decides the rest of an AWS deployment.
 | Encryption keys | KMS, one key per deployment | Kubernetes Secrets are envelope-encrypted with it |
 | Audit and logs | CloudTrail, and CloudWatch where AWS forces it | |
 | TLS certificates | cert-manager | deliberate on every cloud, not ACM |
-| HyperDX metadata store | FerretDB on PostgreSQL in the cluster | deliberate, not RDS |
+| HyperDX metadata store | DocumentDB on CloudNativePG in the cluster | deliberate, not RDS |
 | ClickHouse without ClickHouse Cloud | in the cluster | deliberate |
 | Images | GHCR | deliberate, not ECR |
 

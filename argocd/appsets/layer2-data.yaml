@@ -1,5 +1,5 @@
-# Wave 4: ClickHouse cluster, Strimzi Kafka, FerretDB (with its own DocumentDB
-# PostgreSQL backend). Wave 6: OTel Collector, Kafbat, links.
+# Wave 4: ClickHouse cluster, Strimzi Kafka, the DocumentDB store HyperDX keeps
+# its state in. Wave 6: OTel Collector, Kafbat, links.
 # HyperDX is an app, not substrate: layer2-apps deploys it at wave 5 from the
 # deploy repo's values/hyperdx-<instance>-values.yaml, like every other app.
 apiVersion: argoproj.io/v1alpha1
@@ -26,7 +26,9 @@ spec:
                   appProject: data
                 # strimzi-kafka is Kafka substrate: deployed only in the scale
                 # profile via appsets/layer-scale.yaml (cluster-label gated).
-                - app: ferretdb
+                # A DocumentDB CR, which the documentdb-operator addon
+                # (layer1-addons, wave 3) turns into a CloudNativePG cluster.
+                - app: documentdb
                   namespace: cnpg
                   wave: "4"
                   appProject: data
@@ -117,7 +119,7 @@ spec:
                 value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               # Where the DFE apps run -- the SAME annotation layer2-apps places them
               # with, so the data services and apps cannot disagree about the
-              # namespace. kafka and ferretdb read it (each projects a credential
+              # namespace. kafka and documentdb read it (each projects a credential
               # into the app namespace); Helm ignores an unused value, so passing
               # it to every data chart is harmless.
               - name: appNamespace

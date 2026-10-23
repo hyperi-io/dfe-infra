@@ -1,0 +1,34 @@
+{{- /*
+CloudNativePG 1.29.2+ watches EndpointSlices in its own namespace, a rule the
+bundled cloudnative-pg chart 0.28.3 lacks, so without this Role the operator
+never syncs its caches and exits. Bound to the namespace's service accounts
+because the operator's own is named after the Argo release, per cluster.
+*/}}
+{{- $name := printf "%s-cnpg-endpointslices" (include "dfe-common.fullname" .) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:serviceaccounts:{{ .Values.operatorNamespace }}

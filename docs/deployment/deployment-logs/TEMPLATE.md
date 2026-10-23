@@ -23,8 +23,8 @@
 | Wave | Components | Status | Notes |
 |------|-----------|--------|-------|
 | 2 | cert-manager, ESO, Envoy Gateway | | |
-| 3 | KEDA, operators | | |
-| 4 | Kafka, ClickHouse, FerretDB, OTel | | |
+| 3 | KEDA, operators (DocumentDB and its CloudNativePG included) | | |
+| 4 | Kafka, ClickHouse, DocumentDB, OTel | | |
 | 5 | DFE services, HyperDX | | |
 
 ## Smoke Tests

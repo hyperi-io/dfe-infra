@@ -139,6 +139,29 @@ def test_the_image_list_includes_an_image_versioned_under_content() -> None:
     expect("an unpublished app stays out", "unshipped" not in refs, f"{refs}")
 
 
+def test_the_docker_render_hands_dfe_docker_its_documentdb_local_pin() -> None:
+    """dfe-docker reads HYPERDX_DOCUMENTDB_VERSION, a name no rule derives from the key."""
+    digest = "sha256:" + "d" * 64
+    pinned = {
+        "services": {"documentdb-local": "pg18-1.0.0"},
+        "services-digests": {"documentdb-local": digest},
+    }
+    lines = stack.render_docker(pinned, "registry.example/org", "test").splitlines()
+    expect(
+        "a pinned stack renders the tag@digest under dfe-docker's own variable",
+        f"HYPERDX_DOCUMENTDB_VERSION=pg18-1.0.0@{digest}  # ghcr.io/documentdb/documentdb/documentdb-local"
+        in lines,
+        f"{lines}",
+    )
+    unpinned = stack.render_docker({}, "registry.example/org", "test")
+    expect(
+        "a stack without the key renders no value for it",
+        "# HYPERDX_DOCUMENTDB_VERSION -- versions.yaml services.documentdb-local missing; NOT rendered"
+        in unpinned.splitlines(),
+        unpinned,
+    )
+
+
 def test_the_toolbox_base_image_takes_the_family_tag() -> None:
     """The base image publishes as dfe-toolbox-base under toolbox.dfe-toolbox, a
     family pin with a different name, so neither apps: nor content: holds it."""

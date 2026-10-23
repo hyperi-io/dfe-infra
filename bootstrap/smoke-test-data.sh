@@ -4,8 +4,8 @@
 #  Purpose:      Verify Layer 2 data platform components are PRESENT/Ready.
 #                NOTE: these are LIVENESS checks ("pod Running / status Ready") --
 #                they do NOT prove the dependency chains work. For real chain/seam
-#                verification (ferretdb->PG, hyperdx->ferretdb, receiver->...->
-#                ClickHouse) run smoke-test-integration.sh.
+#                verification (hyperdx->documentdb, receiver->...->ClickHouse)
+#                run smoke-test-integration.sh.
 #  Language:     Bash
 #
 #  License:      BUSL-1.1
@@ -31,8 +31,7 @@ check() {
 
 skip() { echo "  [SKIP] ${1}"; }
 
-# FerretDB and its DocumentDB backend deploy into the cnpg namespace; there is
-# no ferretdb namespace.
+# The DocumentDB store HyperDX keeps its state in deploys into the cnpg namespace.
 NS_CNPG="${DFE_CNPG_NS:-cnpg}"
 NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
@@ -66,7 +65,7 @@ echo "  profile: ${PROFILE:-unknown}"
 echo ""
 
 echo "--- Namespaces ---"
-check "cnpg namespace (hosts FerretDB)" "kubectl get ns ${NS_CNPG}"
+check "cnpg namespace (hosts DocumentDB)" "kubectl get ns ${NS_CNPG}"
 check "clickhouse namespace" "kubectl get ns ${NS_CH}"
 check "otel namespace" "kubectl get ns ${NS_OTEL}"
 if profile_has_kafka; then
@@ -76,9 +75,13 @@ else
 fi
 
 echo ""
-echo "--- PostgreSQL (FerretDB's DocumentDB backend) ---"
-check "documentdb statefulset ready" \
-  "kubectl -n ${NS_CNPG} get sts dfe-ferretdb-documentdb -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
+echo "--- DocumentDB ---"
+# The operator copies CloudNativePG's phase into the CR, so this reads every instance at once.
+check "DocumentDB cluster healthy" \
+  "kubectl -n ${NS_CNPG} get dbs.documentdb.io dfe-documentdb -o jsonpath='{.status.status}' | grep -qx 'Cluster in healthy state'"
+# The Service follows the primary, whose gateway is the one hyperdx reaches.
+check "DocumentDB gateway Service has a ready endpoint" \
+  "kubectl -n ${NS_CNPG} get endpointslices -l kubernetes.io/service-name=documentdb-service-dfe-documentdb -o jsonpath='{.items[*].endpoints[?(@.conditions.ready==true)].addresses[0]}' | grep -q ."
 
 echo ""
 echo "--- Kafka ---"
@@ -113,11 +116,6 @@ else
     check "ClickHouse pods running" \
       "running_pods ${NS_CH} 'app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)'"
 fi
-
-echo ""
-echo "--- FerretDB ---"
-check "FerretDB deployment ready" \
-  "kubectl -n ${NS_CNPG} get deploy dfe-ferretdb -o jsonpath='{.status.readyReplicas}' | grep -qE '^[1-9]'"
 
 echo ""
 echo "--- OTel Collector ---"

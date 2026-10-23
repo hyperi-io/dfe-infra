@@ -1,0 +1,183 @@
+{{- $auth := .Values.documentdb.auth }}
+{{- $tls := .Values.documentdb.tls }}
+# The gateway login, generated IN-CLUSTER by ESO's Password generator. The gateway
+# on the primary creates the user from it at its first start, and the copy in the
+# app namespace is what hyperdx logs in with. Alphanumeric only: the gateway
+# entrypoint splices the password into a JSON string inside SQL, and hyperdx's
+# MONGO_URI takes it through kubelet env expansion.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: {{ $auth.secretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  symbolCharacters: ""
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $auth.secretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshPolicy: CreatedOnce
+  target:
+    name: {{ $auth.secretName }}
+    creationPolicy: Owner
+    # CreatedOnce still re-runs the generator on any reconcile that finds no recorded
+    # sync or an altered Secret. Immutable keeps the first password, the one the
+    # gateway created the user with.
+    immutable: true
+    template:
+      engineVersion: v2
+      # The keys the operator's sidecar injector reads for the gateway's USERNAME and PASSWORD.
+      data:
+        username: {{ $auth.username | quote }}
+        password: "{{ `{{ .password }}` }}"
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Password
+          name: {{ $auth.secretName }}
+{{- if .Values.appNamespace }}
+{{- /* The namespace the copies below land in, and the only one the store serves. */}}
+{{- $consumers := list .Values.appNamespace }}
+---
+# The login and the gateway CA, copied into the APP namespace for hyperdx. Same
+# shape as the clickhouse-cluster app-namespace copy: an in-cluster generated value
+# cannot be re-derived in a second namespace, so ESO's kubernetes provider copies
+# the one that exists, through a ServiceAccount whose Role names the only Secrets
+# it may read.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ $auth.secretName | quote }}
+      # The CA-only copy, never the keypair Secret beside it (tls.yaml).
+      - {{ $tls.caOnlySecretName | quote }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $auth.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $auth.secretName }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ $auth.secretName }}-reader
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ $auth.secretName }}-source-ns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  # A ClusterSecretStore serves every namespace unless told otherwise, so without
+  # this any namespace's ExternalSecret could read what the Role above names.
+  conditions:
+    - namespaces:
+        {{- range $consumers }}
+        - {{ . | quote }}
+        {{- end }}
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        # Every namespace carries kube-root-ca.crt, so the API server's CA
+        # needs no separate distribution step.
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ .Release.Namespace }}
+      auth:
+        serviceAccount:
+          name: {{ $auth.secretName }}-reader
+          namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ $auth.secretName }}-appns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ $auth.secretName }}
+  refreshTime: 1h
+  namespaceSelectors:
+    {{- range $consumers }}
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ $auth.secretName }}-source-ns
+      kind: ClusterSecretStore
+    target:
+      # The name the hyperdx values' mongodb.passwordSecretName names.
+      name: {{ $auth.secretName }}
+      creationPolicy: Owner
+    data:
+      - secretKey: password
+        remoteRef:
+          key: {{ $auth.secretName }}
+          property: password
+---
+# The CA that signed the gateway certificate, so hyperdx can verify it.
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ $tls.appCaSecretName }}-appns
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ $tls.appCaSecretName }}
+  refreshTime: 1h
+  namespaceSelectors:
+    {{- range $consumers }}
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ $auth.secretName }}-source-ns
+      kind: ClusterSecretStore
+    target:
+      # The name the hyperdx values' mongodb.caSecretName names.
+      name: {{ $tls.appCaSecretName }}
+      creationPolicy: Owner
+    data:
+      - secretKey: ca.crt
+        remoteRef:
+          key: {{ $tls.caOnlySecretName }}
+          property: ca.crt
+{{- end }}

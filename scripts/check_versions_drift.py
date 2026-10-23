@@ -238,6 +238,12 @@ _APPSET_PINS = [
         "argocd/appsets/layer1-addons.yaml",
         "karpenter",
     ),
+    (
+        "documentdb-operator appset",
+        "operators.documentdb-operator",
+        "argocd/appsets/layer1-addons.yaml",
+        "documentdb-operator",
+    ),
 ]
 
 CHECKS: list[Check] = [
@@ -272,6 +278,74 @@ CHECKS += [
         Path("argocd/appsets/layer1-addons.yaml"),
         appset_element_pattern("aws-load-balancer-controller", "imageDigest"),
     ),
+    Check(
+        "documentdb-operator chart digest (layer1-addons)",
+        "services-digests.documentdb-operator",
+        Path("argocd/appsets/layer1-addons.yaml"),
+        appset_element_pattern("documentdb-operator", "chartDigest"),
+    ),
+]
+
+
+def tag_at_digest_pattern(anchor: str, half: str) -> str:
+    """One half of a `tag: "<tag>@sha256:..."` value under `anchor` -- capture group 1."""
+    head = anchor + r'[\s\S]{0,300}?tag:\s*"'
+    return head + (r'([^"@]+)@' if half == "tag" else r'[^"@]+@([^"]+)"')
+
+
+# The DocumentDB operator chart composes repository:tag, so layer1-addons.yaml
+# carries each image's digest inside its tag override.
+CHECKS += [
+    Check(
+        f"documentdb-operator {label} image {half} (layer1-addons)",
+        f"{'services' if half == 'tag' else 'services-digests'}.{key}",
+        Path("argocd/appsets/layer1-addons.yaml"),
+        tag_at_digest_pattern(anchor, half),
+    )
+    for label, key, anchor in (
+        ("operator", "documentdb-operator-image", r"documentdbk8soperator:\n"),
+        ("sidecar injector", "documentdb-sidecar", r"sidecarinjector:\n"),
+        ("CloudNativePG", "cloudnative-pg", r"\n\s*cloudnative-pg:\n"),
+    )
+    for half in ("tag", "digest")
+]
+
+
+def full_ref_pattern(field: str, repository: str, half: str) -> str:
+    """One half of a `<field>: "<repository>:<tag>@sha256:..."` value -- capture group 1."""
+    head = re.escape(field) + r':\s*"' + re.escape(repository) + ":"
+    return head + (r'([^"@]+)@' if half == "tag" else r'[^"@]+@([^"]+)"')
+
+
+# The DocumentDB cluster's own images, full references in its chart's values.
+_DOCUMENTDB_VALUES = Path("helm/charts/documentdb/values.yaml")
+CHECKS += [
+    Check(
+        "documentdb chart appVersion",
+        "services.documentdb",
+        Path("helm/charts/documentdb/Chart.yaml"),
+        r'appVersion:\s*"([^"]+)"',
+    ),
+    Check(
+        "documentdb version (documentdb values)",
+        "services.documentdb",
+        _DOCUMENTDB_VALUES,
+        r'\ndocumentdb:\n(?:\s*#[^\n]*\n)*\s*version:\s*"([^"]+)"',
+    ),
+]
+CHECKS += [
+    Check(
+        f"documentdb {field} image {half} (documentdb values)",
+        f"{'services' if half == 'tag' else 'services-digests'}.{key}",
+        _DOCUMENTDB_VALUES,
+        full_ref_pattern(field, repository, half),
+    )
+    for field, repository, key in (
+        ("documentDB", "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb", "documentdb"),
+        ("gateway", "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway", "documentdb-gateway"),
+        ("postgres", "ghcr.io/cloudnative-pg/postgresql", "documentdb-postgres"),
+    )
+    for half in ("tag", "digest")
 ]
 
 # Pins with a one-off shape, each needing its own anchor.
@@ -394,32 +468,6 @@ CHECKS += [
         "services.nginx-unprivileged",
         Path("helm/charts/links/Chart.yaml"),
         r'appVersion:\s*"([^"]+)"',
-    ),
-    # ferretdb (class D shape): appVersion cascades the image tag (image.tag is
-    # empty), and the chart's documentdb backend pins the documentdb-pg tag.
-    Check(
-        "ferretdb chart appVersion",
-        "services.ferretdb",
-        Path("helm/charts/ferretdb/Chart.yaml"),
-        r'appVersion:\s*"([^"]+)"',
-    ),
-    Check(
-        "ferretdb image digest",
-        "services-digests.ferretdb",
-        Path("helm/charts/ferretdb/values.yaml"),
-        r'ferretdb/ferretdb\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
-    ),
-    Check(
-        "documentdb-pg image tag (ferretdb values)",
-        "services.documentdb-pg",
-        Path("helm/charts/ferretdb/values.yaml"),
-        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:\s*"([^"]+)"',
-    ),
-    Check(
-        "documentdb-pg image digest (ferretdb values)",
-        "services-digests.documentdb-pg",
-        Path("helm/charts/ferretdb/values.yaml"),
-        r'postgres-documentdb\n(?:\s*#[^\n]*\n)*\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # ClickHouse chart values: server version and digest, keeper tag and digest
     Check(
@@ -987,7 +1035,9 @@ UNCONSUMED: dict[str, str] = {
     "bootstrap.argocd": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.local-path-provisioner": "bootstrap.sh reads it at runtime; no hardcoded copy",
     "bootstrap.metallb": "bootstrap.sh reads it at runtime; no hardcoded copy",
-    "services.postgresql": "the PostgreSQL major of FerretDB's DocumentDB backend; render_dial.py reads it at runtime for the AWS toolbox's psql, with no hardcoded copy",
+    "services.postgresql": "the PostgreSQL major the AWS toolbox's psql installs; render_dial.py reads it at runtime, with no hardcoded copy",
+    "services.ferretdb": "docker path only: dfe-stack render --target docker writes it as HYPERDX_FERRETDB_VERSION; k8s runs the DocumentDB operator",
+    "services.documentdb-pg": "docker path only: dfe-stack render --target docker writes it as HYPERDX_POSTGRES_VERSION; k8s runs the DocumentDB operator",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
@@ -1073,6 +1123,25 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.karpenter": "pinned starting the 2.2.1-rc.14 block; a stack that predates it deploys the chart by version",
     "services.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
     "services-digests.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
+    **{
+        key: "pinned starting the stack cut after 2.2.1-rc.17; a stack that predates it runs FerretDB on k8s"
+        for key in (
+            "operators.documentdb-operator",
+            "services-digests.documentdb-operator",
+            "services.documentdb-operator-image",
+            "services-digests.documentdb-operator-image",
+            "services.documentdb-sidecar",
+            "services-digests.documentdb-sidecar",
+            "services.cloudnative-pg",
+            "services-digests.cloudnative-pg",
+            "services.documentdb",
+            "services-digests.documentdb",
+            "services.documentdb-gateway",
+            "services-digests.documentdb-gateway",
+            "services.documentdb-postgres",
+            "services-digests.documentdb-postgres",
+        )
+    },
 }
 
 

@@ -29,9 +29,9 @@
 #                Confluent Cloud, Redpanda Cloud) from a short-lived client pod in
 #                the app namespace. DFE_CLICKHOUSE_MODE and DFE_KAFKA_MODE say which,
 #                else the dfe-cluster secret's clickhouse_mode and kafka_mode.
-#                Ancillary sub-chains (ferretdb->PG, hyperdx->ferretdb) are
-#                diagnostics that localise a CORE failure; add more per ancillary
-#                service over time.
+#                Ancillary sub-chains (hyperdx->documentdb, hyperdx's collections
+#                in PostgreSQL) are diagnostics that localise a CORE failure; add
+#                more per ancillary service over time.
 #  Language:     Bash
 #
 #  License:      BUSL-1.1
@@ -57,7 +57,7 @@ set -uo pipefail
 # the checks below just find nothing, and the kafka seam SKIPS itself as "no broker"
 # (live-proven 2026-07-16: NS_KAFKA defaulted to `kafka` while the broker was in
 # `strimzi`, so CORE 3 reported a reassuring SKIP and the seam went untested).
-NS_FERRET="${DFE_FERRET_NS:-cnpg}"
+NS_CNPG="${DFE_CNPG_NS:-cnpg}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
 # HyperDX ships as an app, so it lands in the app namespace; the bare `hyperdx`
@@ -826,8 +826,8 @@ echo "=== Ancillary diagnostics (localise a CORE failure; expand per service) ==
 check "ClickHouse answers a query (dfe DB present)" \
   "chq 'SHOW DATABASES' | grep -q dfe"
 
-# hyperdx -> ferretdb (app state). If CORE 1 fails, this tells you whether the
-# break is hyperdx<->ferretdb vs gateway<->hyperdx vs hyperdx<->clickhouse.
+# hyperdx -> documentdb (app state). If CORE 1 fails, this tells you whether the
+# break is hyperdx<->documentdb vs gateway<->hyperdx vs hyperdx<->clickhouse.
 #
 # Distinguish "HyperDX is broken" from "HyperDX is not in this profile" -- the two
 # need very different actions, and slim deliberately omits it while telemetry.mode
@@ -838,31 +838,33 @@ hyperdx_readyz() {
 }
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
   # /readyz on the api port (8000) is what the pod's own readiness probe uses, and
-  # it only answers once the ferretdb-backed API is up. The image ships neither wget
+  # it only answers once the documentdb-backed API is up. The image ships neither wget
   # nor curl, so node's fetch asks it and the exit code carries the verdict.
-  check "hyperdx API reaches its ferretdb backend" hyperdx_readyz
+  check "hyperdx API reaches its documentdb backend" hyperdx_readyz
 else
-  skip "hyperdx->ferretdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
+  skip "hyperdx->documentdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
 fi
 
-# ferretdb -> PostgreSQL (DocumentDB backend) -- the layer under hyperdx state.
-#
-# This check CANNOT run as written, and said FAIL for it: the ferretdb image is
-# distroless -- it has no mongosh and no shell at all ("exec: sh: executable file
-# not found in $PATH"), so the exec dies before mongosh is even reached. FAIL claimed
-# the ferretdb->PG chain was broken while ferretdb sat 1/1 Ready and Healthy; the
-# same shape of lie as the pgrep probes (assume tooling the image does not ship).
-#
-# SKIP, not FAIL, and LOUDLY -- an unrunnable check must never read as a broken
-# chain, and must never read as a pass either (the 2026-07-16 kafka seam went
-# untested behind a reassuring SKIP, which is why this prints WHY).
-# To make it real, run mongosh from a client pod that has it, or assert on the PG
-# side (dfe-ferretdb-documentdb-0 ships psql) that ferretdb's DocumentDB schema is being written.
-if kubectl -n "$NS_FERRET" exec deploy/dfe-ferretdb -- mongosh --version >/dev/null 2>&1; then
-  check "ferretdb write+read round-trips to PG" \
-    "kubectl -n $NS_FERRET exec deploy/dfe-ferretdb -- mongosh mongodb://localhost:27017/smoke --quiet --eval 'db.s.insertOne({k:1}); printjson(db.s.findOne({k:1}))' | grep -q 'k'"
+# hyperdx's state in PostgreSQL -- the layer under the gateway. The postgres
+# container of the primary ships psql, and the extension records every collection
+# a client created, so a hyperdx collection there proves its writes reached the
+# store through the gateway.
+documentdb_primary() {
+  kubectl -n "$NS_CNPG" get pods -l cnpg.io/cluster=dfe-documentdb,cnpg.io/instanceRole=primary -o name 2>/dev/null | head -n 1
+}
+hyperdx_collections() {
+  local primary
+  primary="$(documentdb_primary)"
+  [ -n "$primary" ] || return 1
+  kubectl -n "$NS_CNPG" exec "$primary" -c postgres -- psql -d postgres -tAc \
+    "SELECT count(*) FROM documentdb_api_catalog.collections WHERE database_name = 'hyperdx'" | grep -qE '^[1-9]'
+}
+if ! kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
+  skip "hyperdx collections in PostgreSQL -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so nothing writes to the store"
+elif [ -z "$(documentdb_primary)" ]; then
+  check "the DocumentDB store in ns/$NS_CNPG has a primary" false
 else
-  skip "ferretdb->PG round-trip -- no mongosh/shell in the ferretdb image (distroless); needs a client pod or a PG-side assert. NOT evidence the chain works."
+  check "hyperdx's collections are in the DocumentDB store's PostgreSQL" hyperdx_collections
 fi
 
 # Opt-in cleanup: remove THIS run's sample rows (scoped to the marker) once proven.

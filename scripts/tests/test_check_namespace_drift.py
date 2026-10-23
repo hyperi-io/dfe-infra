@@ -111,12 +111,33 @@ def test_operator_absent_from_every_appset() -> None:
 
 def test_unmapped_operator_is_not_a_silent_pass() -> None:
     """An SSoT key with no chart cannot be verified, so it must not read green."""
-    ssot = dict(SSOT, ferretdb="ferretdb-operator-system")
-    netpol = dict(NETPOL, ferretdb="ferretdb-operator-system")
+    ssot = dict(SSOT, mystery="mystery-operator-system")
+    netpol = dict(NETPOL, mystery="mystery-operator-system")
     problems = nsdrift.compare(ssot, netpol, APPSETS)
     expect(
         "unmapped operator is caught",
-        any("ferretdb" in p for p in problems),
+        any("mystery" in p for p in problems),
+        f"got {problems}",
+    )
+
+
+def test_a_subchart_is_held_to_its_own_namespace_override() -> None:
+    """CloudNativePG runs where the operator chart's values put it, not in the release namespace."""
+    found: dict[str, set[str]] = {}
+    nsdrift._walk_chart_elements(
+        {
+            "chart": "documentdb-operator",
+            "namespace": "documentdb-operator",
+            "chartValuesYaml": "cloudnative-pg:\n  namespaceOverride: elsewhere\n",
+        },
+        found,
+    )
+    problems = nsdrift.compare(
+        dict(SSOT, cnpg="cnpg-system"), dict(NETPOL, cnpg="cnpg-system"), {**APPSETS, **found}
+    )
+    expect(
+        "a subchart moved off the SSoT namespace is caught",
+        any("cnpg" in p and "elsewhere" in p for p in problems),
         f"got {problems}",
     )
 
@@ -130,6 +151,7 @@ def main() -> int:
         test_netpol_missing_an_operator()
         test_operator_absent_from_every_appset()
         test_unmapped_operator_is_not_a_silent_pass()
+        test_a_subchart_is_held_to_its_own_namespace_override()
         return summary()
 
 

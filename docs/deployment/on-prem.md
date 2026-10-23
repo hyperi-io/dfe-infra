@@ -24,6 +24,7 @@ All component versions come from `versions.yaml` (the SSoT).
 ## Prerequisites
 
 - A kubeconfig for the target RKE2 cluster -- `kubectl get nodes` works.
+- Kubernetes 1.35 or later, or 1.34 with the `ImageVolume` feature gate on in the API server and every kubelet. The DocumentDB operator mounts its extension into HyperDX's store as an image volume, and its admission webhook refuses the store without one. On 1.34, `bootstrap/check_platform.py` reads the gate from the API server's `/metrics` (it needs `get` on that URL) and refuses a cluster where it is off or unreadable, unless `DFE_IMAGE_VOLUME_ENABLED=true` says it is on in the API server and every kubelet.
 - Nodes for DFE to run on, labelled `dfe.hyperi.io/workload=dfe`. The `local`
   overlay (`argocd/values/local.yaml`) pins DFE to them with a hard nodeSelector
   and tolerates a matching `NoSchedule` taint, so a pool tainted at provisioning
@@ -83,8 +84,8 @@ kubectl -n argocd get app -w               # watch Layer 2 sync
 
 ```mermaid
 flowchart LR
-  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, Strimzi, ..."]
-  W2 --> W4["data platform<br/>FerretDB, Kafka, ClickHouse, OTel"]
+  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, DocumentDB, Strimzi, ..."]
+  W2 --> W4["data platform<br/>DocumentDB, Kafka, ClickHouse, OTel"]
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```
 

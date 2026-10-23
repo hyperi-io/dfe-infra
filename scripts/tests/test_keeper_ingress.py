@@ -50,10 +50,10 @@ KEEPER_POD = {ROLE: "clickhouse-keeper", "app": "dfe-keeper-keeper"}
 SERVER_POD = {ROLE: "clickhouse-server", "app": "dfe-clickhouse-clickhouse"}
 # cnpg and strimzi pods carry no ClickHouse role at all.
 UNROLED_POD: dict[str, str] = {}
-# FerretDB's namespace, where data-ingress-policy also leaves FerretDB's pods out.
+# The DocumentDB store's namespace, where data-ingress-policy also leaves its instances out.
 STORE_NS = yaml.safe_load(
     (chart_dir("network-policies") / "values.yaml").read_text(encoding="utf-8")
-)["ferretdbAccess"]["namespace"]
+)["documentdbAccess"]["namespace"]
 
 
 def run(cmd: list[str]) -> tuple[dict, ...]:
@@ -167,7 +167,7 @@ def test_data_ingress_leaves_keeper_to_the_operator() -> None:
 
 
 def test_an_empty_opt_out_selects_every_pod() -> None:
-    """FerretDB's namespace still leaves FerretDB's own pods out (ferretdbAccess)."""
+    """The store's namespace still leaves the DocumentDB instances out (documentdbAccess)."""
     for ns, policy in sorted(data_ingress(render_policies("operatorIngressScoped=null")).items()):
         selector = policy["spec"]["podSelector"]
         if ns == STORE_NS:

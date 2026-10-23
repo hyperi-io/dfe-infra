@@ -159,11 +159,14 @@ def test_an_image_digest_with_no_tag_fails_the_render() -> None:
 
 
 def test_no_other_addon_takes_the_image_override() -> None:
+    """An element may pin images in its own chartValuesYaml, which the override must leave as written."""
     for element in _elements(_appset()):
         if element["chart"] == "aws-load-balancer-controller":
             continue
+        own = yaml.safe_load(element["chartValuesYaml"] or "") or {}
         values = _values(_render(element, imageTag="v1", imageDigest=IMAGE_DIGEST))
-        assert "image" not in values, element["chart"]
+        assert values.get("image") == own.get("image"), element["chart"]
+        assert IMAGE_DIGEST not in str(values), element["chart"]
 
 
 def test_a_stack_that_pins_the_digests_writes_them_where_the_render_reads_them() -> None:

@@ -33,7 +33,9 @@ is `engine_env`, each run is counted as `engine_offsets` and the client config t
 script built lands in the counts as `engine_conf`. Absent, the exec prints an error.
 
 `hyperdx_ready` adds a dfe-hyperdx deployment whose node runtime answers /readyz
-with that verdict (the image has node and no wget or curl). `engine_schema` adds a
+with that verdict (the image has node and no wget or curl). `documentdb_collections`
+adds a DocumentDB primary in cnpg whose psql counts that many hyperdx collections,
+answering only an exec naming its postgres container. `engine_schema` adds a
 dfe-engine deployment whose /readyz reports that schema verdict. Each answers only
 an exec naming its thin-chart container (`-c dfe-hyperdx`, `-c dfe-engine`).
 `loader_copies_payload_to_raw` makes the landing table hold the whole payload in
@@ -179,6 +181,15 @@ if kafka and args[:2] == ["get", "ns"]:
     sys.exit(0 if args[2] == kafka["namespace"] else 1)
 if "hyperdx_ready" in fixture and args[-3:] == ["get", "deploy", "dfe-hyperdx"]:
     sys.exit(0)
+if "documentdb_collections" in fixture and namespace() == "cnpg":
+    if "pods" in args:
+        print("pod/dfe-documentdb-1")
+        sys.exit(0)
+    if "exec" in args and exec_target() == "pod/dfe-documentdb-1" and "psql" in args:
+        if not container_is("postgres"):
+            sys.exit(1)
+        print(fixture["documentdb_collections"])
+        sys.exit(0)
 if "engine_schema" in fixture and args[-3:] == ["get", "deploy", "dfe-engine"]:
     sys.exit(0)
 

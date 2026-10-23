@@ -1,0 +1,127 @@
+{{- $tls := .Values.documentdb.tls }}
+{{- $name := include "dfe-common.fullname" . }}
+# The CA the gateway certificate is issued from: a self-signed root, then a CA
+# Issuer on it, which the DocumentDB CR names (documentdb.yaml). The operator
+# requests the gateway certificate itself.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $name }}-selfsigned
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $tls.caSecretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ $name }}-ca
+  secretName: {{ $tls.caSecretName }}
+  duration: {{ $tls.duration | quote }}
+  renewBefore: {{ $tls.renewBefore | quote }}
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+    # cert-manager rotates keys by default, which would strand every client
+    # still holding the previous CA copy.
+    rotationPolicy: Never
+  issuerRef:
+    name: {{ $name }}-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $name }}-ca
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $tls.caSecretName }}
+{{- if .Values.appNamespace }}
+{{- $reader := printf "%s-reader" $tls.gatewaySecretName }}
+---
+# The only reader of the gateway keypair Secret, which carries tls.key. A namespaced
+# SecretStore, so only an ExternalSecret in this namespace can use it. It copies
+# ca.crt into a CA-only Secret, and only that Secret is copied to the apps.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ $tls.gatewaySecretName | quote }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $reader }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $reader }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: {{ $reader }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        # A namespaced store names no namespace here, and ESO reads its own.
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+      auth:
+        serviceAccount:
+          name: {{ $reader }}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $tls.caOnlySecretName }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ $reader }}
+    kind: SecretStore
+  target:
+    name: {{ $tls.caOnlySecretName }}
+    creationPolicy: Owner
+  data:
+    - secretKey: ca.crt
+      remoteRef:
+        key: {{ $tls.gatewaySecretName }}
+        property: ca.crt
+{{- end }}

@@ -30,7 +30,7 @@ locally. SAML IdPs are unsupported (mainstream connectors are unmaintained
 upstream); their OIDC face is the supported path.
 
 Identity data stays OUT of the git CRUD cycle: accounts live in the
-engine's account store (FerretDB or the YAML backend), role bindings in
+engine's account store (a mongo-wire document store or the YAML backend), role bindings in
 the engine's runtime store, and git carries only deployment config
 (provider issuer URLs, client refs) -- roles remain product vocabulary in
 code.

@@ -206,6 +206,12 @@
 #                            demanded-vs-allocatable table as a WARNING instead
 #                            of refusing. The warning still stands: the first
 #                            thing to give is the broker under peak.
+#   DFE_IMAGE_VOLUME_ENABLED=true  Kubernetes 1.34 only, for a stack that runs the
+#                            DocumentDB operator: say the ImageVolume feature gate
+#                            is on in the API server and every kubelet, when
+#                            check_platform.py cannot read it from the API server's
+#                            /metrics. Without it, a 1.34 cluster whose gate is off
+#                            or unreadable is refused.
 #   DFE_DRY_RUN=true         Print commands without executing (for CI validation)
 #   DFE_POST=full            Power-on self test run after the deploy converges:
 #                              full       readiness gate + CORE e2e (default)
@@ -881,7 +887,7 @@ echo "==> [1b/7] StorageClass (detect-or-install)"
 #      as-is (the common case below covers when that class does not exist yet)
 #   3. no StorageClass at all (bare RKE2)                 -> INSTALL
 #      local-path-provisioner (pinned) and mark it default, so the data pods'
-#      PVCs (CH/Gitea/FerretDB) can bind with no deployer input
+#      PVCs (CH/Gitea/DocumentDB) can bind with no deployer input
 #   4. DFE_CLOUD=aws and DFE_STORAGE_CLASS still does not exist after the
 #      above -- EKS 1.30+ ships gp2 with no default, and the aws-ebs-csi-driver
 #      add-on makes gp3 POSSIBLE but creates no StorageClass object of its own

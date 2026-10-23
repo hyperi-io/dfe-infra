@@ -64,7 +64,8 @@ ELSEWHERE: dict[tuple[str, str], tuple[str, str | None]] = {
     # The loader's own password, minted beside the engine (engine-service-clickhouse.yaml).
     ("Secret", "loader-clickhouse"): ("helm/charts/dfe-extras/values.yaml", None),
     ("Secret", "dfe-clickhouse-ca"): ("helm/charts/clickhouse-cluster/values.yaml", None),
-    ("Secret", "dfe-ferretdb-password"): ("helm/charts/ferretdb/values.yaml", None),
+    ("Secret", "dfe-documentdb-credentials"): ("helm/charts/documentdb/values.yaml", None),
+    ("Secret", "dfe-documentdb-ca"): ("helm/charts/documentdb/values.yaml", None),
     ("Secret", "dfe-kafka-user"): ("helm/charts/kafka/templates/kafka-user.yaml", None),
     ("Secret", "dfe-deploy-repo-auth"): ("bootstrap/bootstrap.sh", None),
     ("Secret", "ghcr-pull-secret"): ("bootstrap/bootstrap.sh", None),

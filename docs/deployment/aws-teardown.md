@@ -40,6 +40,7 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   managed cluster goes down first, being the long pole both ways, and teardown
   starts when the last proof lands, not at the end of a session.
 - `bootstrap/destroy.sh` deletes the node pools' Application, `karpenter-pools-<cluster>` found by its name, once the load balancers are released and keeps Karpenter itself until every NodeClaim is gone (up to 600s), because a node left running holds its subnets through its network interfaces and `tofu destroy` fails on them. On a test run its last step terminates any node a Karpenter pool launched for that run and cluster.
+- HyperDX's store keeps its volumes (reclaim policy `Retain`) while it runs. Once the DocumentDB operator has gone, `bootstrap/destroy.sh` sets the volumes labelled `documentdb.io/cluster=dfe-documentdb,documentdb.io/namespace=cnpg` to `Delete`, so the EBS CSI driver deletes each one with its disk. A `tofu destroy` run without it first leaves those disks behind.
 - Tear down with `tofu destroy` in `terraform/environments/aws`, deleting
   the Kubernetes workloads first -- anything that made a load balancer, a
   volume or a DNS record did so through a controller, and `tofu destroy`

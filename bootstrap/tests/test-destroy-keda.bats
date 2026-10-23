@@ -23,6 +23,9 @@
 #   pdbs               "<namespace>|<name>" PodDisruptionBudgets
 #   pods               "<namespace>|<name>|<karpenter.sh/do-not-disrupt>" pods
 #   held-apps          Application names the listing prints until the operators' are deleted
+#   documentdb-volumes  the PersistentVolumes a volume listing prints, one a line
+#   volumes-unreadable  listing the PersistentVolumes fails
+#   volume-patch-refused  the PersistentVolumes, one a line, whose patch fails
 # aws is a stub too: it logs every call to aws.log, answers the three describes
 # from security-groups.json, interfaces.json and instances.json, refuses every
 # delete with an error naming an account when aws-refuses exists, and refuses a
@@ -63,6 +66,13 @@ case "$*" in
         if [[ -f "${STUB_DIR}/stuck" && ! -f "${STUB_DIR}/patched" ]]; then
             cat "${STUB_DIR}/stuck"
         fi
+        ;;
+    "get persistentvolumes "*)
+        [[ -f "${STUB_DIR}/volumes-unreadable" ]] && exit 1
+        [[ -f "${STUB_DIR}/documentdb-volumes" ]] && cat "${STUB_DIR}/documentdb-volumes"
+        ;;
+    "patch persistentvolume/"*)
+        grep -qxF -- "${2}" "${STUB_DIR}/volume-patch-refused" 2>/dev/null && exit 1
         ;;
     "patch "*)
         : > "${STUB_DIR}/patched"
@@ -361,14 +371,14 @@ log() {
 }
 
 # Seconds of the clock the Application wait ran: from its first kubectl call to
-# step 4's first namespace delete, less the 10s and 5s settle pauses of steps 2 and 3.
+# step 3's volume listing, less the 10s and 5s settle pauses of steps 2 and 3.
 applications_wait_seconds() {
-    local first_poll step4
+    local first_poll step3
     first_poll="$(awk '$3 == "keda" { print $1; exit }' "${STUB_DIR}/trace.log")"
-    step4="$(awk '$2 == "delete" && $3 == "ns" { print $1; exit }' "${STUB_DIR}/trace.log")"
+    step3="$(awk '$2 == "get" && $3 == "persistentvolumes" { print $1; exit }' "${STUB_DIR}/trace.log")"
     [ -n "${first_poll}" ]
-    [ -n "${step4}" ]
-    echo $((step4 - 15 - first_poll))
+    [ -n "${step3}" ]
+    echo $((step3 - 15 - first_poll))
 }
 
 @test "the Application wait ends at its 300s budget when every kubectl call takes time" {
@@ -907,6 +917,102 @@ data_operators() {
     [[ "${output}" != *"WARN"* ]]
 }
 
+@test "the DocumentDB operator goes in step 3, after the DocumentDB CR it finalizes" {
+    printf '%s\n' \
+        'documentdb-operator-dfe-aws-test  . oci://ghcr.io/documentdb/documentdb-operator' \
+        'documentdb-dfe-aws-test    helm/charts/documentdb https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        > "${STUB_DIR}/applications"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text first cr operator
+    log_text="$(log)"
+    first="$(grep -m 1 -- '^-n argocd delete applications.argoproj.io ' <<<"${log_text}")"
+    [[ "${first}" == *"documentdb-dfe-aws-test"* ]]
+    [[ "${first}" != *"documentdb-operator-dfe-aws-test"* ]]
+    cr="$(line_of '-n cnpg delete dbs.documentdb.io --all --timeout=120s' "${log_text}")"
+    operator="$(line_of '-n argocd delete applications.argoproj.io documentdb-operator-dfe-aws-test --wait=false' "${log_text}")"
+    [ -n "${cr}" ]
+    [ -n "${operator}" ]
+    [ "${cr}" -lt "${operator}" ]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+# The DocumentDB operator and its store, and the two volumes the operator labelled.
+documentdb_store() {
+    printf '%s\n' \
+        'documentdb-operator-dfe-aws-test  . oci://ghcr.io/documentdb/documentdb-operator' \
+        'documentdb-dfe-aws-test    helm/charts/documentdb https://github.com/hyperi-io/dfe-infra.git https://git.example.com/dfe-deploy.git' \
+        > "${STUB_DIR}/applications"
+    printf '%s\n' persistentvolume/pvc-0a1b persistentvolume/pvc-2c3d > "${STUB_DIR}/documentdb-volumes"
+}
+
+STORE_VOLUMES='documentdb.io/cluster=dfe-documentdb,documentdb.io/namespace=cnpg'
+TO_DELETE='--type merge -p {"spec":{"persistentVolumeReclaimPolicy":"Delete"}}'
+
+@test "the store's volumes are found by the operator's labels and set to Delete once it has gone, before their namespace" {
+    documentdb_store
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text operator listed first second ns
+    log_text="$(log)"
+    operator="$(line_of '-n argocd delete applications.argoproj.io documentdb-operator-dfe-aws-test --wait=false' "${log_text}")"
+    listed="$(line_of "get persistentvolumes -l ${STORE_VOLUMES} -o name" "${log_text}")"
+    first="$(line_of "patch persistentvolume/pvc-0a1b ${TO_DELETE}" "${log_text}")"
+    second="$(line_of "patch persistentvolume/pvc-2c3d ${TO_DELETE}" "${log_text}")"
+    ns="$(line_of 'delete ns cnpg ' "${log_text}")"
+    [ -n "${operator}" ]
+    [ -n "${listed}" ]
+    [ -n "${first}" ]
+    [ -n "${second}" ]
+    [ -n "${ns}" ]
+    # The operator puts Retain back on any volume of a store it still runs.
+    [ "${operator}" -lt "${listed}" ]
+    [ "${listed}" -lt "${first}" ]
+    [ "${first}" -lt "${second}" ]
+    [ "${second}" -lt "${ns}" ]
+    # One labelled listing, and no delete of a volume, which would leave its disk behind.
+    [ "$(grep -c -- '^get persistentvolumes' <<<"${log_text}")" -eq 1 ]
+    [[ "${log_text}" != *"delete persistentvolume"* ]]
+    [[ "${log_text}" != *"delete pv"* ]]
+    [[ "${output}" == *"persistentvolume/pvc-0a1b of HyperDX's store set to Delete, so it goes with its disk"* ]]
+    [[ "${output}" != *"WARN"* ]]
+}
+
+@test "a volume that refuses Delete is named, and the store's other volumes still go" {
+    documentdb_store
+    echo persistentvolume/pvc-0a1b > "${STUB_DIR}/volume-patch-refused"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"WARN: could not set persistentvolume/pvc-0a1b of HyperDX's store to Delete, so it and its disk stay"* ]]
+    [[ "${output}" == *"persistentvolume/pvc-2c3d of HyperDX's store set to Delete, so it goes with its disk"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
+}
+
+@test "a volume list the cluster will not answer patches nothing, says so, and the teardown goes on" {
+    documentdb_store
+    touch "${STUB_DIR}/volumes-unreadable"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    [[ "${output}" == *"WARN: could not list the volumes labelled ${STORE_VOLUMES}, so any the store kept stay"* ]]
+    [[ "$(log)" != *"patch persistentvolume"* ]]
+    [[ "${output}" == *"=== Teardown complete ==="* ]]
+}
+
+@test "the dry run names the store's volumes after the operators and before their namespace, and calls no kubectl" {
+    run env DFE_DRY_RUN=true bash "${DESTROY}"
+    [ "$status" -eq 0 ]
+    local operators volumes ns
+    operators="$(line_of "delete the data operators' Applications" "${output}")"
+    volumes="$(line_of "set every PersistentVolume labelled ${STORE_VOLUMES} to reclaim policy Delete" "${output}")"
+    ns="$(line_of 'kubectl delete ns cnpg --ignore-not-found' "${output}")"
+    [ -n "${operators}" ]
+    [ -n "${volumes}" ]
+    [ -n "${ns}" ]
+    [ "${operators}" -lt "${volumes}" ]
+    [ "${volumes}" -lt "${ns}" ]
+    [ ! -s "${STUB_DIR}/kubectl.log" ]
+}
+
 # The data operators and Karpenter on one cluster, with the PodDisruptionBudgets a
 # Kafka and a ClickHouseCluster carry and two NodeClaims that take ${1} listings to go.
 data_operators_on_karpenter() {
@@ -934,7 +1040,7 @@ data_operators_on_karpenter() {
     [ -n "${operators}" ]
     # While a CR stands its operator puts back a PodDisruptionBudget deleted from under it.
     for cr in '-n strimzi delete kafka' '-n strimzi delete redpandas.cluster.redpanda.com' \
-        '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
+        '-n cnpg delete dbs.documentdb.io' '-n cnpg delete clusters.postgresql.cnpg.io' '-n clickhouse delete clickhousecluster' \
         '-n clickhouse delete keepercluster' '-n clickhouse delete clickhouseinstallation'; do
         deleted="$(line_of "${cr} --all --timeout=120s" "${log_text}")"
         [ -n "${deleted}" ]

@@ -7,7 +7,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""CORE 2's `_raw` checks and the ancillary HyperDX readiness check.
+"""CORE 2's `_raw` checks and the ancillary HyperDX readiness and store checks.
 
 dfe-loader stores a JSON payload once, in `_json`, and leaves `_raw` NULL unless
 the payload carries a `_raw` field of its own, which it keeps. The check used to
@@ -32,7 +32,8 @@ from _smoke import run_smoke
 
 KEPT = "[PASS] a payload's own _raw is kept as sent (1 of 3 fixture lines carry one)"
 NULLED = "[PASS] payloads without a _raw field land with _raw NULL (stored once, in _json)"
-HYPERDX = "hyperdx API reaches its ferretdb backend"
+HYPERDX = "hyperdx API reaches its documentdb backend"
+COLLECTIONS = "hyperdx's collections are in the DocumentDB store's PostgreSQL"
 ENGINE_SCHEMA = "dfe-engine reports schema converged"
 
 
@@ -76,6 +77,18 @@ def test_hyperdx_that_does_not_answer_ready_fails() -> None:
     stdout = smoke({"hyperdx_ready": False})
 
     expect("a not-ready API fails", f"[FAIL] {HYPERDX}" in stdout, stdout)
+
+
+def test_hyperdx_collections_in_the_store_pass() -> None:
+    stdout = smoke({"hyperdx_ready": True, "documentdb_collections": 4})
+
+    expect("collections on the primary pass", f"[PASS] {COLLECTIONS}" in stdout, stdout)
+
+
+def test_a_store_holding_no_hyperdx_collection_fails() -> None:
+    stdout = smoke({"hyperdx_ready": True, "documentdb_collections": 0})
+
+    expect("an empty catalogue fails", f"[FAIL] {COLLECTIONS}" in stdout, stdout)
 
 
 def test_the_engine_schema_check_asks_the_thin_chart_container() -> None:

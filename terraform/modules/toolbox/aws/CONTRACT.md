@@ -186,9 +186,9 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
 - `clickhouse-client` reads `services.clickhouse-version`, `psql` reads
   `services.postgresql`, and `kafka-cli` reads `services.kafka-version` --
   the keys that record the deployed ClickHouse server, the PostgreSQL major
-  of FerretDB's DocumentDB backend and the Kafka broker, so the debugging
+  of the DocumentDB store and the Kafka broker, so the debugging
   tool's protocol version follows the server it is debugging. The
-  `services.postgresql` major is held to `services.documentdb-pg`'s tag by
+  `services.postgresql` major is held to the store's PostgreSQL image tag by
   hand, not by a check. The `toolbox:` stage deliberately carries no
   pin of its own for any of the three, for exactly this reason (its own
   comment says so).

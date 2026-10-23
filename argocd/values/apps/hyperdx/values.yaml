@@ -118,6 +118,12 @@ initContainers:
 extraVolumes:
   - name: dashboards
     emptyDir: {}
+  # The CA the document store's gateway certificate chains to, which MONGO_URI's
+  # tlsCAFile names. The bundled store copies it here (helm/charts/documentdb), and
+  # the pod waits for it rather than starting unable to verify the gateway.
+  - name: documentdb-ca
+    secret:
+      secretName: '{{ .Values.mongodb.caSecretName }}'
   # Optional: a deployment on plaintext ClickHouse has no CA object, and
   # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. There,
   # wait-for-clickhouse-ca holds the pod until the CA is in this volume. tpl
@@ -138,13 +144,20 @@ extraVolumeMounts:
   - name: clickhouse-ca
     mountPath: /etc/dfe/clickhouse-ca
     readOnly: true
+  - name: documentdb-ca
+    mountPath: /etc/dfe/documentdb-ca
+    readOnly: true
 
-# Mongo-protocol metadata store: the bundled FerretDB. An external endpoint sets
-# uri with its credentials inline and extraEnv.MONGO_PASSWORD to an empty string.
+# Mongo-protocol metadata store: the bundled DocumentDB gateway, which serves only
+# TLS and authenticates with SCRAM-SHA-256. The host is the Service the operator
+# puts in front of the primary. An external endpoint sets uri with its
+# credentials inline, extraEnv.MONGO_PASSWORD to an empty string, and caSecretName
+# to a Secret carrying its own CA under ca.crt.
 mongodb:
-  uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@dfe-ferretdb.cnpg.svc.cluster.local:27017/hyperdx?authSource=admin"
-  passwordSecretName: dfe-ferretdb-password
+  uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@documentdb-service-dfe-documentdb.cnpg.svc.cluster.local:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256"
+  passwordSecretName: dfe-documentdb-credentials
   passwordSecretKey: password
+  caSecretName: dfe-documentdb-ca
 
 waitForClickhouseCa:
   timeoutSeconds: 600

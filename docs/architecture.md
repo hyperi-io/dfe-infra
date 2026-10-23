@@ -37,7 +37,7 @@ noting it was done, for politeness.
 | Bootstrap | `bootstrap/` | bare-cluster Layer 0: detect-or-install for StorageClass, cert-manager, ESO, DFE's own Argo CD |
 | ApplicationSets | `argocd/appsets/` | layer1 addons, layer2 data + apps (git-files fan-out over the deploy repo's `values/*-values.yaml`), scale-tier operators |
 | Tier values | `argocd/values/` | `profile-{slim,single,scale}.yaml` + `common.yaml` + per-cloud overlays |
-| Charts | `helm/charts/` | backing services (clickhouse-cluster, kafka, ferretdb, forgejo, kafbat, otel-collector), platform charts and dfe-extras. Each dfe-* service deploys from its published thin chart |
+| Charts | `helm/charts/` | backing services (clickhouse-cluster, kafka, documentdb, forgejo, kafbat, otel-collector), platform charts and dfe-extras. Each dfe-* service deploys from its published thin chart |
 | Chart library | `helm/library/dfe-common` | shared templates for the charts in this repo (image, names, labels, security context, the Kafka provider table, the mesh pool listener, the wait-for-engine init container) |
 | Version pins | `versions.yaml` | single source for chart/operator/image versions |
 | Cloud prep | `terraform/` (OpenTofu-first, terraform-compatible) | secrets/IAM prep per cloud target |
@@ -58,7 +58,7 @@ abstraction or a chart mode -- never a fork of the charts.
 | Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+IRSA), ... |
 | Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
 | ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
-| Document store | mongo-protocol endpoint | ferretdb chart (own embedded documentdb PG -- the stack's only postgres) | bundled FerretDB, external mongo-protocol service |
+| Document store | mongo-protocol endpoint | documentdb chart (a DocumentDB CR on the DocumentDB operator's CloudNativePG -- the stack's only postgres), `mongodb.uri` in the hyperdx values | bundled DocumentDB, external mongo-protocol service |
 | Edge / LB | Gateway API + EnvoyProxy CR | `envoyGateway.service.*` (type, class, annotations, externalIPs) | MetalLB, cloud NLB, NodePort behind HW LB, externalIPs with no LB controller |
 | Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
 

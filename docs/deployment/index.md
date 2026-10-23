@@ -9,7 +9,7 @@ in values files - a deployer overrides single dials, never templates.
 
 ```mermaid
 flowchart TB
-    B[bootstrap.sh<br/>detect-or-install: StorageClass, cert-manager, ESO, Argo CD] --> L1[Layer 1 - backing services<br/>ClickHouse, PG+FerretDB, HyperDX, Kafka when tiered in]
+    B[bootstrap.sh<br/>detect-or-install: StorageClass, cert-manager, ESO, Argo CD] --> L1[Layer 1 - backing services<br/>ClickHouse, DocumentDB, HyperDX, Kafka when tiered in]
     L1 --> L2[Layer 2 - dfe-* apps<br/>base charts + deploy-repo overlays]
 ```
 

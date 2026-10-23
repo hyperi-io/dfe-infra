@@ -19,8 +19,11 @@ LOAD_BALANCERS_WAIT=300
 NODECLAIMS_WAIT=600
 # The namespaces step 4 deletes, then steps 7 and 8. With dfe-* and keda they
 # are every namespace this teardown removes, and the only ones step 1 touches.
-DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg ferretdb otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
+DATA_NAMESPACES=(strimzi kafka clickhouse clickhouse-operator-system clickhouse-operator cnpg cnpg-system documentdb-operator otel hyperdx reloader external-dns redpanda-operator forgejo gitea links)
 PLATFORM_NAMESPACES=(argocd envoy-gateway-system cert-manager external-secrets)
+# The labels the DocumentDB operator puts on each volume of HyperDX's store, which
+# helm/charts/documentdb names dfe-documentdb in the cnpg namespace.
+DOCUMENTDB_VOLUMES="documentdb.io/cluster=dfe-documentdb,documentdb.io/namespace=cnpg"
 # Facts off the Argo CD cluster secret, which step 7 deletes, or the caller's DFE_* environment.
 CLUSTER_CLOUD=""
 CLUSTER_REGION=""
@@ -192,7 +195,7 @@ application_roles() {
         elif names_chart "${sources}" karpenter; then
             role=karpenter
         elif names_chart "${sources}" strimzi-kafka-operator || names_chart "${sources}" clickhouse-operator-helm \
-            || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
+            || names_chart "${sources}" documentdb-operator || [[ " ${sources} " == *"//charts.redpanda.com"* ]]; then
             role=operator
         else
             role=other
@@ -236,7 +239,9 @@ delete_data_resources() {
     run kubectl -n strimzi delete kafka --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     # The kafka chart's Redpanda cluster, on the redpanda provider.
     run kubectl -n strimzi delete redpandas.cluster.redpanda.com --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
-    # A CloudNativePG Cluster exists only on an install that predates its removal.
+    # HyperDX's store. Its operator clears the CR's finalizer, and the CloudNativePG
+    # Cluster it owns goes with it, or with the delete after it.
+    run kubectl -n cnpg delete dbs.documentdb.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     # ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
     # clickhouseinstallation the Altinity operator's, and any left keeps its
@@ -244,6 +249,29 @@ delete_data_resources() {
     run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
+}
+
+# The store's volumes are Retain, so its disks would outlive the teardown. With
+# the operator gone nothing puts Retain back, and Delete hands each volume and its
+# disk to the provisioner, now or when the namespace delete releases its claim.
+release_documentdb_volumes() {
+    local volumes pv
+    if ! volumes="$(kubectl get persistentvolumes -l "${DOCUMENTDB_VOLUMES}" -o name 2>/dev/null)"; then
+        echo "  WARN: could not list the volumes labelled ${DOCUMENTDB_VOLUMES}, so any the store kept stay"
+        return 0
+    fi
+    if [[ -z "${volumes}" ]]; then
+        echo "  no volume labelled ${DOCUMENTDB_VOLUMES} is left"
+        return 0
+    fi
+    while read -r pv; do
+        [[ -n "${pv}" ]] || continue
+        if kubectl patch "${pv}" --type merge -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' >/dev/null 2>&1; then
+            echo "  ${pv} of HyperDX's store set to Delete, so it goes with its disk"
+        else
+            echo "  WARN: could not set ${pv} of HyperDX's store to Delete, so it and its disk stay"
+        fi
+    done <<<"${volumes}"
 }
 
 # A PodDisruptionBudget or karpenter.sh/do-not-disrupt in a namespace this
@@ -578,8 +606,10 @@ if [[ "${DRY_RUN}" != "true" ]]; then
         await_applications_gone
     fi
     sleep 5
+    release_documentdb_volumes
 else
     echo "[DRY-RUN] delete the data operators' Applications, and wait up to ${APPLICATIONS_WAIT}s for them to go"
+    echo "[DRY-RUN] set every PersistentVolume labelled ${DOCUMENTDB_VOLUMES} to reclaim policy Delete, so each goes with its disk"
 fi
 
 echo "==> [4/9] Deleting DFE namespaces"

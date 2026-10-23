@@ -18,7 +18,7 @@
 #
 # Everything else is denied by default (Kubernetes NetworkPolicy semantics).
 # Add per-service egress policies layered on top for specific cross-namespace
-# flows (e.g. DFE app egress to ClickHouse, Kafka, FerretDB).
+# flows (e.g. DFE app egress to ClickHouse, Kafka, DocumentDB).
 #
 # THE OPT-OUT. Policies are additive, so a pod this one selects can always
 # reach the whole namespace and no later policy can take that back. A workload

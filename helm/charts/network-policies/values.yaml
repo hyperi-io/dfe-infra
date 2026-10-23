@@ -16,11 +16,10 @@ dfeNamespaces:
   - dfe-local   # changes per env: dfe-dev, dfe-prod, etc.
 
 # Data platform namespaces (ingress only from dfe-* namespaces).
-# NOT a ferretdb entry: FerretDB deploys INTO cnpg (appsets/layer2-data.yaml
-# pins it there, and it shares that namespace with its PostgreSQL backend), so
-# no ferretdb namespace exists. Naming one here does not merely do nothing -- a
-# NetworkPolicy aimed at an absent namespace is rejected, which fails the whole
-# Application sync and leaves the cluster with NO policies applied at all.
+# cnpg holds the DocumentDB store (appsets/layer2-data.yaml pins it there). Name
+# only namespaces that exist -- a NetworkPolicy aimed at an absent namespace is
+# rejected, which fails the whole Application sync and leaves the cluster with NO
+# policies applied at all.
 dataNamespaces:
   - cnpg
   - strimzi
@@ -35,6 +34,8 @@ dataNamespaces:
 operatorNamespaces:
   strimzi: strimzi
   clickhouse: clickhouse-operator-system
+  # CloudNativePG, which polls each DocumentDB instance on its status port 8000.
+  cnpg: cnpg-system
 
 # Data-namespace pods whose ingress their operator's own NetworkPolicy states whole, by the label
 # the operator writes on them. Policies are additive, so a pod data-ingress-policy selects takes
@@ -63,23 +64,27 @@ egressScopedLabel: dfe.hyperi.io/egress-scoped
 # Workloads outside the thin charts carry only app.kubernetes.io/name.
 appLabel: dfe.hyperi.io/app
 
-# Who reaches FerretDB and its PostgreSQL backend. FerretDB's one login is the
-# backend's PostgreSQL superuser and FerretDB enforces no authorisation, so a pod
-# holding that password owns the store at either port. The apps listed here alone
-# reach FerretDB, and FerretDB alone reaches the backend. Both pods leave
-# data-ingress-policy and take their whole ingress from ferretdb-ingress.yaml.
-ferretdbAccess:
-  # appsets/layer2-data.yaml deploys the ferretdb chart here.
+# Who reaches the DocumentDB store. Each instance pod runs PostgreSQL, which holds
+# the documentdb superuser, with the gateway beside it, so a pod reaching either
+# port is a step from owning every document. The apps listed here alone reach the
+# gateway. The instances alone reach each other's PostgreSQL, and CloudNativePG
+# alone reaches their status port. The pods leave data-ingress-policy and take
+# their whole ingress from documentdb-ingress.yaml.
+documentdbAccess:
+  # appsets/layer2-data.yaml deploys the documentdb chart here.
   namespace: cnpg
-  # The label both workloads carry (dfe-common.selectorLabels, documentdb.yaml).
-  nameLabel: app.kubernetes.io/name
-  proxy: dfe-ferretdb
-  backend: dfe-ferretdb-documentdb
+  # The label CloudNativePG writes on every instance pod of the cluster.
+  clusterLabel: cnpg.io/cluster
+  cluster: dfe-documentdb
   # Container ports, which is what NetworkPolicy sees after DNAT.
   ports:
-    - { port: 27017, protocol: TCP }
-  backendPorts:
+    - { port: 10260, protocol: TCP }
+  # Streaming replication between instances.
+  peerPorts:
     - { port: 5432, protocol: TCP }
+  # The instance manager CloudNativePG polls, from operatorNamespaces.cnpg.
+  operatorPorts:
+    - { port: 8000, protocol: TCP }
   apps:
     - dfe-hyperdx   # mongodb.uri in argocd/values/apps/hyperdx/values.yaml
 

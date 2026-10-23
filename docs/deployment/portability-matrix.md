@@ -25,7 +25,7 @@ flowchart TB
     subgraph core["In-cluster, every target"]
         GW["Envoy Gateway<br/>(all L7 routing)"]
         ENG["dfe-engine<br/>(identity authority)"]
-        FDB["FerretDB + documentdb PG"]
+        FDB["DocumentDB on CloudNativePG"]
         APPS["dfe-* apps + UIs"]
     end
     subgraph data["Data plane (in-cluster OR managed)"]
@@ -42,7 +42,7 @@ flowchart TB
 
 One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL
 L7 routing -- there are no per-app cloud LBs and no cloud L7 (ALB/App Gateway).
-dfe-engine (the identity authority), the Envoy edge, and FerretDB's documentdb PG
+dfe-engine (the identity authority), the Envoy edge, and HyperDX's DocumentDB store
 are always in-cluster; Kafka, ClickHouse and object storage can be in-cluster or a
 managed endpoint.
 
@@ -63,7 +63,7 @@ managed endpoint.
 | StorageClass / CSI | `storageClass` (empty -> cluster default) | local-path / Longhorn | EBS | Azure Disk | PD |
 | Workload identity | ServiceAccount annotations | static creds (OpenBao) | EKS Pod Identity (no annotation) | Azure Workload Identity | GKE Workload Identity |
 | etcd-at-rest KMS | cluster EncryptionConfiguration provider | secretbox / aescbc | KMS | Key Vault KMS | Cloud KMS |
-| Document store PG | ferretdb chart (always in-cluster) | documentdb StatefulSet | " | " | " |
+| Document store | documentdb chart, a DocumentDB CR on the DocumentDB operator's CloudNativePG (always in-cluster, Kubernetes 1.35+, or 1.34 with the ImageVolume feature gate) | 2 instances, gateway in each | " | " | " |
 | Identity authority | dfe-engine account store (always in-cluster) | dfe-engine | dfe-engine | dfe-engine | dfe-engine |
 | Federated login | `oidc.providers` external OIDC (opt-in) | any OIDC IdP | Entra / Okta / ... | Entra | Google / ... |
 
@@ -87,8 +87,8 @@ managed endpoint.
   KMS on managed clusters, secretbox/aescbc on-prem. No app couples to a KMS.
 - **Data services are in-cluster OR managed, per deployment.** Kafka and ClickHouse
   default to in-cluster (Strimzi, CH operator) and swap to a managed endpoint by
-  pointing the chart's `*.host` / `bootstrapServers` at it. FerretDB's PG stays
-  in-cluster (it is the document store's backend, not a general PG).
+  pointing the chart's `*.host` / `bootstrapServers` at it. The DocumentDB store's
+  PostgreSQL stays in-cluster (it is HyperDX's store, not a general PG).
 - **ClickHouse on cloud:** ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse
   in-k8s (the operator) is equally ACCEPTABLE on any cloud -- the `clickhouse.mode`
   seam supports both everywhere, so it is a per-deployment call, not a hard rule.

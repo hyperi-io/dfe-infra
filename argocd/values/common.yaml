@@ -101,6 +101,8 @@ exposure:
 operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
+  # The documentdb-operator addon's CloudNativePG, which its chart installs here.
+  cnpg: cnpg-system
 
 # Image pull secrets -- none, so every pod pulls anonymously. A private mirror's
 # secret, when bootstrap.sh creates one, reaches the charts through the appsets.
