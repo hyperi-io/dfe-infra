@@ -28,7 +28,7 @@ extras:
     dfe-loader: "v1.18.58"
     dfe-archiver: "v1.7.39"
     dfe-fetcher: "v1.4.43"
-    dfe-transform-vrl: "v1.1.37"
+    dfe-transform-vrl: "v1.1.38"
     dfe-transform-vector: "v1.0.54"
     dfe-transform-elastic: "v1.1.17"
     culvert: "v2.1.27"

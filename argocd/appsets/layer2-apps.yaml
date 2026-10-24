@@ -109,7 +109,7 @@ spec:
                 "dfe-receiver" "sha256:06d76b49534c272ac05c0fda33e28795479c11f842df479310fa8f27f9b825ba"
                 "dfe-transform-elastic" "sha256:c64f75d330f97027aa61256466e39045b490a604f84c62170d11d74fa2e5168b"
                 "dfe-transform-vector" "sha256:130a193bb99d46a5ad86b5f248dc24055a861577b489e86a26ef7a4cc6204145"
-                "dfe-transform-vrl" "sha256:d81f458c35f376cac2d57c5eac6ecb3ba75f35a67295bd60639fecfc43b6c8a7"
+                "dfe-transform-vrl" "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"
                 "dfe-ui" "sha256:7d4e9acb57fa8b31d0f8b0d2ef052221275270d900a50142d32fa44f9464a075"
                 "hyperdx" "sha256:14161b2e15009f3442c85eaf2438769d3d444dbc50580f901b036985752fb9c4"
             -}}
