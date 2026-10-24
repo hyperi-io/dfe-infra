@@ -230,6 +230,51 @@ resource "aws_iam_instance_profile" "this" {
 // The instance
 // ---------------------------------------------------------------------------
 
+// The primary fingerprint of every key templates/user_data.sh.tftpl checks a
+// download against. Trust anchors, not tunables: each moves only in a reviewed
+// change, so they sit here beside the vendored keys rather than in versions.yaml.
+locals {
+  signing_keys = {
+    kubernetes    = "DE15B14486CD377B9E876E1A234654DA9A296436" // isv:kubernetes OBS Project, signs the pkgs.k8s.io rpm repos
+    opentofu      = "E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80" // OpenTofu, signs the tofu rpm packages
+    opentofu_repo = "F4AF70F66EAC4337EEECC97407D3DFCD4C61499F" // packages.opentofu.org, signs the tofu rpm repo metadata
+    clickhouse    = "3A9EA1193A97B548BE1457D48919F6BD2B48D754" // ClickHouse Inc. Repositories Key, signs the rpm repo metadata
+    helm          = "208DD36ED5BB3745A16743A4C7C6FBB5B91C1155" // helm release key, signs the release tarballs
+    aws_cli       = "FB5DB77FD5C118B80511ADA8A6310ACC4672475C" // AWS CLI Team, keys/aws-cli.asc
+    ssm_plugin    = "7959637124CE093AD501D47A2C4D4AFF6F6757EE" // AWS SSM Session Manager, keys/session-manager-plugin.asc
+  }
+
+  // EC2's own cap on user data, in bytes before base64 encoding.
+  user_data_limit = 16384
+
+  // Rendered only for an instance that exists, so a disabled toolbox needs no tool_versions.
+  user_data = var.enabled ? templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    kubectl_version           = var.tool_versions["kubectl"]
+    helm_version              = var.tool_versions["helm"]
+    argocd_version            = var.tool_versions["argocd-cli"]
+    clickhouse_client_version = var.tool_versions["clickhouse-client"]
+    postgresql_major_version  = var.tool_versions["psql"]
+    tofu_version              = var.tool_versions["tofu"]
+    yq_version                = var.tool_versions["yq"]
+    awscli_version            = var.tool_versions["aws-cli"]
+    ssm_plugin_version        = var.tool_versions["aws-session-manager-plugin"]
+    kafka_cli_version         = var.tool_versions["kafka-cli"]
+    ttl_minutes               = var.ttl_minutes
+    argocd_sha256             = var.tool_versions["argocd-cli-arm64-sha256"]
+    yq_sha256                 = var.tool_versions["yq-arm64-sha256"]
+    kafka_cli_signer_fpr      = split(":", var.tool_versions["kafka-cli-signer"])[1]
+    kubernetes_key_fpr        = local.signing_keys.kubernetes
+    opentofu_key_fpr          = local.signing_keys.opentofu
+    opentofu_repo_key_fpr     = local.signing_keys.opentofu_repo
+    clickhouse_key_fpr        = local.signing_keys.clickhouse
+    helm_key_fpr              = local.signing_keys.helm
+    awscli_key_fpr            = local.signing_keys.aws_cli
+    awscli_key                = chomp(file("${path.module}/keys/aws-cli.asc"))
+    ssm_plugin_key_fpr        = local.signing_keys.ssm_plugin
+    ssm_plugin_key            = chomp(file("${path.module}/keys/session-manager-plugin.asc"))
+  }) : ""
+}
+
 resource "aws_instance" "this" {
   count = var.enabled ? 1 : 0
 
@@ -264,21 +309,16 @@ resource "aws_instance" "this" {
   // into an actual termination, needing zero IAM.
   instance_initiated_shutdown_behavior = "terminate"
 
-  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
-    kubectl_version           = var.tool_versions["kubectl"]
-    helm_version              = var.tool_versions["helm"]
-    argocd_version            = var.tool_versions["argocd-cli"]
-    clickhouse_client_version = var.tool_versions["clickhouse-client"]
-    postgresql_major_version  = var.tool_versions["psql"]
-    tofu_version              = var.tool_versions["tofu"]
-    yq_version                = var.tool_versions["yq"]
-    awscli_version            = var.tool_versions["aws-cli"]
-    ssm_plugin_version        = var.tool_versions["aws-session-manager-plugin"]
-    kafka_cli_version         = var.tool_versions["kafka-cli"]
-    ttl_minutes               = var.ttl_minutes
-  })
+  user_data = local.user_data
 
   tags = local.instance_tags
+
+  lifecycle {
+    precondition {
+      condition     = length(local.user_data) <= local.user_data_limit
+      error_message = "the rendered user data is ${length(local.user_data)} bytes and EC2 refuses more than ${local.user_data_limit} -- trim templates/user_data.sh.tftpl."
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -124,6 +124,9 @@ stacks:
       aws-session-manager-plugin: "1.2.707.0"
       gcloud: "583.0.0"
       az-cli: "2.90.0"
+      argocd-cli-arm64-sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+      yq-arm64-sha256: "2222222222222222222222222222222222222222222222222222222222222222"
+      kafka-cli-signer: "4.2.0:3333333333333333333333333333333333333333"
     services:
       clickhouse-version: "26.3.17.56"
       postgresql: "17"
@@ -194,6 +197,7 @@ def test_tool_versions_assembles_against_the_real_versions_yaml() -> None:
     staged = (
         "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
         "aws-session-manager-plugin",
+        "argocd-cli-arm64-sha256", "yq-arm64-sha256", "kafka-cli-signer",
     )
     for tool in staged:
         if tool in stage:
@@ -222,6 +226,22 @@ def test_clickhouse_client_and_psql_track_the_services_pins_not_their_own() -> N
     assert real["kafka-cli"] == render_dial._scalar(services, ("kafka-version",))
 
 
+def test_the_kafka_cli_signer_names_the_release_the_toolbox_installs() -> None:
+    """Every Kafka release is signed by its own release manager, so a
+    services.kafka-version bump that leaves toolbox.kafka-cli-signer behind
+    would fail the bastion's boot on a key that never signed the new tarball.
+    The module refuses that pair at plan, and this refuses it at the pin PR."""
+    real = render()["toolbox"]["tool_versions"]
+    assert "kafka-cli-signer" in real, "the current stack's toolbox: stage pins no kafka-cli-signer"
+    signed_release, _, fingerprint = real["kafka-cli-signer"].partition(":")
+    assert signed_release == real["kafka-cli"], (
+        f"toolbox.kafka-cli-signer names the {signed_release} release manager, but the "
+        f"toolbox installs Kafka {real['kafka-cli']}: re-pin it to the key that signed "
+        f"kafka_2.13-{real['kafka-cli']}.tgz"
+    )
+    assert len(fingerprint) == 40, f"{fingerprint!r} is not a primary key fingerprint"
+
+
 def test_tool_versions_assembles_fully_from_a_fixture_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -238,6 +258,9 @@ def test_tool_versions_assembles_fully_from_a_fixture_stage(
         "yq": "v4.44.3",
         "aws-cli": "2.19.0",
         "aws-session-manager-plugin": "1.2.707.0",
+        "argocd-cli-arm64-sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "yq-arm64-sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "kafka-cli-signer": "4.2.0:3333333333333333333333333333333333333333",
         "clickhouse-client": "26.3.17.56",
         "psql": "17",
         "kafka-cli": "4.2.0",

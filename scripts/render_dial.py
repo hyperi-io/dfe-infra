@@ -1362,10 +1362,13 @@ def _confluent_rest_ready(dial: dict[str, object]) -> dict[str, int]:
 # upstream release cadence worth tracking), and clickhouse-client/psql are
 # NOT here either -- they come from the existing services.clickhouse-version
 # / services.postgresql pins instead, so the debugging client always matches
-# the server it debugs.
+# the server it debugs. The last three are download checks rather than
+# versions: the arm64 SHA256s of the two binaries that ship no signature, and
+# the Kafka release manager key the CLI tarball's signature is checked against.
 _TOOLBOX_TOOLS = (
     "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
     "aws-session-manager-plugin",
+    "argocd-cli-arm64-sha256", "yq-arm64-sha256", "kafka-cli-signer",
 )
 
 
