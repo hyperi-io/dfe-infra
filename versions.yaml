@@ -6958,7 +6958,7 @@ stacks:
       dfe-fetcher: "v1.4.43"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#243). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vrl: "v1.1.38"   # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#113). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vector: "v1.0.55"  # 2026-10-24, amd64 and arm64. Rebuilt on scalo 2.14.20 (#127). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-transform-elastic: "v1.1.17" # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 (#123). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-transform-elastic: "v1.1.18" # 2026-10-24, amd64 and arm64. Keeps the shipper's agent and namespace fields on a receiver delivery (#125), rebuilt on scalo 2.14.20 (#127). Inside the 7-day cooldown, which is waived for 2.2.1.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -6976,7 +6976,7 @@ stacks:
       dfe-fetcher: "sha256:e7b3e550a49ccaf42b8290ddf6d20036476d23900a976df061735d6e02981e5e"
       dfe-transform-vrl: "sha256:d22603d34e48ae7d6c71239b6eecd7160ca30d805f26f9bd6ff54ff39e973429"
       dfe-transform-vector: "sha256:2457922b8bd88b7660db0627f3ce4ca75881fed3e4df84a43cc95706f4179ce1"
-      dfe-transform-elastic: "sha256:4d8ec74a5baf6f2603c1561e2c6246687266678c4fd00792d591e40ad31303ee"
+      dfe-transform-elastic: "sha256:2a4303db9315ab9d993b26a8e44c238684b4848bd6e25e5db318ebbe8b09653a"
       dfe-hyperdx: "sha256:2ac903fdacb25f689625667352ccaaa8f3cbd1f79b30bb10335f4ec94fd565a4"
       culvert: "sha256:267e981b4b18f0bff9ad8e09a6c8ee31753acbdaba8f32bfb3bd9e3466f11857"
       # Tagged by toolbox.dfe-toolbox.
@@ -6994,7 +6994,7 @@ stacks:
       dfe-fetcher: "sha256:beb3b1ab1254b201b09677afb4973eaba2c3e272eaf316aa081a4aceba70385e"            # 1.4.43
       dfe-loader: "sha256:7bc497b51b96d302f34aa675450437d9860e57861c618859521b861fc8355de7"             # 1.18.58
       dfe-receiver: "sha256:06d76b49534c272ac05c0fda33e28795479c11f842df479310fa8f27f9b825ba"           # 1.15.58
-      dfe-transform-elastic: "sha256:c64f75d330f97027aa61256466e39045b490a604f84c62170d11d74fa2e5168b"  # 1.1.17
+      dfe-transform-elastic: "sha256:eb6db0c37631aa6a16b5f2a8ac211eb9ed80a5e72a4ab2af27262847d6717c2a"  # 1.1.18
       dfe-transform-vector: "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"   # 1.0.55
       dfe-transform-vrl: "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"      # 1.1.38
       dfe-ui: "sha256:7d4e9acb57fa8b31d0f8b0d2ef052221275270d900a50142d32fa44f9464a075"                # 1.7.30
