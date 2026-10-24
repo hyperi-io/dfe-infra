@@ -1,0 +1,37 @@
+# Lints every Dockerfile in the repo with hadolint, on any change to one.
+name: Dockerfile Lint
+
+# Not a required check, so a path filter here cannot block a merge.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/Dockerfile*'
+      - '.github/workflows/dockerfile-lint.yml'
+  pull_request:
+    paths:
+      - '**/Dockerfile*'
+      - '.github/workflows/dockerfile-lint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hadolint:
+    name: hadolint
+    # A named runner image, so a move of the ubuntu-latest label cannot swap the docker this runs on.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Every Dockerfile git tracks, so a new image cannot skip the lint.
+      - name: hadolint every Dockerfile
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*Dockerfile*')
+          docker run --rm -v "$PWD:/w:ro" -w /w \
+            ghcr.io/hadolint/hadolint:v2.15.1@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d \
+            hadolint "${files[@]}"
