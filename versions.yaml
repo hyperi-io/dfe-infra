@@ -6874,7 +6874,7 @@ stacks:
       clickhouse-operator: "0.0.8"   # 2026-09-25, ghcr.io/clickhouse/clickhouse-operator-helm@sha256:61d97bb43a16859f485af1099251fc591b527a4c01013e6de355be11a80fbc9c. ClickHouse Inc's own operator, scale profile only; Altinity's is untested with DFE. See docs/deployment/clickhouse.md.
       redpanda-operator: "26.2.4"    # 2026-09-24. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
       # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
-      aws-load-balancer-controller: "3.6.0"  # 2026-10-05. AWS only. Its CRDs ship in the chart.
+      aws-load-balancer-controller: "3.6.1"  # 2026-10-21. AWS only. Its CRDs ship in the chart.
       # image: public.ecr.aws/karpenter/karpenter
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"            # 2026-10-23, the 1.14 LTS line, supported to 2027-07. Inside the 7-day cooldown, which is waived for 2.2.1. Held on 1.14 because 1.15 is a regular release, supported only until 1.16, and renovate.json keeps it there. Same CRDs and chart as 1.14.1, with a new controller digest. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/node-pools is checked against this release's CRDs, so they move together.
@@ -6905,6 +6905,8 @@ stacks:
       ferretdb: "2.7.0"              # 2025-11-10. Needs the DocumentDB backend; 1.x to 2.x is a dump and restore.
       # renovate: datasource=docker depName=ghcr.io/ferretdb/postgres-documentdb
       documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # The newest PostgreSQL 17 build for FerretDB 2.7.0. FerretDB ships no 18 build yet.
+      # renovate: datasource=docker depName=ghcr.io/documentdb/documentdb/documentdb-local
+      documentdb-local: "pg18-1.0.0"  # dfe-docker's HyperDX store, the single-container DocumentDB build.
       # image: code.forgejo.org/forgejo/forgejo
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
@@ -6917,7 +6919,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31.7-trixie"  # 2026-10-14. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # 2026-07-16. Pulls the deploy repo's hunts and rules into the hunt runner pod.
+      git-sync: "v4.8.0"             # 2026-10-24. Pulls the deploy repo's hunts and rules into the hunt runner pod.
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
       aws-msk-iam-auth: "2.3.9"      # 2026-09-24. A jar, not an image: the MSK bootstrap Job downloads it and checks its sha256.
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
@@ -6929,7 +6931,7 @@ stacks:
       envoy-gateway-proxy: "distroless-v1.39.5"  # 2026-10-23, inside the 7-day cooldown, which is waived for 2.2.1. Its image no longer trusts the compromised eMudhra intermediate CAs. Replaces the distroless-v1.39.1 that Envoy Gateway v1.9.2 defaults to, on the same Envoy minor.
       # image: public.ecr.aws/eks/aws-load-balancer-controller
       # Moves with operators.aws-load-balancer-controller, the chart that runs it.
-      aws-load-balancer-controller-image: "v3.6.0"  # 2026-10-05, amd64 and arm64. AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
+      aws-load-balancer-controller-image: "v3.6.1"  # 2026-10-21, amd64 and arm64. AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
       # The DocumentDB operator, its sidecar injector and its CloudNativePG, all from the operator chart.
       # image: ghcr.io/documentdb/documentdb-kubernetes-operator/operator
       documentdb-operator-image: "1.0.0"
@@ -6978,7 +6980,7 @@ stacks:
       dfe-hyperdx: "sha256:0928bfc493f848e51268906cb7d198cb1aec3b28f7aca89bf4d115f2041a18ff"
       culvert: "sha256:267e981b4b18f0bff9ad8e09a6c8ee31753acbdaba8f32bfb3bd9e3466f11857"
       # Tagged by toolbox.dfe-toolbox.
-      dfe-toolbox-base: "sha256:a08e64b708d201e1e26823ba3ffc8d4a8e54a669713c4047d40715a6ea3522e5"
+      dfe-toolbox-base: "sha256:6892457da2bddb2a17a5ad7c77d8cace746f19fe9cb9665b7ab0f5db452b4d48"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
@@ -7009,16 +7011,17 @@ stacks:
       ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0
       documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0
       envoy-proxy: "sha256:713bb146f1a7c97ebc70e13d259f77ff36f2c5d00f3145677816af5af9bd1530"         # envoyproxy/envoy:v1.40.1
+      documentdb-local: "sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5"   # ghcr.io/documentdb/documentdb/documentdb-local:pg18-1.0.0
       nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"   # nginxinc/nginx-unprivileged:1.31.7-trixie
       otel-collector: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"       # otel/opentelemetry-collector-contrib:0.163.2
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1
+      git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"            # registry.k8s.io/git-sync/git-sync:v4.8.0
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
       local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"  # docker.io/rancher/local-path-provisioner:v0.0.37
       envoy-gateway-proxy: "sha256:9d84a586119a27b50437dbb01eccd4722832741539b1ed53c8e9d6da6067a6e0" # docker.io/envoyproxy/envoy:distroless-v1.39.5
       karpenter: "sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9"           # public.ecr.aws/karpenter/karpenter:1.14.3 (OCI chart)
-      aws-load-balancer-controller-image: "sha256:337a9bf9a99bbac372c8da20afad7b059e0bc89034f1087e325455b28c7fd488"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.0
+      aws-load-balancer-controller-image: "sha256:954b5233e17128a18d12f7fcaac4c7ed792dea4bba0beeb5d450c5a4538e3394"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.1
       documentdb-operator: "sha256:6325eccd12db73ad2b3ffd2df294c79187c0521fb31b1f9a1c3061fa89f35114"
       documentdb-operator-image: "sha256:9d433fd486ac49de79565318e573de08ff67e8819d2f4a955f43dee6db8a5e14"
       documentdb-sidecar: "sha256:53942efe095ebff72f6332c02d478476183bb5763885f870ac485a0d5e8d29e5"
