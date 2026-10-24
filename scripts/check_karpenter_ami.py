@@ -43,7 +43,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import node_images
@@ -95,8 +95,14 @@ def stack_facts(versions: Path, stack: str | None) -> tuple[str, str, str]:
     return name, pin.strip(), (ceiling or floor).removeprefix("v")
 
 
-def newest_from_releases(releases: object, minor: str, arch: str) -> Newest | None:
-    """The newest published release that ships the AL2023 standard image for this minor.
+def newest_from_releases(
+    releases: object,
+    minor: str,
+    arch: str,
+    cooldown_days: int = 0,
+    now: datetime | None = None,
+) -> Newest | None:
+    """The newest published release past the cooldown that ships the AL2023 image for this minor.
 
     Raises:
         node_images.ImageLookupError: An entry is not a GitHub release object.
@@ -104,8 +110,12 @@ def newest_from_releases(releases: object, minor: str, arch: str) -> Newest | No
     if not isinstance(releases, list):
         return None
     wanted = node_images.EKS_IMAGE_NAME.format(arch=arch, minor=minor, tag="")
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=cooldown_days)
     for release in node_images.releases_from(releases):
         if release.prerelease or release.published is None:
+            continue
+        # A release inside the cooldown is one the resolver would refuse, so it is not lag.
+        if cooldown_days and release.published > cutoff:
             continue
         if any(name.startswith(wanted) for name in release.ami_names):
             return Newest(release.tag, release.published.isoformat(), "github")
@@ -167,7 +177,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--region", default="us-west-2", help="the region the ssm source reads")
     parser.add_argument("--releases-json", type=Path, default=None, help="recorded github answer")
     parser.add_argument("--fixtures", type=Path, default=None, help="recorded ssm answers")
+    parser.add_argument(
+        "--now", type=datetime.fromisoformat, default=None, help="the time the cooldown counts from"
+    )
     args = parser.parse_args(argv)
+    try:
+        cooldown_days = node_images.read_policy(args.versions).cooldown_days
+    except node_images.GatePolicyError:
+        cooldown_days = 0
 
     try:
         stack, pin, minor = stack_facts(args.versions, args.stack)
@@ -194,7 +211,11 @@ def main(argv: list[str] | None = None) -> int:
                 else fetch_releases()
             )
             newest = newest_from_releases(
-                releases, minor, node_images.AWS_ARCH.get(args.arch, args.arch)
+                releases,
+                minor,
+                node_images.AWS_ARCH.get(args.arch, args.arch),
+                cooldown_days,
+                args.now,
             )
     except (node_images.ImageLookupError, OSError, json.JSONDecodeError) as err:
         _say("notice", f"Karpenter AMI pin not checked -- {err}. This is a skip, not a pass.")
