@@ -410,6 +410,50 @@ def test_one_name_from_the_images_resolve_to_the_node_pools_appset() -> None:
     assert name == "node-pools.values.yaml"
 
 
+def _node_image_block() -> str:
+    """bootstrap.sh's own node-image lines, from the two paths to the closing fi."""
+    lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith("DFE_NODE_POOLS_VALUES_FILE=")
+    )
+    end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
+    return "\n".join(lines[start : end + 1])
+
+
+def _run_node_image_block(sizing_dir: Path, cloud: str) -> str:
+    done = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _node_image_block()],
+        env={"PATH": "/usr/bin:/bin", "DFE_SIZING_DIR": str(sizing_dir), "DFE_CLOUD": cloud},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def test_an_aws_bootstrap_with_no_node_image_overlay_says_karpenter_takes_the_default(
+    tmp_path: Path,
+) -> None:
+    """The chart's default alias applies silently otherwise, so bootstrap names the command."""
+    out = _run_node_image_block(tmp_path, "aws")
+    assert "NOTE: no " in out
+    assert "node-pools chart's default image, not a gated one" in out
+    assert f"resolve_sizing.py images --dial <deployment.yaml> --out {tmp_path}" in out
+
+
+def test_a_bootstrap_with_the_overlay_names_it_and_no_note(tmp_path: Path) -> None:
+    sizing = _images_resolved(tmp_path)
+    out = _run_node_image_block(tmp_path, "aws")
+    assert out == f"Node images: {sizing / node_images.NODE_POOLS_VALUES_NAME}\n"
+
+
+def test_a_bootstrap_off_aws_prints_no_node_image_note(tmp_path: Path) -> None:
+    assert _run_node_image_block(tmp_path, "local") == ""
+
+
 # ------------------------------------------------------------------- the three proofs
 
 

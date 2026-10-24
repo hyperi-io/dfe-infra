@@ -801,6 +801,10 @@ DFE_NODE_POOLS_VALUES_FILE="${DFE_SIZING_DIR}/sizing/node-pools.values.yaml"
 DFE_NODE_IMAGES_FILE="${DFE_SIZING_DIR}/sizing/node-images.json"
 if [[ -f "${DFE_NODE_POOLS_VALUES_FILE}" ]]; then
   echo "Node images: ${DFE_NODE_POOLS_VALUES_FILE}"
+elif [[ "${DFE_CLOUD}" == "aws" ]]; then
+  # Without the overlay Karpenter silently takes the chart's default alias.
+  echo "NOTE: no ${DFE_NODE_POOLS_VALUES_FILE}, so Karpenter runs the node-pools chart's default image, not a gated one."
+  echo "      Write it with: python3 scripts/resolve_sizing.py images --dial <deployment.yaml> --out ${DFE_SIZING_DIR}"
 fi
 # A test run's id and expiry as one line of JSON, quoted the same way as the pools.
 export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
