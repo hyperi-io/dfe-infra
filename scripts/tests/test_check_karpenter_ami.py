@@ -93,11 +93,11 @@ def test_the_lag_takes_published_at_from_the_release_list() -> None:
 def test_the_real_stack_reads_against_the_recorded_releases(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Whatever the current stack pins, the check names it, and only a pin behind v20261019 warns."""
+    """On 2026-10-24 v20261019 is still cooling, so only a pin behind v20261012 warns."""
     _stack, pin, _minor = check.stack_facts(check.VERSIONS_FILE, None)
-    assert _run("--releases-json", str(RELEASES)) == 0
+    assert _run("--releases-json", str(RELEASES), "--now", "2026-10-24T00:00:00+00:00") == 0
     captured = capsys.readouterr()
-    if pin < "v20261019":
+    if pin < "v20261012":
         assert f"pins operators.karpenter-al2023-ami {pin}," in captured.err
     else:
         assert "OK stack" in captured.out
@@ -210,3 +210,55 @@ def test_the_check_runs_in_ci_as_a_step_that_cannot_fail_the_job() -> None:
     assert "GH_TOKEN: ${{ github.token }}" in step
     assert "|| true" not in step
     assert "continue-on-error" not in step
+
+
+def _versions_with_cooldown(tmp_path: Path, pin: str) -> Path:
+    path = _versions(tmp_path, pin=pin)
+    path.write_text(
+        path.read_text(encoding="utf-8") + "node-images:\n"
+        '  cooldown-days: "7"\n'
+        '  eks-ami-floor: ">=v20261012"\n'
+        "  eks-ami-skip: {}\n"
+        '  al2023-ami-floor: ">=20261012"\n'
+        "  al2023-ami-skip: {}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_release_inside_the_cooldown_is_not_lag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On 2026-10-24 v20261019 (published 2026-10-21) is inside the 7-day cooldown, so v20261012 is the newest."""
+    versions = _versions_with_cooldown(tmp_path, "v20261012")
+    argv = [
+        "--versions",
+        str(versions),
+        "--releases-json",
+        str(RELEASES),
+        "--now",
+        "2026-10-24T00:00:00+00:00",
+    ]
+    assert _run(*argv) == 0
+    captured = capsys.readouterr()
+    assert "WARNING" not in captured.err
+    assert "OK stack 9.9.9 pins v20261012" in captured.out
+
+
+def test_the_lag_counts_to_the_newest_release_past_the_cooldown(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With v20261019 still cooling, a v20261003 pin is behind v20261012, not v20261019."""
+    versions = _versions_with_cooldown(tmp_path, "v20261003")
+    argv = [
+        "--versions",
+        str(versions),
+        "--releases-json",
+        str(RELEASES),
+        "--now",
+        "2026-10-24T00:00:00+00:00",
+    ]
+    assert _run(*argv) == 0
+    err = capsys.readouterr().err
+    assert "v20261012" in err
+    assert "v20261019" not in err
