@@ -17,9 +17,19 @@
     "public.ecr.aws/karpenter/controller:1.14.1@sha256:445baefaaa689029cc12ac1f659b916b0b82fb14308ce536f8521fcf079116fa": [
       "linux/amd64",
       "linux/arm64"
+    ],
+    "public.ecr.aws/karpenter/controller:1.14.3@sha256:32a722105e83dda6064405d34614bfc6ebaec132004ebd699574f77468a5c8a2": [
+      "linux/amd64",
+      "linux/arm64"
     ]
   },
   "charts": {
+    "oci://public.ecr.aws/karpenter/karpenter@sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9": {
+      "version": "1.14.3",
+      "images": {
+        "karpenter controller": "public.ecr.aws/karpenter/controller:1.14.3@sha256:32a722105e83dda6064405d34614bfc6ebaec132004ebd699574f77468a5c8a2"
+      }
+    },
     "oci://public.ecr.aws/karpenter/karpenter@sha256:91434e00fb102d6ee0d1bd34a4457a32fe01a8fa833fe1a2a37da4f50272079b": {
       "version": "1.14.1",
       "images": {

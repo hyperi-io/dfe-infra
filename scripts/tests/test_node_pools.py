@@ -317,7 +317,7 @@ def test_a_deployment_overrides_the_run_sizes_or_turns_them_off() -> None:
 
 
 # spec.template.spec.terminationGracePeriod's pattern in the karpenter.sh_nodepools CRD
-# at karpenter-provider-aws v1.14.1, the release versions.yaml pins.
+# at karpenter-provider-aws v1.14.3, the release versions.yaml pins.
 GRACE_PATTERN = re.compile(r"^([0-9]+(s|m|h))+$")
 
 

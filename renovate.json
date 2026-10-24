@@ -24,6 +24,12 @@
       "allowedVersions": "/^v1\\.35\\./"
     },
     {
+      "description": "Karpenter stays on its LTS line, 1.14, supported to 2027-07. A regular minor such as 1.15 is supported only until the next one ships. Move this pattern to the next LTS minor when Karpenter's SUPPORT.md names one.",
+      "matchFileNames": ["versions.yaml"],
+      "matchDepNames": ["aws/karpenter-provider-aws"],
+      "allowedVersions": "/^v?1\\.14\\./"
+    },
+    {
       "description": "scripts/stack_images.py carries an annotated pin only as a docstring example of the annotation format. Without this rule the org preset's .py manager proposes a bump to that example on every release of the image it names.",
       "matchFileNames": ["scripts/stack_images.py"],
       "enabled": false

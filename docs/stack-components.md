@@ -166,7 +166,7 @@ image. One number, same image ref both sides.
 
 ### Envoy (dfe-proxy)
 
-- SSoT: `services.envoy-proxy` (v1.39.2@sha256:...). docker: `DFE_PROXY_VERSION`
+- SSoT: `services.envoy-proxy` (v1.40.1@sha256:...). docker: `DFE_PROXY_VERSION`
   -> `envoyproxy/envoy`. The compose stack's entrypoint, fronting dfe-ui and
   dfe-engine on one origin.
 - Docker-ONLY despite the name. k8s runs Envoy too, but installs it via
