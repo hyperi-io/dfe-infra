@@ -40,11 +40,13 @@ from _weave import data_application, helm, render_data
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 FIXTURES = REPO_ROOT / "scripts" / "tests" / "fixtures" / "sizing"
+IMAGE_FIXTURES = REPO_ROOT / "scripts" / "tests" / "fixtures" / "node-images"
 BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 FORGEJO_VALUES = REPO_ROOT / "helm" / "charts" / "forgejo" / "values.yaml"
 APPSET = Path("argocd/appsets/layer2-data.yaml")
 
 sys.path.insert(0, str(SCRIPTS))
+import node_images  # noqa: E402
 import resolve_sizing  # noqa: E402
 
 BASE = "scale.data-charts.values.yaml"
@@ -98,7 +100,9 @@ def _resolve(
         encoding="utf-8",
         newline="\n",
     )
-    return resolve_sizing.main(["--dial", str(dial), "--fixtures", str(FIXTURES), "--out", str(out)])
+    return resolve_sizing.main(
+        ["--dial", str(dial), "--fixtures", str(FIXTURES), "--out", str(out)]
+    )
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +118,9 @@ def _base(out: Path) -> dict:
 
 
 def _shapes(out: Path) -> dict:
-    return json.loads((out / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["resolved_shapes"]
+    return json.loads((out / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))[
+        "resolved_shapes"
+    ]
 
 
 def _facts(out: Path) -> dict[str, str]:
@@ -172,14 +178,20 @@ def _assert_sized(spec: dict[str, dict], base: dict) -> None:
     server = spec["ClickHouseCluster"]
     assert server["replicas"] == ch["replicas"]
     assert _resources(server["containerTemplate"]["resources"]) == ch["resources"]
-    assert server["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == ch["storage"]["size"]
-    assert server["settings"]["extraConfig"]["max_server_memory_usage_to_ram_ratio"] == (
-        ch["serverProfile"]["maxServerMemoryUsageToRamRatio"]
+    assert (
+        server["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == ch["storage"]["size"]
+    )
+    assert (
+        server["settings"]["extraConfig"]["max_server_memory_usage_to_ram_ratio"]
+        == (ch["serverProfile"]["maxServerMemoryUsageToRamRatio"])
     )
     quorum = spec["KeeperCluster"]
     assert quorum["replicas"] == keeper["replicas"]
     assert _resources(quorum["containerTemplate"]["resources"]) == keeper["resources"]
-    assert quorum["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == keeper["storage"]["size"]
+    assert (
+        quorum["dataVolumeClaimSpec"]["resources"]["requests"]["storage"]
+        == keeper["storage"]["size"]
+    )
     pool = spec["KafkaNodePool"]
     assert pool["replicas"] == kafka["replicas"]
     assert _resources(pool["resources"]) == kafka["resources"]
@@ -195,25 +207,38 @@ def test_the_base_carries_the_sizing_and_none_of_the_first_sync_keys(resolved: P
     """The storage keys ride the cluster secret, the pools the node-pools chart, and the
     message size is one chain with apps that never read this file."""
     base = _base(resolved)
-    fragment = yaml.safe_load((resolved / "sizing" / "scale.values.yaml").read_text(encoding="utf-8"))
+    fragment = yaml.safe_load(
+        (resolved / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
+    )
     assert set(base) == {"kafka", "clickhouse"}
     assert {"objectStore", "storageModel"}.isdisjoint(base["clickhouse"])
     assert "messageMaxBytes" not in base["kafka"]
     for chart_key, excluded in resolve_sizing.DATA_CHART_EXCLUDED.items():
-        assert base[chart_key] == {k: v for k, v in fragment[chart_key].items() if k not in excluded}
+        assert base[chart_key] == {
+            k: v for k, v in fragment[chart_key].items() if k not in excluded
+        }
 
 
 # -------------------------------------------------- the bundled repo's first commit
 
 
-def test_a_fresh_bundled_repo_gets_the_sizing_in_its_first_commit(tmp_path: Path, resolved: Path) -> None:
+def test_a_fresh_bundled_repo_gets_the_sizing_in_its_first_commit(
+    tmp_path: Path, resolved: Path
+) -> None:
     """Created empty, the repo has no branch until its first commit, and that commit is the sizing."""
     job = run_job(tmp_path, seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved))
     assert job.returncode == 0, job.output
     assert job.writes[0]["path"] == "user/repos"
     assert job.writes[0]["content"]["auto_init"] is False
-    assert job.writes[1] == {"method": "POST", "path": f"sizing/{BASE}", "content": _seed(resolved)[BASE]}
-    assert [w["path"] for w in job.writes[2:]] == ["values/dfe-loader-default-values.yaml", ".seeded-apps"]
+    assert job.writes[1] == {
+        "method": "POST",
+        "path": f"sizing/{BASE}",
+        "content": _seed(resolved)[BASE],
+    }
+    assert [w["path"] for w in job.writes[2:]] == [
+        "values/dfe-loader-default-values.yaml",
+        ".seeded-apps",
+    ]
 
 
 def test_a_deploy_repos_own_sizing_is_left_as_it_is(tmp_path: Path, resolved: Path) -> None:
@@ -224,7 +249,9 @@ def test_a_deploy_repos_own_sizing_is_left_as_it_is(tmp_path: Path, resolved: Pa
     assert (job.repo / "sizing" / BASE).read_text(encoding="utf-8") == own
 
 
-def test_a_failed_sizing_write_stops_before_the_repo_gets_a_branch(tmp_path: Path, resolved: Path) -> None:
+def test_a_failed_sizing_write_stops_before_the_repo_gets_a_branch(
+    tmp_path: Path, resolved: Path
+) -> None:
     """An app seed would then be the repo's first commit, and layer2-data would sync without the sizing."""
     job = run_job(
         tmp_path, seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved), refuse="sizing/"
@@ -248,10 +275,18 @@ def test_one_name_from_the_resolver_to_the_appset() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
     seed = yaml.safe_load(FORGEJO_VALUES.read_text(encoding="utf-8"))["deployRepo"]["sizingSeed"]
     assert f"create configmap {seed['configMapName']}" in script
-    assert 'DFE_SIZING_BASE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.data-charts.values.yaml"' in script
+    assert (
+        'DFE_SIZING_BASE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.data-charts.values.yaml"'
+        in script
+    )
     appset = (REPO_ROOT / APPSET).read_text(encoding="utf-8")
-    assert '/sizing/{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.data-charts.values.yaml' in appset
-    assert (SCRIPTS / "resolve_sizing.py").read_text(encoding="utf-8").count('.data-charts.values.yaml"') == 1
+    assert (
+        '/sizing/{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.data-charts.values.yaml'
+        in appset
+    )
+    assert (SCRIPTS / "resolve_sizing.py").read_text(encoding="utf-8").count(
+        '.data-charts.values.yaml"'
+    ) == 1
 
 
 def _configmap_block() -> str:
@@ -262,16 +297,19 @@ def _configmap_block() -> str:
     return "\n".join(line.strip() for line in lines[start:end])
 
 
-def _run_configmap_block(base_file: Path) -> dict:
+def _run_configmap_block(base_file: Path, sizing_dir: Path | None = None) -> dict:
     """The ConfigMap bootstrap applies, with apply printing what it was handed."""
     if shutil.which("kubectl") is None:
         pytest.skip("kubectl is not on PATH, so bootstrap's dry-run render cannot run")
+    images = sizing_dir if sizing_dir is not None else base_file.parent
     shim = 'kubectl() { if [[ "$1" == apply ]]; then cat; else command kubectl "$@"; fi; }\n'
     done = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", shim + _configmap_block()],
         env={
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "DFE_SIZING_BASE_FILE": str(base_file),
+            "DFE_NODE_POOLS_VALUES_FILE": str(images / node_images.NODE_POOLS_VALUES_NAME),
+            "DFE_NODE_IMAGES_FILE": str(images / node_images.RECORD_NAME),
             "KUBECONFIG": "/nonexistent",
         },
         capture_output=True,
@@ -296,6 +334,126 @@ def test_bootstrap_empties_the_configmap_when_nothing_was_resolved(tmp_path: Pat
     assert "data" not in configmap
 
 
+def _images_resolved(out: Path) -> Path:
+    """resolve_sizing.py images' own two sizing/ artefacts, against the recorded answers."""
+    out.mkdir(parents=True, exist_ok=True)
+    dial = out / "images.yaml"
+    dial.write_text(
+        "target:\n  provision:\n    cloud: aws\n    region: us-west-2\n"
+        '    account: "000000000000"\nkubernetes_version: "1.36"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    argv = [
+        "images",
+        "--dial",
+        str(dial),
+        "--out",
+        str(out),
+        "--fixtures",
+        str(IMAGE_FIXTURES),
+        "--now",
+        "2026-10-24T00:00:00Z",
+    ]
+    assert resolve_sizing.main(argv) == 0
+    return out / "sizing"
+
+
+def test_bootstrap_seeds_the_gated_node_image_beside_the_sizing(
+    tmp_path: Path, resolved: Path
+) -> None:
+    """A bundled repo's first commit carries Karpenter's gated alias, not just the chart's floor."""
+    sizing = _images_resolved(tmp_path)
+    configmap = _run_configmap_block(resolved / "sizing" / BASE, sizing)
+    assert set(configmap["data"]) == {
+        BASE,
+        node_images.NODE_POOLS_VALUES_NAME,
+        node_images.RECORD_NAME,
+    }
+    assert "amiAlias: al2023@v20261012" in configmap["data"][node_images.NODE_POOLS_VALUES_NAME]
+    record = json.loads(configmap["data"][node_images.RECORD_NAME])
+    assert record["karpenter_ami_alias"]["release"] == "v20261012"
+
+
+def test_a_fresh_bundled_repo_gets_the_node_image_before_any_app(
+    tmp_path: Path, resolved: Path
+) -> None:
+    """Seeded with the sizing, so layer2-platform's first sync of node-pools already reads it."""
+    sizing = _images_resolved(tmp_path / "images")
+    seed = {
+        **_seed(resolved),
+        node_images.NODE_POOLS_VALUES_NAME: (sizing / node_images.NODE_POOLS_VALUES_NAME).read_text(
+            encoding="utf-8"
+        ),
+        node_images.RECORD_NAME: (sizing / node_images.RECORD_NAME).read_text(encoding="utf-8"),
+    }
+    job = run_job(tmp_path / "job", seed_apps=("dfe-loader",), fresh=True, sizing=seed)
+    assert job.returncode == 0, job.output
+    paths = [w["path"] for w in job.writes]
+    overlay = f"sizing/{node_images.NODE_POOLS_VALUES_NAME}"
+    assert overlay in paths
+    assert f"sizing/{node_images.RECORD_NAME}" in paths
+    assert paths.index(overlay) < paths.index("values/dfe-loader-default-values.yaml")
+
+
+def test_one_name_from_the_images_resolve_to_the_node_pools_appset() -> None:
+    """The overlay bootstrap seeds is the file layer2-platform reads for karpenter-pools."""
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    name = node_images.NODE_POOLS_VALUES_NAME
+    assert f'DFE_NODE_POOLS_VALUES_FILE="${{DFE_SIZING_DIR}}/sizing/{name}"' in script
+    assert f'DFE_NODE_IMAGES_FILE="${{DFE_SIZING_DIR}}/sizing/{node_images.RECORD_NAME}"' in script
+    platform = (REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "'$values/sizing/{{ index . \"overlay\" | default .app }}.values.yaml'" in platform
+    assert "overlay: node-pools" in platform
+    assert name == "node-pools.values.yaml"
+
+
+def _node_image_block() -> str:
+    """bootstrap.sh's own node-image lines, from the two paths to the closing fi."""
+    lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith("DFE_NODE_POOLS_VALUES_FILE=")
+    )
+    end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
+    return "\n".join(lines[start : end + 1])
+
+
+def _run_node_image_block(sizing_dir: Path, cloud: str) -> str:
+    done = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _node_image_block()],
+        env={"PATH": "/usr/bin:/bin", "DFE_SIZING_DIR": str(sizing_dir), "DFE_CLOUD": cloud},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def test_an_aws_bootstrap_with_no_node_image_overlay_says_karpenter_takes_the_default(
+    tmp_path: Path,
+) -> None:
+    """The chart's default alias applies silently otherwise, so bootstrap names the command."""
+    out = _run_node_image_block(tmp_path, "aws")
+    assert "NOTE: no " in out
+    assert "node-pools chart's default image, not a gated one" in out
+    assert f"resolve_sizing.py images --dial <deployment.yaml> --out {tmp_path}" in out
+
+
+def test_a_bootstrap_with_the_overlay_names_it_and_no_note(tmp_path: Path) -> None:
+    sizing = _images_resolved(tmp_path)
+    out = _run_node_image_block(tmp_path, "aws")
+    assert out == f"Node images: {sizing / node_images.NODE_POOLS_VALUES_NAME}\n"
+
+
+def test_a_bootstrap_off_aws_prints_no_node_image_note(tmp_path: Path) -> None:
+    assert _run_node_image_block(tmp_path, "local") == ""
+
+
 # ------------------------------------------------------------------- the three proofs
 
 
@@ -312,7 +470,10 @@ def test_a_fresh_bundled_deploy_runs_the_data_charts_at_the_resolvers_sizes(
     with tempfile.TemporaryDirectory() as empty:
         defaults = _sized(Path(empty), _facts(resolved))
     for kind in ("ClickHouseCluster", "KeeperCluster"):
-        assert sized[kind]["containerTemplate"]["resources"] != defaults[kind]["containerTemplate"]["resources"]
+        assert (
+            sized[kind]["containerTemplate"]["resources"]
+            != defaults[kind]["containerTemplate"]["resources"]
+        )
     assert sized["KafkaNodePool"]["resources"] != defaults["KafkaNodePool"]["resources"]
 
 
@@ -335,7 +496,9 @@ def test_a_deploy_repo_overlay_beats_the_sizing(tmp_path: Path, resolved: Path) 
     assert sized["ClickHouseCluster"]["replicas"] == 5
     assert _resources(sized["ClickHouseCluster"]["containerTemplate"]["resources"]) == server
     assert sized["KafkaNodePool"]["storage"]["volumes"][0]["size"] == "200Gi"
-    assert sized["KeeperCluster"]["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == "40Gi"
+    assert (
+        sized["KeeperCluster"]["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == "40Gi"
+    )
     # A key no overlay names still comes from the base.
     assert _resources(sized["KafkaNodePool"]["resources"]) == base["kafka"]["resources"]
     keeper = sized["KeeperCluster"]["containerTemplate"]["resources"]
@@ -348,7 +511,11 @@ def test_an_external_deploy_repo_with_the_resolvers_sizing_renders_the_same(
     """An external repo is read through the same ref, holding the sizing/ the deployer committed."""
     facts = {**_facts(resolved), "dfe.hyperi.io/config_repo_url": EXTERNAL_REPO}
     app, _ = _application("kafka", facts)
-    assert app["spec"]["sources"][1] == {"repoURL": EXTERNAL_REPO, "targetRevision": "main", "ref": "values"}
+    assert app["spec"]["sources"][1] == {
+        "repoURL": EXTERNAL_REPO,
+        "targetRevision": "main",
+        "ref": "values",
+    }
 
     external = tmp_path / "external"
     shutil.copytree(resolved / "sizing", external / "sizing")
@@ -436,7 +603,9 @@ def test_every_sized_request_fits_what_its_node_leaves(tmp_path: Path, dial: str
         if not isinstance(block, dict) or use_case not in shapes:
             continue
         node = catalogue.types[shapes[use_case]["instance_types"][0]]
-        cpu_room = node.vcpu * 1000 - resolve_sizing._kube_reserved_cpu_m(node.vcpu) - core.daemonset_cpu_m
+        cpu_room = (
+            node.vcpu * 1000 - resolve_sizing._kube_reserved_cpu_m(node.vcpu) - core.daemonset_cpu_m
+        )
         memory_room = resolve_sizing._allocatable_memory_mib(node.memory_gib, core)
         requests = block["requests"]
         assert _millicores(requests["cpu"]) <= cpu_room, (use_case, node.name, requests)

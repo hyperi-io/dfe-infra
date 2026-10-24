@@ -160,8 +160,8 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     }
     # A credential the root reads from TF_VAR_*, which the dial never carries.
     environment_only = {"clickhouse_external_password"}
-    # resolve_sizing.py images writes these into node-images.auto.tfvars.json, and each defaults.
-    images = {key for key, _lookup in node_images.LOOKUPS["aws"]}
+    # resolve_sizing.py images writes these into node-images.auto.tfvars.json, never the dial render.
+    images = node_images.tfvars_keys("aws")
     expected = (
         declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only - images
     )
@@ -702,7 +702,7 @@ def test_a_dial_with_no_kubernetes_version_takes_the_platform_floor(
     assert render(drop='kubernetes_version: "1.36"')["kubernetes_version"] == "1.37"
 
 
-def test_a_platform_range_floors_at_its_low_side(
+def test_a_platform_range_floors_at_its_low_side_and_defaults_to_its_top(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """gcp and azure have no key of their own, so they read the shared range."""
@@ -714,10 +714,43 @@ def test_a_platform_range_floors_at_its_low_side(
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     for cloud in ("gcp", "azure"):
         assert render_dial._platform_version(cloud) == "1.34"
-        assert render_dial._kubernetes_version({"kubernetes_version": "1.36"}, cloud) == "1.36"
-        assert render_dial._kubernetes_version({}, cloud) == "1.34"
+        assert render_dial._kubernetes_version({"kubernetes_version": "1.35"}, cloud) == "1.35"
+        assert render_dial._kubernetes_version({}, cloud) == "1.36"
         with pytest.raises(render_dial.DialError, match=r"below the platform floor 1\.34"):
             render_dial._kubernetes_version({"kubernetes_version": "1.33"}, cloud)
+
+
+def test_an_empty_version_takes_the_minor_the_eks_addon_pins_are_built_for() -> None:
+    """The real versions.yaml floors aws at eks >=1.34 and tests 1.34-1.36: the add-on pins target 1.36."""
+    tree = render_dial._parse_yaml_subset(
+        render_dial.VERSIONS_FILE.read_text(encoding="utf-8"), source="versions.yaml"
+    )
+    kube_proxy = tree["stacks"][tree["current"]]["eks-addons"]["kube-proxy"]
+    minor = re.match(r"^v(\d+\.\d+)\.", kube_proxy)[1]
+    assert render_dial._platform_version("aws") == "1.34"
+    assert render_dial._kubernetes_version({}, "aws") == minor
+    assert render(drop='kubernetes_version: "1.36"')["kubernetes_version"] == minor
+
+
+def test_a_ceiling_below_the_clouds_own_floor_never_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    versions = tmp_path / "versions.yaml"
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">=1.37"\n'
+        '      kubernetes: "1.34-1.36"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
+    assert render_dial._kubernetes_version({}, "aws") == "1.37"
+
+
+@pytest.mark.parametrize(
+    ("value", "ceiling"),
+    [(">=1.34", None), ("1.34-1.36", "1.36"), ("v1.34-v1.36", "1.36"), ("1.35", None)],
+)
+def test_a_platform_ceiling_is_the_high_side_when_there_is_one(value: str, ceiling: str | None) -> None:
+    assert render_dial._platform_ceiling(value) == ceiling
 
 
 @pytest.mark.parametrize(

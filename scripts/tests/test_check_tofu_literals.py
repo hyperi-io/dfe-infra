@@ -121,9 +121,10 @@ def test_expected_fail_an_ssm_image_lookup_put_back_in_tofu_is_refused(
     assert "data.aws_ssm_parameter.al2023_arm64 name = '/aws/service/ami-amazon-linux-latest/" in out
 
 
-def test_the_node_image_default_is_the_one_image_literal_in_the_tree() -> None:
+def test_the_tree_carries_no_node_image_literal() -> None:
+    """The root's node_image has no default, so every image arrives from the resolver or tfvars."""
     images = [hit.key for hit in check.scan_tree() if hit.kind == "image"]
-    assert images == ["terraform/environments/aws/variables.tf:variable.node_image:default.family"]
+    assert images == []
 
 
 # Every shape a sizing literal takes in this tree, each one refused.

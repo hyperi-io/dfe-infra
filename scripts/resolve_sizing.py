@@ -100,15 +100,20 @@ without one.
     python3 scripts/resolve_sizing.py images --dial deployment.yaml
 
 ``images`` resolves the node images on any profile, separately from the sizing,
-because it reads the live provider wherever a resolve reads fixtures: each
-cloud's recommended node image at its newest version, written to
-``node-images.auto.tfvars.json`` in the cloud's tofu root (``--out`` to put it
-elsewhere). A lookup that fails warns and writes no key, so tfvars or the
-variable default applies, and ``node_image.pin: "true"`` in the dial skips the
-lookups altogether and empties the file, ``--only`` or not. ``--only <key>``
-resolves that key and keeps the file's others, which is how ``dfe-ops bastion
-up`` refreshes the toolbox's AMI without moving the node groups' release or the
-forwarder's AMI. scripts/node_images.py carries the cascade and the sources.
+because it reads the live provider wherever a resolve reads fixtures. On aws
+each image is the newest that clears the release gates in versions.yaml's
+``node-images`` block. Three artefacts come out under ``--out`` (the cloud's
+tofu root by default): ``node-images.auto.tfvars.json`` for tofu, and under
+``sizing/`` the record ``node-images.json`` and Karpenter's alias as the
+node-pools overlay ``node-pools.values.yaml``, both of which the deploy repo
+commits beside ``resolved.yaml``. When a lookup fails or no image clears the
+gates, the value ``--previous`` (default the record under ``--out``) carries
+holds. With nothing recorded the key is left out and warned, so tfvars applies
+or the plan refuses by name, and ``node_image.pin: "true"`` in the dial skips the lookups altogether
+and empties the tfvars file, ``--only`` or not. ``--only <key>`` resolves that
+key and keeps the file's others, which is how ``dfe-ops bastion up`` refreshes
+the toolbox's AMI without moving the node groups' release or the forwarder's
+AMI. scripts/node_images.py carries the gates and the sources.
 
 Exit status is 0 on a resolve, 1 on a bad dial or a failed assertion, 2 when
 the estimate is above the generator cap -- a refusal, not a failure, and it
@@ -154,6 +159,7 @@ from yaml_subset import parse as parse_yaml_subset
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SIZING_FILE = REPO_ROOT / "sizing" / "sizing.yaml"
 SHAPES_FILE = REPO_ROOT / "shapes" / "compute-shapes.yaml"
+VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 
 # Only the scale tier is sized. single and slim are one node of everything with
 # fixed shapes, and nothing here touches them.
@@ -257,7 +263,14 @@ SUSTAINED_USE_CASES = ("kafka-broker", "clickhouse", "keeper")
 # Which use cases a scale deployment sizes. msk-broker joins them only when the
 # dial names a managed provider, and kraft-controller drops out unless
 # kafka.controller_pool asks for a separate quorum.
-CORE_USE_CASES = ("eks-system", "general", "kafka-broker", "kraft-controller", "clickhouse", "keeper")
+CORE_USE_CASES = (
+    "eks-system",
+    "general",
+    "kafka-broker",
+    "kraft-controller",
+    "clickhouse",
+    "keeper",
+)
 
 # Every workload class compute-shapes.yaml declares, which is what a deployer may
 # name in an override.
@@ -616,7 +629,9 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         path=path,
         tier=_scalar(tree, "profile") or "single",
         cloud=resolved_cloud,
-        region=_scalar(tree, "target", "provision", "region") or _scalar(tree, "k8s", "region") or "",
+        region=_scalar(tree, "target", "provision", "region")
+        or _scalar(tree, "k8s", "region")
+        or "",
         target=target or default_target,
         kafka_provider=kafka_provider,
         ingest_gb_per_day=_dial_number(tree, "sizing", "ingest_gb_per_day"),
@@ -962,7 +977,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     if provider == "strimzi":
         heap_gb = take("kafka", provider, "heap_gb")
         page_cache_s = take("kafka", provider, "page_cache_seconds")
-        broker_ram = max(floor_broker_ram, math.ceil(heap_gb + per_broker_peak_mb_s * page_cache_s / 1024))
+        broker_ram = max(
+            floor_broker_ram, math.ceil(heap_gb + per_broker_peak_mb_s * page_cache_s / 1024)
+        )
     elif provider == "redpanda":
         # Redpanda bypasses the page cache and carries per-replica state instead,
         # so its memory grows with PARTITIONS as well as with cores.
@@ -970,7 +987,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         ram_mb_per_replica = take("kafka", provider, "ram_mb_per_partition_replica")
         broker_ram = max(
             floor_broker_ram,
-            math.ceil(broker_vcpu * ram_per_core + partitions_per_broker * ram_mb_per_replica / 1024),
+            math.ceil(
+                broker_vcpu * ram_per_core + partitions_per_broker * ram_mb_per_replica / 1024
+            ),
         )
     else:
         broker_ram = 0
@@ -1024,9 +1043,13 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     # --- KRaft controllers ---------------------------------------------------
     if provider == "msk-express":
-        notes.append("MSK Express runs its own metadata quorum; no controller pool is ours to size.")
+        notes.append(
+            "MSK Express runs its own metadata quorum; no controller pool is ours to size."
+        )
     elif provider in SAAS_KAFKA_PROVIDERS:
-        notes.append(f"{provider} runs its own metadata quorum; no controller pool is ours to size.")
+        notes.append(
+            f"{provider} runs its own metadata quorum; no controller pool is ours to size."
+        )
     elif dial.controller_pool != "separate":
         # Combined mode runs the quorum on the brokers, so there are no
         # controller pods for a controller node to carry.
@@ -1059,7 +1082,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         else take("clickhouse", "hunt_window_days")
     )
     avg_event_bytes = (
-        dial.avg_event_bytes if dial.avg_event_bytes is not None else take("event", "p50_event_bytes")
+        dial.avg_event_bytes
+        if dial.avg_event_bytes is not None
+        else take("event", "p50_event_bytes")
     )
 
     compressed_gib = gb_per_day / compression * ttl_days * BYTES_PER_GB / BYTES_PER_GIB
@@ -1236,9 +1261,7 @@ def _whole(use_case: str, what: str, raw: str) -> int:
     try:
         return int(float(raw))
     except ValueError as err:
-        raise ResolveError(
-            f"sizing.overrides.{use_case}.{what}: {raw!r} is not a number"
-        ) from err
+        raise ResolveError(f"sizing.overrides.{use_case}.{what}: {raw!r} is not a number") from err
 
 
 def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> None:
@@ -1273,9 +1296,12 @@ def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> N
         for what, raw in fields.items():
             if what not in NODE_OVERRIDES:
                 continue
-            attribute = {"cpu": "vcpu", "memory": "ram_gib", "disk_gb": "disk_gib", "replicas": "count"}[
-                what
-            ]
+            attribute = {
+                "cpu": "vcpu",
+                "memory": "ram_gib",
+                "disk_gb": "disk_gib",
+                "replicas": "count",
+            }[what]
             derived = getattr(node, attribute)
             applied = _whole(use_case, what, raw)
             setattr(node, attribute, applied)
@@ -1398,9 +1424,14 @@ def fetch_live(region: str, az_count: int) -> Catalogue:
     """
     zones = _aws(
         [
-            "ec2", "describe-availability-zones", "--region", region,
-            "--filters", "Name=state,Values=available",
-            "--query", "AvailabilityZones[].ZoneName",
+            "ec2",
+            "describe-availability-zones",
+            "--region",
+            region,
+            "--filters",
+            "Name=state,Values=available",
+            "--query",
+            "AvailabilityZones[].ZoneName",
         ]
     )
     all_azs = tuple(str(z) for z in zones)
@@ -1413,11 +1444,15 @@ def fetch_live(region: str, az_count: int) -> Catalogue:
 
     raw = _aws(
         [
-            "ec2", "describe-instance-types", "--region", region,
+            "ec2",
+            "describe-instance-types",
+            "--region",
+            region,
             # SINGULAR. The plural processor-info.supported-architectures is
             # rejected outright, and a rejected filter reads like an empty
             # result rather than a mistake.
-            "--filters", "Name=processor-info.supported-architecture,Values=arm64",
+            "--filters",
+            "Name=processor-info.supported-architecture,Values=arm64",
         ]
     )
     types: dict[str, InstanceType] = {}
@@ -1434,10 +1469,16 @@ def fetch_live(region: str, az_count: int) -> Catalogue:
     for az in azs:
         answer = _aws(
             [
-                "ec2", "describe-instance-type-offerings", "--region", region,
-                "--location-type", "availability-zone",
-                "--filters", f"Name=location,Values={az}",
-                "--query", "InstanceTypeOfferings[].InstanceType",
+                "ec2",
+                "describe-instance-type-offerings",
+                "--region",
+                region,
+                "--location-type",
+                "availability-zone",
+                "--filters",
+                f"Name=location,Values={az}",
+                "--query",
+                "InstanceTypeOfferings[].InstanceType",
             ]
         )
         offerings[az] = {str(name) for name in answer} if isinstance(answer, list) else set()
@@ -1504,7 +1545,12 @@ def _fetch_ec2_prices(region: str) -> tuple[dict[str, float], dict[str, str]]:
     """
     raw = _aws(
         [
-            "pricing", "get-products", "--region", "us-east-1", "--service-code", "AmazonEC2",
+            "pricing",
+            "get-products",
+            "--region",
+            "us-east-1",
+            "--service-code",
+            "AmazonEC2",
             "--filters",
             f"Type=TERM_MATCH,Field=regionCode,Value={region}",
             "Type=TERM_MATCH,Field=operatingSystem,Value=Linux",
@@ -1531,8 +1577,14 @@ def _fetch_msk_prices(region: str) -> tuple[tuple[str, ...], dict[str, float]]:
     """MSK broker types, which live in MSK's own computeFamily namespace."""
     raw = _aws(
         [
-            "pricing", "get-products", "--region", "us-east-1", "--service-code", "AmazonMSK",
-            "--filters", f"Type=TERM_MATCH,Field=regionCode,Value={region}",
+            "pricing",
+            "get-products",
+            "--region",
+            "us-east-1",
+            "--service-code",
+            "AmazonMSK",
+            "--filters",
+            f"Type=TERM_MATCH,Field=regionCode,Value={region}",
         ]
     )
     prices: dict[str, float] = {}
@@ -1835,9 +1887,7 @@ def select_shape(
     passed_over = [
         t
         for t in sized
-        if t.name.split(".", 1)[0] == chosen_prefix
-        and t.vcpu < chosen.vcpu
-        and not leaves_room(t)
+        if t.name.split(".", 1)[0] == chosen_prefix and t.vcpu < chosen.vcpu and not leaves_room(t)
     ]
     if core is not None and passed_over:
         tight = max(passed_over, key=lambda t: (t.vcpu, t.memory_gib, t.name))
@@ -2041,9 +2091,7 @@ def _apply_shape_overrides(
         for name, volume in choice.volumes.items():
             if volume.get("type") != "gp3" or name != "data":
                 continue
-            core.overridden.append(
-                Override(choice.use_case, what, str(volume.get(key)), raw)
-            )
+            core.overridden.append(Override(choice.use_case, what, str(volume.get(key)), raw))
             applied = _whole(choice.use_case, what, raw)
             volume[key] = applied
             # They asked for it: an override above what the workload was going
@@ -2119,7 +2167,8 @@ def _volumes_fit(volumes: dict[str, dict[str, object]], candidate: InstanceType)
     if candidate.baseline_iops and total_iops > candidate.baseline_iops:
         return False
     return not (
-        candidate.baseline_throughput_mib_s and total_throughput > candidate.baseline_throughput_mib_s
+        candidate.baseline_throughput_mib_s
+        and total_throughput > candidate.baseline_throughput_mib_s
     )
 
 
@@ -2410,7 +2459,10 @@ def assert_caps(
                 True,
             )
         )
-    if choice.baseline_throughput_mib_s and total_demand_throughput > choice.baseline_throughput_mib_s:
+    if (
+        choice.baseline_throughput_mib_s
+        and total_demand_throughput > choice.baseline_throughput_mib_s
+    ):
         findings.append(
             Finding(
                 "A3",
@@ -2699,7 +2751,9 @@ def build_tfvars(
     resolved_shapes: dict[str, object] = {}
     for use_case, choice in shaped.items():
         entry = _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
-        resolved_shapes[use_case] = _resolved_shape(choice, entry if isinstance(entry, dict) else None)
+        resolved_shapes[use_case] = _resolved_shape(
+            choice, entry if isinstance(entry, dict) else None
+        )
     return {"node_pools": pools, "resolved_shapes": resolved_shapes}
 
 
@@ -3822,7 +3876,9 @@ def run_resolve(args: argparse.Namespace) -> int:
                     gp3_usd_per_gib_month=gp3_price,
                 )
             )
-        standalone = _resolve_standalone(cloud_entry, dial, core, catalogue, focus_generation, notes)
+        standalone = _resolve_standalone(
+            cloud_entry, dial, core, catalogue, focus_generation, notes
+        )
 
     core.notes.extend(notes)
 
@@ -3892,7 +3948,11 @@ def run_resolve(args: argparse.Namespace) -> int:
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",
         f"## {core.tier} tier, {core.focus} focus, "
-        + (f"{core.ingest_gb_per_day:,.0f} GB/day." if core.estimated else "no estimate (the floor)."),
+        + (
+            f"{core.ingest_gb_per_day:,.0f} GB/day."
+            if core.estimated
+            else "no estimate (the floor)."
+        ),
         "## Every key here exists in the chart it names; the resolver emits no key it invented.",
         "",
     ]
@@ -3943,7 +4003,9 @@ def run_resolve(args: argparse.Namespace) -> int:
         base_path.unlink(missing_ok=True)
 
     report_path = out / "sizing" / f"{core.tier}.report.md"
-    report_path.write_text(build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8")
+    report_path.write_text(
+        build_report(core, dial, choices, findings, sizing, catalogue), encoding="utf-8"
+    )
     written.append(report_path)
 
     resolved_yaml_path = out / "sizing" / "resolved.yaml"
@@ -3973,7 +4035,9 @@ def run_resolve(args: argparse.Namespace) -> int:
     for path in written:
         print(f"resolve_sizing: wrote {path}", file=sys.stderr)
     for finding in findings:
-        print(f"resolve_sizing: {finding.rule} {finding.use_case}: {finding.message}", file=sys.stderr)
+        print(
+            f"resolve_sizing: {finding.rule} {finding.use_case}: {finding.message}", file=sys.stderr
+        )
     # --migrate (already printed MIGRATING above, and reported here as a
     # normal finding if it also happens to be fatal) accepts the LOCKED DIFF,
     # never the caps: a fatal A1/A2/A3 (a volume profile the cloud will
@@ -4000,6 +4064,15 @@ def run_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def _utc_instant(raw: str) -> datetime:
+    """An ISO 8601 instant, read as UTC when it names no offset."""
+    try:
+        instant = datetime.fromisoformat(raw)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"not an ISO 8601 instant: {raw!r}") from err
+    return instant if instant.tzinfo else instant.replace(tzinfo=UTC)
+
+
 def _node_image_pin(tree: dict[str, object]) -> bool:
     """The dial's node_image.pin, refusing anything but true or false."""
     raw = (_scalar(tree, "node_image", "pin") or "false").lower()
@@ -4009,7 +4082,7 @@ def _node_image_pin(tree: dict[str, object]) -> bool:
 
 
 def run_images(args: argparse.Namespace) -> int:
-    """Resolve the dial's node images and write them where its tofu root loads them."""
+    """Resolve the dial's node images behind the release gates and write the three artefacts."""
     tree = _load(args.dial)
     cloud = _scalar(tree, "target", "provision", "cloud")
     if cloud is None:
@@ -4044,7 +4117,9 @@ def run_images(args: argparse.Namespace) -> int:
         raise ResolveError(f"compute-shapes.yaml declares no clouds.{cloud}.arch")
     out = args.out or TOFU_ROOTS / cloud
     if not out.is_dir():
-        raise ResolveError(f"no tofu root at {out} -- pass --out to write the node images elsewhere")
+        raise ResolveError(
+            f"no tofu root at {out} -- pass --out to write the node images elsewhere"
+        )
 
     pinned = _node_image_pin(tree)
     keys = frozenset(args.only) if args.only else None
@@ -4054,26 +4129,63 @@ def run_images(args: argparse.Namespace) -> int:
             f"--only {', '.join(sorted(keys - offered))}: {cloud} resolves only "
             f"{', '.join(sorted(offered))}"
         )
+    try:
+        policy = node_images.read_policy(args.versions)
+    except node_images.GatePolicyError as err:
+        raise ResolveError(str(err)) from err
     target = node_images.Target(cloud, region, account, kubernetes_version, arch)
-    read = (
-        node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
-    )
+    read = node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
+    sizing_dir = out / "sizing"
+    previous_path = args.previous or sizing_dir / node_images.RECORD_NAME
+    previous = node_images.read_record(previous_path)
 
     def warn(message: str) -> None:
         print(f"resolve_sizing: WARNING node image {message}", file=sys.stderr)
 
-    values = node_images.resolve(target, pinned=pinned, read=read, warn=warn, keys=keys)
+    def note(message: str) -> None:
+        print(f"resolve_sizing: node image {message}", file=sys.stderr)
+
+    resolution = node_images.resolve(
+        target,
+        pinned=pinned,
+        read=read,
+        warn=warn,
+        note=note,
+        policy=policy,
+        now=args.now or datetime.now(UTC),
+        recorded=previous,
+        keys=keys,
+    )
+    tfvars_keys = node_images.tfvars_keys(cloud)
+    tfvars = {key: value for key, value in resolution.values.items() if key in tfvars_keys}
     # A pin empties the file whatever --only names, or an earlier key would still beat terraform.tfvars.
-    path = node_images.write_tfvars(out, values, keys=None if pinned else keys)
+    scope = None if pinned or keys is None else keys & tfvars_keys
+    written = [node_images.write_tfvars(out, tfvars, keys=scope)]
     if pinned:
         print(
             "resolve_sizing: node_image.pin is true, so no lookup ran, the file is empty and the "
-        "tfvars value holds",
+            "tfvars value holds",
             file=sys.stderr,
         )
-    for key, value in sorted(values.items()):
-        print(f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}", file=sys.stderr)
-    print(f"resolve_sizing: wrote {path}", file=sys.stderr)
+    else:
+        # A deploy repo commits the record and the chart overlay, so a pin leaves both alone.
+        written.append(node_images.write_record(sizing_dir, resolution, previous))
+        if keys is None or node_images.CHART_KEYS & keys:
+            alias = node_images.read_record(sizing_dir / node_images.RECORD_NAME).get(
+                "karpenter_ami_alias", {}
+            )
+            overlay = node_images.write_node_pools_values(sizing_dir, alias.get("value"))
+            if overlay is not None:
+                written.append(overlay)
+    for key, value in sorted(resolution.values.items()):
+        release = resolution.record.get(key, {}).get("release", "")
+        source = f" ({release})" if release else ""
+        print(
+            f"resolve_sizing: node image {key} = {json.dumps(value, sort_keys=True)}{source}",
+            file=sys.stderr,
+        )
+    for path in written:
+        print(f"resolve_sizing: wrote {path}", file=sys.stderr)
     return 0
 
 
@@ -4088,13 +4200,19 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = sub.add_parser("resolve", help="resolve a dial into the five artefacts")
     resolve.add_argument("--dial", type=Path, required=True, help="the deployment dial")
     resolve.add_argument("--sizing", type=Path, default=SIZING_FILE, help="sizing.yaml to read")
-    resolve.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read")
+    resolve.add_argument(
+        "--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read"
+    )
     resolve.add_argument("--cloud", default=None, help="override the dial's target.provision.cloud")
     resolve.add_argument("--target", default=None, help="override the target overlay key")
     resolve.add_argument("--region", default=None, help="override the dial's region")
     resolve.add_argument("--live", action="store_true", help="resolve against the live cloud API")
-    resolve.add_argument("--fixtures", type=Path, default=None, help="resolve against captured answers")
-    resolve.add_argument("--out", type=Path, default=REPO_ROOT, help="where the artefacts are written")
+    resolve.add_argument(
+        "--fixtures", type=Path, default=None, help="resolve against captured answers"
+    )
+    resolve.add_argument(
+        "--out", type=Path, default=REPO_ROOT, help="where the artefacts are written"
+    )
     resolve.add_argument(
         "--previous",
         type=Path,
@@ -4108,16 +4226,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resolve.set_defaults(func=run_resolve, _parser=resolve)
 
-    capture = sub.add_parser("capture", help="capture the live API answers into a fixtures directory")
+    capture = sub.add_parser(
+        "capture", help="capture the live API answers into a fixtures directory"
+    )
     capture.add_argument("--region", default="us-west-2", help="the region to capture")
     capture.add_argument("--fixtures", type=Path, required=True, help="the fixtures directory")
     capture.set_defaults(func=run_capture)
 
     images = sub.add_parser(
-        "images", help="resolve each node image the provider recommends, at its newest version"
+        "images", help="resolve each node image, the newest that clears the release gates"
     )
     images.add_argument("--dial", type=Path, required=True, help="the deployment dial")
-    images.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read")
+    images.add_argument(
+        "--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read"
+    )
     images.add_argument(
         "--out",
         type=Path,
@@ -4132,6 +4254,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help="resolve just this key and keep the file's others (repeatable), e.g. instance_ami_id",
+    )
+    images.add_argument(
+        "--versions",
+        type=Path,
+        default=VERSIONS_FILE,
+        help="versions.yaml holding the release gates",
+    )
+    images.add_argument(
+        "--previous",
+        type=Path,
+        default=None,
+        help="the deploy repo's sizing/node-images.json, whose values hold when a lookup fails "
+        "or no image clears the gates (default: the one under --out)",
+    )
+    images.add_argument(
+        "--now",
+        type=_utc_instant,
+        default=None,
+        help="the UTC instant the release-age cooldown is measured from, ISO 8601 (default: now)",
     )
     images.set_defaults(func=run_images)
     return parser

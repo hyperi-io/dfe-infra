@@ -1011,37 +1011,56 @@ def _subnet_newbits(dial: dict[str, object], az_count: int) -> int:
     return value
 
 
-def _platform_version(cloud: str) -> str | None:
-    """The control-plane FLOOR versions.yaml states for this cloud, if any.
+def _platform_requirements(cloud: str) -> list[str]:
+    """The current stack's platform requirements for this cloud, its own key first.
 
-    The `platform:` stage names the oldest control-plane minor a cluster must
-    clear, not a version to install -- see _kubernetes_version, which is what
-    turns this floor and the dial's own choice into the version that runs.
-    Absent for a cloud with no stage yet, in which case the dial's own field
-    is all there is.
-
-    A value is spelt the way bootstrap/check_platform.py's parse_requirement
-    reads it: `>=1.34` is a floor alone, and a range `1.34-1.36` is a floor and a
-    ceiling. The floor is the low side either way. The ceiling is what
-    check_platform.py warns above, and it never refuses a dial.
+    Empty for a cloud with no stage yet, in which case the dial's own field is
+    all there is.
     """
     if not VERSIONS_FILE.is_file():
-        return None
+        return []
     try:
         tree = _parse_yaml_subset(
             VERSIONS_FILE.read_text(encoding="utf-8", errors="replace"),
             source=str(VERSIONS_FILE),
         )
     except YamlSubsetError:
-        return None
+        return []
     current = _scalar(tree, ("current",))
     if current is None:
-        return None
-    for key in (_PLATFORM_KEY.get(cloud, cloud), "kubernetes"):
-        value = _scalar(tree, ("stacks", current, "platform", key))
-        if value is not None:
-            return _platform_floor(value)
-    return None
+        return []
+    keys = (_PLATFORM_KEY.get(cloud, cloud), "kubernetes")
+    found = (_scalar(tree, ("stacks", current, "platform", key)) for key in keys)
+    return [value for value in found if value is not None]
+
+
+def _platform_version(cloud: str) -> str | None:
+    """The control-plane FLOOR versions.yaml states for this cloud, if any.
+
+    The `platform:` stage names the oldest control-plane minor a cluster must
+    clear, not a version to install -- see _kubernetes_version, which is what
+    turns this floor and the dial's own choice into the version that runs.
+
+    A value is spelt the way bootstrap/check_platform.py's parse_requirement
+    reads it: `>=1.34` is a floor alone, and a range `1.34-1.36` is a floor and a
+    ceiling. The floor is the low side either way. The ceiling is what
+    check_platform.py warns above, and it never refuses a dial.
+    """
+    requirements = _platform_requirements(cloud)
+    return _platform_floor(requirements[0]) if requirements else None
+
+
+def _platform_top(cloud: str) -> str | None:
+    """The newest minor the stack is tested on: the first ceiling stated, else the floor.
+
+    The EKS add-on pins are built for this minor, so a dial naming no version
+    takes it.
+    """
+    requirements = _platform_requirements(cloud)
+    for value in requirements:
+        if (ceiling := _platform_ceiling(value)) is not None:
+            return ceiling
+    return _platform_floor(requirements[0]) if requirements else None
 
 
 def _platform_floor(value: str) -> str:
@@ -1050,6 +1069,13 @@ def _platform_floor(value: str) -> str:
     bare = value.strip().removeprefix(">=").strip().removeprefix("v")
     low, _, _ceiling = bare.partition("-")
     return low.strip().removeprefix("v")
+
+
+def _platform_ceiling(value: str) -> str | None:
+    """The ceiling of one platform requirement: `1.34-1.36` gives 1.36, and `>=1.34` has none."""
+    bare = value.strip().removeprefix(">=").strip().removeprefix("v")
+    _low, _, ceiling = bare.partition("-")
+    return ceiling.strip().removeprefix("v") or None
 
 
 def _version_at_least(version: str, floor: str) -> bool:
@@ -1066,7 +1092,8 @@ def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
     pin that silently replaces the dial's own choice: a dial version that
     clears the floor wins, one that falls short is refused by name (so the
     mismatch is visible before a plan runs against an unsupported control
-    plane), and a dial naming no version at all takes the floor's minimum.
+    plane), and a dial naming no version at all takes the top of the tested
+    range, the minor the EKS add-on pins are built for.
     A cloud with no platform stage yet falls back to requiring the dial's own
     field, as before that stage existed.
     """
@@ -1075,7 +1102,8 @@ def _kubernetes_version(dial: dict[str, object], cloud: str) -> str:
         return _required(dial, ("kubernetes_version",))
     version = _scalar(dial, ("kubernetes_version",))
     if version is None:
-        return floor
+        top = _platform_top(cloud)
+        return top if top is not None and _version_at_least(top, floor) else floor
     if _version_at_least(version, floor):
         return version
     raise DialError(

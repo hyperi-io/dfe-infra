@@ -746,8 +746,12 @@ def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: s
     monkeypatch.setattr(bastion, "AWS_ROOT", root)
     fixtures = SCRIPTS / "tests" / "fixtures" / "node-images"
 
+    # The day the recorded answers were captured, so the release-age cooldown reads them the same every run.
+    captured = "2026-10-24T00:00:00Z"
+
     def run_with_recorded_answers(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        return subprocess.run([*cmd, "--fixtures", str(fixtures)], check=False, **kwargs)  # type: ignore[call-overload]
+        argv = [*cmd, "--fixtures", str(fixtures), "--now", captured]
+        return subprocess.run(argv, check=False, **kwargs)  # type: ignore[call-overload]
 
     monkeypatch.setattr(bastion, "_run", run_with_recorded_answers)
     return path

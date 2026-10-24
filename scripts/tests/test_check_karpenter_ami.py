@@ -10,8 +10,9 @@
 """Tests for scripts/check_karpenter_ami.py.
 
 ``eks-ami-releases.json`` is the verbatim answer of the check's own ``gh api``
-call (RELEASES_JQ) for awslabs/amazon-eks-ami, captured 2026-10-18. The ssm
-case reads the recorded EKS ``recommended`` parameter test_node_images.py uses.
+call (node_images.EKS_RELEASES_ARGS) for awslabs/amazon-eks-ami, captured
+2026-10-24. The ssm case reads the recorded EKS ``recommended`` parameter
+test_node_images.py uses.
 
     python3 -m pytest scripts/tests/test_check_karpenter_ami.py -q
 """
@@ -53,34 +54,76 @@ def _run(*argv: str) -> int:
 def test_the_lag_names_the_pin_and_the_newest_release(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """v20261012 shipped for 1.36 on 2026-10-14, nine days of releases after v20261003."""
+    """v20261003 was published 2026-10-08T18:11Z and v20261019 2026-10-21T19:19Z."""
     assert _run("--versions", str(_versions(tmp_path)), "--releases-json", str(RELEASES)) == 0
     err = capsys.readouterr().err
-    assert "WARNING stack 9.9.9 pins operators.karpenter-al2023-ami v20261003, 9 day(s) behind" in err
-    assert "newest AL2023 release for Kubernetes 1.36, v20261012 (github, published 2026-10-14)" in err
+    assert (
+        "WARNING stack 9.9.9 pins operators.karpenter-al2023-ami v20261003, 13 day(s) behind" in err
+    )
+    assert (
+        "newest AL2023 release for Kubernetes 1.36, v20261019 (github, published 2026-10-21)" in err
+    )
 
 
-def test_the_real_stack_reads_against_the_recorded_releases(capsys: pytest.CaptureFixture[str]) -> None:
-    """Whatever the current stack pins, the check names it, and only a pin behind v20261012 warns."""
+def test_the_lag_is_measured_by_publish_date_never_the_tag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """v20260311 was published 47 days after its tag, so it is newer than v20260318 by 31 days."""
+    releases = json.loads(RELEASES.read_text(encoding="utf-8"))
+    older = tmp_path / "releases.json"
+    older.write_text(
+        json.dumps([r for r in releases if r["tag_name"] <= "v20260318"]), encoding="utf-8"
+    )
+    versions = str(_versions(tmp_path, pin="v20260318"))
+    assert _run("--versions", versions, "--minor", "1.35", "--releases-json", str(older)) == 0
+    err = capsys.readouterr().err
+    assert "pins operators.karpenter-al2023-ami v20260318, 31 day(s) behind" in err
+    assert "v20260311 (github, published 2026-04-27)" in err
+
+
+def test_the_lag_takes_published_at_from_the_release_list() -> None:
+    releases = json.loads(RELEASES.read_text(encoding="utf-8"))
+    assert check.published_at(releases, "v20261012") == "2026-10-14T17:28:15Z"
+    assert check.published_at(releases, "v20200101") == ""
+    newest = check.Newest("v20261019", "2026-10-21T19:19:04Z", "github")
+    assert check.lag("2026-10-14T17:28:15Z", newest) == 7
+    assert check.lag("", newest) is None
+
+
+def test_the_real_stack_reads_against_the_recorded_releases(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whatever the current stack pins, the check names it, and only a pin behind v20261019 warns."""
     _stack, pin, _minor = check.stack_facts(check.VERSIONS_FILE, None)
     assert _run("--releases-json", str(RELEASES)) == 0
     captured = capsys.readouterr()
-    if pin < "v20261012":
+    if pin < "v20261019":
         assert f"pins operators.karpenter-al2023-ami {pin}," in captured.err
     else:
         assert "OK stack" in captured.out
         assert pin in captured.out
 
 
-def test_the_ssm_source_reports_the_same_lag(
+def test_the_ssm_source_names_the_lag_without_a_day_count(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """SSM carries no publish date, so the tags order the two and no day count is invented."""
     versions = str(_versions(tmp_path))
-    argv = ("--versions", versions, "--source", "ssm", "--region", "us-west-2", "--fixtures", str(FIXTURES))
+    argv = (
+        "--versions",
+        versions,
+        "--source",
+        "ssm",
+        "--region",
+        "us-west-2",
+        "--fixtures",
+        str(FIXTURES),
+    )
     assert _run(*argv) == 0
     err = capsys.readouterr().err
-    assert "v20261003, 9 day(s) behind" in err
+    assert "pins operators.karpenter-al2023-ami v20261003, behind the newest" in err
     assert "v20261012 (ssm us-west-2)" in err
+    assert "so the lag has no day count" in err
 
 
 def test_a_lag_is_an_annotation_under_actions(
@@ -92,10 +135,10 @@ def test_a_lag_is_an_annotation_under_actions(
 
 
 def test_a_current_pin_is_ok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    versions = _versions(tmp_path, pin="v20261012")
+    versions = _versions(tmp_path, pin="v20261019")
     assert _run("--versions", str(versions), "--releases-json", str(RELEASES)) == 0
     captured = capsys.readouterr()
-    assert captured.out.startswith("check_karpenter_ami: OK stack 9.9.9 pins v20261012")
+    assert captured.out.startswith("check_karpenter_ami: OK stack 9.9.9 pins v20261019")
     assert "WARNING" not in captured.err
 
 
@@ -124,7 +167,7 @@ def test_a_draft_or_prerelease_is_never_the_newest() -> None:
     releases[0]["prerelease"] = True
     newest = check.newest_from_releases(releases, "1.36", "arm64")
     assert newest is not None
-    assert newest.tag == "v20261003"
+    assert newest.tag == "v20261012"
 
 
 def test_expected_fail_an_unreadable_source_is_a_loud_skip_and_not_a_gate(
@@ -141,7 +184,9 @@ def test_expected_fail_a_pin_that_is_not_dated_warns_and_still_exits_zero(
 ) -> None:
     versions = _versions(tmp_path, pin="latest")
     assert _run("--versions", str(versions), "--releases-json", str(RELEASES)) == 0
-    assert "pins operators.karpenter-al2023-ami 'latest', not v<YYYYMMDD>" in capsys.readouterr().err
+    assert (
+        "pins operators.karpenter-al2023-ami 'latest', not v<YYYYMMDD>" in capsys.readouterr().err
+    )
 
 
 def test_expected_fail_a_stack_with_no_pin_warns_and_still_exits_zero(
@@ -149,7 +194,8 @@ def test_expected_fail_a_stack_with_no_pin_warns_and_still_exits_zero(
 ) -> None:
     versions = tmp_path / "versions.yaml"
     versions.write_text(
-        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      kubernetes: "1.36"\n', encoding="utf-8"
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      kubernetes: "1.36"\n',
+        encoding="utf-8",
     )
     assert _run("--versions", str(versions), "--releases-json", str(RELEASES)) == 0
     assert "carries no operators.karpenter-al2023-ami pin" in capsys.readouterr().err

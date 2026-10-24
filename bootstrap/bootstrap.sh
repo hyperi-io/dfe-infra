@@ -100,8 +100,10 @@
 #                            the directory `sizing/` hangs off. Defaults to
 #                            terraform/environments/<cloud> where that exists,
 #                            matching the resolve the deployment docs give. Its
-#                            <profile>.data-charts.values.yaml is seeded into a
-#                            bundled deploy repo's sizing/ for layer2-data.
+#                            <profile>.data-charts.values.yaml, and the
+#                            node-pools.values.yaml and node-images.json
+#                            resolve_sizing.py images writes, are seeded into a
+#                            bundled deploy repo's sizing/.
 #   DFE_SECRETS_REGION       aws-sm only: the region the store reads from.
 #   DFE_SECRETS_PREFIX       aws-sm only: the path every remoteRef hangs off.
 #   DFE_ENGINE_SECRETS_PREFIX  aws only: where dfe-engine's role writes what it
@@ -805,6 +807,17 @@ DFE_SIZING_BASE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.data-charts.values
 if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
   echo "Data-chart sizing: ${DFE_SIZING_BASE_FILE}"
 fi
+# The gated Karpenter alias layer2-platform reads, and the image record the next
+# resolve holds from. [4c/7] seeds both into a bundled repo.
+DFE_NODE_POOLS_VALUES_FILE="${DFE_SIZING_DIR}/sizing/node-pools.values.yaml"
+DFE_NODE_IMAGES_FILE="${DFE_SIZING_DIR}/sizing/node-images.json"
+if [[ -f "${DFE_NODE_POOLS_VALUES_FILE}" ]]; then
+  echo "Node images: ${DFE_NODE_POOLS_VALUES_FILE}"
+elif [[ "${DFE_CLOUD}" == "aws" ]]; then
+  # Without the overlay Karpenter silently takes the chart's default alias.
+  echo "NOTE: no ${DFE_NODE_POOLS_VALUES_FILE}, so Karpenter runs the node-pools chart's default image, not a gated one."
+  echo "      Write it with: python3 scripts/resolve_sizing.py images --dial <deployment.yaml> --out ${DFE_SIZING_DIR}"
+fi
 # A test run's id and expiry as one line of JSON, quoted the same way as the pools.
 export DFE_RUN_TAGS="${DFE_RUN_TAGS:-}"
 # shellcheck disable=SC2034 # read on the next line, inside a double-quoted expansion
@@ -1247,12 +1260,14 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
     --dry-run=client -o yaml | dfe_apply_secret
   echo "  Forgejo admin secret (forgejo ns) + engine write cred dfe-deploy-repo-auth (${DFE_NAMESPACE}) ready"
 
-  # The sizing the setup Job seeds into the repo's first commit. Applied empty
-  # where the resolve wrote none, so an earlier resolve's file cannot seed.
+  # The sizing and node images the setup Job seeds into the repo's first commit.
+  # Applied empty where the resolve wrote none, so an earlier resolve's file cannot seed.
   sizing_seed_args=()
-  if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
-    sizing_seed_args=(--from-file="${DFE_SIZING_BASE_FILE##*/}=${DFE_SIZING_BASE_FILE}")
-  fi
+  for seed_file in "${DFE_SIZING_BASE_FILE}" "${DFE_NODE_POOLS_VALUES_FILE}" "${DFE_NODE_IMAGES_FILE}"; do
+    if [[ -f "${seed_file}" ]]; then
+      sizing_seed_args+=(--from-file="${seed_file##*/}=${seed_file}")
+    fi
+  done
   kubectl -n forgejo create configmap dfe-deploy-repo-sizing ${sizing_seed_args[@]+"${sizing_seed_args[@]}"} \
     --dry-run=client -o yaml | kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -
   echo "  Deploy-repo sizing seed (forgejo ns): ${sizing_seed_args[*]:-none}"
@@ -1323,6 +1338,10 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
   if [[ -f "${DFE_SIZING_BASE_FILE}" ]]; then
     echo "  NOTE: layer2-data sizes Kafka and ClickHouse from sizing/${DFE_SIZING_BASE_FILE##*/} in ${DFE_CONFIG_REPO_URL}."
     echo "        Commit ${DFE_SIZING_DIR}/sizing/ there, or the data charts run at their chart defaults."
+  fi
+  if [[ -f "${DFE_NODE_POOLS_VALUES_FILE}" ]]; then
+    echo "  NOTE: Karpenter takes its gated node image from sizing/${DFE_NODE_POOLS_VALUES_FILE##*/} in ${DFE_CONFIG_REPO_URL}."
+    echo "        Commit it with sizing/${DFE_NODE_IMAGES_FILE##*/}, or nodes run the chart's default image."
   fi
 fi
 

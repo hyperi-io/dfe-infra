@@ -1,0 +1,622 @@
+[
+ {
+  "number": 2861,
+  "title": "AL2023 NVIDIA AMI: ignore NVIDIA_VISIBLE_DEVICES from unprivileged containers, as Bottlerocket does",
+  "state": "open"
+ },
+ {
+  "number": 2856,
+  "title": "bug(al2023): update-motd leaks ~30 MB dnf temp files every run, filling root volume on long-lived nodes",
+  "state": "closed"
+ },
+ {
+  "number": 2855,
+  "title": "bug(nvidia): truncated /etc/eks/pause.tar in v20261003 breaks nodes using FastImagePull",
+  "state": "closed"
+ },
+ {
+  "number": 2849,
+  "title": "[Notice] EKS-optimized AL2027 Public Preview",
+  "state": "open"
+ },
+ {
+  "number": 2848,
+  "title": "bug(al2023): Changing the kernel or downgrading to the fips certified kernel6.1 no longer possible with newer nvidia EKS amis",
+  "state": "open"
+ },
+ {
+  "number": 2846,
+  "title": "bug(al2023): failed to set MOUNT_ATTR_IDMAP in latest EKS Nvidia AMI",
+  "state": "closed"
+ },
+ {
+  "number": 2845,
+  "title": "bug(al2023): kernel 6.12.110-135.201 in v20260930 panics in list_lru_add during reclaim",
+  "state": "closed"
+ },
+ {
+  "number": 2839,
+  "title": "Support CUDA 13.4.2 in AL2023 NVIDIA EKS AMIs",
+  "state": "open"
+ },
+ {
+  "number": 2834,
+  "title": "bug(nvidia): ld.so.cache not rebuilt after driver tree overlay since v20260917, NVML fails with ERROR_LIBRARY_NOT_FOUND",
+  "state": "closed"
+ },
+ {
+  "number": 2833,
+  "title": "bug(release): Add the NVIDIA driver release back into the release notes",
+  "state": "closed"
+ },
+ {
+  "number": 2827,
+  "title": "[Feature] instance.storage.volumes: allow one EBS volume to back multiple directories, as localStorage already does",
+  "state": "open"
+ },
+ {
+  "number": 2817,
+  "title": "[AL2023] Update amazon-ssm-agent to >= 3.3.4851.0 for CVE-2026-89049",
+  "state": "closed"
+ },
+ {
+  "number": 2794,
+  "title": "Set `reservedSystemCPUs` dynamically",
+  "state": "open"
+ },
+ {
+  "number": 2790,
+  "title": "bug(al2023-nvidia): AMI v20260818 ships nvidia-container-toolkit 1.20.0, which breaks GPU containers with a read-only `/etc/nvidia`",
+  "state": "closed"
+ },
+ {
+  "number": 2789,
+  "title": "v20260818 (AL2023, kernel 6.12.100): /proc/sys/fs/binfmt_misc automount not triggered at boot \u2014 QEMU binfmt registrations from containers silently lost (\"exec format error\")",
+  "state": "closed"
+ },
+ {
+  "number": 2779,
+  "title": "When will SOCI v0.15.0 be supported",
+  "state": "closed"
+ },
+ {
+  "number": 2772,
+  "title": "AMI releases need to be more often as bugs are released every day, but your amis once in 2 weeks~",
+  "state": "closed"
+ },
+ {
+  "number": 2768,
+  "title": "AL2023 NVIDIA AMI: g7 instance family GPU (10de:2c3a) missing from nvidia-open supported-devices list \u2014 proprietary kmod loaded, GPU unusable",
+  "state": "closed"
+ },
+ {
+  "number": 2767,
+  "title": "Support RAID0 striping across multiple EBS volumes",
+  "state": "closed"
+ },
+ {
+  "number": 2745,
+  "title": "bug(al2023): AMI build fails during package install/verification",
+  "state": "closed"
+ },
+ {
+  "number": 2741,
+  "title": "bug: nvidia images has incorrect kernel boot options config",
+  "state": "closed"
+ },
+ {
+  "number": 2739,
+  "title": "bug(changelog): Add kernel version back into release note table",
+  "state": "closed"
+ },
+ {
+  "number": 2729,
+  "title": "bug(nodeadm): RunPodSandbox fails with image \"localhost/kubernetes/pause\": not found on v20260520, nodes never reach Ready",
+  "state": "closed"
+ },
+ {
+  "number": 2727,
+  "title": "Conditionally enable fabric manager service in NVIDIA AMIs",
+  "state": "closed"
+ },
+ {
+  "number": 2725,
+  "title": "bug(al2023): install-efa.sh script fails when NOEXEC set on /tmp",
+  "state": "closed"
+ },
+ {
+  "number": 2723,
+  "title": "[Windows] Start-EKSBootstrap.ps1: Get-EC2Instance triggers AWSPowerShell module cold-load",
+  "state": "closed"
+ },
+ {
+  "number": 2716,
+  "title": "re: `Dirty Frag`",
+  "state": "closed"
+ },
+ {
+  "number": 2715,
+  "title": "Request to use Semantic versioning",
+  "state": "closed"
+ },
+ {
+  "number": 2713,
+  "title": "New CVE similar to #2699: dirtyfrag / Copy_Fail2 mitigation guidance",
+  "state": "closed"
+ },
+ {
+  "number": 2712,
+  "title": "bug(al2023): EKS AMI v20260505 with containerd 2.2.3 breaks SOCI snapshotter and nodes stay NotReady",
+  "state": "closed"
+ },
+ {
+  "number": 2710,
+  "title": "bug(al2023): Nodes fail to become ready",
+  "state": "closed"
+ },
+ {
+  "number": 2706,
+  "title": "bug(AL2023_x86_64_NVIDIA): nvidia-device-plugin crashloops with libnvsandboxutils ERROR_NVML_LIB_CALL on AMI v20260423 (AL2023.11) \u2014 works on v20260403 (AL2023.10), same driver",
+  "state": "closed"
+ },
+ {
+  "number": 2703,
+  "title": "[Bug] Systemd ordering cycle non-deterministically skips cloud-init services on AL2023 EKS nodes after SELinux autorelabel reboot",
+  "state": "closed"
+ },
+ {
+  "number": 2702,
+  "title": "bug(nodeadm): EnsureRunning() does not restart containerd after Configure() writes new config",
+  "state": "closed"
+ },
+ {
+  "number": 2701,
+  "title": "Changelog too long to be viewed in GitHub",
+  "state": "closed"
+ },
+ {
+  "number": 2699,
+  "title": "\ud83d\udea8 Patch for: CVE-2026-31431",
+  "state": "closed"
+ },
+ {
+  "number": 2684,
+  "title": "Are there machine readable Ami Versions?",
+  "state": "closed"
+ },
+ {
+  "number": 2682,
+  "title": "bug(al2023): containerd v2.2.1 fails to create containers from images having /etc/{passwd,group} symlinked to an absolute path",
+  "state": "closed"
+ },
+ {
+  "number": 2681,
+  "title": "bug(al2023): v20260409 \u2014 kubelet silently stalls within hours, node stays \"running\" on EC2 side",
+  "state": "open"
+ },
+ {
+  "number": 2674,
+  "title": "Request for Updated AWS AMI Containing Patched gRPC Library (google.golang.org/grpc \u2265 1.79.3)",
+  "state": "closed"
+ },
+ {
+  "number": 2673,
+  "title": "v20260403 AMIs missing from us-east-1 and us-west-1",
+  "state": "closed"
+ },
+ {
+  "number": 2672,
+  "title": "bug(al2023): efa_nv_peermem: symbol version mismatch with NVIDIA driver not rebuilt by dkms autoinstall",
+  "state": "closed"
+ },
+ {
+  "number": 2669,
+  "title": "bug(nvidia): GRID driver not installed on g6f instances with AL2023 NVIDIA AMI v20260318",
+  "state": "closed"
+ },
+ {
+  "number": 2664,
+  "title": "v20260311 disappeared",
+  "state": "closed"
+ },
+ {
+  "number": 2652,
+  "title": "Release for ALAS2023-2026-1468",
+  "state": "closed"
+ },
+ {
+  "number": 2651,
+  "title": "bug: max-pods-calculator.sh deleted on commit id b228903",
+  "state": "closed"
+ },
+ {
+  "number": 2632,
+  "title": "Migrating to AL2023. The Nodegroup with AL2023 does not come up healthy. Instances failed to join the kubernetes cluster",
+  "state": "closed"
+ },
+ {
+  "number": 2631,
+  "title": "Reserve EKS add-on ports in AMI to prevent containerd CRI streaming server collision with managed components",
+  "state": "closed"
+ },
+ {
+  "number": 2629,
+  "title": "Nested VM support with upstream SDK update",
+  "state": "closed"
+ },
+ {
+  "number": 2625,
+  "title": "Upgrade containerd to 2.2+",
+  "state": "closed"
+ },
+ {
+  "number": 2623,
+  "title": "ec2-net-utils secondary IP aliases not applied: drop-in directory name mismatch with 70-eks-{iface}.network",
+  "state": "closed"
+ },
+ {
+  "number": 2622,
+  "title": "Release for ALAS2023-2026-1406",
+  "state": "closed"
+ },
+ {
+  "number": 2611,
+  "title": "bug(nodeadm): i4i.xlarge nodes failing to join node group",
+  "state": "closed"
+ },
+ {
+  "number": 2605,
+  "title": "EKS Optimized AMI: race condition during early pod startup causes hostPort iptables failures (-m comment)",
+  "state": "closed"
+ },
+ {
+  "number": 2599,
+  "title": "log-collector: collect node user-data as part of node logs collection",
+  "state": "closed"
+ },
+ {
+  "number": 2598,
+  "title": "log-collector: collect NMA pod logs",
+  "state": "closed"
+ },
+ {
+  "number": 2594,
+  "title": "bug(al2023): FICLONE ioctl throws \"operation not supported\" in the latest release",
+  "state": "closed"
+ },
+ {
+  "number": 2592,
+  "title": "bug(al2023): CredentialProviderConfig doesn't include dualstack endpoints",
+  "state": "closed"
+ },
+ {
+  "number": 2587,
+  "title": "bug(al2023): Error while building AL2023 image on k8s 1.33",
+  "state": "closed"
+ },
+ {
+  "number": 2586,
+  "title": "KubeVirt GPU Passthrough",
+  "state": "closed"
+ },
+ {
+  "number": 2582,
+  "title": "Node memory issues after 1.33 to 1.34 upgrade.",
+  "state": "closed"
+ },
+ {
+  "number": 2581,
+  "title": "Please rebuild nerdctl with an updated go.mod that pulls containerd/v2 v2.1.5",
+  "state": "closed"
+ },
+ {
+  "number": 2580,
+  "title": "bug(nodeadm): Memory Fully Reserved by kubeReserved on EKS Nodes When Using NodeAdm with VPC CNI Prefix Delegation and maxPodsExpression",
+  "state": "closed"
+ },
+ {
+  "number": 2577,
+  "title": "bug(nvidia): Disable HMM Addressing Mode in AMI",
+  "state": "closed"
+ },
+ {
+  "number": 2569,
+  "title": "Enable CONFIG_CACHEFILES_ONDEMAND and CONFIG_EROFS_FS_ONDEMAND in AL2023 kernel for nydus/EROFS fscache support",
+  "state": "closed"
+ },
+ {
+  "number": 2568,
+  "title": "Node fails to join EKS cluster after deploying custom AL2023 FIPS AMI - API timeout errors",
+  "state": "closed"
+ },
+ {
+  "number": 2566,
+  "title": "bug(GPU): DCGM metrics not fully reporting on G6/L4 GPUs on AL2023",
+  "state": "closed"
+ },
+ {
+  "number": 2554,
+  "title": "RuntimeError: Unexpected error from cudaGetDeviceCount(). Did you run some cuda functions before calling NumCudaDevices() that might have already set an error? Error 802: system not yet initialized",
+  "state": "closed"
+ },
+ {
+  "number": 2553,
+  "title": "bug(nodeadm): nodeadm does not complain when passing unknown attribute in NodeConfig spec",
+  "state": "closed"
+ },
+ {
+  "number": 2545,
+  "title": "NOTICE: Amazon Linux 2 AMI end of support",
+  "state": "closed"
+ },
+ {
+  "number": 2544,
+  "title": "bug(al2023): GovCloud AMIs do not contain updated nvidia packages",
+  "state": "closed"
+ },
+ {
+  "number": 2540,
+  "title": "bug(kubelet): maxPodsExpression not applied everywhere",
+  "state": "closed"
+ },
+ {
+  "number": 2535,
+  "title": "Include Mountpoint S3 CSI Driver logs in log bundle",
+  "state": "closed"
+ },
+ {
+  "number": 2518,
+  "title": "bug(AL2023): AMI 1.33.5-20251108 references missing S3 binaries at 2025-11-05",
+  "state": "closed"
+ },
+ {
+  "number": 2512,
+  "title": "ENI network broken",
+  "state": "closed"
+ },
+ {
+  "number": 2511,
+  "title": "bug(calico,al2023): kernel change lead to calico network CNI crash",
+  "state": "closed"
+ },
+ {
+  "number": 2510,
+  "title": "bug(containerd): AL2 / AMI Release 1.32.9-20251103 fails mounting host-file over symlink in container",
+  "state": "closed"
+ },
+ {
+  "number": 2499,
+  "title": "bug(al2023): host network Pods terminating forever since switching from AL2 to AL2023 EKS node AMI",
+  "state": "closed"
+ },
+ {
+  "number": 2498,
+  "title": "bug(runc): AmazonLinux2 runc 1.3.2 amazon-eks-node-1.32-v20251103 containers fail to start with \"failed to write cpu.cfs_quota_us: invalid argument\"",
+  "state": "closed"
+ },
+ {
+  "number": 2497,
+  "title": "bug(Observability): Unable to collect GPU monitoring metrics on g6f node",
+  "state": "closed"
+ },
+ {
+  "number": 2494,
+  "title": "bug(al2023): default containerd config-path doesn't treat properly when transfer service enbaled in containerd v2",
+  "state": "open"
+ },
+ {
+  "number": 2492,
+  "title": "bug(nodeadm): Disabling PodLogs mounting is not working",
+  "state": "closed"
+ },
+ {
+  "number": 2488,
+  "title": "Enable parallel image unpacking in containerd 2.2",
+  "state": "open"
+ },
+ {
+  "number": 2474,
+  "title": "Use `amazon-ecr-credential-helper` to remove login step",
+  "state": "closed"
+ },
+ {
+  "number": 2473,
+  "title": "Run script/commands from NodeConfig",
+  "state": "open"
+ },
+ {
+  "number": 2470,
+  "title": "Announcement: Containerd2.1 and Nvidia 580 Upgrade Timeline",
+  "state": "closed"
+ },
+ {
+  "number": 2468,
+  "title": "bug(networking MTU): Changing the MTU fails in October EKS AMis",
+  "state": "closed"
+ },
+ {
+  "number": 2467,
+  "title": "Add support for CredentialProviderConfig as part of NodeConfig.kubelet.config",
+  "state": "open"
+ },
+ {
+  "number": 2466,
+  "title": "EFA installer with GDR enabled",
+  "state": "closed"
+ },
+ {
+  "number": 2465,
+  "title": "nodeadm maxPodsExpressions vpc-cni prefix delegation documentation",
+  "state": "closed"
+ },
+ {
+  "number": 2455,
+  "title": "bug(al2023): amazon-ssm-agent package on the AMI is outdated and flagged as vulnerable",
+  "state": "closed"
+ },
+ {
+  "number": 2454,
+  "title": "Kernel dead old",
+  "state": "closed"
+ },
+ {
+  "number": 2452,
+  "title": "Enable Parallel Pull on smaller instance sizes",
+  "state": "closed"
+ },
+ {
+  "number": 2449,
+  "title": "bug(AL2023-EKS28-docker): $docker is missing on august and September images",
+  "state": "closed"
+ },
+ {
+  "number": 2444,
+  "title": "bug(templates): Default custom_endpoint_ec2 value causes error when retrieving instance profile",
+  "state": "closed"
+ },
+ {
+  "number": 2443,
+  "title": "Nvidia Grid Driver support in AL2023_x86_64_NVIDIA",
+  "state": "closed"
+ },
+ {
+  "number": 2438,
+  "title": "Support configuring node DNS resolver via NodeConfig",
+  "state": "closed"
+ },
+ {
+  "number": 2437,
+  "title": "Upgrade NVIDIA driver to 580.82.07",
+  "state": "closed"
+ },
+ {
+  "number": 2436,
+  "title": "bug(nodeadm): nodes occasionally failing to join eks cluster",
+  "state": "closed"
+ },
+ {
+  "number": 2428,
+  "title": "bug(al2023): Failed to initialize NVML Unknown Error",
+  "state": "closed"
+ },
+ {
+  "number": 2426,
+  "title": "Failed to start nodeadm-co.service - EKS Nodeadm Config",
+  "state": "closed"
+ },
+ {
+  "number": 2423,
+  "title": "bug(nodeadm): The newly added nodes in the Autoscaling Group occasionally fail to join the EKS cluster",
+  "state": "closed"
+ },
+ {
+  "number": 2417,
+  "title": "feat(al2023): NVIDIA driver version control",
+  "state": "open"
+ },
+ {
+  "number": 2415,
+  "title": "bug Provisioning step had errors: Running the cleanup provisioner",
+  "state": "closed"
+ },
+ {
+  "number": 2414,
+  "title": "feat(al2023): allow configuration for nodeadm init to use non default config source for NodeConfig",
+  "state": "closed"
+ },
+ {
+  "number": 2413,
+  "title": "bug($AREA): $HEADLINE",
+  "state": "closed"
+ },
+ {
+  "number": 2410,
+  "title": "feat(al2023): optimize GZIP",
+  "state": "closed"
+ },
+ {
+  "number": 2407,
+  "title": "bug($AREA): EKS Node fails to provision with invalid content-type",
+  "state": "closed"
+ },
+ {
+  "number": 2404,
+  "title": "bug(nodeadm): failed at `install-nodeadm.sh` due to duplicate image ids passed as `nerdctl rmi` argument",
+  "state": "closed"
+ },
+ {
+  "number": 2401,
+  "title": "PTP Hardware Clock support for EKS AMI",
+  "state": "closed"
+ },
+ {
+  "number": 2400,
+  "title": "bug(containerd): Unable to install containerd 1.7.27-1.eks.amzn2.0.4 from S3",
+  "state": "closed"
+ },
+ {
+  "number": 2391,
+  "title": "bug(AL2): Please help to update /usr/bin/aws-iam-authenticator without Amazon go SDK v1 in AL2 EKS optimized AMI.",
+  "state": "closed"
+ },
+ {
+  "number": 2386,
+  "title": "bug(nodeadm): Unable to create nodepool with RAID0 localstorage strategy in version >= v20250620",
+  "state": "closed"
+ },
+ {
+  "number": 2385,
+  "title": "bug(containerd): Pod creation fails consistently: failed to create containerd task: failed to create shim task: OCI runtime create failed: chown /dev/stdout: permission denied: unknown",
+  "state": "closed"
+ },
+ {
+  "number": 2379,
+  "title": "AL2 Nvidia driver upgrade",
+  "state": "closed"
+ },
+ {
+  "number": 2377,
+  "title": "AL2023 with Linux kernel 6.12",
+  "state": "closed"
+ },
+ {
+  "number": 2374,
+  "title": "containerd missing",
+  "state": "closed"
+ },
+ {
+  "number": 2367,
+  "title": "bug(AL2023): 20250807 fails to register hugepages via kubelet",
+  "state": "closed"
+ },
+ {
+  "number": 2366,
+  "title": "bug(containerd): Pod creation sometimes fail with Failed to create containerd task: failed to create shim task: OCI runtime create failed",
+  "state": "closed"
+ },
+ {
+  "number": 2365,
+  "title": "Need a new EKS AMI with the kernel bug fix applied",
+  "state": "closed"
+ },
+ {
+  "number": 2363,
+  "title": "Docker not available on most recent al2 1.31 image",
+  "state": "closed"
+ },
+ {
+  "number": 2360,
+  "title": "bug(AL2023): $Base ami created but instance not booting up as networking fails for IMDS calls",
+  "state": "closed"
+ },
+ {
+  "number": 2354,
+  "title": "bug(AL2023): iptable_nat module not loaded, breaking Istio and other iptables-legacy users in v20250801",
+  "state": "closed"
+ },
+ {
+  "number": 2351,
+  "title": "Run prebootstrap commands for Swap setup in nodes (AL2023)",
+  "state": "closed"
+ }
+]
