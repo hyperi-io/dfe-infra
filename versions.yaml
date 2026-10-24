@@ -6951,11 +6951,11 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.63"        # 2026-10-22, amd64 and arm64. Receiver auth compiled per listener into one Secret (#943), the resolver's sizing counted as declared (#944), the source catalogue read from dfe-schemas 0.2.18 (#963). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-ui: "v1.7.30"              # 2026-10-22, amd64 and arm64. next 16.4.1 for two RCEs and a DoS (v1.7.27), the engine-down page and public brand assets (#592), a 5 s engine timeout and tidier error pages (#593). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-receiver: "v1.15.58"      # 2026-10-22, amd64 and arm64. Bearer tokens come only from the per-listener auth the engine compiles, so the env path and its secret group go (#204). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-loader: "v1.18.58"        # 2026-10-21, amd64 and arm64. Reads the tenant from _org_id alone (#268), on the scalo 2.14.18 rule engine. Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-ui: "v1.7.30"              # 2026-10-24, amd64 and arm64. zod 4.6.7 and undici for GHSA-mrhx-c7xc-m3w5 and three undici advisories (#602), on v1.7.29's catalogue sources offered by variant (#598). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-receiver: "v1.15.58"      # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#207), on v1.15.57's single Kafka-or-gRPC transport key (#206). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-loader: "v1.18.58"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#270). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-archiver: "v1.7.38"       # 2026-10-21, amd64 and arm64. Keys the archive path on _org_id, the default org on a blank one (#132). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-fetcher: "v1.4.43"        # 2026-10-22, amd64 and arm64. The GA.RULES tenancy release (#240) plus a test-fixture Redpanda bump (#237). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-fetcher: "v1.4.43"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#243). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vrl: "v1.1.37"   # 2026-10-20, amd64 and arm64. Rebuilt on scalo 2.14.18 (#110). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vector: "v1.0.54"  # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 and vector 0.60.0 (#124). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-elastic: "v1.1.17" # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 (#123). Inside the 7-day cooldown, which is waived for 2.2.1.
