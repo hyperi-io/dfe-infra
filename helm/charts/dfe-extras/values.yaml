@@ -26,7 +26,7 @@ extras:
     dfe-ui: "v1.7.30"
     dfe-receiver: "v1.15.58"
     dfe-loader: "v1.18.58"
-    dfe-archiver: "v1.7.38"
+    dfe-archiver: "v1.7.39"
     dfe-fetcher: "v1.4.43"
     dfe-transform-vrl: "v1.1.37"
     dfe-transform-vector: "v1.0.54"
