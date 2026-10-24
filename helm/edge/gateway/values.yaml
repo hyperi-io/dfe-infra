@@ -45,7 +45,7 @@ envoyGateway:
   # services.envoy-gateway-proxy pin rather than the controller's compiled
   # default; the drift check holds both halves to versions.yaml.
   proxy:
-    image: "docker.io/envoyproxy/envoy:distroless-v1.39.2@sha256:dced08cf7c472e1a1d067f906878266078eeeb63c110b4961882c039a622853a"
+    image: "docker.io/envoyproxy/envoy:distroless-v1.39.5@sha256:9d84a586119a27b50437dbb01eccd4722832741539b1ed53c8e9d6da6067a6e0"
   # Concurrent connections each edge listener takes per proxy replica before it
   # closes new ones (ClientTrafficPolicy connection.connectionLimit).
   connectionLimit:

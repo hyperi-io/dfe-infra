@@ -14,7 +14,7 @@
 // The controller policy below is AWS's published one for the pinned provider
 // release, read from
 // website/content/en/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml
-// at v1.14.1, with the instance-profile lifecycle statements dropped: the
+// at v1.14.3, with the instance-profile lifecycle statements dropped: the
 // profile is created here, so the controller never creates, tags or deletes one.
 // The two instance-profile reads stay, because the controller makes them
 // whether or not it manages a profile.

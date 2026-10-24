@@ -211,8 +211,8 @@ spec:
                 # controller image by digest, so a chart digest pins both.
                 - chart: karpenter
                   repo: public.ecr.aws/karpenter
-                  version: "1.14.1"
-                  chartDigest: "sha256:91434e00fb102d6ee0d1bd34a4457a32fe01a8fa833fe1a2a37da4f50272079b"
+                  version: "1.14.3"
+                  chartDigest: "sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra

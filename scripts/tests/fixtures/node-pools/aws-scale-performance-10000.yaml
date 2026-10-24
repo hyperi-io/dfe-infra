@@ -13,7 +13,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -65,7 +65,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -117,7 +117,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -168,7 +168,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -219,7 +219,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -270,7 +270,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -318,7 +318,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -377,7 +377,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -447,7 +447,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -513,7 +513,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -579,7 +579,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
@@ -649,7 +649,7 @@ metadata:
     app.kubernetes.io/instance: "t"
     app.kubernetes.io/part-of: "dfe"
     app.kubernetes.io/managed-by: "helm"
-    app.kubernetes.io/version: "1.14.1"
+    app.kubernetes.io/version: "1.14.3"
     dfe.hyperi.io/env: "local"
     dfe.hyperi.io/cloud: "local"
 spec:
