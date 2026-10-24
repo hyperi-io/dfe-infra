@@ -85,7 +85,7 @@ variable "ttl_minutes" {
 // keys that track a server version instead of having one of their own --
 // see CONTRACT.md for the exact keys and where each one comes from.
 variable "tool_versions" {
-  description = "kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql, kafka-cli -- every key required and non-empty. jq and openssl are NOT here: they carry no upstream release cadence worth tracking (versions.yaml's own toolbox: stage comment) and are installed unpinned, matching docker/dfe-toolbox/base/Dockerfile's identical choice. kafka-cli pins the Apache Kafka CLI tarball this instance installs in place of kcat -- AL2023 carries no kcat package -- and reads services.kafka-version, never a pin of its own, the same way clickhouse-client and psql read theirs. That matches the in-cluster broker exactly; an MSK deployment names kafka.msk.broker_version in its own dial, so on that path the CLI is whatever services.kafka-version says rather than what the managed broker runs."
+  description = "kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql, kafka-cli, plus the download checks argocd-cli-arm64-sha256, yq-arm64-sha256 and kafka-cli-signer -- every key required and non-empty. The two SHA256s are the arm64 binaries' own, checked before install because neither ships a signature the instance can check. kafka-cli-signer is `<kafka-cli version>:<primary key fingerprint>`, the Apache release manager who signed that tarball, and must name the release kafka-cli installs. jq and openssl are NOT here: they carry no upstream release cadence worth tracking (versions.yaml's own toolbox: stage comment) and are installed unpinned, matching docker/dfe-toolbox/base/Dockerfile's identical choice. kafka-cli pins the Apache Kafka CLI tarball this instance installs in place of kcat -- AL2023 carries no kcat package -- and reads services.kafka-version, never a pin of its own, the same way clickhouse-client and psql read theirs. That matches the in-cluster broker exactly; an MSK deployment names kafka.msk.broker_version in its own dial, so on that path the CLI is whatever services.kafka-version says rather than what the managed broker runs."
   type        = map(string)
 
   // Only enforced when enabled is true: this module is ALWAYS instantiated
@@ -97,9 +97,26 @@ variable "tool_versions" {
       for k in [
         "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
         "aws-session-manager-plugin", "clickhouse-client", "psql", "kafka-cli",
+        "argocd-cli-arm64-sha256", "yq-arm64-sha256", "kafka-cli-signer",
       ] : can(var.tool_versions[k]) && length(var.tool_versions[k]) > 0
     ])
-    error_message = "tool_versions must carry a non-empty entry for kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql and kafka-cli whenever enabled is true -- render_dial.py assembles this from versions.yaml, so a missing key names a stanza that has not landed there yet."
+    error_message = "tool_versions must carry a non-empty entry for kubectl, helm, argocd-cli, tofu, yq, aws-cli, aws-session-manager-plugin, clickhouse-client, psql, kafka-cli, argocd-cli-arm64-sha256, yq-arm64-sha256 and kafka-cli-signer whenever enabled is true -- render_dial.py assembles this from versions.yaml, so a missing key names a stanza that has not landed there yet."
+  }
+
+  // A malformed hash or fingerprint would only surface as a failed boot, so plan refuses it.
+  validation {
+    condition = !var.enabled || alltrue([
+      can(regex("^[0-9a-f]{64}$", lookup(var.tool_versions, "argocd-cli-arm64-sha256", ""))),
+      can(regex("^[0-9a-f]{64}$", lookup(var.tool_versions, "yq-arm64-sha256", ""))),
+      can(regex("^[^:]+:[0-9A-F]{40}$", lookup(var.tool_versions, "kafka-cli-signer", ""))),
+    ])
+    error_message = "argocd-cli-arm64-sha256 and yq-arm64-sha256 must each be a lowercase hex SHA256, and kafka-cli-signer must be `<kafka-cli version>:<40 uppercase hex fingerprint>` -- versions.yaml toolbox: carries all three."
+  }
+
+  // Each Kafka release has its own release manager, so a broker bump without a re-pinned signer fails here, not at boot.
+  validation {
+    condition     = !var.enabled || split(":", lookup(var.tool_versions, "kafka-cli-signer", ":"))[0] == lookup(var.tool_versions, "kafka-cli", "")
+    error_message = "kafka-cli-signer names the release manager key for one Kafka release, and it is not the release kafka-cli installs -- re-pin versions.yaml toolbox.kafka-cli-signer to the key that signed kafka_2.13-<kafka-cli>.tgz, from https://downloads.apache.org/kafka/KEYS."
   }
 }
 

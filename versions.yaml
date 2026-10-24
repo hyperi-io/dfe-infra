@@ -7049,10 +7049,12 @@ stacks:
       helm: "v4.3.1"                     # 2026-10-15.
       # renovate: datasource=github-releases depName=argoproj/argo-cd
       argocd-cli: "v3.5.6"               # 2026-10-20, inside the 7-day cooldown, which is waived for 2.2.1. Matches the Argo CD that bootstrap.argocd installs.
+      argocd-cli-arm64-sha256: "281aea75a1eaea15e2839f12626e78684f76099f09ffb0b05d35f64344ed1256"  # Read 2026-10-24 from argocd-linux-arm64 in the v3.5.6 release, and equal to that release's cli_checksums.txt and GitHub's own asset digest. The AWS bastion checks the binary against it before install. Moves with argocd-cli.
       # renovate: datasource=github-releases depName=opentofu/opentofu
       tofu: "1.13.2"                     # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. Drops the compromised intermediate CA certificates and fixes CPU exhaustion against a hostile HTTP2 server in tofu init. OpenTofu publishes no LTS line.
       # renovate: datasource=github-releases depName=mikefarah/yq
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
+      yq-arm64-sha256: "189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b"  # Read 2026-10-24 from yq_linux_arm64 in the v4.54.1 release, and equal to that release's checksums file and GitHub's own asset digest. The AWS bastion checks the binary against it before install. Moves with yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.38.5"                  # 2026-10-22, inside the 7-day cooldown, which is waived for 2.2.1.
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
@@ -7060,6 +7062,7 @@ stacks:
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
+      kafka-cli-signer: "4.3.1:365454B8BAF2D52CCCE65EB471650CBCEA26F8A4"  # Read 2026-10-24: Bill Bejeck's code signing key signed kafka_2.13-4.3.1.tgz on 2026-06-17. It is in https://downloads.apache.org/kafka/KEYS, and keys.openpgp.org serves it with bbejeck@apache.org verified. The AWS bastion checks the Kafka CLI tarball against it. Each Kafka release has its own manager, so this moves with services.kafka-version.
 
     # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, which
     # render_dial.py renders into the aws root's eks_addon_versions tfvar. Each is built for one

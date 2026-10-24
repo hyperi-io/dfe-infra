@@ -65,6 +65,9 @@ variables {
     clickhouse-client          = "26.3.17.56"
     psql                       = "17"
     kafka-cli                  = "4.2.0"
+    argocd-cli-arm64-sha256    = "1111111111111111111111111111111111111111111111111111111111111111"
+    yq-arm64-sha256            = "2222222222222222222222222222222222222222222222222222222222222222"
+    kafka-cli-signer           = "4.2.0:3333333333333333333333333333333333333333"
   }
 
   session = {
@@ -789,6 +792,62 @@ run "rejects_incomplete_tool_versions" {
   variables {
     tool_versions = {
       kubectl = "1.36.0"
+    }
+  }
+
+  expect_failures = [
+    var.tool_versions,
+  ]
+}
+
+// --- a Kafka bump that leaves the release-manager key behind is refused at plan
+
+run "rejects_a_kafka_cli_signer_for_another_release" {
+  command = plan
+
+  variables {
+    tool_versions = {
+      kubectl                    = "v1.36.0"
+      helm                       = "v4.2.4"
+      argocd-cli                 = "v3.5.2"
+      tofu                       = "1.11.0"
+      yq                         = "v4.44.3"
+      aws-cli                    = "2.19.0"
+      aws-session-manager-plugin = "1.2.707.0"
+      clickhouse-client          = "26.3.17.56"
+      psql                       = "17"
+      kafka-cli                  = "4.3.1"
+      argocd-cli-arm64-sha256    = "1111111111111111111111111111111111111111111111111111111111111111"
+      yq-arm64-sha256            = "2222222222222222222222222222222222222222222222222222222222222222"
+      kafka-cli-signer           = "4.2.0:3333333333333333333333333333333333333333"
+    }
+  }
+
+  expect_failures = [
+    var.tool_versions,
+  ]
+}
+
+// --- a malformed download check is refused at plan, not at boot
+
+run "rejects_a_malformed_sha256" {
+  command = plan
+
+  variables {
+    tool_versions = {
+      kubectl                    = "v1.36.0"
+      helm                       = "v4.2.4"
+      argocd-cli                 = "v3.5.2"
+      tofu                       = "1.11.0"
+      yq                         = "v4.44.3"
+      aws-cli                    = "2.19.0"
+      aws-session-manager-plugin = "1.2.707.0"
+      clickhouse-client          = "26.3.17.56"
+      psql                       = "17"
+      kafka-cli                  = "4.2.0"
+      argocd-cli-arm64-sha256    = "1111111111111111111111111111111111111111111111111111111111111111"
+      yq-arm64-sha256            = "not-a-sha256"
+      kafka-cli-signer           = "4.2.0:3333333333333333333333333333333333333333"
     }
   }
 
