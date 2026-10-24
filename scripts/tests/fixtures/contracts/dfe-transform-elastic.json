@@ -86,7 +86,8 @@
       "auto_download": {
         "enabled": true,
         "data_dir": "/var/lib/dfe/geoip",
-        "max_age_days": 30
+        "max_age_days": 30,
+        "max_database_bytes": 536870912
       }
     }
   },
@@ -110,7 +111,7 @@
       "topics_path": "config.kafka.topics"
     }
   },
-  "base_image": "debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f",
+  "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
     "apt_repos": [
       {
@@ -188,7 +189,8 @@
             "maxmind_account_id": null,
             "maxmind_license_key": null,
             "ipinfo_token": null,
-            "max_age_days": 30
+            "max_age_days": 30,
+            "max_database_bytes": 536870912
           }
         }
       }
@@ -397,7 +399,8 @@
               "maxmind_account_id": null,
               "maxmind_license_key": null,
               "ipinfo_token": null,
-              "max_age_days": 30
+              "max_age_days": 30,
+              "max_database_bytes": 536870912
             }
           }
         }
@@ -416,7 +419,7 @@
             "const": "max_mind_geo_lite2"
           },
           {
-            "description": "IPLocate.io -- free, anonymous, country + ASN only.",
+            "description": "IPLocate.io IP to ASN -- free, anonymous, ASN only, CC BY-SA 4.0.",
             "type": "string",
             "const": "ip_locate"
           },
@@ -426,7 +429,7 @@
             "const": "ip_info_lite"
           },
           {
-            "description": "sapics/ip-location-db -- free CC0, country + ASN only.",
+            "description": "DB-IP Lite ASN as sapics/ip-location-db republishes it -- free,\nanonymous, ASN only, CC BY 4.0.",
             "type": "string",
             "const": "sapics"
           },
@@ -487,6 +490,13 @@
             "format": "uint32",
             "minimum": 0,
             "default": 30
+          },
+          "max_database_bytes": {
+            "description": "Largest download, and largest database decompressed from it, in bytes.\nA transfer past it is abandoned and the local copy kept. Default 512 MiB.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 536870912
           }
         }
       }

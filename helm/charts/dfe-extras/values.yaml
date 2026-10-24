@@ -22,17 +22,17 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.63"
-    dfe-ui: "v1.7.28"
-    dfe-receiver: "v1.15.56"
-    dfe-loader: "v1.18.57"
-    dfe-archiver: "v1.7.38"
-    dfe-fetcher: "v1.4.42"
-    dfe-transform-vrl: "v1.1.37"
-    dfe-transform-vector: "v1.0.54"
-    dfe-transform-elastic: "v1.1.17"
+    dfe-engine: "v1.22.70"
+    dfe-ui: "v1.7.30"
+    dfe-receiver: "v1.15.58"
+    dfe-loader: "v1.18.58"
+    dfe-archiver: "v1.7.39"
+    dfe-fetcher: "v1.4.43"
+    dfe-transform-vrl: "v1.1.38"
+    dfe-transform-vector: "v1.0.55"
+    dfe-transform-elastic: "v1.1.18"
     culvert: "v2.1.27"
-    dfe-hyperdx: "v0.3.11"
+    dfe-hyperdx: "v0.3.14"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
@@ -277,11 +277,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:4b32bccfae4f1443e144843e86a31ad8878554a92aeb54a551d4b11d33451064"
+        digest: "sha256:19bc5a276a7b2134067526c7c5e6f8bdde9803531f780a542dbf4de2be92fae8"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.28"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.30"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
@@ -430,8 +430,8 @@ extras:
           enabled: true
           image:
             repository: registry.k8s.io/git-sync/git-sync
-            tag: "v4.7.1"           # == versions.yaml services.git-sync
-            digest: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"
+            tag: "v4.8.0"           # == versions.yaml services.git-sync
+            digest: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"
             pullPolicy: IfNotPresent
           mountPath: /deploy-repo
           link: current

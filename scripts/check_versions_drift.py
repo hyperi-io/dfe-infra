@@ -1038,6 +1038,7 @@ UNCONSUMED: dict[str, str] = {
     "services.postgresql": "the PostgreSQL major the AWS toolbox's psql installs; render_dial.py reads it at runtime, with no hardcoded copy",
     "services.ferretdb": "docker path only: dfe-stack render --target docker writes it as HYPERDX_FERRETDB_VERSION; k8s runs the DocumentDB operator",
     "services.documentdb-pg": "docker path only: dfe-stack render --target docker writes it as HYPERDX_POSTGRES_VERSION; k8s runs the DocumentDB operator",
+    "services.documentdb-local": "docker path only: dfe-stack render --target docker writes it as HYPERDX_DOCUMENTDB_VERSION; k8s runs the DocumentDB operator",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",

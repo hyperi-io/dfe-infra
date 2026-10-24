@@ -10,7 +10,7 @@
       "linux/riscv64",
       "linux/s390x"
     ],
-    "public.ecr.aws/eks/aws-load-balancer-controller:v3.6.0@sha256:337a9bf9a99bbac372c8da20afad7b059e0bc89034f1087e325455b28c7fd488": [
+    "public.ecr.aws/eks/aws-load-balancer-controller:v3.6.1@sha256:954b5233e17128a18d12f7fcaac4c7ed792dea4bba0beeb5d450c5a4538e3394": [
       "linux/amd64",
       "linux/arm64"
     ],

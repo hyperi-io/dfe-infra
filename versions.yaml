@@ -6874,7 +6874,7 @@ stacks:
       clickhouse-operator: "0.0.8"   # 2026-09-25, ghcr.io/clickhouse/clickhouse-operator-helm@sha256:61d97bb43a16859f485af1099251fc591b527a4c01013e6de355be11a80fbc9c. ClickHouse Inc's own operator, scale profile only; Altinity's is untested with DFE. See docs/deployment/clickhouse.md.
       redpanda-operator: "26.2.4"    # 2026-09-24. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
       # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
-      aws-load-balancer-controller: "3.6.0"  # 2026-10-05. AWS only. Its CRDs ship in the chart.
+      aws-load-balancer-controller: "3.6.1"  # 2026-10-21. AWS only. Its CRDs ship in the chart.
       # image: public.ecr.aws/karpenter/karpenter
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"            # 2026-10-23, the 1.14 LTS line, supported to 2027-07. Inside the 7-day cooldown, which is waived for 2.2.1. Held on 1.14 because 1.15 is a regular release, supported only until 1.16, and renovate.json keeps it there. Same CRDs and chart as 1.14.1, with a new controller digest. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/node-pools is checked against this release's CRDs, so they move together.
@@ -6905,11 +6905,13 @@ stacks:
       ferretdb: "2.7.0"              # 2025-11-10. Needs the DocumentDB backend; 1.x to 2.x is a dump and restore.
       # renovate: datasource=docker depName=ghcr.io/ferretdb/postgres-documentdb
       documentdb-pg: "17-0.107.0-ferretdb-2.7.0"  # The newest PostgreSQL 17 build for FerretDB 2.7.0. FerretDB ships no 18 build yet.
+      # renovate: datasource=docker depName=ghcr.io/documentdb/documentdb/documentdb-local
+      documentdb-local: "pg18-1.0.0"  # dfe-docker's HyperDX store, the single-container DocumentDB build.
       # image: code.forgejo.org/forgejo/forgejo
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
       otel-collector: "0.163.2"      # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. The gateway and daemonset configs rendered for aws/scale and local/slim, and dfe-docker's collector config, pass otelcol validate on it.
-      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.11 merges, its packages/app version. The image is content.dfe-hyperdx.
+      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.14 merges, its packages/app version. The image is content.dfe-hyperdx.
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
       # renovate: datasource=docker depName=envoyproxy/envoy
@@ -6917,7 +6919,7 @@ stacks:
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31.7-trixie"  # 2026-10-14. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
-      git-sync: "v4.7.1"             # 2026-07-16. Pulls the deploy repo's hunts and rules into the hunt runner pod.
+      git-sync: "v4.8.0"             # 2026-10-24. Pulls the deploy repo's hunts and rules into the hunt runner pod.
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
       aws-msk-iam-auth: "2.3.9"      # 2026-09-24. A jar, not an image: the MSK bootstrap Job downloads it and checks its sha256.
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
@@ -6929,7 +6931,7 @@ stacks:
       envoy-gateway-proxy: "distroless-v1.39.5"  # 2026-10-23, inside the 7-day cooldown, which is waived for 2.2.1. Its image no longer trusts the compromised eMudhra intermediate CAs. Replaces the distroless-v1.39.1 that Envoy Gateway v1.9.2 defaults to, on the same Envoy minor.
       # image: public.ecr.aws/eks/aws-load-balancer-controller
       # Moves with operators.aws-load-balancer-controller, the chart that runs it.
-      aws-load-balancer-controller-image: "v3.6.0"  # 2026-10-05, amd64 and arm64. AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
+      aws-load-balancer-controller-image: "v3.6.1"  # 2026-10-21, amd64 and arm64. AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
       # The DocumentDB operator, its sidecar injector and its CloudNativePG, all from the operator chart.
       # image: ghcr.io/documentdb/documentdb-kubernetes-operator/operator
       documentdb-operator-image: "1.0.0"
@@ -6948,15 +6950,15 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.63"        # 2026-10-22, amd64 and arm64. Receiver auth compiled per listener into one Secret (#943), the resolver's sizing counted as declared (#944), the source catalogue read from dfe-schemas 0.2.18 (#963). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-ui: "v1.7.28"              # 2026-10-22, amd64 and arm64. next 16.4.1 for two RCEs and a DoS (v1.7.27), the engine-down page and public brand assets (#592), a 5 s engine timeout and tidier error pages (#593). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-receiver: "v1.15.56"      # 2026-10-22, amd64 and arm64. Bearer tokens come only from the per-listener auth the engine compiles, so the env path and its secret group go (#204). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-loader: "v1.18.57"        # 2026-10-21, amd64 and arm64. Reads the tenant from _org_id alone (#268), on the scalo 2.14.18 rule engine. Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-archiver: "v1.7.38"       # 2026-10-21, amd64 and arm64. Keys the archive path on _org_id, the default org on a blank one (#132). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-fetcher: "v1.4.42"        # 2026-10-22, amd64 and arm64. The GA.RULES tenancy release (#240) plus a test-fixture Redpanda bump (#237). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-transform-vrl: "v1.1.37"   # 2026-10-20, amd64 and arm64. Rebuilt on scalo 2.14.18 (#110). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-transform-vector: "v1.0.54"  # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 and vector 0.60.0 (#124). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-transform-elastic: "v1.1.17" # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 (#123). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-engine: "v1.22.70"        # 2026-10-24, amd64 and arm64. Compound Source conditions, rule ordering and compatibility profiles (#969), ETag readable cross-origin (#971), a non-equals fetcher route refused (#970), catalogue sources by deployed variant (#964), view role gates at the grant's scope (#965), scalo 2.32.1 (#968). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-ui: "v1.7.30"              # 2026-10-24, amd64 and arm64. zod 4.6.7 and undici for GHSA-mrhx-c7xc-m3w5 and three undici advisories (#602), on v1.7.29's catalogue sources offered by variant (#598). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-receiver: "v1.15.58"      # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#207), on v1.15.57's single Kafka-or-gRPC transport key (#206). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-loader: "v1.18.58"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#270). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-archiver: "v1.7.39"       # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#134). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-fetcher: "v1.4.43"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#243). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-transform-vrl: "v1.1.38"   # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#113). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-transform-vector: "v1.0.55"  # 2026-10-24, amd64 and arm64. Rebuilt on scalo 2.14.20 (#127). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-transform-elastic: "v1.1.18" # 2026-10-24, amd64 and arm64. Keeps the shipper's agent and namespace fields on a receiver delivery (#125), rebuilt on scalo 2.14.20 (#127). Inside the 7-day cooldown, which is waived for 2.2.1.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -6966,19 +6968,19 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:4b32bccfae4f1443e144843e86a31ad8878554a92aeb54a551d4b11d33451064"
-      dfe-ui: "sha256:4c201654f39a9818c25dfceb89219879d7fc7385516ea1db5aab4d464080a103"
-      dfe-receiver: "sha256:cae6887bb82841ddea91648c089e5f8ca0d02a6ece9004b48834c922a47c387e"
-      dfe-loader: "sha256:7f3a534147fb4591cd878d94bae5b0c52b61bf681a452a9cff26c0a2391ce9a3"
-      dfe-archiver: "sha256:842b462991fb89402b2fb75a6bed7494dfdaea83704fd9c91b61c02e9911d9d4"
-      dfe-fetcher: "sha256:2633164629805a59cb153a0efc797093e69cb8f6b780b2329768310966133a8e"
-      dfe-transform-vrl: "sha256:54d20328149f8f38b837d31c107b955ae7c647c7141ff4fd42d12808d183a637"
-      dfe-transform-vector: "sha256:d4ec0991b089e8279eb4863c93f8288354bd60d1d0e8bf042481b7e25cb3e4c6"
-      dfe-transform-elastic: "sha256:4d8ec74a5baf6f2603c1561e2c6246687266678c4fd00792d591e40ad31303ee"
-      dfe-hyperdx: "sha256:0928bfc493f848e51268906cb7d198cb1aec3b28f7aca89bf4d115f2041a18ff"
+      dfe-engine: "sha256:19bc5a276a7b2134067526c7c5e6f8bdde9803531f780a542dbf4de2be92fae8"
+      dfe-ui: "sha256:32ed4e324b4e070830e2cc0ded978beeb6d5d50969a54023272d8e187cc95e5a"
+      dfe-receiver: "sha256:44a5874e7db073dd6c273fce20e6d61cc7cd0654a757b934099f2c5343a63369"
+      dfe-loader: "sha256:4f35277451d5c9e42560515bff58ab5c40cdde3f350a2ec69e9fd3539668ac21"
+      dfe-archiver: "sha256:08ce1f184c20b202aea45c853b9545cfb473c44e2c161869a810618ff6fc91e2"
+      dfe-fetcher: "sha256:e7b3e550a49ccaf42b8290ddf6d20036476d23900a976df061735d6e02981e5e"
+      dfe-transform-vrl: "sha256:d22603d34e48ae7d6c71239b6eecd7160ca30d805f26f9bd6ff54ff39e973429"
+      dfe-transform-vector: "sha256:2457922b8bd88b7660db0627f3ce4ca75881fed3e4df84a43cc95706f4179ce1"
+      dfe-transform-elastic: "sha256:2a4303db9315ab9d993b26a8e44c238684b4848bd6e25e5db318ebbe8b09653a"
+      dfe-hyperdx: "sha256:2ac903fdacb25f689625667352ccaaa8f3cbd1f79b30bb10335f4ec94fd565a4"
       culvert: "sha256:267e981b4b18f0bff9ad8e09a6c8ee31753acbdaba8f32bfb3bd9e3466f11857"
       # Tagged by toolbox.dfe-toolbox.
-      dfe-toolbox-base: "sha256:a08e64b708d201e1e26823ba3ffc8d4a8e54a669713c4047d40715a6ea3522e5"
+      dfe-toolbox-base: "sha256:6892457da2bddb2a17a5ad7c77d8cace746f19fe9cb9665b7ab0f5db452b4d48"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
@@ -6987,16 +6989,16 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:7370678f13b9d388a8b441b6e757b9f1205830edab83e2641cd0ffdaf38f36c9"                # 2.1.27
-      dfe-archiver: "sha256:fb62a7468acf31dd9450210d67ae0e1a49251f4df2042077ea00606f3db924aa"           # 1.7.38
-      dfe-engine: "sha256:538b266e226babaeaa87195fb14d1e6a15235934df7b57eb24d6a51cac9693b3"             # 1.22.63
-      dfe-fetcher: "sha256:515d1214e4e30f100b311967eba59972f78da0f25886fa9b88f532d1f84e5bdd"            # 1.4.42
-      dfe-loader: "sha256:8c101f911374b409d6a6bb860b78193621aec0bd1b6d5190b34e0a677e7b9bb5"             # 1.18.57
-      dfe-receiver: "sha256:efd2b33e9e54df66f9042b2622dd196adc7378e8a9feb0d5f236e2054abf4b42"           # 1.15.56
-      dfe-transform-elastic: "sha256:c64f75d330f97027aa61256466e39045b490a604f84c62170d11d74fa2e5168b"  # 1.1.17
-      dfe-transform-vector: "sha256:130a193bb99d46a5ad86b5f248dc24055a861577b489e86a26ef7a4cc6204145"   # 1.0.54
-      dfe-transform-vrl: "sha256:d81f458c35f376cac2d57c5eac6ecb3ba75f35a67295bd60639fecfc43b6c8a7"      # 1.1.37
-      dfe-ui: "sha256:cfdb8de5bbc83aad354b654f06e4d777e9b021d51f22227a855a6789175c760b"                # 1.7.28
-      hyperdx: "sha256:14161b2e15009f3442c85eaf2438769d3d444dbc50580f901b036985752fb9c4"                # 0.3.11
+      dfe-archiver: "sha256:ae0c75b611f9f36ab777507a98529df7607e10daf598fd79564a17e7287ba800"           # 1.7.39
+      dfe-engine: "sha256:77b67464aee61b60e40b62e26c7ecab723adb30db79fae52218061655d3793f7"             # 1.22.70
+      dfe-fetcher: "sha256:beb3b1ab1254b201b09677afb4973eaba2c3e272eaf316aa081a4aceba70385e"            # 1.4.43
+      dfe-loader: "sha256:7bc497b51b96d302f34aa675450437d9860e57861c618859521b861fc8355de7"             # 1.18.58
+      dfe-receiver: "sha256:06d76b49534c272ac05c0fda33e28795479c11f842df479310fa8f27f9b825ba"           # 1.15.58
+      dfe-transform-elastic: "sha256:eb6db0c37631aa6a16b5f2a8ac211eb9ed80a5e72a4ab2af27262847d6717c2a"  # 1.1.18
+      dfe-transform-vector: "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"   # 1.0.55
+      dfe-transform-vrl: "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"      # 1.1.38
+      dfe-ui: "sha256:7d4e9acb57fa8b31d0f8b0d2ef052221275270d900a50142d32fa44f9464a075"                # 1.7.30
+      hyperdx: "sha256:bc29954067bdf92e0569cacd3052a3444a7ceac16154ca28a3875e9c0f0c9ffa"                # 0.3.14
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
@@ -7009,16 +7011,17 @@ stacks:
       ferretdb: "sha256:5706414241eb84f0515512c37b46db0f1b1eac9e5ceb7e4c2523211c184b1985"            # ghcr.io/ferretdb/ferretdb:2.7.0
       documentdb-pg: "sha256:2386795ec2aa7ae559304361979f1dc5708d383ee9020ae63dadc2940dfe58f7"       # ghcr.io/ferretdb/postgres-documentdb:17-0.107.0-ferretdb-2.7.0
       envoy-proxy: "sha256:713bb146f1a7c97ebc70e13d259f77ff36f2c5d00f3145677816af5af9bd1530"         # envoyproxy/envoy:v1.40.1
+      documentdb-local: "sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5"   # ghcr.io/documentdb/documentdb/documentdb-local:pg18-1.0.0
       nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"   # nginxinc/nginx-unprivileged:1.31.7-trixie
       otel-collector: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"       # otel/opentelemetry-collector-contrib:0.163.2
-      git-sync: "sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717"            # registry.k8s.io/git-sync/git-sync:v4.7.1
+      git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"            # registry.k8s.io/git-sync/git-sync:v4.8.0
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
       local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"  # docker.io/rancher/local-path-provisioner:v0.0.37
       envoy-gateway-proxy: "sha256:9d84a586119a27b50437dbb01eccd4722832741539b1ed53c8e9d6da6067a6e0" # docker.io/envoyproxy/envoy:distroless-v1.39.5
       karpenter: "sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9"           # public.ecr.aws/karpenter/karpenter:1.14.3 (OCI chart)
-      aws-load-balancer-controller-image: "sha256:337a9bf9a99bbac372c8da20afad7b059e0bc89034f1087e325455b28c7fd488"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.0
+      aws-load-balancer-controller-image: "sha256:954b5233e17128a18d12f7fcaac4c7ed792dea4bba0beeb5d450c5a4538e3394"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.1
       documentdb-operator: "sha256:6325eccd12db73ad2b3ffd2df294c79187c0521fb31b1f9a1c3061fa89f35114"
       documentdb-operator-image: "sha256:9d433fd486ac49de79565318e573de08ff67e8819d2f4a955f43dee6db8a5e14"
       documentdb-sidecar: "sha256:53942efe095ebff72f6332c02d478476183bb5763885f870ac485a0d5e8d29e5"
@@ -7034,7 +7037,7 @@ stacks:
       dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 1d7c1f2e (2026-10-23) is "fix: report cores deployed and worker-node cores on the docker stack (#289)".
       dfe-docker: "1d7c1f2e6b34822e78251294035aa020d4003581"
-      dfe-hyperdx: "v0.3.11"             # 2026-10-23, amd64 and arm64. Still upstream HyperDX 2.41.0: the DFE sources store matches a source name by value, so a request cannot send an operator in its place (dfe-hyperdx#161).
+      dfe-hyperdx: "v0.3.14"             # 2026-10-24, amd64 and arm64. Still upstream HyperDX 2.41.0, with the request-body and JSON-width bounds.
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
