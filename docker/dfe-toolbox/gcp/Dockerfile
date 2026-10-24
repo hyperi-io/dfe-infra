@@ -4,43 +4,28 @@
 #
 # ARG default mirrors versions.yaml's toolbox.gcloud pin (drift-checked); the
 # workflow overrides it at build time from the same source.
-ARG BASE_TAG="v1.0.5"
+ARG BASE_TAG="v1.0.6"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
-ARG TARGETARCH
 ARG GCLOUD_VERSION="587.0.0"
 
 USER 0
 
-# gcloud needs a system Python 3 interpreter; the base image ships none
-# (nothing else in it is Python-based). Deliberately unpinned: it rides
-# trixie's own security-update cadence.
-# hadolint ignore=DL3008
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 \
-    && rm -rf /var/lib/apt/lists/*
-
-# google-cloud-cli: official tarball install (Google names amd64/arm64 as
-# x86_64/arm). --usage-reporting=false and --command-completion=false keep
-# the non-interactive install from prompting; --path-update=false because
-# PATH is set explicitly below instead of writing to a shell rc file nothing
-# in a container sources.
-RUN case "${TARGETARCH}" in \
-      amd64) GCLOUD_ARCH=x86_64 ;; \
-      arm64) GCLOUD_ARCH=arm ;; \
-      *) echo "unsupported TARGETARCH ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL -o /tmp/gcloud.tar.gz \
-      "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-${GCLOUD_VERSION}-linux-${GCLOUD_ARCH}.tar.gz" \
-    && tar -xzf /tmp/gcloud.tar.gz -C /opt \
-    && rm -f /tmp/gcloud.tar.gz \
-    && /opt/google-cloud-sdk/install.sh \
-         --usage-reporting=false \
-         --command-completion=false \
-         --path-update=false \
-         --quiet
-
-ENV PATH="/opt/google-cloud-sdk/bin:${PATH}"
+# google-cloud-cli: Google's signed apt repo, key
+# 35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3 pinned by primary fingerprint. The
+# package pulls Debian's python3, which the base image does not carry. The
+# installation properties file turns usage reporting off for every user.
+RUN mkdir -p /etc/apt/keyrings /tmp/keys \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/keys/google-cloud.asc \
+      "https://packages.cloud.google.com/apt/doc/apt-key.gpg" \
+    && pinned-keyring /tmp/keys/google-cloud.asc /etc/apt/keyrings/google-cloud.gpg \
+      35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3 \
+    && echo "deb [signed-by=/etc/apt/keyrings/google-cloud.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends "google-cloud-cli=${GCLOUD_VERSION}-*" \
+    && printf '[core]\ndisable_usage_reporting = true\n' > /usr/lib/google-cloud-sdk/properties \
+    && rm -rf /var/lib/apt/lists/* /tmp/keys
 
 USER 1000:1000

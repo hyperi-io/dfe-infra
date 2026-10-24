@@ -19,12 +19,16 @@ scripts need a full Kafka install plus a JVM), and jq/yq/openssl/curl/dig/nc.
 No `tcpdump`: the pod is unprivileged with no `CAP_NET_RAW`/`CAP_NET_ADMIN`,
 so the binary would be dead weight.
 
-Every version is a Docker build ARG defaulting to a `versions.yaml` `toolbox.*` pin; `scripts/check_versions_drift.py` holds each Dockerfile's default to its pin, and the build workflow overrides every one from the same source. A published family tag (`toolbox.dfe-toolbox`) never moves: a change to any image's inputs ships under a bumped tag, and the pull-request check fails until the bump is there.
+Every version is a Docker build ARG defaulting to a `versions.yaml` `toolbox.*` pin. `scripts/check_versions_drift.py` holds each Dockerfile's default to its pin, and the build workflow overrides every one from the same source. A published family tag (`toolbox.dfe-toolbox`) never moves: a change to any image's inputs ships under a bumped tag, and the pull-request check fails until the bump is there.
 
-**Per-cloud:** `-aws` adds the AWS CLI v2 and the Session Manager plugin --
-AWS publishes no versioned plugin download, only a floating `latest`, so the
-build asserts the installed version still matches the recorded pin. `-gcp`
-adds gcloud. `-azure` adds az from Microsoft's apt repo pinned to `bookworm`
+Every download is checked before it installs, and a failed check fails the build:
+
+- kubectl, tofu, clickhouse-client, gcloud and az come from the vendor's signed apt repo, with the repo key pinned by fingerprint in the Dockerfile and trusted for that repo only.
+- argocd and yq are copied out of their official images, pinned by index digest (`toolbox.argocd-cli-image`, `toolbox.yq-image`). The build fails unless each binary reports its release pin.
+- helm, the AWS CLI and the Session Manager plugin are checked against a signature from a key pinned by fingerprint. AWS publishes its two keys only in its docs, so they sit beside the aws Dockerfile.
+
+**Per-cloud:** `-aws` adds the AWS CLI v2 and the Session Manager plugin, both
+at the pinned version. `-gcp` adds gcloud. `-azure` adds az from Microsoft's apt repo pinned to `bookworm`
 (`packages.microsoft.com` has no `trixie` suite yet; the build itself is a
 self-contained venv that runs on trixie regardless).
 

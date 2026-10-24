@@ -7040,23 +7040,27 @@ stacks:
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
     toolbox:
       # renovate: datasource=docker depName=ghcr.io/hyperi-io/dfe-toolbox-base
-      dfe-toolbox: "v1.0.5"              # The family tag for all four images. A published tag never moves, so any input change ships under a new one. v1.0.5 carries helm v4.3.1, argocd v3.5.6, tofu 1.13.2 and aws-cli 2.38.5. v1.0.4 stays published as it was.
+      dfe-toolbox: "v1.0.6"              # The family tag for all four images. A published tag never moves, so any input change ships under a new one. v1.0.6 carries the 2026-10-21 trixie-slim and checks every download against a pinned key or image digest before it installs. v1.0.5 stays published as it was.
       # renovate: datasource=docker depName=debian
-      debian: "trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"  # Debian 13.7, pushed 2026-10-06.
+      debian: "trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"  # Debian 13.7, pushed 2026-10-21 (Docker Hub tag API, shared with 13.7-slim and trixie-20261020-slim).
       # renovate: datasource=github-releases depName=kubernetes/kubernetes
       kubectl: "v1.35.9"                 # 2026-09-23. The middle of the platform window, so within kubectl's one-minor skew of both 1.34 and 1.36. renovate.json holds it to 1.35.x.
       # renovate: datasource=github-releases depName=helm/helm
       helm: "v4.3.1"                     # 2026-10-15.
       # renovate: datasource=github-releases depName=argoproj/argo-cd
       argocd-cli: "v3.5.6"               # 2026-10-20, inside the 7-day cooldown, which is waived for 2.2.1. Matches the Argo CD that bootstrap.argocd installs.
+      # renovate: datasource=docker depName=quay.io/argoproj/argocd
+      argocd-cli-image: "v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335"  # The official image dfe-toolbox-base copies argocd out of, by index digest (amd64 and arm64), read 2026-10-24 with `docker buildx imagetools inspect`. The build fails unless the binary reports toolbox.argocd-cli.
       # renovate: datasource=github-releases depName=opentofu/opentofu
       tofu: "1.13.2"                     # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. Drops the compromised intermediate CA certificates and fixes CPU exhaustion against a hostile HTTP2 server in tofu init. OpenTofu publishes no LTS line.
       # renovate: datasource=github-releases depName=mikefarah/yq
       yq: "v4.54.1"                      # 2026-09-29. mikefarah/yq, not Debian's python3-yq.
+      # renovate: datasource=docker depName=ghcr.io/mikefarah/yq
+      yq-image: "4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"  # The image yq's own release workflow pushes to GHCR, by index digest (amd64 and arm64), read 2026-10-24. The build fails unless the binary reports toolbox.yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.38.5"                  # 2026-10-22, inside the 7-day cooldown, which is waived for 2.2.1.
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
-      aws-session-manager-plugin: "1.2.896.0"  # Observed 2026-10-11 as what latest serves on amd64 and arm64 (release 2026-10-10). The download is a floating latest, so the aws Dockerfile fails the build when latest stops matching this. Renovate watches the GitHub releases, which can land minutes before latest moves.
+      aws-session-manager-plugin: "1.2.896.0"  # Release 2026-10-10. The aws Dockerfile fetches this version's own .deb and its AWS signature, so where latest points no longer matters to the build. Renovate watches the GitHub releases.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
       # renovate: datasource=pypi depName=azure-cli
       az-cli: "2.91.0"                   # 2026-10-05. From Microsoft's bookworm apt repo, which installs on trixie; there is no trixie suite yet.
