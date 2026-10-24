@@ -10,12 +10,14 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/node_images.py and ``resolve_sizing.py images``.
 
-``eks-ami-releases.json`` and ``eks-ami-open-issues.json`` are the answers of
+``eks-ami-releases.json`` and ``eks-ami-issues.json`` are the answers of
 node_images.py's own two anonymous REST reads of awslabs/amazon-eks-ami,
 captured 2026-10-24, so every gate below runs against a real historical
 release. Each release body is cut to its admonitions and the lines naming an
-image or a release version, which parse to the same Release as the full body,
-and each issue to its number and title. The ``recommended`` SSM fixtures and ``aws-us-west-2-al2023-ami-arm64.txt``
+image or a release version, which parse to the same Release as the full body.
+The issue search ran from a v20250801 floor, open and closed, and each issue is
+cut to its number, title and state. The ``recommended`` SSM fixtures and
+``aws-us-west-2-al2023-ami-arm64.txt``
 are the verbatim us-west-2 public parameters, captured 2026-10-18. The
 per-release ``image_id`` fixture for v20261012 carries the AMI id the arm64
 ``recommended`` answer named. The v20261019 ``image_id`` and every AMI in
@@ -33,6 +35,8 @@ import re
 import shutil
 import sys
 import threading
+import urllib.parse
+import urllib.request
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -72,8 +76,8 @@ OPEN = node_images.GatePolicy(POLICY.cooldown_days, "v20240101", {}, "20240101",
 RELEASES = node_images.parse_releases(
     (FIXTURES / "eks-ami-releases.json").read_text(encoding="utf-8")
 )
-TITLES = node_images.open_issue_titles(
-    (FIXTURES / "eks-ami-open-issues.json").read_text(encoding="utf-8")
+TITLES = node_images.issue_titles(
+    (FIXTURES / node_images.EKS_ISSUES_FIXTURE).read_text(encoding="utf-8")
 )
 
 
@@ -89,7 +93,7 @@ def _release(tag: str) -> node_images.Release:
 
 def _refusals(tag: str, policy: node_images.GatePolicy = OPEN, now: datetime = NOW) -> list[str]:
     return node_images.eks_refusals(
-        _release(tag), releases=RELEASES, policy=policy, open_titles=TITLES, now=now
+        _release(tag), releases=RELEASES, policy=policy, titles=TITLES, now=now
     )
 
 
@@ -160,11 +164,16 @@ def test_gate_a_refuses_a_release_inside_the_cooldown() -> None:
 
 
 def test_gate_a_measures_from_published_at_never_the_tag() -> None:
-    """v20260311 was published at 2026-04-27T23:35Z, 47 days after its tag date."""
+    """v20260311 was published at 2026-04-27T23:35Z, 47 days after its tag date.
+
+    Issue #2664 ("v20260311 disappeared") refuses it under gate f as well, so
+    the issues are left out here to leave gate a the only one that can.
+    """
     tag_age_50_days = datetime.fromisoformat("2026-04-30T12:00:00+00:00")
-    assert _refusals("v20260311", now=tag_age_50_days) == [
-        "released 2026-04-27, 2 day(s) ago, inside the 7-day cooldown"
-    ]
+    refusals = node_images.eks_refusals(
+        _release("v20260311"), releases=RELEASES, policy=OPEN, titles=[], now=tag_age_50_days
+    )
+    assert refusals == ["released 2026-04-27, 2 day(s) ago, inside the 7-day cooldown"]
 
 
 def test_gate_a_alone_would_adopt_the_known_bad_releases() -> None:
@@ -231,7 +240,31 @@ def test_gate_e_never_reads_an_older_release_naming_a_newer_one() -> None:
 def test_gate_f_refuses_a_release_an_open_issue_names() -> None:
     refusals = _refusals("v20260409")
     assert len(refusals) == 1
-    assert refusals[0].startswith("open issue #2681 bug(al2023): v20260409")
+    assert refusals[0].startswith("issue #2681 bug(al2023): v20260409")
+
+
+@pytest.mark.parametrize(
+    ("tag", "issues"),
+    [("v20260505", ("#2712",)), ("v20260818", ("#2789", "#2790"))],
+)
+def test_gate_f_refuses_a_release_a_closed_issue_names(tag: str, issues: tuple[str, ...]) -> None:
+    """Closed means fixed in a later release: both cleared gates a to e and only the floor held them."""
+    refusals = _refusals(tag)
+    assert sorted(r.split(" ")[1] for r in refusals) == list(issues)
+    assert all(r.startswith("issue #") for r in refusals)
+
+
+def test_gate_f_leaves_the_floor_release_eligible() -> None:
+    assert not [t for t in TITLES if "v20261012" in t]
+    assert _refusals("v20261012", POLICY) == []
+
+
+def test_gate_f_searches_open_and_closed_issues_from_the_floor_date() -> None:
+    url, pages = node_images.eks_issues_args("v20261012")
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    assert query["q"] == ["repo:awslabs/amazon-eks-ami is:issue created:>=2026-10-12"]
+    assert url.startswith("https://api.github.com/search/issues?")
+    assert pages == node_images.EKS_ISSUES_PAGES
 
 
 def test_gate_g_refuses_a_clean_release_below_the_floor() -> None:
@@ -265,8 +298,7 @@ def test_the_eks_lookup_reads_the_releases_the_issues_and_the_regions_parameter(
         "https://api.github.com/repos/awslabs/amazon-eks-ami/releases?per_page=100",
         "1",
     ]
-    assert calls[1][1][0].startswith("https://api.github.com/search/issues?q=repo%3Aawslabs")
-    assert "is%3Aissue+is%3Aopen" in calls[1][1][0]
+    assert calls[1][1] == node_images.eks_issues_args(POLICY.eks_floor)
     args = calls[2][1]
     assert args[args.index("--name") + 1] == (
         "/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/arm64/standard/"
@@ -319,9 +351,9 @@ def test_expected_fail_releases_that_are_not_a_release_list_are_refused() -> Non
     with pytest.raises(node_images.ImageLookupError, match="no tag_name"):
         node_images.parse_releases('[{"published_at": "2026-10-14T17:28:15Z"}]')
     with pytest.raises(node_images.ImageLookupError, match="not JSON"):
-        node_images.open_issue_titles("[{")
+        node_images.issue_titles("[{")
     with pytest.raises(node_images.ImageLookupError, match="no title"):
-        node_images.open_issue_titles('[{"number": 1}]')
+        node_images.issue_titles('[{"number": 1}]')
 
 
 def test_a_release_body_parses_to_its_names_versions_and_warnings() -> None:
@@ -839,6 +871,41 @@ def test_a_token_reaches_github_and_never_a_host_a_redirect_names(
             assert json.loads(node_images.github_pages(f"{base}/releases", 1, 5)) == [1]
     assert served.seen[0][1]["Authorization"] == "Bearer example-not-a-token"
     assert "Authorization" not in other_served.seen[0][1]
+
+
+@pytest.mark.parametrize(
+    ("newurl", "kept"),
+    [
+        ("http://api.github.com/repos/next", False),
+        ("https://example.com/repos/next", False),
+        ("https://api.github.com/repos/next", True),
+    ],
+    ids=["same-host-to-http", "other-host", "same-origin"],
+)
+def test_a_redirect_keeps_the_token_only_on_the_same_scheme_and_host(
+    newurl: str, kept: bool
+) -> None:
+    request = urllib.request.Request(
+        "https://api.github.com/repos/awslabs/amazon-eks-ami/releases",
+        headers={"Authorization": "Bearer example-not-a-token"},
+    )
+    handler = node_images._SameOriginRedirect()
+    new = handler.redirect_request(request, None, 302, "Found", {}, newurl)
+    assert new is not None
+    assert (new.get_header("Authorization") is not None) is kept
+
+
+def test_expected_fail_a_next_page_off_the_starting_origin_is_never_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Followed, it would carry the token elsewhere. Skipped, it would cut the issue list short."""
+    monkeypatch.setenv("GH_TOKEN", "example-not-a-token")
+    with _github({"/search": (200, {}, '{"items": [2]}')}) as (other, other_served):
+        first = {"/search": (200, {"Link": f'<{other}/search>; rel="next"'}, '{"items": [1]}')}
+        with _github(first) as (base, _served):
+            with pytest.raises(node_images.ImageLookupError, match=r"off .* scheme and host"):
+                node_images.github_pages(f"{base}/search", 10, 5)
+    assert other_served.seen == []
 
 
 # --- resolve_sizing.py images ------------------------------------------------

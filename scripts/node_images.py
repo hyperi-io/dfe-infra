@@ -33,7 +33,8 @@ block holds the knobs, and the gates are:
     c  not in the skip-list
     d  its own release notes carry no warning admonition
     e  no newer release's admonition names it as affected
-    f  no open awslabs/amazon-eks-ami issue names it in its title
+    f  no awslabs/amazon-eks-ami issue filed since the floor, open or closed,
+       names it in its title
     g  at or above the floor
 
     EKS-optimised AL2023   the node groups' dated release and Karpenter's
@@ -140,12 +141,9 @@ HTTPS = "https"
 EKS_RELEASES_ARGS = [f"{GITHUB_API}/repos/{EKS_AMI_REPO}/releases?per_page=100", "1"]
 EKS_RELEASES_FIXTURE = "eks-ami-releases.json"
 
-# One search for every open issue, pull requests left out, following its pages.
-EKS_ISSUES_QUERY = urllib.parse.urlencode(
-    {"q": f"repo:{EKS_AMI_REPO} is:issue is:open", "per_page": "100"}
-)
-EKS_ISSUES_ARGS = [f"{GITHUB_API}/search/issues?{EKS_ISSUES_QUERY}", "10"]
-EKS_ISSUES_FIXTURE = "eks-ami-open-issues.json"
+# The most pages of the issue search to follow, inside the search API's own 1,000-result cap.
+EKS_ISSUES_PAGES = "10"
+EKS_ISSUES_FIXTURE = "eks-ami-issues.json"
 
 # What the gates read from a release body: its AL2023 standard image names, its
 # per-minor release versions and its warning admonitions.
@@ -437,16 +435,31 @@ def parse_releases(raw: str) -> list[Release]:
     return releases_from(_json_list(raw, f"{EKS_AMI_REPO} releases"))
 
 
-def open_issue_titles(raw: str) -> list[str]:
-    """The titles of the open issues EKS_ISSUES_ARGS answered, each as ``#<number> <title>``.
+def eks_issues_args(floor: str) -> list[str]:
+    """The issue search: open and closed, filed on or after the floor release's date.
+
+    A closed issue naming a release usually means the fault was fixed in a later
+    release, not that the named one is sound, so closed issues count too. No
+    candidate is older than the floor, so nothing filed before it can name one.
+    """
+    date = floor.removeprefix("v")
+    since = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    query = urllib.parse.urlencode(
+        {"q": f"repo:{EKS_AMI_REPO} is:issue created:>={since}", "per_page": "100"}
+    )
+    return [f"{GITHUB_API}/search/issues?{query}", EKS_ISSUES_PAGES]
+
+
+def issue_titles(raw: str) -> list[str]:
+    """The titles of the issues the search answered, each as ``#<number> <title>``.
 
     Raises:
         ImageLookupError: The answer is not a list of issue objects.
     """
     titles: list[str] = []
-    for issue in _json_list(raw, f"{EKS_AMI_REPO} open issues"):
+    for issue in _json_list(raw, f"{EKS_AMI_REPO} issues"):
         if not isinstance(issue, dict) or not isinstance(issue.get("title"), str):
-            raise ImageLookupError(f"{EKS_AMI_REPO} open issues carry an entry with no title")
+            raise ImageLookupError(f"{EKS_AMI_REPO} issues carry an entry with no title")
         titles.append(f"#{issue.get('number')} {issue['title']}")
     return titles
 
@@ -467,7 +480,7 @@ def eks_refusals(
     *,
     releases: list[Release],
     policy: GatePolicy,
-    open_titles: list[str],
+    titles: list[str],
     now: datetime,
 ) -> list[str]:
     """Every gate, a to g, the release fails, and nothing when it is eligible."""
@@ -487,9 +500,7 @@ def eks_refusals(
             continue
         if any(release.tag in RELEASE_TAG.findall(a) for a in newer.admonitions):
             refusals.append(f"{newer.tag}'s release notes name it as affected")
-    refusals.extend(
-        f"open issue {title}" for title in open_titles if release.tag.lower() in title.lower()
-    )
+    refusals.extend(f"issue {title}" for title in titles if release.tag.lower() in title.lower())
     if release.tag < policy.eks_floor:
         refusals.append(f"below the floor {policy.eks_floor}")
     return refusals
@@ -526,15 +537,13 @@ def eks_release(
     minor = _minor(target)
     arch = _aws_arch(target)
     releases = parse_releases(read(EKS_RELEASES_FIXTURE, HTTPS, list(EKS_RELEASES_ARGS)))
-    titles = open_issue_titles(read(EKS_ISSUES_FIXTURE, HTTPS, list(EKS_ISSUES_ARGS)))
+    titles = issue_titles(read(EKS_ISSUES_FIXTURE, HTTPS, eks_issues_args(policy.eks_floor)))
     refused: list[str] = []
     for release in releases:
         name = EKS_IMAGE_NAME.format(arch=arch, minor=minor, tag=release.tag)
         if name not in release.ami_names:
             continue
-        reasons = eks_refusals(
-            release, releases=releases, policy=policy, open_titles=titles, now=now
-        )
+        reasons = eks_refusals(release, releases=releases, policy=policy, titles=titles, now=now)
         version = release_version_for(release, minor)
         if version is None:
             reasons.append(f"its release notes carry no {minor} release version")
@@ -963,8 +972,14 @@ def resolve(
     return Resolution(values, record, frozenset(refused))
 
 
-class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect, dropping the token when it leaves the host it was meant for."""
+def _origin(url: str) -> tuple[str, str]:
+    """A URL's scheme and host, which a token must not leave."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect, dropping the token when it leaves the scheme or host it was meant for."""
 
     def redirect_request(
         self,
@@ -976,8 +991,7 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
         newurl: str,
     ) -> urllib.request.Request | None:
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        old_host = urllib.parse.urlsplit(req.full_url).netloc
-        if new is not None and urllib.parse.urlsplit(newurl).netloc != old_host:
+        if new is not None and _origin(newurl) != _origin(req.full_url):
             new.remove_header("Authorization")
         return new
 
@@ -1003,15 +1017,19 @@ def github_pages(url: str, max_pages: int, timeout: float) -> str:
 
     Raises:
         ImageLookupError: GitHub is unreachable, rate-limits the read (403 or
-            429), answers another error, or answers something that is not a
-            list or a complete search.
+            429), answers another error, answers something that is not a list
+            or a complete search, or links its next page off the scheme and
+            host the read started on.
     """
-    opener = urllib.request.build_opener(_SameHostRedirect())
+    opener = urllib.request.build_opener(_SameOriginRedirect())
     items: list[object] = []
     next_url: str | None = url
     for _page in range(max_pages):
         if next_url is None:
             break
+        # A next page elsewhere would carry the token there, and skipping it would cut the list short.
+        if _origin(next_url) != _origin(url):
+            raise ImageLookupError(f"GitHub's next page {next_url} is off {url}'s scheme and host")
         request = urllib.request.Request(next_url, headers=_github_headers())
         try:
             with opener.open(request, timeout=timeout) as response:
