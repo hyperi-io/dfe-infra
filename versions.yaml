@@ -6911,7 +6911,7 @@ stacks:
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
       otel-collector: "0.163.2"      # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. The gateway and daemonset configs rendered for aws/scale and local/slim, and dfe-docker's collector config, pass otelcol validate on it.
-      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.11 merges, its packages/app version. The image is content.dfe-hyperdx.
+      hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.14 merges, its packages/app version. The image is content.dfe-hyperdx.
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
       # renovate: datasource=docker depName=envoyproxy/envoy
@@ -6951,11 +6951,11 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.63"        # 2026-10-22, amd64 and arm64. Receiver auth compiled per listener into one Secret (#943), the resolver's sizing counted as declared (#944), the source catalogue read from dfe-schemas 0.2.18 (#963). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-ui: "v1.7.28"              # 2026-10-22, amd64 and arm64. next 16.4.1 for two RCEs and a DoS (v1.7.27), the engine-down page and public brand assets (#592), a 5 s engine timeout and tidier error pages (#593). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-receiver: "v1.15.56"      # 2026-10-22, amd64 and arm64. Bearer tokens come only from the per-listener auth the engine compiles, so the env path and its secret group go (#204). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-loader: "v1.18.57"        # 2026-10-21, amd64 and arm64. Reads the tenant from _org_id alone (#268), on the scalo 2.14.18 rule engine. Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-ui: "v1.7.30"              # 2026-10-22, amd64 and arm64. next 16.4.1 for two RCEs and a DoS (v1.7.27), the engine-down page and public brand assets (#592), a 5 s engine timeout and tidier error pages (#593). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-receiver: "v1.15.58"      # 2026-10-22, amd64 and arm64. Bearer tokens come only from the per-listener auth the engine compiles, so the env path and its secret group go (#204). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-loader: "v1.18.58"        # 2026-10-21, amd64 and arm64. Reads the tenant from _org_id alone (#268), on the scalo 2.14.18 rule engine. Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-archiver: "v1.7.38"       # 2026-10-21, amd64 and arm64. Keys the archive path on _org_id, the default org on a blank one (#132). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-fetcher: "v1.4.42"        # 2026-10-22, amd64 and arm64. The GA.RULES tenancy release (#240) plus a test-fixture Redpanda bump (#237). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-fetcher: "v1.4.43"        # 2026-10-22, amd64 and arm64. The GA.RULES tenancy release (#240) plus a test-fixture Redpanda bump (#237). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vrl: "v1.1.37"   # 2026-10-20, amd64 and arm64. Rebuilt on scalo 2.14.18 (#110). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-vector: "v1.0.54"  # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 and vector 0.60.0 (#124). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-transform-elastic: "v1.1.17" # 2026-10-21, amd64 and arm64. Rebuilt on scalo 2.14.18 (#123). Inside the 7-day cooldown, which is waived for 2.2.1.
@@ -6969,15 +6969,15 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:4b32bccfae4f1443e144843e86a31ad8878554a92aeb54a551d4b11d33451064"
-      dfe-ui: "sha256:4c201654f39a9818c25dfceb89219879d7fc7385516ea1db5aab4d464080a103"
-      dfe-receiver: "sha256:cae6887bb82841ddea91648c089e5f8ca0d02a6ece9004b48834c922a47c387e"
-      dfe-loader: "sha256:7f3a534147fb4591cd878d94bae5b0c52b61bf681a452a9cff26c0a2391ce9a3"
+      dfe-ui: "sha256:32ed4e324b4e070830e2cc0ded978beeb6d5d50969a54023272d8e187cc95e5a"
+      dfe-receiver: "sha256:44a5874e7db073dd6c273fce20e6d61cc7cd0654a757b934099f2c5343a63369"
+      dfe-loader: "sha256:4f35277451d5c9e42560515bff58ab5c40cdde3f350a2ec69e9fd3539668ac21"
       dfe-archiver: "sha256:842b462991fb89402b2fb75a6bed7494dfdaea83704fd9c91b61c02e9911d9d4"
-      dfe-fetcher: "sha256:2633164629805a59cb153a0efc797093e69cb8f6b780b2329768310966133a8e"
+      dfe-fetcher: "sha256:e7b3e550a49ccaf42b8290ddf6d20036476d23900a976df061735d6e02981e5e"
       dfe-transform-vrl: "sha256:54d20328149f8f38b837d31c107b955ae7c647c7141ff4fd42d12808d183a637"
       dfe-transform-vector: "sha256:d4ec0991b089e8279eb4863c93f8288354bd60d1d0e8bf042481b7e25cb3e4c6"
       dfe-transform-elastic: "sha256:4d8ec74a5baf6f2603c1561e2c6246687266678c4fd00792d591e40ad31303ee"
-      dfe-hyperdx: "sha256:0928bfc493f848e51268906cb7d198cb1aec3b28f7aca89bf4d115f2041a18ff"
+      dfe-hyperdx: "sha256:2ac903fdacb25f689625667352ccaaa8f3cbd1f79b30bb10335f4ec94fd565a4"
       culvert: "sha256:267e981b4b18f0bff9ad8e09a6c8ee31753acbdaba8f32bfb3bd9e3466f11857"
       # Tagged by toolbox.dfe-toolbox.
       dfe-toolbox-base: "sha256:6892457da2bddb2a17a5ad7c77d8cace746f19fe9cb9665b7ab0f5db452b4d48"
@@ -6991,13 +6991,13 @@ stacks:
       culvert: "sha256:7370678f13b9d388a8b441b6e757b9f1205830edab83e2641cd0ffdaf38f36c9"                # 2.1.27
       dfe-archiver: "sha256:fb62a7468acf31dd9450210d67ae0e1a49251f4df2042077ea00606f3db924aa"           # 1.7.38
       dfe-engine: "sha256:538b266e226babaeaa87195fb14d1e6a15235934df7b57eb24d6a51cac9693b3"             # 1.22.63
-      dfe-fetcher: "sha256:515d1214e4e30f100b311967eba59972f78da0f25886fa9b88f532d1f84e5bdd"            # 1.4.42
-      dfe-loader: "sha256:8c101f911374b409d6a6bb860b78193621aec0bd1b6d5190b34e0a677e7b9bb5"             # 1.18.57
-      dfe-receiver: "sha256:efd2b33e9e54df66f9042b2622dd196adc7378e8a9feb0d5f236e2054abf4b42"           # 1.15.56
+      dfe-fetcher: "sha256:beb3b1ab1254b201b09677afb4973eaba2c3e272eaf316aa081a4aceba70385e"            # 1.4.43
+      dfe-loader: "sha256:7bc497b51b96d302f34aa675450437d9860e57861c618859521b861fc8355de7"             # 1.18.58
+      dfe-receiver: "sha256:06d76b49534c272ac05c0fda33e28795479c11f842df479310fa8f27f9b825ba"           # 1.15.58
       dfe-transform-elastic: "sha256:c64f75d330f97027aa61256466e39045b490a604f84c62170d11d74fa2e5168b"  # 1.1.17
       dfe-transform-vector: "sha256:130a193bb99d46a5ad86b5f248dc24055a861577b489e86a26ef7a4cc6204145"   # 1.0.54
       dfe-transform-vrl: "sha256:d81f458c35f376cac2d57c5eac6ecb3ba75f35a67295bd60639fecfc43b6c8a7"      # 1.1.37
-      dfe-ui: "sha256:cfdb8de5bbc83aad354b654f06e4d777e9b021d51f22227a855a6789175c760b"                # 1.7.28
+      dfe-ui: "sha256:7d4e9acb57fa8b31d0f8b0d2ef052221275270d900a50142d32fa44f9464a075"                # 1.7.30
       hyperdx: "sha256:14161b2e15009f3442c85eaf2438769d3d444dbc50580f901b036985752fb9c4"                # 0.3.11
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
@@ -7037,7 +7037,7 @@ stacks:
       dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 1d7c1f2e (2026-10-23) is "fix: report cores deployed and worker-node cores on the docker stack (#289)".
       dfe-docker: "1d7c1f2e6b34822e78251294035aa020d4003581"
-      dfe-hyperdx: "v0.3.11"             # 2026-10-23, amd64 and arm64. Still upstream HyperDX 2.41.0: the DFE sources store matches a source name by value, so a request cannot send an operator in its place (dfe-hyperdx#161).
+      dfe-hyperdx: "v0.3.14"             # 2026-10-24, amd64 and arm64. Still upstream HyperDX 2.41.0, with the request-body and JSON-width bounds.
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.

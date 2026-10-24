@@ -23,16 +23,16 @@ extras:
   # scripts/check_versions_drift.py.
   appVersions:
     dfe-engine: "v1.22.63"
-    dfe-ui: "v1.7.28"
-    dfe-receiver: "v1.15.56"
-    dfe-loader: "v1.18.57"
+    dfe-ui: "v1.7.30"
+    dfe-receiver: "v1.15.58"
+    dfe-loader: "v1.18.58"
     dfe-archiver: "v1.7.38"
-    dfe-fetcher: "v1.4.42"
+    dfe-fetcher: "v1.4.43"
     dfe-transform-vrl: "v1.1.37"
     dfe-transform-vector: "v1.0.54"
     dfe-transform-elastic: "v1.1.17"
     culvert: "v2.1.27"
-    dfe-hyperdx: "v0.3.11"
+    dfe-hyperdx: "v0.3.14"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
@@ -281,7 +281,7 @@ extras:
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.28"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.30"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
