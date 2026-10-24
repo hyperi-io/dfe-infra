@@ -111,7 +111,7 @@ spec:
                 "dfe-transform-vector" "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"
                 "dfe-transform-vrl" "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"
                 "dfe-ui" "sha256:7d4e9acb57fa8b31d0f8b0d2ef052221275270d900a50142d32fa44f9464a075"
-                "hyperdx" "sha256:14161b2e15009f3442c85eaf2438769d3d444dbc50580f901b036985752fb9c4"
+                "hyperdx" "sha256:bc29954067bdf92e0569cacd3052a3444a7ceac16154ca28a3875e9c0f0c9ffa"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}
