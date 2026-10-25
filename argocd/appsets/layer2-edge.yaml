@@ -251,7 +251,7 @@ spec:
           # versions.yaml chart-digests entry by scripts/check_versions_drift.py.
           targetRevision: |-
             {{- $pins := dict
-                "culvert" "sha256:7370678f13b9d388a8b441b6e757b9f1205830edab83e2641cd0ffdaf38f36c9"
+                "culvert" "sha256:723ea6a8a9a4748d2b9c8aae00a3ce92e471bca8a340c7cc37a3e4dcf6602743"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}
