@@ -14,6 +14,10 @@
       "linux/amd64",
       "linux/arm64"
     ],
+    "public.ecr.aws/eks/aws-load-balancer-controller:v3.6.2@sha256:fd51f0ec82f8d357837aa57fdfaa4fca7137b75f25a09b421d95c425c9dc2d94": [
+      "linux/amd64",
+      "linux/arm64"
+    ],
     "public.ecr.aws/karpenter/controller:1.14.1@sha256:445baefaaa689029cc12ac1f659b916b0b82fb14308ce536f8521fcf079116fa": [
       "linux/amd64",
       "linux/arm64"
