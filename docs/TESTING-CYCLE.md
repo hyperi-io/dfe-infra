@@ -34,6 +34,29 @@ use your current context; check it first). A failed deploy still destroys -- a
 broken cycle must not strand a half-stack. `--keep` skips the destroy, on a dev
 cluster only.
 
+## Release rounds
+
+A release candidate is proved in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](#choosing-the-backend-for-one-run)), the k8s deploy, the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+
+Each find is recorded as it lands. A find that blocks a proof does not stop the round when a workaround for that cycle alone lets the other proofs continue, such as a manual reload or a hand-applied config. The workaround goes into the round's findings and is never shipped.
+
+After the round, the WHOLE accumulated set is fixed, blocking and non-blocking alike, as one batch. The fixes run in parallel and merge without release trailers, then each touched repo cuts ONE release and the stack cuts ONE new candidate. A find too big or risky for that batch becomes an issue labelled `next-patch`, which `dfe-sweep` schedules without gating, and never re-opens the candidate.
+
+The next round re-runs only the proofs the batch can affect. A batch touching several components re-runs the union of their rows.
+
+| Changed | Re-run |
+|---|---|
+| dfe-ui only | dfe-ui deployed e2e, the k8s deploy |
+| dfe-engine | the k8s deploy, the VM, the source-suite cloud legs |
+| dfe-hyperdx | the k8s deploy, the VM, the source-suite cloud legs (the `observe` step reads it) |
+| dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, the k8s deploy |
+| dfe-infra charts or tofu | the cloud legs on the touched backend, the k8s deploy |
+| pin bumps in versions.yaml only | `dfe-sweep`, the k8s deploy |
+
+`msk` is in no row unless its re-test is explicitly approved ([MSK runs last, and rarely](#msk-runs-last-and-rarely)).
+
+A round ends early only for a find that blocks a proof and has no workaround, such as the deploy itself broken or an AWS deny on the account. That find may cut a candidate early, because nothing else in the round can run until it is fixed.
+
 ## Batching a full cloud cycle
 
 A full cloud cycle runs once per BATCH of changes to the managed-Kafka path,
