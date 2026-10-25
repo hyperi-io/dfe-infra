@@ -129,7 +129,7 @@ pools:
       # versions.yaml's node-images gates into the deploy repo's
       # sizing/node-pools.values.yaml, which overrides this. This default is the
       # fallback with none recorded: operators.karpenter-al2023-ami, drift-checked.
-      amiAlias: al2023@v20261012
+      amiAlias: al2023@v20261019
       metadata:
         # IMDSv2 only, hop limit 1 -- a pod on the node cannot reach
         # 169.254.169.254 at all. Every AWS credential on this cluster is a Pod
