@@ -114,13 +114,27 @@ PODS = [
     _pod("dfe", "dfe-keda-shim", "h8", ("shim",)),
     _pod("strimzi", "dfe-kafka-broker", "0", ("kafka",), owner_kind="StatefulSet"),
     _pod("dfe", "dfe-archiver", "j9", ("dfe-archiver",)),
+    # CloudNativePG names each instance pod after its Cluster, which is its owner.
+    _pod(
+        "cnpg",
+        "dfe-documentdb",
+        "1",
+        ("postgres", "documentdb-gateway"),
+        init=("bootstrap-controller",),
+        owner_kind="Cluster",
+    ),
+    _pod("cnpg-system", "cnpg-operator", "k1", ("manager",)),
 ]
 LOGGED = [
+    ("cnpg", "dfe-documentdb-1", "bootstrap-controller"),
+    ("cnpg", "dfe-documentdb-1", "postgres"),
+    ("cnpg", "dfe-documentdb-1", "documentdb-gateway"),
     ("dfe", "dfe-archiver-j9", "dfe-archiver"),
     ("dfe", "dfe-engine-c3", "git-sync-init"),
     ("dfe", "dfe-engine-c3", "dfe-engine"),
     ("dfe", "dfe-engine-c3", "git-sync"),
     ("dfe", "dfe-hunt-runner-d4", "hunt-runner"),
+    ("dfe", "dfe-hyperdx-g7", "hyperdx"),
     ("dfe", "dfe-loader-b2", "dfe-loader"),
     ("dfe", "dfe-receiver-a1", "dfe-receiver"),
     ("dfe", "dfe-transform-vrl-e5", "dfe-transform-vrl"),
@@ -277,13 +291,26 @@ def test_a_pods_deployment_is_its_replica_set_less_the_template_hash() -> None:
     assert dg.owning_workload({"metadata": {"name": "bare"}}) == ""
 
 
-def test_the_logged_apps_are_receiver_loader_engine_hunt_runner_and_every_transform() -> None:
+def test_the_logged_apps_are_the_dfe_apps_hyperdx_and_its_store() -> None:
     chosen = [
         (pod["metadata"]["namespace"], pod["metadata"]["name"]) for pod in dg.log_targets(PODS)
     ]
     assert ("dfe", f"{PER_SOURCE}-f6") in chosen
+    assert ("dfe", "dfe-hyperdx-g7") in chosen
+    assert ("cnpg", "dfe-documentdb-1") in chosen
     assert {name for _, name in chosen} == {name for _, name, _ in LOGGED}
-    assert not any("hyperdx" in name or "keda" in name or "kafka" in name for _, name in chosen)
+    assert not any("keda" in name or "kafka" in name or "operator" in name for _, name in chosen)
+
+
+def test_a_documentdb_instance_is_its_cluster_and_every_container_is_read() -> None:
+    instance = next(pod for pod in PODS if pod["metadata"]["name"] == "dfe-documentdb-1")
+    assert dg.owning_workload(instance) == "dfe-documentdb"
+    assert [name for name, _ in fe.containers_of(instance)] == [
+        "bootstrap-controller",
+        "postgres",
+        "documentdb-gateway",
+    ]
+    assert not dg.logged("dfe-documentdbs")
 
 
 def test_the_fetchers_are_logged_the_per_source_ones_included() -> None:
@@ -298,7 +325,12 @@ def test_the_engine_namespace_is_where_its_pod_runs() -> None:
 
 
 def test_dfe_namespaces_are_argo_destinations_logged_namespaces_and_argocd() -> None:
-    assert dg.dfe_namespaces(APPS, dg.log_targets(PODS)) == ["argocd", "clickhouse", "dfe"]
+    assert dg.dfe_namespaces(APPS, dg.log_targets(PODS)) == [
+        "argocd",
+        "clickhouse",
+        "cnpg",
+        "dfe",
+    ]
     assert dg.dfe_namespaces([], []) == ["argocd"]
 
 
