@@ -76,9 +76,10 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ $store.namespace }}
+          # The gateway Service's selector key, so a CNI judging egress before DNAT admits its ClusterIP.
           podSelector:
             matchLabels:
-              {{ $store.clusterLabel }}: {{ $store.cluster }}
+              {{ $store.serviceLabel }}: {{ $store.cluster }}
       ports:
         {{- toYaml $store.ports | nindent 8 }}
 {{- end }}

@@ -21,8 +21,14 @@ The sources are every workload the thin-chart goldens render, with their own
 NetworkPolicies, plus a pod carrying no labels at all, plus a pod in each namespace
 data-ingress-policy admits that carries no egress policy of its own. CloudNativePG
 creates the instance pods at runtime, so the destinations are modelled from the
-documentdb chart's DocumentDB resource and the label CloudNativePG writes on every
-instance of its cluster.
+documentdb chart's DocumentDB resource and the labels CloudNativePG and the operator
+write on every instance of its cluster.
+
+hyperdx dials the operator's gateway Service, and the EKS VPC CNI judges egress before
+that Service's DNAT: its controller admits the ClusterIP only where an egress peer's
+podSelector matches the Service's own selector. So the Service is also a destination,
+modelled by its selector labels at an address in the Service range, which is exactly what
+that controller compares.
 
     python3 scripts/tests/test_documentdb_egress.py
 
@@ -59,6 +65,14 @@ ACCESS = POLICY_VALUES["documentdbAccess"]
 
 NS_LABEL = "kubernetes.io/metadata.name"
 READER = "dfe-hyperdx"
+VERSIONS = REPO_ROOT / "versions.yaml"
+# documentdb-kubernetes-operator 1.0.0 labels every instance pod `app: <cluster>`
+# (internal/cnpg/cnpg_cluster.go getInheritedMetadataLabels) and selects its gateway
+# Service on that plus the primary role (internal/utils/util.go
+# GetDocumentDBServiceDefinition).
+OPERATOR_VERSION = "1.0.0"
+OPERATOR_APP_LABEL = "app"
+PRIMARY_ROLE = {"cnpg.io/instanceRole": "primary"}
 # CloudNativePG's instance manager listens here, and PostgreSQL on its usual port.
 STATUS_PORT = 8000
 PG_PORT = 5432
@@ -147,9 +161,16 @@ def cluster_name() -> str:
 
 
 def instance(index: int) -> Pod:
-    """One instance pod of the cluster, as CloudNativePG labels it."""
-    labels = {ACCESS["clusterLabel"]: cluster_name()}
+    """One instance pod of the cluster, as CloudNativePG and the operator label it."""
+    labels = {ACCESS["clusterLabel"]: cluster_name(), OPERATOR_APP_LABEL: cluster_name()}
     return Pod(f"{cluster_name()}-{index + 1}", STORE_NS, labels, address(index))
+
+
+def gateway_service() -> Pod:
+    """The operator's gateway Service, as a CNI that judges egress before DNAT sees it."""
+    labels = {OPERATOR_APP_LABEL: cluster_name(), **PRIMARY_ROLE}
+    service_range = ipaddress.ip_network(COMMON["networkModel"]["serviceCIDR"])
+    return Pod(f"documentdb-service-{cluster_name()}", STORE_NS, labels, service_range[10])
 
 
 def gateway_port() -> int:
@@ -307,6 +328,41 @@ def test_only_hyperdx_reaches_the_gateway() -> None:
         found = reaching(variant, dest, gateway_port())
         expect(
             f"{name}: only {READER} reaches {dest.name}:{gateway_port()}",
+            found == {READER},
+            f"got {sorted(found)}",
+        )
+
+
+def test_the_operator_labels_are_the_pinned_operators() -> None:
+    """Labels read from one operator release are not evidence about the next."""
+    doc = yaml.safe_load(VERSIONS.read_text(encoding="utf-8"))
+    pinned = doc["stacks"][doc["current"]]["operators"]["documentdb-operator"]
+    expect(
+        "operator pin matches the release the gateway Service selector was read from",
+        pinned == OPERATOR_VERSION,
+        f"versions.yaml pins {pinned}; re-read GetDocumentDBServiceDefinition and "
+        "getInheritedMetadataLabels at that tag",
+    )
+    expect(
+        "documentdbAccess.serviceLabel is the key the gateway Service selects on",
+        ACCESS["serviceLabel"] == OPERATOR_APP_LABEL,
+        f"{ACCESS['serviceLabel']} vs {OPERATOR_APP_LABEL}",
+    )
+
+
+def test_only_hyperdx_reaches_the_gateway_service_judged_before_dnat() -> None:
+    """Egress at the source sees the ClusterIP, and ingress at the instance sees the pod."""
+    service, dest, port = gateway_service(), instance(0), gateway_port()
+    for name, variant in VARIANTS.items():
+        base = render_policies(*variant)
+        found = {
+            pod.name
+            for pod, own in app_pods()
+            if admits((*base, *own), pod, True, service, port)
+            and admits((*base, *own), dest, False, pod, port)
+        }
+        expect(
+            f"{name}: only {READER} reaches {service.name}:{port}",
             found == {READER},
             f"got {sorted(found)}",
         )
