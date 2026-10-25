@@ -34,6 +34,29 @@ use your current context; check it first). A failed deploy still destroys -- a
 broken cycle must not strand a half-stack. `--keep` skips the destroy, on a dev
 cluster only.
 
+## Release rounds
+
+A release candidate is proved in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](#choosing-the-backend-for-one-run)), the k8s deploy (dfe-b), the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+
+Each find is triaged as it lands. It is GA-blocking when it is a reachable security flaw (graded by [THREAT-MODEL.md](THREAT-MODEL.md)), data loss or corruption, a broken core data path, or a failing release gate. Those carry `release-blocker`, which `dfe-sweep` gates on, and join the round's fix batch. Every other find becomes an issue labelled `next-patch`, which `dfe-sweep` schedules without gating, and never re-opens the candidate.
+
+When every proof of the round has finished, the batch is fixed in parallel and merged without release trailers. Each touched repo then cuts ONE release and the stack cuts ONE new candidate.
+
+The next round re-runs only the proofs the batch can affect. A batch touching several components re-runs the union of their rows.
+
+| Changed | Re-run |
+|---|---|
+| dfe-ui only | dfe-ui deployed e2e, dfe-b |
+| dfe-engine | dfe-b, the VM, the source-suite cloud legs |
+| dfe-hyperdx | dfe-b, the VM, the source-suite cloud legs (the `observe` step reads it) |
+| dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, dfe-b |
+| dfe-infra charts or tofu | the cloud legs on the touched backend, dfe-b |
+| pin bumps in versions.yaml only | `dfe-sweep`, dfe-b |
+
+`msk` is in no row unless its re-test is explicitly approved ([MSK runs last, and rarely](#msk-runs-last-and-rarely)).
+
+One find may cut a candidate early: one that stops every other proof, such as the deploy itself broken or an AWS deny on the account. Nothing else in the round can run until it is fixed.
+
 ## Batching a full cloud cycle
 
 A full cloud cycle runs once per BATCH of changes to the managed-Kafka path,
