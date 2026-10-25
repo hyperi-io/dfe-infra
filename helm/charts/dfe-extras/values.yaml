@@ -23,7 +23,7 @@ extras:
   # scripts/check_versions_drift.py.
   appVersions:
     dfe-engine: "v1.22.72"
-    dfe-ui: "v1.7.31"
+    dfe-ui: "v1.7.32"
     dfe-receiver: "v1.15.58"
     dfe-loader: "v1.18.58"
     dfe-archiver: "v1.7.39"
@@ -281,7 +281,7 @@ extras:
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.31"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.32"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""

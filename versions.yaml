@@ -7488,7 +7488,7 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.72"        # 2026-10-25, amd64 and arm64. An org-bound holder can use the usage, sampler, task and schema reads, and a held read reaches only the orgs a grant's own group names, which closes a cross-org read (#978). A scoped role may grant only reads and query:execute (#979). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-ui: "v1.7.31"              # 2026-10-25, amd64 and arm64. Edits compound Source matches and orders the receiver's rule blocks (#601). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-ui: "v1.7.32"              # 2026-10-25, amd64 and arm64. Own table requires a meta schema and a refused submit opens the tab holding the error, the receiver routing card reads the compiled rules including compound and CEL matches, the backing-services count refreshes, and the e2e specs follow the settings menu (#603). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-receiver: "v1.15.58"      # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#207), on v1.15.57's single Kafka-or-gRPC transport key (#206). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-loader: "v1.18.58"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#270). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-archiver: "v1.7.39"       # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#134). Inside the 7-day cooldown, which is waived for 2.2.1.
@@ -7506,7 +7506,7 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:f71dafacb24927e85805a639cfb356b247957936e98a504fcde9136a6d7ca7a7"
-      dfe-ui: "sha256:88c7456ecb739c67d06ce69354a0ef7e87beb3bbdd2cd8e1af4735b292b3ab18"
+      dfe-ui: "sha256:74f9d7f8789a96d7f0e46db988de235586dad9c82e3188f5983c3bc62eda38f2"
       dfe-receiver: "sha256:44a5874e7db073dd6c273fce20e6d61cc7cd0654a757b934099f2c5343a63369"
       dfe-loader: "sha256:4f35277451d5c9e42560515bff58ab5c40cdde3f350a2ec69e9fd3539668ac21"
       dfe-archiver: "sha256:08ce1f184c20b202aea45c853b9545cfb473c44e2c161869a810618ff6fc91e2"
@@ -7534,7 +7534,7 @@ stacks:
       dfe-transform-elastic: "sha256:eb6db0c37631aa6a16b5f2a8ac211eb9ed80a5e72a4ab2af27262847d6717c2a"  # 1.1.18
       dfe-transform-vector: "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"   # 1.0.55
       dfe-transform-vrl: "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"      # 1.1.38
-      dfe-ui: "sha256:8122f57e9ce51ce9510b7eac1d6b1c85e1b781672b67243898ea8816bebfab74"                # 1.7.31
+      dfe-ui: "sha256:8b3f2354e5227329c7bbf1295b51c0cdd0677f97bd43c239af07bbb19022949e"                # 1.7.32
       hyperdx: "sha256:992ea0d8085e9578f599a0eec3275c8246e62deb95f802efdc83a40a5b35ada4"                # 0.3.15
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
