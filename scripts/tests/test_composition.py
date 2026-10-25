@@ -40,12 +40,11 @@ CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-u
 ARCHIVERLESS = "docker-slim"
 
 # Deployed on demand -- one instance per source, written by the engine.
-# dfe-transform-vector belongs here rather than in SEEDED_IDLE because it
-# declares no `idle_when`, so it has no empty state to be stood up in.
 ON_DEMAND = ("dfe-fetcher", "dfe-transform-vector", "culvert")
 
 # Compose declares its services in a committed file and creates none at run time,
-# so the apps a source would otherwise deploy start idle instead, one each.
+# so the apps a source would otherwise deploy start idle instead, one each. Each
+# declares `idle_when`, the same pairing SEEDED_IDLE needs.
 COMPOSE_IDLE: dict[str, tuple[str, ...]] = {
     "docker-single": ("dfe-fetcher", "dfe-transform-vector"),
 }
@@ -101,6 +100,7 @@ def test_the_on_demand_apps_are_seeded_only_where_a_source_cannot_deploy_one() -
         for app in ON_DEMAND:
             if app in idle:
                 assert app in deployed, f"{app} not in {profile}"
+                assert composition.idle_when(app), f"{app} is seeded but declares no idle_when"
                 continue
             assert app not in deployed, f"{app} in {profile}"
 

@@ -65,6 +65,14 @@ The source's brokers are the deployment's, not the source's. The bus profiles ha
 
 The cisco_ios lines the filebeat case posts are also the entry the variant names, and the proof is the same `source_ip` column, which the posted envelope carries nothing of.
 
+## `vector`
+
+The filebeat case with the program run by dfe-transform-vector, a supervised Vector. Its bundled `pipelines/filebeat/filebeat.yaml` embeds dfe-transform-vrl's `filebeat.vrl` byte-identical in a Vector `remap`, with the same `timezones.csv`, so the proof is the same `source_ip` column from a second runtime.
+
+The corpus still comes from dfe-transform-vrl and the program from dfe-transform-vector, so the run names two checkouts: `--transform-repo` and `--program-repo`, each defaulting to the checkout beside the engine repo. dfe-ops reads the second from `DFE_TRANSFORM_VECTOR_REPO`, as dfe-docker's `make test-source` does.
+
+The docker single seeds one idle dfe-transform-vector, so Compose can reach the case. dfe-docker's `make proof` runs it after `filebeat` on every stack version, with dfe-transform-vector cloned at the tag the stack pins.
+
 ## Pushing through a real filebeat (`--via logstash`, `--via beats`)
 
 The posted envelope is reconstructed. A deployment gets the agent's own, two ways: filebeat shipping lumberjack to Logstash and Logstash's http output posting the event at the receiver (`--via logstash`), or filebeat shipping lumberjack straight to the receiver's own listener (`--via beats`). The Elastic ingest pipelines dfe-transform-elastic compiles in were written against that envelope. Both are variations of the two pushed cases.
