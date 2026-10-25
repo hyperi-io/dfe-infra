@@ -36,7 +36,7 @@ cluster only.
 
 ## Release rounds
 
-A release candidate is proved in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](#choosing-the-backend-for-one-run)), the k8s deploy (dfe-b), the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+A release candidate is proved in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](#choosing-the-backend-for-one-run)), the k8s deploy, the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
 
 Each find is recorded as it lands. A find that blocks a proof does not stop the round when a workaround for that cycle alone lets the other proofs continue, such as a manual reload or a hand-applied config. The workaround goes into the round's findings and is never shipped.
 
@@ -46,12 +46,12 @@ The next round re-runs only the proofs the batch can affect. A batch touching se
 
 | Changed | Re-run |
 |---|---|
-| dfe-ui only | dfe-ui deployed e2e, dfe-b |
-| dfe-engine | dfe-b, the VM, the source-suite cloud legs |
-| dfe-hyperdx | dfe-b, the VM, the source-suite cloud legs (the `observe` step reads it) |
-| dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, dfe-b |
-| dfe-infra charts or tofu | the cloud legs on the touched backend, dfe-b |
-| pin bumps in versions.yaml only | `dfe-sweep`, dfe-b |
+| dfe-ui only | dfe-ui deployed e2e, the k8s deploy |
+| dfe-engine | the k8s deploy, the VM, the source-suite cloud legs |
+| dfe-hyperdx | the k8s deploy, the VM, the source-suite cloud legs (the `observe` step reads it) |
+| dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, the k8s deploy |
+| dfe-infra charts or tofu | the cloud legs on the touched backend, the k8s deploy |
+| pin bumps in versions.yaml only | `dfe-sweep`, the k8s deploy |
 
 `msk` is in no row unless its re-test is explicitly approved ([MSK runs last, and rarely](#msk-runs-last-and-rarely)).
 
