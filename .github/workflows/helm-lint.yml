@@ -161,7 +161,7 @@ jobs:
       # the tree reaches its site-packages. The install is a step of its own because
       # `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           activate-environment: true
           venv-path: ${{ runner.temp }}/venv
@@ -185,7 +185,7 @@ jobs:
       - name: Ruff (scripts/)
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
-          version: "0.17.1"
+          version: "0.17.2"
           args: check
           src: scripts
 
@@ -497,7 +497,7 @@ jobs:
       # the tree reaches its site-packages. The install is a step of its own because
       # `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           activate-environment: true
           venv-path: ${{ runner.temp }}/venv
@@ -560,7 +560,7 @@ jobs:
       # the tree reaches its site-packages. The install is a step of its own because
       # `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           activate-environment: true
           venv-path: ${{ runner.temp }}/venv
@@ -605,7 +605,7 @@ jobs:
       # the tree reaches its site-packages. The install is a step of its own because
       # `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           activate-environment: true
           venv-path: ${{ runner.temp }}/venv
