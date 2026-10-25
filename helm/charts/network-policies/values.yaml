@@ -76,7 +76,13 @@ documentdbAccess:
   # The label CloudNativePG writes on every instance pod of the cluster.
   clusterLabel: cnpg.io/cluster
   cluster: dfe-documentdb
-  # Container ports, which is what NetworkPolicy sees after DNAT.
+  # The label the DocumentDB operator writes on every instance pod, with cluster as its
+  # value, and the key its gateway Service selects on. Egress to the gateway selects by
+  # it: the EKS VPC CNI judges egress before the Service's DNAT, and admits a ClusterIP
+  # only where the egress podSelector matches that Service's own selector, which carries
+  # no clusterLabel.
+  serviceLabel: app
+  # The gateway's port, the same on its container and on its Service.
   ports:
     - { port: 10260, protocol: TCP }
   # Streaming replication between instances.
