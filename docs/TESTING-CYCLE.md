@@ -239,7 +239,7 @@ The cycle is target-neutral: the target is (kubeconfig + env file), nothing else
 Not part of the stock POST: the default E2E tests prove the deploy moved data,
 these prove an operator can add a source and watch it work. Run on demand after
 a deploy, here and on docker through dfe-docker's `make test-source`, which
-calls the same runner. Three cases, chosen with `--source-case`: `filebeat` (the default) pushes the corpus's cisco_ios lines at the receiver in the Elastic Agent envelope, routed on `data_stream.dataset`, through the bundled VRL, `elastic` pushes the same lines at a transform compiled into dfe-transform-elastic, and `cloudwatch` (run as `--aws-service cloudtrail`) lets a fetcher pull an AWS upstream.
+calls the same runner. Four cases, chosen with `--source-case`: `filebeat` (the default) pushes the corpus's cisco_ios lines at the receiver in the Elastic Agent envelope, routed on `data_stream.dataset`, through the bundled VRL, `elastic` pushes the same lines at a transform compiled into dfe-transform-elastic, `vector` runs the same program through dfe-transform-vector, and `cloudwatch` (run as `--aws-service cloudtrail`) lets a fetcher pull an AWS upstream. dfe-docker's `make proof` runs `filebeat` and `vector` on every stack version.
 
 The CloudWatch case needs a SIXTH env file naming the upstream
 (`.tmp/aws-test.env`: `DFE_AWS_REGION`, `DFE_AWS_LOG_GROUP`), and
