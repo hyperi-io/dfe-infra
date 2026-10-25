@@ -7684,14 +7684,14 @@ stacks:
       reloader: "2.2.18"             # 2026-09-30, app v1.4.22.
       strimzi-kafka-operator: "1.2.0"  # 2026-08-20. Needed for Kafka 4.3.1. A 0.51 cluster must convert its v1beta2 resources (v1-api-conversion.sh convert-resource, then crd-upgrade) before upgrading; dfe-ops refuses to deploy over a CRD still stored at v1beta2.
       clickhouse-operator: "0.0.8"   # 2026-09-25, ghcr.io/clickhouse/clickhouse-operator-helm@sha256:61d97bb43a16859f485af1099251fc591b527a4c01013e6de355be11a80fbc9c. ClickHouse Inc's own operator, scale profile only; Altinity's is untested with DFE. See docs/deployment/clickhouse.md.
-      redpanda-operator: "26.2.4"    # 2026-09-24. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
+      redpanda-operator: "26.2.5"    # 2026-10-23, chart 26.2.5 at appVersion v26.2.5, operator image amd64 and arm64, inside the 7-day cooldown, which is waived for 2.2.1. Built with Go 1.26.10, which rejects certificates chaining to the compromised eMudhra intermediates (CVE-2026-111943), and its default broker is v26.2.6, the one DFE runs. Its NodePool image change does not reach DFE, whose Redpanda CR renders no NodePool. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
       # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
       aws-load-balancer-controller: "3.6.2"  # 2026-10-25, chart 3.6.2 at appVersion v3.6.2, inside the 7-day cooldown, which is waived for 2.2.1. A patch with no CRD changes, on a base image that drops the distrusted eMudhra and emSign roots. AWS only. Its CRDs ship in the chart.
       # image: public.ecr.aws/karpenter/karpenter
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"            # 2026-10-23, the 1.14 LTS line, supported to 2027-07. Inside the 7-day cooldown, which is waived for 2.2.1. Held on 1.14 because 1.15 is a regular release, supported only until 1.16, and renovate.json keeps it there. Same CRDs and chart as 1.14.1, with a new controller digest. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/node-pools is checked against this release's CRDs, so they move together.
       # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
-      karpenter-al2023-ami: "v20261012"  # 2026-10-14, inside the 7-day cooldown, which is waived until 2.2 GA. Kernel 6.12.111 fixes the kswapd reclaim panic that rebooted 1.34-1.35 nodes on v20260930 and v20261003 (awslabs/amazon-eks-ami#2845, closed), and 1.36 nodes boot kernel 6.18.54. helm/charts/node-pools uses it as the EC2NodeClass alias al2023@v20261012.
+      karpenter-al2023-ami: "v20261023"  # Published 2026-10-24 and still marked a GitHub prerelease on 2026-10-25, inside the 7-day cooldown, which is waived until 2.2 GA. Adds CAs to the AL2023 CA blocklist (awslabs/amazon-eks-ami#2862, #2863), on v20261019's truncated /etc/eks/pause.tar fix (#2858). Same kernels as v20261012: 6.12.111 on 1.33-1.35, 6.18.54 on 1.36. helm/charts/node-pools uses it as the EC2NodeClass alias al2023@v20261023.
       # The DocumentDB operator chart, whose CloudNativePG runs HyperDX's document store.
       # image: ghcr.io/documentdb/documentdb-operator
       documentdb-operator: "1.0.0"    # DocumentDB 1.0 GA.
@@ -7705,7 +7705,7 @@ stacks:
       kafka-replicas: "3"            # cluster mode default
       # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda
       # The version moves by hand with the operator; refresh-digests moves the digest.
-      redpanda-version: "v26.2.6"    # Pushed 2026-10-23 (Docker Hub tag API), amd64 and arm64, inside the 7-day cooldown, which is waived for 2.2.1. The redpanda chart and operator v26.2.5 notes make it their default because its image no longer trusts the compromised eMudhra certificate authorities (CVE-2026-111943). Redpanda publishes no GitHub release for it. Runs under operator chart 26.2.4, which defaults to v26.2.3 and takes any v-prefixed semver tag (Tag() in charts/redpanda/chart/helpers.go). The cluster-mode CR takes a bare tag, no digest.
+      redpanda-version: "v26.2.6"    # Pushed 2026-10-23 (Docker Hub tag API), amd64 and arm64, inside the 7-day cooldown, which is waived for 2.2.1. The redpanda chart and operator v26.2.5 notes make it their default because its image no longer trusts the compromised eMudhra certificate authorities (CVE-2026-111943). Redpanda publishes no GitHub release for it. Operator chart 26.2.5 ships it as its default broker. The cluster-mode CR takes a bare tag, no digest.
       # image: clickhouse/clickhouse-server
       # The version moves by hand with the operator; refresh-digests moves the digest.
       clickhouse-version: "26.3.42.3"  # v26.3.42.3-lts, 2026-10-05. The 26.3 LTS line is supported to about 2027-03. Docker tags drop the -lts suffix.
@@ -7759,7 +7759,7 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.74"        # 2026-10-25, amd64 and arm64. Rebuilt on the python:3.14-slim 35caba8 and uv python3.14-trixie-slim d8e7328 base image digests, with the deployment contract literal moved to match (#985). Inside the 7-day cooldown, which is waived for 2.2.1.
-      dfe-ui: "v1.7.32"              # 2026-10-25, amd64 and arm64. Own table requires a meta schema and a refused submit opens the tab holding the error, the receiver routing card reads the compiled rules including compound and CEL matches, the backing-services count refreshes, and the e2e specs follow the settings menu (#603). Inside the 7-day cooldown, which is waived for 2.2.1.
+      dfe-ui: "v1.7.33"              # 2026-10-25, amd64 and arm64. Rebuilt on the node base image digest 43b9ba1 (#606). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-receiver: "v1.15.58"      # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#207), on v1.15.57's single Kafka-or-gRPC transport key (#206). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-loader: "v1.18.58"        # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#270). Inside the 7-day cooldown, which is waived for 2.2.1.
       dfe-archiver: "v1.7.39"       # 2026-10-24, amd64 and arm64. scalo 2.14.20 and ctutils 0.4.5 for RUSTSEC-2026-0385 (#134). Inside the 7-day cooldown, which is waived for 2.2.1.
@@ -7777,7 +7777,7 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:703f292cc7e71b59e662edb4e37e579c9b2fc5b9d77fb3aefb4d26e1ea6712d9"
-      dfe-ui: "sha256:74f9d7f8789a96d7f0e46db988de235586dad9c82e3188f5983c3bc62eda38f2"
+      dfe-ui: "sha256:6975874b5cec75effd6b792b733e2988569f4b5f53c2213035374c1b3158e316"
       dfe-receiver: "sha256:44a5874e7db073dd6c273fce20e6d61cc7cd0654a757b934099f2c5343a63369"
       dfe-loader: "sha256:4f35277451d5c9e42560515bff58ab5c40cdde3f350a2ec69e9fd3539668ac21"
       dfe-archiver: "sha256:08ce1f184c20b202aea45c853b9545cfb473c44e2c161869a810618ff6fc91e2"
@@ -7805,7 +7805,7 @@ stacks:
       dfe-transform-elastic: "sha256:eb6db0c37631aa6a16b5f2a8ac211eb9ed80a5e72a4ab2af27262847d6717c2a"  # 1.1.18
       dfe-transform-vector: "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"   # 1.0.55
       dfe-transform-vrl: "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"      # 1.1.38
-      dfe-ui: "sha256:8b3f2354e5227329c7bbf1295b51c0cdd0677f97bd43c239af07bbb19022949e"                # 1.7.32
+      dfe-ui: "sha256:2f22f68690d8a9ac2d2dcaefc46c4b9c688f4454efab1bc3ea3cb51eff960324"                # 1.7.33
       hyperdx: "sha256:a46cab8eb77d14b5524fc99c1b496fed7b4a660f04daaf718b01c37c1436bd02"                # 0.3.17
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
