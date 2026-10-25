@@ -850,7 +850,8 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
         return
     matched = _manager_matches(manager, text)
 
-    annotated = re.findall(r"#\s*renovate:.*?depName=(\S+)", text)
+    # The current block only: a frozen block may still annotate a pin the current one dropped.
+    annotated = re.findall(r"#\s*renovate:.*?depName=(\S+)", _manager_region(manager, text))
     expect(
         "the manager matches every `# renovate:` annotated pin",
         set(matched) == set(annotated),

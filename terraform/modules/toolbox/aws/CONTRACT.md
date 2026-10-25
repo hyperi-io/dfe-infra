@@ -23,7 +23,7 @@ this module's to close; see "Out of scope" at the end.
 | `root_volume` | `object({ type, size_gib })` | The same resolved shape's root disk. |
 | `ami_id` | `string` | The root's `instance_ami_id`: the newest AL2023 arm64 AMI in the region that clears the release gates, auto-selected by `scripts/resolve_sizing.py images`, else tfvars. Null when neither answered, refused only while `enabled` is true -- see "AMI resolution" below. |
 | `ttl_minutes` | `number` | Idle-session bound, 15-480, enforced here AND by `dfe-ops`. |
-| `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql`, `kafka-cli` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" below. |
+| `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql`, `kafka-cli`, and the download checks `argocd-cli-arm64-sha256`, `yq-arm64-sha256` and `kafka-cli-signer` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" and "How each download is checked" below. |
 | `session` | `object({ idle_timeout_minutes, max_duration_minutes })` | The SHELL document's preferences only. |
 | `session_log_retention_days` | `number` | From tfvars, 90 when the dial is silent. Deliberately independent of `telemetry.retention_days` -- `#18`. |
 | `kms_key_arn` | `string` | The deployment CMK. Used via an IAM role policy, never a key policy of this module's own -- `#6` (see "What this module deliberately does NOT write"). |
@@ -192,6 +192,9 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
   hand, not by a check. The `toolbox:` stage deliberately carries no
   pin of its own for any of the three, for exactly this reason (its own
   comment says so).
+- `argocd-cli-arm64-sha256`, `yq-arm64-sha256` and `kafka-cli-signer` come
+  from the same `toolbox:` stage. They are download checks, not versions, and
+  each moves with the pin it checks: see "How each download is checked".
 - `jq` and `openssl` are a deliberate exception: neither carries an
   upstream release cadence worth tracking as a versions.yaml pin (the
   `toolbox:` stage's own comment says so), so both install unpinned via
@@ -199,6 +202,24 @@ never from a literal in this module or its `templates/user_data.sh.tftpl`:
   install them unpinned via `apt`. `kcat` is the container image's own
   Debian package (that repo does carry one) and is NOT installed on this EC2
   instance at all -- see "Kafka CLI on the EC2 instance" below for why.
+
+## How each download is checked
+
+`templates/user_data.sh.tftpl` checks every download against an anchor this repo holds before it installs anything, and a failed check stops the boot. The key fingerprints are `local.signing_keys` in `main.tf`, and the two keys AWS publishes only in its docs are vendored in `keys/`.
+
+| Tool | Check | Anchor |
+|------|-------|--------|
+| kubectl | signed rpm repo (packages and metadata) | pkgs.k8s.io key, fingerprint pinned |
+| tofu | signed rpm repo | OpenTofu key (packages) and repo key (metadata), fingerprints pinned |
+| clickhouse-client | signed rpm repo metadata, which holds each unsigned package's SHA256 | ClickHouse repo key, fingerprint pinned |
+| helm | tarball signature | helm release key from `KEYS` at the release tag, fingerprint pinned |
+| aws-cli | zip signature | `keys/aws-cli.asc`, fingerprint pinned |
+| session-manager-plugin | rpm signature, at its versioned URL | `keys/session-manager-plugin.asc`, fingerprint pinned |
+| Kafka CLI | tarball signature | that release's manager key from Apache's `KEYS`, fingerprint in `kafka-cli-signer` |
+| argocd, yq | SHA256 | `argocd-cli-arm64-sha256`, `yq-arm64-sha256` |
+| jq, openssl, unzip, psql, Java 17 | AL2023's own signed repos | the Amazon Linux key the AMI carries |
+
+Every Kafka release has its own release manager, so `kafka-cli-signer` is `<kafka-cli version>:<fingerprint>`, and the `tool_versions` validation refuses a pair whose version is not the one `kafka-cli` installs. A bump of `services.kafka-version` therefore needs the signer re-pinned to the key that signed the new tarball, from <https://downloads.apache.org/kafka/KEYS>. EC2 refuses user data over 16384 bytes, so the instance carries a precondition that fails the plan first.
 
 ## AMI resolution (`#8`)
 
@@ -285,6 +306,9 @@ naming it
   can be in.
 - **Every tool version is a lookup, never a literal**, in this module and in
   `templates/user_data.sh.tftpl` alike.
+- **Every download is checked before it installs**, against an anchor this
+  repo holds (see "How each download is checked"), and never against a
+  checksum fetched from the same upstream.
 - **The `targets` output only ever names a target that will actually work.**
   It is built FROM `aws_ssm_document.forward` and
   `aws_vpc_security_group_egress_rule.targets`, never from `var.targets`

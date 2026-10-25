@@ -131,8 +131,8 @@ drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 - data: `otel-collector`, `forgejo` (bundled deploy-repo fallback, k8s-only).
   `postgresql` is no chart or image: it records the PostgreSQL major the AWS
   toolbox installs psql at.
-- the DocumentDB store, HyperDX's metadata on k8s (dfe-docker runs FerretDB,
-  class E below):
+- the DocumentDB store, HyperDX's metadata on k8s (dfe-docker runs DocumentDB
+  Local, `services.documentdb-local`, class E below):
   - the operator is the OCI chart `oci://ghcr.io/documentdb/documentdb-operator`
     1.0.0, by digest, in `argocd/appsets/layer1-addons.yaml`. Its chart bundles
     CloudNativePG and installs it into `cnpg-system`, and the operator, sidecar
@@ -155,14 +155,10 @@ image. One number, same image ref both sides.
 
 ## Class E - third-party plain image, docker-ONLY
 
-### FerretDB and its PostgreSQL backend (HyperDX's metadata, docker)
+### DocumentDB Local (HyperDX's metadata, docker)
 
-- SSoT: `services.ferretdb` (2.7.0) and `services.documentdb-pg`
-  (17-0.107.0-ferretdb-2.7.0). docker: `HYPERDX_FERRETDB_VERSION` ->
-  `ghcr.io/ferretdb/ferretdb` and `HYPERDX_POSTGRES_VERSION` ->
-  `ghcr.io/ferretdb/postgres-documentdb`.
+- SSoT: `services.documentdb-local` (pg18-1.0.0). docker: `HYPERDX_DOCUMENTDB_VERSION` -> `ghcr.io/documentdb/documentdb/documentdb-local`, the single-container DocumentDB build.
 - No k8s cascade: k8s runs the DocumentDB store (class C above).
-- dfe-docker moves to DocumentDB Local: `services.documentdb-local` (pg18-1.0.0) renders as `HYPERDX_DOCUMENTDB_VERSION` -> `ghcr.io/documentdb/documentdb/documentdb-local`. Its key starts with the stack cut after 2.2.1-rc.17, and the FerretDB pair goes once dfe-docker no longer reads it.
 
 ### Envoy (dfe-proxy)
 

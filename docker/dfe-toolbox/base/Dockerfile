@@ -24,8 +24,21 @@
 # scripts/check_versions_drift.py holds the two together, and
 # .github/workflows/toolbox-build.yml passes the SAME values as
 # --build-arg so a stale default here never reaches a pushed image.
-# The Debian base is tag@sha256 (toolbox.debian), declared before FROM so FROM can read it.
-ARG DEBIAN_TAG="trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f"
+#
+# Every download is checked against an anchor this repo pins before it
+# installs: a signed vendor apt repo with its key pinned by fingerprint, an
+# official image pinned by digest, or a signature from a pinned key. Each
+# install step names its anchor.
+#
+# The images are tag@sha256 (toolbox.debian, toolbox.argocd-cli-image,
+# toolbox.yq-image), declared before the first FROM so a FROM can read them.
+ARG DEBIAN_TAG="trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
+ARG ARGOCD_IMAGE="v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335"
+ARG YQ_IMAGE="4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"
+
+FROM quay.io/argoproj/argocd:${ARGOCD_IMAGE} AS argocd
+FROM ghcr.io/mikefarah/yq:${YQ_IMAGE} AS yq
+
 FROM debian:${DEBIAN_TAG}
 
 ARG TARGETARCH
@@ -42,8 +55,8 @@ ARG CLICKHOUSE_VERSION="26.3.42.3"
 #   - kcat: Debian's `kafkacat` source package (upstream renamed the binary to
 #     kcat; the project has had no release since 1.7.1 in 2021, so pinning
 #     past what Debian ships buys nothing real).
-#   - postgresql-client: pulls postgresql-client-17, matching
-#     services.postgresql (CNPG runs PG 17).
+#   - postgresql-client: trixie's postgresql-client-17, one major behind the
+#     DocumentDB store's PostgreSQL 18 (services.postgresql). Trixie ships no 18.
 # Deliberately unpinned: trixie is a point-release distro and these packages
 # ride its own security-update cadence, which a hardcoded version would fight
 # on every rebuild.
@@ -54,6 +67,7 @@ RUN apt-get update \
        curl \
        unzip \
        gnupg \
+       gpgv \
        jq \
        dnsutils \
        netcat-openbsd \
@@ -62,54 +76,82 @@ RUN apt-get update \
        openssl \
     && rm -rf /var/lib/apt/lists/*
 
-# kubectl: official static binary.
-RUN curl -fsSL -o /usr/local/bin/kubectl \
-      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
-    && chmod +x /usr/local/bin/kubectl
+# Writes a keyring of only the pinned keys, for this image and the cloud layers.
+COPY pinned-keyring.sh /usr/local/sbin/pinned-keyring
+RUN chmod 0755 /usr/local/sbin/pinned-keyring
 
-# helm: official tarball.
-RUN curl -fsSL -o /tmp/helm.tar.gz \
+# Signed vendor apt repos, each key pinned by primary fingerprint:
+#   kubectl            pkgs.k8s.io              DE15B14486CD377B9E876E1A234654DA9A296436
+#   tofu               packages.opentofu.org    F4AF70F66EAC4337EEECC97407D3DFCD4C61499F
+#   clickhouse-client  packages.clickhouse.com  3A9EA1193A97B548BE1457D48919F6BD2B48D754
+# OpenTofu, never the terraform binary. clickhouse-client is pinned to the
+# version the stack's ClickHouse server runs (services.clickhouse-version), so
+# a compatibility query never drifts from what it talks to. The repos are
+# removed after the install, so the cloud layers' apt-get update reads Debian only.
+RUN mkdir -p /etc/apt/keyrings /tmp/keys \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/keys/kubernetes.asc \
+      "https://pkgs.k8s.io/core:/stable:/${KUBECTL_VERSION%.*}/deb/Release.key" \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/keys/opentofu.asc \
+      "https://packages.opentofu.org/opentofu/tofu/gpgkey" \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/keys/clickhouse.asc \
+      "https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key" \
+    && pinned-keyring /tmp/keys/kubernetes.asc /etc/apt/keyrings/kubernetes.gpg \
+      DE15B14486CD377B9E876E1A234654DA9A296436 \
+    && pinned-keyring /tmp/keys/opentofu.asc /etc/apt/keyrings/opentofu.gpg \
+      F4AF70F66EAC4337EEECC97407D3DFCD4C61499F \
+    && pinned-keyring /tmp/keys/clickhouse.asc /etc/apt/keyrings/clickhouse.gpg \
+      3A9EA1193A97B548BE1457D48919F6BD2B48D754 \
+    && echo "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://pkgs.k8s.io/core:/stable:/${KUBECTL_VERSION%.*}/deb/ /" \
+      > /etc/apt/sources.list.d/kubernetes.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/opentofu.gpg] https://packages.opentofu.org/opentofu/tofu/any/ any main" \
+      > /etc/apt/sources.list.d/opentofu.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/clickhouse.gpg] https://packages.clickhouse.com/deb stable main" \
+      > /etc/apt/sources.list.d/clickhouse.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      "kubectl=${KUBECTL_VERSION#v}-*" \
+      "tofu=${TOFU_VERSION}" \
+      "clickhouse-common-static=${CLICKHOUSE_VERSION}" \
+      "clickhouse-client=${CLICKHOUSE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* /tmp/keys \
+      /etc/apt/sources.list.d/kubernetes.list /etc/apt/keyrings/kubernetes.gpg \
+      /etc/apt/sources.list.d/opentofu.list /etc/apt/keyrings/opentofu.gpg \
+      /etc/apt/sources.list.d/clickhouse.list /etc/apt/keyrings/clickhouse.gpg
+
+# helm: release tarball signed by the helm release key
+# 208DD36ED5BB3745A16743A4C7C6FBB5B91C1155, read from KEYS at the release tag.
+RUN mkdir -p /tmp/helm \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/helm/KEYS \
+      "https://raw.githubusercontent.com/helm/helm/${HELM_VERSION}/KEYS" \
+    && pinned-keyring /tmp/helm/KEYS /tmp/helm/helm.gpg \
+      208DD36ED5BB3745A16743A4C7C6FBB5B91C1155 \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/helm/helm.tar.gz \
       "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
-    && tar -xzf /tmp/helm.tar.gz -C /tmp \
-    && install -m 0755 "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
-    && rm -rf /tmp/helm.tar.gz "/tmp/linux-${TARGETARCH}"
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/helm/helm.tar.gz.asc \
+      "https://github.com/helm/helm/releases/download/${HELM_VERSION}/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz.asc" \
+    && gpgv --keyring /tmp/helm/helm.gpg /tmp/helm/helm.tar.gz.asc /tmp/helm/helm.tar.gz \
+    && tar -xzf /tmp/helm/helm.tar.gz -C /tmp/helm \
+    && install -m 0755 "/tmp/helm/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
+    && rm -rf /tmp/helm
 
-# argocd CLI: official static binary, matched to the ArgoCD APP version this
-# stack's bootstrap.argocd chart deploys (not the chart's own version number).
-RUN curl -fsSL -o /usr/local/bin/argocd \
-      "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-${TARGETARCH}" \
-    && chmod +x /usr/local/bin/argocd
+# argocd and yq (mikefarah/yq, the Go binary, NOT Debian's python3-yq): copied
+# out of their official images by index digest, which is the check.
+COPY --from=argocd /usr/local/bin/argocd /usr/local/bin/argocd
+COPY --from=yq /usr/bin/yq /usr/local/bin/yq
 
-# tofu: official release zip. OpenTofu, never the terraform binary.
-RUN curl -fsSL -o /tmp/tofu.zip \
-      "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_${TARGETARCH}.zip" \
-    && unzip -q /tmp/tofu.zip -d /tmp/tofu \
-    && install -m 0755 /tmp/tofu/tofu /usr/local/bin/tofu \
-    && rm -rf /tmp/tofu.zip /tmp/tofu
-
-# yq: mikefarah/yq, the Go binary -- NOT Debian's python3-yq.
-RUN curl -fsSL -o /usr/local/bin/yq \
-      "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
-    && chmod +x /usr/local/bin/yq
-
-# clickhouse-client: the official standalone tgz, pinned to the SAME version
-# the stack's ClickHouse server runs (services.clickhouse-version), so a
-# compatibility query never drifts from what it actually talks to. Two
-# tarballs: clickhouse-common-static carries the real binary,
-# clickhouse-client is a thin wrapper + config whose `clickhouse-client`
-# entry point is a symlink into it -- common-static installs first. Each
-# ships its own install/doinst.sh, which copies relative to the CWD; the
-# Dockerfile's default WORKDIR (/) is what makes that land at the real /usr.
-RUN curl -fsSL -o /tmp/ch-common.tgz \
-      "https://packages.clickhouse.com/tgz/stable/clickhouse-common-static-${CLICKHOUSE_VERSION}-${TARGETARCH}.tgz" \
-    && curl -fsSL -o /tmp/ch-client.tgz \
-      "https://packages.clickhouse.com/tgz/stable/clickhouse-client-${CLICKHOUSE_VERSION}-${TARGETARCH}.tgz" \
-    && mkdir -p /tmp/ch-common /tmp/ch-client \
-    && tar -xzf /tmp/ch-common.tgz -C /tmp/ch-common \
-    && tar -xzf /tmp/ch-client.tgz -C /tmp/ch-client \
-    && "/tmp/ch-common/clickhouse-common-static-${CLICKHOUSE_VERSION}/install/doinst.sh" \
-    && "/tmp/ch-client/clickhouse-client-${CLICKHOUSE_VERSION}/install/doinst.sh" \
-    && rm -rf /tmp/ch-common.tgz /tmp/ch-client.tgz /tmp/ch-common /tmp/ch-client
+# The image digests and the release pins are separate versions.yaml keys, so a
+# pair naming different releases fails here. argocd tracks the Argo CD APP
+# version bootstrap.argocd deploys, not the chart's own version number.
+RUN ARGOCD_REPORTED="$(argocd version --client --short)" \
+    && case "${ARGOCD_REPORTED}" in \
+         "argocd: ${ARGOCD_VERSION}" | "argocd: ${ARGOCD_VERSION}+"*) ;; \
+         *) echo "argocd reports '${ARGOCD_REPORTED}', toolbox.argocd-cli says ${ARGOCD_VERSION}" >&2; exit 1 ;; \
+       esac \
+    && YQ_REPORTED="$(yq --version)" \
+    && case "${YQ_REPORTED}" in \
+         *" version ${YQ_VERSION}") ;; \
+         *) echo "yq reports '${YQ_REPORTED}', toolbox.yq says ${YQ_VERSION}" >&2; exit 1 ;; \
+       esac
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

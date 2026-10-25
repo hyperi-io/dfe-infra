@@ -4,7 +4,7 @@
 #
 # ARG default mirrors versions.yaml's toolbox.az-cli pin (drift-checked); the
 # workflow overrides it at build time from the same source.
-ARG BASE_TAG="v1.0.5"
+ARG BASE_TAG="v1.0.6"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
@@ -12,19 +12,21 @@ ARG AZ_CLI_VERSION="2.91.0"
 
 USER 0
 
-# Microsoft's azure-cli apt repo has no `trixie` suite yet (only as far as
-# bookworm at the time this was written -- checked against
-# https://packages.microsoft.com/repos/azure-cli/dists/). The bookworm build
-# is a self-contained Python venv under /opt/az with no distro-version-specific
-# glibc assumptions beyond what trixie already exceeds, so it installs and
-# runs cleanly here; re-point this at `trixie` the day Microsoft publishes one.
-RUN curl -fsSL "https://packages.microsoft.com/keys/microsoft.asc" -o /tmp/microsoft.asc \
-    && gpg --dearmor -o /etc/apt/trusted.gpg.d/microsoft.gpg /tmp/microsoft.asc \
-    && rm -f /tmp/microsoft.asc \
-    && echo "deb [arch=amd64,arm64] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+# az: Microsoft's signed apt repo, key BC528686B50D79E339D3721CEB3E94ADBE1229CF
+# pinned by primary fingerprint and trusted for this repo only (signed-by).
+# The repo has no `trixie` suite yet (https://packages.microsoft.com/repos/azure-cli/dists/).
+# The bookworm build is a self-contained Python venv under /opt/az with no
+# glibc assumption trixie does not already meet, so it installs and runs here.
+# Re-point this at `trixie` the day Microsoft publishes one.
+RUN mkdir -p /etc/apt/keyrings /tmp/keys \
+    && curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/keys/microsoft.asc \
+      "https://packages.microsoft.com/keys/microsoft.asc" \
+    && pinned-keyring /tmp/keys/microsoft.asc /etc/apt/keyrings/microsoft.gpg \
+      BC528686B50D79E339D3721CEB3E94ADBE1229CF \
+    && echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
       > /etc/apt/sources.list.d/azure-cli.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends "azure-cli=${AZ_CLI_VERSION}-1~bookworm" \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/keys
 
 USER 1000:1000

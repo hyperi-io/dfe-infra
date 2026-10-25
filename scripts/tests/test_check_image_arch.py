@@ -74,7 +74,7 @@ _PINS = {
 NOT_AN_IMAGE = {
     "operators.karpenter-al2023-ami": "an EC2 AMI alias for Karpenter's node class",
     "operators.documentdb-operator": "the operator chart; its images are services.documentdb-operator-image, documentdb-sidecar and cloudnative-pg",
-    "services.postgresql": "the Postgres major; the image is services.documentdb-pg",
+    "services.postgresql": "the Postgres major; the image is services.documentdb-postgres",
     "services.kafka-replicas": "a replica count",
     "services.clickhouse-replicas": "a replica count",
     "services.hyperdx": "the upstream version the fork tracks; the image is digests.dfe-hyperdx",
