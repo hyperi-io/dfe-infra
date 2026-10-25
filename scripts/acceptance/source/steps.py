@@ -18,6 +18,7 @@ deadlines; the polling is not written twice.
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -67,6 +68,12 @@ DATA_STREAM_NAMESPACE = "default"
 MARKER = "_e2e"
 CORPUS = "corpus"
 PROBE = "probe"
+# The two records the ceiling step sends either side of the receiver's door.
+CEILING_UNDER = "ceiling-under"
+CEILING_OVER = "ceiling-over"
+# How far each ceiling record sits from the door, in bytes of request body.
+CEILING_MARGIN = 1024
+CEILING_DEADLINE = 300.0
 # The app that keeps an archived source's raw records.
 ARCHIVER_SERVICE = "dfe-archiver"
 # A recipe make reports as failed, which names the target and never the cause.
@@ -690,6 +697,95 @@ def wait_rows(store: Datastore, table: str, wanted: int, deadline: float,
         if found >= wanted or time.monotonic() >= until:
             return found
         time.sleep(interval)
+
+
+# --- the record ceiling ------------------------------------------------------
+
+
+def ceiling_body(run: str, kind: str, size: int) -> bytes:
+    """A JSON record of exactly *size* bytes, marked as *kind*, matching no source's rule.
+
+    Raises:
+        ValueError: When *size* is smaller than the record's own framing.
+    """
+    shell = {MARKER: run_marker(run, kind), "message": ""}
+    framing = len(json.dumps(shell).encode())
+    if size < framing:
+        raise ValueError(f"a {size}-byte record cannot hold its own {framing}-byte framing")
+    return json.dumps({**shell, "message": "x" * (size - framing)}).encode()
+
+
+def post_body(receiver_url: str, verify: bool, body: bytes,
+              window: float = INGEST_RETRY_WINDOW) -> int:
+    """POST one body at the receiver and return its status, retrying only what is not an answer.
+
+    Through curl with ``Expect: 100-continue``, because the receiver refuses an
+    oversize body on its Content-Length before reading it, and a client that
+    sends the body anyway can be reset mid-send and never see the 413.
+
+    A 4xx is the receiver's verdict and returns at once. A 5xx or no answer is a
+    pod on its way out, retried for *window* seconds.
+
+    Raises:
+        RuntimeError: When curl is not on PATH, or the receiver never answers.
+    """
+    curl = shutil.which("curl")
+    if curl is None:
+        raise RuntimeError("the record-ceiling step posts through curl, which is not on PATH")
+    argv = [
+        curl, "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "60",
+        "-X", "POST", "-H", "Content-Type: application/json", "-H", "Expect: 100-continue",
+        "--data-binary", "@-", *([] if verify else ["--insecure"]), receiver_url,
+    ]
+    until = time.monotonic() + window
+    while True:
+        done = subprocess.run(argv, input=body, capture_output=True, check=False, timeout=90)
+        status = int(done.stdout or b"0")
+        if 0 < status < 500 or (status and time.monotonic() >= until):
+            return status
+        if time.monotonic() >= until:
+            why = done.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"the receiver never answered within {window:.0f}s: {why}")
+        time.sleep(2)
+
+
+def ceiling_outcome(door: int, over_status: int, under_status: int,
+                    under_landed: int, over_landed: int) -> tuple[str, str]:
+    """The step result for one record over the receiver's door and one under it.
+
+    Over must be refused with 413 and never land. Under must be accepted and land
+    in dfe.main, which is the proof that every hop behind the door, the broker
+    topic included, takes a record the door admits.
+    """
+    over, under = door + CEILING_MARGIN, door - CEILING_MARGIN
+    detail = (
+        f"door {door} bytes: {over}-byte record answered {over_status}, {over_landed} landed; "
+        f"{under}-byte record answered {under_status}, {under_landed} landed in dfe.main"
+    )
+    refused = over_status == 413 and over_landed == 0
+    # At least once, so a redelivered copy is not a failure.
+    admitted = 200 <= under_status < 300 and under_landed >= 1
+    return ("done" if refused and admitted else "failed"), detail
+
+
+def record_ceiling(driver, store: Datastore, receiver_url: str, verify: bool, run: str,
+                   door: int, deadline: float = CEILING_DEADLINE) -> None:
+    """Send one record just over the receiver's door and one just under, and prove where each went.
+
+    The under record names no dataset, so it lands in the catch-all whatever
+    the source routes. A door of 0 is a deployment that did not say what its
+    door is, which this step cannot judge.
+    """
+    if not receiver_url or door <= 0:
+        why = "no receiver URL" if not receiver_url else "no --receiver-door-bytes named"
+        driver.record("record-ceiling", "skipped", why)
+        return
+    over_status = post_body(receiver_url, verify, ceiling_body(run, CEILING_OVER, door + CEILING_MARGIN))
+    under_status = post_body(receiver_url, verify, ceiling_body(run, CEILING_UNDER, door - CEILING_MARGIN))
+    wanted = 1 if 200 <= under_status < 300 else 0
+    under_landed = wait_rows(store, "main", wanted, deadline, marked(run, CEILING_UNDER)) if wanted else 0
+    over_landed = store.scalar(f"SELECT count() FROM main WHERE {marked(run, CEILING_OVER)}")
+    driver.record("record-ceiling", *ceiling_outcome(door, over_status, under_status, under_landed, over_landed))
 
 
 # --- the archive -------------------------------------------------------------

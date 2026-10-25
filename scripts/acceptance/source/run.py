@@ -70,6 +70,9 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     )
     case.feed(run)
     case.prove(run)
+    steps.record_ceiling(
+        run.driver, run.store, run.receiver_url, run.verify, run.run_id, run.args.receiver_door_bytes
+    )
     steps.record_archive(run.driver, archive_exec, case.name)
     steps.record_observe(run.driver, case.name)
 
@@ -289,6 +292,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval-secs", type=int, default=60,
                         help="how often the fetcher polls its upstream")
     parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
+    parser.add_argument("--receiver-door-bytes", type=int, default=0, metavar="BYTES",
+                        help="the receiver's request body limit; the record-ceiling step sends one "
+                             "record just over it, which must be refused with 413, and one just "
+                             "under, which must land in dfe.main (0 skips the step)")
     parser.add_argument("--via", default="post", choices=("post", *cases.SHIPPED),
                         help="how the pushed cases reach the receiver: post wraps each corpus line "
                              "and POSTs it, logstash stands a real filebeat and logstash pair beside "

@@ -1842,7 +1842,7 @@ class TestTheOrderTheRunnerWalks:
         assert steps_seen == [
             "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
             "deploy", "hyperdx-source", "upload-program", "restart", "table",
-            "transform-instance", "transform-reporting", "archived", "observe",
+            "transform-instance", "transform-reporting", "record-ceiling", "archived", "observe",
         ]
         assert driver.status("observe") == "done"
 
@@ -1856,7 +1856,7 @@ class TestTheOrderTheRunnerWalks:
         assert steps_seen == [
             "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
             "deploy", "hyperdx-source", "upload-program", "restart", "table",
-            "transform-instance", "transform-reporting", "archived", "observe",
+            "transform-instance", "transform-reporting", "record-ceiling", "archived", "observe",
         ]
         assert driver.status("upload-program") == "skipped"
         assert driver.status("transform-instance") == "done"
@@ -1880,7 +1880,8 @@ class TestTheOrderTheRunnerWalks:
 
         assert "upload-program" not in order
         assert order == ["deploy", "hyperdx-source", "restart", "table",
-                         "fetcher-instance", "fetcher-reporting", "archived", "observe"]
+                         "fetcher-instance", "fetcher-reporting", "record-ceiling", "archived",
+                         "observe"]
 
     def test_the_restart_step_is_skipped_when_nothing_asked_for_one(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
