@@ -32,10 +32,11 @@ id to its `[topic, partition, offset]` rows, or `{"error": text}` to raise. Its 
 is `engine_env`, each run is counted as `engine_offsets` and the client config the
 script built lands in the counts as `engine_conf`. Absent, the exec prints an error.
 
-`hyperdx_ready` adds a dfe-hyperdx deployment whose node runtime answers /readyz
-with that verdict (the image has node and no wget or curl). `documentdb_collections`
-adds a DocumentDB primary in cnpg whose psql counts that many hyperdx collections,
-answering only an exec naming its postgres container. `engine_schema` adds a
+`hyperdx_store` adds a dfe-hyperdx deployment whose store probe answers the ping when
+it is true, and otherwise prints that string and fails. The script handed to node is
+syntax-checked by the real node, and lands in the counts as `hyperdx_probe`.
+`documentdb_collections` adds a DocumentDB primary in cnpg whose psql counts that many
+hyperdx collections, answering only an exec naming its postgres container. `engine_schema` adds a
 dfe-engine deployment whose /readyz reports that schema verdict. Each answers only
 an exec naming its thin-chart container (`-c dfe-hyperdx`, `-c dfe-engine`).
 `loader_copies_payload_to_raw` makes the landing table hold the whole payload in
@@ -179,7 +180,7 @@ if kafka and namespace() == kafka["namespace"]:
         sys.exit(0)
 if kafka and args[:2] == ["get", "ns"]:
     sys.exit(0 if args[2] == kafka["namespace"] else 1)
-if "hyperdx_ready" in fixture and args[-3:] == ["get", "deploy", "dfe-hyperdx"]:
+if "hyperdx_store" in fixture and args[-3:] == ["get", "deploy", "dfe-hyperdx"]:
     sys.exit(0)
 if "documentdb_collections" in fixture and namespace() == "cnpg":
     if "pods" in args:
@@ -234,8 +235,21 @@ if "exec" in args:
         if '"_raw"' in posted:
             bump("posted_raw")
         sys.exit(0)
-    if "node" in args:
-        sys.exit(0 if fixture.get("hyperdx_ready") and container_is("dfe-hyperdx") else 1)
+    if exec_target() == "deploy/dfe-hyperdx" and "node" in args:
+        script = sys.stdin.read()
+        counts["hyperdx_probe"] = script
+        with open(counts_file, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh)
+        checked = subprocess.run(["node", "--check", "-"], input=script, capture_output=True,
+                                 text=True, check=False)
+        if checked.returncode != 0:
+            sys.stdout.write(checked.stderr)
+            sys.exit(1)
+        store = fixture.get("hyperdx_store")
+        if not container_is("dfe-hyperdx") or store is None:
+            sys.exit(1)
+        print("ping ok: 1" if store is True else store)
+        sys.exit(0 if store is True else 1)
     if "mongosh" in args or "wget" in args:
         sys.exit(1)
     query = args[args.index("--query") + 1] if "--query" in args else ""

@@ -26,10 +26,11 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
                              resource not Synced and Healthy
   logs/<namespace>/<pod>.<container>.log
                              the last --log-minutes of each container of dfe-receiver,
-                             dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner and every
-                             dfe-fetcher-* and dfe-transform-* deployment, the per-source ones
-                             included. The cycle passes the failed stage's own length when it
-                             ran longer than the default
+                             dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner, dfe-hyperdx,
+                             every dfe-fetcher-* and dfe-transform-* deployment, the per-source
+                             ones included, and the dfe-documentdb store's instances. The cycle
+                             passes the failed stage's own length when it ran longer than the
+                             default
   logs/<namespace>/<pod>.<container>.previous.log
                              the run before, for a container that restarted
   kafka/engine.txt           the bootstrap address, security protocol and SASL Secret name
@@ -107,15 +108,18 @@ MAX_EVENT_NAMESPACES = 20
 MAX_RESOURCES = 20  # resources not Synced and Healthy named per Application
 # Share of the budget the log reads leave for the Kafka reads after them.
 KAFKA_SHARE = 0.35
-# Deployments whose logs are read: each name, and every `<name>-<suffix>` beside it.
+# Workloads whose logs are read: each name, and every `<name>-<suffix>` beside it.
 LOGGED_APPS = (
     "dfe-receiver",
     "dfe-loader",
     "dfe-archiver",
     "dfe-engine",
     "dfe-hunt-runner",
+    "dfe-hyperdx",
     "dfe-fetcher",
     "dfe-transform",
+    # The store's CloudNativePG Cluster, which owns its PostgreSQL and gateway instance pods.
+    "dfe-documentdb",
 )
 ENGINE = "dfe-engine"
 ARGOCD = "argocd"
@@ -1028,8 +1032,8 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
         "events of argocd and of every namespace an Argo Application deploys into, every "
         "Application's sync and health with each resource not Synced and Healthy, the last "
         "--log-minutes of every container of dfe-receiver, dfe-loader, dfe-archiver, dfe-engine, "
-        "dfe-hunt-runner and each dfe-fetcher-* and dfe-transform-* deployment with the previous "
-        "run of any that "
+        "dfe-hunt-runner, dfe-hyperdx, each dfe-fetcher-* and dfe-transform-* deployment and the "
+        "dfe-documentdb store's instances with the previous run of any that "
         "restarted, and every consumer group's offsets with the end offset of each _land, _load "
         "and _dlq topic, then the brokers' API versions and the loader group's list, state and "
         "offsets one read at a time. The Kafka reads run from a short-lived pod beside dfe-engine "

@@ -832,15 +832,31 @@ check "ClickHouse answers a query (dfe DB present)" \
 # Distinguish "HyperDX is broken" from "HyperDX is not in this profile" -- the two
 # need very different actions, and slim deliberately omits it while telemetry.mode
 # still names it the default OTLP destination.
-hyperdx_readyz() {
-  kubectl -n "$NS_HYPERDX" exec deploy/dfe-hyperdx -c dfe-hyperdx -- node -e \
-    "fetch('http://localhost:8000/readyz',{signal:AbortSignal.timeout(10000)}).then(async r=>{const b=await r.json();process.exit(r.status===200&&b.status==='ready'?0:1)}).catch(()=>process.exit(1))"
+#
+# /readyz never asks the store, so this pings it with the pod's own MONGO_URI. A FAIL
+# names the layer: a refused or timed-out connect (path or NetworkPolicy), a
+# certificate error (TLS), or code 18 (login).
+hyperdx_store_ping() {
+  kubectl -n "$NS_HYPERDX" exec -i deploy/dfe-hyperdx -c dfe-hyperdx -- node - <<'JS'
+const say = (line, code) => { console.log(line); process.exit(code); };
+setTimeout(() => say("the store gave no answer in 30s", 1), 30000);
+(async () => {
+  const { MongoClient } = require("mongodb");
+  const client = new MongoClient(process.env.MONGO_URI || "", { serverSelectionTimeoutMS: 15000 });
+  await client.connect();
+  const reply = await client.db().command({ ping: 1 });
+  say(`ping ok: ${reply.ok}`, reply.ok === 1 ? 0 : 1);
+})().catch((err) => {
+  // A server-selection error carries the real cause on the server it tried.
+  const tried = err.reason && err.reason.servers ? [...err.reason.servers.values()] : [];
+  const cause = tried.map((server) => server.error && server.error.message).find(Boolean);
+  const code = err.code === undefined ? "" : ` (code ${err.code})`;
+  say(`${err.name}${code}: ${cause || err.message}`, 1);
+});
+JS
 }
 if kubectl -n "$NS_HYPERDX" get deploy dfe-hyperdx >/dev/null 2>&1; then
-  # /readyz on the api port (8000) is what the pod's own readiness probe uses, and
-  # it only answers once the documentdb-backed API is up. The image ships neither wget
-  # nor curl, so node's fetch asks it and the exit code carries the verdict.
-  check "hyperdx API reaches its documentdb backend" hyperdx_readyz
+  check "hyperdx logs in to its DocumentDB store and pings it" hyperdx_store_ping
 else
   skip "hyperdx->documentdb -- no dfe-hyperdx deployment in ns/$NS_HYPERDX, so this profile does not ship it. CORE 1 above says whether the OTel path still reaches ClickHouse without it."
 fi
