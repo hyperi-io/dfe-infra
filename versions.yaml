@@ -7691,7 +7691,7 @@ stacks:
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"            # 2026-10-23, the 1.14 LTS line, supported to 2027-07. Inside the 7-day cooldown, which is waived for 2.2.1. Held on 1.14 because 1.15 is a regular release, supported only until 1.16, and renovate.json keeps it there. Same CRDs and chart as 1.14.1, with a new controller digest. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/node-pools is checked against this release's CRDs, so they move together.
       # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
-      karpenter-al2023-ami: "v20261023"  # Published 2026-10-24 and still marked a GitHub prerelease on 2026-10-25, inside the 7-day cooldown, which is waived until 2.2 GA. Adds CAs to the AL2023 CA blocklist (awslabs/amazon-eks-ami#2862, #2863), on v20261019's truncated /etc/eks/pause.tar fix (#2858). Same kernels as v20261012: 6.12.111 on 1.33-1.35, 6.18.54 on 1.36. helm/charts/node-pools uses it as the EC2NodeClass alias al2023@v20261023.
+      karpenter-al2023-ami: "v20261019"  # Published 2026-10-21, the newest full release (v20261023 is still a GitHub prerelease), inside the 7-day cooldown, which is waived until 2.2 GA. Prevents a truncated /etc/eks/pause.tar in the AL2023 AMIs (awslabs/amazon-eks-ami#2858) and disables the update-motd timer (#2857). Same kernels as v20261012: 6.12.111 on 1.33-1.35, 6.18.54 on 1.36. helm/charts/node-pools uses it as the EC2NodeClass alias al2023@v20261019.
       # The DocumentDB operator chart, whose CloudNativePG runs HyperDX's document store.
       # image: ghcr.io/documentdb/documentdb-operator
       documentdb-operator: "1.0.0"    # DocumentDB 1.0 GA.
