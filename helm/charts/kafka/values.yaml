@@ -79,11 +79,11 @@ kafka:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # Broker tag the operator chart 26.2.4 pairs with (see versions.yaml).
-      tag: "v26.2.3"
+      # == versions.yaml services.redpanda-version (drift-checked).
+      tag: "v26.2.4"
       # Single mode only; the operator's chart refuses a tag that is not bare semver.
       # == versions.yaml services-digests.redpanda-version (drift-checked).
-      digest: "sha256:9e83cfa99278f30d0133271c26bf670cd69c94ffa6ba0b42830dd0c3bd9dcfd9"
+      digest: "sha256:c98c2f04a751e6646012cc701bac5183252cee44c88ba1dfa412e4c7124f2e89"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.

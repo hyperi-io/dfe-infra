@@ -55,8 +55,8 @@ ARG CLICKHOUSE_VERSION="26.3.42.3"
 #   - kcat: Debian's `kafkacat` source package (upstream renamed the binary to
 #     kcat; the project has had no release since 1.7.1 in 2021, so pinning
 #     past what Debian ships buys nothing real).
-#   - postgresql-client: pulls postgresql-client-17, matching
-#     services.postgresql (CNPG runs PG 17).
+#   - postgresql-client: trixie's postgresql-client-17, one major behind the
+#     DocumentDB store's PostgreSQL 18 (services.postgresql). Trixie ships no 18.
 # Deliberately unpinned: trixie is a point-release distro and these packages
 # ride its own security-update cadence, which a hardcoded version would fight
 # on every rebuild.

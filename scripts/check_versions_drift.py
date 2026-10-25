@@ -1041,8 +1041,6 @@ UNCONSUMED: dict[str, str] = {
     "toolbox.argocd-cli-arm64-sha256": "the AWS bastion's check on the argocd binary; render_dial.py reads it at runtime into the toolbox's tool_versions, with no hardcoded copy",
     "toolbox.yq-arm64-sha256": "the AWS bastion's check on the yq binary; render_dial.py reads it at runtime into the toolbox's tool_versions, with no hardcoded copy",
     "toolbox.kafka-cli-signer": "the key the AWS bastion checks the Kafka CLI tarball against; render_dial.py reads it at runtime into the toolbox's tool_versions, with no hardcoded copy",
-    "services.ferretdb": "docker path only: dfe-stack render --target docker writes it as HYPERDX_FERRETDB_VERSION; k8s runs the DocumentDB operator",
-    "services.documentdb-pg": "docker path only: dfe-stack render --target docker writes it as HYPERDX_POSTGRES_VERSION; k8s runs the DocumentDB operator",
     "services.documentdb-local": "docker path only: dfe-stack render --target docker writes it as HYPERDX_DOCUMENTDB_VERSION; k8s runs the DocumentDB operator",
     "services.kafka-replicas": "replica count, overridden per profile",
     "services.clickhouse-replicas": "replica count, overridden per profile",
