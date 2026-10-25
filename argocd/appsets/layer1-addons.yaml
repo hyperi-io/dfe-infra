@@ -195,10 +195,10 @@ spec:
                 # stack pins it; the chart's own tag runs while they are.
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
-                  version: "3.6.1"
+                  version: "3.6.2"
                   chartDigest: ""
-                  imageTag: "v3.6.1"
-                  imageDigest: "sha256:954b5233e17128a18d12f7fcaac4c7ed792dea4bba0beeb5d450c5a4538e3394"
+                  imageTag: "v3.6.2"
+                  imageDigest: "sha256:fd51f0ec82f8d357837aa57fdfaa4fca7137b75f25a09b421d95c425c9dc2d94"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra

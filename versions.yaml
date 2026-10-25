@@ -7415,7 +7415,7 @@ stacks:
       clickhouse-operator: "0.0.8"   # 2026-09-25, ghcr.io/clickhouse/clickhouse-operator-helm@sha256:61d97bb43a16859f485af1099251fc591b527a4c01013e6de355be11a80fbc9c. ClickHouse Inc's own operator, scale profile only; Altinity's is untested with DFE. See docs/deployment/clickhouse.md.
       redpanda-operator: "26.2.4"    # 2026-09-24. Installed only when provider=redpanda and acceptLicense=true (BSL). Moves with services.redpanda-version.
       # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
-      aws-load-balancer-controller: "3.6.1"  # 2026-10-21. AWS only. Its CRDs ship in the chart.
+      aws-load-balancer-controller: "3.6.2"  # 2026-10-25, chart 3.6.2 at appVersion v3.6.2, inside the 7-day cooldown, which is waived for 2.2.1. A patch with no CRD changes, on a base image that drops the distrusted eMudhra and emSign roots. AWS only. Its CRDs ship in the chart.
       # image: public.ecr.aws/karpenter/karpenter
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"            # 2026-10-23, the 1.14 LTS line, supported to 2027-07. Inside the 7-day cooldown, which is waived for 2.2.1. Held on 1.14 because 1.15 is a regular release, supported only until 1.16, and renovate.json keeps it there. Same CRDs and chart as 1.14.1, with a new controller digest. AWS only, OCI chart from public.ecr.aws/karpenter. helm/charts/node-pools is checked against this release's CRDs, so they move together.
@@ -7468,7 +7468,7 @@ stacks:
       envoy-gateway-proxy: "distroless-v1.39.5"  # 2026-10-23, inside the 7-day cooldown, which is waived for 2.2.1. Its image no longer trusts the compromised eMudhra intermediate CAs. Replaces the distroless-v1.39.1 that Envoy Gateway v1.9.2 defaults to, on the same Envoy minor.
       # image: public.ecr.aws/eks/aws-load-balancer-controller
       # Moves with operators.aws-load-balancer-controller, the chart that runs it.
-      aws-load-balancer-controller-image: "v3.6.1"  # 2026-10-21, amd64 and arm64. AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
+      aws-load-balancer-controller-image: "v3.6.2"  # 2026-10-25, amd64 and arm64. Rebuilt on eks-distro-minimal-base-nonroot 2026-10-23, which removes 5 distrusted eMudhra and emSign roots from the CA bundle (kubernetes-sigs/aws-load-balancer-controller#4937). AWS only. layer1-addons.yaml carries it, with its digest, as the chart's imageTag and imageDigest.
       # The DocumentDB operator, its sidecar injector and its CloudNativePG, all from the operator chart.
       # image: ghcr.io/documentdb/documentdb-kubernetes-operator/operator
       documentdb-operator-image: "1.0.0"
@@ -7556,7 +7556,7 @@ stacks:
       local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"  # docker.io/rancher/local-path-provisioner:v0.0.37
       envoy-gateway-proxy: "sha256:9d84a586119a27b50437dbb01eccd4722832741539b1ed53c8e9d6da6067a6e0" # docker.io/envoyproxy/envoy:distroless-v1.39.5
       karpenter: "sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9"           # public.ecr.aws/karpenter/karpenter:1.14.3 (OCI chart)
-      aws-load-balancer-controller-image: "sha256:954b5233e17128a18d12f7fcaac4c7ed792dea4bba0beeb5d450c5a4538e3394"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.1
+      aws-load-balancer-controller-image: "sha256:fd51f0ec82f8d357837aa57fdfaa4fca7137b75f25a09b421d95c425c9dc2d94"  # public.ecr.aws/eks/aws-load-balancer-controller:v3.6.2
       documentdb-operator: "sha256:6325eccd12db73ad2b3ffd2df294c79187c0521fb31b1f9a1c3061fa89f35114"
       documentdb-operator-image: "sha256:9d433fd486ac49de79565318e573de08ff67e8819d2f4a955f43dee6db8a5e14"
       documentdb-sidecar: "sha256:53942efe095ebff72f6332c02d478476183bb5763885f870ac485a0d5e8d29e5"
