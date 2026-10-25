@@ -80,10 +80,10 @@ kafka:
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
       # == versions.yaml services.redpanda-version (drift-checked).
-      tag: "v26.2.4"
+      tag: "v26.2.6"
       # Single mode only; the operator's chart refuses a tag that is not bare semver.
       # == versions.yaml services-digests.redpanda-version (drift-checked).
-      digest: "sha256:c98c2f04a751e6646012cc701bac5183252cee44c88ba1dfa412e4c7124f2e89"
+      digest: "sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce"
     auth:
       # Bootstrap superuser the operator creates + manages (its admin identity
       # for reconciling the User CR). Operator generates its password Secret.

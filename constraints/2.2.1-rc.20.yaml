@@ -56,8 +56,8 @@ rules:
     when-key: "operators.redpanda-operator"
     when-equals: "26.2.4"
     require-key: "services.redpanda-version"
-    require-equals: "v26.2.4"
-    reason: "redpanda-operator chart 26.2.4 ships broker image v26.2.3 as its default, and DFE runs v26.2.4, one patch ahead on the same minor, the tag the receiver and fetcher PGO workloads run. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
+    require-equals: "v26.2.6"
+    reason: "redpanda-operator chart 26.2.4 ships broker image v26.2.3 as its default and takes any v-prefixed semver tag. DFE runs v26.2.6, three patches ahead on the same minor, because its image no longer trusts the compromised eMudhra certificate authorities (CVE-2026-111943). Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
     source: "https://github.com/redpanda-data/redpanda-operator/releases"
 
   envoy-gateway-proxy-pairing:

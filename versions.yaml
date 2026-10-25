@@ -7163,7 +7163,7 @@ stacks:
       kafka-replicas: "3"            # cluster mode default
       # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda
       # The version moves by hand with the operator; refresh-digests moves the digest.
-      redpanda-version: "v26.2.4"    # Pushed 2026-10-06 (Docker Hub tag API), amd64 and arm64. The tag dfe-receiver's and dfe-fetcher's PGO workloads run. One patch ahead of the v26.2.3 operator chart 26.2.4 ships with, on the same minor. The cluster-mode CR takes a bare tag, no digest.
+      redpanda-version: "v26.2.6"    # Pushed 2026-10-23 (Docker Hub tag API), amd64 and arm64, inside the 7-day cooldown, which is waived for 2.2.1. The redpanda chart and operator v26.2.5 notes make it their default because its image no longer trusts the compromised eMudhra certificate authorities (CVE-2026-111943). Redpanda publishes no GitHub release for it. Runs under operator chart 26.2.4, which defaults to v26.2.3 and takes any v-prefixed semver tag (Tag() in charts/redpanda/chart/helpers.go). The cluster-mode CR takes a bare tag, no digest.
       # image: clickhouse/clickhouse-server
       # The version moves by hand with the operator; refresh-digests moves the digest.
       clickhouse-version: "26.3.42.3"  # v26.3.42.3-lts, 2026-10-05. The 26.3 LTS line is supported to about 2027-03. Docker tags drop the -lts suffix.
@@ -7246,7 +7246,7 @@ stacks:
       dfe-hyperdx: "sha256:2ac903fdacb25f689625667352ccaaa8f3cbd1f79b30bb10335f4ec94fd565a4"
       culvert: "sha256:267e981b4b18f0bff9ad8e09a6c8ee31753acbdaba8f32bfb3bd9e3466f11857"
       # Tagged by toolbox.dfe-toolbox.
-      dfe-toolbox-base: "sha256:6892457da2bddb2a17a5ad7c77d8cace746f19fe9cb9665b7ab0f5db452b4d48"
+      dfe-toolbox-base: "sha256:84e780cc3283137b0e6675f5767e9216b040534a0dbe175bbd32db74bfa617d4"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
@@ -7272,7 +7272,7 @@ stacks:
       clickhouse-version: "sha256:21d572843e59539c7d100286b6f5a6053c341fe4b33c2d7b74b1ff7cb24c5399"  # clickhouse/clickhouse-server:26.3.42.3
       clickhouse-keeper: "sha256:8361ed78996d087f3e85622566f15517c502e169a63e70b44dafe6ddca6dd3f5"   # docker.io/clickhouse/clickhouse-keeper:26.3.42.3
       kafka-version: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"       # apache/kafka:4.3.1
-      redpanda-version: "sha256:c98c2f04a751e6646012cc701bac5183252cee44c88ba1dfa412e4c7124f2e89"    # docker.redpanda.com/redpandadata/redpanda:v26.2.4
+      redpanda-version: "sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce"    # docker.redpanda.com/redpandadata/redpanda:v26.2.6
       kafbat: "sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"              # ghcr.io/kafbat/kafka-ui:v1.5.0
       envoy-proxy: "sha256:713bb146f1a7c97ebc70e13d259f77ff36f2c5d00f3145677816af5af9bd1530"         # envoyproxy/envoy:v1.40.1
       documentdb-local: "sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5"   # ghcr.io/documentdb/documentdb/documentdb-local:pg18-1.0.0
