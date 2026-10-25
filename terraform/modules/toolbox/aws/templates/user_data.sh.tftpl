@@ -2,11 +2,10 @@
 # Toolbox instance bootstrap -- installs the idle auto-terminate timer, then the
 # same tool list the dfe-toolbox-aws container image carries, at the SAME
 # versions.yaml pins (every substitution below is a render_dial.py-supplied
-# value; nothing here is a literal version). URL shapes below
-# mirror docker/dfe-toolbox/base/Dockerfile and docker/dfe-toolbox/aws/Dockerfile
-# line for line, adjusted for dnf/rpm in place of apt/deb -- the two toolboxes
-# read the SAME versions.yaml toolbox: stage, so they should install the same
-# way wherever the packaging format allows it.
+# value, and nothing here is a literal version).
+#
+# Every download is checked against an anchor this module pins before it
+# installs, and a failed check stops the boot. Each install site names its anchor.
 #
 # AL2023 ships the SSM Agent preinstalled (AWS's own agent-install-al2.html:
 # "AMIs for Amazon Linux 2 and Amazon Linux 2023 ... come with SSM Agent
@@ -14,8 +13,8 @@
 set -euo pipefail
 
 ARCH=arm64
-# The RPM/dnf spelling of the same architecture, which the ClickHouse packages
-# below are named with. Every other download here uses the Debian/Docker one.
+# The RPM/dnf spelling of the same architecture, which the AWS CLI download is
+# named with. Every other download here uses the Debian/Docker one.
 RPM_ARCH=aarch64
 BIN=/usr/local/bin
 mkdir -p "$BIN"
@@ -84,104 +83,195 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now toolbox-idle-check.timer
 
-# --- jq, openssl, unzip -- AL2023 base repo packages, ahead of every download
-# below because the tofu and AWS CLI steps unzip what they fetch. No upstream
-# release cadence worth tracking as a versions.yaml pin, matching
-# docker/dfe-toolbox/base/Dockerfile's identical (Debian apt) choice.
+# --- Download checks: each helper stops the boot when its check fails.
+
+# HTTPS only, failing on an HTTP error, and bounded so a stalled download fails the boot.
+fetch() {
+  curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 30 --max-time 900 --retry 3 -o "$1" "$2"
+}
+
+# AL2023's gnupg2-minimal ships no gpg-agent, and public-key work needs none.
+pgp() {
+  gpg --homedir "$1" --batch --no-autostart --quiet "$${@:2}"
+}
+
+# Writes $3 holding only the key whose primary fingerprint is $2, taken from the key file $1.
+pinned_key() {
+  local home found
+  home="$(mktemp -d)"
+  pgp "$home" --import "$1"
+  pgp "$home" --armor --export "$2" > "$3"
+  if [ ! -s "$3" ]; then
+    echo "toolbox-bootstrap: $1 holds no key $2" >&2
+    exit 1
+  fi
+  found="$(pgp "$home" --with-colons --show-keys "$3" | awk -F: '$1 == "pub" { want = 1; next } want && $1 == "fpr" { print $10; want = 0 }')"
+  rm -rf "$home"
+  if [ "$found" != "$2" ]; then
+    echo "toolbox-bootstrap: $1 gave primary key $found, not $2" >&2
+    exit 1
+  fi
+}
+
+# Fails unless $3 is a good signature over $4 by the key with primary fingerprint $2, held alone in $1.
+verify_signature() {
+  local home status
+  home="$(mktemp -d)"
+  pgp "$home" --import "$1"
+  if ! status="$(pgp "$home" --status-fd 1 --verify "$3" "$4")"; then
+    echo "toolbox-bootstrap: no good signature on $4" >&2
+    exit 1
+  fi
+  rm -rf "$home"
+  case "$status" in
+    *"VALIDSIG "*" $2"*) ;;
+    *)
+      echo "toolbox-bootstrap: $4 is not signed by $2" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# Fails unless the file $1 hashes to the SHA256 $2.
+verify_sha256() {
+  echo "$2  $1" | sha256sum --check --strict -
+}
+
+# Trusts the repo key at $2 for dnf and rpm only once it proves to be the key with primary fingerprint $3.
+repo_key() {
+  fetch "/tmp/$1.key" "$2"
+  pinned_key "/tmp/$1.key" "$3" "/etc/pki/rpm-gpg/RPM-GPG-KEY-$1"
+  rpm --import "/etc/pki/rpm-gpg/RPM-GPG-KEY-$1"
+  rm -f "/tmp/$1.key"
+}
+
+# --- jq, openssl, unzip: AL2023's own repos, signed by the Amazon Linux key the
+# AMI carries, unpinned to match docker/dfe-toolbox/base/Dockerfile.
 dnf install -y jq openssl unzip
 
-# --- kubectl -- versions.yaml's value already carries its own "v" prefix ----
-curl -fsSL -o "$BIN/kubectl" \
-  "https://dl.k8s.io/release/${kubectl_version}/bin/linux/$ARCH/kubectl"
-chmod +x "$BIN/kubectl"
+# --- kubectl: pkgs.k8s.io's signed rpm repo, one per Kubernetes minor, key pinned by fingerprint.
+# AL2023's dnf.conf skips a repo it cannot verify, so each vendor repo here refuses that instead.
+KUBECTL_VERSION="${kubectl_version}"
+KUBE_REPO="https://pkgs.k8s.io/core:/stable:/$${KUBECTL_VERSION%.*}/rpm/"
+repo_key kubernetes "$${KUBE_REPO}repodata/repomd.xml.key" "${kubernetes_key_fpr}"
+cat > /etc/yum.repos.d/kubernetes.repo <<REPO
+[kubernetes]
+name=Kubernetes
+baseurl=$KUBE_REPO
+gpgcheck=1
+repo_gpgcheck=1
+skip_if_unavailable=False
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-kubernetes
+REPO
+dnf install -y "kubectl-$${KUBECTL_VERSION#v}"
 
-# --- helm --------------------------------------------------------------------
-curl -fsSL -o /tmp/helm.tar.gz \
-  "https://get.helm.sh/helm-${helm_version}-linux-$ARCH.tar.gz"
+# --- helm: the release tarball's signature, by the helm release key taken from
+# KEYS at the release tag and pinned by fingerprint.
+fetch /tmp/helm-KEYS "https://raw.githubusercontent.com/helm/helm/${helm_version}/KEYS"
+pinned_key /tmp/helm-KEYS "${helm_key_fpr}" /tmp/helm-key.asc
+fetch /tmp/helm.tar.gz "https://get.helm.sh/helm-${helm_version}-linux-$ARCH.tar.gz"
+fetch /tmp/helm.tar.gz.asc "https://github.com/helm/helm/releases/download/${helm_version}/helm-${helm_version}-linux-$ARCH.tar.gz.asc"
+verify_signature /tmp/helm-key.asc "${helm_key_fpr}" /tmp/helm.tar.gz.asc /tmp/helm.tar.gz
 tar -xzf /tmp/helm.tar.gz -C /tmp
 install -m 0755 "/tmp/linux-$ARCH/helm" "$BIN/helm"
-rm -rf /tmp/helm.tar.gz "/tmp/linux-$ARCH"
+rm -rf /tmp/helm-KEYS /tmp/helm-key.asc /tmp/helm.tar.gz /tmp/helm.tar.gz.asc "/tmp/linux-$ARCH"
 
-# --- argocd CLI ----------------------------------------------------------
-curl -fsSL -o "$BIN/argocd" \
-  "https://github.com/argoproj/argo-cd/releases/download/${argocd_version}/argocd-linux-$ARCH"
-chmod +x "$BIN/argocd"
+# --- argocd CLI: the arm64 binary's SHA256, held in versions.yaml (toolbox.argocd-cli-arm64-sha256).
+fetch /tmp/argocd "https://github.com/argoproj/argo-cd/releases/download/${argocd_version}/argocd-linux-$ARCH"
+verify_sha256 /tmp/argocd "${argocd_sha256}"
+install -m 0755 /tmp/argocd "$BIN/argocd"
+rm -f /tmp/argocd
 
-# --- OpenTofu -- the release TAG takes a "v" prefix the tarball's own
-# filename does not; tofu_version itself carries neither.
-curl -fsSL -o /tmp/tofu.zip \
-  "https://github.com/opentofu/opentofu/releases/download/v${tofu_version}/tofu_${tofu_version}_linux_$ARCH.zip"
-unzip -q /tmp/tofu.zip -d /tmp/tofu
-install -m 0755 /tmp/tofu/tofu "$BIN/tofu"
-rm -rf /tmp/tofu.zip /tmp/tofu
+# --- OpenTofu: its signed rpm repo, packages signed by the OpenTofu key and the
+# metadata by the repo key, both pinned by fingerprint.
+repo_key opentofu https://get.opentofu.org/opentofu.gpg "${opentofu_key_fpr}"
+repo_key opentofu-repo https://packages.opentofu.org/opentofu/tofu/gpgkey "${opentofu_repo_key_fpr}"
+cat > /etc/yum.repos.d/opentofu.repo <<'REPO'
+[opentofu]
+name=OpenTofu
+baseurl=https://packages.opentofu.org/opentofu/tofu/rpm_any/rpm_any/$basearch
+gpgcheck=1
+repo_gpgcheck=1
+skip_if_unavailable=False
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-opentofu file:///etc/pki/rpm-gpg/RPM-GPG-KEY-opentofu-repo
+REPO
+dnf install -y "tofu-${tofu_version}"
 
-# --- yq -- no AL2023 package; mikefarah/yq ships an arm64 static binary ----
-curl -fsSL -o "$BIN/yq" \
-  "https://github.com/mikefarah/yq/releases/download/${yq_version}/yq_linux_$ARCH"
-chmod +x "$BIN/yq"
+# --- yq: the arm64 binary's SHA256, held in versions.yaml (toolbox.yq-arm64-sha256).
+fetch /tmp/yq "https://github.com/mikefarah/yq/releases/download/${yq_version}/yq_linux_$ARCH"
+verify_sha256 /tmp/yq "${yq_sha256}"
+install -m 0755 /tmp/yq "$BIN/yq"
+rm -f /tmp/yq
 
-# --- aws CLI v2 -- AWS's own versioned bundled-installer URL, aarch64 naming
-curl -fsSL -o /tmp/awscliv2.zip \
-  "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-${awscli_version}.zip"
+# --- aws CLI v2: the zip's signature, by the AWS CLI Team key vendored as
+# keys/aws-cli.asc and pinned by fingerprint.
+cat > /tmp/aws-cli.key <<'KEY'
+${awscli_key}
+KEY
+pinned_key /tmp/aws-cli.key "${awscli_key_fpr}" /tmp/aws-cli.asc
+fetch /tmp/awscliv2.zip "https://awscli.amazonaws.com/awscli-exe-linux-$RPM_ARCH-${awscli_version}.zip"
+fetch /tmp/awscliv2.zip.sig "https://awscli.amazonaws.com/awscli-exe-linux-$RPM_ARCH-${awscli_version}.zip.sig"
+verify_signature /tmp/aws-cli.asc "${awscli_key_fpr}" /tmp/awscliv2.zip.sig /tmp/awscliv2.zip
 unzip -q /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
-rm -rf /tmp/awscliv2.zip /tmp/aws
+rm -rf /tmp/aws-cli.key /tmp/aws-cli.asc /tmp/awscliv2.zip /tmp/awscliv2.zip.sig /tmp/aws
 
-# --- session-manager-plugin -- AWS publishes no versioned URL for this one,
-# only a floating "latest" per OS/arch, so ssm_plugin_version is informational
-# (versions.yaml's own comment on toolbox.aws-session-manager-plugin): it
-# records what "latest" resolved to when the pin was last verified.
-# docker/dfe-toolbox/aws/Dockerfile FAILS its build on a mismatch, because a
-# stale image is easy to rebuild; this instance instead only LOGS one,
-# because failing the boot would make the one debugging tool unusable at
-# exactly the moment AWS moved "latest" -- the worse failure of the two.
-curl -fsSL -o /tmp/session-manager-plugin.rpm \
-  "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_arm64/session-manager-plugin.rpm"
+# --- session-manager-plugin: this version's rpm and its signature, by the AWS
+# SSM key vendored as keys/session-manager-plugin.asc and pinned by fingerprint.
+cat > /tmp/session-manager-plugin.key <<'KEY'
+${ssm_plugin_key}
+KEY
+pinned_key /tmp/session-manager-plugin.key "${ssm_plugin_key_fpr}" /tmp/session-manager-plugin.asc
+SSM_PLUGIN_URL="https://s3.amazonaws.com/session-manager-downloads/plugin/${ssm_plugin_version}/linux_$ARCH/session-manager-plugin.rpm"
+fetch /tmp/session-manager-plugin.rpm "$SSM_PLUGIN_URL"
+fetch /tmp/session-manager-plugin.rpm.sig "$SSM_PLUGIN_URL.sig"
+verify_signature /tmp/session-manager-plugin.asc "${ssm_plugin_key_fpr}" /tmp/session-manager-plugin.rpm.sig /tmp/session-manager-plugin.rpm
 dnf install -y /tmp/session-manager-plugin.rpm
-rm -f /tmp/session-manager-plugin.rpm
-# Non-fatal under `set -e`: this step only logs a drifted pin, so a plugin that
-# cannot report its version must not abort the installs below it.
-installed_ssm_plugin="$(session-manager-plugin --version || echo unknown)"
-if [ "$installed_ssm_plugin" != "${ssm_plugin_version}" ]; then
-  logger -t toolbox-bootstrap "session-manager-plugin: latest is now $installed_ssm_plugin, versions.yaml toolbox.aws-session-manager-plugin says ${ssm_plugin_version} -- bump the pin"
-fi
+rm -f /tmp/session-manager-plugin.key /tmp/session-manager-plugin.asc /tmp/session-manager-plugin.rpm /tmp/session-manager-plugin.rpm.sig
+# The signed rpm at the versioned path must carry that version, or the boot stops.
+[ "$(rpm -q --queryformat '%%{VERSION}' session-manager-plugin)" = "${ssm_plugin_version}" ]
 
 # --- ClickHouse client, pinned to the SAME version this deployment's server
 # runs (versions.yaml services.clickhouse-version), never a version of its own.
-# packages.clickhouse.com/rpm/ holds no files at all, only lts/ and stable/, so
-# the path carries the channel. Both packages go in ONE transaction: dnf cannot
-# resolve clickhouse-client's pinned clickhouse-common-static dependency from a
-# standalone RPM URL, and there is no ClickHouse repo configured to find it in.
-dnf install -y \
-  "https://packages.clickhouse.com/rpm/stable/clickhouse-common-static-${clickhouse_client_version}.$RPM_ARCH.rpm" \
-  "https://packages.clickhouse.com/rpm/stable/clickhouse-client-${clickhouse_client_version}.$RPM_ARCH.rpm"
+# ClickHouse's signed rpm repo, key pinned by fingerprint. The packages are
+# unsigned, so the signed metadata holding each one's SHA256 is the check.
+repo_key clickhouse https://packages.clickhouse.com/rpm/stable/repodata/repomd.xml.key "${clickhouse_key_fpr}"
+cat > /etc/yum.repos.d/clickhouse.repo <<'REPO'
+[clickhouse-stable]
+name=ClickHouse stable
+baseurl=https://packages.clickhouse.com/rpm/stable/
+gpgcheck=0
+repo_gpgcheck=1
+skip_if_unavailable=False
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-clickhouse
+REPO
+# clickhouse-client requires clickhouse-common-static at no version, so both are named.
+dnf install -y "clickhouse-common-static-${clickhouse_client_version}" "clickhouse-client-${clickhouse_client_version}"
 
-# --- psql, pinned to the deployment's PostgreSQL MAJOR (services.postgresql)
+# --- psql, pinned to the deployment's PostgreSQL MAJOR (services.postgresql),
+# from AL2023's own repos, signed by the Amazon Linux key the AMI carries.
 dnf install -y "postgresql${postgresql_major_version}"
 
 # --- Java 17 -- the Apache Kafka CLI scripts below need it (KIP-1013: Kafka
-# 4.0 raised brokers, Connect and the console tools to Java 17; only clients
-# and Streams stayed on 11). AL2023's own base repos carry Corretto 17, so
-# nothing beyond this package needs enabling.
+# 4.0 raised brokers, Connect and the console tools to Java 17, and only clients
+# and Streams stayed on 11). AL2023's own base repos, signed by the Amazon
+# Linux key the AMI carries, ship Corretto 17.
 dnf install -y java-17-amazon-corretto-headless
 
-# --- Kafka CLI -- kcat is not an AL2023 package (AWS publishes none in the
-# base repos, unlike the Debian the container image installs it from), so
-# this instance carries the Apache project's own console scripts instead,
-# pinned to versions.yaml services.kafka-version and never to a pin of its
-# own -- the identical pattern clickhouse-client and psql already follow
-# above. That is the IN-CLUSTER broker's version exactly; an MSK deployment
-# names its own kafka.msk.broker_version in the dial, so the two can differ
-# and the CLI is then the newer of the pair. Pulled from
-# archive.apache.org rather than the current-release mirror network, which
-# drops a version the moment it is no longer the latest. Scala 2.13 is the
-# only build the 4.x line publishes, so it is a constant here rather than a
-# second thing to pin.
-curl -fsSL -o /tmp/kafka-cli.tgz \
-  "https://archive.apache.org/dist/kafka/${kafka_cli_version}/kafka_2.13-${kafka_cli_version}.tgz"
+# --- Kafka CLI -- AL2023 has no kcat package, so this is Apache's own console
+# scripts at services.kafka-version (the in-cluster broker's, which MSK may not be),
+# from archive.apache.org, which keeps every release. Scala 2.13 is the only 4.x
+# build. The tarball's signature, by that release's manager, whose key is taken
+# from Apache's KEYS and pinned by fingerprint (toolbox.kafka-cli-signer).
+KAFKA_URL="https://archive.apache.org/dist/kafka/${kafka_cli_version}/kafka_2.13-${kafka_cli_version}.tgz"
+fetch /tmp/kafka-KEYS https://downloads.apache.org/kafka/KEYS
+pinned_key /tmp/kafka-KEYS "${kafka_cli_signer_fpr}" /tmp/kafka-signer.asc
+fetch /tmp/kafka-cli.tgz "$KAFKA_URL"
+fetch /tmp/kafka-cli.tgz.asc "$KAFKA_URL.asc"
+verify_signature /tmp/kafka-signer.asc "${kafka_cli_signer_fpr}" /tmp/kafka-cli.tgz.asc /tmp/kafka-cli.tgz
 tar -xzf /tmp/kafka-cli.tgz -C /opt
 ln -s "/opt/kafka_2.13-${kafka_cli_version}" /opt/kafka-cli
-rm -f /tmp/kafka-cli.tgz
+rm -f /tmp/kafka-KEYS /tmp/kafka-signer.asc /tmp/kafka-cli.tgz /tmp/kafka-cli.tgz.asc
 # A plain symlink into $BIN would break these scripts: each one finds its own
 # JARs via `dirname $0`, and a symlink's $0 is the LINK's path, never its
 # target -- so a thin wrapper that execs the real script by absolute path is

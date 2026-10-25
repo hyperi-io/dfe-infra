@@ -62,8 +62,10 @@ jobs:
       kubectl: ${{ steps.pins.outputs.KUBECTL }}
       helm: ${{ steps.pins.outputs.HELM }}
       argocd_cli: ${{ steps.pins.outputs.ARGOCD_CLI }}
+      argocd_cli_image: ${{ steps.pins.outputs.ARGOCD_CLI_IMAGE }}
       tofu: ${{ steps.pins.outputs.TOFU }}
       yq: ${{ steps.pins.outputs.YQ }}
+      yq_image: ${{ steps.pins.outputs.YQ_IMAGE }}
       clickhouse_version: ${{ steps.pins.outputs.CLICKHOUSE_VERSION }}
       aws_cli: ${{ steps.pins.outputs.AWS_CLI }}
       aws_session_manager_plugin: ${{ steps.pins.outputs.AWS_SESSION_MANAGER_PLUGIN }}
@@ -90,8 +92,10 @@ jobs:
               "toolbox.kubectl",
               "toolbox.helm",
               "toolbox.argocd-cli",
+              "toolbox.argocd-cli-image",
               "toolbox.tofu",
               "toolbox.yq",
+              "toolbox.yq-image",
               "toolbox.aws-cli",
               "toolbox.aws-session-manager-plugin",
               "toolbox.gcloud",
@@ -138,8 +142,10 @@ jobs:
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
             --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
+            --build-arg ARGOCD_IMAGE="${{ needs.resolve.outputs.argocd_cli_image }}" \
             --build-arg TOFU_VERSION="${{ needs.resolve.outputs.tofu }}" \
             --build-arg YQ_VERSION="${{ needs.resolve.outputs.yq }}" \
+            --build-arg YQ_IMAGE="${{ needs.resolve.outputs.yq_image }}" \
             --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
             --github-output "$GITHUB_OUTPUT"
 
@@ -207,8 +213,10 @@ jobs:
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
             --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
+            --build-arg ARGOCD_IMAGE="${{ needs.resolve.outputs.argocd_cli_image }}" \
             --build-arg TOFU_VERSION="${{ needs.resolve.outputs.tofu }}" \
             --build-arg YQ_VERSION="${{ needs.resolve.outputs.yq }}" \
+            --build-arg YQ_IMAGE="${{ needs.resolve.outputs.yq_image }}" \
             --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
             --github-output "$GITHUB_OUTPUT"
 
