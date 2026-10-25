@@ -208,6 +208,7 @@ def _acceptance(
     monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "_secret_value", lambda *_a, **_k: "")
     monkeypatch.setattr(dfeops, "_pods_of", lambda *_a, **_k: [])
+    monkeypatch.setattr(dfeops, "_receiver_door", lambda *_a, **_k: 0)
     monkeypatch.setattr(dfeops, "_resolves", lambda _host: True)
     monkeypatch.setattr(dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted"))
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)

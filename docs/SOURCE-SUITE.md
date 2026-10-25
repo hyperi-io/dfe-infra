@@ -51,6 +51,12 @@ what a tester meets: the embed's frame-ancestors, the login shared across the
 two origins and the source's own view. A frame the browser refused fails the
 step with the console's own error line.
 
+## The record ceiling (`record-ceiling`, every case)
+
+After a case's own proof, the step probes the receiver's door, the request body limit it runs with. One record 1 KiB over the door must be answered 413 and never land. One 1 KiB under must be accepted and land in `main`, which proves every hop behind the door, the broker topic included, takes what the door admits.
+
+dfe-ops reads the door off the dfe-receiver Deployment's `DFE_RECEIVER_MAX_BODY_SIZE`, which a managed broker sets to 5/8 of its `kafka.message_max_bytes`, else the receiver's own 10 MiB. A run with no `--receiver-door-bytes` records the step `skipped`.
+
 ## `elastic`
 
 The same push and the same meta schema as `filebeat`, against
