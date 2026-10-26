@@ -27,6 +27,13 @@ function dockerCommands(stack) {
   ].join('\n');
 }
 
+// dfe-docker docs/evaluating.md, "Seeing your own data go through".
+const DOCKER_SEND = [
+  'curl -X POST http://localhost:8080/ingest \\',
+  "  -H 'Content-Type: application/json' \\",
+  `  -d '{"_source":"main","message":"hello dfe"}'`,
+].join('\n');
+
 // dfe-infra docs/deployment/on-prem.md, "Deploy", the integrated path.
 const KUBERNETES = [
   '(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)   # 0600 from creation; fill in creds',
@@ -63,6 +70,10 @@ export default function Quickstart({stack}) {
             <a href="https://github.com/hyperi-io/dfe-docker">dfe-docker</a> checkout:
           </p>
           <CodeBlock language="bash" title="bash">{dockerCommands(stack)}</CodeBlock>
+          <p className={styles.quickstartLead}>
+            Then send it an event. It lands in <code>dfe.main</code> a couple of seconds later:
+          </p>
+          <CodeBlock language="bash" title="bash">{DOCKER_SEND}</CodeBlock>
           <GuideLink to="/quickstart/docker/">Docker quickstart</GuideLink>
         </TabItem>
         <TabItem value="kubernetes" label="Kubernetes">
