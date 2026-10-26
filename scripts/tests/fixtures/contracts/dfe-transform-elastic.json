@@ -55,6 +55,12 @@
   "default_config": {
     "source": {
       "name": "filebeat.okta.default",
+      "mode": "agent",
+      "detect": {
+        "unmatched": "passthrough",
+        "fallback": "",
+        "candidates": []
+      },
       "transport": "bus",
       "listen": "0.0.0.0:6000",
       "envelope": "auto",
@@ -151,6 +157,12 @@
         "$ref": "#/$defs/SourceConfig",
         "default": {
           "name": "",
+          "mode": "agent",
+          "detect": {
+            "unmatched": "passthrough",
+            "fallback": "",
+            "candidates": []
+          },
           "transport": "bus",
           "listen": "0.0.0.0:6000",
           "envelope": "auto",
@@ -201,9 +213,23 @@
         "type": "object",
         "properties": {
           "name": {
-            "description": "Beats or Agent source whose transform to apply, e.g. `filebeat.okta`.",
+            "description": "Beats or Agent source whose transform to apply, e.g. `filebeat.okta`.\nLeft empty in agentless mode, which picks the source per event.",
             "type": "string",
             "default": ""
+          },
+          "mode": {
+            "description": "`agent` runs the one transform `name` selects. `agentless` detects the\nsource of each event instead, and stamps `_source` with its catalogue\nlabel so dfe-loader routes it to that source's table.",
+            "$ref": "#/$defs/Mode",
+            "default": "agent"
+          },
+          "detect": {
+            "description": "Detection settings, read only in agentless mode.",
+            "$ref": "#/$defs/DetectConfig",
+            "default": {
+              "unmatched": "passthrough",
+              "fallback": "",
+              "candidates": []
+            }
           },
           "transport": {
             "description": "Which transport the inbound side uses: `bus` consumes `topics`, `direct`\naccepts pushes on `listen`.",
@@ -263,6 +289,65 @@
             }
           }
         }
+      },
+      "Mode": {
+        "description": "Whether one named transform serves the source, or each event picks its own.",
+        "oneOf": [
+          {
+            "description": "`source.name` names the one transform every event runs.",
+            "type": "string",
+            "const": "agent"
+          },
+          {
+            "description": "The source is read off each event's text, and that source's transform\nruns. One dfe-receiver syslog stream can then carry many device types.",
+            "type": "string",
+            "const": "agentless"
+          }
+        ]
+      },
+      "DetectConfig": {
+        "description": "How agentless mode detects each event's source.",
+        "type": "object",
+        "properties": {
+          "unmatched": {
+            "description": "What happens to an event nothing matches.",
+            "$ref": "#/$defs/Unmatched",
+            "default": "passthrough"
+          },
+          "fallback": {
+            "description": "The registered source whose transform runs on an unmatched event.\nRequired when `unmatched` is `fallback`, and refused otherwise.",
+            "type": "string",
+            "default": ""
+          },
+          "candidates": {
+            "description": "Sources the detector may name, by registered name. Empty means every\nsource it knows. Narrowing it hands lines two sources share to the one\nleft, e.g. leaving out `filebeat.cisco_asa.default` lets FTD take them.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "Unmatched": {
+        "description": "What agentless mode does with an event no marker claims.",
+        "oneOf": [
+          {
+            "description": "Emit the event unwrapped to the Beats layout with no transform and no\n`_source`, so dfe-loader lands it under the sink topic's default table.",
+            "type": "string",
+            "const": "passthrough"
+          },
+          {
+            "description": "Run `detect.fallback`'s transform and stamp its label.",
+            "type": "string",
+            "const": "fallback"
+          },
+          {
+            "description": "Stop the service with the block unreleased, so a restart reads it again.",
+            "type": "string",
+            "const": "stop"
+          }
+        ]
       },
       "Transport": {
         "description": "Which transport a side of the service uses.\n\n`bus` is Kafka between the stages; `direct` is a scalo Push listener inbound and a gRPC client outbound, needing no broker at all. The record and the transform are identical either way -- only who hands the record over changes. `kafka` and `grpc` are read as the same two, the names dfe-engine renders, and a config always writes `bus` and `direct` back.",
