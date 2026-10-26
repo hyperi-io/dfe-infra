@@ -25,7 +25,7 @@
     "sass": "1.106.1"
   },
   "devDependencies": {
-    "wrangler": "4.152.0"
+    "wrangler": "4.153.0"
   },
   "overrides": {
     "tinypool": "2.2.0",
