@@ -55,6 +55,7 @@ import importlib.machinery
 import importlib.util
 import json
 import re
+import time
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -241,11 +242,12 @@ RUN_SEVERITY = {
 ANNOTATION_SEVERITY = {"failure": "medium", "warning": "low"}
 
 # Renovate dashboard sections that list an update waiting on something, by heading prefix.
+# Pending Status Checks is left out: those updates wait on a release-age cooldown or their
+# own checks, Renovate clears them unaided, and one that becomes a PR is a bot_prs finding.
 DASHBOARD_SECTIONS = (
     ("repository problems", "medium"),
     ("errored", "medium"),
     ("rate-limited", "low"),
-    ("pending", "low"),
     ("deprecations", "low"),
 )
 DASHBOARD_TITLE = "dependency dashboard"
@@ -869,7 +871,32 @@ def _error_line(stderr: str, stdout: str) -> str:
     return lines[0] if lines else stdout.strip()[:200]
 
 
+GH_RETRIES = 2
+# GitHub answers an overloaded request with an HTML error page, which gh reports as a
+# JSON parse error with no status, or with a 5xx.
+_TRANSIENT_STATUS = {502, 503, 504}
+_TRANSIENT_TEXT = ("invalid character '<'", "not JSON: <")
+
+
+def _transient(exc: GhError) -> bool:
+    text = str(exc)
+    return exc.status in _TRANSIENT_STATUS or any(mark in text for mark in _TRANSIENT_TEXT)
+
+
 def _run_gh(argv: list[str], label: str, timeout: float) -> list:
+    """Run gh, retrying a transient GitHub error page up to GH_RETRIES times."""
+    attempt = 0
+    while True:
+        try:
+            return _run_gh_once(argv, label, timeout)
+        except GhError as exc:
+            if attempt == GH_RETRIES or not _transient(exc):
+                raise
+        time.sleep(2**attempt)
+        attempt += 1
+
+
+def _run_gh_once(argv: list[str], label: str, timeout: float) -> list:
     """Run gh through proc.run and decode one JSON value per output line."""
     try:
         proc = run_command(argv, check=False, timeout=timeout)

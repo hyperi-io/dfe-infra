@@ -851,6 +851,37 @@ def test_a_dashboard_entry_is_aged_by_its_branch_not_the_dashboard() -> None:
     }
 
 
+def test_a_pending_status_check_never_gates() -> None:
+    body = (
+        "## Pending Status Checks\n\n"
+        " - [ ] <!-- unpend-branch=renovate/major-stack-pins -->"
+        "fix(deps): update dependency awslabs/amazon-eks-ami to v20261023\n"
+    )
+    assert sweep.dashboard_items(body) == []
+
+
+def test_a_github_error_page_is_retried_and_a_real_refusal_is_not(monkeypatch) -> None:
+    calls: list[str] = []
+    errors = [sweep.GhError("x", None, "invalid character '<' looking for beginning of value")]
+
+    def once(argv: list[str], label: str, timeout: float) -> list:
+        calls.append(label)
+        if errors:
+            raise errors.pop()
+        return [{"ok": True}]
+
+    monkeypatch.setattr(sweep, "_run_gh_once", once)
+    monkeypatch.setattr(sweep.time, "sleep", lambda seconds: None)
+    assert sweep._run_gh(["gh"], "q", 1.0) == [{"ok": True}]
+    assert calls == ["q", "q"]
+
+    calls.clear()
+    errors.append(sweep.GhError("x", 404, "Not Found (HTTP 404)"))
+    with pytest.raises(sweep.GhError):
+        sweep._run_gh(["gh"], "q", 1.0)
+    assert calls == ["q"]
+
+
 def test_a_dashboard_comment_is_stripped_however_it_ends() -> None:
     assert sweep._clean("a <!-- one\ntwo --> b") == "a b"
     assert sweep._clean("a <!-- one --!> b") == "a b"
