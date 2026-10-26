@@ -34,6 +34,9 @@ const DOCKER_SEND = [
   `  -d '{"_source":"main","message":"hello dfe"}'`,
 ].join('\n');
 
+// dfe-docker docs/evaluating.md, the make demo section.
+const DOCKER_DEMO = 'make demo                                    # 60s at 20 lines a second, over UDP';
+
 // dfe-infra docs/deployment/on-prem.md, "Deploy", the integrated path.
 const KUBERNETES = [
   '(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)   # 0600 from creation; fill in creds',
@@ -74,6 +77,10 @@ export default function Quickstart({stack}) {
             Then send it an event. It lands in <code>dfe.main</code> a couple of seconds later:
           </p>
           <CodeBlock language="bash" title="bash">{DOCKER_SEND}</CodeBlock>
+          <p className={styles.quickstartLead}>
+            Or watch raw firewall and switch syslog get parsed into one table per vendor:
+          </p>
+          <CodeBlock language="bash" title="bash">{DOCKER_DEMO}</CodeBlock>
           <GuideLink to="/quickstart/docker/">Docker quickstart</GuideLink>
         </TabItem>
         <TabItem value="kubernetes" label="Kubernetes">
