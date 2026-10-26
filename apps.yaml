@@ -107,6 +107,13 @@
 #   where the app ships a catalogue of them. The engine writes a source's
 #   transform.variant there without knowing which app it is.
 #
+# mode_path, detect_path
+#   For an app that either runs the one program variant_path names or detects
+#   each event's program itself. mode_path is the config key choosing between
+#   the two, detect_path the block holding how it detects. The engine writes a
+#   source's transform.mode and transform.detect there, and refuses a source that
+#   sets either for an app declaring no path.
+#
 # consumes
 #   The config file the app's own image reads, by name. On Kubernetes the app's
 #   chart renders the instance overlay into a ConfigMap and the name is the
@@ -727,12 +734,16 @@ apps:
       config: config.yaml
     # Both paths are listed because the app idles on EITHER being empty: with no
     # name there is no transform to select, and with no topics there is nothing
-    # to consume.
+    # to consume. An agentless instance (config.source.mode) names no transform
+    # and does not idle on an empty name.
     idle_when:
       - config.source.name
       - config.source.topics
-    # It ships a catalogue of compiled-in transforms and selects one by name.
+    # It ships a catalogue of compiled-in transforms and selects one by name, or
+    # in agentless mode detects the transform per event and takes no name.
     variant_path: config.source.name
+    mode_path: config.source.mode
+    detect_path: config.source.detect
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"
