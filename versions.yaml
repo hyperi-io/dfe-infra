@@ -56,7 +56,7 @@
 
 schema: 2
 current: "2.2.1"
-latest: "2.2.0"
+latest: "2.2.1"
 lts:
   # <stack version>: "<LTS expiry, ISO 8601>". Empty until the first LTS is
   # designated (needs a release first). Examples of the two supported
