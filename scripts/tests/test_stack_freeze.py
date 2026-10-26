@@ -69,7 +69,6 @@ LEGACY_EDITED = frozenset(
         *(f"2.2.0-rc.{n}" for n in range(1, 15)),
         "2.2.0",
         *(f"2.2.1-rc.{n}" for n in range(1, 7)),
-        "2.2.1",
     }
 )
 
