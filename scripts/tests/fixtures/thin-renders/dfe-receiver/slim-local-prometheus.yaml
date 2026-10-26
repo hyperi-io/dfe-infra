@@ -288,6 +288,7 @@ spec:
 apiVersion: v1
 data:
   DFE_RECEIVER_DLQ_ENABLED: 'false'
+  DFE_RECEIVER_MAX_BODY_SIZE: '8000000'
 kind: ConfigMap
 metadata:
   labels:

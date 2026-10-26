@@ -11,8 +11,8 @@
 
 The door here is a local HTTP server that answers 413 past its limit the way
 dfe-receiver's RequestBodyLimitLayer does, and the landed rows are read back by
-``clickhouse local`` with the suite's own SQL. dfe-ops reads the door off the
-receiver's Deployment, which is tested on the JSON kubectl prints.
+``clickhouse local`` with the suite's own SQL. The door a deployed run asserts is
+the DFE-wide record cap, held in step with the dfe-extras chart's default.
 
     python3 -m pytest scripts/tests/test_source_ceiling.py
 """
@@ -25,11 +25,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from acceptance.source import steps
-from test_source_cases import CLICKHOUSE, FakeDriver, FakePage, LocalClickHouse, dfeops
+from test_source_cases import CLICKHOUSE, FakeDriver, FakePage, LocalClickHouse
 
 RUN = "src-ceiling0001"
 DOOR = 64 * 1024
@@ -218,27 +219,18 @@ class TestTheStepAgainstADoor:
         assert "answered 200, 0 landed in dfe.main" in driver.detail("record-ceiling")
 
 
-class TestTheDeployedDoor:
-    """dfe-ops reads the door off the receiver's Deployment."""
+CHART_VALUES = Path(__file__).resolve().parents[2] / "helm" / "charts" / "dfe-extras" / "values.yaml"
 
-    @staticmethod
-    def _deployment(*env: dict) -> dict:
-        return {"spec": {"template": {"spec": {"containers": [{"name": "dfe-receiver", "env": list(env)}]}}}}
 
-    def test_a_literal_env_value_is_the_door(self) -> None:
-        deployment = self._deployment({"name": dfeops.RECEIVER_DOOR_VAR, "value": "5242880"})
-        assert dfeops.receiver_door(deployment) == 5242880
+class TestTheRecordCap:
+    """The step asserts the DFE-wide record cap the dfe-extras chart gives the receiver."""
 
-    def test_an_unset_env_leaves_the_receivers_own_default(self) -> None:
-        deployment = self._deployment({"name": "DFE_RECEIVER_LOG_LEVEL", "value": "info"})
-        assert dfeops.receiver_door(deployment) == dfeops.RECEIVER_DEFAULT_DOOR
+    def test_the_cap_is_eight_megabytes_decimal(self) -> None:
+        assert steps.RECORD_CAP == 8_000_000
 
-    def test_a_value_from_a_reference_is_not_read_as_a_number(self) -> None:
-        reference = {"name": dfeops.RECEIVER_DOOR_VAR, "valueFrom": {"configMapKeyRef": {"name": "x", "key": "y"}}}
-        assert dfeops.receiver_door(self._deployment(reference)) == dfeops.RECEIVER_DEFAULT_DOOR
+    def test_the_step_and_the_chart_name_the_same_cap(self) -> None:
+        values = yaml.safe_load(CHART_VALUES.read_text(encoding="utf-8"))
+        assert values["extras"]["defaults"]["dfe-receiver"]["maxBodySize"] == steps.RECORD_CAP
 
-    def test_a_deployment_with_no_containers_leaves_the_default(self) -> None:
-        assert dfeops.receiver_door({}) == dfeops.RECEIVER_DEFAULT_DOOR
-
-    def test_the_default_is_the_receivers_ten_mib(self) -> None:
-        assert dfeops.RECEIVER_DEFAULT_DOOR == 10 * 1024 * 1024
+    def test_both_ceiling_records_fit_an_8_mib_broker(self) -> None:
+        assert steps.RECORD_CAP + steps.CEILING_MARGIN < 8 * 1024 * 1024

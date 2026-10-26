@@ -52,15 +52,22 @@ import pytest
 import yaml
 
 from _gate import configmap_files, effective_env, golden, object_id, render_differences
-from _weave import render_app
+from _weave import render_app, weave
 
 SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
-# Confluent Basic and Standard cap a topic's max.message.bytes here.
+# Confluent Basic and Standard cap a topic's max.message.bytes here, and every
+# broker DFE deploys must accept at least this.
 BASIC = 8388608
 
 # The stack's own record ceiling, scalo-rs MESSAGE_MAX_BYTES.
 STACK = 16777216
+
+# The DFE-wide record cap: the receiver door on every broker, in-cluster included.
+CAP = 8_000_000
+
+# What helm refuses a render with, as dfe-weave raises it.
+RenderError = weave().WeaveError
 
 # A managed broker's cluster secret as bootstrap.sh writes it. The endpoint is an
 # RFC 2606 placeholder: this repo ships publicly.
@@ -146,8 +153,8 @@ def test_the_producer_ceiling_is_the_topic_ceiling(app: str) -> None:
 @pytest.mark.parametrize(
     ("app", "name", "wanted"),
     [
-        # The 10 MiB door under the 16 MiB chain: room for a transform to grow a record.
-        ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", BASIC * 5 // 8),
+        # The record cap, the same whatever the broker, under its smallest ceiling.
+        ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", CAP),
         # The 1 MiB in 16 the app keeps for framing, headers and zstd growth.
         ("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES", BASIC * 15 // 16),
     ],
@@ -161,8 +168,8 @@ def test_a_payload_limit_leaves_room_under_the_ceiling(app: str, name: str, want
 @pytest.mark.parametrize(
     ("app", "name", "default"),
     [
-        # dfe-receiver v1.15.45 src/config/mod.rs:1007.
-        ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", 10 * 1024 * 1024),
+        # The record cap, which the chart sets on every deployment.
+        ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", CAP),
         # dfe-transform-elastic v1.1.12 src/config.rs:291.
         ("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES", 15 * 1024 * 1024),
     ],
@@ -203,7 +210,29 @@ def test_a_merged_overrides_map_carries_the_size_alone(app: str) -> None:
 
 @pytest.mark.parametrize("app", PRODUCERS)
 def test_an_in_cluster_broker_moves_nothing(app: str) -> None:
-    """bootstrap.sh writes the annotation empty for strimzi and redpanda."""
-    assert limits(app, "") == {}
+    """bootstrap.sh writes the annotation empty for strimzi and redpanda, and only the cap is set."""
+    capped = {"DFE_RECEIVER_MAX_BODY_SIZE": str(CAP)} if app == "dfe-receiver" else {}
+    assert limits(app, "") == capped
     in_cluster = render_app(app, *CELL, annotations={SIZE_ANNOTATION: ""})
     assert render_differences(golden(app, *CELL), in_cluster) == []
+
+
+@pytest.mark.parametrize(
+    ("annotation", "overlay", "message"),
+    [
+        pytest.param("4194304", {}, "below the 8388608 every DFE broker must accept",
+                     id="a-broker-under-8-mib"),
+        pytest.param(str(BASIC), {"maxBodySize": BASIC}, f"not above the {BASIC}-byte record cap",
+                     id="a-cap-the-broker-cannot-carry"),
+        pytest.param("", {"maxBodySize": 0}, "maxBodySize must be a positive whole number",
+                     id="no-cap"),
+    ],
+)
+def test_expected_fail_a_cap_the_broker_cannot_land_is_refused(
+    annotation: str, overlay: dict, message: str
+) -> None:
+    with pytest.raises(RenderError) as refused:
+        render_app("dfe-receiver", *CELL, annotations={**MANAGED, SIZE_ANNOTATION: annotation},
+                   overlay=overlay)
+    said = " ".join(str(refused.value).split())
+    assert message in said, said

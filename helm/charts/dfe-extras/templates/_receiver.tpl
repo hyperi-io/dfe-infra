@@ -4,9 +4,17 @@ does not carry. The thin chart carries the SASL secret references (the
 contract's kafka group), the namespace, the OTLP identity and endpoint, and the
 version-check overrides. There is no DFE_RECEIVER_BIND_ADDRESS: the contract
 fixes the http port at 8080, the app's own default bind address.
-dfe-receiver-env carries these entries, each only while its condition holds.
+dfe-receiver-env carries these entries: the record cap always, the rest each only
+while its condition holds.
 */}}
 {{- define "dfe-receiver.env" -}}
+{{- $door := int64 (.Values.maxBodySize | default 0) }}
+{{- if le $door 0 }}
+{{- fail (printf "maxBodySize must be a positive whole number of bytes, got %v" .Values.maxBodySize) }}
+{{- end }}
+            # The DFE-wide record cap, decimal so a whole Kafka message fits an 8 MiB broker with its framing.
+            - name: DFE_RECEIVER_MAX_BODY_SIZE
+              value: {{ $door | quote }}
 {{- if (include "dfe-common.transportIsBus" .) }}
             # A bare KAFKA_BOOTSTRAP_SERVERS is read by nothing; DFE_RECEIVER is the app's prefix.
             - name: DFE_RECEIVER_KAFKA_BROKERS
@@ -17,12 +25,12 @@ dfe-receiver-env carries these entries, each only while its condition holds.
               value: {{ .Values.kafka.securityProtocol | quote }}
             {{- end }}
             {{- with .Values.kafka.messageMaxBytes }}
-            {{- if le (int64 .) 0 }}
-            {{- fail (printf "kafka.messageMaxBytes must be a positive whole number of bytes, got %v" .) }}
+            {{- if lt (int64 .) 8388608 }}
+            {{- fail (printf "kafka.messageMaxBytes is %v, below the 8388608 every DFE broker must accept" .) }}
             {{- end }}
-            # Five eighths of the broker's record ceiling, the 10 MiB door the stack keeps under its 16 MiB, so a transform can grow a record before it re-enters Kafka.
-            - name: DFE_RECEIVER_MAX_BODY_SIZE
-              value: {{ div (mul (int64 .) 5) 8 | quote }}
+            {{- if le (int64 .) $door }}
+            {{- fail (printf "kafka.messageMaxBytes is %v, not above the %v-byte record cap, so an admitted record could not land" . $door) }}
+            {{- end }}
             {{- end }}
 {{- end }}
 {{- if eq (include "dfe-common.transport" .) "direct" }}
