@@ -5,12 +5,6 @@ sidebar_label: Docker
 
 # Quickstart: Docker
 
-:::caution To be proven end to end
-
-Each step links to the dfe-docker guide that owns it. This route has not yet been run end to end against this release.
-
-:::
-
 dfe-docker runs the DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept.
 
 1. Get one event through the pipeline: [Taking DFE for a first look](../dfe-docker/evaluating.md).

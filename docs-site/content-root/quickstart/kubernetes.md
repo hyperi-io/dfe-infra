@@ -5,12 +5,6 @@ sidebar_label: Kubernetes on-premises
 
 # Quickstart: Kubernetes on-premises
 
-:::caution To be proven end to end
-
-Each step links to the dfe-infra guide that owns it. This route has not yet been run end to end against this release.
-
-:::
-
 dfe-infra stands DFE up on a Kubernetes cluster you run. RKE2 is the reference distribution, and the charts assume no particular one.
 
 1. Learn the layers, tiers and values cascade: [Deploying DFE with dfe-infra](../dfe-infra/deployment/index.md).
