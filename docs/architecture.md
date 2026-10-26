@@ -152,3 +152,4 @@ Each Application is named `<service>-<instance>-<cluster>`, and that name is its
 | [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
 | [EDGE-AUTH.md](EDGE-AUTH.md) | web-plane exposure + auth: every UI with a login external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
 | [INGEST-EDGE.md](INGEST-EDGE.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
+| [design-principles.md](design-principles.md) | fleet-wide design rules, starting with where parsing happens and why raw capture is off by default |
