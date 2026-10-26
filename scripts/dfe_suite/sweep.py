@@ -1367,8 +1367,24 @@ def dashboard_items(body: str) -> list[tuple[str, str, str, str]]:
     return [(sec, sev, key.removeprefix("|"), text) for sec, sev, key, text in items]
 
 
-def dashboard_findings(repo: str, row: dict) -> list[Finding]:
-    """One finding per flagged dashboard entry, linked to the dashboard issue."""
+def _branch_pushed_at(repo: str, branch: str, api: Api | None) -> str:
+    """When the branch's head commit was made, or empty when it cannot be read."""
+    if not branch or api is None:
+        return ""
+    try:
+        head = api(f"repos/{repo}/commits/{quote(branch, safe='')}", HEAD_JQ, False)
+    except GhError:
+        return ""
+    return _text(head[0].get("date")) if head else ""
+
+
+def dashboard_findings(repo: str, row: dict, api: Api | None = None) -> list[Finding]:
+    """One finding per flagged dashboard entry, linked to the dashboard issue.
+
+    An entry is aged by its Renovate branch's head commit, which Renovate rewrites on each
+    update. The dashboard issue's own age says nothing about an entry, so an entry with no
+    readable branch carries no age.
+    """
     number = _text(row.get("number"))
     return [
         Finding(
@@ -1378,7 +1394,7 @@ def dashboard_findings(repo: str, row: dict) -> list[Finding]:
             severity=severity,
             title=f"{section}: {text}",
             url=_text(row.get("html_url")),
-            created_at=_text(row.get("created_at")),
+            created_at=_branch_pushed_at(repo, key if key != text else "", api),
             extra={"section": section, "issue": row.get("number")},
         )
         for section, severity, key, text in dashboard_items(_text(row.get("body")))
@@ -1681,7 +1697,7 @@ def _issues(
     if "renovate_dashboard" in wanted:
         for row in rows:
             if not row.get("is_pr") and is_dashboard(row, config.bot_logins):
-                findings += dashboard_findings(repo, row)
+                findings += dashboard_findings(repo, row, api)
     return findings, issue_items(repo, rows, config.bot_logins)
 
 

@@ -833,6 +833,24 @@ def test_the_dashboard_flags_what_waits_and_nothing_else() -> None:
     ]
 
 
+def test_a_dashboard_entry_is_aged_by_its_branch_not_the_dashboard() -> None:
+    def api(endpoint: str, jq: str, paginate: bool) -> list[dict]:
+        if endpoint == "repos/example-org/dfe-infra/commits/renovate%2Ffoo-1.x":
+            return [{"sha": "a" * 40, "date": "2026-10-24T01:00:00Z"}]
+        raise sweep.GhError(endpoint, 404, "Branch not found (HTTP 404)")
+
+    row = {"number": 7, "html_url": "u", "created_at": "2026-03-23T00:00:00Z",
+           "body": DASHBOARD_BODY}
+    ages = {f.id: f.created_at
+            for f in sweep.dashboard_findings("example-org/dfe-infra", row, api)}
+    assert ages == {
+        "7:WARN: Package lookup failures": "",
+        "7:renovate/foo-1.x": "2026-10-24T01:00:00Z",
+        "7:renovate/bar-2.x": "",
+        "7:npm old-lib #12": "",
+    }
+
+
 def test_a_dashboard_comment_is_stripped_however_it_ends() -> None:
     assert sweep._clean("a <!-- one\ntwo --> b") == "a b"
     assert sweep._clean("a <!-- one --!> b") == "a b"
