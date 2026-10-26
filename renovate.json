@@ -30,6 +30,13 @@
       "allowedVersions": "/^v?1\\.14\\./"
     },
     {
+      "description": "The docs-site overrides pin one transitive package to the line its parent was built for (js-yaml 4.x under openapi-to-postmanv2, yaml 1.x, undici 7.x under miniflare). A major would force a newer API into a package that never saw it and leave package-lock.json out of sync, so the overrides move within their line only.",
+      "matchFileNames": ["docs-site/package.json"],
+      "matchDepTypes": ["overrides"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
       "description": "scripts/stack_images.py carries an annotated pin only as a docstring example of the annotation format. Without this rule the org preset's .py manager proposes a bump to that example on every release of the image it names.",
       "matchFileNames": ["scripts/stack_images.py"],
       "enabled": false
