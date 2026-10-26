@@ -253,7 +253,6 @@ export default function Home() {
               id="capabilities"
               eyebrow="Capabilities"
               title="What the suite does"
-              lead="Each card links to the guide that owns it."
             />
             <ul className={styles.gridCapabilities}>
               {CAPABILITIES.map(({key, Icon, eyebrow, title, text, chips, to}) => (

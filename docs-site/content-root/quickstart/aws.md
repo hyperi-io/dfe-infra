@@ -5,12 +5,6 @@ sidebar_label: AWS
 
 # Quickstart: AWS
 
-:::caution To be proven end to end
-
-Each step links to the dfe-infra guide that owns it. This route has not yet been run end to end against this release.
-
-:::
-
 dfe-infra deploys DFE onto Amazon EKS, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud.
 
 1. Size the deployment and stand it up: [DFE on AWS](../dfe-infra/deployment/aws.md).
