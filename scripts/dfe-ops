@@ -1447,39 +1447,6 @@ def apply_fetcher_credentials(
     )
 
 
-def receiver_door(deployment: dict) -> int:
-    """The request body limit a dfe-receiver Deployment runs with.
-
-    Args:
-        deployment: The Deployment as ``kubectl get -o json`` prints it.
-
-    Returns:
-        DFE_RECEIVER_MAX_BODY_SIZE where a container sets it as a literal, else
-        the receiver's own default.
-    """
-    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers") or []
-    for container in containers:
-        for entry in container.get("env") or []:
-            value = str(entry.get("value", ""))
-            if entry.get("name") == RECEIVER_DOOR_VAR and value.isdigit():
-                return int(value)
-    return RECEIVER_DEFAULT_DOOR
-
-
-def _receiver_door(kube: list[str], namespace: str) -> int:
-    """The deployed receiver's body limit, or 0 when its Deployment cannot be read."""
-    done = subprocess.run(
-        [*kube, "-n", namespace, "get", "deployment", RECEIVER_DEPLOYMENT, "-o", "json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    if done.returncode != 0:
-        return 0
-    try:
-        return receiver_door(json.loads(done.stdout))
-    except json.JSONDecodeError:
-        return 0
-
-
 def _pods_of(kube: list[str], namespace: str, selector: str) -> list[str]:
     """Running pod names matching *selector*, newest-irrelevant, empty when none."""
     done = subprocess.run(
@@ -1711,11 +1678,6 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 # runs after POST on the deployments that showcase the data path.
 SOURCE_SUITE = "source"
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
-# The receiver's request body limit, which the source suite's record-ceiling step probes.
-RECEIVER_DEPLOYMENT = "dfe-receiver"
-RECEIVER_DOOR_VAR = "DFE_RECEIVER_MAX_BODY_SIZE"
-# dfe-receiver's own server.max_body_size default (src/config/mod.rs), which an unset env leaves in force.
-RECEIVER_DEFAULT_DOOR = 10 * 1024 * 1024
 # A send from an allow-listed address outside the cloud to the receiver's public
 # door, found in main, the console and HyperDX, and refused from the cluster's own
 # egress. Not part of `all`: only a cloud lane has a load balancer to send to.
@@ -2331,10 +2293,6 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
                 program_repo = _sibling_repo("dfe-transform-vector", "DFE_TRANSFORM_VECTOR_REPO")
                 if program_repo:
                     runner += ["--program-repo", str(program_repo)]
-            # The door the deployment runs, so the ceiling step probes the real one.
-            door = _receiver_door(kube, namespace)
-            if door:
-                runner += ["--receiver-door-bytes", str(door)]
             # The whole way in, not its parts: the docker lane passes its own.
             # One per replica, because the consumer group splits the topic's
             # partitions and each replica archives only what it was assigned.

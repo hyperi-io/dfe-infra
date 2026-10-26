@@ -320,6 +320,8 @@ apps:
       config.routing.dlq.enabled: DFE_RECEIVER_DLQ_ENABLED
       config.routing.dlq.topic: DFE_RECEIVER_DLQ_TOPIC
       config.routing.dlq.mode: DFE_RECEIVER_DLQ_MODE
+      # The DFE-wide record cap, dfe-extras maxBodySize.
+      config.server.max_body_size: DFE_RECEIVER_MAX_BODY_SIZE
       # Each listener binds the port its contract opens on the Service and the
       # probes, so moving it takes the listener off that port.
       config.server.bind_address: contract port http

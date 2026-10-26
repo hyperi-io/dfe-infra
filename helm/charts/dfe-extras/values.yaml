@@ -64,6 +64,8 @@ extras:
           podLabel: dfe-culvert
         networkPolicy:
           enabled: true
+      # The DFE-wide record cap in bytes: the largest request body the receiver admits.
+      maxBodySize: 8000000
       kafka:
         mode: ""
         bootstrapServers: ""

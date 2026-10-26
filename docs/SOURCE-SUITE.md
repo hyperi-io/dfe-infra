@@ -55,7 +55,7 @@ step with the console's own error line.
 
 After a case's own proof, the step probes the receiver's door, the request body limit it runs with. One record 1 KiB over the door must be answered 413 and never land. One 1 KiB under must be accepted and land in `main`, which proves every hop behind the door, the broker topic included, takes what the door admits.
 
-dfe-ops reads the door off the dfe-receiver Deployment's `DFE_RECEIVER_MAX_BODY_SIZE`, which a managed broker sets to 5/8 of its `kafka.message_max_bytes`, else the receiver's own 10 MiB. A run with no `--receiver-door-bytes` records the step `skipped`.
+The door is the DFE-wide record cap, 8,000,000 bytes, which the dfe-extras chart sets on every receiver whatever the broker. So the step sends a 7,998,976-byte record that must land and an 8,001,024-byte record that must be refused. `--receiver-door-bytes` names another door, and `--receiver-door-bytes 0` records the step `skipped`.
 
 ## `elastic`
 

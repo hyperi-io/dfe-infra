@@ -62,6 +62,8 @@ not a dial per topic. Rationale below each, sources at the end.
 
 ### message.max.bytes -- the three-way alignment
 
+The receiver caps a record at 8,000,000 bytes, so every broker DFE deploys accepts at least 8 MiB (8,388,608 bytes).
+
 `message.max.bytes` (broker) / `max.message.bytes` (topic) holds the largest
 record batch AFTER compression. It must line up across four layers or you get
 producer rejects or consumer stalls:
