@@ -304,6 +304,7 @@ data:
   DFE_RECEIVER_DLQ_MODE: kafka_only
   DFE_RECEIVER_DLQ_TOPIC: dfe_receiver_dlq
   DFE_RECEIVER_KAFKA_BROKERS: dfe-kafka.strimzi.svc.cluster.local:9092
+  DFE_RECEIVER_MAX_BODY_SIZE: '8000000'
 kind: ConfigMap
 metadata:
   labels:

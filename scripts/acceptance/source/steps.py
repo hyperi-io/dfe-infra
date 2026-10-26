@@ -68,6 +68,8 @@ DATA_STREAM_NAMESPACE = "default"
 MARKER = "_e2e"
 CORPUS = "corpus"
 PROBE = "probe"
+# The DFE-wide record cap, the dfe-extras chart's dfe-receiver maxBodySize.
+RECORD_CAP = 8_000_000
 # The two records the ceiling step sends either side of the receiver's door.
 CEILING_UNDER = "ceiling-under"
 CEILING_OVER = "ceiling-over"
@@ -773,11 +775,11 @@ def record_ceiling(driver, store: Datastore, receiver_url: str, verify: bool, ru
     """Send one record just over the receiver's door and one just under, and prove where each went.
 
     The under record names no dataset, so it lands in the catch-all whatever
-    the source routes. A door of 0 is a deployment that did not say what its
-    door is, which this step cannot judge.
+    the source routes. A door of 0 is a run that asked for the step to be left
+    out.
     """
     if not receiver_url or door <= 0:
-        why = "no receiver URL" if not receiver_url else "no --receiver-door-bytes named"
+        why = "no receiver URL" if not receiver_url else "--receiver-door-bytes 0 leaves it out"
         driver.record("record-ceiling", "skipped", why)
         return
     over_status = post_body(receiver_url, verify, ceiling_body(run, CEILING_OVER, door + CEILING_MARGIN))
