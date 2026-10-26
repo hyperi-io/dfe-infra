@@ -30,4 +30,4 @@ That is the default data path. The leaner deployment profiles skip Kafka and sen
 | dfe-infra | Deploys the backing services and the components onto Kubernetes, through Argo CD. |
 | dfe-docker | Runs the same stack under Docker Compose. |
 
-Start with the [quickstarts](quickstart/README.md) for Docker, Kubernetes on-premises and AWS. Readers coming from 2.1 have a [migration page](migration.md).
+Start with the [quickstarts](quickstart/README.md) for Docker, Kubernetes on-premises and AWS.
