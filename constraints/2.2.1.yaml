@@ -14,7 +14,7 @@
 #   severity: error (blocks under --strict) | warn (advisory).
 # Version compare is TOLERANT (strip a leading v, leading-numeric dotted
 # segments), so 26.3.13.31 and v26.1.8 both parse. require-matches is a plain
-# substring test (for the 4-part ferretdb backend tag).
+# substring test.
 #
 # License:   BUSL-1.1
 # Copyright: (c) 2026 HYPERI PTY LIMITED
@@ -54,10 +54,10 @@ rules:
   redpanda-operator-broker-pairing:
     severity: "warn"
     when-key: "operators.redpanda-operator"
-    when-equals: "26.2.4"
+    when-equals: "26.2.5"
     require-key: "services.redpanda-version"
-    require-equals: "v26.2.3"
-    reason: "redpanda-operator chart 26.2.4 is tested/paired with broker image v26.2.3. Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
+    require-equals: "v26.2.6"
+    reason: "redpanda-operator chart 26.2.5 ships broker image v26.2.6 as its default (operator v26.2.5 release notes). Other broker tags are untested with this operator (a tested-pairing recommendation, not a proven hard break -- hence warn)."
     source: "https://github.com/redpanda-data/redpanda-operator/releases"
 
   envoy-gateway-proxy-pairing:
@@ -65,21 +65,20 @@ rules:
     when-key: "operators.envoy-gateway"
     when-equals: "v1.9.2"
     require-key: "services.envoy-gateway-proxy"
-    require-equals: "distroless-v1.39.2"
-    reason: "Envoy Gateway v1.9.2 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy; helm/edge/gateway pins distroless-v1.39.2 explicitly over it for BoringSSL CVE-2026-35189, one patch ahead on the same Envoy minor. The gateway and proxy pins move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
+    require-equals: "distroless-v1.39.5"
+    reason: "Envoy Gateway v1.9.2 compiles in docker.io/envoyproxy/envoy:distroless-v1.39.1 as its default proxy. helm/edge/gateway pins distroless-v1.39.5 explicitly over it, four patches ahead on the same Envoy minor, for BoringSSL CVE-2026-35189 and an image that no longer trusts the compromised eMudhra intermediate CAs. The gateway and proxy pins move as one. Error severity: a gateway bump leaves this when-equals guard dead, which fails --strict until the proxy pin and this rule are re-pointed together."
     source: "https://github.com/envoyproxy/gateway/blob/v1.9.2/api/v1alpha1/shared_types.go"
 
-  ferretdb2-requires-documentdb:
+  cert-manager-gateway-api-pairing:
     severity: "error"
-    when-key: "services.ferretdb"
-    when-range: ">=2.0.0"
-    require-key: "services.documentdb-pg"
-    require-matches: "ferretdb-2"
-    reason: "FerretDB 2.x REQUIRES the postgres-documentdb backend (a documentdb 2.x image). 1.x to 2.x is not in-place upgradable (dump/restore)."
-    source: "https://docs.ferretdb.io/"
+    when-key: "bootstrap.cert-manager"
+    when-equals: "v1.21.2"
+    require-key: "operators.envoy-gateway"
+    require-equals: "v1.9.2"
+    reason: "bootstrap.sh starts cert-manager with Gateway API support over the Gateway API CRDs it lays from Envoy Gateway's own chart at operators.envoy-gateway, before cert-manager installs. cert-manager v1.21.2 builds against gateway-api v1.6.0, and Envoy Gateway v1.9.2 ships Gateway API v1.6.1 on the experimental channel. Error severity: a cert-manager bump leaves this guard dead and a gateway bump fails the requirement, so either one fails --strict until the pairing is re-checked."
+    source: "https://github.com/cert-manager/cert-manager/blob/v1.21.2/go.mod and oci://registry-1.docker.io/envoyproxy/gateway-helm:v1.9.2 charts/crds/crds/gatewayapi-crds.yaml"
 
 # Accepted, tracked exceptions the check must not fail on yet. A waiver names a
 # rule id it suppresses (or a free scope), a reason, an expiry, and a ref.
-# (None currently: the k8s-ferretdb-chart-lag waiver retired when the k8s
-# ferretdb chart moved to 2.x with its bundled documentdb backend.)
+# None currently.
 waivers:
