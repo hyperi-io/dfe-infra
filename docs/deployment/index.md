@@ -43,6 +43,16 @@ deploy (no external git) the git host is `layer2-deploy-repo`'s own
 single-source Application, so the data-layer and platform Applications
 report ComparisonError until it is up and then converge.
 
+What each tier is proven to do:
+
+| Tier | Transport | Status |
+|---|---|---|
+| `single`, `scale` | Kafka between every stage | Supported and proven. They need Kafka: a broker in the cluster, or a managed one ([managed-backends.md](managed-backends.md)). |
+| `slim` | gRPC, stage to stage, one replica each | Supported and proven without archiving. A source with archive on routes a copy to the archiver as a second gRPC destination, and that fan-out is not yet proven. |
+| `mesh` | gRPC through a balancer per stage pool, no Kafka | Present in the charts, never run against a live cluster, and not supported in 2.2.1. The work to make it a tier is tracked in [#875](https://github.com/hyperi-io/dfe-infra/issues/875). |
+
+gRPC itself is proven app to app: receiver to loader, and receiver to transform to loader, on the docker stack's `*-grpc` profiles and on `slim`.
+
 Kafka on tier `single` uses the non-operator single-broker KRaft path
 (`helm/charts/kafka`, `kafka.mode: single`); the Strimzi operator installs
 only on `scale` clusters (`layer-scale.yaml`).
@@ -69,7 +79,7 @@ Which APPS a tier deploys is `apps.yaml`'s, not the profile file's --
 
 ### The mesh tier
 
-`mesh` is `scale` without a broker: the stages hand records to each other over gRPC. `mesh.enabled` puts a Gateway API listener in front of every stage pool, because a Kubernetes Service balances per connection and gRPC holds one open, so a sender would otherwise pin itself to one pod however many replicas KEDA adds. Each pool's route carries its own policy (`mesh.routePolicy`): a request timeout at or above the sender's 30 s deadline, retries only on connect failure and resource exhausted, and ejection of a pod that keeps answering unavailable.
+Not supported in 2.2.1: the pieces below render and pass their chart tests, but no mesh deploy has run against a live cluster ([#875](https://github.com/hyperi-io/dfe-infra/issues/875)). `mesh` is `scale` without a broker: the stages hand records to each other over gRPC. `mesh.enabled` puts a Gateway API listener in front of every stage pool, because a Kubernetes Service balances per connection and gRPC holds one open, so a sender would otherwise pin itself to one pod however many replicas KEDA adds. Each pool's route carries its own policy (`mesh.routePolicy`): a request timeout at or above the sender's 30 s deadline, retries only on connect failure and resource exhausted, and ejection of a pod that keeps answering unavailable.
 
 With `acknowledgements.enabled` (the default) the receiver answers a sender only once the loader confirms delivery, and builds no buffer or spool. A loader outage reaches senders as a 503 once the hold expires, and they retry from their own copy. With acknowledgements off, the raised receiver buffer is the only slack in the chain: an outage shorter than it is invisible to senders, and a held record has already had its 2xx, so it dies with the pod.
 
