@@ -1,8 +1,8 @@
 # Profile: slim -- the smallest k8s tier (below this -> dfe-docker compose).
 # gRPC transport, NO Kafka, pods sized to MINIMUM VIABLE + safety. Bare-minimum
-# footprint: engine + ui + the receiver/loader ingest path ONLY. archiver,
-# fetcher and the transform workers are NOT deployed by default (the slim deploy
-# repo simply omits their values/<svc>-<inst>-values.yaml files; add them later).
+# footprint: engine + ui + the receiver/loader ingest path, plus an idle archiver
+# (apps.yaml default_in). The fetcher and the transform workers are NOT deployed
+# by default (the slim deploy repo omits their values files; add them later).
 # No web infra UIs unless cheap (Kafbat off -- no Kafka anyway; Argo CD runs
 # headless; Forgejo only as the deploy-repo fallback). Merged after common.yaml +
 # <cloud>.yaml. Keys unknown to a chart are ignored by Helm.
