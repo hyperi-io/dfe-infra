@@ -487,6 +487,21 @@ def test_the_store_consumers_follow_the_charts() -> None:
     assert any("OIDC" in use for use in aws), aws
 
 
+def test_the_on_prem_root_refuses_none_on_exactly_the_tiers_that_read_the_store() -> None:
+    """terraform/environments/local plans no OpenBao for a tier outside its
+    store_profiles, so that list has to be the tiers whose charts read the store."""
+    import re
+
+    main_tf = (REPO_ROOT / "terraform" / "environments" / "local" / "main.tf").read_text(encoding="utf-8")
+    listed = re.search(r"store_profiles\s*=\s*\[([^\]]*)\]", main_tf)
+    assert listed, "store_profiles is gone from the local root"
+    root = set(re.findall(r'"([^"]+)"', listed.group(1)))
+    # The env the local root hands bootstrap, with no store input.
+    local = {"DFE_CLOUD": "local"}
+    reads = {mode for mode in dfeops.SELECTABLE_MODES if dfeops._store_consumers(mode, local)}
+    assert root == reads, (root, reads)
+
+
 def test_the_console_nextauth_secret_is_a_store_consumer_when_a_layer_names_the_store(
     monkeypatch,
 ) -> None:

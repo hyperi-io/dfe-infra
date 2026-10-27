@@ -29,9 +29,10 @@ usage() {
     echo "  --skip-terraform  Skip the tofu apply (use existing state)"
     echo "  --help            Show this help"
     echo ""
-    echo "Required env vars (for tofu):"
-    echo "  VAULT_TOKEN       OpenBao/Vault token (local)"
-    echo "  AWS_PROFILE       AWS profile (aws)"
+    echo "Env vars (for tofu):"
+    echo "  DFE_SECRETS_BACKEND  openbao or none (local; empty: openbao when vault_addr is set)"
+    echo "  VAULT_TOKEN          OpenBao token (local, openbao only)"
+    echo "  AWS_PROFILE          AWS profile (aws)"
     echo ""
     echo "Examples:"
     echo "  ${0} --cloud local                    # Deploy to local Rancher cluster"
@@ -63,6 +64,21 @@ if [[ ! -d "${TF_DIR}" ]]; then
     exit 1
 fi
 
+# An operator .env in the OpenTofu environment dir sets any DFE_* input
+# bootstrap.sh reads. Sourced before OpenTofu, which takes DFE_SECRETS_BACKEND too.
+if [[ -f "${TF_DIR}/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null # the operator's own file, absent from the repo
+  source "${TF_DIR}/.env"
+  set +a
+fi
+
+# One store choice for the root and bootstrap. A root that declares no
+# secrets_backend ignores it.
+if [[ -n "${DFE_SECRETS_BACKEND:-}" ]]; then
+  export TF_VAR_secrets_backend="${DFE_SECRETS_BACKEND}"
+fi
+
 # Step 1: OpenTofu
 if [[ "${SKIP_TF}" == "false" ]]; then
     echo "==> Step 1: OpenTofu apply"
@@ -76,15 +92,6 @@ if [[ "${SKIP_TF}" == "false" ]]; then
     cd "${REPO_ROOT}"
 else
     echo "==> Step 1: OpenTofu (skipped)"
-fi
-
-# Step 1b: an operator .env in the OpenTofu environment dir sets any DFE_* input
-# bootstrap.sh reads.
-if [[ -f "${TF_DIR}/.env" ]]; then
-  set -a
-  # shellcheck source=/dev/null # the operator's own file, absent from the repo
-  source "${TF_DIR}/.env"
-  set +a
 fi
 
 # Step 2: Bridge + Bootstrap
