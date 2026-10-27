@@ -49,22 +49,27 @@ output "DFE_OTEL_ENDPOINT" {
   value = "otel-collector-gateway.otel.svc.cluster.local:4317"
 }
 
+# bootstrap.sh and bridge.py read this before any DFE_VAULT_* key: none asks for none of them.
+output "DFE_SECRETS_BACKEND" {
+  value = local.secrets_backend
+}
+
 output "DFE_VAULT_ADDR" {
-  value = module.secrets.vault_addr
+  value = local.openbao ? module.secrets[0].vault_addr : ""
 }
 
 output "DFE_VAULT_ROLE_ID" {
-  value     = module.secrets.eso_role_id
+  value     = local.openbao ? module.secrets[0].eso_role_id : ""
   sensitive = true
 }
 
 output "DFE_VAULT_SECRET_ID" {
   # Surfaced so bootstrap can seed the ESO AppRole secret (dfe-vault-approle-secret).
   # Nothing else created that k8s secret, so ESO could never authenticate to OpenBao.
-  value     = module.secrets.eso_secret_id
+  value     = local.openbao ? module.secrets[0].eso_secret_id : ""
   sensitive = true
 }
 
 output "DFE_WORKLOAD_IDENTITY_ANNOTATIONS" {
-  value = jsonencode(module.iam.workload_identity_annotations)
+  value = local.openbao ? jsonencode(module.iam[0].workload_identity_annotations) : "{}"
 }
