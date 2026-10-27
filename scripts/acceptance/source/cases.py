@@ -624,7 +624,13 @@ class FilebeatCase(Case):
         if self._pair is not None:
             rows.append(wizard.StepResult("beats-removed", "done", beats.stop(self._pair)))
         if self._listener is not None:
-            rows.append(self._close_lumberjack(run))
+            try:
+                rows.append(self._close_lumberjack(run))
+            except (OSError, RuntimeError) as exc:
+                rows.append(wizard.StepResult(
+                    "receiver-lumberjack-restored", "failed",
+                    f"{self._listener[0]} was not put back ({exc}), so lumberjack may still be open",
+                ))
         return rows
 
 

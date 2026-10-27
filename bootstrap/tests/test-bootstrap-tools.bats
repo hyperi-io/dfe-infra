@@ -66,3 +66,10 @@ run_bootstrap() {
     [[ "${output}" == *"deploy tools on PATH: kubectl helm python3 openssl"* ]]
     [[ "${output}" == *"Missing required environment variables"* ]]
 }
+
+@test "the mesh profile is refused with the reason before any cluster call" {
+    run_bootstrap DFE_CLOUD=local DFE_PROFILE=mesh
+    [ "$status" -eq 1 ]
+    [[ "${output}" == *"mesh is not supported in this release; use scale"* ]]
+    [ ! -s "${CALLS}" ]
+}

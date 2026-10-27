@@ -35,7 +35,7 @@ its gateway hostname, so it needs that name to resolve from the host.
 
 Credentials come from `--env-file`, exactly as for `stack-deploy`: the chart-repo
 read credential (DFE_REPO_TOKEN or DFE_REPO_SSH_KEY) and the secrets-backend
-facts. The single, slim and mesh tiers from the published images and a public
+facts. The single and slim tiers from the published images and a public
 chart repo need none of them, so no env file at all. Nothing is read from this
 shell's environment: every DFE_* variable
 is stripped before the deploy runs, so an estate value exported in the
@@ -1001,7 +1001,11 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         help="point Argo at the ref name instead of the commit it resolved to",
     )
     up.add_argument(
-        "--mode", default=DEFAULT_MODE, choices=list(profiles.MODES), help="deploy profile"
+        "--mode",
+        default=DEFAULT_MODE,
+        type=profiles.selectable_mode,
+        choices=list(profiles.SELECTABLE_MODES),
+        help="deploy profile",
     )
     up.add_argument(
         "--stack", default="", help="versions.yaml stack to deploy (default: the ref's `current`)"

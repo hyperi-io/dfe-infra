@@ -48,6 +48,12 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_edge"] = dfeops
 _loader.exec_module(dfeops)
 
+
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
+
 from acceptance.edge import run as edge_run  # noqa: E402
 from acceptance.edge import steps as edge  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402

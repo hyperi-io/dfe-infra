@@ -33,7 +33,7 @@ All component versions come from `versions.yaml` (the SSoT).
   label the DFE nodes yourself and set it to `false`.
 - For the `scale` tier, or any setting that reads a secrets store, an OpenBao
   token for your Vault/OpenBao (e.g. `bao.example.com`; Terraform uses it).
-  slim, single and mesh need no store at all
+  slim and single need no store at all
   ([index.md](index.md#secrets-store)).
 - `bootstrap/local.env`: copy `bootstrap/local.env.example` at mode 0600, as in [Deploy](#deploy), and fill it in.
 - OpenTofu (or Terraform) and helm on PATH. CI pins the exact versions it uses in

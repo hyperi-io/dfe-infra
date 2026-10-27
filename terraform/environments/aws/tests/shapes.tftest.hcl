@@ -310,6 +310,16 @@ run "a_plan_with_no_resolved_node_image_is_refused" {
   expect_failures = [var.node_image]
 }
 
+run "the_mesh_profile_is_refused" {
+  command = plan
+
+  variables {
+    profile = "mesh"
+  }
+
+  expect_failures = [var.profile]
+}
+
 run "a_node_image_with_no_release_is_refused" {
   command = plan
 

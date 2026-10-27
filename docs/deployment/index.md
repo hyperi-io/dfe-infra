@@ -27,7 +27,7 @@ values merge in this order (later wins):
 <chart>/values.yaml                  chart defaults (helm/charts/, or the app's thin chart)
 argocd/values/common.yaml            fleet-wide overrides
 argocd/values/<cloud|site>.yaml      per-target overrides
-argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale / mesh)
+argocd/values/profile-<tier>.yaml    tier composition (slim / single / scale, plus mesh, which cannot be selected)
 deploy repo sizing/<tier>.data-charts.values.yaml   resolver sizing, layer2-data only
 deploy repo infra/common.yaml        deployment-wide (every appset)
 deploy repo infra/<chart>.yaml       one data-layer or platform chart
@@ -49,7 +49,7 @@ What each tier is proven to do:
 |---|---|---|
 | `single`, `scale` | Kafka between every stage | Supported and proven. They need Kafka: a broker in the cluster, or a managed one ([managed-backends.md](managed-backends.md)). |
 | `slim` | gRPC, stage to stage, one replica each | Supported and proven without archiving. A source with archive on routes a copy to the archiver as a second gRPC destination, and that fan-out is not yet proven. |
-| `mesh` | gRPC through a balancer per stage pool, no Kafka | Present in the charts, never run against a live cluster, and not supported in 2.2.1. The work to make it a tier is tracked in [#875](https://github.com/hyperi-io/dfe-infra/issues/875). |
+| `mesh` | gRPC through a balancer per stage pool, no Kafka | Present in the charts, never run against a live cluster, and not supported in 2.2.1: `dfe-ops`, `bootstrap.sh` and the terraform `profile` variable refuse it with `use scale`. The work to make it a tier is tracked in [#875](https://github.com/hyperi-io/dfe-infra/issues/875). |
 
 gRPC itself is proven app to app: receiver to loader, and receiver to transform to loader, on the docker stack's `*-grpc` profiles and on `slim`.
 
@@ -61,7 +61,7 @@ only on `scale` clusters (`layer-scale.yaml`).
 
 | Tier | Reads the secrets store | What to set |
 |---|---|---|
-| slim, single, mesh | nothing | nothing: `DFE_SECRETS_BACKEND` resolves to `none`, no ClusterSecretStore |
+| slim, single | nothing | nothing: `DFE_SECRETS_BACKEND` resolves to `none`, no ClusterSecretStore |
 | scale | the Strimzi broker's client credential | `DFE_SECRETS_BACKEND=openbao` with `DFE_VAULT_ADDR`, `DFE_VAULT_ROLE_ID`, `DFE_VAULT_SECRET_ID`, or `aws-sm` with `DFE_SECRETS_REGION` |
 
 `dfe-ops stack-deploy` checks each store-referencing template's render

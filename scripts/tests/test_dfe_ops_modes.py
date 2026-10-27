@@ -17,11 +17,13 @@ longer matches its mode fails here instead of mid-deploy.
     python3 -m pytest scripts/tests/test_dfe_ops_modes.py -q
 """
 
+import argparse
 import importlib.machinery
 import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -54,7 +56,41 @@ def _charts(appset: dict) -> list[dict]:
 
 
 def test_mesh_is_a_declared_mode() -> None:
-    assert "mesh" in dfeops.MODES
+    assert "mesh" in dfeops.profiles.MODES
+
+
+def _mode_subcommands() -> list[str]:
+    parser = dfeops.build_parser()
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return sorted(
+        name
+        for name, sub in subparsers.choices.items()
+        if any("--mode" in action.option_strings for action in sub._actions)
+    )
+
+
+@pytest.mark.parametrize("sub", _mode_subcommands())
+@pytest.mark.parametrize(("mode", "refused"), [("mesh", True), ("bogus", True), ("scale", False)])
+def test_every_mode_flag_refuses_mesh_and_unknown_modes(sub: str, mode: str, refused: bool, capsys) -> None:
+    """Every subcommand that takes --mode says why mesh is out, and accepts the real tiers."""
+    parser = dfeops.build_parser()
+    if sub == "kind":
+        argv = ["kind", "up", "--mode", mode]
+    else:
+        argv = [sub, "--mode", mode]
+    if refused:
+        with pytest.raises(SystemExit) as exit_info:
+            parser.parse_args(argv)
+        assert exit_info.value.code == 2
+        err = capsys.readouterr().err
+        expected = "mesh is not supported in this release; use scale" if mode == "mesh" else "invalid choice"
+        assert expected in err
+    else:
+        try:
+            parser.parse_args(argv)
+        except SystemExit:
+            # A required flag of the subcommand may be missing; the mode itself must not be what is refused.
+            assert "invalid choice" not in capsys.readouterr().err
 
 
 def test_the_argocd_profiles_disable_kafka_on_the_brokerless_modes() -> None:

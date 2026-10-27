@@ -254,6 +254,12 @@ def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple
     return dfeops.cmd_stack_deploy(args), ran["bootstrap"]
 
 
+def test_stack_deploy_refuses_mesh_before_any_cluster_call(tmp_path: Path, monkeypatch, capsys) -> None:
+    """mesh stays declared but cannot be deployed: the refusal comes before bootstrap."""
+    assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "mesh") == (2, False)
+    assert "mesh is not supported in this release; use scale" in capsys.readouterr().err
+
+
 def test_a_single_broker_deploy_needs_no_secret_id(tmp_path: Path, monkeypatch) -> None:
     """Refusing it sent a store-less kind or on-prem deploy of the single tier away
     for a credential nothing in that tier reads."""
@@ -526,7 +532,7 @@ def test_the_component_values_layer_the_appset_files_over_the_extras_defaults(
     assert config.get("nextauthSecretName") == "from-defaults", config
 
 
-@pytest.mark.parametrize("mode", dfeops.MODES)
+@pytest.mark.parametrize("mode", dfeops.profiles.MODES)
 def test_the_preflight_renders_each_apps_extras_and_finds_the_catalogue(mode: str) -> None:
     """The offline render stack-deploy gates on: dfe-extras per app, the engine's catalogue in it."""
     if shutil.which("helm") is None:

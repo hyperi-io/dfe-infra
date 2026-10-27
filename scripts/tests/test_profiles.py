@@ -108,9 +108,16 @@ def test_mesh_is_sized_like_scale() -> None:
 
 def test_dfe_ops_reads_the_one_table() -> None:
     """A compose profile is not a cluster deploy mode, so `--mode` refuses it."""
-    assert dfeops.MODES == profiles.MODES
+    assert dfeops.SELECTABLE_MODES == profiles.SELECTABLE_MODES
     for mode in profiles.COMPOSE_MODES:
-        assert mode not in dfeops.MODES
+        assert mode not in dfeops.SELECTABLE_MODES
+
+
+def test_mesh_is_declared_but_not_selectable() -> None:
+    assert "mesh" in profiles.MODES
+    assert profiles.SELECTABLE_MODES == ("slim", "single", "scale")
+    assert profiles.refusal("mesh") == "mesh is not supported in this release; use scale"
+    assert profiles.refusal("scale") is None
 
 
 def test_the_tester_idp_registers_a_callback_for_every_mode() -> None:

@@ -152,6 +152,14 @@ PROFILE_NAMES: tuple[str, ...] = tuple(PROFILES)
 MODES: tuple[str, ...] = tuple(name for name, p in PROFILES.items() if p.platform == KUBERNETES)
 """The Kubernetes deploy modes -- what `dfe-ops --mode` and DFE_PROFILE accept."""
 
+UNSUPPORTED_MODES: dict[str, str] = {
+    "mesh": "mesh is not supported in this release; use scale",
+}
+"""Modes that stay declared (charts, overlays, render tests) but cannot be deployed, mapped to the refusal text."""
+
+SELECTABLE_MODES: tuple[str, ...] = tuple(m for m in MODES if m not in UNSUPPORTED_MODES)
+"""The modes a deploy may name: MODES less UNSUPPORTED_MODES."""
+
 DEFAULT_MODE = "scale"
 """The mode a Kubernetes deploy, cycle or check runs when none is named: the HA tier on the bus."""
 
@@ -162,6 +170,40 @@ COMPOSE_MODES: tuple[str, ...] = tuple(
     name for name, p in PROFILES.items() if p.platform == COMPOSE
 )
 """The Compose profiles, in the order dfe-docker writes them."""
+
+
+def refusal(mode: str) -> str | None:
+    """The reason a mode cannot be deployed, if it cannot.
+
+    Args:
+        mode: A deploy mode name.
+
+    Returns:
+        The refusal message for an unsupported mode, None otherwise.
+    """
+    return UNSUPPORTED_MODES.get(mode)
+
+
+def selectable_mode(value: str) -> str:
+    """argparse `type=` for --mode: accept a deployable mode, refuse anything else.
+
+    Args:
+        value: The text given on the command line.
+
+    Returns:
+        The mode, unchanged.
+
+    Raises:
+        argparse.ArgumentTypeError: The mode is unsupported or unknown.
+    """
+    reason = refusal(value)
+    if reason:
+        raise argparse.ArgumentTypeError(reason)
+    if value not in SELECTABLE_MODES:
+        raise argparse.ArgumentTypeError(
+            f"invalid choice: {value!r} (choose from {', '.join(SELECTABLE_MODES)})"
+        )
+    return value
 
 
 def has_kafka(mode: str) -> bool:

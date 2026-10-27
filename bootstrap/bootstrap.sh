@@ -23,7 +23,7 @@
 #   DFE_REGION               e.g. us-east-1, local
 #   DFE_DOMAIN               e.g. dfe.example.com; derived as
 #                            <DFE_PROFILE>.<DFE_BASE_DOMAIN> when unset
-#   DFE_PROFILE              slim | single | scale | mesh (default: scale)
+#   DFE_PROFILE              slim | single | scale (default: scale)
 #   DFE_REGISTRY             registry + path every dfe-* image is published
 #                            under, e.g. ghcr.io/hyperi-io. Reaches every chart
 #                            as global.registry through the cluster secret.
@@ -251,6 +251,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Every tool this script and destroy.sh run, checked before the first one is needed.
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is not on PATH, and bootstrap.sh runs every helper with it" >&2; exit 1; }
 python3 "${SCRIPT_DIR}/check_tools.py"
+# The mesh profile stays in the charts and overlays but cannot be deployed until it is GA.
+if [[ "${DFE_PROFILE:-}" == "mesh" ]]; then
+  echo "ERROR: DFE_PROFILE=mesh: mesh is not supported in this release; use scale" >&2
+  exit 1
+fi
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 
 # Detect Terraform or OpenTofu (informational only). bootstrap.sh itself never
