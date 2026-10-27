@@ -340,10 +340,13 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
         ("/docs/TESTING-CYCLE.md", f"https://github.com/{REPO}/blob/2.2.1/docs/TESTING-CYCLE.md"),
         ("../archived.md", "../archived.md"),
         ("aws.md", "aws.md"),
+        ("../pipeline/", f"https://github.com/{REPO}/tree/2.2.1/docs/pipeline"),
+        ("../pipeline/routing.md", "../pipeline/routing.md"),
+        ("../pipeline/README.md", f"https://github.com/{REPO}/blob/2.2.1/docs/pipeline/README.md"),
     ],
 )
 def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str) -> None:
-    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/"})
+    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/", "docs/pipeline/README.md"})
     relinked = aggregate.relink(
         target, doc_dir="docs/deployment", repo=REPO, ref="2.2.1", internal=internal
     )
@@ -801,3 +804,32 @@ def test_the_manifest_names_the_newest_listed_build() -> None:
     assert [build["name"] for build in manifest["builds"]] == ["2.3.0", "2.2.0", "next"]
     preview_only = aggregate.site_manifest([BuildResult(Build("next", "/next/", False, {}))])
     assert preview_only["newest"] is None
+    assert manifest["dropped"] == []
+    assert aggregate.site_manifest(results, {"2.1.0", "1.9.0"})["dropped"] == ["1.9.0", "2.1.0"]
+
+
+@pytest.mark.parametrize(
+    ("dropped", "expected"),
+    [
+        ([], []),
+        (
+            ["2.2.0"],
+            [
+                "/v/2.2.0 /v/2.2.1/ 301",
+                "/v/2.2.0/ /v/2.2.1/ 301",
+                "/v/2.2.0/* /v/2.2.1/:splat 301",
+            ],
+        ),
+    ],
+)
+def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
+    dropped: list[str], expected: list[str]
+) -> None:
+    build_spec = importlib.util.spec_from_file_location(
+        "docs_build_site", SCRIPT.with_name("build_site.py")
+    )
+    build_site = importlib.util.module_from_spec(build_spec)
+    build_spec.loader.exec_module(build_site)
+    lines = build_site.redirects("2.2.1", dropped).splitlines()
+    assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
+    assert lines[3:] == expected

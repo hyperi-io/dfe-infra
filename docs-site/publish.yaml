@@ -15,20 +15,47 @@ dropped_versions:
 mount_under:
   dfe-hyperdx: "dfe-ui"
 
-# Pages written for the people who build, test and release DFE rather than for an
-# organisation running it. member -> a path under its docs/ -> why it stays off
-# the site. A path ending in / covers the whole directory. The file stays in its
-# repo, and a published page linking to it links to GitHub instead.
+# Pages for the people who build, test and release DFE rather than for an
+# organisation running it: process pages, and the components' developer docs,
+# which stay in their repos. member -> a path under its docs/ -> why it stays
+# off the site. A path ending in / covers the whole directory. The file stays in
+# its repo, and a published page linking to it links to GitHub instead.
 internal:
   culvert:
     ci-environment.md: "the culvert CI pipeline"
+    scalo-reference.md: "developer docs: design, internals or dev setup"
+    supply-chain.md: "developer docs: design, internals or dev setup"
+  dfe-archiver:
+    DESIGN.md: "developer docs: design, internals or dev setup"
+  dfe-docker:
+    developing.md: "developer docs: design, internals or dev setup"
   dfe-engine:
     archive/: "superseded research"
+    AUTH-ENVOY-TOPOLOGY.md: "developer docs: design, internals or dev setup"
+    control-plane/dfe-cli-design.md: "developer docs: design, internals or dev setup"
+    control-plane/gitops-commit-standard.md: "developer docs: design, internals or dev setup"
+    control-plane/governed-ops-design.md: "developer docs: design, internals or dev setup"
+    control-plane/type-safety-sync.md: "developer docs: design, internals or dev setup"
+    control-plane/ui-api-guide.md: "developer docs: design, internals or dev setup"
     data-evolution-acceptance.md: "the end-to-end test steps"
+    data-plane/schema-sync.md: "developer docs: design, internals or dev setup"
     deployment/e2e-acceptance.md: "how a change is signed off"
     deployment/supply-chain-pinning.md: "how the suite picks and pins dependency versions"
-    integrations/hyperdx-fork-maintenance.md: "keeping the HyperDX fork mergeable"
+    integrations/: "keeping dfe-ui and the HyperDX fork in step with the engine"
+    LOCAL-DEV.md: "developer docs: design, internals or dev setup"
+  dfe-fetcher:
+    DESIGN.md: "developer docs: design, internals or dev setup"
   dfe-hyperdx:
+    architecture/authorization.md: "developer docs: design, internals or dev setup"
+    architecture/backend.md: "developer docs: design, internals or dev setup"
+    architecture/clickhouse-data-model.md: "developer docs: design, internals or dev setup"
+    architecture/data-flow.md: "developer docs: design, internals or dev setup"
+    architecture/deployment.md: "developer docs: design, internals or dev setup"
+    architecture/frontend.md: "developer docs: design, internals or dev setup"
+    architecture/query-to-rule-pipeline.md: "developer docs: design, internals or dev setup"
+    architecture/README.md: "developer docs: design, internals or dev setup"
+    decisions/: "developer docs: design, internals or dev setup"
+    development/: "developer docs: design, internals or dev setup"
     fork/: "maintaining the fork against upstream HyperDX"
   dfe-infra:
     ACCEPTANCE-CYCLE.md: "the attended sign-off pass"
@@ -36,16 +63,50 @@ internal:
     CI-MAINTENANCE-DESIGN.md: "the repository's CI bots and gates"
     CUTTING-A-STACK.md: "cutting a stack release"
     DEPLOY-HELPERS.md: "release helpers for unattended runs"
-    SOURCE-SUITE.md: "the post-deploy source tests"
-    TESTING-CYCLE.md: "the create, test, destroy validation cycle"
-    VERIFICATION-TIERS.md: "how a stack version is proven"
     deployment/deployment-logs/: "a blank test log template"
+    SOURCE-SUITE.md: "the post-deploy source tests"
     stack-components.md: "the render and drift-check class map"
     suite-graph.md: "suite membership and release edges"
+    TESTING-CYCLE.md: "the create, test, destroy validation cycle"
+    VERIFICATION-TIERS.md: "how a stack version is proven"
   dfe-loader:
-    deployment/PUBLISHING.md: "the loader's CI publishing"
+    clickhouse/CLICKHOUSE-EXT.md: "developer docs: design, internals or dev setup"
+    clickhouse/INSERT-FORMATS.md: "developer docs: design, internals or dev setup"
+    clickhouse/README.md: "developer docs: design, internals or dev setup"
+    clickhouse/SCHEMA-CACHE.md: "developer docs: design, internals or dev setup"
+    deployment/: "the loader's CI publishing and schema submodule"
+    FEATURE-FLAGS.md: "developer docs: design, internals or dev setup"
+    performance/: "developer docs: design, internals or dev setup"
+    pipeline/ENRICHMENT.md: "developer docs: design, internals or dev setup"
+    pipeline/OVERVIEW.md: "developer docs: design, internals or dev setup"
+    pipeline/PARALLELISM.md: "developer docs: design, internals or dev setup"
+    pipeline/README.md: "developer docs: design, internals or dev setup"
+    transport/GRPC.md: "developer docs: design, internals or dev setup"
+    transport/README.md: "developer docs: design, internals or dev setup"
+  dfe-receiver:
+    DESIGN.md: "developer docs: design, internals or dev setup"
+    LOG-SPAMMING.md: "developer docs: design, internals or dev setup"
+    PERFORMANCE.md: "developer docs: design, internals or dev setup"
+    SIDECAR-TRANSPORTS.md: "developer docs: design, internals or dev setup"
+  dfe-schemas:
+    architecture.md: "developer docs: design, internals or dev setup"
   dfe-transform-elastic:
+    architecture.md: "developer docs: design, internals or dev setup"
+    compat-policy.md: "developer docs: design, internals or dev setup"
+    compat.md: "developer docs: design, internals or dev setup"
+    performance.md: "developer docs: design, internals or dev setup"
+    schema-generation.md: "developer docs: design, internals or dev setup"
     shared-crates.md: "code shared with an unreleased transform"
+    testing.md: "developer docs: design, internals or dev setup"
+  dfe-transform-vector:
+    DESIGN.md: "developer docs: design, internals or dev setup"
+  dfe-transform-vrl:
+    DESIGN.md: "developer docs: design, internals or dev setup"
+  dfe-ui:
+    build-and-deploy.md: "developer docs: design, internals or dev setup"
+    create-schema-form.md: "developer docs: design, internals or dev setup"
+    engine-api-client.md: "developer docs: design, internals or dev setup"
+    local-development.md: "developer docs: design, internals or dev setup"
   scalo-py:
     POST-GA-DEFERRED.md: "a release review backlog"
   scalo-rs:

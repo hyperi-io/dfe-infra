@@ -534,10 +534,13 @@ def relink(
         return target, True
     suffix = f"{query_mark}{query}{hash_mark}{fragment}"
     parts = resolved.split("/")
+    # A directory link lands on its README.md, so an internal landing unpublishes the link.
+    landing = f"{resolved}/{LANDING}" if path.endswith("/") else resolved
     published = (
         parts[0] == "docs"
         and not WORKING_DIRS.intersection(parts[1:])
         and not is_internal(resolved, internal)
+        and not is_internal(landing, internal)
     )
     if published:
         if not absolute:
@@ -1011,14 +1014,17 @@ def stray_report(result: BuildResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def site_manifest(results: Iterable[BuildResult]) -> dict[str, object]:
+def site_manifest(results: Iterable[BuildResult], dropped: Iterable[str] = ()) -> dict[str, object]:
     """The site.json docusaurus.config.js and build_site.py read.
 
     Args:
         results: The assembled builds, listed ones newest first.
+        dropped: The released stacks publish.yaml drops, which build_site.py
+            redirects to the newest release.
 
     Returns:
-        The newest listed build's name (None without one) and every build.
+        The newest listed build's name (None without one), every build, and the
+        dropped stacks.
     """
     builds = [
         {
@@ -1031,7 +1037,7 @@ def site_manifest(results: Iterable[BuildResult]) -> dict[str, object]:
         for result in results
     ]
     newest = next((build["name"] for build in builds if build["listed"]), None)
-    return {"newest": newest, "builds": builds}
+    return {"newest": newest, "builds": builds, "dropped": sorted(dropped)}
 
 
 def prepare_out(out: Path) -> None:
@@ -1167,7 +1173,7 @@ def main(argv: list[str] | None = None) -> int:
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(stray_report(result), encoding="utf-8", newline="\n")
         summarise(result)
-    write_json(args.out / SITE_FILE, site_manifest(results))
+    write_json(args.out / SITE_FILE, site_manifest(results, policy.dropped))
     return 0
 
 
