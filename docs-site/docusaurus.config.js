@@ -11,6 +11,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const {journeySidebar} = require('./sidebar-journeys.js');
 
 const CONTENT = path.join(__dirname, 'content');
 const SITE_FILE = path.join(CONTENT, 'site.json');
@@ -73,12 +74,19 @@ function spliceApiSlice(item) {
     return null;
   }
   const loaded = require(slicePath);
-  return {...item, customProps, items: loaded.default || loaded};
+  const apiDir = path.posix.dirname(openapiSlice);
+  return {...item, customProps: {...customProps, apiDir}, items: loaded.default || loaded};
 }
 
+// journeys.yaml regroups the pages into reader journeys when aggregate.py placed them.
 async function sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
-  const items = await defaultSidebarItemsGenerator(args);
-  return items.map(spliceApiSlice).filter(Boolean);
+  const items = (await defaultSidebarItemsGenerator(args)).map(spliceApiSlice).filter(Boolean);
+  const journeys = site.journeys || [];
+  const placements = build.placements || {};
+  if (journeys.length === 0 || Object.keys(placements).length === 0) {
+    return items;
+  }
+  return journeySidebar(items, journeys, placements);
 }
 
 const openapiPlugins = build.openapi

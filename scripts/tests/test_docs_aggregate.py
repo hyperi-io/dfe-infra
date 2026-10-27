@@ -267,6 +267,10 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
                 frozenset({"1.0.0"}), {"b": "a"}, {"a": frozenset({"docs/x.md", "docs/old/"})}
             ),
         ),
+        (
+            {"internal": {"c": {"all-pages": "a library"}}},
+            aggregate.Policy(internal={"c": frozenset({"docs/"})}),
+        ),
         ({"mount_under": "a"}, "`mount_under` is not a map"),
         ({"mount_under": {"b": "z"}}, "not both members"),
         ({"mount_under": {"a": "a"}}, "a parent must mount at the top level"),
@@ -285,6 +289,96 @@ def test_load_policy_reads_a_valid_file_and_names_every_problem(
             aggregate.load_policy(tree, ["a", "b", "c"])
         return
     assert aggregate.load_policy(tree, ["a", "b", "c"]) == expected
+
+
+def test_the_real_journeys_file_places_every_member_that_publishes() -> None:
+    members = [member.name for member in aggregate.ordered_members(aggregate.load_suite())]
+    policy = aggregate.load_policy(
+        aggregate.yaml_subset.parse(aggregate.PUBLISH_FILE.read_text(encoding="utf-8")), members
+    )
+    journeys = aggregate.load_journeys(
+        aggregate.yaml_subset.parse(aggregate.JOURNEYS_FILE.read_text(encoding="utf-8")), members
+    )
+    assert [label for label, _ in journeys.order] == ["Evaluate", "Deploy", "Operate", "Reference"]
+    whole = {name for name in members if policy.internal_to(name) == frozenset({"docs/"})}
+    assert whole == {
+        "scalo-rs",
+        "scalo-py",
+        "factbook-rs",
+        "logreducer",
+        "vector-vrl",
+        "clickhouse-dfe",
+    }
+    assert set(members) - whole <= set(journeys.placement)
+    assert aggregate.ROOT_PAGES in journeys.placement
+
+
+SIDEBAR = {"J": {"S": "", "T": ""}, "K": {"U": ""}}
+
+
+@pytest.mark.parametrize(
+    ("placement", "expected"),
+    [
+        (
+            {"a": {"default": "J / S", "x/": "K / U", "x/y.md": "J / T", "top.md": ""}},
+            {"a": {"default": "J / S", "x/": "K / U", "x/y.md": "J / T", "top.md": ""}},
+        ),
+        ({"z": {"default": "J / S"}}, "placement z: not a member"),
+        ({"a": "J / S"}, "placement a: not a member with a map"),
+        ({"a": {"x.md": "J / S"}}, "placement a: no `default`"),
+        ({"a": {"default": "J / U"}}, "'J / U' is no journey and section"),
+        ({"a": {"default": "J/S"}}, "'J/S' is no journey and section"),
+    ],
+)
+def test_load_journeys_reads_a_valid_file_and_names_every_problem(
+    placement: dict, expected: dict | str
+) -> None:
+    tree = {"sidebar": SIDEBAR, "placement": placement}
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.load_journeys(tree, ["a", "b"])
+        return
+    journeys = aggregate.load_journeys(tree, ["a", "b"])
+    assert journeys.order == (("J", ("S", "T")), ("K", ("U",)))
+    assert journeys.placement == expected
+    assert journeys.manifest() == [
+        {"label": "J", "sections": ["S", "T"]},
+        {"label": "K", "sections": ["U"]},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("member", "prefix", "expected"),
+    [
+        (
+            "a",
+            "dfe-ui/a",
+            {
+                "dfe-ui/a/": "J / S",
+                "dfe-ui/a/x/": "K / U",
+                "dfe-ui/a/x/y": "J / T",
+                "dfe-ui/a/top": "",
+            },
+        ),
+        ("content-root", "", {"": "J / S", "README": ""}),
+        ("b", "b", "b publishes and has no placement"),
+    ],
+)
+def test_placements_are_keyed_by_doc_id_under_the_member_mount(
+    member: str, prefix: str, expected: dict | str
+) -> None:
+    journeys = aggregate.Journeys(
+        (("J", ("S", "T")), ("K", ("U",))),
+        {
+            "a": {"default": "J / S", "x/": "K / U", "x/y.md": "J / T", "top.md": ""},
+            "content-root": {"default": "J / S", "README.md": ""},
+        },
+    )
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            journeys.keys_for(member, prefix)
+        return
+    assert journeys.keys_for(member, prefix) == expected
 
 
 # --- links ---------------------------------------------------------------------
@@ -775,6 +869,51 @@ def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
     pages = [path for path in checkout_files(out / "9.9.9") if path.endswith(".md")]
     assert [page for page in pages if "hd/" in page] == expected
     assert [entry["name"] for entry in result.members] == sorted(refs, key=["ui", "hd"].index)
+
+
+@pytest.mark.parametrize(
+    ("placement", "expected"),
+    [
+        (
+            {"ui": {"default": "J / S"}, "hd": {"default": "J / T", "fork/": "K / U"}},
+            {"ui/": "J / S", "ui/hd/": "J / T", "ui/hd/fork/": "K / U", "": "J / S", "README": ""},
+        ),
+        ({"ui": {"default": "J / S"}}, "hd publishes and has no placement"),
+    ],
+)
+def test_assemble_places_every_published_member_and_skips_a_wholly_internal_one(
+    tmp_path: Path, placement: dict, expected: dict | str
+) -> None:
+    root = tmp_path / "remotes"
+    make_repo(root, "o/ui", {"docs/README.md": "# UI\n"}, "v1.0.0")
+    make_repo(root, "o/hd", {"docs/README.md": "# HD\n", "docs/fork/README.md": "#\n"}, "v2.0.0")
+    make_repo(root, "o/lib", {"docs/README.md": "# Lib\n"}, "v3.0.0")
+    members = [
+        Member("ui", "o/ui", "ui", 10, "product"),
+        Member("hd", "o/hd", "ui", 11, "fork"),
+        Member("lib", "o/lib", "libraries", 12, "oss"),
+    ]
+    policy = aggregate.Policy(mounts={"hd": "ui"}, internal={"lib": frozenset({"docs/"})})
+    journeys = aggregate.Journeys(
+        (("J", ("S", "T")), ("K", ("U",))),
+        {**placement, "content-root": {"default": "J / S", "README.md": ""}},
+    )
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    build = Build("9.9.9", "/v/9.9.9/", True, {"ui": "v1.0.0", "hd": "v2.0.0", "lib": "v3.0.0"})
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.assemble(build, members, fetcher, out, policy, journeys)
+        return
+    result = aggregate.assemble(build, members, fetcher, out, policy, journeys)
+    assert result.placements == expected
+    assert not (out / "9.9.9" / "lib").exists()
+    assert ("lib", Rule.ALL_INTERNAL) in {(f.member, f.rule) for f in result.findings}
+    assert [entry["name"] for entry in result.members] == ["ui", "hd"]
+    manifest = aggregate.site_manifest([result], (), journeys)
+    assert manifest["builds"][0]["placements"] == expected
+    assert manifest["journeys"][0] == {"label": "J", "sections": ["S", "T"]}
 
 
 def test_the_report_summarises_each_member_then_lists_every_finding() -> None:

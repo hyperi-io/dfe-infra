@@ -24,6 +24,8 @@ left out.
 
 publish.yaml also names the pages each member keeps internal, which are not
 copied, and the members whose docs mount inside another member's section.
+journeys.yaml places every published page in a journey section, and site.json
+carries those placements to docusaurus.config.js, which builds the sidebar.
 
 Writes, under --out (default docs-site/content/):
 
@@ -63,6 +65,12 @@ DFE_STACK = REPO_ROOT / "scripts" / "dfe-stack"
 CONTENT_ROOT = SITE_ROOT / "content-root"
 DEFAULT_OUT = SITE_ROOT / "content"
 PUBLISH_FILE = SITE_ROOT / "publish.yaml"
+JOURNEYS_FILE = SITE_ROOT / "journeys.yaml"
+# journeys.yaml's name for the suite's own pages, and for a member's catch-all rule.
+ROOT_PAGES = "content-root"
+DEFAULT_PLACE = "default"
+# The publish.yaml internal path that keeps a member's whole docs/ off the site.
+WHOLE_MEMBER = "all-pages"
 # Files in content-root/ for the people editing it, never copied into a build.
 EDITOR_ONLY = ("VOICE.md",)
 
@@ -128,9 +136,10 @@ class Rule(StrEnum):
     REFUSED = "an anonymous fetch was refused"
     NO_DOCS = "no docs/ at the pinned ref"
     NO_SPEC = "no committed OpenAPI spec at the pinned ref"
+    ALL_INTERNAL = "every page is internal, so nothing is published"
 
 
-LEFT_OUT = frozenset({Rule.NO_PIN, Rule.REFUSED, Rule.NO_DOCS})
+LEFT_OUT = frozenset({Rule.NO_PIN, Rule.REFUSED, Rule.NO_DOCS, Rule.ALL_INTERNAL})
 
 
 class FetchError(RuntimeError):
@@ -234,6 +243,54 @@ class Policy:
         return self.internal.get(member, frozenset())
 
 
+@dataclass(frozen=True, slots=True)
+class Journeys:
+    """The sidebar journeys.yaml sets: journeys, their sections, and where pages sit.
+
+    Attributes:
+        order: Each journey with its sections, in sidebar order.
+        placement: member (or ``content-root``) -> a path under its docs/ ->
+            ``Journey / Section``, or "" for the top of the sidebar.
+    """
+
+    order: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    placement: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+
+    def keys_for(self, member: str, prefix: str) -> dict[str, str]:
+        """One member's placements, keyed the way docusaurus.config.js matches doc ids.
+
+        Args:
+            member: The member, or ``content-root``.
+            prefix: Where its pages sit in the build, such as ``dfe-ui/dfe-hyperdx``.
+
+        Returns:
+            Doc id, or id prefix ending in /, -> ``Journey / Section``. The longest
+            key that matches a doc id wins.
+
+        Raises:
+            SystemExit: The member publishes pages and journeys.yaml does not place it.
+        """
+        rules = self.placement.get(member)
+        if rules is None:
+            raise SystemExit(
+                f"error: {JOURNEYS_FILE.name}: {member} publishes and has no placement"
+            )
+        base = f"{prefix}/" if prefix else ""
+        keys: dict[str, str] = {}
+        for path, place in rules.items():
+            if path == DEFAULT_PLACE:
+                keys[base] = place
+            elif path.lower().endswith(MARKDOWN):
+                keys[base + posixpath.splitext(path)[0]] = place
+            else:
+                keys[base + path] = place
+        return keys
+
+    def manifest(self) -> list[dict[str, object]]:
+        """The journeys and sections for site.json, in sidebar order."""
+        return [{"label": label, "sections": list(sections)} for label, sections in self.order]
+
+
 @dataclass(slots=True)
 class BuildResult:
     """What one build assembled, for site.json and the stray report.
@@ -243,12 +300,14 @@ class BuildResult:
         members: One site.json entry per member included.
         findings: Every stray and every member left out.
         openapi: The OpenAPI paths for docusaurus.config.js, when the engine has a spec.
+        placements: Doc id or id prefix -> "Journey / Section", for the sidebar.
     """
 
     build: Build
     members: list[dict[str, str]] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     openapi: dict[str, str] | None = None
+    placements: dict[str, str] = field(default_factory=dict)
 
 
 def _run(cmd: list[str], env: Mapping[str, str] | None = None) -> subprocess.CompletedProcess:
@@ -423,10 +482,58 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
             continue
         bad = [path for path in paths if path.startswith("/") or ".." in path.split("/")]
         problems += [f"internal {member}: {path} is not a path under docs/" for path in bad]
-        internal[member] = frozenset(f"docs/{path}" for path in paths)
+        internal[member] = frozenset(
+            "docs/" if path == WHOLE_MEMBER else f"docs/{path}" for path in paths
+        )
     if problems:
         raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
     return Policy(frozenset(sections["dropped_versions"]), mounts, internal)
+
+
+def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journeys:
+    """Read a parsed journeys.yaml, refusing any place the sidebar does not define.
+
+    Args:
+        tree: journeys.yaml as `yaml_subset.parse` returns it.
+        members: Every suite member's name.
+
+    Returns:
+        The journeys.
+
+    Raises:
+        SystemExit: A section is not a map, a name is neither a member nor
+            content-root, a member has no default, or a place names no journey and
+            section in the sidebar.
+    """
+    sidebar = tree.get("sidebar") or {}
+    placement = tree.get("placement") or {}
+    if not isinstance(sidebar, dict) or not isinstance(placement, dict):
+        raise SystemExit(f"error: {JOURNEYS_FILE.name}: `sidebar` and `placement` are maps")
+    order = tuple(
+        (journey, tuple(sections) if isinstance(sections, dict) else ())
+        for journey, sections in sidebar.items()
+    )
+    places = {""} | {
+        f"{journey} / {section}" for journey, sections in order for section in sections
+    }
+    known = set(members) | {ROOT_PAGES}
+    problems: list[str] = []
+    rules: dict[str, dict[str, str]] = {}
+    for member, paths in placement.items():
+        if member not in known or not isinstance(paths, dict):
+            problems.append(f"placement {member}: not a member with a map of paths")
+            continue
+        if DEFAULT_PLACE not in paths:
+            problems.append(f"placement {member}: no `{DEFAULT_PLACE}`")
+        problems += [
+            f"placement {member} {path}: {place!r} is no journey and section in `sidebar`"
+            for path, place in paths.items()
+            if place not in places
+        ]
+        rules[member] = dict(paths)
+    if problems:
+        raise SystemExit(f"error: {JOURNEYS_FILE.name}: {'; '.join(problems)}")
+    return Journeys(order, rules)
 
 
 def is_internal(repo_path: str, internal: frozenset[str]) -> bool:
@@ -855,6 +962,7 @@ def assemble(
     fetcher: Fetcher,
     out: Path,
     policy: Policy | None = None,
+    journeys: Journeys | None = None,
 ) -> BuildResult:
     """Assemble one build's content tree under `out`.
 
@@ -865,13 +973,16 @@ def assemble(
         out: The content root. The build lands in ``out/<build name>``.
         policy: The internal pages and mounts publish.yaml sets. None publishes
             every page and mounts every member at the top level.
+        journeys: The sidebar journeys.yaml sets. None leaves the sidebar one
+            section per member.
 
     Returns:
         What was assembled.
 
     Raises:
         SystemExit: A member's docs/ collides with the generated API directory, with a
-            member mounted inside it, or with the root pages.
+            member mounted inside it, or with the root pages, or a member publishes
+            with no place in journeys.yaml.
     """
     policy = policy or Policy()
     members = mount_order(members, policy.mounts)
@@ -905,6 +1016,11 @@ def assemble(
             result.findings += find_strays(docs, member.name)
         internal = policy.internal_to(member.name)
         result.findings += copy_docs(docs, dest, member=member, ref=link_ref, internal=internal)
+        if not dest.is_dir():
+            result.findings.append(Finding(member.name, "docs/", Rule.ALL_INTERNAL))
+            continue
+        if journeys:
+            result.placements |= journeys.keys_for(member.name, dest.relative_to(root).as_posix())
         opening = None
         if not (dest / LANDING).is_file():
             found = next((name for name in ARCHITECTURE if (dest / name).is_file()), None)
@@ -917,6 +1033,8 @@ def assemble(
         if member.name == SPEC_MEMBER:
             result.openapi = _place_spec(checkout, build, dest, out, result.findings)
     copy_root(root, {member.name for member in members})
+    if journeys:
+        result.placements |= journeys.keys_for(ROOT_PAGES, "")
     return result
 
 
@@ -1014,17 +1132,22 @@ def stray_report(result: BuildResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def site_manifest(results: Iterable[BuildResult], dropped: Iterable[str] = ()) -> dict[str, object]:
+def site_manifest(
+    results: Iterable[BuildResult],
+    dropped: Iterable[str] = (),
+    journeys: Journeys | None = None,
+) -> dict[str, object]:
     """The site.json docusaurus.config.js and build_site.py read.
 
     Args:
         results: The assembled builds, listed ones newest first.
         dropped: The released stacks publish.yaml drops, which build_site.py
             redirects to the newest release.
+        journeys: The sidebar journeys. None keeps one section per member.
 
     Returns:
-        The newest listed build's name (None without one), every build, and the
-        dropped stacks.
+        The newest listed build's name (None without one), every build with its
+        page placements, the dropped stacks, and the journeys.
     """
     builds = [
         {
@@ -1033,11 +1156,17 @@ def site_manifest(results: Iterable[BuildResult], dropped: Iterable[str] = ()) -
             "listed": result.build.listed,
             "members": result.members,
             "openapi": result.openapi,
+            "placements": result.placements,
         }
         for result in results
     ]
     newest = next((build["name"] for build in builds if build["listed"]), None)
-    return {"newest": newest, "builds": builds, "dropped": sorted(dropped)}
+    return {
+        "newest": newest,
+        "builds": builds,
+        "dropped": sorted(dropped),
+        "journeys": journeys.manifest() if journeys else [],
+    }
 
 
 def prepare_out(out: Path) -> None:
@@ -1157,6 +1286,10 @@ def main(argv: list[str] | None = None) -> int:
     members = ordered_members(load_suite())
     publish = yaml_subset.parse(PUBLISH_FILE.read_text(encoding="utf-8"), source=str(PUBLISH_FILE))
     policy = load_policy(publish, (member.name for member in members))
+    sidebar = yaml_subset.parse(
+        JOURNEYS_FILE.read_text(encoding="utf-8"), source=str(JOURNEYS_FILE)
+    )
+    journeys = load_journeys(sidebar, (member.name for member in members))
     builds = plan_builds(tree, members, args.stack, args.next, policy.dropped)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
@@ -1164,7 +1297,9 @@ def main(argv: list[str] | None = None) -> int:
         work.mkdir(parents=True, exist_ok=True)
         fetcher = Fetcher(work, args.git_base)
         try:
-            results = [assemble(build, members, fetcher, args.out, policy) for build in builds]
+            results = [
+                assemble(build, members, fetcher, args.out, policy, journeys) for build in builds
+            ]
         except FetchError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -1173,7 +1308,7 @@ def main(argv: list[str] | None = None) -> int:
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(stray_report(result), encoding="utf-8", newline="\n")
         summarise(result)
-    write_json(args.out / SITE_FILE, site_manifest(results, policy.dropped))
+    write_json(args.out / SITE_FILE, site_manifest(results, policy.dropped, journeys))
     return 0
 
 
