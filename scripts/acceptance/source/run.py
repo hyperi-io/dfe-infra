@@ -36,12 +36,14 @@ import shlex
 import subprocess
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import access_summary as access_summary_file
 
+from acceptance import footprint
 from acceptance.clients import Datastore, Engine, companion, remove_source
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
@@ -162,6 +164,46 @@ def close_out(run: cases.Run, case: cases.Case, api_url: str) -> None:
         teardown(run, case, api_url)
 
 
+def attempt(
+    current: cases.Run, case: cases.Case, archive_exec: list[list[str]], restart_exec: list[str],
+    prepare: Callable[[], None], read: Callable[[], footprint.Footprint],
+) -> footprint.Footprint | None:
+    """Sign in, read the deployment, then walk the case, turning any exception into a failed row.
+
+    Args:
+        current: The run.
+        case: The case being walked.
+        archive_exec: The archive assertion's command prefixes.
+        restart_exec: The restart command prefix.
+        prepare: Signs in and sweeps strays, before anything is read.
+        read: Takes a footprint reading.
+
+    Returns:
+        The reading taken before the walk, or None when the run never got that far.
+    """
+    driver = current.driver
+    before = None
+    try:
+        prepare()
+        before, rows = footprint.baseline(read)
+        driver.results.extend(rows)
+        walk(current, case, archive_exec, restart_exec)
+    except Exception as exc:  # a Playwright timeout IS the finding
+        driver.record("run", "failed", steps.failure_line(exc))
+    return before
+
+
+def conclude(
+    current: cases.Run, case: cases.Case, api_url: str,
+    before: footprint.Footprint | None, read: Callable[[], footprint.Footprint],
+) -> None:
+    """Capture and remove what the run made, then diff the deployment against its state before the run."""
+    close_out(current, case, api_url)
+    if before is not None:
+        keep = case.name if current.args.keep else ""
+        current.driver.results.extend(footprint.settle(before, read, keep_name=keep))
+
+
 def run(args: argparse.Namespace) -> int:
     from playwright.sync_api import sync_playwright
 
@@ -204,6 +246,11 @@ def run(args: argparse.Namespace) -> int:
     restart_exec = shlex.split(args.restart_exec)
 
     shots = Path(args.shots_dir)
+    kube = shlex.split(args.kubectl)
+
+    def read() -> footprint.Footprint:
+        return footprint.capture(kube, args.namespace, engine)
+
     with sync_playwright() as play:
         browser = play.chromium.launch(
             channel=args.channel, headless=not args.headed, args=onboarding.resolver_args(args.resolve)
@@ -216,19 +263,19 @@ def run(args: argparse.Namespace) -> int:
             transform_repo=transform_repo, program_repo=program_repo,
             receiver_url=os.environ.get("DFE_E2E_RECEIVER_URL", ""), verify=verify,
         )
-        try:
+        def prepare() -> None:
             steps.open_console_settled(
                 driver, engine, admin_user, password, args.org, args.first_user, new_password
             )
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
-            walk(current, case, archive_exec, restart_exec)
-        except Exception as exc:  # a Playwright timeout IS the finding
-            driver.record("run", "failed", steps.failure_line(exc))
+
+        try:
+            before = attempt(current, case, archive_exec, restart_exec, prepare, read)
         finally:
             context.close()
             browser.close()
 
-    close_out(current, case, api_url)
+    conclude(current, case, api_url, before, read)
 
     held = (password, new_password, store.password, engine.password, engine.token)
     print()
@@ -333,6 +380,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")
     parser.add_argument("--keep", action="store_true", help="leave the source deployed")
+    parser.add_argument("--kubectl", default="", metavar="PREFIX",
+                        help="kubectl and the flags that aim it at the deployment's cluster, as one string. "
+                             "Given, the run reads the receiver's ConfigMaps, the Deployments and the "
+                             "harness namespaces before and after, and fails on any difference. Without "
+                             "it only the engine's sources and the receiver overlay are compared")
+    parser.add_argument("--namespace", default="dfe", help="the app namespace --kubectl reads")
     parser.add_argument("--diagnostics-exec", default="", metavar="PREFIX",
                         help="command the runner appends `--label source-<name>` to and runs "
                              "once, when a step failed and before the teardown removes the "

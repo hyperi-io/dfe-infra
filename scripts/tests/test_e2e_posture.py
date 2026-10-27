@@ -58,6 +58,12 @@ sys.modules["dfeops_e2e_posture"] = dfeops
 _loader.exec_module(dfeops)
 
 
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the checkout gates, which have their own tests."""
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
+
+
 # --- the engine ------------------------------------------------------------------
 ENGINE = "dfe-engine"
 ENGINE_CELLS = [c for c in CELLS if c[0] == ENGINE]

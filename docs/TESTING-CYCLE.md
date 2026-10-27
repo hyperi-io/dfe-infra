@@ -119,7 +119,9 @@ The run length is a deadline that apply and the cycle share: a cycle still runni
 
 `dfe-ops cycle --acceptance-suite <suite>` runs `acceptance` as a stage after smoke and before ui, from the deploy's terraform outputs and as its minted admin; a failed stage skips the rest and destroy still runs.
 
-The suite runs from the dfe-engine checkout `acceptance --repo` names, and that checkout must be the exact tag the stack under test pins (`apps.dfe-engine` in versions.yaml) on a clean tree. Otherwise `acceptance` and the cycle (before it deploys anything) refuse, naming both versions. `--dev` runs a local tree on purpose and prints a WARNING with both versions.
+The suite runs from the dfe-engine checkout `acceptance --repo` names, and that checkout must be the exact tag the stack under test pins (`apps.dfe-engine` in versions.yaml) on a clean tree. The same holds for the checkouts the source suite reads its corpus and program from (`dfe-transform-vrl`, and `dfe-transform-vector` for the vector case) and for the dfe-ui checkout the `ui` stage runs. Otherwise `acceptance`, `ui` and the cycle (before it deploys anything) refuse, naming both versions. `--dev` runs a local tree on purpose and prints a WARNING with both versions.
+
+The source and edge suites leave nothing behind. Each reads the deployment before the run and again after its teardown: the receiver's ConfigMaps, every Deployment and its replicas (one an HPA scales is left out), the sources the engine lists, the receiver's lumberjack overlay and the harness namespaces. Any difference fails the run with a `no-trace-<part>` row, on a pass and on a failure alike. `--keep` leaves only its own source and the apps named after it. The edge suite leaves out the receiver ConfigMaps, which `dfe-ops` rolls with the allow list and restores after the run.
 
 ### The edge stage
 

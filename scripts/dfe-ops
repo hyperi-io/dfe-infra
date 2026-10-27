@@ -1477,8 +1477,8 @@ def _sibling_repo(name: str, env_var: str) -> str | None:
     return str(sibling) if sibling.is_dir() else None
 
 
-def _stack_engine_pin(stack: str) -> str:
-    """The dfe-engine tag versions.yaml pins for *stack*, empty when the stack or the pin is absent."""
+def _stack_app_pin(stack: str, app: str) -> str:
+    """The tag versions.yaml pins *app* at for *stack*, empty when the stack or the pin is absent."""
     sys.path.insert(0, str(BOOTSTRAP))
     from check_platform import load_versions
 
@@ -1487,7 +1487,7 @@ def _stack_engine_pin(stack: str) -> str:
     except OSError:
         return ""
     entry = (root.get("stacks") or {}).get(stack) or {}
-    return str((entry.get("apps") or {}).get("dfe-engine") or "")
+    return str((entry.get("apps") or {}).get(app) or "")
 
 
 def _checkout_state(repo: str) -> tuple[str, bool]:
@@ -1510,43 +1510,71 @@ def _checkout_state(repo: str) -> tuple[str, bool]:
     return described.strip(), " ".join(tags.split())
 
 
-def _engine_checkout_gate(repo: str, stack: str, dev: bool) -> int:
-    """Refuse an engine checkout that is not the release the stack under test pins.
+def _checkout_gate(repo: str, app: str, stack: str, dev: bool, why: str) -> int:
+    """Refuse a checkout that is not the release the stack under test pins for *app*.
 
-    The acceptance suite is the engine's own pytest tree and runner, so a checkout
-    at any other commit proves that commit rather than the stack. --dev runs a local
+    The suites read tests, programs or a corpus out of a checkout, so one at any
+    other commit proves that commit rather than the stack. --dev runs a local
     tree on purpose and says so.
 
     Args:
-        repo: The dfe-engine checkout the suite runs from.
-        stack: The versions.yaml stack under test; empty reads versions.yaml `current`.
+        repo: The checkout the run reads from.
+        app: The versions.yaml `apps` key whose tag the checkout must be at.
+        stack: The versions.yaml stack under test, empty reads versions.yaml `current`.
         dev: Whether a checkout that is not the pinned release is allowed.
+        why: What the run reads from it, for the message.
 
     Returns:
         0 to proceed, 2 to refuse.
     """
     stack = stack or _current_stack()
-    pin = _stack_engine_pin(stack)
+    pin = _stack_app_pin(stack, app)
     described, tags_at_head = _checkout_state(repo)
     if pin and pin in tags_at_head.split():
-        print(f"  engine checkout {repo} is {pin}, the release stack {stack} pins", file=sys.stderr)
+        print(f"  {app} checkout {repo} is {pin}, the release stack {stack} pins", file=sys.stderr)
         return 0
     seen = f"{described} ({repo})"
-    wanted = f"dfe-engine {pin}" if pin else "no dfe-engine"
+    wanted = f"{app} {pin}" if pin else f"no {app}"
     if dev:
         print(
-            f"WARNING: --dev: the acceptance suite runs from engine checkout {seen}, "
-            f"but stack {stack} pins {wanted}",
+            f"WARNING: --dev: {why} from {app} checkout {seen}, but stack {stack} pins {wanted}",
             file=sys.stderr,
         )
         return 0
     print(
-        f"acceptance: the engine checkout is {seen}, but stack {stack} pins {wanted}. "
+        f"acceptance: {why} from {app} checkout {seen}, but stack {stack} pins {wanted}. "
         f"Check out {pin or 'the pinned tag'} there (git -C {repo} checkout {pin or '<tag>'}), "
         "or pass --dev to run a local tree on purpose.",
         file=sys.stderr,
     )
     return 2
+
+
+def _engine_checkout_gate(repo: str, stack: str, dev: bool) -> int:
+    """The acceptance suite is the engine's own pytest tree and runner, so it must be the pinned engine."""
+    return _checkout_gate(repo, "dfe-engine", stack, dev, "the acceptance suite runs")
+
+
+def _companion_checkouts_gate(suite: str, source_case: str, stack: str, dev: bool) -> int:
+    """Gate the checkouts the source suite reads its corpus and program from.
+
+    The corpus comes from dfe-transform-vrl and the vector case's program from
+    dfe-transform-vector. A checkout not found beside this repo is left to the
+    runner, which refuses a missing one itself.
+
+    Returns:
+        0 to proceed, 2 to refuse.
+    """
+    if suite != SOURCE_SUITE:
+        return 0
+    wanted = [("dfe-transform-vrl", "DFE_TRANSFORM_VRL_REPO", "the source suite reads its corpus")]
+    if source_case == "vector":
+        wanted.append(("dfe-transform-vector", "DFE_TRANSFORM_VECTOR_REPO", "the vector case reads its program"))
+    for app, variable, why in wanted:
+        repo = _sibling_repo(app, variable)
+        if repo and _checkout_gate(repo, app, stack, dev, why) != 0:
+            return 2
+    return 0
 
 
 def _acceptance_transport(args: argparse.Namespace) -> str:
@@ -2126,6 +2154,8 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
 
     if _engine_checkout_gate(str(args.repo), args.stack, args.dev) != 0:
         return 2
+    if _companion_checkouts_gate(args.suite, args.source_case, args.stack, args.dev) != 0:
+        return 2
 
     context = args.context or settings.get("DFE_KUBE_CONTEXT")
     namespace = args.namespace or settings.get("DFE_NAMESPACE", "dfe-local")
@@ -2349,6 +2379,8 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
                 "--shots-dir", args.shots_dir,
                 "--case", args.source_case,
                 "--aws-service", args.aws_service,
+                "--kubectl", shlex.join(kube),
+                "--namespace", namespace,
             ]
             # The upstream a fetched case polls is a property of the DEPLOYMENT,
             # so it comes from the env files rather than from this script.
@@ -3615,6 +3647,8 @@ def cmd_ui(args: argparse.Namespace) -> int:
     unauthenticated /api/e2e routes over a port-forward, which only a deployment
     stood up with `stack-deploy --e2e` mounts, so the run refuses any other.
     """
+    if _checkout_gate(str(args.ui_repo), "dfe-ui", args.stack, args.dev, "the ui suite runs") != 0:
+        return 2
     settings = dict(os.environ)
     for env_file in args.env_file:
         loaded = envfile.parse_env_file(Path(env_file))
@@ -4759,6 +4793,10 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
         if _engine_checkout_gate(str(engine_repo), args.stack, args.dev) != 0:
             return 2
+        if _companion_checkouts_gate(args.acceptance_suite, "filebeat", args.stack, args.dev) != 0:
+            return 2
+    if args.ui_repo and _checkout_gate(args.ui_repo, "dfe-ui", args.stack, args.dev, "the ui stage runs") != 0:
+        return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
     passthrough_kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
     passthrough_env = [flag for f in args.env_file for flag in ("--env-file", f)]
@@ -4839,8 +4877,10 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     # every cycle runner has, and a cycle that starts failing for want of a
     # browser would be worse than one that says the stage did not run.
     if args.ui_repo:
-        ui_cmd = [*self_cmd, "ui", "--ui-repo", args.ui_repo,
+        ui_cmd = [*self_cmd, "ui", "--ui-repo", args.ui_repo, "--stack", args.stack,
                   *passthrough_kube, *passthrough_env]
+        if args.dev:
+            ui_cmd.append("--dev")
         if args.ui_url:
             ui_cmd += ["--ui-url", args.ui_url]
         stages.append(("ui", ui_cmd))
@@ -5090,7 +5130,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "checkout acceptance --repo finds, and a browser for onboarding, source and "
                          f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
     cy.add_argument("--dev", action="store_true",
-                    help="let the acceptance stage run from an engine checkout that is not the stack's pinned release (a WARNING names both versions)")
+                    help="let the acceptance and ui stages run from checkouts (engine, transform, dfe-ui) that are not the stack's pinned releases, with a WARNING naming both versions")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
                     help="where the acceptance stage writes its screenshots and step table")
     cy.add_argument("--evidence-dir", default=None, metavar="DIR",
@@ -5346,6 +5386,9 @@ def build_parser() -> argparse.ArgumentParser:
     ui_repo = _sibling_repo("dfe-ui", "DFE_UI_REPO")
     ui.add_argument("--ui-repo", default=ui_repo, required=ui_repo is None,
                     help="dfe-ui checkout the suite runs from (default: $DFE_UI_REPO, else the dfe-ui checkout beside this repo; required when there is neither)")
+    ui.add_argument("--stack", default="", help="versions.yaml stack under test, whose dfe-ui pin --ui-repo must be checked out at (default: its `current` pointer)")
+    ui.add_argument("--dev", action="store_true",
+                    help="run from a dfe-ui checkout that is not the stack's pinned release, with a WARNING naming both versions")
     ui.add_argument("--grep-invert", default=DOCKER_ONLY_TAG,
                     help="Playwright --grep-invert: specs a Kubernetes run cannot carry; empty runs every spec")
     ui.add_argument("--grep", default="", help="Playwright --grep narrowing the run further; empty keeps every spec")

@@ -39,13 +39,13 @@ _spec = importlib.util.spec_from_loader("dfeops_acceptance_stage", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_acceptance_stage"] = dfeops
 _loader.exec_module(dfeops)
-_REAL_GATE = dfeops._engine_checkout_gate
+_REAL_GATE = dfeops._checkout_gate
 
 
 @pytest.fixture(autouse=True)
 def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
-    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
+    """These tests are about what the stage does after the checkout gates, which have their own tests."""
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
 import test_edge_web_fence as edge_fence  # noqa: E402
 from acceptance import clients  # noqa: E402
@@ -112,9 +112,9 @@ def test_the_engine_checkout_must_be_the_pinned_release_unless_dev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, tree: dict, pin: str, dev: bool, rc: int, said: list[str],
     warns: bool,
 ) -> None:
-    monkeypatch.setattr(dfeops, "_stack_engine_pin", lambda _stack: pin)
+    monkeypatch.setattr(dfeops, "_stack_app_pin", lambda _stack, _app: pin)
     repo = _engine_checkout(tmp_path, **tree)
-    assert _REAL_GATE(str(repo), "S", dev) == rc
+    assert _REAL_GATE(str(repo), "dfe-engine", "S", dev, "the acceptance suite runs") == rc
     err = capsys.readouterr().err
     for phrase in said:
         assert phrase in err, err
@@ -122,14 +122,15 @@ def test_the_engine_checkout_must_be_the_pinned_release_unless_dev(
 
 
 def test_a_directory_that_is_not_a_git_checkout_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    monkeypatch.setattr(dfeops, "_stack_engine_pin", lambda _stack: "v1.0.0")
-    assert _REAL_GATE(str(tmp_path), "S", False) == 2
+    monkeypatch.setattr(dfeops, "_stack_app_pin", lambda _stack, _app: "v1.0.0")
+    assert _REAL_GATE(str(tmp_path), "dfe-engine", "S", False, "the acceptance suite runs") == 2
     assert "unknown" in capsys.readouterr().err
 
 
 def test_the_pin_is_read_from_the_stack_under_test() -> None:
-    assert dfeops._stack_engine_pin(dfeops._current_stack()).startswith("v")
-    assert dfeops._stack_engine_pin("0.0.0-no-such-stack") == ""
+    for app in ("dfe-engine", "dfe-transform-vrl", "dfe-transform-vector", "dfe-ui"):
+        assert dfeops._stack_app_pin(dfeops._current_stack(), app).startswith("v"), app
+    assert dfeops._stack_app_pin("0.0.0-no-such-stack", "dfe-engine") == ""
 
 
 # --- the stage inside the cycle ----------------------------------------------------
@@ -155,6 +156,50 @@ def _cycle(monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = "") -> list[
     )
     dfeops.cmd_cycle(args)
     return ran
+
+
+@pytest.mark.parametrize(
+    ("suite", "case", "reads"),
+    [
+        ("source", "filebeat", ["dfe-transform-vrl"]),
+        ("source", "vector", ["dfe-transform-vrl", "dfe-transform-vector"]),
+        ("flows", "filebeat", []),
+        ("onboarding", "vector", []),
+    ],
+)
+def test_the_source_suite_gates_the_checkouts_it_reads_a_corpus_and_program_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suite: str, case: str, reads: list[str]
+) -> None:
+    asked: list[tuple] = []
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *args: asked.append(args) or 0)
+    monkeypatch.setenv("DFE_TRANSFORM_VRL_REPO", str(tmp_path / "vrl"))
+    monkeypatch.setenv("DFE_TRANSFORM_VECTOR_REPO", str(tmp_path / "vector"))
+    assert dfeops._companion_checkouts_gate(suite, case, "S", True) == 0
+    assert [args[1] for args in asked] == reads
+    assert all(args[2:4] == ("S", True) for args in asked)
+
+
+def test_a_wrong_corpus_checkout_refuses_the_source_suite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 2)
+    monkeypatch.setenv("DFE_TRANSFORM_VRL_REPO", str(tmp_path))
+    assert dfeops._companion_checkouts_gate("source", "filebeat", "S", False) == 2
+
+
+def test_the_ui_stage_is_gated_in_the_cycle_and_in_its_own_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    asked: list[tuple] = []
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *args: asked.append(args) or 2)
+    assert _cycle(monkeypatch, "--ui-repo", "/nonexistent/dfe-ui", "--e2e") == []
+    assert asked[0][:3] == ("/nonexistent/dfe-ui", "dfe-ui", "2.2.0-rc.99")
+    args = dfeops.build_parser().parse_args(["ui", "--ui-repo", "/nonexistent/dfe-ui", "--stack", "S"])
+    assert dfeops.cmd_ui(args) == 2
+    assert asked[-1][:3] == ("/nonexistent/dfe-ui", "dfe-ui", "S")
+
+
+def test_the_cycle_hands_the_ui_stage_its_stack_and_the_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran = _cycle(monkeypatch, "--ui-repo", "/nonexistent/dfe-ui", "--e2e", "--dev")
+    stage = next(cmd for word, cmd in ran if word == "ui")
+    assert stage[stage.index("--stack") + 1] == "2.2.0-rc.99"
+    assert "--dev" in stage
 
 
 def test_the_cycle_refuses_a_wrong_engine_checkout_before_it_deploys(monkeypatch: pytest.MonkeyPatch) -> None:

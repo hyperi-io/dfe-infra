@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from acceptance import footprint
 from acceptance.clients import Datastore, Engine
 from acceptance.edge import steps as edge
 from acceptance.onboarding import run as onboarding
@@ -48,7 +49,10 @@ from acceptance.onboarding import wizard
 from acceptance.source import steps as source_steps
 from acceptance.source.run import report
 
-__all__ = ["build_parser", "ingest_rows", "main", "report", "run"]
+__all__ = ["build_parser", "ingest_rows", "main", "prove", "report", "run"]
+
+# The parts of the footprint the edge run compares.
+EDGE_FOOTPRINT = ("replicas", "sources", "overlay", "namespaces")
 
 
 def ingest_rows(results: list[wizard.StepResult], kube: list[str], namespace: str, allow: list[str],
@@ -103,6 +107,30 @@ def console_rows(args: argparse.Namespace, results: list[wizard.StepResult], eng
             browser.close()
 
 
+def prove(args: argparse.Namespace, results: list[wizard.StepResult], kube: list[str], engine: Engine,
+          store: Datastore, admin_user: str, password: str, new_password: str, verify: bool,
+          run_id: str) -> None:
+    """Every row of the run, in the order they happen."""
+    endpoint, accepted, landed = ingest_rows(results, kube, args.namespace, args.allow, store, run_id)
+    if landed:
+        console_rows(args, results, engine, admin_user, password, new_password, run_id)
+        edge.record_hyperdx(results, args.hyperdx_url, engine, run_id, verify, edge.HYPERDX_DEADLINE)
+    else:
+        edge.row(results, "observe", "failed", "not searched: nothing landed to find")
+        edge.row(results, "hyperdx", "failed", "not searched: nothing landed to find")
+    edge.record_minted_secrets(results, kube)
+    if endpoint is not None and accepted:
+        edge.record_refused(
+            results, kube, args.namespace, endpoint, args.gateway_address, args.allow,
+            edge.split_cidrs(args.egress_cidrs), run_id,
+            console_url=args.ui_url, receiver_deployment=args.receiver_deployment,
+        )
+    else:
+        edge.row(results, "refused", "failed", (
+            "not probed: without an accepted send a refusal cannot tell the list from a dead load balancer"
+        ))
+
+
 def run(args: argparse.Namespace) -> int:
     admin_user = os.environ.get("DFE_E2E_ENGINE_USER", "admin")
     password = os.environ.get("DFE_E2E_ADMIN_PASSWORD", "")
@@ -122,24 +150,19 @@ def run(args: argparse.Namespace) -> int:
     print(f"  edge run {run_id}: sending from {', '.join(args.allow)}", file=sys.stderr)
 
     results: list[wizard.StepResult] = []
-    endpoint, accepted, landed = ingest_rows(results, kube, args.namespace, args.allow, store, run_id)
-    if landed:
-        console_rows(args, results, engine, admin_user, password, new_password, run_id)
-        edge.record_hyperdx(results, args.hyperdx_url, engine, run_id, verify, edge.HYPERDX_DEADLINE)
-    else:
-        edge.row(results, "observe", "failed", "not searched: nothing landed to find")
-        edge.row(results, "hyperdx", "failed", "not searched: nothing landed to find")
-    edge.record_minted_secrets(results, kube)
-    if endpoint is not None and accepted:
-        edge.record_refused(
-            results, kube, args.namespace, endpoint, args.gateway_address, args.allow,
-            edge.split_cidrs(args.egress_cidrs), run_id,
-            console_url=args.ui_url, receiver_deployment=args.receiver_deployment,
-        )
-    else:
-        edge.row(results, "refused", "failed", (
-            "not probed: without an accepted send a refusal cannot tell the list from a dead load balancer"
-        ))
+
+    def read() -> footprint.Footprint:
+        # The receiver's ConfigMaps are left out: dfe-ops writes the allow list that rolls them and restores it after this runs.
+        return footprint.capture(kube, args.namespace, engine, include=EDGE_FOOTPRINT)
+
+    before, rows = footprint.baseline(read)
+    results.extend(rows)
+    try:
+        prove(args, results, kube, engine, store, admin_user, password, new_password, verify, run_id)
+    except Exception as exc:  # a failed row is the finding, and the footprint below still has to be read
+        edge.row(results, "run", "failed", source_steps.failure_line(exc))
+    if before is not None:
+        results.extend(footprint.settle(before, read))
 
     shots = Path(args.shots_dir)
     held = (password, new_password, store.password, engine.password, engine.token)
