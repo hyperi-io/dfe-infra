@@ -45,6 +45,12 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_external_datastore"] = dfeops
 _loader.exec_module(dfeops)
 
+
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
+
 from acceptance import clients  # noqa: E402
 
 APP_NAMESPACE = "dfe-aws-test"

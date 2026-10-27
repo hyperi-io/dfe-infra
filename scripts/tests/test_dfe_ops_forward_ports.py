@@ -25,6 +25,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "dfe-ops"
 
@@ -34,6 +36,12 @@ _spec = importlib.util.spec_from_loader("dfeops_forward_ports", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_forward_ports"] = dfeops
 _loader.exec_module(dfeops)
+
+
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
 
 
 @contextmanager

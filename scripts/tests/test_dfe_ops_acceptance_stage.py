@@ -22,6 +22,7 @@ leave a destroy behind it whatever it reports.
 import argparse
 import importlib.machinery
 import importlib.util
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -38,6 +39,13 @@ _spec = importlib.util.spec_from_loader("dfeops_acceptance_stage", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_acceptance_stage"] = dfeops
 _loader.exec_module(dfeops)
+_REAL_GATE = dfeops._engine_checkout_gate
+
+
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
 
 import test_edge_web_fence as edge_fence  # noqa: E402
 from acceptance import clients  # noqa: E402
@@ -56,6 +64,72 @@ def _fake_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
     bridge = type(sys)("bridge")
     bridge.get_tf_outputs = lambda _dir: dict(TF_OUTPUTS)
     monkeypatch.setitem(sys.modules, "bridge", bridge)
+
+
+# --- the engine checkout must be the release the stack pins --------------------------
+
+
+def _git(repo: Path, *argv: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
+         "-C", str(repo), *argv],
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+
+
+def _engine_checkout(tmp_path: Path, *, tag: str = "v1.0.0", past: bool = False, dirty: bool = False) -> Path:
+    """A git tree with one commit tagged *tag*, optionally a commit past it or with a modified tracked file."""
+    repo = tmp_path / "dfe-engine"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "f.txt").write_text("one\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-q", "-m", "one")
+    _git(repo, "tag", tag)
+    if past:
+        (repo / "f.txt").write_text("two\n", encoding="utf-8")
+        _git(repo, "commit", "-q", "-am", "two")
+    if dirty:
+        (repo / "f.txt").write_text("three\n", encoding="utf-8")
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("tree", "pin", "dev", "rc", "said", "warns"),
+    [
+        ({}, "v1.0.0", False, 0, ["is v1.0.0, the release stack S pins"], False),
+        ({}, "v1.0.0", True, 0, ["is v1.0.0"], False),
+        ({"past": True}, "v1.0.0", False, 2, ["v1.0.0-1-g", "pins dfe-engine v1.0.0", "--dev"], False),
+        ({"tag": "v0.9.0"}, "v1.0.0", False, 2, ["v0.9.0", "pins dfe-engine v1.0.0"], False),
+        ({"dirty": True}, "v1.0.0", False, 2, ["-dirty", "pins dfe-engine v1.0.0"], False),
+        ({}, "", False, 2, ["pins no dfe-engine"], False),
+        ({"past": True}, "v1.0.0", True, 0, ["WARNING", "v1.0.0-1-g", "pins dfe-engine v1.0.0"], True),
+        ({"dirty": True}, "v1.0.0", True, 0, ["WARNING", "-dirty", "pins dfe-engine v1.0.0"], True),
+    ],
+    ids=["on-pin", "on-pin-dev", "past-pin", "other-tag", "dirty", "no-pin", "past-pin-dev", "dirty-dev"],
+)
+def test_the_engine_checkout_must_be_the_pinned_release_unless_dev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, tree: dict, pin: str, dev: bool, rc: int, said: list[str],
+    warns: bool,
+) -> None:
+    monkeypatch.setattr(dfeops, "_stack_engine_pin", lambda _stack: pin)
+    repo = _engine_checkout(tmp_path, **tree)
+    assert _REAL_GATE(str(repo), "S", dev) == rc
+    err = capsys.readouterr().err
+    for phrase in said:
+        assert phrase in err, err
+    assert ("WARNING" in err) is warns, err
+
+
+def test_a_directory_that_is_not_a_git_checkout_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(dfeops, "_stack_engine_pin", lambda _stack: "v1.0.0")
+    assert _REAL_GATE(str(tmp_path), "S", False) == 2
+    assert "unknown" in capsys.readouterr().err
+
+
+def test_the_pin_is_read_from_the_stack_under_test() -> None:
+    assert dfeops._stack_engine_pin(dfeops._current_stack()).startswith("v")
+    assert dfeops._stack_engine_pin("0.0.0-no-such-stack") == ""
 
 
 # --- the stage inside the cycle ----------------------------------------------------
@@ -81,6 +155,21 @@ def _cycle(monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = "") -> list[
     )
     dfeops.cmd_cycle(args)
     return ran
+
+
+def test_the_cycle_refuses_a_wrong_engine_checkout_before_it_deploys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 2)
+    assert _cycle(monkeypatch, "--acceptance-suite", "source") == []
+
+
+def test_the_cycle_hands_the_acceptance_stage_its_stack_and_the_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple] = []
+    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *args: seen.append(args) or 0)
+    ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--dev")
+    stage = next(cmd for word, cmd in ran if word == "acceptance")
+    assert stage[stage.index("--stack") + 1] == "2.2.0-rc.99"
+    assert "--dev" in stage
+    assert seen == [("/nonexistent/dfe-engine", "2.2.0-rc.99", True)]
 
 
 def test_no_acceptance_suite_runs_no_acceptance_stage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -594,7 +683,10 @@ def test_an_engine_that_refuses_the_run_at_teardown_still_leaves_the_report(tmp_
 
     driver = types.SimpleNamespace(results=[wizard.StepResult("landed", "done", "60 of 60 rows")])
     run = types.SimpleNamespace(driver=driver, engine=Refusing(), args=types.SimpleNamespace(keep=False))
-    source_run.teardown(run, types.SimpleNamespace(name="fb-1"), "https://dfe.example")
+    cleaned: list[str] = []
+    case = types.SimpleNamespace(name="fb-1", cleanup=lambda _run: cleaned.append("cleanup") or [])
+    source_run.teardown(run, case, "https://dfe.example")
+    assert cleaned == ["cleanup"], "the case's own cleanup runs even when the engine refused the run"
     text = source_run.report(driver.results, tmp_path)
     assert "FAILED: teardown" in text
     assert "forced password change failed: 422" in (tmp_path / source_run.STEP_TABLE).read_text(encoding="utf-8")

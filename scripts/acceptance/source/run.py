@@ -78,7 +78,25 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
 
 
 def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
-    """Remove what the run made, and prove HyperDX lost the view with it."""
+    """Remove what the run made, and prove HyperDX lost the view with it.
+
+    The case's own cleanup runs on every path out, because it closes the receiver's
+    unauthenticated listener and stops the beats pair, and an unreachable engine
+    must not leave either behind.
+    """
+    try:
+        remove_run_source(run, case, api_url)
+    finally:
+        try:
+            run.driver.results.extend(case.cleanup(run))
+        except (OSError, RuntimeError) as exc:
+            run.driver.results.append(wizard.StepResult(
+                "cleanup", "failed", f"{case.name} cleanup did not finish: {exc}"
+            ))
+
+
+def remove_run_source(run: cases.Run, case: cases.Case, api_url: str) -> None:
+    """Delete the run's source through the engine API and check HyperDX dropped its view."""
     driver = run.driver
     try:
         created = run.engine.call("GET", f"/sources/{case.name}").status == 200
@@ -101,7 +119,6 @@ def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
         driver.results.append(wizard.StepResult("hyperdx-source-removed", state, detail))
     elif created:
         driver.results.append(wizard.StepResult("teardown", "kept", f"{case.name} left deployed (--keep)"))
-    driver.results.extend(case.cleanup(run))
 
 
 def capture_diagnostics(prefix: list[str], label: str, timeout: float) -> wizard.StepResult:

@@ -15,11 +15,11 @@ variable "domain" {
 }
 
 variable "profile" {
-  description = "Deployment profile, from tfvars: slim (single-node, gRPC, no Kafka), single (single-node, with Kafka), scale (HA, with Kafka) or mesh (HA, gRPC, no Kafka)"
+  description = "Deployment profile, from tfvars: slim (single-node, gRPC, no Kafka), single (single-node, with Kafka) or scale (HA, with Kafka). mesh is not supported in this release"
   type        = string
   validation {
-    condition     = contains(["slim", "single", "scale", "mesh"], var.profile)
-    error_message = "profile must be 'slim', 'single', 'scale' or 'mesh'."
+    condition     = contains(["slim", "single", "scale"], var.profile)
+    error_message = "profile must be 'slim', 'single' or 'scale' (mesh is not supported in this release; use scale)."
   }
 }
 

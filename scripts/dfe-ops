@@ -28,7 +28,7 @@ Subcommands:
   deploy       Deploy DFE to a target cloud (wraps bootstrap/deploy.sh:
                terraform -> bridge -> bootstrap -> Argo).
   stack-deploy Drive one END-TO-END deploy of a PINNED stack version in a chosen
-               MODE (slim|single|scale|mesh) onto an EXISTING cluster:
+               MODE (slim|single|scale) onto an EXISTING cluster:
                offline pre-flight (pins resolve, no drift, mode charts render) ->
                bootstrap (Layer 0/1 + Argo sync of the mode's profile at the
                SSoT-pinned versions) -> bounded readiness gate -> the two default
@@ -352,7 +352,7 @@ from dfe_ops_kind import add_kind_subparser  # noqa: E402
 from dfe_ops_readiness_report import add_readiness_report_subparser  # noqa: E402
 from dfe_ops_redact import add_redact_subparser  # noqa: E402
 from dfe_ops_upgrade import STRIMZI_CRDS, add_upgrade_subparser, stale_strimzi_crds  # noqa: E402
-from profiles import DEFAULT_MODE, MODES  # noqa: E402
+from profiles import DEFAULT_MODE, SELECTABLE_MODES, selectable_mode  # noqa: E402
 from resolve_pins import add_pin_subparser  # noqa: E402
 from tester_idp import add_idp_subparser  # noqa: E402
 
@@ -432,7 +432,7 @@ def _extras_render(app: str, mode: str) -> list[str]:
 
     Args:
         app: The app's deploy.service, which picks its objects and its values directory.
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
 
     Returns:
         The command, short of the deploy-time facts a caller adds.
@@ -1477,6 +1477,78 @@ def _sibling_repo(name: str, env_var: str) -> str | None:
     return str(sibling) if sibling.is_dir() else None
 
 
+def _stack_engine_pin(stack: str) -> str:
+    """The dfe-engine tag versions.yaml pins for *stack*, empty when the stack or the pin is absent."""
+    sys.path.insert(0, str(BOOTSTRAP))
+    from check_platform import load_versions
+
+    try:
+        root = load_versions(REPO_ROOT / "versions.yaml")
+    except OSError:
+        return ""
+    entry = (root.get("stacks") or {}).get(stack) or {}
+    return str((entry.get("apps") or {}).get("dfe-engine") or "")
+
+
+def _checkout_state(repo: str) -> tuple[str, bool]:
+    """What a git checkout is, and whether that is exactly a release tag on a clean tree.
+
+    Args:
+        repo: Path to the checkout.
+
+    Returns:
+        (`git describe --tags --always --dirty`, or "unknown" when git cannot read it;
+        the tags pointing at HEAD joined by space, empty when the tree is dirty).
+    """
+    rc, described, _ = _run_text(["git", "-C", repo, "describe", "--tags", "--always", "--dirty"])
+    if rc != 0:
+        return "unknown", ""
+    rc, tags, _ = _run_text(["git", "-C", repo, "tag", "--points-at", "HEAD"])
+    rc_dirty, dirty, _ = _run_text(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"])
+    if rc != 0 or rc_dirty != 0 or dirty.strip():
+        return described.strip(), ""
+    return described.strip(), " ".join(tags.split())
+
+
+def _engine_checkout_gate(repo: str, stack: str, dev: bool) -> int:
+    """Refuse an engine checkout that is not the release the stack under test pins.
+
+    The acceptance suite is the engine's own pytest tree and runner, so a checkout
+    at any other commit proves that commit rather than the stack. --dev runs a local
+    tree on purpose and says so.
+
+    Args:
+        repo: The dfe-engine checkout the suite runs from.
+        stack: The versions.yaml stack under test; empty reads versions.yaml `current`.
+        dev: Whether a checkout that is not the pinned release is allowed.
+
+    Returns:
+        0 to proceed, 2 to refuse.
+    """
+    stack = stack or _current_stack()
+    pin = _stack_engine_pin(stack)
+    described, tags_at_head = _checkout_state(repo)
+    if pin and pin in tags_at_head.split():
+        print(f"  engine checkout {repo} is {pin}, the release stack {stack} pins", file=sys.stderr)
+        return 0
+    seen = f"{described} ({repo})"
+    wanted = f"dfe-engine {pin}" if pin else "no dfe-engine"
+    if dev:
+        print(
+            f"WARNING: --dev: the acceptance suite runs from engine checkout {seen}, "
+            f"but stack {stack} pins {wanted}",
+            file=sys.stderr,
+        )
+        return 0
+    print(
+        f"acceptance: the engine checkout is {seen}, but stack {stack} pins {wanted}. "
+        f"Check out {pin or 'the pinned tag'} there (git -C {repo} checkout {pin or '<tag>'}), "
+        "or pass --dev to run a local tree on purpose.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def _acceptance_transport(args: argparse.Namespace) -> str:
     """The data path the flow suite must prove: explicit, else derived from the mode."""
     if args.transport:
@@ -2052,6 +2124,9 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
         settings.update(loaded)
         print(f"  loaded {len(loaded)} var(s) from {env_file}", file=sys.stderr)
 
+    if _engine_checkout_gate(str(args.repo), args.stack, args.dev) != 0:
+        return 2
+
     context = args.context or settings.get("DFE_KUBE_CONTEXT")
     namespace = args.namespace or settings.get("DFE_NAMESPACE", "dfe-local")
     ch_namespace = args.ch_namespace or settings.get("DFE_CH_NAMESPACE", "clickhouse")
@@ -2610,7 +2685,7 @@ def _chart_values(chart: Path, mode: str, cloud: str = "") -> dict:
 
     Args:
         chart: The chart directory.
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
         cloud: The argocd/values/<cloud>.yaml overlay, skipped when empty.
 
     Returns:
@@ -2642,7 +2717,7 @@ def _component_values(service: str, mode: str, cloud: str = "") -> dict:
 
     Args:
         service: The component's deploy.service, which names its defaults and values directory.
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
         cloud: The argocd/values/<cloud>.yaml overlay, skipped when empty.
 
     Returns:
@@ -2681,7 +2756,7 @@ def _broker_credential_from_store(mode: str, cloud: str = "") -> bool:
     credential comes from an in-cluster generator (kafka-single-user.yaml).
 
     Args:
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
         cloud: The cloud overlay to layer, skipped when empty.
 
     Returns:
@@ -2711,7 +2786,7 @@ def _store_consumers(mode: str, env: Mapping[str, str]) -> list[str]:
     an external ClickHouse say, and that repo is not readable before the deploy.
 
     Args:
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
         env: The assembled deploy environment.
 
     Returns:
@@ -2780,7 +2855,7 @@ def _resolve_store_backend(env: Mapping[str, str], mode: str) -> tuple[str, list
 
     Args:
         env: The assembled deploy environment.
-        mode: One of MODES.
+        mode: One of SELECTABLE_MODES.
 
     Returns:
         (backend, the store's consumers from _store_consumers). The backend is
@@ -4369,7 +4444,7 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
     The forced overrides are the whole point of the driver: DFE_PROFILE = the
     chosen mode (the single lever that selects the deploy profile end to end) and,
     optionally, the Argo git ref for the pinned charts. Later sources win, so a
-    terraform-supplied DFE_PROFILE (one of MODES) is always replaced by the
+    terraform-supplied DFE_PROFILE (one of SELECTABLE_MODES) is always replaced by the
     requested mode.
 
     DFE_REGISTRY is NOT in that set: --registry overrides the env file when it is
@@ -4420,8 +4495,8 @@ def _assemble_env(args: argparse.Namespace) -> dict[str, str]:
 
 def cmd_stack_deploy(args: argparse.Namespace) -> int:
     """Drive a pinned-stack, mode-selected deploy + the two default E2E tests."""
-    if args.mode not in MODES:
-        print(f"--mode must be one of {', '.join(MODES)}", file=sys.stderr)
+    if args.mode not in SELECTABLE_MODES:
+        print(profiles.refusal(args.mode) or f"--mode must be one of {', '.join(SELECTABLE_MODES)}", file=sys.stderr)
         return 2
     if _resolve_stack(args) != 0:
         return 2
@@ -4679,6 +4754,11 @@ def cmd_cycle(args: argparse.Namespace) -> int:
             return 2
     if _resolve_stack(args) != 0:
         return 2
+    # Refused before anything deploys: `acceptance` runs the same gate at the end.
+    if args.acceptance_suite:
+        engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
+        if _engine_checkout_gate(str(engine_repo), args.stack, args.dev) != 0:
+            return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
     passthrough_kube = ["--kubeconfig", args.kubeconfig] if args.kubeconfig else []
     passthrough_env = [flag for f in args.env_file for flag in ("--env-file", f)]
@@ -4742,9 +4822,12 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     if args.acceptance_suite:
         acceptance_cmd = [
             *self_cmd, "acceptance", "--suite", args.acceptance_suite, "--mode", args.mode,
+            "--stack", args.stack,
             *passthrough_kube, *passthrough_env,
             "--insecure", "--shots-dir", args.acceptance_shots_dir,
         ]
+        if args.dev:
+            acceptance_cmd.append("--dev")
         if args.from_terraform:
             acceptance_cmd += ["--from-terraform", args.from_terraform]
         # The stage follows its pods' logs, and the source runner captures before it removes its
@@ -4898,16 +4981,16 @@ def build_parser() -> argparse.ArgumentParser:
     # stack-deploy
     sd = sub.add_parser(
         "stack-deploy",
-        help=f"deploy a pinned stack version in a mode ({'|'.join(MODES)}) + run the 2 default E2E tests",
+        help=f"deploy a pinned stack version in a mode ({'|'.join(SELECTABLE_MODES)}) + run the 2 default E2E tests",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     sd.add_argument("--stack", default="", help="versions.yaml stack version to deploy/validate (default: its `current` pointer)")
     sd.add_argument(
         "--mode",
         default=DEFAULT_MODE,
-        choices=list(MODES),
+        type=selectable_mode, choices=list(SELECTABLE_MODES),
         help=f"deploy profile (default: {DEFAULT_MODE}) -- "
-        + "; ".join(f"{m}: {p.description}" for m, p in profiles.PROFILES.items()),
+        + "; ".join(f"{m}: {p.description}" for m, p in profiles.PROFILES.items() if m not in profiles.UNSUPPORTED_MODES),
     )
     sd.add_argument(
         "--kubeconfig",
@@ -4960,7 +5043,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="READ-ONLY check: is this cluster right for a DFE deployment?",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    pf.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile the cluster is being sized for")
+    pf.add_argument("--mode", default=DEFAULT_MODE, type=selectable_mode, choices=list(SELECTABLE_MODES), help="deploy profile the cluster is being sized for")
     pf.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster (default: $KUBECONFIG / current context)")
     pf.add_argument("--context", default=None, help="kubeconfig context name (default: DFE_KUBE_CONTEXT from --env-file, else current)")
     pf.add_argument("--namespace", default=None, help="target app namespace (default: DFE_NAMESPACE from --env-file, else dfe-local)")
@@ -4982,7 +5065,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="THE validation cycle: preflight -> stack-deploy+E2E -> smoke suite -> destroy",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    cy.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy profile to cycle")
+    cy.add_argument("--mode", default=DEFAULT_MODE, type=selectable_mode, choices=list(SELECTABLE_MODES), help="deploy profile to cycle")
     cy.add_argument("--stack", default="", help="versions.yaml stack version to deploy (default: its `current` pointer)")
     cy.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig for the target cluster")
     cy.add_argument("--env-file", action="append", default=[], metavar="PATH", help="DFE_* env file (repeatable; later wins) -- the ONLY place estate-specific values live")
@@ -5006,6 +5089,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run `acceptance --suite <name>` as a stage after smoke (needs the engine "
                          "checkout acceptance --repo finds, and a browser for onboarding, source and "
                          f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
+    cy.add_argument("--dev", action="store_true",
+                    help="let the acceptance stage run from an engine checkout that is not the stack's pinned release (a WARNING names both versions)")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
                     help="where the acceptance stage writes its screenshots and step table")
     cy.add_argument("--evidence-dir", default=None, metavar="DIR",
@@ -5062,7 +5147,7 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--kubeconfig", help="kubeconfig for the target cluster")
     vf.add_argument("--env-file", action="append", default=[], metavar="PATH",
                     help="DFE_* env file the deploy used (repeatable; later wins). Without it the suite uses its default namespaces and fails a healthy stack.")
-    vf.add_argument("--mode", choices=MODES, help="deploy profile, so the suite knows whether a broker is expected")
+    vf.add_argument("--mode", type=selectable_mode, choices=SELECTABLE_MODES, help="deploy profile, so the suite knows whether a broker is expected")
     vf.add_argument("--from-terraform", metavar="TF_DIR",
                     help="read DFE_* outputs from this terraform environment, as the deploy did (supplies DFE_NAMESPACE)")
     vf.set_defaults(func=cmd_verify)
@@ -5086,7 +5171,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="DFE_* env file the deploy used (repeatable; later wins) -- supplies DFE_NAMESPACE")
     rf.add_argument("--from-terraform", default=None, metavar="TF_DIR",
                     help="read DFE_* outputs from a terraform env dir, as the deploy did (env files win over it)")
-    rf.add_argument("--mode", choices=MODES,
+    rf.add_argument("--mode", type=selectable_mode, choices=SELECTABLE_MODES,
                     help="deploy profile, so the smoke suite knows whether a broker is expected")
     rf.add_argument("--namespace", default=None,
                     help="app namespace the readiness gate asserts workloads in (default: DFE_NAMESPACE from --env-file)")
@@ -5110,7 +5195,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     asum.add_argument("--out", default="", help="where to write it (default: .tmp/<stack>-<mode>/access-summary.md)")
     asum.add_argument("--stack", default="current", help="stack version, for the default path")
-    asum.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES), help="deploy mode, for the default path")
+    asum.add_argument("--mode", default=DEFAULT_MODE, type=selectable_mode, choices=list(SELECTABLE_MODES), help="deploy mode, for the default path")
     asum.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG"), help="kubeconfig the deploy ran with")
     asum.add_argument("--context", default=None, help="kubeconfig context")
     asum.add_argument("--namespace", default=None, help="app namespace (default: the cluster annotation)")
@@ -5128,7 +5213,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cc.add_argument("--lane", required=True, choices=("docker", "k8s"),
                     help="which lane is asking; docker reads its host's memory, k8s the node headroom")
-    cc.add_argument("--mode", default=DEFAULT_MODE, choices=list(MODES),
+    cc.add_argument("--mode", default=DEFAULT_MODE, type=selectable_mode, choices=list(SELECTABLE_MODES),
                     help="deploy mode, which sets the floor from scripts/profiles.py")
     cc.add_argument("--floor-bytes", type=int, default=0,
                     help="override the mode's floor (bytes); 0 keeps the profile's")
@@ -5179,10 +5264,13 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--ch-user", default=None,
                     help="datastore user the suite connects as (default: an external server's user from the dfe-cluster secret, else default)")
     ac.add_argument("--ch-database", default="dfe", help="datastore database the assertions read")
+    ac.add_argument("--stack", default="", help="versions.yaml stack under test, whose dfe-engine pin --repo must be checked out at (default: its `current` pointer)")
+    ac.add_argument("--dev", action="store_true",
+                    help="run from an engine checkout that is not the stack's pinned release, with a WARNING naming both versions")
     engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
     ac.add_argument("--repo", default=engine_repo, required=engine_repo is None,
                     help="engine checkout the suite runs from (default: $DFE_ENGINE_REPO, else the dfe-engine checkout beside this repo; required when there is neither)")
-    ac.add_argument("--mode", default=None, choices=list(MODES),
+    ac.add_argument("--mode", default=None, type=selectable_mode, choices=list(SELECTABLE_MODES),
                     help="deploy profile the stack runs, which sets the default --transport and the app set the idle check expects")
     ac.add_argument("--idle-port", type=int, default=19090,
                     help="local port the idle check forwards each app's metrics server onto, one at a time")

@@ -769,8 +769,8 @@ steps:
 ## backend also reaches bootstrap.sh as DFE_SECRETS_BACKEND: on openbao it
 ## requires DFE_VAULT_ADDR + DFE_VAULT_ROLE_ID and seeds an AppRole SecretID, on
 ## aws-sm it requires neither and the store authenticates by the pod's own
-## identity, and on none it creates no store at all. Nothing the slim, single or
-## mesh profile deploys reads a store, so those take none -- or leave backend
+## identity, and on none it creates no store at all. Nothing the slim or
+## single profile deploys reads a store, so those take none -- or leave backend
 ## blank and give no OpenBao value, and dfe-ops stack-deploy picks none itself.
 ## scale reads its broker credential from the store and is refused on none.
 ## ref is the path prefix every reference hangs off -- optional, and empty means

@@ -41,7 +41,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 from acceptance.source import cases, fetcher, steps  # noqa: E402
-from acceptance.source.run import build_parser, walk  # noqa: E402
+from acceptance.source.run import build_parser, teardown, walk  # noqa: E402
 
 PROGRAM = "# a filebeat program\n" * 8
 TABLE = "zone,offset\nUTC,0\n"
@@ -2350,6 +2350,38 @@ class TestTheBeatsVariation:
 
         assert rows[-1].status == "failed"
         assert "may still be open" in rows[-1].detail
+
+    @pytest.mark.parametrize("failing", ["the source lookup only", "every call"])
+    @pytest.mark.parametrize("error", [OSError("connection refused"), RuntimeError("login refused")])
+    def test_the_teardown_cleans_up_even_when_the_engine_cannot_be_reached(
+        self, monkeypatch, transform_repo, failing, error
+    ):
+        engine = ReceiverEngine()
+        driver, case, run, _, _ = self._feed(monkeypatch, transform_repo, engine)
+        stopped: list[str] = []
+        monkeypatch.setattr(cases.beats, "stop", lambda pair: (stopped.append("stop"), "removed")[1])
+        served = engine.call
+
+        def unreachable(method, path, body=None):
+            if failing == "every call" or path.startswith("/sources/"):
+                raise error
+            return served(method, path, body)
+
+        engine.call = unreachable
+        driver.results = []
+
+        teardown(run, case, "https://dfe.example")
+
+        rows = {row.slug: row for row in driver.results}
+        assert rows["teardown"].status == "failed"
+        assert stopped == ["stop"], "the beats pair is stopped whatever the engine does"
+        assert rows["beats-removed"].status == "done"
+        restored = rows["receiver-lumberjack-restored"]
+        if failing == "every call":
+            assert restored.status == "failed"
+            assert "may still be open" in restored.detail
+        else:
+            assert restored.status == "done", restored.detail
 
     def test_the_proof_holds_both_shipped_routes_to_the_same_fields(self, shipping_corpus):
         for via in cases.SHIPPED:
