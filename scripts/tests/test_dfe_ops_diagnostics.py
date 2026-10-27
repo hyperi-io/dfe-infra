@@ -56,8 +56,8 @@ _loader.exec_module(dfeops)
 
 @pytest.fixture(autouse=True)
 def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
-    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
+    """These tests are about what the stage does after the checkout gates, which have their own tests."""
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
 # Credential values planted in every answer. None may reach a file.
 PLANTED = (

@@ -51,9 +51,10 @@ _loader.exec_module(dfeops)
 
 @pytest.fixture(autouse=True)
 def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests are about what the stage does after the engine-checkout gate, which has its own tests."""
-    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 0)
+    """These tests are about what the stage does after the checkout gates, which have their own tests."""
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+from acceptance import footprint  # noqa: E402
 from acceptance.edge import run as edge_run  # noqa: E402
 from acceptance.edge import steps as edge  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402
@@ -1376,6 +1377,7 @@ def test_the_runner_records_the_store_after_hyperdx(monkeypatch: pytest.MonkeyPa
     before: list[str] = []
     monkeypatch.setattr(edge_run, "ingest_rows", lambda results, *_a: (edge.row(results, "public-endpoint", "failed", "no door"), (None, False, False))[1])
     monkeypatch.setattr(edge, "record_minted_secrets", lambda results, kube: before.extend([*kube, *(r.slug for r in results)]))
+    monkeypatch.setattr(footprint, "capture", lambda *_a, **_k: footprint.Footprint())
     monkeypatch.setenv("DFE_E2E_ADMIN_PASSWORD", "minted")
     args = edge_run.build_parser().parse_args([
         "--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example", "--namespace", "dfe-run",

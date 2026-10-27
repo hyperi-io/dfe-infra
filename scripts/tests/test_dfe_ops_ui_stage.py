@@ -35,6 +35,12 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_ui_stage"] = dfeops
 _loader.exec_module(dfeops)
 
+
+@pytest.fixture(autouse=True)
+def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about what the stage does after the checkout gates, which have their own tests."""
+    monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
+
 BUDGET_VARS = ("E2E_TEST_TIMEOUT_MS", "E2E_EXPECT_TIMEOUT_MS", "E2E_NAV_TIMEOUT_MS")
 
 
