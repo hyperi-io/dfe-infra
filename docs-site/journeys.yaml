@@ -114,6 +114,7 @@ placement:
     EDGE-AUTH-cloud.md: "Deploy / Exposure and access"
     INGEST-EDGE.md: "Deploy / Exposure and access"
     deployment/aws.md: "Deploy / AWS"
+    deployment/aws-configuration.md: "Deploy / AWS"
     deployment/aws-operations.md: "Deploy / AWS"
     deployment/aws-teardown.md: "Deploy / AWS"
     deployment/managed-backends.md: "Deploy / AWS"
