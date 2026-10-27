@@ -171,12 +171,12 @@ function CardLink({to, href, className, children, ...rest}) {
 
 function Hero({stack, versionLabel}) {
   return (
-    <section className={`${styles.hero} surface-navy`} aria-labelledby="hero-title">
+    <section className={styles.hero} aria-labelledby="hero-title">
       <div className={`${styles.container} ${styles.heroGrid}`}>
         <div className={styles.heroCopy}>
           <p className={styles.eyebrow}>DFE {versionLabel} documentation</p>
           <h1 id="hero-title" className={styles.heroTitle}>
-            Data Fusion Engine
+            Data Fusion <span className={styles.heroAccent}>Engine</span>
           </h1>
           <p className={styles.tagline}>
             The data pipeline you deploy and run yourself, from HTTP ingest to ClickHouse.
@@ -307,7 +307,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={`${styles.closing} surface-navy`} aria-labelledby="closing">
+        <section className={styles.closing} aria-labelledby="closing">
           <div className={`${styles.container} ${styles.closingInner}`}>
             <h2 id="closing" className={styles.sectionTitle}>
               Start with a quickstart

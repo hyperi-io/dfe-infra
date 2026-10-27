@@ -158,7 +158,8 @@ module.exports = {
     ],
   ],
   themeConfig: {
-    colorMode: {respectPrefersColorScheme: true},
+    // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
+    colorMode: {defaultMode: 'light', disableSwitch: false, respectPrefersColorScheme: true},
     announcementBar: releaseNotes
       ? {
           // Keyed on the release, so a reader who closed one sees the next.
@@ -172,10 +173,13 @@ module.exports = {
         }
       : undefined,
     navbar: {
-      style: 'dark',
+      title: 'Data Fusion Engine',
+      // hyperi-graphics public/hyperi-hound/tertiary: the one hound colour that reads on both modes.
       logo: {
-        alt: 'Data Fusion Engine',
-        src: `${GRAPHICS}/product-dfe-named-inline/dark/product-dfe-named-inline_bare.svg`,
+        alt: 'HyperI',
+        src: 'img/hyperi-hound.svg',
+        width: 47,
+        height: 32,
       },
       items: [
         {to: '/overview/', label: 'Docs', position: 'left'},
