@@ -264,7 +264,7 @@ The bootstrap Job's pinned jar is verified: `aws-msk-iam-auth` v2.3.8 was
 published 2026-09-05 and the sha256 in `values.yaml` matches both the release's
 own `.sha256` asset and a hand-computed sum of the downloaded jar.
 
-NOT verified (no live AWS account in this workstream, cannot deploy): that the
+NOT verified: that the
 bootstrap Job authenticates end to end -- the Pod Identity credential reaching the
 IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, have not been
 run against a real cluster. Also the
