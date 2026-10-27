@@ -69,6 +69,25 @@ jobs:
       - name: Build every version and merge them
         run: python3 docs-site/scripts/build_site.py
 
+      # main's own pages, assembled the same way at the same moment, so a member's /next/ change reaches both trees.
+      - name: Assemble main's pages for the docs gate
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          git fetch --no-tags --depth 1 origin main
+          git worktree add "$RUNNER_TEMP/main" FETCH_HEAD
+          python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --next --out "$RUNNER_TEMP/content-main"
+
+      # A pull request fails only on findings main's pages do not already carry, so a page awaiting its rewrite blocks nobody. Elsewhere the gate reports.
+      - name: Docs gate
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            python3 docs-site/scripts/gate.py --baseline "$RUNNER_TEMP/content-main" --summary "$GITHUB_STEP_SUMMARY"
+          else
+            python3 docs-site/scripts/gate.py --report-only --summary "$GITHUB_STEP_SUMMARY"
+          fi
+
       # Uploads a version and sends it all traffic. The Worker and its domain are created by OpenTofu, never here.
       - name: Deploy to the docs Worker
         if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
