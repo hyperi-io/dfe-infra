@@ -10,7 +10,7 @@
 """build_site -- one Docusaurus build per version, merged for a single deploy.
 
     python3 docs-site/scripts/build_site.py               # every build in content/site.json
-    python3 docs-site/scripts/build_site.py --only 2.2.0  # one build, the others left as built
+    python3 docs-site/scripts/build_site.py --only 2.2.1  # one build, the others left as built
 
 For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming

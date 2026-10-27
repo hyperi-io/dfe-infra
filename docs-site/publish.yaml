@@ -1,0 +1,52 @@
+# docs-site/publish.yaml -- what the docs site leaves out and where it mounts a
+# member, on top of the stacks versions.yaml releases and the members suite.yaml
+# lists. scripts/aggregate.py reads it with scripts/yaml_subset.py, so it holds
+# nested maps and quoted scalars only: no lists, no flow collections.
+
+# Released stacks the site does not build: no version menu entry, no tree under
+# /v/<stack>/. Each maps to the reason.
+dropped_versions:
+  2.2.0: "superseded by 2.2.1"
+
+# A member whose docs mount inside another member's section rather than at the
+# top of the sidebar: member -> the member it mounts under. The parent mounts at
+# the top level itself, and a member its parent does not reach falls back to the
+# top level.
+mount_under:
+  dfe-hyperdx: "dfe-ui"
+
+# Pages written for the people who build, test and release DFE rather than for an
+# organisation running it. member -> a path under its docs/ -> why it stays off
+# the site. A path ending in / covers the whole directory. The file stays in its
+# repo, and a published page linking to it links to GitHub instead.
+internal:
+  culvert:
+    ci-environment.md: "the culvert CI pipeline"
+  dfe-engine:
+    archive/: "superseded research"
+    data-evolution-acceptance.md: "the end-to-end test steps"
+    deployment/e2e-acceptance.md: "how a change is signed off"
+    deployment/supply-chain-pinning.md: "how the suite picks and pins dependency versions"
+    integrations/hyperdx-fork-maintenance.md: "keeping the HyperDX fork mergeable"
+  dfe-hyperdx:
+    fork/: "maintaining the fork against upstream HyperDX"
+  dfe-infra:
+    ACCEPTANCE-CYCLE.md: "the attended sign-off pass"
+    AUTH-TESTING.md: "test identities for the end-to-end suite"
+    CI-MAINTENANCE-DESIGN.md: "the repository's CI bots and gates"
+    CUTTING-A-STACK.md: "cutting a stack release"
+    DEPLOY-HELPERS.md: "release helpers for unattended runs"
+    SOURCE-SUITE.md: "the post-deploy source tests"
+    TESTING-CYCLE.md: "the create, test, destroy validation cycle"
+    VERIFICATION-TIERS.md: "how a stack version is proven"
+    deployment/deployment-logs/: "a blank test log template"
+    stack-components.md: "the render and drift-check class map"
+    suite-graph.md: "suite membership and release edges"
+  dfe-loader:
+    deployment/PUBLISHING.md: "the loader's CI publishing"
+  dfe-transform-elastic:
+    shared-crates.md: "code shared with an unreleased transform"
+  scalo-py:
+    POST-GA-DEFERRED.md: "a release review backlog"
+  scalo-rs:
+    vector-baselining.md: "an internal performance baseline"

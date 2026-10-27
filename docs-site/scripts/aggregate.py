@@ -10,21 +10,26 @@
 """aggregate -- one content tree per released DFE stack, pulled from the members.
 
     python3 docs-site/scripts/aggregate.py                  # every released stack
-    python3 docs-site/scripts/aggregate.py --stack 2.2.0    # one of them
+    python3 docs-site/scripts/aggregate.py --stack 2.2.1    # one of them
     python3 docs-site/scripts/aggregate.py --next           # plus /next/ from each default branch
     python3 docs-site/scripts/aggregate.py --work-dir .tmp/docs-clones   # keep the clones
 
 A released stack is a versions.yaml block at `maturity: release`, not withdrawn,
-named X.Y.Z with no prerelease suffix. Membership and the sidebar order come from
-`dfe-stack suite`, lane by lane, first appearance winning. Each member is fetched
-anonymously at the ref its stack pins: `apps.<member>` or `content.<member>`, and
-the stack's own tag for dfe-infra. A member the stack does not pin, or one an
-anonymous fetch refuses, is reported and left out.
+named X.Y.Z with no prerelease suffix, less the stacks docs-site/publish.yaml drops.
+Membership and the sidebar order come from `dfe-stack suite`, lane by lane, first
+appearance winning. Each member is fetched anonymously at the ref its stack pins:
+`apps.<member>` or `content.<member>`, and the stack's own tag for dfe-infra. A
+member the stack does not pin, or one an anonymous fetch refuses, is reported and
+left out.
+
+publish.yaml also names the pages each member keeps internal, which are not
+copied, and the members whose docs mount inside another member's section.
 
 Writes, under --out (default docs-site/content/):
 
     <build>/<member>/...              the member's docs/, links that leave docs/ sent to GitHub
     <build>/<member>/_category_.json  its sidebar label and lane position
+    <build>/<parent>/<member>/...     a member publish.yaml mounts under another
     <build>/...                       docs-site/content-root/, the suite's own pages
     _specs/<build>/dfe-engine.json    the engine's committed OpenAPI spec at its pin
     _reports/strays-<build>.md        every docs/ file outside the documentation standard
@@ -57,6 +62,9 @@ VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 DFE_STACK = REPO_ROOT / "scripts" / "dfe-stack"
 CONTENT_ROOT = SITE_ROOT / "content-root"
 DEFAULT_OUT = SITE_ROOT / "content"
+PUBLISH_FILE = SITE_ROOT / "publish.yaml"
+# Files in content-root/ for the people editing it, never copied into a build.
+EDITOR_ONLY = ("VOICE.md",)
 
 GITHUB = "https://github.com"
 RAW_GITHUB = "https://raw.githubusercontent.com"
@@ -83,6 +91,8 @@ NOT_RENDERED = (".rst", ".adoc", ".txt")
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 BANNED_NAMES = frozenset({"design.md", "context.md", "notes.md", "todo.md", "scratch.md"})
 LANDING = "README.md"
+# A member with no landing page opens its sidebar section on its architecture page.
+ARCHITECTURE = ("architecture.md", "ARCHITECTURE.md")
 # What git prints when an anonymous fetch meets a private or missing repository.
 REFUSED = ("could not read Username", "Repository not found", "Authentication failed")
 CATEGORY_FILE = "_category_.json"
@@ -195,6 +205,33 @@ class Finding:
     path: str
     rule: Rule
     detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Policy:
+    """What publish.yaml says to leave out and where to mount a member.
+
+    Attributes:
+        dropped: Released stacks the site does not build.
+        mounts: member -> the member whose section it mounts inside.
+        internal: member -> repo paths it keeps off the site. A path ending in /
+            covers a directory.
+    """
+
+    dropped: frozenset[str] = frozenset()
+    mounts: Mapping[str, str] = field(default_factory=dict)
+    internal: Mapping[str, frozenset[str]] = field(default_factory=dict)
+
+    def internal_to(self, member: str) -> frozenset[str]:
+        """The repo paths one member keeps off the site.
+
+        Args:
+            member: The member's name.
+
+        Returns:
+            Its internal paths, such as ``docs/TESTING-CYCLE.md`` or ``docs/archive/``.
+        """
+        return self.internal.get(member, frozenset())
 
 
 @dataclass(slots=True)
@@ -349,6 +386,65 @@ def load_suite(dfe_stack: Path = DFE_STACK) -> dict:
     return json.loads(done.stdout)
 
 
+def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
+    """Read a parsed publish.yaml, refusing anything that names no member.
+
+    Args:
+        tree: publish.yaml as `yaml_subset.parse` returns it.
+        members: Every suite member's name.
+
+    Returns:
+        The policy.
+
+    Raises:
+        SystemExit: A section is not a map, a name is not a member, a member mounts
+            under itself or under a member that is mounted in turn, or a path leaves
+            docs/.
+    """
+    known = set(members)
+    sections = {key: tree.get(key) or {} for key in ("dropped_versions", "mount_under", "internal")}
+    problems = [
+        f"`{key}` is not a map" for key, value in sections.items() if not isinstance(value, dict)
+    ]
+    if problems:
+        raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
+    mounts = {str(child): str(parent) for child, parent in sections["mount_under"].items()}
+    for child, parent in mounts.items():
+        if child not in known or parent not in known:
+            problems.append(f"mount_under {child} -> {parent}: not both members")
+        elif child == parent or parent in mounts:
+            problems.append(
+                f"mount_under {child} -> {parent}: a parent must mount at the top level"
+            )
+    internal: dict[str, frozenset[str]] = {}
+    for member, paths in sections["internal"].items():
+        if member not in known or not isinstance(paths, dict):
+            problems.append(f"internal {member}: not a member with a map of paths")
+            continue
+        bad = [path for path in paths if path.startswith("/") or ".." in path.split("/")]
+        problems += [f"internal {member}: {path} is not a path under docs/" for path in bad]
+        internal[member] = frozenset(f"docs/{path}" for path in paths)
+    if problems:
+        raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
+    return Policy(frozenset(sections["dropped_versions"]), mounts, internal)
+
+
+def is_internal(repo_path: str, internal: frozenset[str]) -> bool:
+    """Whether a repo path is one of a member's internal pages, or sits in an internal directory.
+
+    Args:
+        repo_path: A normalised repo path, such as ``docs/archive/old.md``.
+        internal: The member's internal paths.
+
+    Returns:
+        True when the path is kept off the site.
+    """
+    directory = repo_path.rstrip("/") + "/"
+    return repo_path in internal or any(
+        path.endswith("/") and directory.startswith(path) for path in internal
+    )
+
+
 def ordered_members(graph: Mapping[str, object]) -> list[Member]:
     """Every member, in the order the lanes first list it.
 
@@ -402,14 +498,23 @@ def stack_refs(
     return refs
 
 
-def relink(target: str, *, doc_dir: str, repo: str, ref: str) -> tuple[str, bool]:
-    """Point one link target that leaves docs/ at the file on GitHub, at `ref`.
+def relink(
+    target: str,
+    *,
+    doc_dir: str,
+    repo: str,
+    ref: str,
+    internal: frozenset[str] = frozenset(),
+) -> tuple[str, bool]:
+    """Point one link target that leaves the published docs at the file on GitHub, at `ref`.
 
     Args:
         target: The link target as written, optionally in angle brackets.
         doc_dir: The repo path of the directory holding the linking file.
         repo: The member's owner/name.
         ref: The tag or commit the file was fetched at.
+        internal: The member's internal paths, which are linked on GitHub like any
+            file outside docs/.
 
     Returns:
         The target to write, and whether it escaped the repository (left unchanged).
@@ -429,7 +534,11 @@ def relink(target: str, *, doc_dir: str, repo: str, ref: str) -> tuple[str, bool
         return target, True
     suffix = f"{query_mark}{query}{hash_mark}{fragment}"
     parts = resolved.split("/")
-    published = parts[0] == "docs" and not WORKING_DIRS.intersection(parts[1:])
+    published = (
+        parts[0] == "docs"
+        and not WORKING_DIRS.intersection(parts[1:])
+        and not is_internal(resolved, internal)
+    )
     if published:
         if not absolute:
             return target, False
@@ -445,8 +554,15 @@ def relink(target: str, *, doc_dir: str, repo: str, ref: str) -> tuple[str, bool
     return (f"<{new}>" if bracketed else new), False
 
 
-def rewrite_links(text: str, *, doc_path: str, repo: str, ref: str) -> tuple[str, list[str]]:
-    """Rewrite every link in a markdown file that leaves docs/, outside code.
+def rewrite_links(
+    text: str,
+    *,
+    doc_path: str,
+    repo: str,
+    ref: str,
+    internal: frozenset[str] = frozenset(),
+) -> tuple[str, list[str]]:
+    """Rewrite every link in a markdown file that leaves the published docs, outside code.
 
     Inline links and images, reference definitions and HTML href/src attributes are
     read. Fenced code blocks and inline code spans are left as written.
@@ -456,6 +572,7 @@ def rewrite_links(text: str, *, doc_path: str, repo: str, ref: str) -> tuple[str
         doc_path: The file's repo path, such as ``docs/deployment/aws.md``.
         repo: The member's owner/name.
         ref: The tag or commit the file was fetched at.
+        internal: The member's internal paths.
 
     Returns:
         The rewritten markdown, and each target that escaped the repository.
@@ -464,7 +581,9 @@ def rewrite_links(text: str, *, doc_path: str, repo: str, ref: str) -> tuple[str
     escaped: list[str] = []
 
     def fix(match: re.Match[str]) -> str:
-        new, escapes = relink(match.group(2), doc_dir=doc_dir, repo=repo, ref=ref)
+        new, escapes = relink(
+            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal
+        )
         if escapes:
             escaped.append(match.group(2))
         closing = match.group(3) if match.re is _HTML_TARGET else ""
@@ -615,17 +734,25 @@ def _file_strays(path: Path, repo_path: str, member: str) -> list[Finding]:
     return found
 
 
-def copy_docs(docs: Path, dest: Path, *, member: Member, ref: str) -> list[Finding]:
+def copy_docs(
+    docs: Path,
+    dest: Path,
+    *,
+    member: Member,
+    ref: str,
+    internal: frozenset[str] = frozenset(),
+) -> list[Finding]:
     """Copy one member's docs/ into the build, rewriting links in its markdown.
 
-    Working-artefact directories, dotfiles and symbolic links are not copied: a link
-    could name any file on the build host.
+    Working-artefact directories, internal pages, dotfiles and symbolic links are not
+    copied: a link could name any file on the build host.
 
     Args:
         docs: The member's docs/ directory.
         dest: Where the member's pages go in the build.
         member: The member.
         ref: The tag or commit the docs were fetched at, for the GitHub links.
+        internal: The member's internal paths.
 
     Returns:
         A LINK finding for each link that escaped the repository.
@@ -637,16 +764,18 @@ def copy_docs(docs: Path, dest: Path, *, member: Member, ref: str) -> list[Findi
         hidden = any(part.startswith(".") for part in relative.parts)
         if path.is_symlink() or hidden or WORKING_DIRS.intersection(relative.parts[:-1]):
             continue
-        if not path.is_file():
+        repo_path = f"docs/{relative.as_posix()}"
+        if not path.is_file() or is_internal(repo_path, internal):
             continue
         target = dest / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if not path.name.lower().endswith(MARKDOWN):
             shutil.copyfile(path, target)
             continue
-        repo_path = f"docs/{relative.as_posix()}"
         text = drop_leading_comments(path.read_text(encoding="utf-8", errors="replace"))
-        rewritten, escaped = rewrite_links(text, doc_path=repo_path, repo=member.repo, ref=ref)
+        rewritten, escaped = rewrite_links(
+            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal
+        )
         target.write_text(rewritten, encoding="utf-8", newline="\n")
         findings += [Finding(member.name, repo_path, Rule.LINK, link) for link in escaped]
     return findings
@@ -679,17 +808,18 @@ def write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
-def category(member: Member, *, ref: str, has_landing: bool) -> dict[str, object]:
+def category(member: Member, *, ref: str, opening: str | None = None) -> dict[str, object]:
     """The `_category_.json` for one member's sidebar entry.
 
     Args:
         member: The member.
         ref: The ref its docs came from.
-        has_landing: Whether its docs/ carries a README.md, which then becomes the
-            category's page.
+        opening: The doc id the section opens on when its docs/ has no README.md,
+            such as ``dfe-loader/architecture``. A README.md is the section's page
+            without one, and with neither the section has no page of its own.
 
     Returns:
-        The category, with a generated index page when there is no landing page.
+        The category.
     """
     data: dict[str, object] = {
         "label": member.name,
@@ -697,15 +827,32 @@ def category(member: Member, *, ref: str, has_landing: bool) -> dict[str, object
         "collapsed": True,
         "customProps": {"lane": member.lane, "ref": ref},
     }
-    if not has_landing:
-        data["link"] = {
-            "type": "generated-index",
-            "description": f"The {member.name} documentation at {ref}.",
-        }
+    if opening:
+        data["link"] = {"type": "doc", "id": opening}
     return data
 
 
-def assemble(build: Build, members: Iterable[Member], fetcher: Fetcher, out: Path) -> BuildResult:
+def mount_order(members: Iterable[Member], mounts: Mapping[str, str]) -> list[Member]:
+    """The members in sidebar order, each mounted member after every top-level one.
+
+    Args:
+        members: The suite members, in sidebar order.
+        mounts: member -> the member it mounts under.
+
+    Returns:
+        The members, top-level first, so a parent is assembled before its children.
+    """
+    members = list(members)
+    return [m for m in members if m.name not in mounts] + [m for m in members if m.name in mounts]
+
+
+def assemble(
+    build: Build,
+    members: Iterable[Member],
+    fetcher: Fetcher,
+    out: Path,
+    policy: Policy | None = None,
+) -> BuildResult:
     """Assemble one build's content tree under `out`.
 
     Args:
@@ -713,18 +860,22 @@ def assemble(build: Build, members: Iterable[Member], fetcher: Fetcher, out: Pat
         members: The suite members, in sidebar order.
         fetcher: Where the checkouts come from.
         out: The content root. The build lands in ``out/<build name>``.
+        policy: The internal pages and mounts publish.yaml sets. None publishes
+            every page and mounts every member at the top level.
 
     Returns:
         What was assembled.
 
     Raises:
-        SystemExit: A member's docs/ collides with the generated API directory or with
-            the root pages.
+        SystemExit: A member's docs/ collides with the generated API directory, with a
+            member mounted inside it, or with the root pages.
     """
-    members = list(members)
+    policy = policy or Policy()
+    members = mount_order(members, policy.mounts)
     result = BuildResult(build)
     root = out / build.name
     root.mkdir(parents=True)
+    included: set[str] = set()
     for member in members:
         ref = build.refs.get(member.name)
         if ref is None:
@@ -743,18 +894,26 @@ def assemble(build: Build, members: Iterable[Member], fetcher: Fetcher, out: Pat
             result.findings.append(Finding(member.name, "docs/", Rule.NO_DOCS, ref))
             continue
         link_ref = checkout.commit if ref == HEAD else ref
-        dest = root / member.name
+        parent = policy.mounts.get(member.name)
+        dest = root / parent / member.name if parent in included else root / member.name
+        if dest.exists():
+            raise SystemExit(f"error: {dest.relative_to(out)} is already in the build")
         if member.classification not in UPSTREAM_LED:
             result.findings += find_strays(docs, member.name)
-        result.findings += copy_docs(docs, dest, member=member, ref=link_ref)
-        has_landing = (docs / LANDING).is_file()
-        write_json(dest / CATEGORY_FILE, category(member, ref=link_ref, has_landing=has_landing))
+        internal = policy.internal_to(member.name)
+        result.findings += copy_docs(docs, dest, member=member, ref=link_ref, internal=internal)
+        opening = None
+        if not (dest / LANDING).is_file():
+            found = next((name for name in ARCHITECTURE if (dest / name).is_file()), None)
+            opening = (dest / found).relative_to(root).with_suffix("").as_posix() if found else None
+        write_json(dest / CATEGORY_FILE, category(member, ref=link_ref, opening=opening))
+        included.add(member.name)
         result.members.append(
             {"name": member.name, "repo": member.repo, "ref": link_ref, "commit": checkout.commit}
         )
         if member.name == SPEC_MEMBER:
             result.openapi = _place_spec(checkout, build, dest, out, result.findings)
-    _copy_root(root, {member.name for member in members})
+    copy_root(root, {member.name for member in members})
     return result
 
 
@@ -772,7 +931,7 @@ def _place_spec(
     placed = out / "_specs" / build.name / f"{SPEC_MEMBER}.json"
     document = json.loads(spec.read_text(encoding="utf-8"))
     write_json(placed, mdx_safe_spec(document))
-    slice_path = f"{SPEC_MEMBER}/{API_DIR}/sidebar.ts"
+    slice_path = (api / "sidebar.ts").relative_to(out / build.name).as_posix()
     # The sidebar generator swaps this category's items for the slice gen-api-docs writes.
     write_json(
         api / CATEGORY_FILE,
@@ -785,14 +944,39 @@ def _place_spec(
     }
 
 
-def _copy_root(root: Path, member_names: set[str]) -> None:
-    """Copy the suite's own pages to the top of a build, refusing to overwrite a member."""
+def root_pages() -> dict[str, Path]:
+    """Every file content-root/ publishes, less the editor-only ones.
+
+    Returns:
+        Its path relative to content-root/, as posix -> the file.
+    """
+    return {
+        path.relative_to(CONTENT_ROOT).as_posix(): path
+        for path in sorted(CONTENT_ROOT.rglob("*"))
+        if path.is_file() and path.name not in EDITOR_ONLY
+    }
+
+
+def copy_root(root: Path, member_names: set[str]) -> None:
+    """Copy the suite's own pages to the top of a build, refusing to overwrite a member.
+
+    Args:
+        root: The build's directory.
+        member_names: Every member's name, none of which a root entry may take.
+
+    Raises:
+        SystemExit: content-root/ is missing, or one of its entries takes a member's name.
+    """
     if not CONTENT_ROOT.is_dir():
         raise SystemExit(f"error: {CONTENT_ROOT} is missing")
-    clash = sorted({path.name for path in CONTENT_ROOT.iterdir()} & member_names)
+    pages = root_pages()
+    clash = sorted({relative.split("/")[0] for relative in pages} & member_names)
     if clash:
         raise SystemExit(f"error: content-root/ entries collide with members: {', '.join(clash)}")
-    shutil.copytree(CONTENT_ROOT, root, dirs_exist_ok=True)
+    for relative, path in pages.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
 
 
 def stray_report(result: BuildResult) -> str:
@@ -867,7 +1051,11 @@ def prepare_out(out: Path) -> None:
 
 
 def plan_builds(
-    tree: Mapping[str, object], members: list[Member], stacks: list[str], with_next: bool
+    tree: Mapping[str, object],
+    members: list[Member],
+    stacks: list[str],
+    with_next: bool,
+    dropped: frozenset[str] = frozenset(),
 ) -> list[Build]:
     """The builds to assemble: the chosen released stacks newest first, then /next/.
 
@@ -876,14 +1064,19 @@ def plan_builds(
         members: The suite members.
         stacks: Released stacks to build. Empty means every one.
         with_next: Whether to add the unlisted preview from each default branch.
+        dropped: Released stacks the site does not build.
 
     Returns:
         The builds.
 
     Raises:
-        SystemExit: A named stack is not a released one, or there is nothing to build.
+        SystemExit: A named stack is not a released one or is dropped, or there is
+            nothing to build.
     """
-    released = released_stacks(tree)
+    refused = sorted(set(stacks) & dropped)
+    if refused:
+        raise SystemExit(f"error: {PUBLISH_FILE.name} drops {', '.join(refused)}")
+    released = [name for name in released_stacks(tree) if name not in dropped]
     unknown = sorted(set(stacks) - set(released))
     if unknown:
         have = ", ".join(released) or "none"
@@ -956,14 +1149,16 @@ def main(argv: list[str] | None = None) -> int:
     text = VERSIONS_FILE.read_text(encoding="utf-8")
     tree = yaml_subset.parse(text, source=str(VERSIONS_FILE))
     members = ordered_members(load_suite())
-    builds = plan_builds(tree, members, args.stack, args.next)
+    publish = yaml_subset.parse(PUBLISH_FILE.read_text(encoding="utf-8"), source=str(PUBLISH_FILE))
+    policy = load_policy(publish, (member.name for member in members))
+    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)
         work.mkdir(parents=True, exist_ok=True)
         fetcher = Fetcher(work, args.git_base)
         try:
-            results = [assemble(build, members, fetcher, args.out) for build in builds]
+            results = [assemble(build, members, fetcher, args.out, policy) for build in builds]
         except FetchError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1

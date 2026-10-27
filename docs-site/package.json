@@ -8,6 +8,7 @@
     "build": "python3 scripts/build_site.py",
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
+    "preview": "python3 scripts/preview.py",
     "serve": "docusaurus serve --dir build",
     "clear": "docusaurus clear"
   },

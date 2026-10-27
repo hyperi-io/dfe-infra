@@ -13,6 +13,14 @@ on:
     workflows: ["Stack Release"]
     types: [completed]
     branches: [main]
+  # A merged docs change publishes now. content-root/ and publish.yaml reach every
+  # version, and docs/ reaches /next/, which reads this repo's default branch.
+  push:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
   # Not a required check, so a path filter here cannot block a merge.
   pull_request:
     paths:
