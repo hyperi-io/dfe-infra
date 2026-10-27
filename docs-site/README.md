@@ -14,7 +14,7 @@ The source of https://dfe.docs.hyperi.io. A Docusaurus site with one build per r
 
 A change to dfe-infra's own `docs/` also refreshes `/next/` on merge.
 
-The sidebar is generated from the tree. A root page sets its place below 10, with `sidebar_position` front matter, or `position` in a directory's `_category_.json`. Each repository follows in the lane order `suite.yaml` gives, opening on its `docs/README.md`, else its `architecture.md`.
+The sidebar runs Overview, then four journeys: Evaluate, Deploy, Operate, Reference. `journeys.yaml` names each journey's sections in order and places every page in one, by repository and path, with a `default` per repository for pages it does not name. A new page in a repository's `docs/` lands in that repository's default section until a line places it. Pages keep their URLs, whichever section they sit in. Within a section, pages follow the lane order `suite.yaml` gives, then each repository's own order.
 
 `publish.yaml` holds the three publishing decisions: the released stacks the site does not build, the pages each repository keeps internal, and the repositories whose section sits inside another's (dfe-hyperdx inside dfe-ui). A published page that links to an internal one links to it on GitHub.
 

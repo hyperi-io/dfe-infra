@@ -19,8 +19,11 @@ mount_under:
 # organisation running it: process pages, and the components' developer docs,
 # which stay in their repos. member -> a path under its docs/ -> why it stays
 # off the site. A path ending in / covers the whole directory. The file stays in
-# its repo, and a published page linking to it links to GitHub instead.
+# its repo, and a published page linking to it links to GitHub instead. `all-pages` keeps
+# a member's whole docs/ off the site.
 internal:
+  clickhouse-dfe:
+    all-pages: "a library's developer docs"
   culvert:
     ci-environment.md: "the culvert CI pipeline"
     scalo-reference.md: "developer docs: design, internals or dev setup"
@@ -107,7 +110,13 @@ internal:
     create-schema-form.md: "developer docs: design, internals or dev setup"
     engine-api-client.md: "developer docs: design, internals or dev setup"
     local-development.md: "developer docs: design, internals or dev setup"
+  factbook-rs:
+    all-pages: "a library's developer docs"
+  logreducer:
+    all-pages: "a library's developer docs"
   scalo-py:
-    POST-GA-DEFERRED.md: "a release review backlog"
+    all-pages: "a library's developer docs"
   scalo-rs:
-    vector-baselining.md: "an internal performance baseline"
+    all-pages: "a library's developer docs"
+  vector-vrl:
+    all-pages: "a library's developer docs"

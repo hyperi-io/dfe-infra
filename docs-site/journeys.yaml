@@ -1,0 +1,150 @@
+# docs-site/journeys.yaml -- the sidebar: four reader journeys, each a run of
+# sections, and the section every published page sits in. Pages keep their URLs.
+# scripts/aggregate.py checks it and hands it to docusaurus.config.js through
+# content/site.json. Nested maps and quoted scalars only (scripts/yaml_subset.py).
+
+# Journeys and their sections, in sidebar order. A section no page lands in is
+# left out of the sidebar.
+sidebar:
+  Evaluate:
+    How DFE fits together: ""
+    Try the demo: ""
+    Try a local working copy: ""
+    Elastic Beats alongside or swapped: ""
+    AWS logs through the fetcher: ""
+  Deploy:
+    Choose a target: ""
+    Docker: ""
+    Kubernetes on-prem: ""
+    AWS: ""
+    Kafka choices: ""
+    Exposure and access: ""
+    Remote access (culvert, optional): ""
+    The deploy repo: ""
+  Operate:
+    Sources: ""
+    Transforms: ""
+    Detections and hunts: ""
+    Users and OIDC: ""
+    The console: ""
+    Monitoring: ""
+    Scaling: ""
+    Day to day and troubleshooting: ""
+    Upgrade: ""
+    Archiving: ""
+  Reference:
+    Configuration: ""
+    HTTP API: ""
+    Query API: ""
+    Schemas: ""
+    The event header: ""
+    Metrics: ""
+    ClickHouse: ""
+    Fetcher: ""
+    Kafka client settings: ""
+    Alert webhooks: ""
+    Security: ""
+
+# Where each page sits: member (or content-root, the suite's own pages) -> a path
+# under its docs/ -> "Journey / Section". A path ending in / covers a directory,
+# `default` covers every page nothing longer matches, and "" puts a page at the
+# top of the sidebar, above the journeys. Every member that publishes a page needs
+# a default.
+placement:
+  content-root:
+    default: "Deploy / Choose a target"
+    README.md: ""
+    quickstart/demo.md: "Evaluate / Try the demo"
+    quickstart/docker.md: "Evaluate / Try the demo"
+    quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"
+    quickstart/aws.md: "Deploy / AWS"
+  culvert:
+    default: "Deploy / Remote access (culvert, optional)"
+  dfe-archiver:
+    default: "Operate / Archiving"
+  dfe-deploy:
+    default: "Deploy / The deploy repo"
+  dfe-docker:
+    default: "Deploy / Docker"
+    configuration.md: "Reference / Configuration"
+    evaluating.md: "Evaluate / Try the demo"
+    observability.md: "Operate / Monitoring"
+    operating.md: "Operate / Day to day and troubleshooting"
+    profiles.md: "Evaluate / Try a local working copy"
+    troubleshooting.md: "Operate / Day to day and troubleshooting"
+  dfe-engine:
+    default: "Operate / Sources"
+    api/: "Reference / HTTP API"
+    architecture.md: "Evaluate / How DFE fits together"
+    control-plane/: "Operate / Users and OIDC"
+    control-plane/index.md: "Evaluate / How DFE fits together"
+    control-plane/synthetic-data.md: "Evaluate / Try a local working copy"
+    data-plane/expressions-cel.md: "Operate / Detections and hunts"
+    data-plane/hunt-runner-scaling.md: "Operate / Detections and hunts"
+    data-plane/hunt-schedule-smoothing.md: "Operate / Detections and hunts"
+    data-plane/query-api.md: "Reference / Query API"
+    data-plane/query-api-python.md: "Reference / Query API"
+    data-plane/query-api-rust.md: "Reference / Query API"
+    data-plane/query-api-typescript.md: "Reference / Query API"
+    data-plane/schema.md: "Reference / Schemas"
+    data-plane/schema-bootstrap.md: "Reference / Schemas"
+    data-plane/schema-classes.md: "Reference / Schemas"
+    data-plane/sigma.md: "Operate / Detections and hunts"
+    deployment/: "Deploy / Choose a target"
+    deployment/observability-standard.md: "Operate / Monitoring"
+    reference/api-route-map.md: "Reference / HTTP API"
+  dfe-fetcher:
+    default: "Operate / Sources"
+    cloud-setup/aws.md: "Evaluate / AWS logs through the fetcher"
+    reference/: "Reference / Fetcher"
+  dfe-hyperdx:
+    default: "Operate / The console"
+    alert-webhook-template-variables.md: "Reference / Alert webhooks"
+  dfe-infra:
+    default: "Deploy / Kubernetes on-prem"
+    architecture.md: "Evaluate / How DFE fits together"
+    design-principles.md: "Evaluate / How DFE fits together"
+    AUTOSCALING.md: "Operate / Scaling"
+    CLICKHOUSE-IDENTITY.md: "Reference / ClickHouse"
+    CLICKHOUSE-JSON-TYPE.md: "Reference / ClickHouse"
+    CNSA-STANDARD.md: "Reference / Security"
+    THREAT-MODEL.md: "Reference / Security"
+    DEPLOY-TLS-TRUST.md: "Deploy / Exposure and access"
+    EDGE-AUTH.md: "Deploy / Exposure and access"
+    EDGE-AUTH-cloud.md: "Deploy / Exposure and access"
+    INGEST-EDGE.md: "Deploy / Exposure and access"
+    deployment/aws.md: "Deploy / AWS"
+    deployment/aws-operations.md: "Deploy / AWS"
+    deployment/aws-teardown.md: "Deploy / AWS"
+    deployment/managed-backends.md: "Deploy / AWS"
+    deployment/edge.md: "Deploy / Exposure and access"
+    deployment/edge-vpn.md: "Deploy / Exposure and access"
+    deployment/gateway-oidc.md: "Deploy / Exposure and access"
+    deployment/kafka/: "Deploy / Kafka choices"
+    deployment/toolbox.md: "Operate / Day to day and troubleshooting"
+    deployment/upgrades.md: "Operate / Upgrade"
+    deployment/upgrade-rollback.md: "Operate / Upgrade"
+  dfe-loader:
+    default: "Operate / Day to day and troubleshooting"
+    CONFIGURATION.md: "Reference / Configuration"
+    clickhouse/DDL-DIRECTIVES.md: "Reference / Schemas"
+    clickhouse/TYPES.md: "Reference / Schemas"
+    clickhouse/TLS.md: "Deploy / Exposure and access"
+    pipeline/: "Operate / Sources"
+    transport/COMMON-HEADER.md: "Reference / The event header"
+  dfe-receiver:
+    default: "Operate / Sources"
+    HARDENING.md: "Deploy / Exposure and access"
+    METRICS.md: "Reference / Metrics"
+  dfe-schemas:
+    default: "Reference / Schemas"
+  dfe-transform-elastic:
+    default: "Operate / Transforms"
+    parity.md: "Evaluate / Elastic Beats alongside or swapped"
+  dfe-transform-vector:
+    default: "Operate / Transforms"
+    LIBRDKAFKA.md: "Reference / Kafka client settings"
+  dfe-transform-vrl:
+    default: "Operate / Transforms"
+  dfe-ui:
+    default: "Operate / The console"
