@@ -35,7 +35,7 @@ const DOCKER_SEND = [
 ].join('\n');
 
 // dfe-docker docs/evaluating.md, the make demo section.
-const DOCKER_DEMO = 'make demo                                    # 60s at 20 lines a second, over TCP';
+const DOCKER_DEMO = 'make demo                                    # streams until make demo-stop';
 
 // dfe-infra docs/deployment/on-prem.md, "Deploy", the integrated path.
 const KUBERNETES = [

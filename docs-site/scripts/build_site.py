@@ -10,12 +10,12 @@
 """build_site -- one Docusaurus build per version, merged for a single deploy.
 
     python3 docs-site/scripts/build_site.py               # every build in content/site.json
-    python3 docs-site/scripts/build_site.py --only 2.2.0  # one build, the others left as built
+    python3 docs-site/scripts/build_site.py --only 2.2.1  # one build, the others left as built
 
 For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming
-the build, into build/<its base path>. Then write build/_redirects so / reaches the
-newest release, copy that release's 404 page to the root, and count the files
+the build, into build/<its base path>. Then write build/_redirects so / and every
+dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
 against the Workers static-asset limits.
 
 Needs the site's npm dependencies installed (npm ci) and aggregate.py run first.
@@ -70,17 +70,25 @@ def build_one(entry: dict) -> Path:
     return out
 
 
-def redirects(newest: str) -> str:
+def redirects(newest: str, dropped: list[str] | None = None) -> str:
     """The Workers _redirects file: the site root and /v/ go to the newest release.
+
+    A dropped stack's pages go permanently to the same path under the newest release,
+    where the version menu's own switch would have sent the reader.
 
     Args:
         newest: The newest listed build.
+        dropped: Stacks publish.yaml drops.
 
     Returns:
         The file's text.
     """
     target = f"/v/{newest}/"
-    return "".join(f"{source} {target} 302\n" for source in ("/", "/v", "/v/"))
+    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/")]
+    for stack in dropped or []:
+        old = f"/v/{stack}"
+        lines += [f"{old} {target} 301", f"{old}/ {target} 301", f"{old}/* {target}:splat 301"]
+    return "".join(f"{line}\n" for line in lines)
 
 
 def count(tree: Path) -> tuple[int, int, int]:
@@ -140,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         newest_404 = BUILD / "v" / site["newest"] / "404.html"
         if newest_404.is_file():
             shutil.copyfile(newest_404, BUILD / "404.html")
-        (BUILD / "_redirects").write_text(redirects(site["newest"]), encoding="utf-8", newline="\n")
+        text = redirects(site["newest"], site.get("dropped", []))
+        (BUILD / "_redirects").write_text(text, encoding="utf-8", newline="\n")
 
     pages, files, largest = count(BUILD)
     print(f"build/: {pages} pages, {files} files, largest {largest} bytes")

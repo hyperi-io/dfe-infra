@@ -214,6 +214,79 @@ def test_plan_builds_refuses_an_unreleased_stack_and_an_empty_plan() -> None:
         aggregate.plan_builds(tree, members, [], False)
 
 
+@pytest.mark.parametrize(
+    ("stacks", "expected"),
+    [
+        ([], ["2.2.1"]),
+        (["2.2.1"], ["2.2.1"]),
+        (["2.2.0"], r"publish\.yaml drops 2\.2\.0"),
+        (["2.2.0", "2.2.1"], r"publish\.yaml drops 2\.2\.0"),
+    ],
+)
+def test_a_dropped_stack_is_never_built(stacks: list[str], expected: list[str] | str) -> None:
+    release = {"maturity": "release", "support": "standard", "apps": {"x": "v1"}}
+    tree = {"stacks": {"2.2.0": release, "2.2.1": release}}
+    members = [Member("x", "o/x", "consumers", 10)]
+    dropped = frozenset({"2.2.0"})
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.plan_builds(tree, members, stacks, False, dropped)
+        return
+    builds = aggregate.plan_builds(tree, members, stacks, False, dropped)
+    assert [build.name for build in builds] == expected
+
+
+# --- publish.yaml ------------------------------------------------------------------
+
+
+def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release() -> None:
+    members = aggregate.ordered_members(aggregate.load_suite())
+    text = aggregate.PUBLISH_FILE.read_text(encoding="utf-8")
+    policy = aggregate.load_policy(
+        aggregate.yaml_subset.parse(text), [member.name for member in members]
+    )
+    versions = aggregate.yaml_subset.parse((REPO_ROOT / "versions.yaml").read_text())
+    builds = aggregate.plan_builds(versions, members, [], False, policy.dropped)
+    assert "2.2.0" in policy.dropped
+    assert builds[0].name == versions["latest"]
+    assert policy.mounts == {"dfe-hyperdx": "dfe-ui"}
+    assert "docs/TESTING-CYCLE.md" in policy.internal_to("dfe-infra")
+
+
+@pytest.mark.parametrize(
+    ("tree", "expected"),
+    [
+        ({}, aggregate.Policy()),
+        (
+            {
+                "dropped_versions": {"1.0.0": "old"},
+                "mount_under": {"b": "a"},
+                "internal": {"a": {"x.md": "why", "old/": "why"}},
+            },
+            aggregate.Policy(
+                frozenset({"1.0.0"}), {"b": "a"}, {"a": frozenset({"docs/x.md", "docs/old/"})}
+            ),
+        ),
+        ({"mount_under": "a"}, "`mount_under` is not a map"),
+        ({"mount_under": {"b": "z"}}, "not both members"),
+        ({"mount_under": {"a": "a"}}, "a parent must mount at the top level"),
+        ({"mount_under": {"b": "a", "c": "b"}}, "a parent must mount at the top level"),
+        ({"internal": {"z": {"x.md": "why"}}}, "internal z: not a member"),
+        ({"internal": {"a": "x.md"}}, "internal a: not a member with a map"),
+        ({"internal": {"a": {"../README.md": "why"}}}, r"\.\./README\.md is not a path"),
+        ({"internal": {"a": {"/etc/x": "why"}}}, "/etc/x is not a path"),
+    ],
+)
+def test_load_policy_reads_a_valid_file_and_names_every_problem(
+    tree: dict, expected: object
+) -> None:
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.load_policy(tree, ["a", "b", "c"])
+        return
+    assert aggregate.load_policy(tree, ["a", "b", "c"]) == expected
+
+
 # --- links ---------------------------------------------------------------------
 
 
@@ -249,6 +322,35 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
         expected,
         False,
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (
+            "../TESTING-CYCLE.md#msk",
+            f"https://github.com/{REPO}/blob/2.2.1/docs/TESTING-CYCLE.md#msk",
+        ),
+        ("../archive/old.md", f"https://github.com/{REPO}/blob/2.2.1/docs/archive/old.md"),
+        ("../archive/", f"https://github.com/{REPO}/tree/2.2.1/docs/archive"),
+        (
+            "../archive/flow.png",
+            f"https://raw.githubusercontent.com/{REPO}/2.2.1/docs/archive/flow.png",
+        ),
+        ("/docs/TESTING-CYCLE.md", f"https://github.com/{REPO}/blob/2.2.1/docs/TESTING-CYCLE.md"),
+        ("../archived.md", "../archived.md"),
+        ("aws.md", "aws.md"),
+        ("../pipeline/", f"https://github.com/{REPO}/tree/2.2.1/docs/pipeline"),
+        ("../pipeline/routing.md", "../pipeline/routing.md"),
+        ("../pipeline/README.md", f"https://github.com/{REPO}/blob/2.2.1/docs/pipeline/README.md"),
+    ],
+)
+def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str) -> None:
+    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/", "docs/pipeline/README.md"})
+    relinked = aggregate.relink(
+        target, doc_dir="docs/deployment", repo=REPO, ref="2.2.1", internal=internal
+    )
+    assert relinked == (expected, False)
 
 
 def test_a_link_out_of_the_repository_is_left_and_flagged() -> None:
@@ -423,6 +525,74 @@ def test_copying_skips_links_working_dirs_and_dotfiles(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_copying_leaves_internal_pages_and_directories_out(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    write_tree(
+        docs,
+        {
+            "README.md": "# M\n\n[cycle](TESTING-CYCLE.md) [old](archive/x.md)\n",
+            "TESTING-CYCLE.md": "# cycle\n",
+            "archive/x.md": "# x\n",
+            "archive/flow.png": "png",
+            "archived.md": "# kept\n",
+        },
+    )
+    dest = tmp_path / "out"
+    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/"})
+    member = Member("m", "o/m", "consumers", 10)
+    aggregate.copy_docs(docs, dest, member=member, ref="v2", internal=internal)
+    assert checkout_files(dest) == ["README.md", "archived.md"]
+    text = (dest / "README.md").read_text()
+    assert "(https://github.com/o/m/blob/v2/docs/TESTING-CYCLE.md)" in text
+    assert "(https://github.com/o/m/blob/v2/docs/archive/x.md)" in text
+
+
+@pytest.mark.parametrize(
+    ("members", "expected"),
+    [({"member"}, ["README.md", "quick/a.md"]), ({"quick"}, "collide with members: quick")],
+)
+def test_the_root_pages_leave_editor_files_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: set[str], expected: list[str] | str
+) -> None:
+    source = tmp_path / "content-root"
+    write_tree(
+        source,
+        {"README.md": "# O\n", "VOICE.md": "# V\n", "quick/a.md": "# A\n", "quick/VOICE.md": "#"},
+    )
+    monkeypatch.setattr(aggregate, "CONTENT_ROOT", source)
+    root = tmp_path / "build"
+    root.mkdir()
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.copy_root(root, members)
+        return
+    aggregate.copy_root(root, members)
+    assert checkout_files(root) == expected
+
+
+def test_the_preview_copies_saved_pages_and_removes_deleted_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preview_spec = importlib.util.spec_from_file_location(
+        "docs_preview", SCRIPT.with_name("preview.py")
+    )
+    preview = importlib.util.module_from_spec(preview_spec)
+    preview_spec.loader.exec_module(preview)
+    source = tmp_path / "content-root"
+    write_tree(source, {"README.md": "# O\n", "VOICE.md": "# V\n", "quick/a.md": "# A\n"})
+    monkeypatch.setattr(preview.aggregate, "CONTENT_ROOT", source)
+    build = tmp_path / "build"
+    seen = preview.sync(build, {})
+    assert checkout_files(build) == ["README.md", "quick/a.md"]
+    (source / "quick" / "a.md").write_text("# A2\n", encoding="utf-8")
+    os.utime(source / "quick" / "a.md", (seen["quick/a.md"] + 5, seen["quick/a.md"] + 5))
+    (source / "README.md").unlink()
+    seen = preview.sync(build, seen)
+    assert checkout_files(build) == ["quick/a.md"]
+    assert (build / "quick" / "a.md").read_text() == "# A2\n"
+    assert set(seen) == {"quick/a.md"}
+
+
 def test_prepare_out_refuses_a_directory_it_did_not_write(tmp_path: Path) -> None:
     (tmp_path / "keep.txt").write_text("x", encoding="utf-8")
     with pytest.raises(SystemExit, match="refusing to clear"):
@@ -546,7 +716,9 @@ def test_assemble_lays_out_a_build(remotes: tuple[Path, str], tmp_path: Path) ->
         "customProps": {"lane": "toolchain", "ref": "v1.0.0"},
     }
     engine = json.loads((tree / "dfe-engine" / "_category_.json").read_text())
-    assert engine["link"]["type"] == "generated-index"
+    assert engine["link"] == {"type": "doc", "id": "dfe-engine/architecture"}
+    fork = json.loads((tree / "fork" / "_category_.json").read_text())
+    assert "link" not in fork
     api = json.loads((tree / "dfe-engine" / "api" / "_category_.json").read_text())
     assert api["customProps"] == {"openapiSlice": "dfe-engine/api/sidebar.ts"}
     placed = json.loads((out / "_specs" / "9.9.9" / "dfe-engine.json").read_text())
@@ -568,6 +740,41 @@ def test_assemble_lays_out_a_build(remotes: tuple[Path, str], tmp_path: Path) ->
         ("dfe-engine", "docs/", Rule.LANDING),
         ("lib", "", Rule.NO_PIN),
     }
+
+
+@pytest.mark.parametrize(
+    ("refs", "parent_docs", "expected"),
+    [
+        ({"ui": "v1.0.0", "hd": "v2.0.0"}, {}, ["ui/hd/README.md", "ui/hd/fork/README.md"]),
+        ({"hd": "v2.0.0"}, {}, ["hd/README.md", "hd/fork/README.md"]),
+        ({"ui": "v1.0.0", "hd": "v2.0.0"}, {"docs/hd/x.md": "# x\n"}, "ui/hd is already"),
+    ],
+)
+def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
+    tmp_path: Path, refs: dict[str, str], parent_docs: dict[str, str], expected: list[str] | str
+) -> None:
+    root = tmp_path / "remotes"
+    make_repo(root, "o/ui", {"docs/README.md": "# UI\n", **parent_docs}, "v1.0.0")
+    make_repo(
+        root,
+        "o/hd",
+        {"docs/README.md": "# HD\n", "docs/fork/README.md": "# Fork\n", "docs/guide.md": "#\n"},
+        "v2.0.0",
+    )
+    members = [Member("hd", "o/hd", "ui", 10, "fork"), Member("ui", "o/ui", "ui", 11, "product")]
+    policy = aggregate.Policy(mounts={"hd": "ui"}, internal={"hd": frozenset({"docs/guide.md"})})
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    build = Build("9.9.9", "/v/9.9.9/", True, refs)
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.assemble(build, members, fetcher, out, policy)
+        return
+    result = aggregate.assemble(build, members, fetcher, out, policy)
+    pages = [path for path in checkout_files(out / "9.9.9") if path.endswith(".md")]
+    assert [page for page in pages if "hd/" in page] == expected
+    assert [entry["name"] for entry in result.members] == sorted(refs, key=["ui", "hd"].index)
 
 
 def test_the_report_summarises_each_member_then_lists_every_finding() -> None:
@@ -597,3 +804,32 @@ def test_the_manifest_names_the_newest_listed_build() -> None:
     assert [build["name"] for build in manifest["builds"]] == ["2.3.0", "2.2.0", "next"]
     preview_only = aggregate.site_manifest([BuildResult(Build("next", "/next/", False, {}))])
     assert preview_only["newest"] is None
+    assert manifest["dropped"] == []
+    assert aggregate.site_manifest(results, {"2.1.0", "1.9.0"})["dropped"] == ["1.9.0", "2.1.0"]
+
+
+@pytest.mark.parametrize(
+    ("dropped", "expected"),
+    [
+        ([], []),
+        (
+            ["2.2.0"],
+            [
+                "/v/2.2.0 /v/2.2.1/ 301",
+                "/v/2.2.0/ /v/2.2.1/ 301",
+                "/v/2.2.0/* /v/2.2.1/:splat 301",
+            ],
+        ),
+    ],
+)
+def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
+    dropped: list[str], expected: list[str]
+) -> None:
+    build_spec = importlib.util.spec_from_file_location(
+        "docs_build_site", SCRIPT.with_name("build_site.py")
+    )
+    build_site = importlib.util.module_from_spec(build_spec)
+    build_spec.loader.exec_module(build_site)
+    lines = build_site.redirects("2.2.1", dropped).splitlines()
+    assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
+    assert lines[3:] == expected
