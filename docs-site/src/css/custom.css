@@ -21,9 +21,19 @@
   --role-on-plate: var(--hyperi-light-on-plate, #ffffff);
   --role-plate-hover: var(--hyperi-light-plate-hover, #0c2e73);
   --role-accent-ink: var(--hyperi-light-accent-ink, #177a68);
+  --role-chrome: var(--role-canvas);
+  --role-card: var(--role-canvas);
+  --role-tint: color-mix(in srgb, var(--dfe-blue) 9%, transparent);
+  --role-card-border: color-mix(in srgb, var(--dfe-blue) 35%, var(--role-border));
+  --role-glow: color-mix(in srgb, var(--dfe-blue) 28%, transparent);
+  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 20%, transparent), transparent 70%),
+    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 16%, transparent), transparent 70%),
+    var(--role-raised);
 
   --dfe-navy: var(--hyperi-navy, #000647);
+  --dfe-blue: var(--hyperi-blue, #2ea4f6);
   --dfe-accent: var(--hyperi-accent, #2ded88);
+  --dfe-font-logo: var(--hyperi-font-marketing-logo, Montserrat, "Helvetica Neue", Arial, sans-serif);
   --dfe-font-display: var(--hyperi-font-marketing-display, "Martel Sans", "Helvetica Neue", Arial, sans-serif);
   --dfe-font-sans: var(--hyperi-font-ui-sans, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   --dfe-font-mono: var(--hyperi-font-ui-mono, "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace);
@@ -58,6 +68,8 @@
   --dfe-stroke-focus: var(--hyperi-stroke-focus, 2px);
   --dfe-container: var(--hyperi-layout-container, 75rem);
   --dfe-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14'/%3E%3Cpath d='M13 6l6 6-6 6'/%3E%3C/svg%3E");
+  --dfe-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
+  --dfe-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 
   --ifm-font-family-base: var(--dfe-font-sans);
   --ifm-font-family-monospace: var(--dfe-font-mono);
@@ -82,11 +94,9 @@
   --ifm-navbar-shadow: none;
 }
 
-/* Dark mode, and every navy band on a light page: navbar, footer, landing hero. */
+/* Every surface follows the colour mode. The footer alone is a navy band in both, as on hyperi.io. */
 html[data-theme='dark'],
-.navbar--dark,
-.footer--dark,
-.surface-navy {
+.footer--dark {
   --role-canvas: var(--hyperi-dark-canvas, #000324);
   --role-raised: var(--hyperi-dark-raised, #000647);
   --role-border: var(--hyperi-dark-border, #17559f);
@@ -98,22 +108,26 @@ html[data-theme='dark'],
   --role-on-plate: var(--hyperi-dark-on-plate, #000647);
   --role-plate-hover: var(--hyperi-dark-plate-hover, #6dbff9);
   --role-accent-ink: var(--hyperi-dark-accent-ink, #2ded88);
+  --role-chrome: var(--dfe-navy);
+  --role-card: color-mix(in srgb, var(--dfe-navy) 70%, transparent);
+  --role-tint: color-mix(in srgb, var(--dfe-blue) 14%, transparent);
+  --role-card-border: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
+  --role-glow: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
+  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 32%, transparent), transparent 70%),
+    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--dfe-navy), var(--hyperi-dark-canvas, #000324));
+  color-scheme: dark;
 }
 
-/* A navy band is its own canvas, and a panel on it sinks to the dark canvas. */
-.navbar--dark,
-.footer--dark,
-.surface-navy {
-  --role-canvas: var(--hyperi-navy, #000647);
+.footer--dark {
+  --role-canvas: var(--dfe-navy);
   --role-raised: var(--hyperi-dark-canvas, #000324);
 }
 
 /* Re-declared on every scope that changes the roles, because a var() resolves where it is declared. */
 :root,
 html[data-theme='dark'],
-.navbar--dark,
-.footer--dark,
-.surface-navy {
+.footer--dark {
   --ifm-background-color: var(--role-canvas);
   --ifm-background-surface-color: var(--role-raised);
   --ifm-font-color-base: var(--role-body);
@@ -139,6 +153,17 @@ html[data-theme='dark'],
   --ifm-menu-color-active: var(--role-link);
   --ifm-dropdown-link-color: var(--role-body);
   --docusaurus-highlighted-code-line-bg: color-mix(in srgb, var(--role-link) 14%, transparent);
+  --ifm-navbar-background-color: color-mix(in srgb, var(--role-chrome) 88%, transparent);
+  --ifm-navbar-link-color: var(--role-body);
+  --ifm-navbar-link-hover-color: var(--role-accent-ink);
+  --ifm-navbar-link-active-color: var(--role-accent-ink);
+  --ifm-navbar-search-input-background-color: var(--role-raised);
+  --ifm-navbar-search-input-color: var(--role-body);
+  --ifm-navbar-search-input-placeholder-color: var(--role-muted);
+}
+
+.navbar__search-input {
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
 }
 
 h4,
@@ -243,14 +268,11 @@ html[data-theme='dark'] {
   color: var(--role-ink);
 }
 
-/* The header is a navy band in both modes. */
-.navbar--dark {
-  --ifm-navbar-background-color: var(--dfe-navy);
-  --ifm-navbar-link-color: var(--role-body);
-  --ifm-navbar-link-hover-color: var(--dfe-accent);
-  --ifm-navbar-link-active-color: var(--dfe-accent);
+/* The header takes the mode's chrome: white in light, HyperI navy in dark. */
+.navbar {
   --ifm-navbar-item-padding-horizontal: var(--dfe-space-3);
   border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
+  backdrop-filter: saturate(1.4) blur(10px);
 }
 
 .navbar__link {
@@ -258,14 +280,31 @@ html[data-theme='dark'] {
   font-weight: 600;
 }
 
-.navbar__logo {
-  height: var(--dfe-space-6);
+/* The hound sits before the product name, set in the HyperI wordmark face. */
+.navbar__brand {
+  gap: var(--dfe-space-3);
 }
 
-/* The lockup is 11:1, so the collapsed navbar needs it smaller to leave room for search. */
+.navbar__logo {
+  height: var(--dfe-space-8);
+  margin-right: 0;
+}
+
+.navbar__title {
+  color: var(--role-ink);
+  font-family: var(--dfe-font-logo);
+  font-size: var(--dfe-text-lg);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
 @media (max-width: 996px) {
   .navbar__logo {
-    height: var(--dfe-text-lg);
+    height: var(--dfe-space-6);
+  }
+
+  .navbar__title {
+    font-size: var(--dfe-text-base);
   }
 }
 
@@ -340,4 +379,28 @@ div[class*='announcementBar'] svg {
 
 .footer__copyright {
   font-size: var(--dfe-text-xs);
+}
+
+/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas instead. */
+.docusaurus-mermaid-container .edgeLabel,
+.docusaurus-mermaid-container .edgeLabel p,
+.docusaurus-mermaid-container .labelBkg {
+  background-color: var(--role-canvas) !important;
+}
+
+.docusaurus-mermaid-container .edgeLabel rect {
+  fill: var(--role-canvas) !important;
+  opacity: 1 !important;
+}
+
+.table-of-contents__link--active {
+  color: var(--role-accent-ink);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: var(--role-tint);
+}
+
+.markdown table thead tr {
+  background: var(--role-tint);
 }

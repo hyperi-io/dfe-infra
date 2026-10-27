@@ -9,20 +9,33 @@
  */
 
 .container {
+  position: relative;
   max-width: var(--dfe-container);
   margin-inline: auto;
   padding-inline: var(--dfe-space-6);
 }
 
+/* A section label: blue, letter-spaced, led by the brand's blue-to-green rule. */
 .eyebrow {
-  margin: 0 0 var(--dfe-space-3);
-  color: var(--role-accent-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dfe-space-3);
+  margin: 0 0 var(--dfe-space-4);
+  color: var(--role-link);
   font-family: var(--dfe-font-sans);
   font-size: var(--dfe-text-xs);
   font-weight: 700;
-  letter-spacing: var(--dfe-tracking-eyebrow);
+  letter-spacing: 0.18em;
   line-height: var(--dfe-leading-snug);
   text-transform: uppercase;
+}
+
+.eyebrow::before {
+  content: '';
+  width: var(--dfe-space-8);
+  height: var(--dfe-stroke-focus);
+  border-radius: var(--dfe-radius-pill);
+  background: linear-gradient(90deg, var(--dfe-blue), var(--dfe-accent));
 }
 
 .textLink {
@@ -30,21 +43,36 @@
   align-items: center;
   gap: var(--dfe-space-2);
   color: var(--role-link);
-  font-size: var(--dfe-text-sm);
-  font-weight: 600;
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--dfe-tracking-eyebrow);
+  text-transform: uppercase;
 }
 
 .textLink:hover {
-  color: var(--role-link);
+  color: var(--role-accent-ink);
+  text-decoration: none;
 }
 
 /* The minifier merges rules that share declarations and can reorder them, so a variant outranks its base by specificity, never by order. */
 
-/* Hero: a navy band holding the copy and the quickstart panel. */
+/* Hero: the mode's brand band, a dot field fading out from the top right, and a slanted lower edge. */
 .hero {
-  padding-block: var(--dfe-space-16);
-  background: var(--role-canvas);
+  position: relative;
+  padding-block: var(--dfe-space-16) calc(var(--dfe-space-16) + var(--dfe-space-12));
+  background: var(--role-band);
   color: var(--role-body);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--dfe-space-12)), 0 100%);
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--role-glow) 1px, transparent 1.5px);
+  background-size: var(--dfe-space-6) var(--dfe-space-6);
+  mask-image: radial-gradient(48rem 30rem at 100% 0%, black, transparent 75%);
+  pointer-events: none;
 }
 
 /* The quickstart takes the wider column, so a command reads on one line where it can. */
@@ -56,12 +84,19 @@
 }
 
 .heroTitle {
-  margin: 0 0 var(--dfe-space-4);
+  margin: 0 0 var(--dfe-space-6);
   color: var(--role-ink);
-  font-family: var(--dfe-font-display);
+  font-family: var(--dfe-font-logo);
   font-size: var(--dfe-text-5xl);
   font-weight: 800;
-  line-height: var(--dfe-leading-tight);
+  letter-spacing: -0.01em;
+  line-height: 1.02;
+  text-transform: uppercase;
+}
+
+.heroAccent {
+  display: block;
+  color: var(--role-accent-ink);
 }
 
 .tagline {
@@ -83,12 +118,17 @@
   gap: var(--dfe-space-2);
   padding: var(--dfe-space-3) var(--dfe-space-6);
   border: var(--dfe-stroke-hairline) solid transparent;
-  border-radius: var(--dfe-radius-md);
+  border-radius: var(--dfe-radius-sm);
   font-family: var(--dfe-font-sans);
-  font-size: var(--dfe-text-base);
-  font-weight: 600;
+  font-size: var(--dfe-text-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
   line-height: var(--dfe-leading-snug);
   text-decoration: none;
+  transition:
+    background-color 160ms var(--dfe-ease),
+    border-color 160ms var(--dfe-ease),
+    box-shadow 160ms var(--dfe-ease);
 }
 
 .button:hover {
@@ -102,6 +142,7 @@
 
 .button.buttonPrimary {
   background: var(--role-plate);
+  box-shadow: 0 var(--dfe-space-2) var(--dfe-space-6) calc(-1 * var(--dfe-space-2)) var(--role-glow);
 }
 
 .button.buttonPrimary:hover {
@@ -110,16 +151,17 @@
 
 .button.buttonSecondary,
 .button.buttonSecondary:hover {
-  border-color: var(--role-link);
   color: var(--role-ink);
 }
 
 .button.buttonSecondary {
+  border-color: var(--role-card-border);
   background: transparent;
 }
 
 .button.buttonSecondary:hover {
-  background: var(--role-raised);
+  border-color: var(--role-link);
+  background: var(--role-tint);
 }
 
 .badges {
@@ -131,27 +173,43 @@
   list-style: none;
 }
 
+/* Each fact carries a tick in the accent colour. */
 .badge {
   display: inline-flex;
-  padding: var(--dfe-space-1) var(--dfe-space-3);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  align-items: center;
+  gap: var(--dfe-space-2);
+  padding: var(--dfe-space-1) var(--dfe-space-3) var(--dfe-space-1) var(--dfe-space-2);
   border-radius: var(--dfe-radius-pill);
+  background: var(--role-tint);
   color: var(--role-body);
   font-size: var(--dfe-text-sm);
   text-decoration: none;
 }
 
+.badge::before {
+  content: '';
+  flex: none;
+  width: var(--dfe-space-4);
+  height: var(--dfe-space-4);
+  background-color: var(--role-accent-ink);
+  mask: var(--dfe-check) center / contain no-repeat;
+}
+
 .badge:hover {
-  border-color: var(--role-link);
-  color: var(--role-body);
+  background: color-mix(in srgb, var(--dfe-blue) 20%, transparent);
+  color: var(--role-ink);
   text-decoration: none;
 }
 
+/* The quickstart panel wears a blue-to-green gradient edge. */
 .quickstart {
   padding: var(--dfe-space-6);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border: var(--dfe-stroke-hairline) solid transparent;
   border-radius: var(--dfe-radius-lg);
-  background: var(--role-raised);
+  background:
+    linear-gradient(var(--role-canvas), var(--role-canvas)) padding-box,
+    linear-gradient(135deg, var(--dfe-blue), var(--role-border) 45%, var(--dfe-accent)) border-box;
+  box-shadow: 0 var(--dfe-space-6) var(--dfe-space-16) calc(-1 * var(--dfe-space-8)) var(--role-glow);
 }
 
 .quickstartTitle {
@@ -186,11 +244,10 @@
   padding: var(--dfe-space-2) var(--dfe-space-4);
   border-bottom-color: var(--role-border);
   color: var(--role-muted);
+  font-family: var(--dfe-font-mono);
   font-size: var(--dfe-text-xs);
-  font-weight: 700;
-  letter-spacing: var(--dfe-tracking-eyebrow);
+  font-weight: 600;
   line-height: var(--dfe-space-6);
-  text-transform: uppercase;
 }
 
 /* The title row is space-2 + space-6 + space-2 tall, so this centres the button in it. */
@@ -202,30 +259,48 @@
   font-size: var(--dfe-text-xs);
 }
 
-/* Sections alternate canvas and raised, and a card takes whichever surface its section does not. */
+/* Sections alternate canvas and raised. The raised one opens on a downward notch, as hyperi.io's bands do. */
 .section {
   padding-block: var(--dfe-space-16);
   background: var(--role-canvas);
 }
 
 .section.sectionRaised {
+  padding-top: calc(var(--dfe-space-16) + var(--dfe-space-12));
   background: var(--role-raised);
+  clip-path: polygon(0 0, 50% var(--dfe-space-12), 100% 0, 100% 100%, 0 100%);
 }
 
+/* Section headings are centred, with their link under the lead. */
 .sectionHeader {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--dfe-space-6);
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dfe-space-4);
   margin-bottom: var(--dfe-space-12);
+  text-align: center;
+}
+
+.sectionHeader > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* A centred label takes the rule on both sides. */
+.sectionHeader .eyebrow::after {
+  content: '';
+  width: var(--dfe-space-8);
+  height: var(--dfe-stroke-focus);
+  border-radius: var(--dfe-radius-pill);
+  background: linear-gradient(90deg, var(--dfe-accent), var(--dfe-blue));
 }
 
 .sectionTitle {
   margin: 0;
   color: var(--role-ink);
   font-family: var(--dfe-font-display);
-  font-size: var(--dfe-text-3xl);
+  font-size: var(--dfe-text-4xl);
   font-weight: 800;
   line-height: var(--dfe-leading-tight);
 }
@@ -240,7 +315,7 @@
 .gridThree,
 .gridCapabilities {
   display: grid;
-  gap: var(--dfe-space-8);
+  gap: var(--dfe-space-6);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -268,24 +343,36 @@
   display: flex;
 }
 
+/* A card is a blue-edged panel that lifts and glows under the pointer. */
 .card {
   display: flex;
   flex-direction: column;
   gap: var(--dfe-space-3);
   width: 100%;
   padding: var(--dfe-space-6);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
-  border-radius: var(--dfe-radius-lg);
-  background: var(--role-raised);
+  border: var(--dfe-stroke-hairline) solid var(--role-card-border);
+  border-radius: var(--dfe-radius-md);
+  background: var(--role-card);
   color: var(--role-body);
+  transition:
+    transform 200ms var(--dfe-ease),
+    border-color 200ms var(--dfe-ease),
+    box-shadow 200ms var(--dfe-ease);
 }
 
-.sectionRaised .card {
-  background: var(--role-canvas);
-}
-
+/* A card's label is the repository or area name, so it reads in the code face, not as a shouted eyebrow. */
 .card .eyebrow {
   margin: 0;
+  color: var(--role-link);
+  font-family: var(--dfe-font-mono);
+  font-size: var(--dfe-text-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.card .eyebrow::before {
+  content: none;
 }
 
 .linkCard,
@@ -295,7 +382,11 @@
 }
 
 .linkCard:hover {
-  border-color: var(--role-link);
+  border-color: var(--dfe-blue);
+  box-shadow:
+    0 0 0 var(--dfe-stroke-hairline) var(--dfe-blue),
+    0 var(--dfe-space-4) var(--dfe-space-8) calc(-1 * var(--dfe-space-4)) var(--role-glow);
+  transform: translateY(calc(-1 * var(--dfe-space-1)));
 }
 
 .cardTitle {
@@ -303,7 +394,7 @@
   color: var(--role-ink);
   font-family: var(--dfe-font-sans);
   font-size: var(--dfe-text-lg);
-  font-weight: 600;
+  font-weight: 700;
   line-height: var(--dfe-leading-snug);
 }
 
@@ -318,28 +409,24 @@
   align-items: center;
   gap: var(--dfe-space-2);
   margin-top: auto;
-  padding-top: var(--dfe-space-2);
+  padding-top: var(--dfe-space-3);
   color: var(--role-link);
-  font-size: var(--dfe-text-sm);
-  font-weight: 600;
+  font-size: var(--dfe-text-xs);
+  font-weight: 700;
+  letter-spacing: var(--dfe-tracking-eyebrow);
+  text-transform: uppercase;
 }
 
+.linkCard:hover .cardAction {
+  color: var(--role-accent-ink);
+}
+
+/* Icons are bare accent line art, as on hyperi.io, with no tile behind them. */
 .iconTile {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--dfe-space-8);
-  height: var(--dfe-space-8);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
-  border-radius: var(--dfe-radius-md);
-  background: var(--role-canvas);
-  color: var(--role-link);
-  font-size: var(--dfe-text-lg);
-}
-
-.sectionRaised .iconTile,
-.sectionRaised .chip {
-  background: var(--role-raised);
+  color: var(--role-accent-ink);
+  font-size: var(--dfe-text-3xl);
+  line-height: 1;
 }
 
 .chips {
@@ -347,31 +434,30 @@
   flex-wrap: wrap;
   gap: var(--dfe-space-2);
   margin: auto 0 0;
-  padding: var(--dfe-space-2) 0 0;
+  padding: var(--dfe-space-3) 0 0;
   list-style: none;
 }
 
 .chip {
-  padding: var(--dfe-space-1) var(--dfe-space-2);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
-  border-radius: var(--dfe-radius-sm);
-  background: var(--role-canvas);
-  color: var(--role-muted);
+  padding: var(--dfe-space-1) var(--dfe-space-3);
+  border-radius: var(--dfe-radius-pill);
+  background: var(--role-tint);
+  color: var(--role-body);
+  font-family: var(--dfe-font-mono);
   font-size: var(--dfe-text-xs);
-  font-weight: 700;
   line-height: var(--dfe-leading-snug);
 }
 
 .closing {
-  padding-block: var(--dfe-space-16);
-  background: var(--role-canvas);
+  padding-block: var(--dfe-space-24);
+  background: var(--role-band);
 }
 
 .closingInner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--dfe-space-8);
+  gap: var(--dfe-space-6);
   text-align: center;
 }
 
@@ -383,9 +469,21 @@
   justify-content: center;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .button {
+    transition: none;
+  }
+
+  .linkCard:hover {
+    transform: none;
+  }
+}
+
 @media (max-width: 996px) {
   .hero {
-    padding-block: var(--dfe-space-12);
+    padding-block: var(--dfe-space-12) calc(var(--dfe-space-12) + var(--dfe-space-8));
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--dfe-space-8)), 0 100%);
   }
 
   .heroGrid {
@@ -399,6 +497,15 @@
   .section,
   .closing {
     padding-block: var(--dfe-space-12);
+  }
+
+  .section.sectionRaised {
+    padding-top: calc(var(--dfe-space-12) + var(--dfe-space-8));
+    clip-path: polygon(0 0, 50% var(--dfe-space-8), 100% 0, 100% 100%, 0 100%);
+  }
+
+  .sectionTitle {
+    font-size: var(--dfe-text-3xl);
   }
 
   .gridThree {
