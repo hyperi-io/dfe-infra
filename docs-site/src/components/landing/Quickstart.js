@@ -1,7 +1,7 @@
 /*
  * Project:      dfe-infra
  * File:         docs-site/src/components/landing/Quickstart.js
- * Purpose:      The landing page's tabbed quickstart: Docker, Kubernetes on-premises and AWS.
+ * Purpose:      The landing page's tabbed quickstart: the demo, Docker, Kubernetes on-premises and AWS.
  * Language:     JavaScript
  *
  * License:      BUSL-1.1
@@ -16,16 +16,20 @@ import CodeBlock from '@theme/CodeBlock';
 import {IconArrow} from './icons';
 import styles from './landing.module.css';
 
-// Each command is copied character for character from the guide named beside it, at this stack.
+// Each command must match the source named beside it, and the matching page under content-root/quickstart/.
 
-// dfe-docker docs/evaluating.md, "Getting it running".
-function dockerCommands(stack) {
+// dfe-docker Makefile targets init, stack, up and demo. The profile names are service_profiles.yaml's.
+function dockerCommands(stack, profile) {
   return [
-    'make init                  # create .env and env/, generate secrets',
-    `make stack VERSION=${stack}   # pin every image from the DFE stack manifest`,
-    'make ci                    # pull and start',
-  ].join('\n');
+    'git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker',
+    'make init',
+    `make stack VERSION=${stack}`,
+    `echo 'DFE_PROFILE=${profile}' >> .env`,
+    'make up',
+  ];
 }
+
+const demoCommands = (stack) => [...dockerCommands(stack, 'single-kafka'), 'make demo'].join('\n');
 
 // dfe-docker docs/evaluating.md, "Seeing your own data go through".
 const DOCKER_SEND = [
@@ -34,21 +38,35 @@ const DOCKER_SEND = [
   `  -d '{"_source":"main","message":"hello dfe"}'`,
 ].join('\n');
 
-// dfe-docker docs/evaluating.md, the make demo section.
-const DOCKER_DEMO = 'make demo                                    # streams until make demo-stop';
+// bootstrap/local.env.example and scripts/dfe-ops preflight, stack-deploy.
+function kubernetesCommands(stack) {
+  return [
+    `git clone --branch ${stack} https://github.com/hyperi-io/dfe-infra && cd dfe-infra`,
+    '(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)',
+    'python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env',
+    `python3 scripts/dfe-ops stack-deploy --stack ${stack} --mode single \\`,
+    `  --target-revision ${stack} --env-file bootstrap/local.env`,
+  ].join('\n');
+}
 
-// dfe-infra docs/deployment/on-prem.md, "Deploy", the integrated path.
-const KUBERNETES = [
-  '(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)   # 0600 from creation; fill in creds',
-  'bash bootstrap/deploy.sh --cloud local',
-].join('\n');
-
-// dfe-infra docs/deployment/aws.md, "Resolving sizing artefacts" and "Applying the plan".
-const AWS_RESOLVE = [
-  'python3 scripts/resolve_sizing.py --dial deployment.yaml --live --out terraform/environments/aws',
+// dfe-infra docs/deployment/wizard.md, then docs/deployment/aws.md "Resolving sizing artefacts".
+const AWS_DIAL = [
+  'python3 scripts/dfe-ops init',
+  'python3 scripts/resolve_sizing.py --dial deployment.yaml --live \\',
+  '  --out terraform/environments/aws',
   'python3 scripts/render_dial.py --tofu',
 ].join('\n');
-const AWS_APPLY = ['tofu init', 'tofu plan -out=deployment.tfplan', 'tofu apply deployment.tfplan'].join('\n');
+
+// dfe-infra docs/deployment/aws.md, "Applying the plan".
+function awsApply(stack) {
+  return [
+    '(cd terraform/environments/aws && tofu init \\',
+    '  && tofu plan -out=deployment.tfplan && tofu apply deployment.tfplan)',
+    'eval "$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)"',
+    `python3 scripts/dfe-ops stack-deploy --stack ${stack} --mode scale \\`,
+    '  --from-terraform terraform/environments/aws',
+  ].join('\n');
+}
 
 function GuideLink({to, children}) {
   return (
@@ -67,41 +85,50 @@ export default function Quickstart({stack}) {
         Stand DFE up
       </h2>
       <Tabs groupId="dfe-quickstart" className={styles.quickstartTabs}>
-        <TabItem value="docker" label="Docker" default>
+        <TabItem value="demo" label="Demo" default>
           <p className={styles.quickstartLead}>
-            One host, under Docker Compose. From a{' '}
-            <a href="https://github.com/hyperi-io/dfe-docker">dfe-docker</a> checkout:
+            Live firewall syslog, parsed per vendor, on one host. You need Docker Compose v2, Python 3 and{' '}
+            <a href="https://docs.astral.sh/uv/">uv</a>.
           </p>
-          <CodeBlock language="bash" title="bash">{dockerCommands(stack)}</CodeBlock>
+          <CodeBlock language="bash" title="bash">{demoCommands(stack)}</CodeBlock>
           <p className={styles.quickstartLead}>
-            Then send it an event. It lands in <code>dfe.main</code> a couple of seconds later:
+            Cisco ASA and FortiGate lines stream in at 20 a second. Each is matched to its vendor, parsed, and lands in{' '}
+            <code>dfe.cisco-asa</code> or <code>dfe.fortinet</code>. <code>make demo-stop</code> ends it.
+          </p>
+          <GuideLink to="/quickstart/demo/">The demo</GuideLink>
+        </TabItem>
+        <TabItem value="docker" label="Docker">
+          <p className={styles.quickstartLead}>
+            One host, your own data. <code>slim-grpc</code> is the core path over gRPC, the least that moves data.{' '}
+            <code>single-kafka</code> adds Kafka and every per-source app.
+          </p>
+          <CodeBlock language="bash" title="bash">{dockerCommands(stack, 'slim-grpc').join('\n')}</CodeBlock>
+          <p className={styles.quickstartLead}>
+            <code>make up</code> ends on a self test and prints the console login. Then send it an event. It lands in{' '}
+            <code>dfe.main</code> a couple of seconds later:
           </p>
           <CodeBlock language="bash" title="bash">{DOCKER_SEND}</CodeBlock>
-          <p className={styles.quickstartLead}>
-            Or watch raw firewall and switch syslog get parsed into one table per vendor:
-          </p>
-          <CodeBlock language="bash" title="bash">{DOCKER_DEMO}</CodeBlock>
           <GuideLink to="/quickstart/docker/">Docker quickstart</GuideLink>
         </TabItem>
         <TabItem value="kubernetes" label="Kubernetes">
           <p className={styles.quickstartLead}>
-            A cluster you run. From a{' '}
-            <a href="https://github.com/hyperi-io/dfe-infra">dfe-infra</a> checkout, with a kubeconfig
-            for the cluster:
+            A cluster you run, Kubernetes 1.35 or later, with <code>kubectl</code> pointed at it. Set{' '}
+            <code>DFE_DOMAIN</code> and <code>DFE_REPO_URL</code> in the env file before the preflight:
           </p>
-          <CodeBlock language="bash" title="bash">{KUBERNETES}</CodeBlock>
+          <CodeBlock language="bash" title="bash">{kubernetesCommands(stack)}</CodeBlock>
+          <p className={styles.quickstartLead}>
+            It finishes by sending an event through to ClickHouse and checking the stack's own telemetry landed.
+          </p>
           <GuideLink to="/quickstart/kubernetes/">Kubernetes on-premises quickstart</GuideLink>
         </TabItem>
         <TabItem value="aws" label="AWS">
           <p className={styles.quickstartLead}>
-            Amazon EKS. From a dfe-infra checkout, with <code>deployment.yaml</code> copied from{' '}
-            <code>deployment.example.yaml</code>:
+            Amazon EKS on Graviton. From a dfe-infra checkout at <code>{stack}</code>, answer the wizard: aws, the{' '}
+            <code>scale</code> tier, and Kafka from MSK, Confluent Cloud or Redpanda Cloud.
           </p>
-          <CodeBlock language="bash" title="bash">{AWS_RESOLVE}</CodeBlock>
-          <p className={styles.quickstartLead}>
-            Then, from <code>terraform/environments/aws</code>:
-          </p>
-          <CodeBlock language="bash" title="bash">{AWS_APPLY}</CodeBlock>
+          <CodeBlock language="bash" title="bash">{AWS_DIAL}</CodeBlock>
+          <p className={styles.quickstartLead}>Then build the cluster and deploy onto it:</p>
+          <CodeBlock language="bash" title="bash">{awsApply(stack)}</CodeBlock>
           <GuideLink to="/quickstart/aws/">AWS quickstart</GuideLink>
         </TabItem>
       </Tabs>

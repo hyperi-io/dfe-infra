@@ -1,10 +1,10 @@
 # Quickstarts
 
-Three ways to stand DFE up. Each page is a short route through the guides that own the steps, in dfe-docker and dfe-infra.
+Four ways in, each a handful of commands. Start with the demo if you have not seen DFE work yet.
 
-| Where it runs | Page | Guides from |
+| You want to | Page | Runs on |
 |---|---|---|
-| One host, under Docker Compose | [Docker](docker.md) | dfe-docker |
-| A Kubernetes cluster you run | [Kubernetes on-premises](kubernetes.md) | dfe-infra |
-| Amazon EKS | [AWS](aws.md) | dfe-infra |
-
+| See it parse live firewall syslog | [The demo](demo.md) | One host, Docker Compose |
+| Send it your own data on one host | [Docker](docker.md) | One host, Docker Compose |
+| Run it on a cluster you own | [Kubernetes on-premises](kubernetes.md) | Kubernetes 1.35 or later |
+| Run it on Amazon EKS | [AWS](aws.md) | EKS, built by OpenTofu |

@@ -40,16 +40,16 @@ const CAPABILITIES = [
     Icon: IconIngest,
     eyebrow: 'Ingest',
     title: 'Every agent, one edge',
-    text: 'dfe-receiver takes each agent in its own protocol and normalises it to JSON before anything else sees it.',
-    chips: ['Beats', 'OpenTelemetry', 'Syslog', 'Webhooks'],
+    text: 'dfe-receiver takes each agent in its own protocol and hands everything on as JSON.',
+    chips: ['Elastic Beats', 'OpenTelemetry', 'Syslog', 'Webhooks'],
     to: '/dfe-receiver/architecture/',
   },
   {
     key: 'routing',
     Icon: IconRouting,
     eyebrow: 'Routing',
-    title: 'One source definition',
-    text: 'A source carries its routing, schema and detections. The receiver, loader and hunt runner read the same definition.',
+    title: 'Define a source once',
+    text: 'Routing, schema and detections hang off the source. The receiver, the loader and the hunt runner all read that one definition.',
     chips: ['Sources', 'Kafka topics', 'Schemas'],
     to: '/dfe-engine/data-plane/source/',
   },
@@ -58,7 +58,7 @@ const CAPABILITIES = [
     Icon: IconStorage,
     eyebrow: 'Storage',
     title: 'Into ClickHouse',
-    text: 'dfe-loader parses, routes and inserts, RowBinary by default, with at-least-once Kafka delivery.',
+    text: 'dfe-loader batches into ClickHouse as RowBinary. Delivery from Kafka is at-least-once.',
     chips: ['ClickHouse', 'RowBinary', 'Dead-letter queue'],
     to: '/dfe-loader/',
   },
@@ -67,7 +67,7 @@ const CAPABILITIES = [
     Icon: IconHunting,
     eyebrow: 'Hunting',
     title: 'Rules and scheduled hunts',
-    text: 'A rule is a SQL detection tied to a source. Hunts run rules on a schedule and write matches to the alerts table.',
+    text: 'A rule is a SQL detection on a source. A hunt runs rules on a schedule and writes what matches to the alerts table.',
     chips: ['SQL rules', 'Hunts', 'Alerts'],
     to: '/dfe-engine/data-plane/source-detections/',
   },
@@ -76,7 +76,7 @@ const CAPABILITIES = [
     Icon: IconObservability,
     eyebrow: 'Observability',
     title: 'The stack reports on itself',
-    text: 'Every service serves health and metrics endpoints, and the stack sends its own logs and metrics over OpenTelemetry.',
+    text: 'Every service answers health and metrics probes. The stack ships its own logs and metrics over OpenTelemetry, so HyperDX shows its health before your first event.',
     chips: ['OpenTelemetry', 'HyperDX', '/livez /readyz /metrics'],
     to: '/dfe-docker/observability/',
   },
@@ -88,7 +88,7 @@ const DEPLOY_PATHS = [
     Icon: IconHost,
     eyebrow: 'dfe-docker',
     title: 'Docker Compose',
-    text: 'One host: a laptop, a demo box or a proof of concept.',
+    text: 'One host. A laptop, a demo box or a proof of concept.',
     to: '/quickstart/docker/',
   },
   {
@@ -96,7 +96,7 @@ const DEPLOY_PATHS = [
     Icon: IconCluster,
     eyebrow: 'dfe-infra',
     title: 'Kubernetes on-premises',
-    text: 'A cluster you run. RKE2 is the reference distribution, and the charts assume no particular one.',
+    text: 'Your cluster, Kubernetes 1.35 or later. RKE2 is the reference distribution. The charts need no particular one.',
     to: '/quickstart/kubernetes/',
   },
   {
@@ -104,7 +104,7 @@ const DEPLOY_PATHS = [
     Icon: IconCloud,
     eyebrow: 'dfe-infra',
     title: 'Amazon EKS',
-    text: 'EKS, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud.',
+    text: 'OpenTofu builds it on Graviton. Kafka comes from Amazon MSK, Confluent Cloud or Redpanda Cloud.',
     to: '/quickstart/aws/',
   },
 ];
@@ -116,7 +116,7 @@ function whatsNew({newest, releaseNotes, apiPath}) {
       key: 'release',
       eyebrow: 'Latest release',
       title: `DFE ${newest}`,
-      text: 'The changes in the dfe-infra release that certifies this stack.',
+      text: 'What changed, from the dfe-infra release that certifies this stack.',
       action: 'Release notes',
       href: releaseNotes,
     });
@@ -125,7 +125,7 @@ function whatsNew({newest, releaseNotes, apiPath}) {
     key: 'aws',
     eyebrow: 'Deploy',
     title: 'DFE on AWS',
-    text: 'OpenTofu builds EKS, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud, then hands it to the same bootstrap every cluster uses.',
+    text: 'OpenTofu builds EKS on Graviton, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud. Then the same bootstrap as every other cluster.',
     action: 'Read the guide',
     to: '/dfe-infra/deployment/aws/',
   });
@@ -134,7 +134,7 @@ function whatsNew({newest, releaseNotes, apiPath}) {
       key: 'api',
       eyebrow: 'Reference',
       title: 'HTTP API reference',
-      text: "Every dfe-engine endpoint, generated from the engine's committed OpenAPI spec at this release's pin.",
+      text: 'Every dfe-engine endpoint, generated from the OpenAPI spec this release pins.',
       action: 'Browse the API',
       to: apiPath,
     });
@@ -179,7 +179,7 @@ function Hero({stack, versionLabel}) {
             Data Fusion <span className={styles.heroAccent}>Engine</span>
           </h1>
           <p className={styles.tagline}>
-            The data pipeline you deploy and run yourself, from HTTP ingest to ClickHouse.
+            A data pipeline you run yourself. Every agent in, ClickHouse out.
           </p>
           <div className={styles.actions}>
             <Link className={`${styles.button} ${styles.buttonPrimary}`} to="/quickstart/">
@@ -284,7 +284,7 @@ export default function Home() {
               id="deploy-paths"
               eyebrow="Deploy"
               title="Where it runs"
-              lead="Three routes, each a short path through the guides that own the steps."
+              lead="Docker on one host. Kubernetes when it has to scale, on your own cluster or on EKS."
             />
             <ul className={styles.gridThree}>
               {DEPLOY_PATHS.map(({key, Icon, eyebrow, title, text, to}) => (
@@ -310,14 +310,14 @@ export default function Home() {
         <section className={styles.closing} aria-labelledby="closing">
           <div className={`${styles.container} ${styles.closingInner}`}>
             <h2 id="closing" className={styles.sectionTitle}>
-              Start with a quickstart
+              Start with the demo
             </h2>
             <p className={styles.sectionLead}>
-              The Docker quickstart gets one event through the pipeline on a single host.
+              One host with Docker. Live firewall syslog, parsed into one ClickHouse table per vendor.
             </p>
             <div className={styles.actions}>
-              <Link className={`${styles.button} ${styles.buttonPrimary}`} to="/quickstart/">
-                Get started
+              <Link className={`${styles.button} ${styles.buttonPrimary}`} to="/quickstart/demo/">
+                Run the demo
               </Link>
               <a className={`${styles.button} ${styles.buttonSecondary}`} href="https://github.com/hyperi-io">
                 Source on GitHub
