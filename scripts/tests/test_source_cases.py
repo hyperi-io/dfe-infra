@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -1832,6 +1833,7 @@ class TestTheOrderTheRunnerWalks:
         """FakePage's source picker stays empty, so the step runs out its wait, which is shortened here."""
         monkeypatch.setattr(steps, "SOURCE_LIST_WAIT_S", 0.05)
         monkeypatch.setattr(steps, "SOURCE_LIST_POLL_S", 0.01)
+        monkeypatch.setattr(steps, "WORK_DEADLINE", 0.0)
 
     def _walk(self, case, driver, engine, transform_repo):
         walk(a_run(driver, engine, parse(), case.name, transform_repo), case, [], [])
@@ -1874,6 +1876,15 @@ class TestTheOrderTheRunnerWalks:
         order = self._walk(case, driver, engine, transform_repo)
 
         assert order.index("deploy") < order.index("upload-program") < order.index("restart")
+
+    def test_the_reporting_row_is_read_after_the_feed(self, transform_repo):
+        driver, engine = FakeDriver(FakePage()), FakeEngine()
+        case = cases.build(parse())
+        case.feed = lambda run: driver.record("feed", "done", "")
+        case.prove = lambda run: None
+        order = self._walk(case, driver, engine, transform_repo)
+
+        assert order.index("transform-instance") < order.index("feed") < order.index("transform-reporting")
 
     def test_a_case_with_no_files_skips_that_row_entirely(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
@@ -2106,23 +2117,73 @@ class TestTheReportingVerdict:
         engine.instance = "someone-else"
 
         steps.record_instance_up(
-            driver, engine, self.IdleStore(), self.SERVICE, "el1",
-            "transform-instance", 0.0, "transform-reporting", 0.0,
+            driver, engine, self.SERVICE, "el1", "transform-instance", 0.0, 0.0,
         )
 
         assert driver.status("transform-instance") == "failed"
 
-    def test_the_row_the_run_lands_goes_through_the_verdict(self):
-        """The wait and the verdict are one step, so no caller can record the raw wait."""
+    def test_the_wait_for_the_instance_records_no_reporting_row(self):
+        """The row waits for the feed: an instance with no records yet can only read idle (#872)."""
         driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
         engine.instance = "el1"
 
         steps.record_instance_up(
-            driver, engine, self.IdleStore(samples=3), self.SERVICE, "el1",
-            "transform-instance", 0.0, "transform-reporting", 0.0,
+            driver, engine, self.SERVICE, "el1", "transform-instance", 0.0, 0.0,
         )
 
-        assert driver.status("transform-reporting") == "unproven"
+        assert driver.rows == ["transform-instance"]
+
+    @pytest.mark.parametrize(
+        ("info", "samples", "state"),
+        [
+            pytest.param(6, 0, "done", id="busy_throughout"),
+            pytest.param(6, 3, "done", id="busy_for_some_exports"),
+            pytest.param(6, 6, "unproven", id="idle_throughout"),
+            pytest.param(0, 0, "unproven", id="no_export_since_the_feed"),
+        ],
+    )
+    def test_the_row_reads_what_was_published_since_the_feed(self, info, samples, state):
+        driver = FakeDriver(FakePage())
+        reported = (self.UP, {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"})
+
+        steps.record_reporting(
+            driver, self.IdleStore(info=info, samples=samples), self.SERVICE,
+            "transform-reporting", reported, time.monotonic(),
+        )
+
+        assert driver.status("transform-reporting") == state
+
+    def test_an_export_that_lands_after_the_first_read_still_counts(self, monkeypatch):
+        """The first read can precede the export that shows the instance working."""
+        store = self.IdleStore(info=0, samples=0)
+        reads = iter([(0, 0), (4, 0)])
+
+        def query(sql):
+            if "info" in sql:
+                store.info, store.samples = next(reads)
+            return [[store.samples, store.since]] if "pipeline_idle" in sql else [[store.info, 2]]
+
+        store.query = query
+        monkeypatch.setattr(steps, "WORK_DEADLINE", 60.0)
+        monkeypatch.setattr(steps, "WORK_POLL_SECONDS", 0.0)
+        driver = FakeDriver(FakePage())
+        reported = (self.UP, {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"})
+
+        steps.record_reporting(
+            driver, store, self.SERVICE, "transform-reporting", reported, time.monotonic()
+        )
+
+        assert driver.status("transform-reporting") == "done"
+
+    def test_an_instance_that_never_reported_fails_after_the_feed_too(self):
+        driver = FakeDriver(FakePage())
+
+        steps.record_reporting(
+            driver, self.IdleStore(), self.SERVICE, "transform-reporting",
+            (f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}), time.monotonic(),
+        )
+
+        assert driver.status("transform-reporting") == "failed"
 
     def test_an_unproven_row_is_not_a_failure_either(self):
         from acceptance.onboarding import wizard
