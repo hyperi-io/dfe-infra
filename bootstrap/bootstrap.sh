@@ -1049,6 +1049,9 @@ if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cer
     --version "${CERT_MANAGER_VERSION}" \
     ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
+  # Marks the operator as this bootstrap's own, so destroy.sh removes only what it installed
+  # (OWNED_ANNOTATION there).
+  run kubectl annotate namespace cert-manager dfe.hyperi.io/installed-by-bootstrap=true --overwrite
 fi
 # Private-CA issuance (the chart's tls.vault issuer mode): seed the AppRole
 # SecretID cert-manager authenticates to Vault/OpenBao with. Outside the
@@ -1069,6 +1072,7 @@ if dfe_should_install external-secrets clustersecretstores.external-secrets.io e
     --version "${EXTERNAL_SECRETS_VERSION}" \
     ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
+  run kubectl annotate namespace external-secrets dfe.hyperi.io/installed-by-bootstrap=true --overwrite
 fi
 
 echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"

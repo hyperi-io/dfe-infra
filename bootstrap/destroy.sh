@@ -122,6 +122,20 @@ delete_namespace() {
     echo "  WARN: namespace ${ns} still terminating after ${DELETE_TIMEOUT}, continuing: ${held:-nothing on it says why}"
 }
 
+# The annotation bootstrap.sh puts on the namespace of an operator it installed
+# (DFE_OWNED_ANNOTATION there). An operator without it was adopted from the
+# cluster and may serve other tenants, so this teardown leaves it running.
+OWNED_ANNOTATION='dfe\.hyperi\.io/installed-by-bootstrap'
+
+# Success when bootstrap installed the operator whose namespace this is. A dry run
+# reads nothing and counts every operator as installed, so it prints the full order.
+bootstrap_installed() {
+    local owned
+    [[ "${DRY_RUN}" == "true" ]] && return 0
+    owned="$(kubectl get ns "${1}" -o "jsonpath={.metadata.annotations.${OWNED_ANNOTATION}}" 2>/dev/null)" || return 1
+    [[ "${owned}" == "true" ]]
+}
+
 # Success when this teardown deletes the namespace; anything elsewhere belongs to
 # another tenant on the cluster and is never touched.
 torn_down_namespace() {
@@ -683,18 +697,35 @@ fi
 run helm uninstall argocd -n argocd 2>/dev/null || true
 run helm uninstall dfe-valkey -n argocd 2>/dev/null || true
 
+# Read before step 1: the namespaces carry the answer, and step 7 removes them.
+# Each is checked once, so a step that fails midway cannot flip a later one.
+CERT_MANAGER_INSTALLED=false
+ESO_INSTALLED=false
+bootstrap_installed cert-manager && CERT_MANAGER_INSTALLED=true
+bootstrap_installed external-secrets && ESO_INSTALLED=true
+
 echo "==> [7/9] Uninstalling Layer 1 (cert-manager, ESO)"
 # Only ESO clears an ExternalSecret's finalizer and only cert-manager an ACME
 # challenge's, so a namespace goes while both still run, and a controller's own
 # namespace once its release is uninstalled.
 delete_namespace argocd
 delete_namespace envoy-gateway-system
-run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
-delete_namespace cert-manager
-run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
+if [[ "${CERT_MANAGER_INSTALLED}" == "true" ]]; then
+    run helm uninstall cert-manager -n cert-manager 2>/dev/null || true
+    delete_namespace cert-manager
+else
+    echo "  cert-manager left running -- this cluster carried it before bootstrap, so other tenants may depend on it"
+fi
+if [[ "${ESO_INSTALLED}" == "true" ]]; then
+    run helm uninstall external-secrets -n external-secrets 2>/dev/null || true
+else
+    echo "  external-secrets left running -- this cluster carried it before bootstrap, so other tenants may depend on it"
+fi
 
 echo "==> [8/9] Cleaning up namespaces"
-delete_namespace external-secrets
+if [[ "${ESO_INSTALLED}" == "true" ]]; then
+    delete_namespace external-secrets
+fi
 # destroy.sh cannot tell a MetalLB bootstrap installed from one the cluster
 # already carried, and removing an adopted LoadBalancer provider would strand
 # every other tenant's Service on the cluster.
