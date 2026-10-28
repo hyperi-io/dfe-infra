@@ -370,17 +370,6 @@ dfe_have_ready_deploy() {
   return 1
 }
 
-# The annotation an operator's namespace carries once THIS bootstrap installed
-# the operator. destroy.sh removes only what carries it, so an operator adopted
-# from the cluster (a shared cert-manager, another tenant's MetalLB) outlives the
-# teardown. Kept in step with OWNED_ANNOTATION in destroy.sh.
-DFE_OWNED_ANNOTATION="dfe.hyperi.io/installed-by-bootstrap"
-
-# dfe_record_install <ns>: mark the namespace of an operator bootstrap just installed.
-dfe_record_install() {
-  run kubectl annotate namespace "$1" "${DFE_OWNED_ANNOTATION}=true" --overwrite
-}
-
 # dfe_should_install <name> <crd> [<ns> <deploy> [<label-selector>...]]  -> rc 0 = INSTALL, rc 1 = ADOPT.
 # ADOPT only when BOTH the CRD and a running operator deployment are present. A
 # LINGERING CRD with no deployment (e.g. left behind by destroy.sh's resource-policy
@@ -1060,7 +1049,9 @@ if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cer
     --version "${CERT_MANAGER_VERSION}" \
     ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
-  dfe_record_install cert-manager
+  # Marks the operator as this bootstrap's own, so destroy.sh removes only what it installed
+  # (OWNED_ANNOTATION there).
+  run kubectl annotate namespace cert-manager dfe.hyperi.io/installed-by-bootstrap=true --overwrite
 fi
 # Private-CA issuance (the chart's tls.vault issuer mode): seed the AppRole
 # SecretID cert-manager authenticates to Vault/OpenBao with. Outside the
@@ -1081,7 +1072,7 @@ if dfe_should_install external-secrets clustersecretstores.external-secrets.io e
     --version "${EXTERNAL_SECRETS_VERSION}" \
     ${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"} \
     --wait --timeout 5m
-  dfe_record_install external-secrets
+  run kubectl annotate namespace external-secrets dfe.hyperi.io/installed-by-bootstrap=true --overwrite
 fi
 
 echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
