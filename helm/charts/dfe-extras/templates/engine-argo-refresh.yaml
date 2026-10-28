@@ -1,0 +1,44 @@
+{{- define "dfe-extras.engine.argoRefresh" -}}
+{{- /*
+What the engine needs to hard-refresh the Argo CD Applications a routing push
+changed: get and patch on Applications in Argo's namespace, nothing else there.
+
+Argo compares an Application on its webhook or its repo poll. A push that lands
+while a compare of the same Application is already running is folded into that
+compare, which resolved the old head, and the Application then reports Synced
+until the next poll. The engine sets argocd.argoproj.io/refresh=hard on the
+Applications it changed, which starts a compare of its own.
+
+The Role lives in Argo's namespace because that is where Applications are. A
+Role grants nothing on Secrets, AppProjects or ApplicationSets.
+*/ -}}
+{{- $argocd := (.Values.operatorNamespaces | default dict).argocd | default "argocd" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-argo-refresh
+  namespace: {{ $argocd }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-argo-refresh
+  namespace: {{ $argocd }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dfe-common.fullname" . }}-argo-refresh
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- include "dfe-extras.render" (dict "root" . "charts" (list "dfe-engine") "body" "dfe-extras.engine.argoRefresh") }}
