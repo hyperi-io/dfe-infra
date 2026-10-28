@@ -510,7 +510,7 @@ class RebuildRsTests(OnPathTestCase):
         root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-rebuild-")
         self.addCleanup(root_tmp.cleanup)
         root = Path(root_tmp.name)
-        origin = root / "origin.git"
+        origin = root / "dfe-receiver.git"
         _git(root, "init", "--bare", "-b", "main", str(origin))
         seed = root / "seed"
         _git(root, "clone", str(origin), str(seed))
@@ -540,6 +540,16 @@ class RebuildRsTests(OnPathTestCase):
         assert code == 0
         assert "emit-dockerfile" in argv
         assert "config-schema" in argv
+
+    def test_a_worktree_named_anything_builds_its_repos_app_and_the_main_checkout_stays_on_main(self) -> None:
+        wt = self.repo.parent / "ga-rebuild"
+        _git(self.repo, "worktree", "add", "-b", "scratch", str(wt))
+        args = sf.build_parser().parse_args(["rebuild-rs", str(wt), "2.11.0", "--no-tests"])
+        assert sf.cmd_rebuild_rs(args) == 0
+        argv = _fake_argv(self.bindir, "cargo")
+        assert argv[argv.index("--bin") + 1] == "dfe-receiver"
+        assert sf.current_branch(self.repo) == "main"
+        assert sf.current_branch(wt) == "HEAD"
 
     def test_the_dry_run_names_the_dockerfile_and_docs_artefacts_only(self) -> None:
         buffer = io.StringIO()
@@ -577,7 +587,7 @@ class RebuildRsTargetTests(OnPathTestCase):
         root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-target-")
         self.addCleanup(root_tmp.cleanup)
         self.root = Path(root_tmp.name)
-        origin = self.root / "origin.git"
+        origin = self.root / "dfe-receiver.git"
         _git(self.root, "init", "--bare", "-b", "main", str(origin))
         seed = self.root / "seed"
         _git(self.root, "clone", str(origin), str(seed))
@@ -756,7 +766,7 @@ class RebuildRsGateFeaturesTests(OnPathTestCase):
         root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-gate-")
         self.addCleanup(root_tmp.cleanup)
         root = Path(root_tmp.name)
-        origin = root / "origin.git"
+        origin = root / "dfe-fetcher.git"
         _git(root, "init", "--bare", "-b", "main", str(origin))
         seed = root / "seed"
         _git(root, "clone", str(origin), str(seed))
@@ -1026,6 +1036,47 @@ class SyncMainTests(unittest.TestCase):
                 assert "Run the tool against" in message
                 assert "already used by worktree" not in message
         assert sf.current_branch(self.work) == "some-side-branch"
+
+    def test_a_linked_worktree_detaches_at_origin_main_and_leaves_main_alone(self) -> None:
+        # The fleet runs in a worktree called anything, while the repo's main
+        # checkout stays on main and nobody borrows it.
+        wt = Path(self._tmp.name) / "ga-rebuild"
+        _git(self.work, "worktree", "add", "-b", "some-side-branch", str(wt))
+        sf.sync_main(wt, dry_run=True)
+        assert sf.current_branch(wt) == "some-side-branch"
+        sf.sync_main(wt, dry_run=False)
+        assert sf.current_branch(wt) == "HEAD"
+        assert sf.head_sha(wt) == _git(wt, "rev-parse", "origin/main")
+        assert (wt / "b.txt").exists()
+        assert sf.current_branch(self.work) == "main"
+
+    def test_a_linked_worktree_keeps_its_wip_when_it_detaches(self) -> None:
+        wt = Path(self._tmp.name) / "ga-rebuild"
+        _git(self.work, "worktree", "add", "-b", "some-side-branch", str(wt))
+        (wt / "a.txt").write_text("1\nmy wip\n", encoding="utf-8")
+        sf.sync_main(wt, dry_run=False)
+        assert "my wip" in (wt / "a.txt").read_text(encoding="utf-8")
+
+    def test_after_a_merge_a_linked_worktree_detaches_and_the_main_checkout_is_untouched(self) -> None:
+        wt = Path(self._tmp.name) / "ga-rebuild"
+        _git(self.work, "worktree", "add", "-b", "some-side-branch", str(wt))
+        sf.return_to_main(wt)
+        assert sf.current_branch(wt) == "HEAD"
+        assert sf.head_sha(wt) == _git(wt, "rev-parse", "origin/main")
+        assert sf.current_branch(self.work) == "main"
+
+    def test_the_main_checkout_returns_to_main_after_a_merge(self) -> None:
+        _git(self.work, "switch", "-c", "some-side-branch")
+        sf.return_to_main(self.work)
+        assert sf.current_branch(self.work) == "main"
+        assert (self.work / "b.txt").exists()
+
+    def test_the_repo_name_comes_from_the_remote_not_the_directory(self) -> None:
+        named = Path(self._tmp.name) / "named"
+        origin = _git(self.work, "remote", "get-url", "origin")
+        _git(self.work, "remote", "set-url", "origin", origin.replace("origin.git", "dfe-fetcher.git"))
+        _git(self.work, "worktree", "add", "-b", "x", str(named))
+        assert sf.repo_slug(named, "hyperi-io") == "hyperi-io/dfe-fetcher"
 
     def test_running_against_the_worktree_that_holds_main_syncs(self) -> None:
         _git(self.work, "switch", "-c", "some-side-branch")
@@ -1410,7 +1461,7 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         root_tmp = tempfile.TemporaryDirectory(prefix="scalo-fleet-unopt-")
         self.addCleanup(root_tmp.cleanup)
         root = Path(root_tmp.name)
-        self.origin = root / "origin.git"
+        self.origin = root / "dfe-app.git"
         _git(root, "init", "--bare", "-b", "main", str(self.origin))
         seed = root / "seed"
         _git(root, "clone", str(self.origin), str(seed))
