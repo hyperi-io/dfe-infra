@@ -354,20 +354,44 @@ dfe_have_default_storageclass() {
     | grep -q true
 }
 
-# dfe_should_install <name> <crd> [<ns> <deploy>]  -> rc 0 = INSTALL, rc 1 = ADOPT.
+# rc 0 when <ns> holds a deployment with a Ready replica matching any of the label
+# selectors. The selectors are tried one at a time, because kubectl cannot OR two
+# different label keys in one query.
+dfe_have_ready_deploy() {
+  local ns="$1" selector ready
+  shift
+  for selector in "$@"; do
+    ready="$(kubectl -n "${ns}" get deploy -l "${selector}" \
+      -o jsonpath='{range .items[*]}{.status.readyReplicas}{"\n"}{end}' 2>/dev/null)" || continue
+    if grep -qE '^[1-9][0-9]*$' <<<"${ready}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# dfe_should_install <name> <crd> [<ns> <deploy> [<label-selector>...]]  -> rc 0 = INSTALL, rc 1 = ADOPT.
 # ADOPT only when BOTH the CRD and a running operator deployment are present. A
 # LINGERING CRD with no deployment (e.g. left behind by destroy.sh's resource-policy
 # keep) must NOT fool us into skipping the install -- that stranded argocd +
 # cert-manager (uninstalled but CRDs kept) on a clean-slate redeploy. So: CRD +
 # deployment -> ADOPT; CRD but no deployment -> INSTALL (re-adopts the CRD).
+# <deploy> is the Helm chart's deployment name. An operator installed from its
+# upstream manifest names it differently (MetalLB's is `controller`), so a Ready
+# deployment matching any <label-selector> in <ns> counts as the operator too.
 dfe_should_install() {
   local name="$1" crd="$2" ns="${3:-}" deploy="${4:-}"
+  shift $(( $# < 4 ? $# : 4 ))
   if [[ "${DFE_FORCE_INSTALL:-false}" == "true" ]]; then
     echo "  [${name}] DFE_FORCE_INSTALL -> INSTALL DFE-owned"
     return 0
   fi
   if dfe_have_crd "${crd}"; then
     if [[ -n "${ns}" && -n "${deploy}" ]] && ! kubectl -n "${ns}" get deploy "${deploy}" >/dev/null 2>&1; then
+      if [[ $# -gt 0 ]] && dfe_have_ready_deploy "${ns}" "$@"; then
+        echo "  [${name}] detected (CRD ${crd} + a Ready operator in ${ns} under another name) -> ADOPT existing, skip install"
+        return 1
+      fi
       echo "  [${name}] CRD ${crd} present but ${ns}/${deploy} not running (lingering CRD) -> INSTALL"
       return 0
     fi
@@ -1017,7 +1041,8 @@ else
 fi
 
 echo "==> [2/7] cert-manager (detect-or-install)"
-if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager; then
+if dfe_should_install cert-manager certificates.cert-manager.io cert-manager cert-manager \
+  app.kubernetes.io/name=cert-manager; then
   dfe_release_values cert-manager
   run helm upgrade --install cert-manager jetstack/cert-manager \
     --namespace cert-manager --create-namespace \
@@ -1036,7 +1061,8 @@ if [[ -n "${DFE_CERTMANAGER_SECRET_ID:-}" ]] && [[ "${DFE_DRY_RUN:-false}" != "t
 fi
 
 echo "==> [3/7] external-secrets (detect-or-install)"
-if dfe_should_install external-secrets clustersecretstores.external-secrets.io external-secrets external-secrets; then
+if dfe_should_install external-secrets clustersecretstores.external-secrets.io external-secrets external-secrets \
+  app.kubernetes.io/name=external-secrets; then
   dfe_release_values external-secrets
   run helm upgrade --install external-secrets external-secrets/external-secrets \
     --namespace external-secrets --create-namespace \
@@ -1051,7 +1077,9 @@ echo "==> [3b/7] MetalLB (detect-or-install, on-prem only)"
 if dfe_cloud_programs_loadbalancers; then
   echo "  DFE_CLOUD=${DFE_CLOUD}: the cloud LoadBalancer controller programs the Services -- MetalLB skipped"
 else
-  if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller; then
+  # The upstream manifest labels its controller app=metallb, the chart app.kubernetes.io/name=metallb.
+  if dfe_should_install metallb ipaddresspools.metallb.io metallb-system metallb-controller \
+    app=metallb,component=controller app.kubernetes.io/name=metallb,app.kubernetes.io/component=controller; then
     run helm upgrade --install metallb metallb/metallb \
       --namespace metallb-system --create-namespace \
       --version "${METALLB_VERSION}" \
