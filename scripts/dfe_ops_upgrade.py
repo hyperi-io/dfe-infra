@@ -21,6 +21,9 @@
                            [--skip-cluster-check] [--target-revision <ref>]
     dfe-ops upgrade migrate-values --deploy <dir> [--check]
 
+apply and rollback also take --bundled-forgejo [--forgejo-repo <name>] [--forgejo-owner <user>]
+when --deploy is a checkout of the bundled in-cluster Forgejo deploy repo.
+
 Every verb takes `--deploy`, a dfe-deploy checkout (its `pins.yaml` names the
 FROM stack in `base.dfe-infra`), and `--to`, a versions.yaml stack version
 (default: the `current` pointer). A deploy repo with no `pins.yaml`, such as the
@@ -211,6 +214,7 @@ import argocd_release  # noqa: E402
 import helm_releases  # noqa: E402
 import values_migration  # noqa: E402
 import yaml_subset  # noqa: E402
+from deploy_repo_session import BundledRepo, SessionError  # noqa: E402
 
 UPGRADE_ORDER = REPO_ROOT / "upgrade-order.yaml"
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
@@ -365,8 +369,47 @@ def _absent(err: str) -> bool:
     return "NotFound" in err or "the server doesn't have a resource type" in err
 
 
+# The credential environment of the open --bundled-forgejo session; empty otherwise.
+_GIT_ENV: dict[str, str] = {}
+
+
 def _git(deploy: Path, *args: str) -> subprocess.CompletedProcess:
+    if _GIT_ENV:
+        return _run(["git", "-C", str(deploy), *args], env={**os.environ, **_GIT_ENV})
     return _run(["git", "-C", str(deploy), *args])
+
+
+def _with_bundled_repo(func: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
+    """Run a verb with --deploy attached to the bundled Forgejo deploy repo when --bundled-forgejo is set."""
+
+    def run(args: argparse.Namespace) -> int:
+        if not args.bundled_forgejo:
+            return func(args)
+        repo = BundledRepo(kubeconfig=args.kubeconfig, repo=args.forgejo_repo, owner=args.forgejo_owner)
+        try:
+            with repo.open(Path(args.deploy)) as session:
+                _GIT_ENV.update(session.git_env)
+                print(f"dfe-ops upgrade: {args.deploy} is attached to the bundled deploy repo", file=sys.stderr)
+                try:
+                    return func(args)
+                finally:
+                    _GIT_ENV.clear()
+        except SessionError as err:
+            print(f"dfe-ops upgrade: {err}", file=sys.stderr)
+            return EXIT_PREFLIGHT_FAILED
+
+    return run
+
+
+def _add_bundled_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--bundled-forgejo",
+        action="store_true",
+        help="--deploy is a checkout of the bundled in-cluster Forgejo deploy repo (cloned when absent): "
+        "the admin credential is read from the cluster and used in-process, so the push needs no clone of your own",
+    )
+    parser.add_argument("--forgejo-repo", default="deploy", help="the bundled repo's name")
+    parser.add_argument("--forgejo-owner", default=None, help="the bundled repo's owner (default: the admin user)")
 
 
 def _unpushed(deploy: Path) -> bool:
@@ -3446,7 +3489,8 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         "(finalise after the soak, or resume an apply) (default: pins.yaml's base.dfe-infra)",
     )
     _add_target_revision_arg(apply_)
-    apply_.set_defaults(func=cmd_upgrade_apply)
+    _add_bundled_args(apply_)
+    apply_.set_defaults(func=_with_bundled_repo(cmd_upgrade_apply))
 
     rollback = verbs.add_parser(
         "rollback",
@@ -3465,7 +3509,8 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         "and leave target_revision where it is",
     )
     _add_target_revision_arg(rollback)
-    rollback.set_defaults(func=cmd_upgrade_rollback)
+    _add_bundled_args(rollback)
+    rollback.set_defaults(func=_with_bundled_repo(cmd_upgrade_rollback))
 
     migrate = verbs.add_parser(
         "migrate-values",
