@@ -1462,9 +1462,11 @@ if [[ "${DFE_BUNDLED_DEPLOY_REPO}" == "true" ]] && [[ "${DFE_DRY_RUN:-false}" !=
       -p "{\"stringData\":{\"webhook.gogs.secret\":\"${ARGO_WEBHOOK_SECRET}\"}}" >/dev/null 2>&1; then
     echo "  Argo push webhook secret ready (argocd-secret webhook.gogs.secret)"
   else
-    echo "  WARNING: could not patch argocd-secret with webhook.gogs.secret."
-    echo "           Forgejo will still register the hook, Argo will reject every"
-    echo "           delivery, and a source write waits out the 300s poll instead."
+    echo "  ERROR: could not patch argocd-secret with webhook.gogs.secret."
+    echo "         Forgejo would register the hook, Argo would reject every delivery,"
+    echo "         and a source write would wait out the 300s poll instead of syncing"
+    echo "         on the push. Fix the patch (RBAC on argocd/argocd-secret) and re-run."
+    exit 1
   fi
 fi
 
