@@ -27,6 +27,8 @@ A source has one origin. Either the receiver matches pushed events to it, or a f
 | Pushed | Your agents and devices send to dfe-receiver, which terminates their protocols at the edge | [The source definition](../dfe-engine/data-plane/source-definition.md), then [webhook callers](../dfe-receiver/WEBHOOK-SETUP.md) for products that push alerts |
 | Fetched | dfe-fetcher dials out to a SaaS or cloud API on an interval | [Cloud and SaaS setup guides](../dfe-fetcher/cloud-setup/README.md) |
 
+[Sources](sources.md) is how you browse the catalogue of ready-made ones and create them in one call.
+
 A source is active, dormant or disabled. [Storing and operating a source](../dfe-engine/data-plane/source-registry.md) says what each state does to its table. [Data evolution](../dfe-engine/data-evolution.md) is how a stream goes from landing raw to having its own columns, one field at a time.
 
 ## Everything else

@@ -59,6 +59,7 @@ placement:
     quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"
     quickstart/aws.md: "Deploy / AWS"
     operate/README.md: "Operate / Start here"
+    operate/sources.md: "Operate / Sources"
     operate/transforms.md: "Operate / Transforms"
     operate/users-and-oidc.md: "Operate / Users and OIDC"
     operate/detections-and-hunts.md: "Operate / Detections and hunts"
