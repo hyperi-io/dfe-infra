@@ -46,7 +46,7 @@ data:
       # each SELECT is a fixed set of named columns rather than a metric/value pair.
       sql_query/clickhouse:
         driver: clickhouse
-        datasource: "clickhouse://{{ include "otel-collector.clickhouseUser" . }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ .Values.clickhouse.nativePort }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
+        datasource: "clickhouse://{{ include "otel-collector.clickhouseUser" . }}:${env:CLICKHOUSE_PASSWORD}@{{ .Values.clickhouse.host }}:{{ include "otel-collector.clickhouseNativePort" . }}/{{ .Values.clickhouse.database }}{{ include "otel-collector.clickhouseQuery" . }}"
         collection_interval: {{ .Values.clusterTelemetry.clickhouse.collectionInterval }}
         queries:
           # Instantaneous counters from system.metrics.
@@ -369,7 +369,7 @@ data:
         # Derived from the shared clickhouse facts rather than held twice: the
         # Service name differs per mode, so a second copy resolves to no such
         # host on the mode it was not written for.
-        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v%s" .Values.clickhouse.host .Values.clickhouse.nativePort (include "otel-collector.clickhouseQuery" .)) }}
+        endpoint: {{ .Values.exporters.clickhouse.endpoint | default (printf "tcp://%s:%v%s" .Values.clickhouse.host (include "otel-collector.clickhouseNativePort" .) (include "otel-collector.clickhouseQuery" .)) }}
         database: {{ .Values.exporters.clickhouse.database | default .Values.clickhouse.database }}
         username: {{ include "otel-collector.clickhouseUser" . }}
         password: ${env:CLICKHOUSE_PASSWORD}
@@ -380,6 +380,16 @@ data:
         # without the table -- or with a different engine. With create_schema off
         # the only SQL it sends is INSERT.
         create_schema: false
+        {{- $caKind := include "otel-collector.clickhouseCAKind" . }}
+        {{- if and (include "otel-collector.clickhouseSecure" .) (or $caKind (not (include "otel-collector.clickhouseVerify" .))) }}
+        tls:
+          {{- if $caKind }}
+          ca_file: {{ include "otel-collector.clickhouseCADir" . }}/{{ dig "tls" "ca" "dataKey" "ca.crt" (.Values.clickhouse | default dict) }}
+          {{- end }}
+          {{- if not (include "otel-collector.clickhouseVerify" .) }}
+          insecure_skip_verify: true
+          {{- end }}
+        {{- end }}
         {{- with .Values.exporters.clickhouse.connectionParams }}
         connection_params:
           {{- range $k, $v := . }}

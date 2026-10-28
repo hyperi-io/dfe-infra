@@ -21,15 +21,82 @@ it, so the file the extension reads is the one the Secret projects.
 {{- end -}}
 
 {{/*
-otel-collector.clickhouseQuery -- the query string the exporter and the sql_query
-receiver append to the native address: secure=true on an external server that
-speaks TLS. An in-cluster server stays on plaintext 9000 whatever clickhouse.tls
-says, because clickhouse-cluster keeps 9000 open beside 9440 for this collector.
+otel-collector.clickhouseInClusterTLS -- "true" when the in-cluster ClickHouse
+serves its native protocol over TLS: clickhouse.tls.enabled and a CA to sign with
+(an issuerRef, or the internal CA), the rule clickhouse-cluster's tlsEnabled and
+every other client apply to the same block. An external server stays on its own
+settings.
 */}}
-{{- define "otel-collector.clickhouseQuery" -}}
+{{- define "otel-collector.clickhouseInClusterTLS" -}}
+{{- $ch := .Values.clickhouse | default dict -}}
+{{- $tls := dig "tls" dict $ch -}}
+{{- $issuer := or (dig "issuerRef" "name" "" $tls) (eq (toString (dig "internalCA" "present" false $tls)) "true") -}}
+{{- if and (ne (toString (dig "mode" "" $ch)) "external") (eq (toString (dig "enabled" false $tls)) "true") $issuer -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseNativePort -- the native port the collector dials: the
+TLS port when the in-cluster server serves it, else clickhouse.nativePort.
+*/}}
+{{- define "otel-collector.clickhouseNativePort" -}}
+{{- if include "otel-collector.clickhouseInClusterTLS" . -}}
+{{- dig "tls" "nativePort" 9440 (.Values.clickhouse | default dict) -}}
+{{- else -}}
+{{- .Values.clickhouse.nativePort -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseSecure -- "true" when the collector dials ClickHouse over
+TLS: an in-cluster server serving it, or an external one clickhouse.tls.enabled
+says speaks it.
+*/}}
+{{- define "otel-collector.clickhouseSecure" -}}
 {{- $ch := .Values.clickhouse | default dict -}}
 {{- $external := eq (toString (dig "mode" "" $ch)) "external" -}}
-{{- if and $external (eq (toString (dig "tls" "enabled" false $ch)) "true") -}}?secure=true{{- end -}}
+{{- if or (include "otel-collector.clickhouseInClusterTLS" .) (and $external (eq (toString (dig "tls" "enabled" false $ch)) "true")) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseVerify -- "" when clickhouse.tls.verify is false, for a
+server whose certificate cannot be verified; "true" otherwise.
+*/}}
+{{- define "otel-collector.clickhouseVerify" -}}
+{{- if ne (toString (dig "tls" "verify" true (.Values.clickhouse | default dict))) "false" -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseQuery -- the query string the exporter and the sql_query
+receiver append to the native address: secure=true when the server speaks TLS
+(skip_verify=true as well when verification is off).
+*/}}
+{{- define "otel-collector.clickhouseQuery" -}}
+{{- if include "otel-collector.clickhouseSecure" . -}}
+?secure=true{{ if not (include "otel-collector.clickhouseVerify" .) }}&skip_verify=true{{ end }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseCADir -- where the CA that signed ClickHouse's certificate
+is mounted. The sql_query receiver's driver reads the process's trust store, so
+SSL_CERT_DIR points at this directory, which Go adds to the system roots.
+*/}}
+{{- define "otel-collector.clickhouseCADir" -}}
+/etc/dfe-clickhouse-ca
+{{- end -}}
+
+{{/*
+otel-collector.clickhouseCAKind -- "secret" when the in-cluster server's CA copy
+is mounted, "configmap" when the deployment names a CA bundle of its own for an
+external server, "" when the system roots are enough.
+*/}}
+{{- define "otel-collector.clickhouseCAKind" -}}
+{{- $ca := dig "tls" "ca" dict (.Values.clickhouse | default dict) -}}
+{{- if include "otel-collector.clickhouseVerify" . -}}
+{{- if and (include "otel-collector.clickhouseInClusterTLS" .) $ca.secretName -}}secret
+{{- else if and (include "otel-collector.clickhouseSecure" .) $ca.configMapName -}}configmap
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

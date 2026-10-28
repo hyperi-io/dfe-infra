@@ -1,0 +1,97 @@
+{{- /* The CA copy for clients outside the app namespace. A store of its own, whose
+Role names the CA-only Secret and nothing else, because the app namespace's store
+(clickhouse-admin-appns.yaml) can also read the admin credential. */}}
+{{- if and (ne .Values.clickhouse.mode "external") (include "dfe-clickhouse.tlsEnabled" .) }}
+{{- $ca := .Values.clickhouse.tls.ca | default dict }}
+{{- if and $ca.secretName $ca.extraNamespaces }}
+{{- $store := printf "%s-source-ns" $ca.secretName }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $ca.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $ca.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "dfe-clickhouse.tlsCaSecret" . | quote }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $ca.secretName }}-reader
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $ca.secretName }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ $ca.secretName }}-reader
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ $store }}
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  conditions:
+    - namespaces:
+        {{- range $ca.extraNamespaces }}
+        - {{ . | quote }}
+        {{- end }}
+  provider:
+    kubernetes:
+      remoteNamespace: {{ .Release.Namespace }}
+      server:
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ .Release.Namespace }}
+      auth:
+        serviceAccount:
+          name: {{ $ca.secretName }}-reader
+          namespace: {{ .Release.Namespace }}
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterExternalSecret
+metadata:
+  name: {{ $ca.secretName }}-extra
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  externalSecretName: {{ $ca.secretName }}
+  refreshTime: 1h
+  namespaceSelectors:
+    {{- range $ca.extraNamespaces }}
+    - matchLabels:
+        kubernetes.io/metadata.name: {{ . | quote }}
+    {{- end }}
+  externalSecretSpec:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: {{ $store }}
+      kind: ClusterSecretStore
+    target:
+      name: {{ $ca.secretName }}
+      creationPolicy: Owner
+    data:
+      - secretKey: {{ $ca.dataKey | default "ca.crt" }}
+        remoteRef:
+          key: {{ include "dfe-clickhouse.tlsCaSecret" . }}
+          property: ca.crt
+{{- end }}
+{{- end }}

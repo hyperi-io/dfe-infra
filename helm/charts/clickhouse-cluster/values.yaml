@@ -164,6 +164,11 @@ clickhouse:
     ca:
       secretName: dfe-clickhouse-ca
       dataKey: ca.crt
+      # Namespaces beyond appNamespace that get the CA copy and nothing else: a
+      # client outside the app namespace (the OTel collector) verifies the server
+      # with it. They are served by a store that reads the CA-only Secret, so
+      # unlike extraCredentialNamespaces they never see the admin credential.
+      extraNamespaces: []
   # Storage model, decided at deploy and refused afterwards (the engine holds
   # clickhouse.storageModel as a protected var, and the deployment repo's
   # governance/policies/storage-layout.yaml governs it post-deploy).

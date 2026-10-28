@@ -258,6 +258,24 @@ clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   nativePort: 9000
   database: dfe
+  # The shared clickhouse.tls block (argocd/values/common.yaml), whose rule every
+  # client applies: on when enabled AND there is a CA to sign with (issuerRef, or
+  # the internal CA). An in-cluster server then serves the native protocol over TLS
+  # on nativePort below, and the collector verifies it against the CA copy in
+  # ca.secretName. An external server keeps its own port and trust: set
+  # ca.configMapName for a corporate bundle, verify false for an unverifiable cert.
+  tls:
+    enabled: false
+    nativePort: 9440
+    verify: true
+    issuerRef:
+      name: ""
+    internalCA:
+      present: false
+    ca:
+      secretName: ""
+      configMapName: ""
+      dataKey: ca.crt
   # The collector's own user, never the admin account: dfe-engine creates it on
   # the password dfe-extras mints and copies into this namespace.
   serviceUsers:

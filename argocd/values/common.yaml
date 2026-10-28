@@ -315,11 +315,13 @@ clickhouse:
   # on HTTP. External mode: point port, verify and ca at the server dialled.
   tls:
     enabled: true
-    # false keeps 8123 and 9000 open beside 8443 and 9440, for the OTel collector
-    # (native 9000) and the smoke tests, which still dial plaintext.
+    # false keeps 8123 and 9000 open beside 8443 and 9440, for the smoke tests,
+    # which still dial plaintext.
     required: false
     # What a client dials when enabled. `port` above stays the plaintext port.
     port: 8443
+    # The native protocol over TLS, which the OTel collector dials.
+    nativePort: 9440
     # false only for a server whose certificate cannot be verified. dfe-loader
     # cannot skip verification and refuses to render with it.
     verify: true
@@ -346,6 +348,8 @@ clickhouse:
       secretName: dfe-clickhouse-ca
       configMapName: ""
       dataKey: ca.crt
+      # Namespaces beyond the app namespace that read the CA: the OTel collector's.
+      extraNamespaces: [otel]
 
 # External secret backend (OpenBao / Vault / cloud KMS), per deployment. Set means
 # the deployment has one, and network-policies derives the engine's egress to it

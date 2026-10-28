@@ -17,10 +17,10 @@ This file does two things:
 
 1. Sweeps every chart under helm/charts and helm/edge for a template that
    DEFINES `kind: ClusterSecretStore` at document root, and pins that set to
-   the four known definitions -- so a fifth one added later fails this test
+   the known definitions -- so a fifth one added later fails this test
    until it is covered here, the same closed-set discipline `_charts.py`
    documents for its own chart-tree sweep.
-2. For each of the four, renders the chart and asserts the store's
+2. For each of them, renders the chart and asserts the store's
    `conditions.namespaces` equals exactly the namespaces its
    ClusterExternalSecret(s) copy into -- derived from the same chart values,
    so the two cannot disagree.
@@ -48,6 +48,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # out of scope here -- it is not a chart template.
 KNOWN_STORE_TEMPLATES = {
     REPO_ROOT / "helm/charts/clickhouse-cluster/templates/clickhouse-admin-appns.yaml",
+    REPO_ROOT / "helm/charts/clickhouse-cluster/templates/tls-ca-extra.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user-appns.yaml",
     REPO_ROOT / "helm/charts/documentdb/templates/auth.yaml",
     REPO_ROOT / "helm/charts/dfe-extras/templates/engine-service-clickhouse.yaml",
@@ -218,6 +219,22 @@ def test_documentdb_renders_no_store_with_no_app_namespace() -> None:
 def test_clickhouse_admin_store_still_serves_only_its_copies() -> None:
     docs = render("clickhouse-cluster", "appNamespace=dfe", namespace="clickhouse")
     assert_store_matches_its_copies(docs, "clickhouse-cluster")
+
+
+def test_the_clickhouse_ca_store_serves_only_the_extra_namespaces_and_reads_only_the_ca() -> None:
+    docs = render(
+        "clickhouse-cluster", "appNamespace=dfe", "clickhouse.tls.enabled=true",
+        "clickhouse.tls.internalCA.present=true", "clickhouse.tls.ca.extraNamespaces={otel}",
+        namespace="clickhouse",
+    )
+    assert_store_matches_its_copies(docs, "clickhouse-cluster CA copy")
+    (store,) = [s for s in every(docs, "ClusterSecretStore") if s["metadata"]["name"] == "dfe-clickhouse-ca-source-ns"]
+    role = role_secrets(docs, store_role(docs, store) or "")
+    expect(
+        "clickhouse-cluster: the CA store's Role names only the CA-only Secret, never the keypair or the admin",
+        role == {"dfe-clickhouse-tls-ca"},
+        f"got {sorted(role)}",
+    )
 
 
 # --- dfe-extras: the collector's ClickHouse password ------------------------
