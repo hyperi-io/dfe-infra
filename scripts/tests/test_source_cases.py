@@ -1828,6 +1828,12 @@ class TestTheDeployRow:
 
 
 class TestTheOrderTheRunnerWalks:
+    @pytest.fixture(autouse=True)
+    def _picker_never_fills(self, monkeypatch):
+        """FakePage's source picker stays empty, so the step runs out its wait, which is shortened here."""
+        monkeypatch.setattr(steps, "SOURCE_LIST_WAIT_S", 0.05)
+        monkeypatch.setattr(steps, "SOURCE_LIST_POLL_S", 0.01)
+
     def _walk(self, case, driver, engine, transform_repo):
         walk(a_run(driver, engine, parse(), case.name, transform_repo), case, [], [])
         return driver.rows

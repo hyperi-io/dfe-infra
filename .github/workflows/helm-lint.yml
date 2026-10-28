@@ -300,7 +300,7 @@ jobs:
       # Every file under scripts/tests runs here, including the ones no step
       # above names; the named steps stay for the failure paths they document.
       - name: scripts/tests under pytest
-        run: python3 -m pytest scripts/tests -n auto --dist worksteal -q -p no:cacheprovider --durations=25
+        run: python3 -m pytest scripts/tests -n auto --dist worksteal -q -rs -p no:cacheprovider --durations=25
 
       # A step of its own, not a pytest case: it fetches the engine's bundled
       # copy over the network (gh api), unlike --check-catalogue's pytest
