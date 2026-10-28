@@ -529,9 +529,11 @@ def test_leading_header_comments_go_so_the_h1_titles_the_page() -> None:
     header = (
         "<!--\nProject: x\nFile: docs/a.md\n-->\n\n<!-- second -->\n# Title\n\nBody <!-- kept -->\n"
     )
-    assert aggregate.drop_leading_comments(header) == "# Title\n\nBody <!-- kept -->\n"
+    dropped = aggregate.drop_leading_comments(header)
+    assert dropped == "\n" * 6 + "# Title\n\nBody <!-- kept -->\n"
+    assert dropped.splitlines().index("# Title") == header.splitlines().index("# Title")
     front = "---\nsidebar_position: 2\n---\n<!-- header -->\n# Title\n"
-    assert aggregate.drop_leading_comments(front) == "---\nsidebar_position: 2\n---\n# Title\n"
+    assert aggregate.drop_leading_comments(front) == "---\nsidebar_position: 2\n---\n\n# Title\n"
 
 
 def test_a_page_without_a_leading_comment_is_unchanged() -> None:
@@ -972,3 +974,124 @@ def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
     lines = build_site.redirects("2.2.1", dropped).splitlines()
     assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
     assert lines[3:] == expected
+
+
+# --- the docs gate -------------------------------------------------------------------
+
+gate_spec = importlib.util.spec_from_file_location("docs_gate", SCRIPT.with_name("gate.py"))
+gate = importlib.util.module_from_spec(gate_spec)
+gate_spec.loader.exec_module(gate)
+GATE_PHRASES = gate.load_phrases(
+    aggregate.yaml_subset.parse(gate.GATE_FILE.read_text(encoding="utf-8"))
+)
+EM_DASH = "\u2014"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Use it; then go.\n", [(1, "semicolon", ";")]),
+        ('`a; b` and [x](http://a;b) &amp; <a href="x;y">ok</a>\n', []),
+        ("Text\n```bash\nset -e; run\n```\n", []),
+        ("---\ntitle: a; b\n---\n# T\n", []),
+        ("Leverage the seam.\n", [(1, "register", "seam"), (1, "register", "leverage")]),
+        ("Ships in 2.2.1-rc.7.\n", [(1, "process", "rc.N")]),
+        ("It is expected to run.\n", [(1, "hedge", "is expected to")]),
+        ("Elasticsearch output\n", [(1, "elasticsearch", "Elasticsearch")]),
+        (f"A {EM_DASH} dash\n", [(1, "ascii", "U+2014 em dash")]),
+        ("$$\n\\alpha; \u03b2\n$$\nInline $\\beta;$ fine\n", []),
+        ("<!-- a; b\nstill; comment -->\nok\n", []),
+        (":::note Stub\n", [(1, "process", "stub admonition")]),
+        ("Ask the lead. The leader is fine.\n", [(1, "process", "the lead")]),
+        ("<!-- docs-gate: allow semicolon -- quoted -->\n\nA; b\n", []),
+        ("A; b <!-- docs-gate: allow semicolon -- quoted -->\n", []),
+        ("{/* docs-gate: allow semicolon -- quoted */} A; b\n", []),
+        ("<!-- docs-gate: allow semicolon -- x -->\nA; b\nC; d\n", [(3, "semicolon", ";")]),
+        (
+            f"<!-- docs-gate: off all -- maths -->\nA; b {EM_DASH} c\n<!-- docs-gate: on all -->\nE; f\n",
+            [(4, "semicolon", ";")],
+        ),
+        (
+            "<!-- docs-gate: allow semicolon -->\nA; b\n",
+            [(1, "marker", "no reason after --"), (2, "semicolon", ";")],
+        ),
+        ("<!-- docs-gate: allow speling -- x -->\n", [(1, "marker", "unknown rule speling")]),
+        (
+            "<!-- docs-gate: skip semicolon -- x -->\n",
+            [(1, "marker", "unknown verb 'skip' (allow, off or on)")],
+        ),
+    ],
+)
+def test_the_gate_reads_prose_only_and_honours_its_markers(
+    text: str, expected: list[tuple[int, str, str]]
+) -> None:
+    findings = gate.check_page(text, GATE_PHRASES, build="b", page="p.md")
+    assert [(f.line, f.rule, f.term) for f in findings] == expected
+
+
+def test_the_gate_needs_every_phrase_section() -> None:
+    with pytest.raises(SystemExit, match="`hedge` is not a map"):
+        gate.load_phrases({"process": {}, "register": {}})
+
+
+def write_content(root: Path, pages: dict[str, str]) -> Path:
+    members = [
+        {"name": "dfe-ui", "repo": "o/dfe-ui"},
+        {"name": "dfe-hyperdx", "repo": "o/dfe-hyperdx"},
+    ]
+    site = {"builds": [{"name": "1.0.0", "members": members, "openapi": None}]}
+    write_tree(root, {"site.json": json.dumps(site), **{f"1.0.0/{k}": v for k, v in pages.items()}})
+    return root
+
+
+@pytest.mark.parametrize(
+    ("pages", "exit_code", "new"),
+    [
+        ({"dfe-ui/a.md": "# A\n\nIntro.\n\nOld; line.\n"}, 0, []),
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, []),
+        (
+            {"dfe-ui/a.md": "# A\n\nOld; line, edited.\n"},
+            1,
+            ["o/dfe-ui docs/a.md:3: semicolon"],
+        ),
+        (
+            {"dfe-ui/a.md": "# A\n\nOld; line.\n", "dfe-ui/dfe-hyperdx/b.md": "# B\nNew; one.\n"},
+            1,
+            ["o/dfe-hyperdx docs/b.md:2: semicolon"],
+        ),
+        (
+            {"README.md": "# R\nRoot; page.\n"},
+            1,
+            ["hyperi-io/dfe-infra docs-site/content-root/README.md:2"],
+        ),
+    ],
+)
+def test_the_gate_fails_only_on_findings_the_baseline_lacks(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    pages: dict[str, str],
+    exit_code: int,
+    new: list[str],
+) -> None:
+    baseline = write_content(tmp_path / "main", {"dfe-ui/a.md": "# A\n\nOld; line.\n"})
+    content = write_content(tmp_path / "pr", pages)
+    summary = tmp_path / "summary.md"
+    status = gate.main(
+        ["--content", str(content), "--baseline", str(baseline), "--summary", str(summary)]
+    )
+    out = capsys.readouterr().out
+    assert status == exit_code
+    for line in new:
+        assert line in out
+    assert f"{len(new)} finding(s) new against main" in summary.read_text()
+    report_only = gate.main(
+        ["--content", str(content), "--baseline", str(baseline), "--report-only"]
+    )
+    assert report_only == 0
+
+
+def test_the_gate_reads_named_files_without_a_build(tmp_path: Path) -> None:
+    page = tmp_path / "docs" / "aws.md"
+    write_tree(tmp_path, {"docs/aws.md": "# AWS\n\nGo; now.\n", "docs/x.txt": "a; b"})
+    assert gate.main([str(tmp_path / "docs"), "--report-only"]) == 0
+    assert gate.main([str(page)]) == 1

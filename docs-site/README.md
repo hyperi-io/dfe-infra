@@ -20,6 +20,8 @@ The sidebar runs Overview, then four journeys: Evaluate, Deploy, Operate, Refere
 
 `content-root/VOICE.md` is the voice ledger, one "say X, not Y" rule a line. It is never published.
 
+`scripts/gate.py` is the docs gate. It reads every published page and reports process talk, hedges, the register words in `gate.yaml`, semicolons in prose, non-ASCII typography and "Elasticsearch", each with the repo, file, line and what to write instead. A pull request fails only on findings main does not already have. To keep a line as written, put `<!-- docs-gate: allow <rule> -- <reason> -->` at its end or on the line above. `python3 scripts/gate.py --help` has the block form, and `python3 scripts/gate.py path/to/page.md` checks a page before it merges.
+
 ## Running it locally
 
 Once, from this directory:

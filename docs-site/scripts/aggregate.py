@@ -896,20 +896,23 @@ def drop_leading_comments(text: str) -> str:
 
     Docusaurus titles a page from its H1 only when the H1 comes first, and a comment
     renders nothing, so a file-header comment would otherwise leave the page titled by
-    its filename.
+    its filename. Each comment leaves its newlines behind, so a line in the build is
+    the same line in the member's file, which is where the docs gate points.
 
     Args:
         text: The page's markdown.
 
     Returns:
-        The markdown with its leading comments gone and everything else untouched.
+        The markdown with its leading comments blanked and everything else untouched.
     """
     front = _FRONT_MATTER.match(text)
     head = front.group(0) if front else ""
     body = text[len(head) :]
+    blank = ""
     while comment := _LEADING_COMMENT.match(body):
+        blank += "\n" * comment.group(0).count("\n")
         body = body[comment.end() :]
-    return head + body
+    return head + blank + body
 
 
 def write_json(path: Path, data: object) -> None:
