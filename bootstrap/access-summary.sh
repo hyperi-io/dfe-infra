@@ -243,9 +243,9 @@ kubectl -n ${NS} get pods                              # everything Running
 
 1. Finish the first-run wizard in the console -- your organisation, your first
    user, and your identity provider if you have one.
-2. Retire the bootstrap admin from the wizard's last step (or
-   \`POST /api/v1/auth/setup/retire-admin\`) once your own admin exists, then
-   delete the admin Secret named in the block above. The engine stops
+2. Optional: once your own admin exists, retire the bootstrap admin with
+   \`POST /api/v1/auth/setup/retire-admin\` (the console keeps it otherwise),
+   then delete the admin Secret named in the block above. The engine stops
    reasserting the account, and the deploy repo records the retirement so a
    rebuild does not bring it back.
 3. Keep the break-glass password offline, delete its plaintext, and delete this

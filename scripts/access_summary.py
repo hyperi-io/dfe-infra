@@ -35,7 +35,8 @@ BREAKGLASS_LABEL = "break-glass"
 # rather than a doc page: this file is the only thing they are holding.
 NEXT_STEPS = (
     "Log in at the console URL above and finish the setup wizard.",
-    "Retire the bootstrap admin from the wizard's last step once your own admin exists.",
+    "Optional: once your own admin exists, retire the bootstrap admin with "
+    "`POST /api/v1/auth/setup/retire-admin`. The console keeps it otherwise.",
     "Keep the break-glass password somewhere safe, then delete this file.",
 )
 
