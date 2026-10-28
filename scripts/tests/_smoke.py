@@ -39,6 +39,9 @@ syntax-checked by the real node, and lands in the counts as `hyperdx_probe`.
 hyperdx collections, answering only an exec naming its postgres container. `engine_schema` adds a
 dfe-engine deployment whose /readyz reports that schema verdict. Each answers only
 an exec naming its thin-chart container (`-c dfe-hyperdx`, `-c dfe-engine`).
+`workloads` adds the ready deployments of the app namespace (name, ready and the endpoint
+they export to), and `metric_services` the ServiceNames with a fresh metric row, after
+`metric_zero_answers` asks that find none, each ask counted as `metrics`.
 `loader_copies_payload_to_raw` makes the landing table hold the whole payload in
 _raw on every row.
 
@@ -257,6 +260,12 @@ if "exec" in args:
         asked = bump("otel")
         print(0 if asked <= fixture.get("otel_zero_answers", 0) else 1)
         sys.exit(0)
+    if "otel_metrics" in query:
+        # The services with a fresh metric row, after `metric_zero_answers` asks that find none.
+        asked = bump("metrics")
+        if asked > fixture.get("metric_zero_answers", 0):
+            print("\\n".join(fixture.get("metric_services", [])))
+        sys.exit(0)
     if "SHOW DATABASES" in query:
         print("dfe")
         sys.exit(0)
@@ -272,6 +281,10 @@ if "exec" in args:
         print(counts.get("posted", 0))
     else:
         print(1)
+    sys.exit(0)
+if "workloads" in fixture and "deploy,statefulset" in args:
+    for w in fixture["workloads"]:
+        print(w["name"], w.get("ready", 1), w.get("endpoint", ""), sep="\t")
     sys.exit(0)
 if "pods" in args:
     print("dfe-clickhouse-0")

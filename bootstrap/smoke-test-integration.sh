@@ -618,6 +618,72 @@ check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FR
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== CORE 1b: every deployed DFE service pushes its own metrics ==="
+# CORE 1 passes on otel_logs, which the node daemonset fills from container stdout,
+# so a service that stopped pushing telemetry would not fail it. This reads the
+# services off the cluster and asks the metrics tables for each one.
+#
+# Expected to push: a ready workload of one of these scalo services (the app, or the
+# app-<instance> of a per-config deployment) whose OTEL_EXPORTER_OTLP_ENDPOINT names
+# the collector gateway. telemetry.mode=prometheus renders that variable empty, and
+# an external or receiver endpoint does not land in this database, so neither is
+# held to it. DFE_SERVICE_TELEMETRY=skip turns the section off.
+PUSHING_APPS="${DFE_PUSHING_APPS:-dfe-receiver dfe-loader dfe-archiver dfe-fetcher dfe-transform-vrl dfe-transform-vector dfe-engine}"
+METRIC_TABLES="${DFE_OTEL_METRIC_TABLES:-otel_metrics_gauge otel_metrics_sum otel_metrics_histogram}"
+
+# The app of every ready workload that exports to the gateway, one per line.
+apps_that_push() {
+  local listed app
+  listed="$(kubectl -n "$NS_APP" get deploy,statefulset -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.readyReplicas}{"\t"}{.spec.template.spec.containers[0].env[?(@.name=="OTEL_EXPORTER_OTLP_ENDPOINT")].value}{"\n"}{end}' 2>/dev/null)" || return 1
+  for app in $PUSHING_APPS; do
+    printf '%s\n' "$listed" | awk -F'\t' -v a="$app" \
+      '($1 == a || index($1, a "-") == 1) && $2 + 0 > 0 && $3 ~ /otel-collector-gateway/ { found = 1 } END { exit !found }' \
+      && echo "$app"
+  done
+  return 0
+}
+
+# Every ServiceName with a metric row newer than the freshness window.
+metric_service_names() {
+  local table union=""
+  for table in $METRIC_TABLES; do
+    union="${union:+$union UNION ALL }SELECT ServiceName FROM ${OTEL_DB}.${table} WHERE TimeUnix > now() - INTERVAL ${FRESH_WINDOW} SECOND"
+  done
+  chq "SELECT DISTINCT ServiceName FROM (${union})"
+}
+
+# The apps in $1 (one per line) with no fresh metric row, one per line.
+silent_apps() {
+  local names app
+  names="$(metric_service_names)" || { printf '%s\n' "$1"; return 0; }
+  while IFS= read -r app; do
+    [ -z "$app" ] && continue
+    printf '%s\n' "$names" | grep -qE -- "^${app}(-.*)?$" || echo "$app"
+  done <<<"$1"
+}
+
+if [ "${DFE_SERVICE_TELEMETRY:-check}" = skip ]; then
+  skip "per-service telemetry -- DFE_SERVICE_TELEMETRY=skip"
+else
+  expected="$(apps_that_push)"
+  if [ -z "$expected" ]; then
+    skip "per-service telemetry -- no ready scalo workload in ns/${NS_APP} exports to the collector gateway"
+  else
+    service_waited=0
+    silent="$(silent_apps "$expected")"
+    while [ -n "$silent" ] && [ "$service_waited" -lt "$OTEL_WAIT" ]; do
+      sleep "$OTEL_WAIT_INTERVAL"
+      service_waited=$((service_waited + OTEL_WAIT_INTERVAL))
+      silent="$(silent_apps "$expected")"
+    done
+    echo "  waited ${service_waited}s of ${OTEL_WAIT}s for a metric row from each of: $(echo $expected)"
+    check "every deployed DFE service has a metric row newer than ${FRESH_WINDOW}s in ${OTEL_DB}" \
+      "[ -z \"\$silent\" ] || { echo \"no fresh metrics from: \$(echo \$silent)\"; false; }"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== CORE 2: data path (receiver -> [kafka ->] loader -> ClickHouse) ==="
 # Post a unique event to the receiver, then poll the CH landing table for it.
 # Covers gRPC-direct (slim, mesh) and kafka (single/scale): same two endpoints
