@@ -22,6 +22,7 @@ sidebar:
     Remote access (culvert, optional): ""
     The deploy repo: ""
   Operate:
+    Start here: ""
     Sources: ""
     Transforms: ""
     Detections and hunts: ""
@@ -58,6 +59,12 @@ placement:
     quickstart/docker.md: "Evaluate / Try the demo"
     quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"
     quickstart/aws.md: "Deploy / AWS"
+    operate/README.md: "Operate / Start here"
+    operate/transforms.md: "Operate / Transforms"
+    operate/users-and-oidc.md: "Operate / Users and OIDC"
+    operate/detections-and-hunts.md: "Operate / Detections and hunts"
+    operate/monitoring.md: "Operate / Monitoring"
+    operate/day-to-day.md: "Operate / Day to day and troubleshooting"
   culvert:
     default: "Deploy / Remote access (culvert, optional)"
   dfe-archiver:
