@@ -52,6 +52,8 @@ run_test "Auth & Ingress" "smoke-test-auth.sh"
 # headers). Nothing upstream covers them, so an upstream sync can merge clean and
 # still break them -- this is where that shows up.
 run_test "HyperDX seams (auth/data/embed)" "smoke-test-hyperdx.sh"
+# A source write reaches Argo on the push, not on the 300s repo poll.
+run_test "Forgejo -> Argo push webhook" "smoke-test-argo-webhook.sh"
 run_test "Transform file sets (engine files = pod mount, byte for byte)" "smoke-test-transforms.sh"
 run_test "KEDA Autoscaling" "smoke-test-keda.sh"
 # The deep scale PROOF (artificial +1 pod per pressure-driven app via the fail-safe shim)
