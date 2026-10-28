@@ -90,7 +90,7 @@ optionally emitting a helm values fragment - and verify digests against
 GHCR). On each release tag the `stack-manifest` workflow renders the
 manifest + image list + upgrade graph, attaches them to the GitHub release,
 pushes them as an OCI artifact, and cosign-signs it keyless. Full model:
-dfe-docs `deployment/stack-versioning.md`.
+[docs/deployment/stack-versioning.md](docs/deployment/stack-versioning.md).
 
 ## Context
 

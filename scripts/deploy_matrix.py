@@ -9,7 +9,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Deployment-matrix harness -- the "deployment CI" for substrate charts.
 
-Per the canonical model (dfe-docs/deployment/state-and-repos.md) the dev cycle is
+Per the canonical model (docs/deployment/state-and-repos.md) the dev cycle is
 repeat create -> test -> teardown across a matrix of deployment types. This
 harness exercises the substrate charts (clickhouse-cluster, kafka) across their
 modes, helm-direct (not via Argo), so the *charts themselves* are proven solid on

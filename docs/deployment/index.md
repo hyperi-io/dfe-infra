@@ -145,8 +145,8 @@ images: `name:tag@sha256` digests - tags live in `apps:`, the immutable
 digest half in `digests:` (`scripts/dfe-stack` renders the combined form
 and `dfe-stack verify` re-checks digests against GHCR). A dfe-infra release
 tag certifies the whole set as one stack version (`stack:` metadata +
-lockstep `content:` repo tags); the full release model is in dfe-docs
-`deployment/stack-versioning.md`.
+lockstep `content:` repo tags). The full release model is in
+[stack-versioning.md](stack-versioning.md).
 
 `content:` also records the dfe-docker ref that runs each stack. dfe-docker
 cuts no per-stack tag, so the entry is a commit rather than a version, and
@@ -208,6 +208,12 @@ For a mirror that needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SE
   upgrades
 - [aws-teardown.md](aws-teardown.md) - tearing an AWS cluster down: lifecycle
   tags, the teardown order, and sweeping what is left
+- [state-and-repos.md](state-and-repos.md) - which repository owns each kind
+  of state, and how the deploy repo is created and updated
+- [stack-versioning.md](stack-versioning.md) - one pin selects a certified
+  stack, overrides and the upgrade rules
+- [node-autoscaling.md](node-autoscaling.md) - what an elastic on-prem node
+  layer needs
 - [upgrade-rollback.md](upgrade-rollback.md) - the rollback runbook: what
   rolling back means per upgrade stage, the `dfe-ops upgrade rollback`
   refusal rule, the sizing config-vs-data rule, and the soak before a
