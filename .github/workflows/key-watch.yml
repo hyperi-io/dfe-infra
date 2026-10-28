@@ -1,0 +1,29 @@
+# Weekly check of the signing keys the toolbox pins and the upstream fix the
+# gen-8 instance hold waits on. It fails inside 60 days of a key's expiry, when
+# pkgs.k8s.io serves a key other than the pinned fingerprint, when the AWS CLI
+# install docs publish a key aws-cli.asc lacks, and when
+# aws/aws-network-policy-agent#686 closes. A failed run is the notice.
+name: Key Watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 19 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: signing keys and upstream holds
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check keys and holds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_signing_keys.py --online
