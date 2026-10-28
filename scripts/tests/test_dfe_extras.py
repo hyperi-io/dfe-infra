@@ -485,6 +485,19 @@ def test_dfe_extras_follows_each_conditional(
         assert name not in env, f"{name} is set where the component reads it unset"
 
 
+@pytest.mark.parametrize(("profile", "cloud"), [(p, c) for p in PROFILES for c in CLOUDS])
+def test_the_engine_may_hard_refresh_argo_applications_and_nothing_else_there(profile: str, cloud: str) -> None:
+    docs = golden("dfe-engine", profile, cloud)
+    (role,) = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "dfe-engine-argo-refresh"]
+    (binding,) = [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == "dfe-engine-argo-refresh"]
+    assert role["metadata"]["namespace"] == binding["metadata"]["namespace"] == "argocd"
+    assert role["rules"] == [{"apiGroups": ["argoproj.io"], "resources": ["applications"], "verbs": ["get", "list", "patch"]}]
+    assert binding["roleRef"]["name"] == role["metadata"]["name"]
+    (subject,) = binding["subjects"]
+    assert subject["kind"] == "ServiceAccount"
+    assert subject["name"] == "dfe-engine"
+
+
 def test_the_e2e_posture_reaches_the_engine_env() -> None:
     """The appset's e2eServer parameter beats every values file, so the posture is a cluster fact."""
     docs = render("dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"})

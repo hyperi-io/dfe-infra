@@ -582,6 +582,29 @@ metadata:
     app.kubernetes.io/version: <pin:apps.dfe-engine>
     dfe.hyperi.io/cloud: aws
     dfe.hyperi.io/env: dev
+  name: dfe-engine-argo-refresh
+  namespace: argocd
+rules:
+- apiGroups:
+  - argoproj.io
+  resources:
+  - applications
+  verbs:
+  - get
+  - list
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
   name: dfe-ingest-bearer-tokens-writer
 rules:
 - apiGroups:
@@ -615,6 +638,28 @@ rules:
   - secrets
   verbs:
   - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: aws
+    dfe.hyperi.io/env: dev
+  name: dfe-engine-argo-refresh
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dfe-engine-argo-refresh
+subjects:
+- kind: ServiceAccount
+  name: dfe-engine
+  namespace: dfe
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
