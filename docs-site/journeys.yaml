@@ -39,7 +39,6 @@ sidebar:
     Query API: ""
     Schemas: ""
     The event header: ""
-    Metrics: ""
     ClickHouse: ""
     Fetcher: ""
     Kafka client settings: ""
@@ -143,7 +142,6 @@ placement:
   dfe-receiver:
     default: "Operate / Sources"
     HARDENING.md: "Deploy / Exposure and access"
-    METRICS.md: "Reference / Metrics"
   dfe-schemas:
     default: "Reference / Schemas"
   dfe-transform-elastic:
