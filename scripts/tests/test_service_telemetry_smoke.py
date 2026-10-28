@@ -18,6 +18,7 @@ each one's ServiceName.
 """
 
 import pytest
+
 from _smoke import run_smoke
 
 GATEWAY = "http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317"
