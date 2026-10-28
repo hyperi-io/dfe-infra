@@ -137,6 +137,10 @@ case "$*" in
     "get ns argocd "*)
         [[ -f "${STUB_DIR}/argocd-held" ]] && cat "${STUB_DIR}/argocd-held"
         ;;
+    "get ns cert-manager "*|"get ns external-secrets "*)
+        # Installed by bootstrap, unless the test says the cluster carried it.
+        [[ -f "${STUB_DIR}/adopted" ]] || echo true
+        ;;
 esac
 exit 0
 STUB
@@ -851,6 +855,36 @@ deploy_repo_named_karpenter() {
     [ "${cert_manager_ns}" -lt "${eso}" ]
     [ "${eso}" -lt "${eso_ns}" ]
     [ "$(grep -c -- '^delete ns cert-manager ' <<<"${log_text}")" -eq 1 ]
+}
+
+@test "cert-manager and ESO that bootstrap installed are uninstalled and their namespaces deleted" {
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text
+    log_text="$(log)"
+    [[ "${log_text}" == *"helm uninstall cert-manager -n cert-manager"* ]]
+    [[ "${log_text}" == *"helm uninstall external-secrets -n external-secrets"* ]]
+    [[ "${log_text}" == *"delete ns cert-manager "* ]]
+    [[ "${log_text}" == *"delete ns external-secrets "* ]]
+    [[ "${output}" != *"left running"* ]]
+}
+
+@test "cert-manager and ESO the cluster carried before bootstrap are left running, and the teardown says so" {
+    : > "${STUB_DIR}/adopted"
+    printf '#!/usr/bin/env bash\nprintf "helm %%s\\n" "$*" >> "${STUB_DIR}/kubectl.log"\n' > "${STUB_DIR}/bin/helm"
+    run bash "${DESTROY}" --force
+    [ "$status" -eq 0 ]
+    local log_text
+    log_text="$(log)"
+    [[ "${log_text}" != *"helm uninstall cert-manager"* ]]
+    [[ "${log_text}" != *"helm uninstall external-secrets"* ]]
+    [[ "${log_text}" != *"delete ns cert-manager "* ]]
+    [[ "${log_text}" != *"delete ns external-secrets "* ]]
+    [[ "${output}" == *"cert-manager left running"* ]]
+    [[ "${output}" == *"external-secrets left running"* ]]
+    [[ "${output}" == *"metallb-system and its address pool left in place"* ]]
+    [[ "${log_text}" != *"helm uninstall metallb"* ]]
 }
 
 @test "the PodDisruptionBudgets and do-not-disrupt pods of a torn-down namespace go before the pools, and no other tenant's" {
