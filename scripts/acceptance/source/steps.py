@@ -40,6 +40,9 @@ from acceptance.onboarding import wizard
 from acceptance.source import beats
 
 STEP_TIMEOUT_MS = onboarding.STEP_TIMEOUT_MS
+# How long pick_source waits for the frame to fill its source picker, and how often it looks.
+SOURCE_LIST_WAIT_S = STEP_TIMEOUT_MS / 1000
+SOURCE_LIST_POLL_S = 1.0
 # The receiver rolls onto a new rule and a per-source instance is spawned by
 # Argo, so the first record can take minutes to arrive.
 ROUTING_DEADLINE = 900.0
@@ -1134,9 +1137,9 @@ def pick_source(frame, name: str) -> bool:
     picker.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     # The frame fills its source list after the page paints, so an empty picker
     # is one still loading, and a picker already on this source has nothing to pick.
-    until = time.monotonic() + STEP_TIMEOUT_MS / 1000
+    until = time.monotonic() + SOURCE_LIST_WAIT_S
     while not picker.input_value().strip() and time.monotonic() < until:
-        time.sleep(1)
+        time.sleep(SOURCE_LIST_POLL_S)
     if picker.input_value().strip() != name:
         picker.click(timeout=STEP_TIMEOUT_MS)
         # The dropdown lists nothing until the frame's source list arrives, and a
