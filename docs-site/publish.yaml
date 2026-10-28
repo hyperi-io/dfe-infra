@@ -88,6 +88,7 @@ internal:
     transport/README.md: "developer docs: design, internals or dev setup"
   dfe-receiver:
     DESIGN.md: "developer docs: design, internals or dev setup"
+    METRICS.md: "a historical planning doc, out of date"
     LOG-SPAMMING.md: "developer docs: design, internals or dev setup"
     PERFORMANCE.md: "developer docs: design, internals or dev setup"
     SIDECAR-TRANSPORTS.md: "developer docs: design, internals or dev setup"
