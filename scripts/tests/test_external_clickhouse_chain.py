@@ -272,10 +272,10 @@ def test_a_plaintext_external_server_is_dialled_without_tls() -> None:
     assert config["exporters"]["clickhouse"]["username"] == "dfe_otel_writer"
 
 
-def test_the_in_cluster_collector_keeps_its_plaintext_native_port() -> None:
+def test_the_in_cluster_collector_dials_the_native_tls_port() -> None:
     config = collector_config(data_overlay(IN_CLUSTER))
     profile = yaml.safe_load((VALUES / "profile-scale.yaml").read_text(encoding="utf-8"))
-    assert config["exporters"]["clickhouse"]["endpoint"] == f"tcp://{profile['clickhouse']['host']}:9000"
+    assert config["exporters"]["clickhouse"]["endpoint"] == f"tcp://{profile['clickhouse']['host']}:9440?secure=true"
 
 
 def test_external_opens_the_apps_egress_on_the_servers_ports() -> None:
