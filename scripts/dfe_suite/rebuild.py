@@ -476,8 +476,8 @@ def rebuild_rust(
     repo = Path(repo).expanduser().resolve()
     if not (repo / ".git").exists():
         raise FleetError(f"{repo} is not a git checkout")
-    app = repo.name
     slug = repo_slug(repo, org)
+    app = slug.split("/", 1)[1]
     subject = subject or f"fix: rebuild on {package} {version}"
 
     # Unset leaves cargo on its own target dir; set, it goes in the env rather
@@ -729,8 +729,8 @@ def rebuild_python(
     repo = Path(repo).expanduser().resolve()
     if not (repo / ".git").exists():
         raise FleetError(f"{repo} is not a git checkout")
-    app = repo.name
     slug = repo_slug(repo, org)
+    app = slug.split("/", 1)[1]
     subject = subject or f"fix: rebuild on {package} {version}"
 
     say(f"{app} -> {package} {version} (repo {slug})")

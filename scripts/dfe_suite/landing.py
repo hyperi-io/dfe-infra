@@ -40,7 +40,7 @@ from dfe_suite.proc import (
     run,
     say,
 )
-from dfe_suite.repos import git, head_sha
+from dfe_suite.repos import git, head_sha, is_linked_worktree, return_to_main
 
 # The trailer hyperi-ci greps for on main. Must sit on its own line in the
 # squash commit body: .github/actions/predict-version/action.yml matches
@@ -501,6 +501,10 @@ def land_via_pr(
 
     await_pr_mergeable(slug, pr)
 
+    # gh --delete-branch also switches the checkout to main, which a linked
+    # worktree cannot do while the main checkout holds it, so the branch is
+    # deleted here instead.
+    linked = is_linked_worktree(repo)
     trailer = "carries the release trailer" if publish else "carries no release trailer"
     say(f"squash-merging PR #{pr} (the squash message {trailer})")
     run(
@@ -512,7 +516,7 @@ def land_via_pr(
             "-R",
             slug,
             "--squash",
-            "--delete-branch",
+            *([] if linked else ["--delete-branch"]),
             # Refuse to merge anything other than the commit we just validated.
             "--match-head-commit",
             branch_sha,
@@ -527,9 +531,10 @@ def land_via_pr(
 
     # gh may already have switched away and deleted the local branch; either
     # way, end up on a main that matches the remote.
-    git("switch", "main", cwd=repo, check=False)
-    git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
-    git("merge", "--ff-only", "origin/main", cwd=repo)
+    return_to_main(repo)
+    if linked:
+        git("branch", "-D", branch, cwd=repo, check=False)
+        git("push", "origin", "--delete", branch, cwd=repo, check=False)
     merged = head_sha(repo)
     say(f"merged -- main is now {merged[:12]}")
     return merged

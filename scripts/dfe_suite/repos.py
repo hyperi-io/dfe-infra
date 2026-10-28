@@ -96,11 +96,18 @@ def has_staged_changes(repo: Path) -> bool:
     )
 
 
+def _origin_name(repo: Path) -> str | None:
+    """The repo name in the origin remote's URL, which every worktree of a repo shares."""
+    proc = run(["git", "remote", "get-url", "origin"], cwd=repo, check=False)
+    tail = proc.stdout.strip().rstrip("/").removesuffix(".git").replace(":", "/").rsplit("/", 1)[-1]
+    return tail if proc.returncode == 0 and tail else None
+
+
 def repo_slug(repo: Path, org: str) -> str:
     """The ``owner/name`` slug for a checkout.
 
-    Read from the origin remote where possible so a fork or a renamed
-    directory is not silently addressed as the wrong repo.
+    Read from the origin remote where possible so a fork, a renamed directory or
+    a worktree called anything at all is not silently addressed as the wrong repo.
     """
     proc = run(
         ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
@@ -110,7 +117,14 @@ def repo_slug(repo: Path, org: str) -> str:
     slug = proc.stdout.strip()
     if proc.returncode == 0 and "/" in slug:
         return slug
-    return f"{org}/{repo.name}"
+    return f"{org}/{_origin_name(repo) or repo.name}"
+
+
+def is_linked_worktree(repo: Path) -> bool:
+    """True when ``repo`` is a linked worktree rather than the repo's main checkout."""
+    git_dir = Path(git("rev-parse", "--absolute-git-dir", cwd=repo)).resolve()
+    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)).resolve()
+    return git_dir != common
 
 
 def worktree_holding(repo: Path, branch: str) -> Path | None:
@@ -145,24 +159,49 @@ def sync_main(repo: Path, *, dry_run: bool) -> None:
     The WIP is deliberately kept: the fleet folds existing uncommitted work
     into the release commit rather than stranding it (no SEP fields).
 
+    A linked worktree that is not already on ``main`` is left on a detached HEAD
+    at ``origin/main`` instead, so the repo's main checkout keeps ``main`` and
+    the worktree needs no branch of that name.
+
     Raises:
-        FleetError: If another worktree holds ``main``, naming that worktree.
-            Checked on a dry run too, so the dry run cannot pass a checkout the
-            real run would fail on.
+        FleetError: If the repo's main checkout has to switch to ``main`` but
+            another worktree holds it, naming that worktree. Checked on a dry
+            run too, so the dry run cannot pass a checkout the real run would
+            fail on.
     """
-    holder = worktree_holding(repo, "main")
-    if holder is not None:
-        raise FleetError(
-            f"main is checked out in the worktree at {holder}, so {repo} cannot "
-            f"switch to it. Run the tool against {holder} instead."
-        )
+    detach = is_linked_worktree(repo) and current_branch(repo) != "main"
+    if not detach:
+        holder = worktree_holding(repo, "main")
+        if holder is not None:
+            raise FleetError(
+                f"main is checked out in the worktree at {holder}, so {repo} cannot "
+                f"switch to it. Run the tool against {holder} instead."
+            )
     if dry_run:
-        say("[dry-run] would fetch origin and fast-forward main")
+        say(
+            "[dry-run] would fetch origin and detach at origin/main"
+            if detach
+            else "[dry-run] would fetch origin and fast-forward main"
+        )
         return
     git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
+    if detach:
+        say("linked worktree -- detaching at origin/main (WIP carries across)")
+        git("switch", "--detach", "origin/main", cwd=repo)
+        return
     branch = current_branch(repo)
     if branch != "main":
         say(f"on '{branch}' -- switching to main (WIP carries across)")
         git("switch", "main", cwd=repo)
     # --autostash so uncommitted work survives the rebase and comes back.
     git("pull", "--rebase", "--autostash", "origin", "main", cwd=repo)
+
+
+def return_to_main(repo: Path) -> None:
+    """After a merge, leave ``repo`` on the remote's ``main``: the branch in a main checkout, a detached HEAD in a linked worktree."""
+    git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
+    if is_linked_worktree(repo):
+        git("switch", "--detach", "origin/main", cwd=repo)
+        return
+    git("switch", "main", cwd=repo, check=False)
+    git("merge", "--ff-only", "origin/main", cwd=repo)
