@@ -17,7 +17,7 @@
 
     python3 scripts/dfe-stack <subcommand> [options]     # or ./scripts/dfe-stack ...
 
-The model (dfe-docs/deployment/stack-versioning.md): "DFE X.Y.Z[-pre]" is one
+The model (docs/deployment/stack-versioning.md): "DFE X.Y.Z[-pre]" is one
 certified pin set = a KEY under `stacks:` in versions.yaml. versions.yaml is
 NESTED: every stack version carries its complete pin set, so history + authority
 live in one file (no `git show <tag>:versions.yaml`). `current` points at the
