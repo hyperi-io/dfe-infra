@@ -13,12 +13,17 @@ load average, and half the free memory. An explicit `-n 4` never reaches this ho
 """
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 # Peak RSS of one worker on this suite, with headroom.
 WORKER_MEM_MB = 1024
+
+
+def on_ci() -> bool:
+    return os.environ.get("CI", "").lower() not in ("", "0", "false")
 
 
 def _cpus() -> int:
@@ -48,10 +53,9 @@ def _available_mb() -> float | None:
 
 def auto_workers() -> int:
     cpus = _cpus()
-    on_ci = os.environ.get("CI", "").lower() not in ("", "0", "false")
     cpu_budget = cpus
     memory_share = 0.8
-    if not on_ci:
+    if not on_ci():
         cpu_budget = cpus // 2
         memory_share = 0.5
         try:
@@ -69,3 +73,28 @@ def pytest_xdist_auto_num_workers(config):
     if config.option.numprocesses not in ("auto", "logical"):
         return None
     return auto_workers()
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_tool(name): needs the outside binary on PATH. Skips locally when it is"
+        " missing and fails under CI, where the workflow installs it.",
+    )
+
+
+def tool_gate(tool: str, found: str | None, ci: bool) -> tuple[str, str] | None:
+    """The outcome a missing `tool` forces: ("fail" | "skip", reason), or None when it is present."""
+    if found is not None:
+        return None
+    if ci:
+        return "fail", f"{tool} is not on PATH under CI, so the workflow's install step has not run"
+    return "skip", f"needs {tool} on PATH"
+
+
+def pytest_runtest_setup(item):
+    for marker in item.iter_markers("requires_tool"):
+        tool = marker.args[0]
+        gate = tool_gate(tool, shutil.which(tool), on_ci())
+        if gate is not None:
+            (pytest.fail if gate[0] == "fail" else pytest.skip)(gate[1])
