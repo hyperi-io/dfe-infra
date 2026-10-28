@@ -30,7 +30,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from acceptance.source import steps
-from test_source_cases import CLICKHOUSE, FakeDriver, FakePage, LocalClickHouse
+from test_source_cases import FakeDriver, FakePage, LocalClickHouse
 
 RUN = "src-ceiling0001"
 DOOR = 64 * 1024
@@ -188,7 +188,7 @@ class TestThePost:
             steps.post_body("http://127.0.0.1:9/ingest", True, b"{}", window=0.0)
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary for clickhouse local")
+@pytest.mark.requires_tool("clickhouse")
 class TestTheStepAgainstADoor:
     def _walk(self, door: Door, declared: int = DOOR) -> FakeDriver:
         driver = FakeDriver(FakePage())

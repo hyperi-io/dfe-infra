@@ -297,6 +297,34 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # The tests that drive clickhouse local and the argocd CLI fail, not skip, when a binary
+      # is missing under CI. Versions are the stack's own pins (versions.yaml), so one edit moves
+      # the deploy and these tests together. Each download is checked against the checksum its
+      # own release publishes and the step fails on a mismatch.
+      - name: Install the pinned clickhouse and argocd binaries
+        run: |
+          set -euo pipefail
+          [ "$(uname -m)" = x86_64 ] || { echo "this step fetches amd64 builds, runner is $(uname -m)" >&2; exit 1; }
+          ch="$(python3 bootstrap/read_versions.py services.clickhouse-version)"
+          argo="$(python3 bootstrap/read_versions.py toolbox.argocd-cli)"
+          bin="${RUNNER_TEMP}/test-tools"
+          work="$(mktemp -d)"
+          mkdir -p "${bin}"
+          # ClickHouse publishes a sha512 file beside each package; its tag carries the -lts suffix.
+          pkg="clickhouse-common-static-${ch}-amd64.tgz"
+          base="https://github.com/ClickHouse/ClickHouse/releases/download/v${ch}-lts"
+          curl -fsSL --retry 3 --output-dir "${work}" -O "${base}/${pkg}" -O "${base}/${pkg}.sha512"
+          (cd "${work}" && sha512sum --check "${pkg}.sha512")
+          tar -xzf "${work}/${pkg}" --strip-components=3 -C "${bin}" "clickhouse-common-static-${ch}/usr/bin/clickhouse"
+          base="https://github.com/argoproj/argo-cd/releases/download/${argo}"
+          curl -fsSL --retry 3 --output-dir "${work}" -O "${base}/argocd-linux-amd64" -O "${base}/cli_checksums.txt"
+          (cd "${work}" && grep ' argocd-linux-amd64$' cli_checksums.txt | sha256sum --check)
+          install -m 0755 "${work}/argocd-linux-amd64" "${bin}/argocd"
+          rm -rf "${work}"
+          echo "${bin}" >> "${GITHUB_PATH}"
+          "${bin}/clickhouse" local --version
+          "${bin}/argocd" version --client --short
+
       # Every file under scripts/tests runs here, including the ones no step
       # above names; the named steps stay for the failure paths they document.
       - name: scripts/tests under pytest

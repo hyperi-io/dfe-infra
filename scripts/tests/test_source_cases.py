@@ -1337,7 +1337,7 @@ class LocalClickHouse:
         return int(rows[0][0]) if rows else 0
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary for clickhouse local")
+@pytest.mark.requires_tool("clickhouse")
 class TestTheQueriesAgainstClickHouse:
     """The suite's own SQL over rows stored the way the loader stores a JSON payload."""
 
@@ -1557,8 +1557,7 @@ class Accepted:
         return False
 
 
-@pytest.fixture(params=["python", pytest.param("clickhouse", marks=pytest.mark.skipif(
-    CLICKHOUSE is None, reason="needs the clickhouse binary for clickhouse local"))])
+@pytest.fixture(params=["python", pytest.param("clickhouse", marks=pytest.mark.requires_tool("clickhouse"))])
 def backend(request):
     """Every count read in Python everywhere, and by ClickHouse itself where the binary is."""
     return request.param

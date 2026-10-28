@@ -25,7 +25,6 @@ Needs `helm` on PATH for the chart renders.
 import importlib.util
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tomllib
@@ -265,7 +264,7 @@ def offline_kubeconfig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
-@pytest.mark.skipif(shutil.which("argocd") is None, reason="needs the argocd CLI on PATH")
+@pytest.mark.requires_tool("argocd")
 @pytest.mark.usefixtures("offline_kubeconfig")
 @pytest.mark.parametrize(
     ("group", "action", "resource", "target", "allowed"),
