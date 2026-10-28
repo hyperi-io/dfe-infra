@@ -58,6 +58,7 @@ TABLE = "otel table dfe.otel_logs is queryable from HyperDX"
 CSP = "CSP frame-ancestors present"
 XFO = "X-Frame-Options NOT set"
 BEARER = "HyperDX accepts an engine-issued token"
+REFUSES = "HyperDX refuses a token it did not issue"
 EMBED_SKIPPED = "embed headers -- could not read response headers"
 ENV_UNREAD = "read HyperDX's runtime env"
 
@@ -90,10 +91,11 @@ if "get" in args:
 if "exec" in args:
     target = next(a for a in args[args.index("exec") + 1:] if not a.startswith("-"))
     if target == "deploy/dfe-engine":
-        if "/api/v1/auth/token/smoke" in args[-1]:
-            if "engine_token" not in pod:
-                sys.exit(1)
-            print(json.dumps({"access_token": pod["engine_token"]}))
+        if "python3" in args and "-c" in args:
+            # The sign-in helper: the account that signed in, then its token. Nothing on a refusal.
+            if "engine_token" in pod:
+                print(pod.get("engine_account", "admin"))
+                print(pod["engine_token"])
             sys.exit(0)
         # Any other engine command runs in the engine's own shell, under its environment.
         engine_env = {"PATH": os.environ["FAKE_POD_BIN"], **pod.get("engine_env", {})}
@@ -158,9 +160,10 @@ class Frontend(BaseHTTPRequestHandler):
             if cfg["x_frame_options"]:
                 headers.append(("X-Frame-Options", "DENY"))
             self.reply(cfg["head_status"], headers=tuple(headers))
-        elif parts.path == "/api/v1/me":
+        elif parts.path == "/api/me":
             seen["bearer"] = self.headers.get("Authorization")
-            ok = seen["bearer"] == f"Bearer {TOKEN}"
+            seen["bearers"].append(seen["bearer"])
+            ok = cfg["accept_any_bearer"] or (seen["bearer"] == f"Bearer {TOKEN}" and not cfg["reject_bearer"])
             self.reply(200 if ok else 401, '{"email":"smoke"}' if ok else "")
         else:
             self.reply(404)
@@ -171,6 +174,7 @@ def run_smoke(
     pod_env: dict | None = None,
     node: bool = True,
     engine_token: str | None = None,
+    engine_account: str = "admin",
     in_deployment_env: bool = False,
     engine_ch: dict | None = None,
     reader_password: str | None = CH_FIXTURE_VALUE,
@@ -190,9 +194,11 @@ def run_smoke(
         "csp": True,
         "x_frame_options": False,
         "head_status": 200,
+        "accept_any_bearer": False,
+        "reject_bearer": False,
         **(serve or {}),
     }
-    server.seen = {"queries": [], "ch_credentials_ok": False, "bearer": None}
+    server.seen = {"queries": [], "ch_credentials_ok": False, "bearer": None, "bearers": []}
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
@@ -220,6 +226,7 @@ def run_smoke(
             }
             if engine_token:
                 pod["engine_token"] = engine_token
+                pod["engine_account"] = engine_account
             if engine_ch is not None:
                 engine_env = {
                     "DFE_CLICKHOUSE_HOST": "127.0.0.1",
@@ -354,8 +361,41 @@ def test_the_engine_issued_token_is_presented_as_a_bearer() -> None:
     out, seen = run_smoke(engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"})
 
     expect("the round trip passes", verdict(out, "PASS", BEARER), out.stdout)
-    expect("the server saw the bearer", seen["bearer"] == f"Bearer {TOKEN}")
+    expect("the server saw the bearer", f"Bearer {TOKEN}" in seen["bearers"])
+    expect("a token the engine never signed is refused", verdict(out, "PASS", REFUSES), out.stdout)
     expect("no check failed", "0 failed" in out.stdout, out.stdout)
+    expect("the token is never echoed", TOKEN not in out.stdout + out.stderr)
+
+
+def test_the_account_that_signed_in_is_named() -> None:
+    out, _ = run_smoke(engine_token=TOKEN, engine_account="breakglass", engine_ch={"DFE_CLICKHOUSE_SECURE": "false"})
+
+    expect("break-glass is named", "signed in to dfe-engine as breakglass" in out.stdout, out.stdout)
+
+
+def test_a_hyperdx_that_rejects_the_engines_token_fails_the_round_trip() -> None:
+    out, _ = run_smoke(
+        serve={"reject_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}
+    )
+
+    expect("the round trip fails", verdict(out, "FAIL", BEARER), out.stdout)
+
+
+def test_a_hyperdx_that_accepts_any_bearer_fails_the_refusal_check() -> None:
+    out, _ = run_smoke(
+        serve={"accept_any_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}
+    )
+
+    expect("the acceptance passes", verdict(out, "PASS", BEARER), out.stdout)
+    expect("the refusal check fails", verdict(out, "FAIL", REFUSES), out.stdout)
+
+
+def test_an_engine_that_gives_no_token_fails_rather_than_skips() -> None:
+    out, seen = run_smoke(engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}, engine_token=None)
+
+    expect("the round trip is a failure", "[FAIL] engine-issued-token round trip" in out.stdout, out.stdout)
+    expect("it is not a skip", "[SKIP] engine-issued-token" not in out.stdout, out.stdout)
+    expect("no bearer was sent", seen["bearers"] == [], str(seen["bearers"]))
 
 
 # Nothing listens on the discard port, so a probe that dials it fails.

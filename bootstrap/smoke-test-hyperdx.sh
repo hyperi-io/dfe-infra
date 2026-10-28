@@ -41,6 +41,7 @@ HYPERDX_CONTAINER="${DFE_HYPERDX_CONTAINER:-dfe-hyperdx}"
 ENGINE_DEPLOY="${DFE_ENGINE_DEPLOY:-dfe-engine}"
 HYPERDX_PORT="${DFE_HYPERDX_PORT:-8080}"
 ENGINE_PORT="${DFE_ENGINE_PORT:-8000}"
+ENGINE_CONTAINER="${DFE_ENGINE_CONTAINER:-dfe-engine}"
 
 # The otel db/table HyperDX reads back. Same SSoT defaults as the integration test.
 OTEL_DB="${DFE_OTEL_DB:-dfe}"
@@ -70,7 +71,7 @@ if (e.PROBE_CH_USER) {
   headers["X-ClickHouse-User"] = e.PROBE_CH_USER;
   headers["X-ClickHouse-Key"] = require("fs").readFileSync(0, "utf8");
 }
-if (e.PROBE_BEARER) headers.Authorization = "Bearer " + e.PROBE_BEARER;
+if (e.PROBE_BEARER_STDIN) headers.Authorization = "Bearer " + require("fs").readFileSync(0, "utf8").trim();
 fetch(e.PROBE_URL, {
   method: e.PROBE_METHOD,
   headers,
@@ -97,7 +98,8 @@ JS
 
 # hdx_probe METHOD URL [VAR=value ...]: a GET prints the body and a HEAD the status
 # line and headers. PROBE_CH_USER=<user> sends that ClickHouse user with the
-# password read from stdin, and PROBE_BEARER=<jwt> a bearer token.
+# password read from stdin, and PROBE_BEARER_STDIN=1 a bearer token read from stdin
+# (hdx_probe_bearer), so a token never sits in an argv.
 hdx_probe() {
   local method="$1" url="$2"
   shift 2
@@ -111,6 +113,45 @@ hdx_probe() {
 hdx_env() {
   kubectl -n "$NS_HYPERDX" exec "deploy/${HYPERDX_DEPLOY}" -c "$HYPERDX_CONTAINER" -- \
     node -e 'process.stdout.write(process.env[process.argv[1]] || "")' "$1" 2>/dev/null
+}
+
+# hdx_probe_bearer URL: GET with the bearer token read from stdin.
+hdx_probe_bearer() {
+  kubectl -n "$NS_HYPERDX" exec -i "deploy/${HYPERDX_DEPLOY}" -c "$HYPERDX_CONTAINER" -- \
+    env "PROBE_METHOD=GET" "PROBE_URL=$1" "PROBE_BEARER_STDIN=1" node -e "$JS_PROBE" 2>/dev/null
+}
+
+# engine_signin_token: a JWT from the engine's own sign-in. The local admin first,
+# then the break-glass account when the admin is refused (a fresh deploy's admin
+# must change its issued password before anything else, and a used one has changed
+# it). Each credential is read from the engine pod's environment inside the pod and
+# never leaves it. Prints "<account>" then the token on the next line, or nothing.
+engine_signin_token() {
+  kubectl -n "$NS_APP" exec "deploy/${ENGINE_DEPLOY}" -c "$ENGINE_CONTAINER" -- python3 -c '
+import json, os, sys, urllib.request
+
+port = sys.argv[1]
+for account, user_env, pass_env, default in (
+    ("admin", "DFE_AUTH_LOCAL_ADMIN_USERNAME", "DFE_AUTH_LOCAL_ADMIN_PASSWORD", "admin"),
+    ("breakglass", "", "DFE_AUTH_BREAKGLASS_PASSWORD", "breakglass"),
+):
+    password = os.environ.get(pass_env, "")
+    if not password:
+        continue
+    body = json.dumps({"username": os.environ.get(user_env, default) if user_env else default, "password": password}).encode()
+    req = urllib.request.Request(
+        "http://localhost:%s/api/v1/auth/login" % port, data=body, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            reply = json.load(r)
+    except Exception:
+        continue
+    if reply.get("access_token") and not reply.get("password_change_required"):
+        print(account)
+        print(reply["access_token"])
+        break
+' "$ENGINE_PORT" 2>/dev/null
 }
 
 # 127.0.0.1, never localhost: the frontend binds IPv4 only while the API binds
@@ -174,17 +215,24 @@ else
 
   # End to end: mint a token AT the engine and present it TO HyperDX. This is the
   # only check that proves the two halves agree; the ones above prove config only.
+  # The token comes from signing in as the engine's local admin through its own
+  # API, read from the pod's environment inside the pod, and reaches HyperDX on
+  # stdin. HyperDX answering with the signed-in user is the pass.
   if kubectl -n "$NS_APP" get deploy "$ENGINE_DEPLOY" >/dev/null 2>&1; then
-    TOKEN="$(kubectl -n "$NS_APP" exec "deploy/${ENGINE_DEPLOY}" -- sh -c \
-      "curl -fsS -X POST http://localhost:${ENGINE_PORT}/api/v1/auth/token/smoke 2>/dev/null" 2>/dev/null \
-      | sed -n 's/.*"\(access_token\|token\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p')"
+    SIGNIN="$(engine_signin_token)"
+    TOKEN="$(printf '%s\n' "$SIGNIN" | sed -n 2p)"
     if [ -n "$TOKEN" ]; then
+      note "signed in to ${ENGINE_DEPLOY} as $(printf '%s\n' "$SIGNIN" | sed -n 1p)"
       check "HyperDX accepts an engine-issued token (auth seam closed)" \
-        "hdx_probe GET 'http://127.0.0.1:${HYPERDX_PORT}/api/v1/me' 'PROBE_BEARER=${TOKEN}' | grep -q '\"'"
+        "printf '%s' \"\$TOKEN\" | hdx_probe_bearer 'http://127.0.0.1:${HYPERDX_PORT}/api/me' | grep -q '\"email\"'"
+      check "HyperDX refuses a token it did not issue and the engine did not sign" \
+        "! printf '%s' 'not.a.jwt' | hdx_probe_bearer 'http://127.0.0.1:${HYPERDX_PORT}/api/me' | grep -q '\"email\"'"
     else
-      skip "engine-issued-token round trip -- the engine did not mint a smoke token."
-      note "Config above is verified; the two halves AGREEING is not. Wire a service"
-      note "token for the smoke user to close this."
+      echo "  [FAIL] engine-issued-token round trip -- neither the local admin nor break-glass signed in to ${ENGINE_DEPLOY}"
+      FAIL=$((FAIL+1))
+      note "The admin may still owe its forced password change, and break-glass may be turned off or"
+      note "throttled. Without a token the two halves AGREEING is unproven, and that is the check"
+      note "that matters here."
     fi
   else
     skip "engine-issued-token round trip -- deploy/${ENGINE_DEPLOY} not in ns/${NS_APP}"
