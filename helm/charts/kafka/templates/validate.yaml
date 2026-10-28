@@ -2,3 +2,4 @@
 {{- include "dfe-kafka.validateStorageModel" . -}}
 {{- include "dfe-kafka.validateAutoscaling" . -}}
 {{- include "dfe-kafka.validateExternalProvider" . -}}
+{{- include "dfe-kafka.validateBrokerProvider" . -}}

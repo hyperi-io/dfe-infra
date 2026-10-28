@@ -200,7 +200,7 @@ internetEgress:
 # because the loader needed them. `apps` matches app.kubernetes.io/name or appLabel, and the
 # single entry "*" means every pod in the namespace. `appPorts` gives one app
 # ports of its own in place of the purpose's. `providers` is keyed by the
-# provider the declaration names (kafka.provider), and the entry for it replaces
+# provider the declaration names (kafka.external.provider), and the entry for it replaces
 # the purpose's ports, appPorts and extraNamespaceApps whole.
 #
 # baseline-egress rule 3 (the Kubernetes API allow) carries ports with no `to`,

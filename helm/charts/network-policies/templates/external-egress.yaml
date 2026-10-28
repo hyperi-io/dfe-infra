@@ -31,7 +31,7 @@
 {{- /* The provider a purpose's declaration names, which picks its entry under
        `providers` when it has one. */}}
 {{- $provider := dict
-      "kafka"   ($kafka.provider | default "" | toString)
+      "kafka"   (($kafka.external | default dict).provider | default "" | toString)
       "secrets" ($secrets.provider | default "" | toString)
 }}
 {{- /* Fixed order so a re-render diffs cleanly. */}}

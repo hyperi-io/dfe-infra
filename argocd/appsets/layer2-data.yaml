@@ -138,12 +138,12 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
-              # Who runs the brokers, and (msk only) their bare host list -- the
-              # otel-collector chart's MSK open_monitoring scrape needs both, to
-              # decide whether to render the job and what to target. Only
-              # otel-collector reads either; harmless elsewhere.
+              # The broker DFE deploys (strimzi or redpanda), and (msk only) the
+              # bare host list the otel-collector chart's MSK open_monitoring
+              # scrape targets. A managed vendor in the annotation reaches the
+              # charts as kafka.external.provider, in the values block below.
               - name: kafka.provider
-                value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}'
+                value: '{{ $p := index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}{{ if has $p (list "strimzi" "redpanda") }}{{ $p }}{{ else }}strimzi{{ end }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
               # Whether dfe-internal-ca exists: the gateway chart that mints it is

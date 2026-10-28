@@ -639,7 +639,9 @@ def layer2_kafka(broker: str, *sets: str) -> list[dict]:
             f"appNamespace={facts['dfe.hyperi.io/dfe_namespace']}",
             f"env={facts['dfe.hyperi.io/env']}",
             f"cloud={facts['dfe.hyperi.io/cloud']}",
-            f"kafka.provider={facts['dfe.hyperi.io/kafka_provider']}",
+            # layer2-data's kafka.provider parameter: a managed vendor is not a
+            # broker DFE deploys, so it reaches the chart as external.provider.
+            f"kafka.provider={facts['dfe.hyperi.io/kafka_provider'] if broker not in MANAGED else 'strimzi'}",
             *licence(broker),
             *sets,
             values=cascade,

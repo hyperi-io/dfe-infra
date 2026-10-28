@@ -179,9 +179,16 @@ clusterTelemetry:
     # Pinned rather than left to the receiver default of 2.1.0.
     protocolVersion: "3.6.0"
     scrapers: [brokers, topics, consumers]
+    # Dial TLS (system trust store). A managed broker (kafka.mode external with
+    # kafka.external.provider set) always does, so this is for a self-run
+    # broker on a TLS listener.
+    tls:
+      enabled: false
     sasl:
       enabled: true
-      mechanism: SCRAM-SHA-512
+      # Empty derives it: the provider table's mechanism for a managed broker,
+      # else SCRAM-SHA-512.
+      mechanism: ""
       username: dfe-kafka-user
       passwordSecretName: dfe-kafka-user
       passwordSecretKey: password
@@ -192,7 +199,7 @@ clusterTelemetry:
   # which speaks the Kafka protocol itself and covers broker/topic/consumer
   # counts, not JVM or OS metrics. Gateway-only: the targets are the brokers'
   # own hosts, not anything running in this cluster. Rendered only when
-  # kafka.provider is msk -- every other provider either exposes no such
+  # kafka.external.provider is msk -- every other provider either exposes no such
   # endpoint (strimzi, redpanda) or is a SaaS body with no host to target
   # (confluent-cloud, redpanda-cloud).
   mskOpenMonitoring:
@@ -260,14 +267,15 @@ clickhouse:
       passwordSecretKey: password
 
 kafka:
+  # Comma separated for a multi-broker bootstrap list.
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
-  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud, the SAME token
-  # the kafka chart's own kafka.provider carries -- gates
-  # clusterTelemetry.mskOpenMonitoring below. Populated from the
-  # dfe.hyperi.io/kafka_provider cluster-secret annotation
-  # (argocd/appsets/layer2-data.yaml); strimzi is both this chart's and the
-  # kafka chart's own default, so an unset annotation changes nothing.
-  provider: strimzi
+  # The kafka chart's own kafka.mode and kafka.external.provider, set from the
+  # cluster-secret annotations by argocd/appsets/layer2-data.yaml. At
+  # mode=external the provider decides TLS, the SASL mechanism and whether the
+  # MSK open_monitoring scrape below renders.
+  mode: ""
+  external:
+    provider: ""
   # MSK's own bare broker hosts (no port), comma separated -- the target list
   # the Prometheus receiver below needs. Derived by bootstrap.sh from
   # DFE_KAFKA_BOOTSTRAP; empty on every provider but msk.

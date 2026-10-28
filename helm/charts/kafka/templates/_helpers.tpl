@@ -61,12 +61,10 @@ claim a TLS endpoint nothing in this chart stands up (dfe-infra#191).
 mode=external carries a broker somebody else runs, so its identity comes from
 kafka.external.provider verbatim. mode=disabled dials nothing and renders empty.
 
-The deployed identity follows what the chart actually stands up, not the
-kafka.provider string: kafka-single.yaml and redpanda.yaml take the Redpanda path
-only at provider=redpanda and the Apache Kafka path for anything else, so a
-provider naming a managed vendor (kafka.provider=msk selects the MSK bootstrap
-Job at mode=external) still resolves to the Apache broker it really renders here
-rather than composing a key the table does not hold.
+The deployed identity follows what the chart actually stands up:
+kafka-single.yaml and redpanda.yaml take the Redpanda path only at
+provider=redpanda and the Apache Kafka path otherwise. The MSK bootstrap Job
+gates on kafka.external.provider=msk at mode=external, never on kafka.provider.
 
 Usage:
   sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
@@ -283,5 +281,17 @@ the mismatch only surfaces as an auth failure against the broker.
 {{- if and (eq $authType "msk_iam") $provider (ne $provider "msk_iam") -}}
 {{- fail (printf "kafka: external.auth.type=msk_iam renders no credential Secret, so external.provider must be msk_iam or left empty (got %q)." $provider) -}}
 {{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+dfe-kafka.validateBrokerProvider -- kafka.provider names the broker this chart
+DEPLOYS, so it is strimzi or redpanda. A managed vendor belongs in
+kafka.external.provider, and one named here would deploy an Apache broker under
+the vendor's name.
+*/}}
+{{- define "dfe-kafka.validateBrokerProvider" -}}
+{{- if not (has .Values.kafka.provider (list "strimzi" "redpanda")) -}}
+{{- fail (printf "kafka.provider is %q, but it names only the broker DFE deploys: strimzi or redpanda. Name a managed broker (msk, confluent-cloud, redpanda-cloud) in kafka.external.provider with kafka.mode=external." .Values.kafka.provider) -}}
 {{- end -}}
 {{- end }}

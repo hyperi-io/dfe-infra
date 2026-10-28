@@ -220,7 +220,8 @@ spec:
               kafka:
                 mode: {{ $kafkaMode | quote }}
                 {{- if and (eq $kafkaMode "external") $kafkaProvider }}
-                provider: {{ $kafkaProvider | quote }}
+                external:
+                  provider: {{ $kafkaProvider | quote }}
                 {{- end }}
               {{- end }}
               {{- if eq (index .metadata.annotations "dfe.hyperi.io/clickhouse_mode" | default "") "external" }}
