@@ -76,7 +76,7 @@ _MARKER = re.compile(
     r"(?:<!--|\{/\*)\s*docs-gate:\s*(?P<verb>\S+)\s+(?P<rules>[\w,-]+)"
     r"(?:\s*--\s*(?P<reason>.*?))?\s*(?:-->|\*/\})"
 )
-_COMMENT = re.compile(r"<!--.*?-->|\{/\*.*?\*/\}")
+_COMMENT = re.compile(r"<!--.*?-->|\{/\*.*?\*/\}", re.DOTALL)
 _LINK_TARGET = re.compile(r"\]\([^)]*\)")
 _URL = re.compile(r"https?://\S+")
 _TAG = re.compile(r"</?[A-Za-z][^>]*>")
