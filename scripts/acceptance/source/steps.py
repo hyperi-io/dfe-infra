@@ -55,6 +55,10 @@ ARCHIVE_DEADLINE = 300.0
 # registers pipeline_idle only while it holds no work, and drops it on the next
 # export once it does.
 IDLE_WINDOW = 120
+# How long the reporting row keeps re-reading after the feed, for an export to land
+# while the instance holds work. scalo exports on a 60 s interval.
+WORK_DEADLINE = 180.0
+WORK_POLL_SECONDS = 15.0
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
 RUN_PREFIXES = ("fb", "cw", "el", "vc", "onboard")
@@ -356,7 +360,8 @@ def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tu
     return gauge_samples(store, service_name, "pipeline_idle", window_seconds)
 
 
-def reporting_verdict(store: Datastore, service: str, detail: str, status: dict) -> tuple[str, str]:
+def reporting_verdict(store: Datastore, service: str, detail: str, status: dict,
+                      window: int = IDLE_WINDOW) -> tuple[str, str]:
     """The status a reporting wait earns, once the telemetry has been attributed.
 
     An app reports whether or not the instance this run created is doing any of
@@ -376,6 +381,7 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
         service: The app the instance belongs to.
         detail: The line ``wait_reporting`` produced.
         status: The engine's status body for the instance.
+        window: How many seconds back the series are read.
 
     Returns:
         The status and detail for ``Driver.record``.
@@ -398,8 +404,8 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
                 f"{detail}; {store.database}.{GAUGE_TABLE} is not in this run's reach, "
                 "so the telemetry behind that answer cannot be read"
             )
-        seen, _ = gauge_samples(store, telemetry or service, "info", IDLE_WINDOW)
-        samples, since = idle_history(store, telemetry or service, IDLE_WINDOW)
+        seen, _ = gauge_samples(store, telemetry or service, "info", window)
+        samples, since = idle_history(store, telemetry or service, window)
     except Exception as exc:  # an unreadable otel table is the finding, not a traceback
         return "unproven", f"{detail}; the otel tables did not answer: {type(exc).__name__}"
     if not seen:
@@ -408,29 +414,67 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict)
         # series has to be looked for rather than taken on the engine's word.
         return "unproven", (
             f"{detail}; no {telemetry or service} series in {store.database}.{GAUGE_TABLE} "
-            f"in the last {IDLE_WINDOW}s, so the engine's answer is not backed by telemetry "
+            f"in the last {window}s, so the engine's answer is not backed by telemetry "
             "this run can see"
         )
-    if samples:
+    if samples >= seen:
         return "unproven", (
             f"{detail}; {telemetry or service} published {samples} pipeline_idle sample(s) "
-            f"in the last {IDLE_WINDOW}s"
+            f"in the last {window}s"
             + (f", the last {since}s ago" if since is not None else "")
             + ", which is an app holding no work"
         )
+    if samples:
+        return "done", (
+            f"{detail}; pipeline_idle in {samples} of {seen} sample(s) in the last {window}s, "
+            f"so the app held work for the rest, read from {whose}"
+        )
     return "done", (
-        f"{detail}; no pipeline_idle sample in the last {IDLE_WINDOW}s, read from {whose}"
+        f"{detail}; no pipeline_idle sample in the last {window}s, read from {whose}"
     )
 
 
-def record_instance_up(driver, engine: Engine, store: Datastore, service: str, name: str,
+def record_instance_up(driver, engine: Engine, service: str, name: str,
                        instance_step: str, instance_deadline: float,
-                       reporting_step: str, reporting_deadline: float) -> None:
-    """The two waits every per-source app gets, under the case's own step names."""
+                       reporting_deadline: float) -> tuple[str, dict]:
+    """Wait for the instance and for its first telemetry, recording the instance row.
+
+    The reporting row is not recorded here. An instance that has had no records
+    publishes ``pipeline_idle`` whatever its health, so ``record_reporting`` reads
+    it once the run has fed the source.
+
+    Returns:
+        The line ``wait_reporting`` produced and the engine's status body.
+    """
     detail, found = wait_instance(engine, service, name, instance_deadline)
     driver.record(instance_step, "done" if found else "failed", detail)
-    detail, status = wait_reporting(engine, service, name, reporting_deadline)
-    driver.record(reporting_step, *reporting_verdict(store, service, detail, status))
+    return wait_reporting(engine, service, name, reporting_deadline)
+
+
+def record_reporting(driver, store: Datastore, service: str, step: str,
+                     reported: tuple[str, dict], fed_at: float) -> None:
+    """Record the reporting row from what the instance published since the feed began.
+
+    Re-reads until an export shows the instance holding work, or the deadline
+    passes with it idle, which stays ``unproven``.
+
+    Args:
+        driver: The run's driver.
+        store: The datastore this run can read the otel tables from.
+        service: The app the instance belongs to.
+        step: The row to record.
+        reported: What ``record_instance_up`` returned.
+        fed_at: ``time.monotonic()`` when the feed began.
+    """
+    detail, status = reported
+    until = time.monotonic() + WORK_DEADLINE
+    while True:
+        window = int(time.monotonic() - fed_at) + 1
+        state, text = reporting_verdict(store, service, detail, status, window)
+        if state != "unproven" or not store.host or time.monotonic() >= until:
+            break
+        time.sleep(WORK_POLL_SECONDS)
+    driver.record(step, state, text)
 
 
 def record_table(driver, store: Datastore, name: str) -> None:

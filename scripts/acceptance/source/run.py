@@ -35,6 +35,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -65,12 +66,13 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
         run.driver, restart_exec, [*created, *steps.reply_hints(deployed), *hints]
     )
     steps.record_table(run.driver, run.store, case.name)
-    steps.record_instance_up(
-        run.driver, run.engine, run.store, case.service, case.name,
-        case.instance_step, case.instance_deadline,
-        case.reporting_step, case.reporting_deadline,
+    reported = steps.record_instance_up(
+        run.driver, run.engine, case.service, case.name,
+        case.instance_step, case.instance_deadline, case.reporting_deadline,
     )
+    fed_at = time.monotonic()
     case.feed(run)
+    steps.record_reporting(run.driver, run.store, case.service, case.reporting_step, reported, fed_at)
     case.prove(run)
     steps.record_ceiling(
         run.driver, run.store, run.receiver_url, run.verify, run.run_id, run.args.receiver_door_bytes
