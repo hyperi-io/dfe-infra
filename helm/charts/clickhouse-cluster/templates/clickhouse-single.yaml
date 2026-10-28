@@ -25,6 +25,9 @@ spec:
     - name: https
       port: 8443
       targetPort: https
+    - name: native-tls
+      port: 9440
+      targetPort: native-tls
     {{- end }}
 ---
 apiVersion: apps/v1
@@ -61,6 +64,8 @@ spec:
             {{- if $tls }}
             - name: https
               containerPort: 8443
+            - name: native-tls
+              containerPort: 9440
             {{- end }}
           env:
             - name: CLICKHOUSE_USER
@@ -312,11 +317,12 @@ data:
   # Merged over the image's own <openSSL>, which keeps its protocol and
   # verification defaults and takes the keypair from the mounted Secret. HTTPS is
   # a protocol with its own host, because https_port would bind loopback only
-  # (dfe-listen.xml).
+  # (dfe-listen.xml), and the native protocol over TLS likewise.
   dfe-tls.xml: |
     <clickhouse>
       <protocols>
         <https><type>tls</type><impl>http</impl><host>0.0.0.0</host><port>8443</port><description>https</description></https>
+        <tcp_secure><type>tls</type><impl>tcp</impl><host>0.0.0.0</host><port>9440</port><description>native protocol over TLS</description></tcp_secure>
       </protocols>
       <openSSL>
         <server>
