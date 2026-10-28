@@ -170,7 +170,7 @@ def ports_by_app(policies: list[dict]) -> dict[str, set[int]]:
 
 
 def test_msk_opens_scram_to_the_apps_and_iam_to_the_bootstrap_job_alone() -> None:
-    policies = external(render("kafka.mode=external", "kafka.provider=msk"), "kafka")
+    policies = external(render("kafka.mode=external", "kafka.external.provider=msk"), "kafka")
     by_app = ports_by_app(policies)
     expect("every app gets SCRAM alone",
            all(ports == {9096} for app, ports in by_app.items() if app != "dfe-kafka"),
@@ -180,14 +180,14 @@ def test_msk_opens_scram_to_the_apps_and_iam_to_the_bootstrap_job_alone() -> Non
 
 
 def test_confluent_opens_9092_and_reaches_no_bootstrap_job() -> None:
-    policies = external(render("kafka.mode=external", "kafka.provider=confluent-cloud"), "kafka")
+    policies = external(render("kafka.mode=external", "kafka.external.provider=confluent-cloud"), "kafka")
     expect("Confluent's one Kafka port", ports_of(policies) == {9092}, f"got {sorted(ports_of(policies))}")
     expect("no policy lands in strimzi, where no Job dials Confluent",
            namespaces_of(policies) == {"dfe-local"}, f"got {sorted(namespaces_of(policies))}")
 
 
 def test_redpanda_opens_its_seed_and_broker_ports() -> None:
-    policies = external(render("kafka.mode=external", "kafka.provider=redpanda-cloud"), "kafka")
+    policies = external(render("kafka.mode=external", "kafka.external.provider=redpanda-cloud"), "kafka")
     expect("Redpanda's seed and broker ports", ports_of(policies) == {9092, 9093, 9094, 9095},
            f"got {sorted(ports_of(policies))}")
     expect("no policy lands in strimzi", namespaces_of(policies) == {"dfe-local"},
@@ -196,7 +196,7 @@ def test_redpanda_opens_its_seed_and_broker_ports() -> None:
 
 def test_an_in_cluster_provider_keeps_the_generic_range() -> None:
     """A provider with no entry is a broker the deployer brought, so the range stays."""
-    policies = external(render("kafka.mode=external", "kafka.provider=strimzi"), "kafka")
+    policies = external(render("kafka.mode=external", "kafka.external.provider=strimzi"), "kafka")
     expect("the generic range", ports_of(policies) == KAFKA_PORTS, f"got {sorted(ports_of(policies))}")
 
 

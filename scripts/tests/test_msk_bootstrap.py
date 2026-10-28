@@ -60,8 +60,8 @@ MSK_VALUES = {
     "appNamespace": "dfe-aws",
     "kafka": {
         "mode": "external",
-        "provider": "msk",
         "external": {
+            "provider": "msk",
             "bootstrap": "b-1.dfe.example:9096,b-2.dfe.example:9096",
             "msk": {"bootstrapIam": "b-1.dfe.example:9098,b-2.dfe.example:9098"},
         },
@@ -152,11 +152,8 @@ def test_the_job_and_its_account_render_for_msk() -> None:
 
 
 def test_the_job_renders_for_msk_alone() -> None:
-    for provider in ("strimzi", "redpanda"):
-        # Redpanda refuses to render at all without its BSL acknowledgement, and
-        # that refusal is a different check's -- accept it so this one sees the
-        # provider gate rather than the licence gate.
-        docs = render(merged({"kafka": {"provider": provider, "redpanda": {"acceptLicense": True}}}))
+    for provider in ("", "confluent-cloud", "redpanda-cloud"):
+        docs = render(merged({"kafka": {"external": {"provider": provider}}}))
         expect(
             f"external mode on {provider} renders no MSK Job",
             not [d for d in jobs(docs) if "msk-bootstrap" in d["metadata"]["name"]],

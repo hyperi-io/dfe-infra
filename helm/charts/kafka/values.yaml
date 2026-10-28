@@ -127,7 +127,7 @@ kafka:
       type: scram
       secretName: dfe-kafka-external
       secretStoreName: dfe-secret-store
-    # AWS MSK bootstrap, rendered ONLY at mode: external with provider: msk
+    # AWS MSK bootstrap, rendered ONLY at mode: external with external.provider: msk
     # (msk-bootstrap-job.yaml). MSK's ACLs live in the Kafka data plane, not the
     # AWS control plane, so no tofu apply can write the first one -- and once the
     # cluster stops granting by default, nothing can write it unless it is already

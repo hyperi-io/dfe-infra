@@ -145,3 +145,39 @@ pods while the class they name does not exist.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+otel-collector.kafkaProvider -- the managed broker kafka.external.provider names,
+or "" for a broker the stack deploys. Every managed provider speaks SASL_SSL.
+*/}}
+{{- define "otel-collector.kafkaProvider" -}}
+{{- if eq (toString .Values.kafka.mode) "external" -}}
+{{- dig "provider" "" (.Values.kafka.external | default dict) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+otel-collector.kafkaMechanism -- the SASL mechanism the kafka_metrics receiver
+dials with: the explicit value, else the one the provider table derives for the
+managed broker, else SCRAM-SHA-512 (the shipped broker's).
+*/}}
+{{- define "otel-collector.kafkaMechanism" -}}
+{{- $provider := include "otel-collector.kafkaProvider" . -}}
+{{- if .Values.clusterTelemetry.kafka.sasl.mechanism -}}
+{{- .Values.clusterTelemetry.kafka.sasl.mechanism -}}
+{{- else if $provider -}}
+{{- include "dfe-common.kafkaSaslMechanism" $provider -}}
+{{- else -}}
+SCRAM-SHA-512
+{{- end -}}
+{{- end }}
+
+{{/*
+otel-collector.kafkaTLS -- "true" when kafka_metrics must dial TLS: asked for
+explicitly, or the broker is a managed provider. Renders "" otherwise.
+*/}}
+{{- define "otel-collector.kafkaTLS" -}}
+{{- if or .Values.clusterTelemetry.kafka.tls.enabled (include "otel-collector.kafkaProvider" .) -}}
+true
+{{- end -}}
+{{- end }}

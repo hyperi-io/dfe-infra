@@ -333,7 +333,7 @@ THIRD_PARTY_WORKLOADS = [
 MSK_BOOTSTRAP = (
     "appNamespace=dfe-aws",
     "kafka.mode=external",
-    "kafka.provider=msk",
+    "kafka.external.provider=msk",
     "kafka.external.bootstrap=b-1.dfe.example:9096",
     "kafka.external.msk.bootstrapIam=b-1.dfe.example:9098",
 )

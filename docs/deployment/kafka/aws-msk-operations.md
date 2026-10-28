@@ -24,7 +24,7 @@ permitted. Topics have the same problem from the other end --
 fatal.
 
 So the kafka chart runs an in-cluster Job, rendered only at
-`kafka.mode=external` with `kafka.provider=msk`
+`kafka.mode=external` with `kafka.external.provider=msk`
 (`helm/charts/kafka/templates/msk-bootstrap-job.yaml`). It authenticates with
 **SASL/IAM on port 9098**, where the IAM policy is the authorisation and no Kafka
 ACL has to exist yet, then:
@@ -66,7 +66,7 @@ driving the chart directly (a bespoke overlay, or outside `bootstrap.sh`).
 
 | Value | What it is |
 |---|---|
-| `kafka.mode` / `kafka.provider` | `external` and `msk` -- the Job renders for nothing else. |
+| `kafka.mode` / `kafka.external.provider` | `external` and `msk` -- the Job renders for nothing else. |
 | `kafka.external.msk.bootstrapIam` | The 9098 bootstrap string, `bootstrap_brokers_sasl_iam`. Empty renders no Job. |
 | `kafka.external.msk.scramUsername` | The principal the ACLs are written for; must equal the username in the `AmazonMSK_` secret. |
 | `kafka.external.msk.credentialRef` | The `AmazonMSK_` secret's ARN, the cluster secret's `dfe.hyperi.io/kafka_credential_ref`. The one copy of the credential: the apps' `dfe-kafka-user` reads its password from it through the `dfe-secret-store-unprefixed` store, and no `kafka/msk` seed exists. |

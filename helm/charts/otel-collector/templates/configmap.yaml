@@ -158,7 +158,10 @@ data:
       {{- end }}
       {{- if .Values.clusterTelemetry.kafka.enabled }}
       kafka_metrics:
-        brokers: [{{ .Values.kafka.bootstrapServers | quote }}]
+        brokers:
+          {{- range splitList "," .Values.kafka.bootstrapServers }}
+          - {{ trim . | quote }}
+          {{- end }}
         protocol_version: {{ .Values.clusterTelemetry.kafka.protocolVersion | quote }}
         collection_interval: {{ .Values.clusterTelemetry.kafka.collectionInterval }}
         scrapers:
@@ -166,12 +169,18 @@ data:
         {{- if .Values.clusterTelemetry.kafka.sasl.enabled }}
         auth:
           sasl:
-            mechanism: {{ .Values.clusterTelemetry.kafka.sasl.mechanism }}
+            mechanism: {{ include "otel-collector.kafkaMechanism" . }}
             username: {{ .Values.clusterTelemetry.kafka.sasl.username }}
             password: ${env:KAFKA_PASSWORD}
+          {{- if include "otel-collector.kafkaTLS" . }}
+          tls: {}
+          {{- end }}
+        {{- else if include "otel-collector.kafkaTLS" . }}
+        auth:
+          tls: {}
         {{- end }}
       {{- end }}
-      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
+      {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq (include "otel-collector.kafkaProvider" .) "msk") .Values.kafka.brokerHosts) }}
       prometheus:
         config:
           scrape_configs:
@@ -264,7 +273,7 @@ data:
                   action: replace
                   target_label: k8s_namespace_name
             {{- end }}
-            {{- if and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts }}
+            {{- if and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq (include "otel-collector.kafkaProvider" .) "msk") .Values.kafka.brokerHosts }}
             # MSK's own open_monitoring, in Prometheus text format on every
             # broker -- a DIFFERENT feed from kafka_metrics above, which speaks
             # the Kafka protocol and knows nothing about JVM or OS metrics.
@@ -428,7 +437,7 @@ data:
             {{- if .Values.otel.ingress.enabled }}
             - otlp/ingress
             {{- end }}
-            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq .Values.kafka.provider "msk") .Values.kafka.brokerHosts) }}
+            {{- if or .Values.clusterTelemetry.selfTelemetry.enabled .Values.clusterTelemetry.dfeServices.enabled .Values.clusterTelemetry.platformComponents.enabled (and .Values.clusterTelemetry.mskOpenMonitoring.enabled (eq (include "otel-collector.kafkaProvider" .) "msk") .Values.kafka.brokerHosts) }}
             # One receiver carries every scrape job, so this must match the
             # receiver's own gate or configured jobs are never routed anywhere.
             - prometheus
