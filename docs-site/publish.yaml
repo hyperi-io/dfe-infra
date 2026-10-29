@@ -22,14 +22,14 @@ mount_under:
 # its repo, and a published page linking to it links to GitHub instead. `all-pages` keeps
 # a member's whole docs/ off the site.
 internal:
-  clickhouse-dfe:
-    all-pages: "a library's developer docs"
   culvert:
     ci-environment.md: "the culvert CI pipeline"
     scalo-reference.md: "developer docs: design, internals or dev setup"
     supply-chain.md: "developer docs: design, internals or dev setup"
   dfe-archiver:
     DESIGN.md: "developer docs: design, internals or dev setup"
+  dfe-clickhouse-rs:
+    all-pages: "a library's developer docs"
   dfe-docker:
     developing.md: "developer docs: design, internals or dev setup"
   dfe-engine:

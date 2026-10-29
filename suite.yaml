@@ -573,9 +573,9 @@ nodes:
     # Its in-repo marker states the numeric tier 4, which is the org
     # property's general-oss.
 
-  clickhouse-dfe:
-    repo: hyperi-io/clickhouse-dfe
-    package: clickhouse-dfe
+  dfe-clickhouse-rs:
+    repo: hyperi-io/dfe-clickhouse-rs
+    package: dfe-clickhouse
     role: library
     language: rust
     audience: general
@@ -763,9 +763,9 @@ edges:
     evidence: "dfe-engine/pyproject.toml"
     note: "Declared with the `enhanced` extra and imported lazily in sampling/service.py and sampling/kafka_reader.py, for the sampler's smart and anomaly modes."
 
-  # --- clickhouse-dfe ------------------------------------------------------
+  # --- dfe-clickhouse-rs ---------------------------------------------------
 
-  - from: clickhouse-dfe
+  - from: dfe-clickhouse-rs
     to: dfe-fetcher
     kind: cargo-dep
     type: potential
@@ -958,7 +958,7 @@ lanes:
     why: "They pin the shared toolchain and the app catalogue. The catalogue edge into dfe-engine runs here, before any library moves."
 
   - name: libraries
-    members: [scalo-rs, factbook-rs, scalo-py, dfe-schemas, logreducer, vector-vrl, clickhouse-dfe]
+    members: [scalo-rs, factbook-rs, scalo-py, dfe-schemas, logreducer, vector-vrl, dfe-clickhouse-rs]
     why: "A consumer cannot resolve a version that does not exist yet, so the libraries release first."
 
   - name: consumers

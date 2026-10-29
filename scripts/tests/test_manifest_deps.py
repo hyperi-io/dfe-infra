@@ -247,9 +247,9 @@ def test_a_uv_lock_names_compare_the_way_pep_503_normalises_them() -> None:
 
 
 def test_a_crate_name_compares_exactly() -> None:
-    lock = '[[package]]\nname = "clickhouse-dfe"\nversion = "0.1.1"\n'
-    assert locked(lock, "cargo-dep", "clickhouse-dfe") == ["0.1.1"]
-    assert locked(lock, "cargo-dep", "clickhouse_dfe") == []
+    lock = '[[package]]\nname = "dfe-clickhouse"\nversion = "0.1.4"\n'
+    assert locked(lock, "cargo-dep", "dfe-clickhouse") == ["0.1.4"]
+    assert locked(lock, "cargo-dep", "dfe_clickhouse") == []
 
 
 def test_a_lock_with_no_packages_resolves_nothing() -> None:
