@@ -307,7 +307,7 @@ def test_the_real_journeys_file_places_every_member_that_publishes() -> None:
         "factbook-rs",
         "logreducer",
         "vector-vrl",
-        "clickhouse-dfe",
+        "dfe-clickhouse-rs",
     }
     assert set(members) - whole <= set(journeys.placement)
     assert aggregate.ROOT_PAGES in journeys.placement

@@ -54,7 +54,7 @@ for the hyperi-io custom property that answers when the repo declares nothing.
 
 - `general` - stands alone. Someone with no DFE deployment can install it and
   get value. scalo-rs, factbook-rs, scalo-py, logreducer, vector-vrl,
-  clickhouse-dfe, and culvert, the optional VPN.
+  dfe-clickhouse-rs, and culvert, the optional VPN.
 - `suite` - only makes sense inside a DFE deployment.
 
 It is kept separate from whether the artefact is public, because those come
@@ -81,7 +81,7 @@ flowchart TB
   end
   subgraph library["library"]
     direction LR
-    clickhouse_dfe["clickhouse-dfe"]:::general
+    dfe_clickhouse_rs["dfe-clickhouse-rs"]:::general
     factbook_rs["factbook-rs"]:::general
     logreducer["logreducer"]:::general
     scalo_py["scalo-py"]:::general
@@ -279,23 +279,23 @@ flowchart LR
 ```
 <!-- suite-graph:end producer:logreducer -->
 
-### clickhouse-dfe
+### dfe-clickhouse-rs
 
-dfe-fetcher takes it as an optional dependency, behind its db crate's
+The crate is `dfe-clickhouse`. dfe-fetcher takes it as an optional dependency, behind its db crate's
 `clickhouse` feature, for the ping and the typed server exception. dfe-loader
 still reaches ClickHouse through the upstream crate with a patch onto the
 clickhouse-rs fork, so a release here moves nothing there.
 
-<!-- suite-graph:begin producer:clickhouse-dfe -->
+<!-- suite-graph:begin producer:dfe-clickhouse-rs -->
 ```mermaid
 flowchart LR
-  clickhouse_dfe["clickhouse-dfe"]:::producer
+  dfe_clickhouse_rs["dfe-clickhouse-rs"]:::producer
   dfe_fetcher["dfe-fetcher"]:::suite
-  clickhouse_dfe -->|cargo-dep, potential| dfe_fetcher
+  dfe_clickhouse_rs -->|cargo-dep, potential| dfe_fetcher
   classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
   classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
 ```
-<!-- suite-graph:end producer:clickhouse-dfe -->
+<!-- suite-graph:end producer:dfe-clickhouse-rs -->
 
 ## The build cycles: the deployed members
 

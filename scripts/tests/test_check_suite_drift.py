@@ -193,7 +193,7 @@ PY_SUITE = SUITE.replace("  image-pin:\n", PY_KIND + "  image-pin:\n", 1).replac
 )
 
 # A second library the member takes only as an optional dependency, which is how
-# dfe-fetcher takes clickhouse-dfe: declared by range in its manifest, resolved in its lock.
+# dfe-fetcher takes dfe-clickhouse: declared by range in its manifest, resolved in its lock.
 LIB_C_NODE = """\
   lib-c:
     repo: org/lib-c
