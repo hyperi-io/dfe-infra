@@ -323,15 +323,15 @@ def test_a_deployment_can_move_the_ranges() -> None:
 
 
 def test_internet_egress_is_unchanged() -> None:
-    """fetcher and archiver semantics must not move when external egress lands."""
+    """Who gets internet egress, and on which ports, must not move when external egress lands."""
     docs = render("clickhouse.mode=external", "kafka.mode=external")
     internet = [
         d for d in docs
         if d.get("kind") == "NetworkPolicy"
         and d["metadata"]["name"].startswith("allow-internet-egress-")
     ]
-    expect("internetEgress still names the fetcher and archiver",
-           apps_of(internet) == {"dfe-fetcher", "dfe-archiver"},
+    expect("internetEgress names the fetcher, archiver and hunt runner",
+           apps_of(internet) == {"dfe-fetcher", "dfe-archiver", "dfe-hunt-runner"},
            f"got {sorted(apps_of(internet))}")
     expect("internetEgress still grants 443 and 80", ports_of(internet) == {443, 80},
            f"got {sorted(ports_of(internet))}")

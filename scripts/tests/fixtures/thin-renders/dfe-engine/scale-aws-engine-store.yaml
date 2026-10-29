@@ -695,6 +695,13 @@ spec:
     metadata:
       labels: *id001
     spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: dfe-engine
+            topologyKey: kubernetes.io/hostname
       containers:
       - args:
         - run
@@ -733,6 +740,8 @@ spec:
           value: /deploy-repo/repo/current/config/hunts
         - name: DFE_HUNTS_RULES_DIR
           value: /deploy-repo/repo/current/config/rules
+        - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
+          value: /config/alerts
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
@@ -762,6 +771,10 @@ spec:
           name: config
         - mountPath: /tmp
           name: tmp
+        - mountPath: /config/alerts
+          name: alert-destinations
+          readOnly: true
+          subPath: alerts
         - mountPath: /deploy-repo
           name: deploy-repo
           readOnly: true
@@ -889,6 +902,10 @@ spec:
         name: config
       - emptyDir: {}
         name: tmp
+      - name: alert-destinations
+        persistentVolumeClaim:
+          claimName: dfe-engine-config
+          readOnly: true
       - emptyDir: {}
         name: deploy-repo
       - emptyDir: {}

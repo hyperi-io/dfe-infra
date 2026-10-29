@@ -450,6 +450,68 @@ def test_the_runner_waits_for_the_engine() -> None:
     )
 
 
+def test_the_runner_reads_the_destinations_the_api_writes() -> None:
+    """An API-created alert destination must reach the runner that delivers hunt matches.
+
+    The engine writes them as YAML under <config>/alerts on its ReadWriteOnce claim,
+    not into git, so the runner mounts that claim read-only on the engine's node.
+    """
+    alerts = f"{config_mount()}/alerts"
+    doc = render()
+    main = container(doc, "hunt-runner")
+    engine = engine_env_data(deployed())
+    expect(
+        "the runner reads the directory the engine writes",
+        env_of(main).get("DFE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts
+        and engine.get("DFE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts,
+        f"{env_of(main).get('DFE_HUNTS_ALERT_DESTINATIONS_DIR')} vs {engine.get('DFE_HUNTS_ALERT_DESTINATIONS_DIR')}",
+    )
+    mount = mount_of(main, "alert-destinations")
+    expect(
+        "it is the alerts subdirectory of the config claim, read-only",
+        mount.get("mountPath") == alerts
+        and mount.get("subPath") == "alerts"
+        and mount.get("readOnly") is True,
+        f"{mount}",
+    )
+    claims = [
+        v["persistentVolumeClaim"] for v in pod(doc)["volumes"] if v["name"] == "alert-destinations"
+    ]
+    expect(
+        "off the engine's own claim, read-only",
+        claims == [{"claimName": "dfe-engine-config", "readOnly": True}],
+        f"{claims}",
+    )
+    terms = pod(doc)["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+    expect(
+        "on the engine's node, since the claim is ReadWriteOnce",
+        terms
+        == [
+            {
+                "topologyKey": "kubernetes.io/hostname",
+                "labelSelector": {"matchLabels": {"app.kubernetes.io/name": ENGINE}},
+            }
+        ],
+        f"{terms}",
+    )
+    for label, overlay in (
+        ("switched off", {"huntRunner": {"alertDestinations": {"enabled": False}}}),
+        (
+            "with no config claim",
+            {"writablePaths": {"config": {"persistence": {"enabled": False}}}},
+        ),
+    ):
+        bare = render(overlay)
+        expect(
+            f"{label}, no mount, volume, env or affinity",
+            not mount_of(container(bare, "hunt-runner"), "alert-destinations")
+            and "DFE_HUNTS_ALERT_DESTINATIONS_DIR" not in env_of(container(bare, "hunt-runner"))
+            and not [v for v in pod(bare)["volumes"] if v["name"] == "alert-destinations"]
+            and "affinity" not in pod(bare),
+            f"{label}",
+        )
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):
