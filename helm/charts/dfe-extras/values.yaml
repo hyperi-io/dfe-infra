@@ -420,6 +420,16 @@ extras:
           passwordSecretKey: password
           passwordSecretCreate: true
           password: ""
+        # Alert destinations the API writes land on the engine's config claim, not
+        # in git (their Apprise URLs are credentials). The runner mounts that
+        # claim's alerts subdirectory read-only and runs on the engine's node,
+        # because the claim is ReadWriteOnce. Off, the runner sees no API-created
+        # destination and delivers only to hunts.alert_channels.
+        alertDestinations:
+          enabled: true
+          claimName: dfe-engine-config
+          engineSelector:
+            app.kubernetes.io/name: dfe-engine
         autoscaling:
           enabled: false
           minReplicaCount: 1

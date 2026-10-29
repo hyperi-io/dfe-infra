@@ -165,6 +165,7 @@ internetEgress:
   apps:
     - dfe-fetcher
     - dfe-archiver
+    - dfe-hunt-runner   # sends hunt matches to Apprise alert targets
   ports:
     - { port: 443, protocol: TCP }   # HTTPS APIs + S3/object storage
     - { port: 80,  protocol: TCP }   # plain-HTTP data sources (fetcher)

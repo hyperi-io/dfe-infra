@@ -44,6 +44,9 @@ disk on every reload tick, and the engine governs them in that repo.
 {{- $gs := .Values.huntRunner.gitSync }}
 {{- /* No deploy repo means nothing to sync, so the sidecar needs both switches. */}}
 {{- $gitSync := and $gs.enabled .Values.gitops.enabled }}
+{{- /* The engine's config claim only exists while its config volume is persistent. */}}
+{{- $ad := .Values.huntRunner.alertDestinations }}
+{{- $alerts := and $ad.enabled (dig "config" "persistence" "enabled" true (.Values.writablePaths | default dict)) }}
 {{- $gsImage := printf "%s:%s" $gs.image.repository $gs.image.tag }}
 {{- with $gs.image.digest }}{{- $gsImage = printf "%s@%s" $gsImage . }}{{- end }}
 {{- /* Where both git-sync passes agree: same repo, same ref, same worktree.
@@ -86,6 +89,18 @@ spec:
       # as an int and exits on ("invalid literal for int() with base 10").
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
+      {{- if $alerts }}
+      # The engine's claim is ReadWriteOnce, so the pod sharing it must land on the
+      # engine's node. Required, not preferred: a preferred spread would hit a
+      # Multi-Attach error on any other node.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- toYaml $ad.engineSelector | nindent 18 }}
+      {{- end }}
       {{- /* The helper renders the initContainers key itself, so git-sync-init
              joins its list, or opens one when the wait is switched off. */}}
       {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
@@ -151,6 +166,11 @@ spec:
             - name: DFE_HUNTS_RULES_DIR
               value: {{ .Values.config.mountPath }}/rules
             {{- end }}
+            {{- if $alerts }}
+            # Where the engine API writes alert destinations, mounted below.
+            - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
+              value: {{ .Values.config.mountPath }}/alerts
+            {{- end }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
@@ -169,6 +189,13 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
+            {{- if $alerts }}
+            # Read-only: the engine API is the only writer.
+            - name: alert-destinations
+              mountPath: {{ .Values.config.mountPath }}/alerts
+              subPath: alerts
+              readOnly: true
+            {{- end }}
             {{- if $gitSync }}
             # Read-only: the sidecar is the only writer.
             - name: deploy-repo
@@ -208,6 +235,12 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if $alerts }}
+        - name: alert-destinations
+          persistentVolumeClaim:
+            claimName: {{ $ad.claimName }}
+            readOnly: true
+        {{- end }}
         {{- if $gitSync }}
         # Written by the git-sync sidecar, read by the runner.
         - name: deploy-repo
