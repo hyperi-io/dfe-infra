@@ -488,7 +488,7 @@ class ProofStore(FakeStore):
 
     def scalar(self, sql):
         self.asked.append(sql)
-        return self.carrying if "!= ''" in sql else self.landed
+        return self.landed - self.carrying if "WHERE NOT" in sql else self.landed
 
 
 class TestTheFetchedSchemaAndItsProof:
@@ -515,6 +515,7 @@ class TestTheFetchedSchemaAndItsProof:
     @pytest.mark.parametrize(("carrying", "status"), [
         pytest.param(3, "done", id="every_row_stamped"),
         pytest.param(0, "failed", id="expected_fail_a_stamp_missing"),
+        pytest.param(1, "failed", id="expected_fail_most_rows_unstamped"),
     ])
     def test_the_fetched_columns_row_asks_for_every_proof_column(self, carrying, status):
         case = cases.build(parse("--case", "cloudwatch"))

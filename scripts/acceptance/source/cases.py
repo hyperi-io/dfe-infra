@@ -796,10 +796,10 @@ class FetchedAwsCase(Case):
         if gained:
             columns = self.upstream.proof_columns
             carried = " AND ".join(f"{column} != ''" for column in columns)
-            set_rows = run.store.scalar(f"SELECT count() FROM {self.name} WHERE {carried}")
+            short = run.store.scalar(f"SELECT count() FROM {self.name} WHERE NOT ({carried})")
             run.driver.record(
-                "fetched-columns", "done" if set_rows else "failed",
-                f"{set_rows} of {gained} row(s) carry all of {', '.join(columns)}",
+                "fetched-columns", "failed" if short else "done",
+                f"{short} of the landed row(s) lack one of {', '.join(columns)}",
             )
 
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
