@@ -74,23 +74,23 @@ class AwsCase:
     """One AWS service the fetcher polls, and the schema its records need.
 
     ``columns`` is what an operator would sit down and write for this upstream.
-    ``proof_column`` is the one a row must carry for the record to have come from
-    this service rather than from anywhere else.
+    ``proof_columns`` are the ones every landed row must carry: a field only this
+    service sets, plus each key the fetcher stamps from the call.
     """
 
     service: str
     stem: str
     summary: str
     columns: tuple[Column, ...]
-    proof_column: str
+    proof_columns: tuple[str, ...]
     service_config: tuple[str, ...] = field(default=())
 
 
 # CloudWatch Logs, from FilterLogEvents. The event carries logStreamName,
-# timestamp, message, ingestionTime and eventId and NOTHING else: the log group,
-# the account and the region are properties of the CALL, not of the event, so
-# those three columns are authored for the reader's sake and arrive empty until
-# the fetcher stamps them on (dfe-fetcher src/source/aws/mod.rs fetch_cloudwatch_logs).
+# timestamp, message, ingestionTime and eventId and NOTHING else. The log group,
+# the account and the region belong to the CALL, so the fetcher stamps them on
+# each event as logGroupName, awsAccountId and awsRegion (dfe-fetcher
+# crates/rest/src/hooks/cloudwatch_logs.rs).
 CLOUDWATCH_LOGS = AwsCase(
     service="cloudwatch_logs",
     stem="cloudwatch_logs",
@@ -102,10 +102,10 @@ CLOUDWATCH_LOGS = AwsCase(
         Column("message", "text", "fulltext", "@source: message", "Log event message"),
         Column("event_id", "string", "bloom", "@source: eventId", "Unique log event identifier"),
         Column("ingestion_time", "datetime", "range", "@source: ingestionTime", "When CloudWatch ingested it"),
-        Column("aws_account", "string", "dimension", "@source: accountId", "AWS account the group belongs to"),
+        Column("aws_account", "string", "dimension", "@source: awsAccountId", "AWS account the group belongs to"),
         Column("aws_region", "string", "dimension", "@source: awsRegion", "AWS region the group lives in"),
     ),
-    proof_column="log_stream",
+    proof_columns=("log_stream", "log_group", "aws_account", "aws_region"),
     service_config=("log_group_name",),
 )
 
@@ -122,7 +122,7 @@ CLOUDTRAIL = AwsCase(
         Column("event_source", "string", "dimension", "@source: EventSource", "AWS service called"),
         Column("username", "string", "dimension", "@source: Username", "Identity that made the call"),
     ),
-    proof_column="event_name",
+    proof_columns=("event_name",),
 )
 
 AWS_CASES = {case.service: case for case in (CLOUDWATCH_LOGS, CLOUDTRAIL)}
