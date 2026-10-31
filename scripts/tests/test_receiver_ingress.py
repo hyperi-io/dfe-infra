@@ -241,9 +241,12 @@ def test_the_tunnel_door_policy_admits_culvert_not_the_internet() -> None:
     docs = render_app("dfe-receiver", "scale", "aws", infra=ingest(door="tunnel"))
     policy = one(docs, "NetworkPolicy", "dfe-receiver-ingest")
     rule = policy["spec"]["ingress"][0]
-    expect("it admits the culvert pods by label",
+    expect("it admits the culvert pods by label, in their own namespace",
            rule.get("from")
-           == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
+           == [{
+               "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "culvert"}},
+               "podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}},
+           }],
            f"got {rule.get('from')!r}")
     expect("no ipBlock names the whole internet",
            not any("ipBlock" in peer for peer in rule.get("from") or []),

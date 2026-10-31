@@ -62,6 +62,10 @@ extras:
         vpn:
           # Selector label of the tunnel pods the tunnel door's policy admits.
           podLabel: dfe-culvert
+          # The namespace they run in: the tunnel needs NET_ADMIN, a hostPath tun device
+          # and a privileged init container, so it has one of its own, labelled
+          # privileged (appsets/layer2-edge.yaml). Empty selects the receiver's own.
+          namespace: culvert
         networkPolicy:
           enabled: true
       # The DFE-wide record cap in bytes: the largest request body the receiver admits.
@@ -165,6 +169,9 @@ extras:
       # listener, the one the receiver's ingest NetworkPolicy admits the tunnel on.
       ingest:
         podLabel: dfe-receiver
+        # The receiver's namespace, which appsets/layer2-edge.yaml passes as dfeNamespace.
+        # Empty selects the tunnel's own, as before the tunnel had a namespace of its own.
+        namespace: ""
         ports:
           - { port: 8080, protocol: TCP }
       # The tunnel pods' whole egress surface: the receiver, DNS and telemetry. Set

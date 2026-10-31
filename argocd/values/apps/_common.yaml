@@ -26,8 +26,8 @@ telemetry:
   # the endpoint is resolved here and carried by extraEnv. prometheus mode renders
   # the variable set and empty, which scalo's OTLP exporters read as off.
   # receiver mode with no receiverEndpoint derives the receiver's OTLP/gRPC port (the
-  # otlp-grpc port of its contract, 4317) in the release namespace. The receiver
-  # binds it only while its config.otlp.enabled is true.
+  # otlp-grpc port of its contract, 4317) in the namespace dfeNamespace names, else the
+  # release's. The receiver binds it only while its config.otlp.enabled is true.
   # scripts/tests/test_apps_common.py holds every mode and app to its known endpoint.
   otlpEndpointTemplate: |-
     {{- $t := .Values.telemetry | default dict -}}
@@ -36,7 +36,7 @@ telemetry:
     {{- if eq $mode "hyperdx" -}}
     {{- $ep = $t.hyperdxEndpoint | default (printf "%s-otel-collector-gateway.%s.svc.cluster.local:4317" .Values.global.project ($t.collectorNamespace | default "otel")) -}}
     {{- else if eq $mode "receiver" -}}
-    {{- $ep = $t.receiverEndpoint | default (printf "dfe-receiver.%s.svc.cluster.local:4317" .Release.Namespace) -}}
+    {{- $ep = $t.receiverEndpoint | default (printf "dfe-receiver.%s.svc.cluster.local:4317" (.Values.dfeNamespace | default .Release.Namespace)) -}}
     {{- else if eq $mode "external" -}}
     {{- $ep = $t.externalEndpoint | default "" -}}
     {{- end -}}

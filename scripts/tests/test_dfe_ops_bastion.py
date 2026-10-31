@@ -61,6 +61,14 @@ kafka:
 """
 
 
+def test_the_tunnel_is_reached_in_its_own_namespace_unless_told_otherwise() -> None:
+    import argparse
+
+    default = argparse.Namespace(namespace=None)
+    assert bastion._namespace(default) == "culvert"
+    assert bastion._namespace(argparse.Namespace(namespace="elsewhere")) == "elsewhere"
+
+
 def test_set_toolbox_field_flips_enabled_and_leaves_everything_else() -> None:
     updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "enabled", "true")
     assert '  enabled: "true"' in updated

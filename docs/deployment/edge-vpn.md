@@ -106,8 +106,8 @@ flowchart LR
 ```
 
 - **The NetworkPolicy** (`helm/charts/dfe-extras/templates/culvert-networkpolicy.yaml`)
-  selects the receiver pods BY LABEL, so it is exact whatever the addressing
-  is. Client traffic is SNATed onto the pod address on its way out of the
+  selects the receiver pods BY LABEL and namespace, so it is exact whatever the
+  addressing is. Client traffic is SNATed onto the pod address on its way out of the
   tunnel, so what the pod may reach is what a client may reach.
 - **culvert's own routing control** (`CULVERT_ROUTING_CONTROL_ENABLED`,
   `routes.destinations`) filters by CIDR inside the pod and pushes the same
@@ -228,10 +228,14 @@ runs the pair. The `replicas` key is deliberately not spelled `replicaCount`:
 the scale profiles set that for every app, and this one cannot take it.
 
 The pod also runs as uid 0 with `NET_ADMIN`, `SETPCAP`, `SETGID` and `SETUID`,
+a hostPath `/dev/net/tun` and a privileged init container for `ip_forward`,
 because OpenVPN and wg-quick create the tun device and program iptables NAT
-before OpenVPN drops to nobody. A cluster enforcing restricted PodSecurity
-admission rejects it unless its namespace is labelled
-`pod-security.kubernetes.io/enforce=privileged`.
+before OpenVPN drops to nobody. The baseline Pod Security level every other DFE
+namespace enforces refuses all of that, so the tunnel runs in its own `culvert`
+namespace, which the Application labels
+`pod-security.kubernetes.io/enforce=privileged`. The receiver's ingest policy
+and the tunnel's egress policy each name the other's namespace, and Secrets the
+tunnel reads (`dfe-culvert-pki`, the OIDC client secret) are created there.
 
 ## Turning it on
 

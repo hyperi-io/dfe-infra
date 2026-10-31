@@ -13,7 +13,8 @@ Every Application that syncs with CreateNamespace=true states the labels through
 managedNamespaceMetadata, since a namespace Argo creates carries none of its own.
 A DFE namespace enforces baseline and warns and audits at restricted. The otel
 collector's namespace enforces privileged, because its DaemonSet mounts the
-node's / and /var/log/pods. kube-system and default are Kubernetes's own, so
+node's / and /var/log/pods, and so does the tunnel's, because its pod holds
+NET_ADMIN, a tun hostPath and a privileged init container. kube-system and default are Kubernetes's own, so
 they are labelled privileged on all three modes, the cluster's default, because
 Argo cannot leave a key out of managedNamespaceMetadata.
 
@@ -30,8 +31,12 @@ from _weave import REPO_ROOT, helm, weave
 PREFIX = "pod-security.kubernetes.io/"
 BASELINE = {"enforce": "baseline", "warn": "restricted", "audit": "restricted"}
 PRIVILEGED = {"enforce": "privileged", "warn": "privileged", "audit": "privileged"}
+# The two namespaces holding a workload the baseline level refuses: the collector's DaemonSet mounts
+# node paths, and the tunnel holds NET_ADMIN, a tun hostPath and a privileged init container.
+ADMITTED_PRIVILEGED = {"enforce": "privileged", "warn": "restricted", "audit": "restricted"}
 EXPECTED = {
-    "otel": {"enforce": "privileged", "warn": "restricted", "audit": "restricted"},
+    "otel": ADMITTED_PRIVILEGED,
+    "culvert": ADMITTED_PRIVILEGED,
     "kube-system": PRIVILEGED,
     "default": PRIVILEGED,
 }
