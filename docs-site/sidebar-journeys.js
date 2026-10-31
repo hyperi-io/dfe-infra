@@ -29,19 +29,23 @@ function flatten(items, out = []) {
   return out;
 }
 
-// The longest placement key that is the doc id, or a directory prefix of it.
-function placeOf(key, placements) {
+// The longest placement key that is the doc id, or a directory prefix of it. Case is
+// ignored, so one lowercase key places both the renamed page and the upper-case file a
+// frozen stack tag still carries.
+function placeOf(docId, placements) {
+  const key = docId.toLowerCase();
   let best = null;
-  for (const [candidate, place] of Object.entries(placements)) {
-    const fits = candidate === key || (candidate.endsWith('/') && key.startsWith(candidate)) || candidate === '';
-    if (fits && (best === null || candidate.length > best.length)) {
-      best = candidate;
+  for (const candidate of Object.keys(placements)) {
+    const folded = candidate.toLowerCase();
+    const fits = folded === key || (folded.endsWith('/') && key.startsWith(folded)) || folded === '';
+    if (fits && (best === null || folded.length > best.folded.length)) {
+      best = {candidate, folded};
     }
   }
   if (best === null) {
-    throw new Error(`journeys.yaml places no page at ${key}`);
+    throw new Error(`journeys.yaml places no page at ${docId}`);
   }
-  return placements[best];
+  return placements[best.candidate];
 }
 
 /**
@@ -81,4 +85,4 @@ function journeySidebar(items, journeys, placements) {
   return [...top, ...journeyItems];
 }
 
-module.exports = {journeySidebar};
+module.exports = {journeySidebar, placeOf};

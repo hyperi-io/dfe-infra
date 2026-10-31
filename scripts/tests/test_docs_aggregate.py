@@ -19,6 +19,7 @@ them over file://, so they need git and no network.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -445,6 +446,61 @@ def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str)
         target, doc_dir="docs/deployment", repo=REPO, ref="2.2.1", internal=internal
     )
     assert relinked == (expected, False)
+
+
+@pytest.mark.parametrize(
+    ("repo_path", "expected"),
+    [
+        ("docs/testing-cycle.md", True),
+        ("docs/TESTING-CYCLE.md", True),
+        ("docs/Archive/Old.md", True),
+        ("docs/archive/", True),
+        ("docs/testing-cycle-notes.md", False),
+        ("docs/deployment/aws.md", False),
+        ("docs/AUTOSCALING.md", False),
+    ],
+)
+def test_an_internal_key_matches_either_case_of_the_file(repo_path: str, expected: bool) -> None:
+    internal = frozenset({"docs/testing-cycle.md", "docs/archive/"})
+    assert aggregate.is_internal(repo_path, internal) is expected
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    ("doc_id", "expected"),
+    [
+        ("dfe-infra/autoscaling", "Operate / Scaling"),
+        ("dfe-infra/AUTOSCALING", "Operate / Scaling"),
+        ("dfe-infra/Deployment/AWS", "Deploy / AWS"),
+        ("dfe-infra/other", "Deploy / Default"),
+    ],
+)
+def test_a_placement_key_places_both_spellings_of_a_page(doc_id: str, expected: str) -> None:
+    placements = {
+        "dfe-infra/": "Deploy / Default",
+        "dfe-infra/autoscaling": "Operate / Scaling",
+        "dfe-infra/deployment/": "Deploy / AWS",
+    }
+    script = (
+        "const {placeOf} = require(process.argv[1]);"
+        "process.stdout.write(placeOf(process.argv[2], JSON.parse(process.argv[3])));"
+    )
+    done = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(REPO_ROOT / "docs-site" / "sidebar-journeys.js"),
+            doc_id,
+            json.dumps(placements),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+    )
+    assert done.stdout == expected
 
 
 def test_a_link_out_of_the_repository_is_left_and_flagged() -> None:

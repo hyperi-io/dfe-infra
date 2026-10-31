@@ -544,11 +544,13 @@ def is_internal(repo_path: str, internal: frozenset[str]) -> bool:
         internal: The member's internal paths.
 
     Returns:
-        True when the path is kept off the site.
+        True when the path is kept off the site. The comparison ignores case, so a
+        lowercase key also covers the upper-case file a frozen stack tag still carries.
     """
-    directory = repo_path.rstrip("/") + "/"
-    return repo_path in internal or any(
-        path.endswith("/") and directory.startswith(path) for path in internal
+    directory = repo_path.rstrip("/").lower() + "/"
+    folded = {path.lower() for path in internal}
+    return directory.rstrip("/") in folded or any(
+        path.endswith("/") and directory.startswith(path) for path in folded
     )
 
 
