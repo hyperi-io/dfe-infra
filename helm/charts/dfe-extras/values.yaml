@@ -147,6 +147,9 @@ extras:
       component: culvert
       env: local
       cloud: local
+      # The receiver's namespace, which appsets/layer2-edge.yaml passes. Empty selects the
+      # tunnel's own, as before the tunnel had a namespace of its own.
+      dfeNamespace: ""
       # The tunnel policy admits the exposed ones. A layer replaces the whole list.
       listeners:
         - { name: wireguard, port: 51820, protocol: UDP, exposed: true, nodePort: 31820 }
@@ -169,9 +172,6 @@ extras:
       # listener, the one the receiver's ingest NetworkPolicy admits the tunnel on.
       ingest:
         podLabel: dfe-receiver
-        # The receiver's namespace, which appsets/layer2-edge.yaml passes as dfeNamespace.
-        # Empty selects the tunnel's own, as before the tunnel had a namespace of its own.
-        namespace: ""
         ports:
           - { port: 8080, protocol: TCP }
       # The tunnel pods' whole egress surface: the receiver, DNS and telemetry. Set

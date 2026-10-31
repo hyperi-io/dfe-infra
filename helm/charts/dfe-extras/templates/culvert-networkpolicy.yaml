@@ -70,10 +70,10 @@ spec:
   egress:
     # The receiver's ingest listeners, and nothing else in its namespace.
     - to:
-        - {{- if .Values.ingest.namespace }}
+        - {{- if .Values.dfeNamespace }}
           namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.ingest.namespace }}
+              kubernetes.io/metadata.name: {{ .Values.dfeNamespace }}
           {{- end }}
           podSelector:
             matchLabels:
@@ -96,10 +96,10 @@ spec:
     {{- if and (eq (toString ($telemetry.mode | default "hyperdx")) "receiver") (not $telemetry.receiverEndpoint) }}
     # receiver mode with no receiverEndpoint exports to the receiver's own OTLP port.
     - to:
-        - {{- if $.Values.ingest.namespace }}
+        - {{- if $.Values.dfeNamespace }}
           namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ $.Values.ingest.namespace }}
+              kubernetes.io/metadata.name: {{ $.Values.dfeNamespace }}
           {{- end }}
           podSelector:
             matchLabels:

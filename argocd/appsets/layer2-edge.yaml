@@ -314,7 +314,7 @@ spec:
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
               # The receiver the tunnel reaches lives in this namespace, not the
-              # tunnel's own. Its receiver-mode telemetry endpoint names it.
+              # tunnel's own. Its receiver-mode telemetry endpoint and egress policy name it.
               - name: dfeNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
             # `values` (a YAML string) rather than a structured block, same
@@ -395,7 +395,7 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
               # The receiver the tunnel reaches lives in this namespace, not the
               # tunnel's own, so the tunnel's egress policy selects it by name.
-              - name: ingest.namespace
+              - name: dfeNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
             values: |
               {{- $tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone" }}
