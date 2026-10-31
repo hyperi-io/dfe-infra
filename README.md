@@ -2,14 +2,19 @@
 
 [![Helm Lint](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml)
 [![Stack Release](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml)
+[![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
 
-> One certified pin set stands up the whole stack. `versions.yaml` is the
-> manifest, every image is `tag@sha256`, and the upgrade graph is derived from
-> the file rather than remembered.
+The deploy layer of DFE: the charts, Argo CD ApplicationSets, OpenTofu modules and cluster bootstrap that stand a full DFE deployment up on any Kubernetes, on-prem, AWS, GCP or Azure. It deploys the backing services as well as the DFE apps, and a release tag here is a certified stack version.
 
-The deploy layer for the Data Fusion Engine (DFE) - the GitOps SSoT and deploy
-vehicle that stands a full DFE stack up on any Kubernetes (Rancher/on-prem, AWS,
-GCP, Azure).
+## What it gives you
+
+- `versions.yaml`, one pin set for the whole stack: every chart, operator and image, with the image digests beside them.
+- `scripts/dfe-stack`, which renders the stack manifest, lists the DFE-owned images to mirror for an air-gapped install (third-party chart images are mirrored separately), derives the upgrade graph from the stacks declared in `versions.yaml` and checks a customer's pins.
+- A signed stack manifest on each release: the manifest, image list and upgrade graph attached to the GitHub release and pushed as a cosign-signed OCI artifact.
+- One two-layer model on every cluster: a cloud-specific base laid by `bootstrap/` and OpenTofu, then the DFE platform, the same everywhere, managed by Argo CD.
+- ClickHouse, Kafka on Strimzi or Redpanda, HyperDX's DocumentDB on CloudNativePG, Envoy Gateway with OIDC, KEDA and External Secrets, deployed and wired for you.
+- `DFE_REGISTRY` to point a deployment at its own image mirror.
+- `scripts/dfe-ops` to deploy, verify, tear down and run the acceptance tests against a cluster, or a local kind one.
 
 ## A product suite, not our internal infra
 
@@ -84,8 +89,8 @@ repos are suite members and what moves when one of them releases
 
 A dfe-infra release tag IS a certified DFE stack version: `versions.yaml` at
 that tag names every component, and `scripts/dfe-stack` operates on it
-(render the manifest, list images for air-gap mirroring, derive the upgrade
-graph from git tags, check an upgrade path, resolve a customer `pins.yaml` -
+(render the manifest, list the DFE-owned images for air-gap mirroring, derive the upgrade
+graph from the stacks `versions.yaml` declares, check an upgrade path, resolve a customer `pins.yaml` -
 optionally emitting a helm values fragment - and verify digests against
 GHCR). On each release tag the `stack-manifest` workflow renders the
 manifest + image list + upgrade graph, attaches them to the GitHub release,
