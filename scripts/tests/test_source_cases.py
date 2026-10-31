@@ -468,6 +468,84 @@ class TestWhichCaseARunGets:
         assert cases.build(parse("--case", "cloudwatch")).companion_repo == ""
 
 
+# The keys each upstream's record carries: the event as FilterLogEvents and
+# LookupEvents return it, plus the call's log group, account and region that
+# dfe-fetcher stamps on (crates/rest/src/hooks/cloudwatch_logs.rs).
+PRODUCER_KEYS = {
+    "cloudwatch_logs": {"eventId", "logStreamName", "timestamp", "ingestionTime", "message",
+                        "logGroupName", "awsAccountId", "awsRegion"},
+    "cloudtrail": {"EventId", "EventName", "ReadOnly", "AccessKeyId", "EventTime",
+                   "EventSource", "Username", "Resources", "CloudTrailEvent"},
+}
+
+
+class ProofStore(FakeStore):
+    """A table holding landed rows, of which *carrying* have every proof column set."""
+
+    def __init__(self, landed: int, carrying: int) -> None:
+        self.landed, self.carrying = landed, carrying
+        self.asked: list[str] = []
+
+    def scalar(self, sql):
+        self.asked.append(sql)
+        return self.landed - self.carrying if "WHERE NOT" in sql else self.landed
+
+
+class TestTheFetchedSchemaAndItsProof:
+    @pytest.mark.parametrize("service", sorted(fetcher.AWS_CASES))
+    def test_every_authored_column_reads_a_key_the_producer_writes(self, service):
+        """A column reading a key nobody writes lands empty on every row, and nothing else fails."""
+        read = {column.expr.removeprefix("@source: ") for column in fetcher.AWS_CASES[service].columns}
+
+        assert read - PRODUCER_KEYS[service] == set()
+
+    @pytest.mark.parametrize("service", sorted(fetcher.AWS_CASES))
+    def test_every_proof_column_is_one_the_schema_authors(self, service):
+        case = fetcher.AWS_CASES[service]
+
+        assert set(case.proof_columns) <= {column.name for column in case.columns}
+
+    def test_the_proof_holds_every_key_the_fetcher_stamps(self):
+        stamped = {"logGroupName", "awsAccountId", "awsRegion"}
+        case = fetcher.CLOUDWATCH_LOGS
+        stamping = {column.name for column in case.columns if column.expr.removeprefix("@source: ") in stamped}
+
+        assert stamping <= set(case.proof_columns)
+
+    @pytest.mark.parametrize(("carrying", "status"), [
+        pytest.param(3, "done", id="every_row_stamped"),
+        pytest.param(0, "failed", id="expected_fail_a_stamp_missing"),
+        pytest.param(1, "failed", id="expected_fail_most_rows_unstamped"),
+    ])
+    def test_the_fetched_columns_row_asks_for_every_proof_column(self, carrying, status):
+        case = cases.build(parse("--case", "cloudwatch"))
+        driver, store = FakeDriver(FakePage()), ProofStore(landed=3, carrying=carrying)
+        run = a_run(driver, FakeEngine(), parse("--case", "cloudwatch"), case.name, Path("/"))
+        run.store = store
+
+        case.prove(run)
+
+        assert driver.status("fetched-columns") == status
+        assert all(f"{column} != ''" in store.asked[-1] for column in case.upstream.proof_columns)
+
+    @pytest.mark.parametrize(("name", "row"), [
+        pytest.param("filebeat", "landed", id="pushed_with_no_receiver"),
+        pytest.param("elastic", "landed", id="elastic_with_no_receiver"),
+        pytest.param("cloudwatch", "fetched", id="fetched_with_no_datastore"),
+    ])
+    def test_a_proof_that_cannot_run_reads_unproven_never_absent(self, name, row):
+        """A run that proved no data path must say so, not leave a table that reads green."""
+        case = cases.build(parse("--case", name))
+        driver = FakeDriver(FakePage())
+        run = a_run(driver, FakeEngine(), parse("--case", name), case.name, Path("/"))
+        run.store = ProofStore(landed=0, carrying=0)
+        run.store.host = ""
+
+        case.prove(run)
+
+        assert driver.status(row) == "unproven"
+
+
 class TestTheConsoleOrApiDecision:
     def test_a_console_that_did_the_work_reads_done(self):
         assert steps.console_outcome("the console set it", "", "") == ("done", "the console set it")

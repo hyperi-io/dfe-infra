@@ -31,7 +31,7 @@ The preflight is read-only. It checks the cluster is fit for the tier before any
 
 Next:
 
-1. The layers, tiers and values cascade: [Deploying DFE with dfe-infra](../dfe-infra/deployment/index.md).
+1. The layers, tiers and values cascade: [Deploying DFE with dfe-infra](../dfe-infra/deployment/README.md).
 2. Prepare the cluster: [RKE2, the DFE Kubernetes distribution](../dfe-infra/deployment/rke2.md).
 3. Decide where data is stored, before the first deploy: [storage](../dfe-infra/deployment/storage.md).
 4. Deploy, test and tear down: [on-premises guide](../dfe-infra/deployment/on-prem.md).

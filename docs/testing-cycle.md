@@ -311,4 +311,4 @@ The CloudWatch case needs a SIXTH env file naming the upstream
 `--fetcher-credentials-vault-path kv/<path>` to put the AWS keys in the Secret
 the fetcher chart names before the source is created.
 
-What each case does and what proves it: [SOURCE-SUITE.md](SOURCE-SUITE.md).
+What each case does and what proves it: [source-suite.md](source-suite.md).

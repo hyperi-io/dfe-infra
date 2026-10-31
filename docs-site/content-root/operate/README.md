@@ -40,7 +40,7 @@ A source is active, dormant or disabled. [Storing and operating a source](../dfe
 | Search, build dashboards, define rules and hunts | [The console](../dfe-ui/console-and-the-flow.md). Its menu runs in the order the data moves: Observe, Data flow, Detect, Stack, Access |
 | Run rules on a schedule | [Detections and hunts](detections-and-hunts.md) |
 | Watch the stack's own health | [Monitoring](monitoring.md) |
-| Grow it | [Autoscaling](../dfe-infra/AUTOSCALING.md). Pods scale on KEDA on every target, and node scaling differs per target |
+| Grow it | [Autoscaling](../dfe-infra/autoscaling.md). Pods scale on KEDA on every target, and node scaling differs per target |
 | Keep it running, and fix it when it is not | [Day to day and troubleshooting](day-to-day.md) |
 | Move to a newer release | [Upgrades](../dfe-infra/deployment/upgrades.md), and the [rollback runbook](../dfe-infra/deployment/upgrade-rollback.md) |
 | Keep the raw copy of every record | Set `archive: true` in a source's flow. [The source flow](../dfe-engine/data-plane/source-flow.md) says what that needs |

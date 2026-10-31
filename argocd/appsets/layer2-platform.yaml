@@ -301,6 +301,11 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: '{{ if has .namespace (list "kube-system" "default") }}privileged{{ else }}baseline{{ end }}'
+            pod-security.kubernetes.io/warn: '{{ if has .namespace (list "kube-system" "default") }}privileged{{ else }}restricted{{ end }}'
+            pod-security.kubernetes.io/audit: '{{ if has .namespace (list "kube-system" "default") }}privileged{{ else }}restricted{{ end }}'
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true

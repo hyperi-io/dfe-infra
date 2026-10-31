@@ -15,9 +15,10 @@
   this one. NetworkPolicies are additive, so it adds the exposed ingest ports
   without touching that baseline.
 
-  It admits the tunnel pods, by label. They SNAT a client onto the pod network,
-  so selecting them is exact and needs no addressing, and it keeps the receiver
-  reachable ONLY through the tunnel on this door.
+  It admits the tunnel pods, by label and namespace: they run in their own
+  privileged namespace, not the receiver's. They SNAT a client onto the pod
+  network, so selecting them is exact and needs no addressing, and it keeps the
+  receiver reachable ONLY through the tunnel on this door.
 
   The load balancer door's policy of the same name is
   argocd/values/apps/dfe-receiver's, rendered from the ports its load balancers
@@ -43,7 +44,12 @@ spec:
           port: {{ .port }}
         {{- end }}
       from:
-        - podSelector:
+        - {{- if .Values.exposure.vpn.namespace }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.exposure.vpn.namespace }}
+          {{- end }}
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: {{ .Values.exposure.vpn.podLabel }}
 {{- end }}

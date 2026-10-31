@@ -12,7 +12,7 @@
     python3 -m pytest scripts/tests/test_clickhouse_app_identity.py -q
 
 dfe-engine creates every user and grant, so it alone connects as the deploy layer's
-admin account (docs/CLICKHOUSE-IDENTITY.md). Every other workload connects as the
+admin account (docs/clickhouse-identity.md). Every other workload connects as the
 user the engine made for it. What has to hold, and what each check reads:
 
 1. No workload but the engine's names the admin Secret, in any golden render.

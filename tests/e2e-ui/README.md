@@ -23,11 +23,11 @@ Endpoints come from env (defaults match the laptop port-forward layout):
 
 The engine builds its OIDC callback from the origin the browser reached it on, so `ENGINE_URL` must be an origin registered as a redirect URI at the IdP, or the IdP refuses the sign-in. The default 8000 is the engine's own port; dfe-docker publishes it on 8003.
 
-The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD` (and `E2E_OIDC_PROVIDER` when the provider is not named dex). `dfe-ops idp deploy` writes it as `TESTER_IDP_USER_PASSWORD` in its `--secrets-out` file ([`docs/AUTH-TESTING.md`](../../docs/AUTH-TESTING.md)) -- never commit it.
+The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD` (and `E2E_OIDC_PROVIDER` when the provider is not named dex). `dfe-ops idp deploy` writes it as `TESTER_IDP_USER_PASSWORD` in its `--secrets-out` file ([`docs/auth-testing.md`](../../docs/auth-testing.md)) -- never commit it.
 
 ## Live IdP sign-in (`oidc-live`)
 
-`npx playwright test --project=oidc-live` signs in through hosted IdPs -- Okta, Entra ID, Google Workspace, or the Dex tester IdP -- on their own login pages, running the engine's real authorization-code flow. Wire the IdP into the deployment first with `dfe-ops idp wire-external` ([`docs/AUTH-TESTING.md`](../../docs/AUTH-TESTING.md)). Per provider it checks:
+`npx playwright test --project=oidc-live` signs in through hosted IdPs -- Okta, Entra ID, Google Workspace, or the Dex tester IdP -- on their own login pages, running the engine's real authorization-code flow. Wire the IdP into the deployment first with `dfe-ops idp wire-external` ([`docs/auth-testing.md`](../../docs/auth-testing.md)). Per provider it checks:
 
 - the IdP accepts the engine's authorize request: Google must not redirect to `/signin/oauth/error`, Okta must not answer 400, and Entra's 200 page must carry no `AADSTS` code
 - each user expecting roles signs in and `/api/v1/auth/me` reports exactly those roles
@@ -69,7 +69,7 @@ One harness, one Playwright project per deployed app, specs under
 
 - `harness/env.ts` -- every endpoint, env-driven; the config and all helpers
   read from here.
-- `harness/users.ts` -- the identities the suite acts as. Grows into the OIDC fixture identities (docs/AUTH-TESTING.md) and the per-role capability truth table the RBA specs assert against.
+- `harness/users.ts` -- the identities the suite acts as. Grows into the OIDC fixture identities (docs/auth-testing.md) and the per-role capability truth table the RBA specs assert against.
 - `harness/auth.ts` -- login strategies. Today: hyperdx local email/password
   (register-or-login). Next: the dex redirect flow, same shape.
 - `harness/fixtures.ts` -- extended `test` with `hyperdxPage`: a page already

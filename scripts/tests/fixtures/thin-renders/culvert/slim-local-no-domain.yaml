@@ -15,7 +15,7 @@ metadata:
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
   name: dfe-culvert
-  namespace: dfe
+  namespace: culvert
 ---
 apiVersion: v1
 binaryData:
@@ -33,7 +33,7 @@ metadata:
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
   name: dfe-culvert-config
-  namespace: dfe
+  namespace: culvert
 ---
 apiVersion: v1
 kind: Service
@@ -50,7 +50,7 @@ metadata:
     dfe.hyperi.io/exposure: public
     helm.sh/chart: culvert-<pin:chart-version.culvert>
   name: dfe-culvert-public-udp
-  namespace: dfe
+  namespace: culvert
 spec:
   externalTrafficPolicy: Local
   ports:
@@ -80,7 +80,7 @@ metadata:
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
   name: dfe-culvert
-  namespace: dfe
+  namespace: culvert
 spec:
   ports:
   - name: metrics
@@ -116,7 +116,7 @@ metadata:
     dfe.hyperi.io/env: dev
     helm.sh/chart: culvert-<pin:chart-version.culvert>
   name: dfe-culvert
-  namespace: dfe
+  namespace: culvert
 spec:
   replicas: 1
   selector:
@@ -326,7 +326,10 @@ spec:
     - port: 8080
       protocol: TCP
     to:
-    - podSelector:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dfe
+      podSelector:
         matchLabels:
           app.kubernetes.io/name: dfe-receiver
   - ports:

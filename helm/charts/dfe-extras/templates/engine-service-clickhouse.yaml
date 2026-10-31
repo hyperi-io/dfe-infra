@@ -3,7 +3,7 @@
 Each app's ClickHouse password (clickhouse.serviceUsers), as a Secret beside the
 engine. The engine adopts it (DFE_CLICKHOUSE_<ROLE>_PASSWORD, its contract's
 secret groups) and creates the app's user on it, and the app connects with the
-same value -- docs/CLICKHOUSE-IDENTITY.md.
+same value -- docs/clickhouse-identity.md.
 
 Rendered with the engine, a wave before every app that reads one, so no app
 waits on a Secret nothing has made yet. The collector runs in its own namespace,

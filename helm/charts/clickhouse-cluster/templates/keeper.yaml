@@ -51,7 +51,7 @@ spec:
   # from pods labelled as the operator in any namespace and the ClickHouse clusters that reference
   # this keeper. network-policies leaves these pods out of data-ingress-policy, which would open
   # every port to every DFE namespace.
-  # Risk-accepted: the any-namespace operator peer (docs/THREAT-MODEL.md, Accepted risks).
+  # Risk-accepted: the any-namespace operator peer (docs/threat-model.md, Accepted risks).
   networkPolicy:
     policy: Enabled
   settings:

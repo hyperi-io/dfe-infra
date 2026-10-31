@@ -113,4 +113,4 @@ A fresh deploy renders no NLB at all, and the receiver stays on a ClusterIP. The
 
 An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load Balancing pricing page). The hourly half is XS. The processing half is the transport cost of ingest on this door. AWS data transfer out still applies to the replies on every path, culvert included.
 
-Those Elastic IPs exist, and AWS bills them, while the ingest door is closed and no NLB exists. `edge.aws.receiver_eips: false` turns them off. [INGEST-EDGE.md](../INGEST-EDGE.md) describes the doors, and [edge.md](edge.md) carries the AWS tier table: every door, its group, its tier, the dial key that turns it and its cost bucket.
+Those Elastic IPs exist, and AWS bills them, while the ingest door is closed and no NLB exists. `edge.aws.receiver_eips: false` turns them off. [ingest-edge.md](../ingest-edge.md) describes the doors, and [edge.md](edge.md) carries the AWS tier table: every door, its group, its tier, the dial key that turns it and its cost bucket.

@@ -51,6 +51,10 @@ COMMON_OVERLAY = Path("infra") / "common.yaml"
 
 KINDS = ("move", "copy", "derive-identity", "derive-entries", "refuse", "report-dropped")
 GUARDS = ("", "empty", "equal")
+UNLESS = ("", "pinned-override")
+
+# The key an override's tag and digest land on, as `dfe-stack resolve --emit-values` writes them.
+OVERRIDE_KEYS = {"image.tag": 0, "image.digest": 1}
 
 # What a rule found. MIGRATE adds a key, RESYNC rewrites one from its old key,
 # CONTRACT drops an old key, DONE has nothing left to do.
@@ -97,6 +101,7 @@ class Rule:
     to: str = ""
     files: tuple[str, ...] = ("overlays",)
     guard: str = ""
+    unless: str = ""
     shape: str = ""
     prefix: str = ""
     directory: str = ""
@@ -173,6 +178,7 @@ def load_map(path: Path | None = None) -> MigrationMap:
             to=str(entry.get("to", "")),
             files=yaml_subset.split_list(entry.get("files", "overlays")),
             guard=str(entry.get("guard", "")),
+            unless=str(entry.get("unless", "")),
             shape=str(entry.get("shape", "")),
             prefix=str(entry.get("prefix", "")),
             directory=str(entry.get("dir", "")),
@@ -191,6 +197,8 @@ def _check_rule(path: Path, rule: Rule) -> None:
         raise MigrationMapError(f"{where}: kind {rule.kind!r} is not one of {', '.join(KINDS)}")
     if rule.guard not in GUARDS:
         raise MigrationMapError(f"{where}: guard {rule.guard!r} is not empty or equal")
+    if rule.unless not in UNLESS or (rule.unless and rule.kind != "refuse"):
+        raise MigrationMapError(f"{where}: unless {rule.unless!r} is not empty or pinned-override on a refuse rule")
     if not rule.apps or not rule.sources:
         raise MigrationMapError(f"{where}: needs `apps` and `from`")
     if rule.kind in ("move", "copy", "derive-identity", "derive-entries") and not rule.to:
@@ -692,7 +700,9 @@ def _present(doc: _Doc, rule: Rule) -> list[str]:
     return found
 
 
-def _apply(doc: _Doc, rule: Rule, service: str | None, *, resync: bool) -> tuple[str, str] | None:
+def _apply(
+    doc: _Doc, rule: Rule, service: str | None, *, resync: bool, overrides: dict[str, str]
+) -> tuple[str, str] | None:
     if rule.kind in ("move", "copy"):
         return _move(doc, rule, resync=resync)
     if rule.kind == "derive-identity":
@@ -700,12 +710,35 @@ def _apply(doc: _Doc, rule: Rule, service: str | None, *, resync: bool) -> tuple
     if rule.kind == "derive-entries":
         return _entries(doc, rule, service or "", resync=resync)
     found = _present(doc, rule)
+    if rule.unless == "pinned-override":
+        found = [source for source in found if not _is_override(doc, source, overrides.get(service or ""))]
     if not found:
         return None
     reason = f" -- {rule.why}" if rule.why else ""
     if rule.kind == "refuse":
         return REFUSED, f"{', '.join(found)}{reason}"
     return DROPPED, f"{', '.join(found)}: the thin charts from {{since}} read nothing in its place{reason}"
+
+
+def _is_override(doc: _Doc, source: str, pinned: str | None) -> bool:
+    """Whether `source` holds the half of the service's pins.yaml override that --emit-values writes there."""
+    if pinned is None or source not in OVERRIDE_KEYS:
+        return False
+    tag, _, digest = pinned.partition("@")
+    return value_of(doc.text, source) == (tag, digest)[OVERRIDE_KEYS[source]]
+
+
+def _pinned_overrides(deploy: Path) -> dict[str, str]:
+    """pins.yaml's `overrides.apps`: the image each service is deliberately held on, tag@sha256."""
+    pins = deploy / "pins.yaml"
+    if not pins.is_file():
+        return {}
+    text = pins.read_text(encoding="utf-8")
+    return {
+        key[-1]: value
+        for key, value in yaml_subset.walk_keys(text)
+        if len(key) == 3 and key[:2] == ("overrides", "apps") and value
+    }
 
 
 def _contract(doc: _Doc, rule: Rule) -> tuple[str, str] | None:
@@ -738,6 +771,7 @@ def _files(deploy: Path) -> list[tuple[str, Path, str | None, bool]]:
 
 def _walk(deploy: Path, migration: MigrationMap, *, write: bool, step: str, resync: bool = False) -> list[Hit]:
     hits: list[Hit] = []
+    overrides = _pinned_overrides(deploy)
     for name, path, service, common in _files(deploy):
         original = path.read_text(encoding="utf-8")
         doc = _Doc(original)
@@ -746,7 +780,10 @@ def _walk(deploy: Path, migration: MigrationMap, *, write: bool, step: str, resy
                 continue
             saved = list(doc.lines)
             try:
-                found = _contract(doc, rule) if step == "contract" else _apply(doc, rule, service, resync=resync)
+                if step == "contract":
+                    found = _contract(doc, rule)
+                else:
+                    found = _apply(doc, rule, service, resync=resync, overrides=overrides)
             except MigrationError as err:
                 doc.lines = saved
                 found = (REFUSED, f"{rule.id}: {err}")

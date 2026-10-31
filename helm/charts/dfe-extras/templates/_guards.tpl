@@ -73,7 +73,7 @@ new default door.
 
 Door loadbalancer is the receiver's own load balancer, which
 argocd/values/apps/dfe-receiver renders from exposure.groups.ingest.allow and
-exposure.public as docs/INGEST-EDGE.md documents them. scalo-service's own
+exposure.public as docs/ingest-edge.md documents them. scalo-service's own
 publicService reads none of them, so switched on it renders a second load
 balancer of the same name with no allow list, and any other key set under it
 reaches nothing. loadBalancerIP is the appset's, carrying the cluster secret's
@@ -92,7 +92,7 @@ tunnel delivers a client onto the pod network and it dials the ClusterIP.
 */}}
 {{- define "dfe-extras.receiverExposureGuard" -}}
 {{- if not (kindIs "invalid" .Values.exposure.mode) }}
-{{- fail (printf "dfe-receiver: exposure.mode is %q and retired -- the receiver's door is exposure.groups.ingest.door: loadbalancer (its own load balancer, rendered while exposure.groups.ingest.allow names the senders; was public), gateway (receiver.{domain} on the gateway; was internal) or tunnel (no public door; was vpn). Move it there, in the deploy repo's infra/common.yaml (docs/INGEST-EDGE.md)" (toString .Values.exposure.mode)) }}
+{{- fail (printf "dfe-receiver: exposure.mode is %q and retired -- the receiver's door is exposure.groups.ingest.door: loadbalancer (its own load balancer, rendered while exposure.groups.ingest.allow names the senders; was public), gateway (receiver.{domain} on the gateway; was internal) or tunnel (no public door; was vpn). Move it there, in the deploy repo's infra/common.yaml (docs/ingest-edge.md)" (toString .Values.exposure.mode)) }}
 {{- end }}
 {{- $ingest := .Values.exposure.groups.ingest }}
 {{- if not (kindIs "map" $ingest) }}
@@ -124,10 +124,10 @@ tunnel delivers a client onto the pod network and it dials the ClusterIP.
 {{- range $key, $value := .Values.publicService | default dict }}
 {{- if eq $key "enabled" }}
 {{- if eq (toString $value) "true" }}
-{{- fail "dfe-receiver: publicService.enabled is true, which renders scalo-service's own load balancer beside the one exposure.groups.ingest.door: loadbalancer renders, under the same name and with no allow list -- leave it false, and set exposure.groups.ingest with exposure.public (docs/INGEST-EDGE.md)" }}
+{{- fail "dfe-receiver: publicService.enabled is true, which renders scalo-service's own load balancer beside the one exposure.groups.ingest.door: loadbalancer renders, under the same name and with no allow list -- leave it false, and set exposure.groups.ingest with exposure.public (docs/ingest-edge.md)" }}
 {{- end }}
 {{- else if and (ne $key "loadBalancerIP") (not (empty $value)) }}
-{{- fail (printf "dfe-receiver: publicService.%s is set, and nothing renders the receiver's load balancer from it -- set exposure.public.%s instead (docs/INGEST-EDGE.md)" $key (get $renamed $key | default $key)) }}
+{{- fail (printf "dfe-receiver: publicService.%s is set, and nothing renders the receiver's load balancer from it -- set exposure.public.%s instead (docs/ingest-edge.md)" $key (get $renamed $key | default $key)) }}
 {{- end }}
 {{- end }}
 {{- $loadbalancer := and $ingest.enabled (eq $door "loadbalancer") }}
@@ -136,7 +136,7 @@ tunnel delivers a client onto the pod network and it dials the ClusterIP.
 {{- fail (printf "dfe-receiver: exposure.groups.ingest.allow is set with exposure.public.serviceType %q, and Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer -- set serviceType: LoadBalancer, or exposure.groups.ingest.door: tunnel and put the allow list in front of the node ports yourself" $type) }}
 {{- end }}
 {{- if and $loadbalancer $ingest.deny }}
-{{- fail (printf "dfe-receiver: exposure.groups.ingest.deny is %v on door loadbalancer, and nothing enforces it there -- cloud load balancer rules are allow-only, and the receiver's server.ip_filter is read from its config file, which no values layer can derive from the ingest group. Narrow exposure.groups.ingest.allow instead, or use door gateway, where Envoy refuses the deny list ahead of the allow list (docs/INGEST-EDGE.md)" $ingest.deny) }}
+{{- fail (printf "dfe-receiver: exposure.groups.ingest.deny is %v on door loadbalancer, and nothing enforces it there -- cloud load balancer rules are allow-only, and the receiver's server.ip_filter is read from its config file, which no values layer can derive from the ingest group. Narrow exposure.groups.ingest.allow instead, or use door gateway, where Envoy refuses the deny list ahead of the allow list (docs/ingest-edge.md)" $ingest.deny) }}
 {{- end }}
 {{- $annotations := $pub.annotations | default dict }}
 {{- if hasKey $annotations "service.beta.kubernetes.io/aws-load-balancer-security-groups" }}

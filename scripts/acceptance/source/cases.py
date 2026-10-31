@@ -558,6 +558,7 @@ class FilebeatCase(Case):
 
     def prove(self, run: Run) -> None:
         if not run.receiver_url:
+            run.driver.record("landed", "unproven", "no receiver in this run, so nothing was posted to land")
             return
         # The routing probes land in this table too, so only rows marked as this run's corpus count.
         corpus = steps.marked(run.run_id, steps.CORPUS)
@@ -780,7 +781,7 @@ class FetchedAwsCase(Case):
 
     def prove(self, run: Run) -> None:
         if not run.store.host:
-            run.driver.record("fetched", "skipped", "no datastore access in this run")
+            run.driver.record("fetched", "unproven", "no datastore access in this run")
             return
         # A poll interval to fetch, and the landing topic plus the loader's own
         # batch window before the row is queryable.
@@ -793,11 +794,12 @@ class FetchedAwsCase(Case):
             f"within {deadline:.0f}s, nothing written to AWS",
         )
         if gained:
-            column = self.upstream.proof_column
-            set_rows = run.store.scalar(f"SELECT count() FROM {self.name} WHERE {column} != ''")
+            columns = self.upstream.proof_columns
+            carried = " AND ".join(f"{column} != ''" for column in columns)
+            short = run.store.scalar(f"SELECT count() FROM {self.name} WHERE NOT ({carried})")
             run.driver.record(
-                "fetched-columns", "done" if set_rows else "failed",
-                f"{set_rows} of {gained} row(s) carry {column}, which only this upstream sets",
+                "fetched-columns", "failed" if short else "done",
+                f"{short} of the landed row(s) lack one of {', '.join(columns)}",
             )
 
     def cleanup(self, run: Run) -> list[wizard.StepResult]:

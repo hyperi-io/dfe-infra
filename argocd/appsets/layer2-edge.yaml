@@ -189,6 +189,11 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: baseline
+            pod-security.kubernetes.io/warn: restricted
+            pod-security.kubernetes.io/audit: restricted
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
@@ -308,6 +313,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+              # The receiver the tunnel reaches lives in this namespace, not the
+              # tunnel's own. Its receiver-mode telemetry endpoint and egress policy name it.
+              - name: dfeNamespace
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
             # `values` (a YAML string) rather than a structured block, same
             # reason the gateway above gives: a conditional cannot live in a
             # field this file's own tests parse as plain YAML.
@@ -384,6 +393,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/stack_version" | default "" }}'
               - name: profile
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/profile" }}'
+              # The receiver the tunnel reaches lives in this namespace, not the
+              # tunnel's own, so the tunnel's egress policy selects it by name.
+              - name: dfeNamespace
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
             values: |
               {{- $tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone" }}
               {{- if $tunnelZone }}
@@ -414,9 +427,13 @@ spec:
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/config_repo_url" }}'
           targetRevision: '{{ $infra := index .metadata.annotations "dfe.hyperi.io/repo_url" | default "" | lower | trimSuffix "/" | trimSuffix ".git" }}{{ $deploy := index .metadata.annotations "dfe.hyperi.io/config_repo_url" | default "" | lower | trimSuffix "/" | trimSuffix ".git" }}{{ $revision := index .metadata.annotations "dfe.hyperi.io/config_repo_revision" }}{{ if and (eq $infra $deploy) (ne $revision (index .metadata.annotations "dfe.hyperi.io/target_revision")) }}{{ fail "dfe.hyperi.io/config_repo_url names the chart repo at a revision other than dfe.hyperi.io/target_revision -- Argo CD reads one revision per repo, so give the deploy repo its own repo or the same revision" }}{{ end }}{{ $revision }}'
           ref: values
+      # Its own namespace, labelled privileged below: the pod holds NET_ADMIN, a
+      # hostPath tun device and a privileged init container, none of which the
+      # baseline level every other DFE namespace enforces admits. The receiver's
+      # ingest policy names this namespace (dfe-extras exposure.vpn.namespace).
       destination:
         server: '{{ .server }}'
-        namespace: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
+        namespace: culvert
       # The chart holds at one replica and refuses more, so there is no KEDA
       # scale for a sync to revert; the block matches layer2-apps so a move
       # between the two changes no field.
@@ -429,6 +446,11 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: privileged
+            pod-security.kubernetes.io/warn: restricted
+            pod-security.kubernetes.io/audit: restricted
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true

@@ -9,7 +9,7 @@ python3 scripts/dfe-ops ca --status --kubeconfig .tmp/dfe.kubeconfig
 ```
 
 Release and deploy helpers around this one live in
-[DEPLOY-HELPERS.md](DEPLOY-HELPERS.md).
+[deploy-helpers.md](deploy-helpers.md).
 
 ## Self-signed mode (the product default)
 

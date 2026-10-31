@@ -10,7 +10,7 @@ Start with the target you run.
 | Target | Run it | Fix it |
 |---|---|---|
 | Docker Compose | [Operating the stack](../dfe-docker/operating.md): exposure, resource limits, secrets, what survives `make clean` | [Troubleshooting](../dfe-docker/troubleshooting.md) |
-| Kubernetes | [Upgrades](../dfe-infra/deployment/upgrades.md), [autoscaling](../dfe-infra/AUTOSCALING.md) | [The troubleshooting toolbox](../dfe-infra/deployment/toolbox.md): an opt-in shell inside the cluster's network |
+| Kubernetes | [Upgrades](../dfe-infra/deployment/upgrades.md), [autoscaling](../dfe-infra/autoscaling.md) | [The troubleshooting toolbox](../dfe-infra/deployment/toolbox.md): an opt-in shell inside the cluster's network |
 | AWS | [DFE on AWS, operations](../dfe-infra/deployment/aws-operations.md) | The toolbox again, on an on-demand bastion |
 
 ## When events are accepted and nothing lands

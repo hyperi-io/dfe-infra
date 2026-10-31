@@ -1,6 +1,6 @@
 <!--
 Project:   DFE (Data Forensics Engine) - product suite
-File:      docs/CNSA-STANDARD.md
+File:      docs/cnsa-standard.md
 Purpose:   DFE cryptographic standard at the deployment layer - transport,
            certificate and at-rest crypto. CNSA-aligned classical baseline
            with a hybrid post-quantum transport layer and a migration path

@@ -432,6 +432,56 @@ def test_release_gate_fails_a_schemas_pin_the_engine_does_not_lock() -> None:
         )
 
 
+def _deploy_gate(template: str | None, maturity: str = "rc") -> tuple[int, str, list[tuple[str, str, str, str]]]:
+    """release-gate over stack 9.9.9 pinning dfe-deploy v1.0.8, whose pins.yaml is ``template``.
+
+    ``template`` None is a repository that will not serve the file.
+    """
+    asked: list[tuple[str, str, str, str]] = []
+
+    def repo_file(org: str, repo: str, ref: str, path: str) -> str:
+        asked.append((org, repo, ref, path))
+        if template is None:
+            raise stack.registry_pins.RegistryError("HTTP 404 Not Found")
+        return template
+
+    block = f'    maturity: {maturity}\n    content:\n      dfe-deploy: "v1.0.8"\n'
+    rc, out = _run_release_gate(block, _both_platforms, repo_file)
+    return rc, out, asked
+
+
+def _template(base: str) -> str:
+    return f'# pins.yaml\n\nbase:\n  dfe-infra: "{base}"      # charts, appsets, defaults.\n  #  continued.\nchannel: "rc"\n'
+
+
+def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None:
+    for maturity in ("rc", "release"):
+        rc, out, asked = _deploy_gate(_template("9.9.8"), maturity)
+        expect(f"{maturity}: a template naming 9.9.8 fails stack 9.9.9", rc == 1, f"exit {rc}\n{out}")
+        expect(
+            f"{maturity}: the error names the pin, both stacks and the fix",
+            "dfe-deploy v1.0.8" in out and "9.9.8" in out and "tag a dfe-deploy whose template names 9.9.9" in out,
+            out,
+        )
+        expect(
+            f"{maturity}: pins.yaml is read at the pinned tag",
+            asked == [("hyperi-io", "dfe-deploy", "v1.0.8", "pins.yaml")],
+            f"{asked}",
+        )
+
+
+def test_release_gate_passes_a_deploy_template_that_names_the_stack() -> None:
+    rc, out, _ = _deploy_gate(_template("9.9.9"))
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and says what it compared", "dfe-deploy v1.0.8 pins.yaml names stack 9.9.9" in out, out)
+
+
+def test_release_gate_holds_a_deploy_template_it_cannot_read_or_that_names_nothing() -> None:
+    for label, template in (("unreadable", None), ("no base", "channel: rc\n")):
+        rc, out, _ = _deploy_gate(template)
+        expect(f"{label}: the gate fails closed", rc == 1, f"exit {rc}\n{out}")
+
+
 def test_release_gate_passes_a_schemas_pin_the_engine_locks() -> None:
     rc, out, _ = _schemas_gate("v0.2.13", _engine_lock("0.2.13"))
     expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
@@ -2503,6 +2553,68 @@ def test_the_committed_constraints_pass_strict() -> None:
     with contextlib.redirect_stdout(out):
         rc = stack.cmd_compat_check(argparse.Namespace(stack=None, strict=True))
     expect("compat-check --strict is green as committed", rc == 0, out.getvalue())
+
+
+_OVERRIDE_TAG = "v9.9.9"
+_OVERRIDE_DIGEST = "sha256:" + "a" * 64
+
+
+def _resolve_over(pins_text: str, *, emit: bool = False, stack_name: str | None = None) -> tuple[int, str, str]:
+    """`dfe-stack resolve` over a pins.yaml: (exit, stdout, the --emit-values fragment)."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        pins = Path(td) / "pins.yaml"
+        pins.write_text(pins_text, encoding="utf-8", newline="\n")
+        fragment = Path(td) / "values.yaml"
+        args = argparse.Namespace(
+            pins=str(pins),
+            stack=stack_name,
+            tag=None,
+            registry=stack.DEFAULT_REGISTRY,
+            emit_values=str(fragment) if emit else None,
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = stack.cmd_resolve(args)
+        return rc, out.getvalue(), fragment.read_text(encoding="utf-8") if emit else ""
+
+
+def _override_pins(base: str) -> str:
+    return (
+        f'base:\n  dfe-infra: "{base}"\n'
+        f'overrides:\n  apps:\n    dfe-receiver: "{_OVERRIDE_TAG}@{_OVERRIDE_DIGEST}"\n'
+    )
+
+
+def test_an_emitted_override_renders_one_valid_image_reference() -> None:
+    """The thin chart appends image.digest to image.tag, so a tag@sha256 tag renders two digests."""
+    import yaml
+    from test_image_digest_pin import REGISTRY, images
+
+    from _weave import render_app
+
+    current = stack.load_root()["current"]
+    rc, _, fragment = _resolve_over(_override_pins(current), emit=True)
+    expect("an override is drift, exit 2", rc == 2, f"exit {rc}")
+    values = yaml.safe_load(fragment)
+    rendered = images(render_app("dfe-receiver", "slim", "local", overlay=values))
+    want = f"{REGISTRY}/dfe-receiver:{_OVERRIDE_TAG}@{_OVERRIDE_DIGEST}"
+    expect("the chart renders the override tag and digest once", bool(rendered) and set(rendered) == {want}, f"{rendered}")
+
+
+def test_resolve_reads_the_stack_the_pins_name() -> None:
+    """The set printed under `base dfe-infra: X` is X's, not whatever `current` is."""
+    root = stack.load_root()
+    other = next(n for n in stack.stack_names(root) if n != root["current"] and not stack.is_withdrawn(root["stacks"][n]))
+    _, out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n')
+    header = out.splitlines()[0]
+    expect("the header names the pinned stack once", header.count(other) == 2, header)
+    _rc, err_out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n', stack_name=root["current"])
+    expect("an explicit --stack still wins", root["current"] in err_out.splitlines()[0], err_out.splitlines()[0])
 
 
 def main() -> int:

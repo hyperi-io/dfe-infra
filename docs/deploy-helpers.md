@@ -53,7 +53,7 @@ Requires a port-forward of the forgejo service to `localhost:13000`.
 
 `dfe-ops` also carries `deploy`, `teardown`, `verify`, `stack-deploy`,
 `kubeconfig`, `preflight`, and `cycle` for k8s create/amend/teardown -- see
-docs/TESTING-CYCLE.md for the cycle.
+docs/testing-cycle.md for the cycle.
 
 ## Where each login comes from
 
@@ -184,7 +184,7 @@ deployment silently falls back to the poll.
 ## Trusting the DFE certificate
 
 Which CA signed the gateway's `*.<domain>` certificate is a per-deployment
-choice. [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md) covers both modes -- the
+choice. [deploy-tls-trust.md](deploy-tls-trust.md) covers both modes -- the
 self-signed default and estate PKI -- and what each asks of a developer box.
 
 ## The end-to-end release + deploy recipe

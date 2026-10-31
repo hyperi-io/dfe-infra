@@ -141,15 +141,15 @@ Each Application is named `<service>-<instance>-<cluster>`, and that name is its
 
 | Doc | Covers |
 |---|---|
-| [deployment/index.md](deployment/index.md) | layers, tiers, values cascade, bootstrap contract |
+| [deployment/README.md](deployment/README.md) | layers, tiers, values cascade, bootstrap contract |
 | [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
 | [deployment/on-prem.md](deployment/on-prem.md) | build, deploy, test and tear down on an on-prem cluster (the `local` target) |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
 | [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud; private-cloud swap; Altinity untested) |
-| [deployment/deployment-logs/](deployment/deployment-logs/TEMPLATE.md) | per-deploy log template |
-| [TESTING-CYCLE.md](TESTING-CYCLE.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
-| [SOURCE-SUITE.md](SOURCE-SUITE.md) | the post-deploy source tests the cycle's `acceptance --suite source` runs: the two cases, what proves each, the reload-and-restart rule |
-| [AUTOSCALING.md](AUTOSCALING.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
-| [EDGE-AUTH.md](EDGE-AUTH.md) | web-plane exposure + auth: every UI with a login external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
-| [INGEST-EDGE.md](INGEST-EDGE.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
+| [deployment/deployment-logs/](deployment/deployment-logs/template.md) | per-deploy log template |
+| [testing-cycle.md](testing-cycle.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
+| [source-suite.md](source-suite.md) | the post-deploy source tests the cycle's `acceptance --suite source` runs: the two cases, what proves each, the reload-and-restart rule |
+| [autoscaling.md](autoscaling.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
+| [edge-auth.md](edge-auth.md) | web-plane exposure + auth: every UI with a login external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
+| [ingest-edge.md](ingest-edge.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
 | [design-principles.md](design-principles.md) | fleet-wide design rules, starting with where parsing happens and why raw capture is off by default |

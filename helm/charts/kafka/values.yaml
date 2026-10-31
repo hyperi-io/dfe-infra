@@ -266,7 +266,8 @@ kafka:
   sizing:
     # Consumer-group parallelism ceiling -- a classic group assigns at most one
     # consumer per partition, so a replica past this count joins and idles. 10 is
-    # the scale profile's KEDA maxReplicaCount.
+    # the chart default. The scale profile's KEDA maxReplicaCount is 12
+    # (profile-scale.yaml).
     consumerCeiling: 10
     # Expected peak ingest across the cluster in MB/s. 0 until the sizing
     # resolver supplies an estimate, which drops the throughput term out.

@@ -1,6 +1,6 @@
 <!--
   Project:      dfe-infra
-  File:         docs/CUTTING-A-STACK.md
+  File:         docs/cutting-a-stack.md
   Purpose:      What a DFE stack version is, how to cut one, and how it reaches
                 every deploy target.
   License:      BUSL-1.1
@@ -150,5 +150,5 @@ Both ladders end at `release`, and the shared vocabulary is deliberate -- the
 only word that differs between the layers is `rc`. hyperi-ci's side of this is
 `docs/versioning-and-the-suite.md` in that repo. <!-- doc-paths: ignore -->
 
-Related: `docs/CI-MAINTENANCE-DESIGN.md` for how shared facts stay current, and
-`docs/TESTING-CYCLE.md` for proving a cut on a real cluster.
+Related: `docs/ci-maintenance-design.md` for how shared facts stay current, and
+`docs/testing-cycle.md` for proving a cut on a real cluster.

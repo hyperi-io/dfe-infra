@@ -127,6 +127,8 @@ ADMIN_CIDR_ENV = "CULVERT_DOWNSTREAM_ADMIN_CIDRS"
 
 # dfe-common.selectorLabels on the culvert chart -- {project}-{component}.
 CULVERT_SELECTOR = "app.kubernetes.io/name=dfe-culvert"
+# The namespace appsets/layer2-edge.yaml deploys the tunnel to.
+CULVERT_NAMESPACE = "culvert"
 # culvert's own paths: the PKI directory its scripts default to, the peer
 # allocation map its WireGuard half writes there, and where it drops a config.
 CULVERT_ALLOCATIONS = "/etc/vpn/pki/wireguard/allocations.json"
@@ -358,7 +360,7 @@ def _kubectl(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def _namespace(args: argparse.Namespace) -> str:
-    return getattr(args, "namespace", None) or os.environ.get("DFE_NAMESPACE") or "dfe"
+    return getattr(args, "namespace", None) or CULVERT_NAMESPACE
 
 
 def _culvert_pod(namespace: str) -> str:
@@ -1142,7 +1144,7 @@ def _revoke_admin_peer() -> int:
     except (OSError, json.JSONDecodeError):
         state = {}
     name = str(state.get("name") or ADMIN_PEER_NAME)
-    namespace = str(state.get("namespace") or "dfe")
+    namespace = str(state.get("namespace") or CULVERT_NAMESPACE)
 
     try:
         pod = _culvert_pod(namespace)
@@ -1369,7 +1371,7 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
         """The namespace culvert runs in, for every verb that reaches its pod."""
         parser.add_argument(
             "--namespace", default=None,
-            help="namespace the fleet tunnel runs in (default: DFE_NAMESPACE, else dfe)",
+            help=f"namespace the fleet tunnel runs in (default: {CULVERT_NAMESPACE})",
         )
         return parser
 

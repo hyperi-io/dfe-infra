@@ -269,7 +269,7 @@ auth:
   # ExternalSecret adopts it (creationPolicy Owner) and overwrites the key on its
   # first reconcile, so every token issued before the upgrade dies once and the
   # engine rolls once. The key is stable from that reconcile on. See
-  # docs/deployment/index.md.
+  # docs/deployment/README.md.
   jwtSecretName: dfe-engine-jwt
   jwtSecretKey: jwt-secret
   # false when the deployment supplies this Secret from its own sealed secret or

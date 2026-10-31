@@ -4074,7 +4074,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     verifies the things bootstrap cannot fix (API access, RBAC, nodes,
     scheduling labels) and PREVIEWS the decisions bootstrap will take
     (adopt-or-install, storage fallback). Creates and changes NOTHING.
-    Documented in docs/TESTING-CYCLE.md (the cluster contract).
+    Documented in docs/testing-cycle.md (the cluster contract).
     """
     # --from-terraform then --env-file fill defaults the flags did not set
     # (same precedence as stack-deploy's _assemble_env: terraform < env-file).
@@ -4758,7 +4758,7 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     target pinning: --kubeconfig is exported as KUBECONFIG to EVERY stage,
     because verify/teardown are ambient-context tools and a mixed-target
     cycle would smoke-test one cluster and destroy another.
-    Documented in docs/TESTING-CYCLE.md.
+    Documented in docs/testing-cycle.md.
 
     Destroy runs by default (an ephemeral test deployment must die with the
     cycle -- non-negotiable for cloud targets); --keep skips it for

@@ -27,6 +27,11 @@ spec:
     automated:
       prune: false
       selfHeal: true
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: baseline
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true

@@ -582,6 +582,28 @@ def test_an_image_pin_is_refused_and_nothing_else_is_held_back(tmp_path: Path) -
     assert "fullnameOverride" in load(overlay(root, "dfe-fetcher", "pypiwatch"))
 
 
+@pytest.mark.parametrize(
+    ("pinned", "refused"),
+    [
+        ('image:\n  tag: "v9.9.9"\n  digest: "sha256:' + "a" * 64 + '"\n', False),
+        ('image:\n  tag: "v1.15.0"\n  digest: "sha256:' + "a" * 64 + '"\n', True),
+        ('image:\n  tag: "v9.9.9"\n  digest: "sha256:' + "b" * 64 + '"\n', True),
+        ('image:\n  repository: "example.test/dfe-receiver"\n  tag: "v9.9.9"\n', True),
+    ],
+    ids=["the emitted override", "another tag", "another digest", "a repository"],
+)
+def test_the_image_an_override_emits_is_not_refused(tmp_path: Path, pinned: str, refused: bool) -> None:
+    root = _copy(tmp_path)
+    (root / "pins.yaml").write_text(
+        f'base:\n  dfe-infra: "{FROM_STACK}"\noverrides:\n  apps:\n    dfe-receiver: "v9.9.9@sha256:{"a" * 64}"\n',
+        encoding="utf-8",
+    )
+    path = overlay(root, "dfe-receiver", "default")
+    path.write_text(path.read_text(encoding="utf-8") + pinned, encoding="utf-8")
+    hits = vm.expand(root, vm.load_map())
+    assert [h.rule.id for h in vm.refused(hits)] == (["70-image-pin"] if refused else [])
+
+
 def test_a_dropped_key_is_named_with_why_and_hyperdx_connections_as_config_loss(tmp_path: Path) -> None:
     root = tmp_path / "deploy"
     write(root, "hyperdx", "default", (

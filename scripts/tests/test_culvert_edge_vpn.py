@@ -67,6 +67,13 @@ INGEST_PORTS = {8080}
 PUSH_PORT = 6000
 
 TUNNEL = "Deployment/dfe-culvert"
+# Who the receiver's tunnel-door policy admits: the tunnel pods, in the namespace appsets/layer2-edge.yaml gives them.
+TUNNEL_PEERS = [
+    {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "culvert"}},
+        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}},
+    }
+]
 
 
 def default() -> list[dict]:
@@ -174,10 +181,13 @@ def test_the_pods_reach_the_receiver_and_nothing_else() -> None:
             if not to_pods:
                 continue
             rule = to_pods[0]
-            expect(f"{where}: and it names the receiver",
-                   rule["to"][0]["podSelector"]["matchLabels"]
-                   == {"app.kubernetes.io/name": "dfe-receiver"},
-                   f"got {rule['to'][0]!r}")
+            expect(f"{where}: and it names the receiver, in the namespace the receiver runs in",
+                   rule["to"]
+                   == [{
+                       "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "dfe"}},
+                       "podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-receiver"}},
+                   }],
+                   f"got {rule['to']!r}")
             ports = {p["port"] for p in rule["ports"]}
             expect(f"{where}: on the ingest listeners", ports == INGEST_PORTS, f"got {ports}")
             expect(f"{where}: never the east-west Push door", PUSH_PORT not in ports,
@@ -463,6 +473,16 @@ def test_it_renders_on_every_profile_it_is_offered_in() -> None:
                    deployment["spec"]["replicas"] == 1, f"got {deployment['spec']['replicas']}")
 
 
+def test_the_receivers_tunnel_policy_names_the_namespace_the_appset_deploys_the_tunnel_to() -> None:
+    appsets = yaml.safe_load_all((REPO_ROOT / "argocd/appsets/layer2-edge.yaml").read_text(encoding="utf-8"))
+    culvert = next(d for d in appsets if d["metadata"]["name"] == "dfe-layer2-edge-culvert")
+    destination = culvert["spec"]["template"]["spec"]["destination"]["namespace"]
+    defaults = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"]["defaults"]
+    expect("the appset and dfe-extras agree",
+           defaults["dfe-receiver"]["exposure"]["vpn"]["namespace"] == destination,
+           f"appset {destination!r}, extras {defaults['dfe-receiver']['exposure']['vpn']['namespace']!r}")
+
+
 def test_the_receiver_gains_a_third_exposure_rendering() -> None:
     """The tunnel door: no load balancer, and an ingest policy admitting the tunnel."""
     tunnel_door = {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}}
@@ -471,8 +491,8 @@ def test_the_receiver_gains_a_third_exposure_rendering() -> None:
     expect("the tunnel door publishes no LoadBalancer", services == ["dfe-receiver"], f"got {services}")
     policy = one(tunnel, "NetworkPolicy", "dfe-receiver-ingest")
     rule = policy["spec"]["ingress"][0]
-    expect("and admits the tunnel pods by label",
-           rule["from"] == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-culvert"}}}],
+    expect("and admits the tunnel pods by label, in the namespace they run in",
+           rule["from"] == TUNNEL_PEERS,
            f"got {rule.get('from')!r}")
     defaults = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"]["defaults"]
     exposed = {

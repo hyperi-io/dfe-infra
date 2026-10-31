@@ -55,6 +55,9 @@ PAUSE_THE_SECRET = {**PAUSE_THE_RUNNER, "path": "secrets.hunt-runner.enabled"}
 RESUME_THE_RUNNER = {**PAUSE_THE_RUNNER, "value": True}
 RESUME_THE_SECRET = {**PAUSE_THE_SECRET, "value": True}
 
+# A helmvars value that deletes its path, which the engine reads as a removal and not as a literal.
+UNSET = {"$unset": True}
+
 
 # ------------------------------------------------------------------ applying an action
 
@@ -72,6 +75,8 @@ def apply_actions(actions: list[dict]) -> dict[str, dict]:
 
     The engine sets a dotted path by creating each parent mapping, so a change to
     ``secrets.hunt-runner.enabled`` lands as ``secrets: {hunt-runner: {enabled: ...}}``.
+    A value of exactly ``{"$unset": true}`` deletes the path instead and prunes each
+    parent mapping that leaves empty.
     """
     files: dict[str, dict] = {}
     for action in actions:
@@ -81,9 +86,18 @@ def apply_actions(actions: list[dict]) -> dict[str, dict]:
                 continue
             node = files.setdefault(change["name"], {})
             *parents, leaf = change["path"].split(".")
+            trail = [node]
             for key in parents:
                 node = node.setdefault(key, {})
-            node[leaf] = resolve(change["value"], params)
+                trail.append(node)
+            if change["value"] == UNSET:
+                node.pop(leaf, None)
+                for parent, key in zip(reversed(trail[:-1]), reversed(parents), strict=True):
+                    if parent[key]:
+                        break
+                    del parent[key]
+            else:
+                node[leaf] = resolve(change["value"], params)
     return files
 
 
@@ -237,6 +251,49 @@ def test_hunts_resume_renders_what_hunts_pause_started_from(
 ) -> None:
     assert {"hunts-pause", "hunts-resume"} <= set(shipped), sorted(shipped)
     assert restore_problems(shipped["hunts-pause"], shipped["hunts-resume"], profile, cloud) == []
+
+
+def receiver_ceiling(values: dict, profile: str, cloud: str) -> int:
+    """The receiver's KEDA maxReplicaCount in the render over ``values``."""
+    docs = render_with("dfe-receiver", "default", profile, cloud, values)
+    return next(
+        d["spec"]["maxReplicaCount"] for d in docs if d.get("kind") == "ScaledObject"
+    )
+
+
+@pytest.mark.parametrize(("profile", "cloud", "tier_ceiling"), [("slim", "local", 2), ("scale", "aws", 12)])
+def test_receiver_normal_returns_the_receiver_to_its_tiers_ceiling(
+    shipped: dict[str, dict], profile: str, cloud: str, tier_ceiling: int
+) -> None:
+    surge, normal = shipped["receiver-surge"], shipped["receiver-normal"]
+    surged = apply_actions([surge])["dfe-receiver-default-values"]
+    restored = apply_actions([surge, normal])["dfe-receiver-default-values"]
+    assert receiver_ceiling(surged, profile, cloud) != tier_ceiling
+    assert restored == {}
+    assert receiver_ceiling(restored, profile, cloud) == tier_ceiling
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ([{"path": "keda.maxReplicaCount", "value": 20}, {"path": "keda.maxReplicaCount", "value": UNSET}], {}),
+        (
+            [
+                {"path": "keda.maxReplicaCount", "value": 20},
+                {"path": "keda.pressure.targetValue", "value": 70},
+                {"path": "keda.maxReplicaCount", "value": UNSET},
+            ],
+            {"keda": {"pressure": {"targetValue": 70}}},
+        ),
+        ([{"path": "keda.pressure.targetValue", "value": UNSET}], {}),
+    ],
+    ids=["emptied parent is pruned", "a sibling keeps its parent", "unsetting an absent path adds nothing"],
+)
+def test_an_unset_value_deletes_its_path_and_prunes_the_parents_it_empties(
+    changes: list[dict], expected: dict
+) -> None:
+    named = [{"cls": "helmvars", "name": "dfe-receiver-default-values", **change} for change in changes]
+    assert apply_actions([action("x", *named)]) == {"dfe-receiver-default-values": expected}
 
 
 # ------------------------------------------------------------- written here, no checkout

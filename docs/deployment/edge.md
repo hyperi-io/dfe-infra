@@ -72,7 +72,7 @@ own compute, the pricing model named, never a rate.
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
 
-Public web access is default-deny on every cloud flavour ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so it takes the ingest group's list into its union while an ingest route renders. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
+Public web access is default-deny on every cloud flavour ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so it takes the ingest group's list into its union while an ingest route renders. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([edge-auth-cloud.md](../edge-auth-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
 
 ### What the engine API's split gets wrong
 
@@ -212,7 +212,7 @@ render cases need no cluster.
 
 ## Related
 
-- [index.md](index.md) - the deploy layers and the values cascade
+- [README.md](README.md) - the deploy layers and the values cascade
 - [aws.md](aws.md) - the AWS deployment, and the cost vocabulary
 - [edge-vpn.md](edge-vpn.md) - the tunnel itself
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC, and its limits

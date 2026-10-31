@@ -54,7 +54,7 @@ own, such as a broker-assigned identifier.
 
 ### Ingest door
 
-Below 2.2.1-rc.7 the receiver's door is `exposure.mode`. From 2.2.1-rc.7 it is the ingest exposure group, `exposure.groups.ingest` ([INGEST-EDGE.md](../INGEST-EDGE.md)). A deploy repo that sets `exposure.mode` or `exposure.public.loadBalancerSourceRanges` fails the render, which names the replacement. One that sets neither renders cleanly and takes the new cloud default, which closes or moves the door:
+Below 2.2.1-rc.7 the receiver's door is `exposure.mode`. From 2.2.1-rc.7 it is the ingest exposure group, `exposure.groups.ingest` ([ingest-edge.md](../ingest-edge.md)). A deploy repo that sets `exposure.mode` or `exposure.public.loadBalancerSourceRanges` fails the render, which names the replacement. One that sets neither renders cleanly and takes the new cloud default, which closes or moves the door:
 
 | Cloud | Door below 2.2.1-rc.7 | Default door from 2.2.1-rc.7 |
 |---|---|---|
@@ -85,7 +85,7 @@ On `local-dfe` and `rancher`, 2.2.0 served two doors at once: the LoadBalancer, 
 
 ### Web plane
 
-Below 2.2.1-rc.6 the gateway fenced no web route by address. From 2.2.1-rc.6 an internet-facing gateway answers 403 on every web route whose allow list is empty: `ui.allowed_cidrs` at 2.2.1-rc.6, each group's `exposure.groups.<group>.allow` from 2.2.1-rc.7 ([EDGE-AUTH-cloud.md](../EDGE-AUTH-cloud.md#internet-facing-defaults)). `argocd/values/edge-<cloud>.yaml` makes the gateway internet-facing on `aws`, `gcp` and `azure`, so a deploy repo there that set nothing loses dfe-ui, HyperDX and the engine API, the `console` and `api` groups, from the first sync. On-prem gateways are not internet-facing, and an empty list fences nothing.
+Below 2.2.1-rc.6 the gateway fenced no web route by address. From 2.2.1-rc.6 an internet-facing gateway answers 403 on every web route whose allow list is empty: `ui.allowed_cidrs` at 2.2.1-rc.6, each group's `exposure.groups.<group>.allow` from 2.2.1-rc.7 ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). `argocd/values/edge-<cloud>.yaml` makes the gateway internet-facing on `aws`, `gcp` and `azure`, so a deploy repo there that set nothing loses dfe-ui, HyperDX and the engine API, the `console` and `api` groups, from the first sync. On-prem gateways are not internet-facing, and an empty list fences nothing.
 
 `plan` reports BLOCKED, and `preflight` and `apply` refuse, until `infra/common.yaml` or `infra/envoy-gateway-config.yaml` sets `enabled`, `allow` or `allowPublic` on both groups, `allow: []` included, or `ui.allowed_cidrs` for a move to 2.2.1-rc.6 itself. The cloud is `--cloud`, else the cluster secret's `dfe.hyperi.io/cloud`.
 
@@ -117,7 +117,7 @@ Until the retarget the 2.2.0 engine writes only the old keys. So just before it,
 `plan` lists every key it finds in a values migration section:
 
 - `MIGRATE`, a key `apply` carries.
-- `REFUSED`, which blocks `plan`, `preflight` and `apply` until a person edits it: an `image.repository`, `image.tag` or `image.digest` in an overlay, which would keep the 2.2.0 image under the new chart, or an `enrichment_tables` path under another instance's table mount.
+- `REFUSED`, which blocks `plan`, `preflight` and `apply` until a person edits it: an `image.repository`, `image.tag` or `image.digest` in an overlay, which would keep the 2.2.0 image under the new chart (an `image.tag` and `image.digest` equal to the service's `overrides.apps` entry in `pins.yaml` are that override, and pass), or an `enrichment_tables` path under another instance's table mount.
 - `DROPPED`, a key the thin charts read nothing in place of. HyperDX's `defaultConnections` is config loss: the thin chart no longer hands HyperDX `DEFAULT_CONNECTIONS` from `defaultConnections.secretName`, so recreate those connections in HyperDX.
 
 `dfe-ops upgrade migrate-values --deploy <dir>` writes the same keys on its own and commits nothing. `--check` writes nothing and exits 1 while a key is left to carry or needs an edit.

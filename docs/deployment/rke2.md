@@ -113,6 +113,6 @@ environment supply those.
 ## See also
 
 - Multi-cloud + E2E plan: `docs/superpowers/plans/2026-07-12-e2e-acceptance-and-multicloud.md`
-- Crypto posture: `docs/CNSA-STANDARD.md`
+- Crypto posture: `docs/cnsa-standard.md`
 - Official: RKE2 architecture (`docs.rke2.io/architecture`), FIPS support
   (`docs.rke2.io/security/fips_support`), the DISA RKE2 STIG (NIST NCP checklist 1040).

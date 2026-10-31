@@ -28,6 +28,10 @@
 #   apps    the deploy.service names it applies to, or * for every one.
 #   files   overlays (values/*-values.yaml), and common (infra/common.yaml) where
 #           named. Default overlays.
+#   unless  pinned-override, on a refuse rule: an image.tag or image.digest equal to
+#           the half of pins.yaml's overrides.apps entry for the file's service that
+#           `dfe-stack resolve --emit-values` writes is a deliberate pin, so it is
+#           not refused.
 #   guard   empty: the render fails while the old key holds a value and the new
 #           key none. equal: while the old key holds a value the new key differs
 #           from, for a new key an integration layer always sets.
@@ -188,6 +192,7 @@ rules:
     apps: "*"
     files: "overlays, common"
     from: "image.repository, image.tag, image.digest"
+    unless: pinned-override
     why: "the thin chart would run the pinned 2.2.0 image -- take the pin out and let the stack choose"
   "80-dropped-push-port":
     kind: report-dropped
