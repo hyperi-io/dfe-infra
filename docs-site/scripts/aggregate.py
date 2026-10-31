@@ -99,6 +99,7 @@ NOT_RENDERED = (".rst", ".adoc", ".txt")
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 BANNED_NAMES = frozenset({"design.md", "context.md", "notes.md", "todo.md", "scratch.md"})
 LANDING = "README.md"
+_LANDINGS = frozenset({"readme.md", "index.md"})
 # A member with no landing page opens its sidebar section on its architecture page.
 ARCHITECTURE = ("architecture.md", "ARCHITECTURE.md")
 # What git prints when an anonymous fetch meets a private or missing repository.
@@ -1102,7 +1103,82 @@ def copy_root(root: Path, member_names: set[str]) -> None:
     for relative, path in pages.items():
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
+        if relative.lower().endswith(MARKDOWN):
+            text = match_case(path.read_text(encoding="utf-8"), page=relative, root=root)
+            target.write_text(text, encoding="utf-8", newline="\n")
+        else:
+            shutil.copyfile(path, target)
+
+
+def match_case(text: str, *, page: str, root: Path) -> str:
+    """Point each relative link in a root page at the spelling this build carries.
+
+    The root pages serve every build, and a member renames a page between pins
+    (``OPERATIONS.md`` at one, ``operations.md`` at the next). A link that names a
+    file the build lacks is matched case-insensitively, one segment at a time, and
+    left as written where no single file matches.
+
+    Args:
+        text: The page's markdown.
+        page: The page's path in the build, as posix.
+        root: The build's directory, with every member already copied in.
+
+    Returns:
+        The markdown with each such link respelled.
+    """
+    page_dir = posixpath.dirname(page)
+
+    def fix(match: re.Match[str]) -> str:
+        target = match.group(2)
+        bracketed = target.startswith("<") and target.endswith(">")
+        raw = target[1:-1] if bracketed else target
+        if not raw or raw.startswith(("#", "/")) or _SCHEME.match(raw):
+            return match.group(0)
+        path, hash_mark, fragment = raw.partition("#")
+        path, query_mark, query = path.partition("?")
+        found = _respell(posixpath.normpath(posixpath.join(page_dir, path)), root) if path else None
+        if found is None:
+            return match.group(0)
+        new = posixpath.relpath(found, page_dir or ".") + ("/" if path.endswith("/") else "")
+        new += f"{query_mark}{query}{hash_mark}{fragment}"
+        closing = match.group(3) if match.re is _HTML_TARGET else ""
+        return match.group(1) + (f"<{new}>" if bracketed else new) + closing
+
+    def prose(segment: str, at_line_start: bool) -> str:
+        if at_line_start:
+            segment = _REF_DEFINITION.sub(fix, segment)
+        segment = _INLINE_TARGET.sub(fix, segment)
+        return _HTML_TARGET.sub(fix, segment)
+
+    return map_outside_code(text, prose)
+
+
+def _respell(resolved: str, root: Path) -> str | None:
+    """Return `resolved` as the build spells it, or None if it is already so or matches nothing.
+
+    Names are compared from directory listings, so a case-insensitive filesystem
+    gives the same answer. README.md and index.md both land a directory, so a
+    final segment naming either matches the other.
+    """
+    if resolved == "." or resolved.startswith("../"):
+        return None
+    current = root
+    parts: list[str] = []
+    segments = resolved.split("/")
+    for depth, part in enumerate(segments):
+        names = [p.name for p in current.iterdir()] if current.is_dir() else []
+        if part not in names:
+            wanted = {part.lower()}
+            if depth == len(segments) - 1 and part.lower() in _LANDINGS:
+                wanted = _LANDINGS
+            names = [name for name in names if name.lower() in wanted]
+            if len(names) != 1:
+                return None
+            part = names[0]
+        parts.append(part)
+        current = current / part
+    respelled = "/".join(parts)
+    return None if respelled == resolved else respelled
 
 
 def stray_report(result: BuildResult) -> str:

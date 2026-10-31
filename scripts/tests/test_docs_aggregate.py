@@ -722,6 +722,31 @@ def test_the_root_pages_leave_editor_files_behind(
     assert checkout_files(root) == expected
 
 
+@pytest.mark.parametrize(
+    ("link", "expected"),
+    [
+        pytest.param("../m/OPERATIONS.md", "../m/operations.md", id="renamed-lower"),
+        pytest.param("../m/ops/Guide.md#run", "../m/ops/guide.md#run", id="dir-and-fragment"),
+        pytest.param("<../M/operations.md>", "<../m/operations.md>", id="bracketed-member"),
+        pytest.param("../m/ops/README.md", "../m/ops/index.md", id="landing-renamed"),
+        pytest.param("../m/README.md/x.md", "../m/README.md/x.md", id="landing-mid-path-left"),
+        pytest.param("../m/operations.md", "../m/operations.md", id="already-right"),
+        pytest.param("../m/missing.md", "../m/missing.md", id="no-match-left"),
+        pytest.param("../../outside.md", "../../outside.md", id="escapes-build"),
+        pytest.param("https://x.io/A.md", "https://x.io/A.md", id="external"),
+    ],
+)
+def test_root_page_links_take_the_builds_spelling(tmp_path: Path, link: str, expected: str) -> None:
+    root = tmp_path / "build"
+    write_tree(
+        root,
+        {"m/operations.md": "#", "m/ops/guide.md": "#", "m/ops/index.md": "#"},
+    )
+    text = f"See [it]({link}) and `[code]({link})`.\n"
+    out = aggregate.match_case(text, page="operate/day.md", root=root)
+    assert out == f"See [it]({expected}) and `[code]({link})`.\n"
+
+
 def test_the_preview_copies_saved_pages_and_removes_deleted_ones(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
