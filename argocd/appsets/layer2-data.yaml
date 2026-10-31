@@ -293,6 +293,11 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: '{{ if eq .namespace "otel" }}privileged{{ else }}baseline{{ end }}'
+            pod-security.kubernetes.io/warn: restricted
+            pod-security.kubernetes.io/audit: restricted
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
