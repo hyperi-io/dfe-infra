@@ -46,7 +46,8 @@ Subcommands:
                  versions.yaml; check the unpinned toolbox family images exist at
                  the family tag for linux/amd64 and linux/arm64.
   release-gate   Fail any stack whose content.dfe-schemas is not the release its
-                 dfe-engine's uv.lock locks, and a release-maturity stack with an
+                 dfe-engine's uv.lock locks, whose content.dfe-deploy template
+                 names another stack, and a release-maturity stack with an
                  unpublished app or a DFE image lacking linux/amd64 or linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
@@ -72,8 +73,9 @@ render/images/graph/check-upgrade/resolve/suite need only python3 + git.
 verify, refresh-digests, platforms, a release-maturity release-gate, and the
 chart-digests reads cut and bump-app make, read the registry through `docker
 buildx imagetools`. cut lists each app's published tags through the registry's
-OCI API. release-gate reads the pinned engine's uv.lock from GitHub at every
-maturity. Every one of those reads is anonymous, so none needs a token.
+OCI API. release-gate reads the pinned engine's uv.lock and the pinned dfe-deploy's
+pins.yaml from GitHub at every maturity. Every one of those reads is anonymous, so
+none needs a token.
 """
 
 import argparse
@@ -1374,8 +1376,40 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
     )
 
 
+DEPLOY_REPO = "dfe-deploy"
+
+
+def deploy_pin_finding(name: str, v: dict, org: str) -> tuple[str, str]:
+    """(status, detail) tying content.dfe-deploy to the stack its pins.yaml selects.
+
+    status is ok, skip or FAIL. A deploy repo is seeded from the pinned dfe-deploy
+    tag, and its pins.yaml `base.dfe-infra` is the stack that deployment then runs,
+    so a template naming another stack seeds every new deploy repo onto it.
+    """
+    pinned = v.get("content", {}).get(DEPLOY_REPO, "")
+    if not pinned:
+        return "skip", f"no content.{DEPLOY_REPO} pin, so no template pins.yaml to compare"
+    where = f"{DEPLOY_REPO} {pinned} pins.yaml"
+    try:
+        text = registry_pins.repo_file(org, DEPLOY_REPO, pinned, "pins.yaml")
+    except registry_pins.RegistryError as exc:
+        return "FAIL", f"cannot read {where}: {exc}"
+    base = parse_simple_yaml(text).get("base")
+    named = base.get("dfe-infra", "") if isinstance(base, dict) else ""
+    if named and _norm_version(named) == _norm_version(name):
+        return "ok", f"content.{DEPLOY_REPO} {pinned} pins.yaml names stack {name}"
+    return "FAIL", (
+        f"content.{DEPLOY_REPO} {pinned} seeds a pins.yaml whose base.dfe-infra is "
+        f"{named or '(unset)'}, not {name}: tag a {DEPLOY_REPO} whose template names {name}, "
+        f"then set content.{DEPLOY_REPO}"
+    )
+
+
 def cmd_release_gate(args: argparse.Namespace) -> int:
-    """Fail a stack whose dfe-schemas pin its engine does not lock, or a release with a gap.
+    """Fail a stack with a pin its repository contradicts, or a release with a gap.
+
+    The pins are content.dfe-schemas, which the pinned engine's lock must name, and
+    content.dfe-deploy, whose template pins.yaml must name this stack.
 
     A release must pin EVERY app; render silently comments out an app with no
     digest, so without this a release could cut a manifest MISSING a component
@@ -1383,13 +1417,19 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
     read from the registry by digest. rc/alpha/beta may carry either gap, and
     their gate never touches the registry.
 
-    The dfe-schemas check runs at every maturity (schemas_lock_finding).
+    Both pin checks run at every maturity (schemas_lock_finding, deploy_pin_finding).
     """
     root = load_root()
     name, v = stack_pins(root, args.stack)
     status, detail = schemas_lock_finding(v, args.org)
-    schemas_failed = status == "FAIL"
-    if schemas_failed:
+    pins_failed = status == "FAIL"
+    if pins_failed:
+        print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
+    else:
+        print(f"release-gate {name}: {detail}")
+    status, detail = deploy_pin_finding(name, v, args.org)
+    if status == "FAIL":
+        pins_failed = True
         print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
     else:
         print(f"release-gate {name}: {detail}")
@@ -1400,8 +1440,8 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
             f"release-gate {name}: maturity={maturity}, {len(unp)} unpublished, "
             "platforms not read (both allowed unless release)"
         )
-        return 1 if schemas_failed else 0
-    failed = schemas_failed
+        return 1 if pins_failed else 0
+    failed = pins_failed
     if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "

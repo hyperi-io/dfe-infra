@@ -432,6 +432,56 @@ def test_release_gate_fails_a_schemas_pin_the_engine_does_not_lock() -> None:
         )
 
 
+def _deploy_gate(template: str | None, maturity: str = "rc") -> tuple[int, str, list[tuple[str, str, str, str]]]:
+    """release-gate over stack 9.9.9 pinning dfe-deploy v1.0.8, whose pins.yaml is ``template``.
+
+    ``template`` None is a repository that will not serve the file.
+    """
+    asked: list[tuple[str, str, str, str]] = []
+
+    def repo_file(org: str, repo: str, ref: str, path: str) -> str:
+        asked.append((org, repo, ref, path))
+        if template is None:
+            raise stack.registry_pins.RegistryError("HTTP 404 Not Found")
+        return template
+
+    block = f'    maturity: {maturity}\n    content:\n      dfe-deploy: "v1.0.8"\n'
+    rc, out = _run_release_gate(block, _both_platforms, repo_file)
+    return rc, out, asked
+
+
+def _template(base: str) -> str:
+    return f'# pins.yaml\n\nbase:\n  dfe-infra: "{base}"      # charts, appsets, defaults.\n  #  continued.\nchannel: "rc"\n'
+
+
+def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None:
+    for maturity in ("rc", "release"):
+        rc, out, asked = _deploy_gate(_template("9.9.8"), maturity)
+        expect(f"{maturity}: a template naming 9.9.8 fails stack 9.9.9", rc == 1, f"exit {rc}\n{out}")
+        expect(
+            f"{maturity}: the error names the pin, both stacks and the fix",
+            "dfe-deploy v1.0.8" in out and "9.9.8" in out and "tag a dfe-deploy whose template names 9.9.9" in out,
+            out,
+        )
+        expect(
+            f"{maturity}: pins.yaml is read at the pinned tag",
+            asked == [("hyperi-io", "dfe-deploy", "v1.0.8", "pins.yaml")],
+            f"{asked}",
+        )
+
+
+def test_release_gate_passes_a_deploy_template_that_names_the_stack() -> None:
+    rc, out, _ = _deploy_gate(_template("9.9.9"))
+    expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
+    expect("and says what it compared", "dfe-deploy v1.0.8 pins.yaml names stack 9.9.9" in out, out)
+
+
+def test_release_gate_holds_a_deploy_template_it_cannot_read_or_that_names_nothing() -> None:
+    for label, template in (("unreadable", None), ("no base", "channel: rc\n")):
+        rc, out, _ = _deploy_gate(template)
+        expect(f"{label}: the gate fails closed", rc == 1, f"exit {rc}\n{out}")
+
+
 def test_release_gate_passes_a_schemas_pin_the_engine_locks() -> None:
     rc, out, _ = _schemas_gate("v0.2.13", _engine_lock("0.2.13"))
     expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
