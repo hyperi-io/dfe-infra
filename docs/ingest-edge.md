@@ -2,7 +2,7 @@
 
 How data gets INTO a DFE deployment from outside the cluster, and who is
 allowed to send it. The web plane is a separate door with a separate model
--- see [EDGE-AUTH.md](EDGE-AUTH.md) for the UIs and their edge RBAC.
+-- see [edge-auth.md](edge-auth.md) for the UIs and their edge RBAC.
 
 `dfe-receiver` is a single-homed airlock: it takes traffic from outside and
 produces to local Kafka, which never faces the network. Its door is the ingest

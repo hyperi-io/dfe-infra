@@ -1,6 +1,6 @@
 <!--
   Project:      dfe-infra
-  File:         docs/CLICKHOUSE-IDENTITY.md
+  File:         docs/clickhouse-identity.md
   Purpose:      The ClickHouse identity set every DFE deployment gets, and which
                 layer creates each part.
   License:      BUSL-1.1
@@ -145,4 +145,4 @@ authentication method inline or ClickHouse refuses `users.yaml` outright and
 every server crashloops (`CANNOT_LOAD_CONFIG`), and the result would apply on
 k8s alone.
 
-Shared-fact mechanics between dfe-infra and dfe-docker: `docs/CI-MAINTENANCE-DESIGN.md`.
+Shared-fact mechanics between dfe-infra and dfe-docker: `docs/ci-maintenance-design.md`.

@@ -115,7 +115,7 @@ SCENARIOS: dict[str, dict] = {
         },
     },
     "clickhouse-plaintext": {"facts": {}, "infra": {"clickhouse": {"tls": {"enabled": False}}}},
-    # The receiver's load balancer door as docs/INGEST-EDGE.md documents it, with
+    # The receiver's load balancer door as docs/ingest-edge.md documents it, with
     # RFC 5737 ranges standing in for the deployment's own senders.
     "public-ingest": {
         "facts": {},

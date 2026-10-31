@@ -1,7 +1,7 @@
 # Edge exposure and authentication -- cloud specifics
 
 The model, the identity plane and on-prem behaviour:
-[EDGE-AUTH.md](EDGE-AUTH.md). This page covers what changes when the
+[edge-auth.md](edge-auth.md). This page covers what changes when the
 Gateway Service is internet-facing: the public listener, the render guard,
 CIDR allow-listing, rate limiting, WAF and DNS.
 

@@ -6,7 +6,7 @@
 # and offers the hybrid post-quantum group. Replaces Envoy Gateway's default
 # (which admits AES-128 / CBC and P-256). Classical suite is CNSA 1.0; symmetric
 # is CNSA 2.0; hybrid ML-KEM is the on-the-wire post-quantum step. See
-# docs/CNSA-STANDARD.md.
+# docs/cnsa-standard.md.
 #
 # ONE policy, because two ClientTrafficPolicies naming the same Gateway with no
 # sectionName conflict and only the oldest applies.

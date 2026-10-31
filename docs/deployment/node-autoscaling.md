@@ -1,6 +1,6 @@
 # Node autoscaling for on-premises clusters
 
-KEDA adds pods, and a pod with no room Pends until something adds a node. [Autoscaling](../AUTOSCALING.md) sets out the two layers and the per-target choice. On AWS the node layer is Karpenter, through the node-pools chart's `karpenter-aws` renderer. Azure and GCP renderers are planned in dfe-infra#806.
+KEDA adds pods, and a pod with no room Pends until something adds a node. [Autoscaling](../autoscaling.md) sets out the two layers and the per-target choice. On AWS the node layer is Karpenter, through the node-pools chart's `karpenter-aws` renderer. Azure and GCP renderers are planned in dfe-infra#806.
 
 On-premises there is no node layer today. The baseline is a fixed RKE2 node pool, so capacity planning replaces node autoscaling and KEDA still scales pods inside the nodes that exist. Karpenter is not an option there, because it needs a cloud provisioning API to mint machines. This page scopes what an elastic on-premises cluster needs.
 

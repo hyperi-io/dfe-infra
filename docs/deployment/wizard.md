@@ -104,6 +104,6 @@ previewing an answers file before it lands.
   schema this wizard walks; every field and default traces back here
 - [../../scripts/render_dial.py](../../scripts/render_dial.py) -- the
   validators the wizard calls, and what actually reads the written dial
-- [index.md](index.md) -- the three layers and the values cascade
+- [README.md](README.md) -- the three layers and the values cascade
 - [toolbox.md](toolbox.md) -- the two troubleshooting surfaces question 8 asks about
 - [gateway-oidc.md](gateway-oidc.md) -- what question 5's OIDC gate is asking you to configure

@@ -275,7 +275,7 @@ later addition; this chart ships enable, disable and the deployment dials.
 
 ## Related
 
-- [index.md](index.md) - the layers and the values cascade
-- [../INGEST-EDGE.md](../INGEST-EDGE.md) - the receiver's other two exposure
+- [README.md](README.md) - the layers and the values cascade
+- [../ingest-edge.md](../ingest-edge.md) - the receiver's other two exposure
   modes and what an open ingest door means
 - [gateway-oidc.md](gateway-oidc.md) - edge OIDC for the HTTP surfaces

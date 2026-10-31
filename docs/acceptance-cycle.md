@@ -1,6 +1,6 @@
 # The attended acceptance cycle
 
-The human-in-the-loop pass that signs off a deployment. `TESTING-CYCLE.md` is the
+The human-in-the-loop pass that signs off a deployment. `testing-cycle.md` is the
 automated loop (`dfe-ops cycle`) and proves the deploy scripts and charts; this
 proves the PRODUCT, by a person using it.
 
@@ -31,7 +31,7 @@ is reported as skipped, never as passed.
 
 - A deployment the agent has reason to believe is working end to end -- the
   automated cycle green, every pod healthy, the data path proven.
-- The identity fixture. `dfe-ops idp` stands up the tester IdP and its users, and the external-provider steps need identities in your own Entra ID tenant; see [`AUTH-TESTING.md`](AUTH-TESTING.md). Do not build another IdP.
+- The identity fixture. `dfe-ops idp` stands up the tester IdP and its users, and the external-provider steps need identities in your own Entra ID tenant; see [`auth-testing.md`](auth-testing.md). Do not build another IdP.
 - Deployment specifics (cluster, domain, credentials) come from the deployment's
   own private config, never from this repo.
 

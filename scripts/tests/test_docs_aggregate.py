@@ -250,7 +250,7 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
     assert "2.2.0" in policy.dropped
     assert builds[0].name == versions["latest"]
     assert policy.mounts == {"dfe-hyperdx": "dfe-ui"}
-    assert "docs/TESTING-CYCLE.md" in policy.internal_to("dfe-infra")
+    assert "docs/testing-cycle.md" in policy.internal_to("dfe-infra")
 
 
 @pytest.mark.parametrize(
@@ -422,8 +422,8 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
     ("target", "expected"),
     [
         (
-            "../TESTING-CYCLE.md#msk",
-            f"https://github.com/{REPO}/blob/2.2.1/docs/TESTING-CYCLE.md#msk",
+            "../testing-cycle.md#msk",
+            f"https://github.com/{REPO}/blob/2.2.1/docs/testing-cycle.md#msk",
         ),
         ("../archive/old.md", f"https://github.com/{REPO}/blob/2.2.1/docs/archive/old.md"),
         ("../archive/", f"https://github.com/{REPO}/tree/2.2.1/docs/archive"),
@@ -431,7 +431,7 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
             "../archive/flow.png",
             f"https://raw.githubusercontent.com/{REPO}/2.2.1/docs/archive/flow.png",
         ),
-        ("/docs/TESTING-CYCLE.md", f"https://github.com/{REPO}/blob/2.2.1/docs/TESTING-CYCLE.md"),
+        ("/docs/testing-cycle.md", f"https://github.com/{REPO}/blob/2.2.1/docs/testing-cycle.md"),
         ("../archived.md", "../archived.md"),
         ("aws.md", "aws.md"),
         ("../pipeline/", f"https://github.com/{REPO}/tree/2.2.1/docs/pipeline"),
@@ -440,7 +440,7 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
     ],
 )
 def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str) -> None:
-    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/", "docs/pipeline/README.md"})
+    internal = frozenset({"docs/testing-cycle.md", "docs/archive/", "docs/pipeline/README.md"})
     relinked = aggregate.relink(
         target, doc_dir="docs/deployment", repo=REPO, ref="2.2.1", internal=internal
     )
@@ -626,20 +626,20 @@ def test_copying_leaves_internal_pages_and_directories_out(tmp_path: Path) -> No
     write_tree(
         docs,
         {
-            "README.md": "# M\n\n[cycle](TESTING-CYCLE.md) [old](archive/x.md)\n",
-            "TESTING-CYCLE.md": "# cycle\n",
+            "README.md": "# M\n\n[cycle](testing-cycle.md) [old](archive/x.md)\n",
+            "testing-cycle.md": "# cycle\n",
             "archive/x.md": "# x\n",
             "archive/flow.png": "png",
             "archived.md": "# kept\n",
         },
     )
     dest = tmp_path / "out"
-    internal = frozenset({"docs/TESTING-CYCLE.md", "docs/archive/"})
+    internal = frozenset({"docs/testing-cycle.md", "docs/archive/"})
     member = Member("m", "o/m", "consumers", 10)
     aggregate.copy_docs(docs, dest, member=member, ref="v2", internal=internal)
     assert checkout_files(dest) == ["README.md", "archived.md"]
     text = (dest / "README.md").read_text()
-    assert "(https://github.com/o/m/blob/v2/docs/TESTING-CYCLE.md)" in text
+    assert "(https://github.com/o/m/blob/v2/docs/testing-cycle.md)" in text
     assert "(https://github.com/o/m/blob/v2/docs/archive/x.md)" in text
 
 

@@ -46,7 +46,7 @@ own checkout". That single rule lets ONE orchestrator drive dev previews,
 production installs, and the marketplace wizard from the same code - and it is
 why dfe-infra deploying dfe-infra is not a paradox. The deploy-context schema that
 carries those inputs is specified in
-[docs/deployment/index.md](docs/deployment/index.md).
+[docs/deployment/README.md](docs/deployment/README.md).
 
 ## Tech
 
@@ -65,7 +65,7 @@ carries those inputs is specified in
 
 See [docs/architecture.md](docs/architecture.md) for where this repo sits in
 the suite (and the hard dfe-engine boundary),
-[docs/deployment/index.md](docs/deployment/index.md) for layers, tiers, and
+[docs/deployment/README.md](docs/deployment/README.md) for layers, tiers, and
 the values cascade, and [docs/suite-graph.md](docs/suite-graph.md) for which
 repos are suite members and what moves when one of them releases
 (`suite.yaml` is the source).

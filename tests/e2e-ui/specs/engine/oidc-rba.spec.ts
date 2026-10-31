@@ -8,7 +8,7 @@
 // The whole RBAC chain, per user: real IdP redirect flow -> engine callback
 // -> minted token -> /auth/me roles and org_ids. A row expecting no roles is
 // refused at the callback instead, with no token and no session. The table is
-// the independent oracle (docs/AUTH-TESTING.md); a drifted group file or claim
+// the independent oracle (docs/auth-testing.md); a drifted group file or claim
 // mapping fails the row that names the broken identity.
 //
 // Requires the tester IdP serving bootstrap/fixtures/tester-idp-users.toml
@@ -55,7 +55,7 @@ const TRUTH_TABLE: Expectation[] = [
 test.describe('OIDC login and role resolution', () => {
   test.skip(
     FIXTURE_PASSWORD === '',
-    'E2E_FIXTURE_PASSWORD not set (see docs/AUTH-TESTING.md)',
+    'E2E_FIXTURE_PASSWORD not set (see docs/auth-testing.md)',
   );
 
   for (const expected of TRUTH_TABLE) {

@@ -35,7 +35,7 @@ Within a minor (2.2.z) patches are cumulative and must not change configs, depre
 
 ## Cutting a release
 
-Component repositories release on their own lines, each with a semantic-release tag and a GHCR image. A stack release is a `dfe-stack cut` against `versions.yaml` ([cutting a stack](../CUTTING-A-STACK.md)), checked by the drift check and the integrated test suites that drive data from the receiver to ClickHouse, then tagged. On the tag, the `stack-manifest` workflow renders the manifest and a flat image list for air-gap mirroring, then publishes them as a cosign-signed OCI artifact beside the images, so a mirror verifies offline. The deploy tooling's own version is in the manifest, because an unpinned installer makes a build impossible to reproduce. A component can be dropped from the set when keeping it costs more than it is worth, and the release notes say so.
+Component repositories release on their own lines, each with a semantic-release tag and a GHCR image. A stack release is a `dfe-stack cut` against `versions.yaml` ([cutting a stack](../cutting-a-stack.md)), checked by the drift check and the integrated test suites that drive data from the receiver to ClickHouse, then tagged. On the tag, the `stack-manifest` workflow renders the manifest and a flat image list for air-gap mirroring, then publishes them as a cosign-signed OCI artifact beside the images, so a mirror verifies offline. The deploy tooling's own version is in the manifest, because an unpinned installer makes a build impossible to reproduce. A component can be dropped from the set when keeping it costs more than it is worth, and the release notes say so.
 
 `scripts/dfe-stack` implements the model with these subcommands:
 

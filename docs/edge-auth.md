@@ -1,7 +1,7 @@
 # Edge exposure and authentication
 
 Internet-facing exposure on a cloud deploy (CIDR, rate limit, WAF, DNS):
-[EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
+[edge-auth-cloud.md](edge-auth-cloud.md).
 
 How a DFE deployment's web surfaces get outside the cluster, and who is
 allowed through. The model: every web UI with a login of its own is exposed
@@ -149,7 +149,7 @@ decides what switch can turn it off.
 | `ingest` | `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
 
 Each group also carries the `allow` and `deny` lists its routes admit by address
-([EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md)). Every web UI with a login renders by default, through a five-step cascade, first match wins:
+([edge-auth-cloud.md](edge-auth-cloud.md)). Every web UI with a login renders by default, through a five-step cascade, first match wins:
 
 1. Class `product`, `api` or `infra` with its group's `enabled: false` means not rendered.
 2. Class `infra` with `ownLogin: false` (links, Cruise Control) means not rendered unless the edge policy is in front of it: `oidc.enabled`, an `oidc.providers` entry and `edgePolicy: true`.
@@ -167,7 +167,7 @@ dfe-ui, the engine API or HyperDX. `exposure.groups.admin.tools` is the one
 list of admin UIs, one key per class-infra route.
 
 On a cloud deploy with an internet-facing Gateway Service, this defaults
-off instead -- see [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
+off instead -- see [edge-auth-cloud.md](edge-auth-cloud.md).
 
 The `exposure:` key is shared with the dfe-receiver chart, which reads
 `exposure.groups.ingest` for its ingest door and `exposure.public` for its load
@@ -210,11 +210,11 @@ in the product needs that: Argo CD and dfe-engine reach the deploy repo on
 its in-cluster Service DNS.
 
 Public hostnames on a cloud deploy, the render guard, CIDR, rate limit, WAF
-and DNS specifics: [EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md).
+and DNS specifics: [edge-auth-cloud.md](edge-auth-cloud.md).
 
 ## The ingest edge
 
-Data ingest is a second door with its own model, the ingest exposure group `exposure.groups.ingest`. On a cloud the door is the receiver's own load balancers, which render only while `allow` names the senders, so a default deploy has no public ingest. On-prem the door is the gateway route on `receiver.{domain}`, HTTP `/ingest` only. The receiver's own `server.auth.mode` defaults to `none` on either door. See [INGEST-EDGE.md](INGEST-EDGE.md).
+Data ingest is a second door with its own model, the ingest exposure group `exposure.groups.ingest`. On a cloud the door is the receiver's own load balancers, which render only while `allow` names the senders, so a default deploy has no public ingest. On-prem the door is the gateway route on `receiver.{domain}`, HTTP `/ingest` only. The receiver's own `server.auth.mode` defaults to `none` on either door. See [ingest-edge.md](ingest-edge.md).
 
 ## The links page
 

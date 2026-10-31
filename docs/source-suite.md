@@ -4,7 +4,7 @@ Not part of the stock POST: the default E2E tests prove the deploy moved data,
 these prove an operator can add a source and watch it work. Run on demand after
 a deploy, here and on docker through dfe-docker's `make test-source`, which
 calls the same runner. The cycle these hang off is
-[TESTING-CYCLE.md](TESTING-CYCLE.md).
+[testing-cycle.md](testing-cycle.md).
 
 ## What runs it
 

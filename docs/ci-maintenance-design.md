@@ -1,6 +1,6 @@
 <!--
   Project:      dfe-infra
-  File:         docs/CI-MAINTENANCE-DESIGN.md
+  File:         docs/ci-maintenance-design.md
   Purpose:      How a shared fact stays current across repos: a bot to move it,
                 a gate to prove it moved.
   License:      BUSL-1.1
@@ -87,7 +87,7 @@ passes, so the PR arrives green rather than red-with-homework. Renovate ignores
 the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch.
 `refresh-digests` refuses a stack whose git tag exists, because a released stack
 is frozen: the digest or app move goes into the next cut
-(`docs/CUTTING-A-STACK.md`).
+(`docs/cutting-a-stack.md`).
 
 Prefer deriving over mirroring. The otel collector held a second copy of the
 ClickHouse endpoint and crashlooped on the profile it was not written for; the

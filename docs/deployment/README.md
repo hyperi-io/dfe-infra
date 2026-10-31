@@ -218,9 +218,9 @@ For a mirror that needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SE
   rolling back means per upgrade stage, the `dfe-ops upgrade rollback`
   refusal rule, the sizing config-vs-data rule, and the soak before a
   Kafka finalise
-- [DEPLOY-HELPERS.md](../DEPLOY-HELPERS.md) - the release and deploy-overlay
+- [deploy-helpers.md](../deploy-helpers.md) - the release and deploy-overlay
   helpers, the logins a deploy carries, and the end-to-end recipe
-- [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) - which CA signs the gateway
+- [deploy-tls-trust.md](../deploy-tls-trust.md) - which CA signs the gateway
   certificate: the self-signed default, estate PKI, and trusting the root once
 - [kafka/](kafka/README.md) - managed-Kafka alternatives + Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator /
@@ -229,4 +229,4 @@ For a mirror that needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SE
 - [upgrades.md](upgrades.md#migrating-from-dfe-2x-before-22) - migrating a
   pre-2.2 private-cloud deployment off the retired ClickHouse fork onto
   cached-object
-- [deployment-logs/](deployment-logs/TEMPLATE.md) - record every deploy
+- [deployment-logs/](deployment-logs/template.md) - record every deploy

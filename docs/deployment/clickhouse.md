@@ -3,7 +3,7 @@
 ClickHouse is the DFE data layer. Which ClickHouse -- and which operator, if
 any -- is a per-deployment choice behind the `clickhouse-cluster` chart's
 `clickhouse.mode` value, per the documented-fork rule (same genre as
-[AUTOSCALING.md](../AUTOSCALING.md)).
+[autoscaling.md](../autoscaling.md)).
 
 ## The DFE 2.2 target matrix
 
@@ -31,7 +31,7 @@ The `user_directories` list has to replace the image's default rather than add t
 
 In single mode `config.d/dfe-listen.xml` replaces the image's `docker_related_config.xml`, so Keeper, raft and interserver bind loopback and no other pod reaches them, and only 8123, 9000 and 8443 listen on the pod's address. Those three listen on IPv4 only, where the image's file listened on IPv6 as well, so single mode fails its probes on an IPv6-only cluster. With `tcp_port` removed, the replica has `is_local` 0 in `system.clusters`, so a hand-run `clusterAllReplicas('dfe', ...)`, which DFE never issues, dials the server as `default` and fails with `AUTHENTICATION_FAILED`.
 
-In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, and `network-policies` leaves the keeper pods out of `data-ingress-policy` (`operatorIngressScoped`). Only operator-labelled pods from any namespace ([accepted risk](../THREAT-MODEL.md#accepted-risks)) and the ClickHouse servers that reference the keeper reach 2181, 2281 and 9123, and only the other keepers reach raft on 9234. Policies are additive, so while `data-ingress-policy` selected them every DFE, data and operator namespace reached every port on the keepers. Pinned by `scripts/tests/test_keeper_ingress.py`.
+In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, and `network-policies` leaves the keeper pods out of `data-ingress-policy` (`operatorIngressScoped`). Only operator-labelled pods from any namespace ([accepted risk](../threat-model.md#accepted-risks)) and the ClickHouse servers that reference the keeper reach 2181, 2281 and 9123, and only the other keepers reach raft on 9234. Policies are additive, so while `data-ingress-policy` selected them every DFE, data and operator namespace reached every port on the keepers. Pinned by `scripts/tests/test_keeper_ingress.py`.
 
 ## History and rationale
 

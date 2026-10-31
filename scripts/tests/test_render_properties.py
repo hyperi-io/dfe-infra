@@ -101,7 +101,7 @@ EXPOSURE: dict[str, dict[str, dict]] = {
             }
         },
     },
-    # Reachable by operators, not by the public (docs/THREAT-MODEL.md).
+    # Reachable by operators, not by the public (docs/threat-model.md).
     "dfe-engine": {"local": {}, "aws": {}},
 }
 INTERNET_FACING = {"dfe-receiver", "culvert"}
@@ -590,7 +590,7 @@ def test_the_receiver_front_door_on_each_cloud(cloud: str) -> None:
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
 def test_a_deployment_naming_its_senders_keeps_its_shape(cloud: str) -> None:
-    """The door docs/INGEST-EDGE.md documents, with the cluster secret's pinned address."""
+    """The door docs/ingest-edge.md documents, with the cluster secret's pinned address."""
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     balancers = load_balancers(_receiver(cloud, OPT_IN, facts))
     shape = CLOUD_SHAPE[cloud]

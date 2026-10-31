@@ -26,7 +26,7 @@ kafka:
   saslSecretName: dfe-kafka-user
 
 # The receiver's front door, from exposure.groups.ingest (argocd/values/common.yaml)
-# and the load balancer's shape in exposure.public, as docs/INGEST-EDGE.md
+# and the load balancer's shape in exposure.public, as docs/ingest-edge.md
 # documents them. scalo-service's publicService reads none of them, so it stays
 # off and dfe-extras refuses it switched on.
 publicService:

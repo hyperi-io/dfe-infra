@@ -54,7 +54,7 @@ exposure:
     # load balancer, which renders only while allow names someone; gateway is
     # receiver.{domain} on the gateway, which the on-prem cloud files set; tunnel
     # is no public door. deny reaches the gateway routes only: the receiver's
-    # own load balancer refuses a deny list (docs/INGEST-EDGE.md).
+    # own load balancer refuses a deny list (docs/ingest-edge.md).
     ingest:
       enabled: true
       allow: []
@@ -290,7 +290,7 @@ clickhouse:
   passwordSecretKey: password
   # Each app's own user. dfe-extras mints each password into a Secret beside the
   # engine, the engine creates the user on that password, and the app connects
-  # with it -- docs/CLICKHOUSE-IDENTITY.md. The names are dfe-engine's.
+  # with it -- docs/clickhouse-identity.md. The names are dfe-engine's.
   serviceUsers:
     loader:
       user: dfe_loader

@@ -36,7 +36,7 @@ Provisioning: [aws.md](aws.md). Running the cluster:
 ## Tearing down
 
 - A full cloud cycle is batched, never run per finding
-  ([TESTING-CYCLE.md](../TESTING-CYCLE.md)). Two halves bear on teardown: the
+  ([testing-cycle.md](../testing-cycle.md)). Two halves bear on teardown: the
   managed cluster goes down first, being the long pole both ways, and teardown
   starts when the last proof lands, not at the end of a session.
 - `bootstrap/destroy.sh` deletes the node pools' Application, `karpenter-pools-<cluster>` found by its name, once the load balancers are released and keeps Karpenter itself until every NodeClaim is gone (up to 600s), because a node left running holds its subnets through its network interfaces and `tofu destroy` fails on them. On a test run its last step terminates any node a Karpenter pool launched for that run and cluster.
@@ -71,4 +71,4 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   the tag filter. The AWS
   account defaults -- the default VPC and everything that comes with it,
   AWS-managed KMS aliases -- are never listed or touched.
-- `--expired` selects resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h), plus any non-default security group with no run tag inside a VPC so selected -- EKS creates its cluster security group untagged and outside tofu state, and the VPC cannot be deleted while it stands. Unattended runs and their reaper: [TESTING-CYCLE.md](../TESTING-CYCLE.md).
+- `--expired` selects resources whose `dfe-e2e` run tag carries an `expires-at` past `--grace` (default 1h), plus any non-default security group with no run tag inside a VPC so selected -- EKS creates its cluster security group untagged and outside tofu state, and the VPC cannot be deleted while it stands. Unattended runs and their reaper: [testing-cycle.md](../testing-cycle.md).

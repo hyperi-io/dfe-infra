@@ -1,6 +1,6 @@
 <!--
 Project:   dfe-infra
-File:      docs/THREAT-MODEL.md
+File:      docs/threat-model.md
 Purpose:   Exposure model for DFE risk analysis -- what an attacker can reach
 Language:  Markdown
 
@@ -37,7 +37,7 @@ in DFE can reach it, and a finding cannot be graded on the score alone.
 
 ## The gateway's trusted proxy ranges
 
-No gateway listener believes `X-Forwarded-For` by default. The CIDR filter judges the TCP peer, which every flavour's load balancer delivers unchanged ([EDGE-AUTH-cloud.md](EDGE-AUTH-cloud.md#the-client-address-the-fence-judges)), so a forged header from a client, the tunnel forwarder in an AWS public subnet, or any other host beside the load balancer passes nothing.
+No gateway listener believes `X-Forwarded-For` by default. The CIDR filter judges the TCP peer, which every flavour's load balancer delivers unchanged ([edge-auth-cloud.md](edge-auth-cloud.md#the-client-address-the-fence-judges)), so a forged header from a client, the tunnel forwarder in an AWS public subnet, or any other host beside the load balancer passes nothing.
 
 `ui.trusted_proxy_cidrs` is the one way to change that: the public listeners (`https-public-*`) then read the header when the TCP peer is inside the list. Every host in a listed range can claim any client address, so it names a CDN's ranges and nothing shared. Treat a deployment that lists anything else as fenced to that whole range.
 
@@ -62,7 +62,7 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 | OTel collector -> ClickHouse | Native 9000, plaintext. Backlog: moves to 9440 |
 | Smoke tests and `scripts/` -> ClickHouse | HTTP 8123, plaintext. Backlog |
 
-8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka and Keeper are not covered yet. The DocumentDB store's PostgreSQL on 5432 serves its replicas over client-certificate TLS and its own gateway over localhost. CloudNativePG's last pg_hba rule takes a SCRAM password from any address, so the chart takes the password off the superuser the operator creates with a published one (`helm/charts/documentdb/templates/documentdb.yaml`), which leaves hyperdx's own login the only password role. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace: the apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [DEPLOY-TLS-TRUST.md](DEPLOY-TLS-TRUST.md).
+8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka and Keeper are not covered yet. The DocumentDB store's PostgreSQL on 5432 serves its replicas over client-certificate TLS and its own gateway over localhost. CloudNativePG's last pg_hba rule takes a SCRAM password from any address, so the chart takes the password off the superuser the operator creates with a published one (`helm/charts/documentdb/templates/documentdb.yaml`), which leaves hyperdx's own login the only password role. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace: the apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [deploy-tls-trust.md](deploy-tls-trust.md).
 
 ## Secrets dfe-engine mints
 

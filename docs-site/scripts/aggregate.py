@@ -238,7 +238,7 @@ class Policy:
             member: The member's name.
 
         Returns:
-            Its internal paths, such as ``docs/TESTING-CYCLE.md`` or ``docs/archive/``.
+            Its internal paths, such as ``docs/testing-cycle.md`` or ``docs/archive/``.
         """
         return self.internal.get(member, frozenset())
 

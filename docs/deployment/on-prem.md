@@ -12,7 +12,7 @@ Pick the tier before anything else. It decides whether you need a secrets store.
 | `single` | Kafka | One replica of each, with a single Kafka broker in the cluster. | None |
 | `scale` | Kafka | Replicas, a ClickHouse cluster and Strimzi Kafka. | OpenBao, for the broker's client credential |
 
-`mesh` is in the charts but every deploy path refuses it. [index.md](index.md#tiers-and-the-values-cascade) has the layers and the values cascade, and [composition.md](composition.md) which apps each tier runs.
+`mesh` is in the charts but every deploy path refuses it. [README.md](README.md#tiers-and-the-values-cascade) has the layers and the values cascade, and [composition.md](composition.md) which apps each tier runs.
 
 ## Before you start
 
@@ -20,7 +20,7 @@ Pick the tier before anything else. It decides whether you need a secrets store.
 - Kubernetes 1.35 or later, or 1.34 with the `ImageVolume` feature gate on in the API server and every kubelet. The DocumentDB operator mounts its extension into HyperDX's store as an image volume, and its admission webhook refuses the store without one. On 1.34, `bootstrap/check_platform.py` reads the gate from the API server's `/metrics` (it needs `get` on that URL) and refuses a cluster where it is off or unreadable, unless `DFE_IMAGE_VOLUME_ENABLED=true` says it is on in the API server and every kubelet.
 - Nodes for DFE to run on, labelled `dfe.hyperi.io/workload=dfe`. The `local` overlay (`argocd/values/local.yaml`) pins DFE to them with a hard nodeSelector and tolerates a matching `NoSchedule` taint, so a pool tainted at provisioning keeps other workloads off it. Bootstrap labels every node on this target (`DFE_LABEL_WORKLOAD_NODES`, default `true` for `local`). On a shared cluster, label the DFE nodes yourself and set it to `false`.
 - Where data is stored is decided at the first deploy and locked after it. Read [storage.md](storage.md) first.
-- For `scale`, an OpenBao: its address, plus an AppRole for External Secrets or a token OpenTofu can create one with ([index.md](index.md#secrets-store)).
+- For `scale`, an OpenBao: its address, plus an AppRole for External Secrets or a token OpenTofu can create one with ([README.md](README.md#secrets-store)).
 
 ## Deploy
 
@@ -101,7 +101,7 @@ flowchart LR
   R --> SVC["service pod"]
 ```
 
-Every UI and the engine API answer through the Envoy Gateway (`helm/edge/gateway/`) on the wildcard `*.<DFE_DOMAIN>`. The console is `dfe.<DFE_DOMAIN>`. cert-manager issues the TLS, and [DEPLOY-TLS-TRUST.md](../DEPLOY-TLS-TRUST.md) covers trusting it.
+Every UI and the engine API answer through the Envoy Gateway (`helm/edge/gateway/`) on the wildcard `*.<DFE_DOMAIN>`. The console is `dfe.<DFE_DOMAIN>`. cert-manager issues the TLS, and [deploy-tls-trust.md](../deploy-tls-trust.md) covers trusting it.
 
 Point a wildcard record at the Gateway's address. Where nothing on the cluster programs a LoadBalancer Service, bootstrap installs MetalLB. `DFE_GATEWAY_IP` fixes the Gateway's address and `DFE_RECEIVER_IP` the receiver's ingest LoadBalancer, so a rebuild keeps the addresses your DNS already names. A name outside the wildcard needs its own record.
 
@@ -129,7 +129,7 @@ To redeploy, run the same deploy command again.
 
 | What you see | What to do |
 |---|---|
-| ImagePullBackOff | Check the image reference has a registry host (`DFE_REGISTRY`). A mirror of your own that needs a login is covered in [index.md](index.md#optional-your-own-private-mirror). |
+| ImagePullBackOff | Check the image reference has a registry host (`DFE_REGISTRY`). A mirror of your own that needs a login is covered in [README.md](README.md#optional-your-own-private-mirror). |
 | `stack-deploy` refuses `scale` with `DFE_SECRETS_BACKEND=none` | It lists what reads the store. Set the four OpenBao keys in step 2, or use `deploy.sh`. |
 | `stack-deploy` refuses on `DFE_KUBE_CONTEXT` | The env file names a context other than the kubeconfig's current one, and bootstrap deploys to the current one. Switch context, or empty the key. |
 | DFE pods Pending on node affinity or selector | The DFE nodes lack the `dfe.hyperi.io/workload=dfe` label, or are gone. Label or restore them rather than removing the selector, which puts DFE on nodes it does not own. `dfe-ops preflight --require-label dfe.hyperi.io/workload=dfe` catches a missing label before a deploy. |

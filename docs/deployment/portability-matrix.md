@@ -112,7 +112,7 @@ managed endpoint.
 
 ## Node autoscaling
 
-A pools interface, with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler: Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../AUTOSCALING.md](../AUTOSCALING.md) has the per-target table.
+A pools interface, with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler: Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../autoscaling.md](../autoscaling.md) has the per-target table.
 
 ## Status
 

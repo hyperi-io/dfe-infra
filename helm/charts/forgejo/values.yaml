@@ -62,7 +62,7 @@ deployRepo:
 # pod without it. Registered as type `gogs`: Argo CD's handler has no gitea or
 # forgejo parser, and Forgejo sends the X-Gogs-* headers the gogs one reads.
 # The external git path configures the same hook on GitHub or GitLab --
-# docs/DEPLOY-HELPERS.md carries that recipe.
+# docs/deploy-helpers.md carries that recipe.
 webhook:
   enabled: true
   # Split into host and path because the host is also the webhook allow-list
