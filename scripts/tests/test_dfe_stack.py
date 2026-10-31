@@ -2505,6 +2505,68 @@ def test_the_committed_constraints_pass_strict() -> None:
     expect("compat-check --strict is green as committed", rc == 0, out.getvalue())
 
 
+_OVERRIDE_TAG = "v9.9.9"
+_OVERRIDE_DIGEST = "sha256:" + "a" * 64
+
+
+def _resolve_over(pins_text: str, *, emit: bool = False, stack_name: str | None = None) -> tuple[int, str, str]:
+    """`dfe-stack resolve` over a pins.yaml: (exit, stdout, the --emit-values fragment)."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        pins = Path(td) / "pins.yaml"
+        pins.write_text(pins_text, encoding="utf-8", newline="\n")
+        fragment = Path(td) / "values.yaml"
+        args = argparse.Namespace(
+            pins=str(pins),
+            stack=stack_name,
+            tag=None,
+            registry=stack.DEFAULT_REGISTRY,
+            emit_values=str(fragment) if emit else None,
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = stack.cmd_resolve(args)
+        return rc, out.getvalue(), fragment.read_text(encoding="utf-8") if emit else ""
+
+
+def _override_pins(base: str) -> str:
+    return (
+        f'base:\n  dfe-infra: "{base}"\n'
+        f'overrides:\n  apps:\n    dfe-receiver: "{_OVERRIDE_TAG}@{_OVERRIDE_DIGEST}"\n'
+    )
+
+
+def test_an_emitted_override_renders_one_valid_image_reference() -> None:
+    """The thin chart appends image.digest to image.tag, so a tag@sha256 tag renders two digests."""
+    import yaml
+    from test_image_digest_pin import REGISTRY, images
+
+    from _weave import render_app
+
+    current = stack.load_root()["current"]
+    rc, _, fragment = _resolve_over(_override_pins(current), emit=True)
+    expect("an override is drift, exit 2", rc == 2, f"exit {rc}")
+    values = yaml.safe_load(fragment)
+    rendered = images(render_app("dfe-receiver", "slim", "local", overlay=values))
+    want = f"{REGISTRY}/dfe-receiver:{_OVERRIDE_TAG}@{_OVERRIDE_DIGEST}"
+    expect("the chart renders the override tag and digest once", bool(rendered) and set(rendered) == {want}, f"{rendered}")
+
+
+def test_resolve_reads_the_stack_the_pins_name() -> None:
+    """The set printed under `base dfe-infra: X` is X's, not whatever `current` is."""
+    root = stack.load_root()
+    other = next(n for n in stack.stack_names(root) if n != root["current"] and not stack.is_withdrawn(root["stacks"][n]))
+    _, out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n')
+    header = out.splitlines()[0]
+    expect("the header names the pinned stack once", header.count(other) == 2, header)
+    _rc, err_out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n', stack_name=root["current"])
+    expect("an explicit --stack still wins", root["current"] in err_out.splitlines()[0], err_out.splitlines()[0])
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

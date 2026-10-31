@@ -117,7 +117,7 @@ Until the retarget the 2.2.0 engine writes only the old keys. So just before it,
 `plan` lists every key it finds in a values migration section:
 
 - `MIGRATE`, a key `apply` carries.
-- `REFUSED`, which blocks `plan`, `preflight` and `apply` until a person edits it: an `image.repository`, `image.tag` or `image.digest` in an overlay, which would keep the 2.2.0 image under the new chart, or an `enrichment_tables` path under another instance's table mount.
+- `REFUSED`, which blocks `plan`, `preflight` and `apply` until a person edits it: an `image.repository`, `image.tag` or `image.digest` in an overlay, which would keep the 2.2.0 image under the new chart (an `image.tag` and `image.digest` equal to the service's `overrides.apps` entry in `pins.yaml` are that override, and pass), or an `enrichment_tables` path under another instance's table mount.
 - `DROPPED`, a key the thin charts read nothing in place of. HyperDX's `defaultConnections` is config loss: the thin chart no longer hands HyperDX `DEFAULT_CONNECTIONS` from `defaultConnections.secretName`, so recreate those connections in HyperDX.
 
 `dfe-ops upgrade migrate-values --deploy <dir>` writes the same keys on its own and commits nothing. `--check` writes nothing and exits 1 while a key is left to carry or needs an edit.
