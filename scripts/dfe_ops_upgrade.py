@@ -1817,11 +1817,12 @@ def set_pin_stack(text: str, stack: str) -> str:
     Walks from the `base:` line (column 0) to the next column-0 non-blank
     line and replaces the first `dfe-infra:` scalar it finds -- every other
     line (comments, `dfe-schemas`, the whole `overrides:`/`channel:` rest of
-    the file) survives verbatim. The same focused-editor shape as
-    dfe_ops_bastion.py's `_set_toolbox_field`, so a bump is never a full
-    rewrite that could silently drop an operator's override block.
+    the file) survives verbatim, and so does a comment trailing the `dfe-infra:`
+    line. The same focused-editor shape as dfe_ops_bastion.py's
+    `_set_toolbox_field`, so a bump is never a full rewrite that could silently
+    drop an operator's override block.
     """
-    field_re = re.compile(r'^(\s*)dfe-infra:\s*(#.*)?$|^(\s*)dfe-infra:\s+\S.*$')
+    field_re = re.compile(r"^(?P<lead>[ \t]*)dfe-infra:[^#]*?(?P<note>[ \t]*#.*)?$")
     lines = text.splitlines()
     out: list[str] = []
     in_block = False
@@ -1838,9 +1839,9 @@ def set_pin_stack(text: str, stack: str) -> str:
             in_block = False
             out.append(line)
             continue
-        if not found and field_re.match(line):
-            leading = line[: len(line) - len(line.lstrip(" "))]
-            out.append(f'{leading}dfe-infra: "{stack}"')
+        field = None if found else field_re.match(line)
+        if field:
+            out.append(f'{field["lead"]}dfe-infra: "{stack}"{field["note"] or ""}')
             found = True
             continue
         out.append(line)

@@ -491,6 +491,13 @@ def test_set_pin_stack_idempotent_when_already_at_target() -> None:
     assert updated == PINS_YAML
 
 
+@pytest.mark.parametrize("target", ["2.0.0", "1.0.0"], ids=["bumped", "already at target"])
+def test_set_pin_stack_keeps_the_comment_on_the_dfe_infra_line(target: str) -> None:
+    text = PINS_YAML.replace('"1.0.0"', '"1.0.0"      # charts, appsets, defaults', 1)
+    updated = u.set_pin_stack(text, target)
+    assert updated == text.replace('"1.0.0"', f'"{target}"', 1)
+
+
 def test_set_pin_stack_refuses_no_base_block() -> None:
     with pytest.raises(u.PinFileError, match=r"base\.dfe-infra"):
         u.set_pin_stack("channel: release\n", "2.0.0")
