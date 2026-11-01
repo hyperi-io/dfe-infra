@@ -217,6 +217,21 @@ def test_a_dry_run_names_the_prefix_and_deletes_nothing(
     assert PREFIX not in err
 
 
+@pytest.mark.parametrize(
+    ("outputs", "command"),
+    [
+        pytest.param(EPHEMERAL_OUTPUTS, f"tofu -chdir={TF_DIR} destroy", id="ephemeral"),
+        pytest.param(PERSISTENT_OUTPUTS, f"tofu -chdir={TF_DIR} destroy -suppress-forget-errors", id="persistent"),
+    ],
+)
+def test_a_dry_run_prints_the_destroy_it_would_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, outputs: dict, command: str
+) -> None:
+    """Every flag the real teardown adds is in the line the dry run prints."""
+    _teardown(monkeypatch, Calls(), outputs, "--dry-run")
+    assert f"[dry-run] would run: {command}\n" in capsys.readouterr().err
+
+
 def test_expected_fail_a_store_that_cannot_be_cleared_fails_the_teardown(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
 ) -> None:

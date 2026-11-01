@@ -903,17 +903,17 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     tf_cmd = [args.tf_bin, f"-chdir={tf_dir}", "destroy"]
     inputs = _destroy_inputs(tf_dir)
     prefix, region, retained = inputs or ("", "", {})
+    if args.force and not args.dry_run:
+        tf_cmd.append("-auto-approve")  # non-interactive teardown when --force
+    if retained:
+        # What a persistent destroy forgets rather than deletes is the intent, not a failure.
+        tf_cmd.append("-suppress-forget-errors")
     if args.dry_run:
         print(f"[dry-run] would run: {' '.join(tf_cmd)}", file=sys.stderr)
         if prefix:
             print(f"[dry-run] would then force-delete every secret under DFE_ENGINE_SECRETS_PREFIX in {region}",
                   file=sys.stderr)
         return rc
-    if args.force:
-        tf_cmd.append("-auto-approve")  # non-interactive teardown when --force
-    if retained:
-        # The key tofu forgets rather than deletes is the intent, not a failure (kms.tf).
-        tf_cmd.append("-suppress-forget-errors")
     destroyed = _run_streaming(tf_cmd, env=env)
     # A refused or failed destroy leaves the deployment up, and its engine needs these secrets.
     if destroyed != 0:
