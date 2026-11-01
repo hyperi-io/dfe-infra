@@ -10,13 +10,16 @@ The source of https://dfe.docs.hyperi.io. A Docusaurus site with one build per r
 | Quickstarts (`/quickstart/...`) | `content-root/quickstart/` | every version, on merge |
 | A repository's section (`/dfe-infra/...`, `/dfe-ui/...`) | that repository's `docs/` | `/next/` nightly at 16:17 UTC, a version only once a stack pins the new tag |
 | The HTTP API reference | dfe-engine's `openapi-spec/openapi.json` | with the dfe-engine tag a stack pins |
-| The landing page (`/`) | `src/pages/index.js` and `src/components/landing/` | every version, on merge |
+| The landing page (`/`) | its words in `copy/landing.yaml`, its layout in `src/pages/index.js` and `src/components/landing/` | every version, on merge |
+| Navbar, footer and release bar | `copy/site.yaml` | every version, on merge |
 
 A change to dfe-infra's own `docs/` also refreshes `/next/` on merge.
 
 The sidebar runs Overview, then four journeys: Evaluate, Deploy, Operate, Reference. `journeys.yaml` names each journey's sections in order and places every page in one, by repository and path, with a `default` per repository for pages it does not name. A new page in a repository's `docs/` lands in that repository's default section until a line places it. Pages keep their URLs, whichever section they sit in. Within a section, pages follow the lane order `suite.yaml` gives, then each repository's own order.
 
-`publish.yaml` holds the three publishing decisions: the released stacks the site does not build, the pages each repository keeps internal, and the repositories whose section sits inside another's (dfe-hyperdx inside dfe-ui). A published page that links to an internal one links to it on GitHub.
+`publish.yaml` holds the publishing decisions: the released stacks the site does not build, the pages each repository keeps internal, the repositories whose section sits inside another's (dfe-hyperdx inside dfe-ui), and docs pins. A published page that links to an internal one links to it on GitHub.
+
+To fix a released version's docs without a DFE release, merge the fix in the repository, then pin that commit under `docs_refs` for the stack in a `docs:` commit here. The merge deploys it. The API reference stays at the release.
 
 `content-root/VOICE.md` is the voice ledger, one "say X, not Y" rule a line. It is never published.
 

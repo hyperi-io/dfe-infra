@@ -237,6 +237,33 @@ def test_a_dropped_stack_is_never_built(stacks: list[str], expected: list[str] |
     assert [build.name for build in builds] == expected
 
 
+@pytest.mark.parametrize(
+    ("docs_refs", "expected"),
+    [
+        ({}, {}),
+        ({"2.2.1": {"x": "abc123"}}, {"x": "abc123"}),
+        ({"2.2.0": {"x": "abc123"}}, r"docs_refs names no built stack: 2\.2\.0"),
+        ({"9.9.9": {"x": "abc123"}}, r"docs_refs names no built stack: 9\.9\.9"),
+    ],
+)
+def test_a_docs_pin_rides_its_stack_and_names_only_a_built_one(
+    docs_refs: dict, expected: dict | str
+) -> None:
+    release = {"maturity": "release", "support": "standard", "apps": {"x": "v1"}}
+    tree = {"stacks": {"2.2.0": release, "2.2.1": release}}
+    members = [Member("x", "o/x", "consumers", 10)]
+    dropped = frozenset({"2.2.0"})
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
+        return
+    builds = aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
+    assert [(build.name, dict(build.refs), dict(build.docs_refs)) for build in builds] == [
+        ("2.2.1", {"x": "v1"}, expected),
+        ("next", {"x": "HEAD"}, {}),
+    ]
+
+
 # --- publish.yaml ------------------------------------------------------------------
 
 
@@ -280,6 +307,13 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
         ({"internal": {"a": "x.md"}}, "internal a: not a member with a map"),
         ({"internal": {"a": {"../README.md": "why"}}}, r"\.\./README\.md is not a path"),
         ({"internal": {"a": {"/etc/x": "why"}}}, "/etc/x is not a path"),
+        (
+            {"docs_refs": {"2.2.1": {"a": "abc123"}}},
+            aggregate.Policy(docs_refs={"2.2.1": {"a": "abc123"}}),
+        ),
+        ({"docs_refs": {"2.2.1": "abc123"}}, "docs_refs 2.2.1: not a map"),
+        ({"docs_refs": {"2.2.1": {"z": "abc123"}}}, "docs_refs 2.2.1 z: not a member"),
+        ({"docs_refs": {"2.2.1": {"a": ""}}}, "docs_refs 2.2.1 a: not a member with a ref"),
     ],
 )
 def test_load_policy_reads_a_valid_file_and_names_every_problem(
@@ -952,6 +986,39 @@ def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
     pages = [path for path in checkout_files(out / "9.9.9") if path.endswith(".md")]
     assert [page for page in pages if "hd/" in page] == expected
     assert [entry["name"] for entry in result.members] == sorted(refs, key=["ui", "hd"].index)
+
+
+@pytest.mark.parametrize(
+    ("docs_refs", "page"),
+    [
+        ({}, "# Arch at release\n"),
+        ({"dfe-engine": "docs-fix"}, "# Arch fixed\n"),
+    ],
+)
+def test_a_docs_pin_moves_the_docs_and_leaves_the_spec_at_the_release(
+    tmp_path: Path, docs_refs: dict[str, str], page: str
+) -> None:
+    root = tmp_path / "remotes"
+    spec = {"openapi": "3.1.0", "info": {"title": "release"}}
+    files = {"docs/architecture.md": "# Arch at release\n", "openapi-spec/openapi.json": ""}
+    files["openapi-spec/openapi.json"] = json.dumps(spec)
+    make_repo(root, "o/dfe-engine", files, "v2.0.0")
+    repo = root / "o/dfe-engine.git"
+    (repo / "docs" / "architecture.md").write_text("# Arch fixed\n", encoding="utf-8")
+    spec["info"]["title"] = "later"
+    (repo / "openapi-spec" / "openapi.json").write_text(json.dumps(spec), encoding="utf-8")
+    git("-C", str(repo), "add", "-A")
+    git("-C", str(repo), *GIT_IDENTITY, "commit", "-q", "-m", "docs fix")
+    git("-C", str(repo), *GIT_IDENTITY, "tag", "-a", "docs-fix", "-m", "docs-fix")
+    members = [Member("dfe-engine", "o/dfe-engine", "consumers", 11, "product")]
+    build = Build("9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0"}, docs_refs)
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    aggregate.assemble(build, members, fetcher, out)
+    assert (out / "9.9.9" / "dfe-engine" / "architecture.md").read_text() == page
+    placed = json.loads((out / "_specs" / "9.9.9" / "dfe-engine.json").read_text())
+    assert placed["info"]["title"] == "release"
 
 
 @pytest.mark.parametrize(

@@ -23,7 +23,8 @@ member the stack does not pin, or one an anonymous fetch refuses, is reported an
 left out.
 
 publish.yaml also names the pages each member keeps internal, which are not
-copied, and the members whose docs mount inside another member's section.
+copied, the members whose docs mount inside another member's section, and docs
+pins: a ref a released stack reads one member's docs/ at in place of its pin.
 journeys.yaml places every published page in a journey section, and site.json
 carries those placements to docusaurus.config.js, which builds the sidebar.
 
@@ -179,12 +180,15 @@ class Build:
         base_url: Where the build is served.
         listed: Whether the version dropdown shows it.
         refs: The ref each member is fetched at. A member absent here has no pin.
+        docs_refs: The ref a member's docs/ is read at instead, from publish.yaml.
+            The engine's OpenAPI spec stays at its `refs` pin.
     """
 
     name: str
     base_url: str
     listed: bool
     refs: Mapping[str, str]
+    docs_refs: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,11 +230,13 @@ class Policy:
         mounts: member -> the member whose section it mounts inside.
         internal: member -> repo paths it keeps off the site. A path ending in /
             covers a directory.
+        docs_refs: stack -> member -> the ref its docs/ is read at for that stack.
     """
 
     dropped: frozenset[str] = frozenset()
     mounts: Mapping[str, str] = field(default_factory=dict)
     internal: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    docs_refs: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def internal_to(self, member: str) -> frozenset[str]:
         """The repo paths one member keeps off the site.
@@ -462,7 +468,8 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
             docs/.
     """
     known = set(members)
-    sections = {key: tree.get(key) or {} for key in ("dropped_versions", "mount_under", "internal")}
+    keys = ("dropped_versions", "mount_under", "internal", "docs_refs")
+    sections = {key: tree.get(key) or {} for key in keys}
     problems = [
         f"`{key}` is not a map" for key, value in sections.items() if not isinstance(value, dict)
     ]
@@ -486,9 +493,19 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
         internal[member] = frozenset(
             "docs/" if path == WHOLE_MEMBER else f"docs/{path}" for path in paths
         )
+    docs_refs: dict[str, dict[str, str]] = {}
+    for stack, pins in sections["docs_refs"].items():
+        if not isinstance(pins, dict):
+            problems.append(f"docs_refs {stack}: not a map of member -> ref")
+            continue
+        for member, ref in pins.items():
+            if member not in known or not isinstance(ref, str) or not ref:
+                problems.append(f"docs_refs {stack} {member}: not a member with a ref")
+                continue
+            docs_refs.setdefault(str(stack), {})[member] = ref
     if problems:
         raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
-    return Policy(frozenset(sections["dropped_versions"]), mounts, internal)
+    return Policy(frozenset(sections["dropped_versions"]), mounts, internal, docs_refs)
 
 
 def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journeys:
@@ -1001,6 +1018,8 @@ def assemble(
         if ref is None:
             result.findings.append(Finding(member.name, "", Rule.NO_PIN))
             continue
+        released_ref = ref
+        ref = build.docs_refs.get(member.name, ref)
         try:
             checkout = fetcher.fetch(member.repo, ref)
         except RefusedError:
@@ -1037,7 +1056,10 @@ def assemble(
             {"name": member.name, "repo": member.repo, "ref": link_ref, "commit": checkout.commit}
         )
         if member.name == SPEC_MEMBER:
-            result.openapi = _place_spec(checkout, build, dest, out, result.findings)
+            spec_checkout = checkout
+            if ref != released_ref:
+                spec_checkout = fetcher.fetch(member.repo, released_ref)
+            result.openapi = _place_spec(spec_checkout, build, dest, out, result.findings)
     copy_root(root, {member.name for member in members})
     if journeys:
         result.placements |= journeys.keys_for(ROOT_PAGES, "")
@@ -1272,6 +1294,7 @@ def plan_builds(
     stacks: list[str],
     with_next: bool,
     dropped: frozenset[str] = frozenset(),
+    docs_refs: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[Build]:
     """The builds to assemble: the chosen released stacks newest first, then /next/.
 
@@ -1281,18 +1304,24 @@ def plan_builds(
         stacks: Released stacks to build. Empty means every one.
         with_next: Whether to add the unlisted preview from each default branch.
         dropped: Released stacks the site does not build.
+        docs_refs: stack -> member -> the ref its docs/ is read at, from publish.yaml.
 
     Returns:
         The builds.
 
     Raises:
-        SystemExit: A named stack is not a released one or is dropped, or there is
-            nothing to build.
+        SystemExit: A named stack is not a released one or is dropped, a docs pin
+            names a stack the site does not build, or there is nothing to build.
     """
+    docs_refs = docs_refs or {}
     refused = sorted(set(stacks) & dropped)
     if refused:
         raise SystemExit(f"error: {PUBLISH_FILE.name} drops {', '.join(refused)}")
     released = [name for name in released_stacks(tree) if name not in dropped]
+    stray_pins = sorted(set(docs_refs) - set(released))
+    if stray_pins:
+        names = ", ".join(stray_pins)
+        raise SystemExit(f"error: {PUBLISH_FILE.name} docs_refs names no built stack: {names}")
     unknown = sorted(set(stacks) - set(released))
     if unknown:
         have = ", ".join(released) or "none"
@@ -1300,7 +1329,14 @@ def plan_builds(
     chosen = [name for name in released if not stacks or name in stacks]
     blocks = tree["stacks"]
     builds = [
-        Build(name, f"/v/{name}/", True, stack_refs(name, blocks[name], members)) for name in chosen
+        Build(
+            name,
+            f"/v/{name}/",
+            True,
+            stack_refs(name, blocks[name], members),
+            dict(docs_refs.get(name, {})),
+        )
+        for name in chosen
     ]
     if with_next:
         heads = {member.name: HEAD for member in members}
@@ -1371,7 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
         JOURNEYS_FILE.read_text(encoding="utf-8"), source=str(JOURNEYS_FILE)
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
-    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped)
+    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)
