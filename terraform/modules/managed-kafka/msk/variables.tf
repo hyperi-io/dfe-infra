@@ -276,9 +276,9 @@ variable "autoscaling" {
     Broker-count scaling for the Express cluster, from tfvars (the dial's
     kafka.msk.autoscaling). AWS gives MSK Express no native equivalent --
     UpdateBrokerCount is a manual API with no scaling policy -- so this is a
-    CloudWatch alarm on cluster-wide BytesInPerSec driving a Lambda that calls
-    it. enabled defaults true; every other field is the caller's, because none
-    of them has a value that is safe to guess:
+    Lambda EventBridge runs every period_seconds, reading the current brokers'
+    BytesInPerSec and calling it. enabled defaults true. Every other field is
+    the caller's, because none of them has a value that is safe to guess:
       - max_brokers: the ceiling. Must be >= broker_count and a multiple of
         the client subnet count, exactly like broker_count itself.
       - step: brokers added per scale-out. Defaults to the client subnet
@@ -288,13 +288,12 @@ variable "autoscaling" {
         network throughput, in MB/s. Not derived here -- resolved_shapes
         carries instance_types and arch only, no throughput figure, so this
         is the caller's own reading of AWS's per-instance-type numbers.
-      - headroom: multiplies the raw capacity ceiling (broker_count x
-        per_broker_capacity_mb_s) to get the alarm threshold. A margin ABOVE
-        full utilisation, so it is always greater than 1.
-      - period_seconds and evaluation_periods: the alarm window. Every one of
-        evaluation_periods consecutive periods has to breach before the alarm
-        fires, and that window is the stabilisation the Lambda's missing
-        cooldown relies on.
+      - headroom: multiplies per_broker_capacity_mb_s to get the per-broker
+        threshold. A margin ABOVE full utilisation, so it is always greater
+        than 1.
+      - period_seconds and evaluation_periods: how often the scaler runs, and
+        how many consecutive periods every broker's mean has to be over the
+        threshold before it adds a step.
   DESCRIPTION
 
   type = object({
@@ -319,15 +318,7 @@ variable "autoscaling" {
 
   validation {
     condition     = var.autoscaling.per_broker_capacity_mb_s > 0
-    error_message = "autoscaling.per_broker_capacity_mb_s must be positive -- it is what the alarm threshold scales with broker_count."
-  }
-
-  // AWS/Kafka publishes BytesInPerSec per broker and never as a cluster total,
-  // and PutMetricAlarm rejects a SEARCH expression, so the alarm names one
-  // metric per broker -- and a metric math expression takes at most ten.
-  validation {
-    condition     = !var.autoscaling.enabled || var.broker_count <= 10
-    error_message = "autoscaling.enabled needs broker_count of 10 or fewer: the scale-out alarm names one CloudWatch metric per broker, and a metric math expression takes at most ten metrics. Refused at plan rather than at apply, where MSK, the Lambda, the SNS topic and the IAM all exist before PutMetricAlarm rejects it. Turn autoscaling off, or scale this cluster by hand."
+    error_message = "autoscaling.per_broker_capacity_mb_s must be positive -- the per-broker threshold is built from it."
   }
 
   validation {

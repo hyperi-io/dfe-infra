@@ -15,12 +15,16 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices): [aws.md](aws.md).
 
 ## Kafka telemetry and autoscaling
 
-- MSK's own broker-count scaler is a CloudWatch alarm on `BytesInPerSec`
-  driving a Lambda, wired from `kafka.msk.autoscaling`. The alarm reads the
-  metric with the `Average` statistic, not `Sum` -- `BytesInPerSec` is
-  already a per-second rate, so summing the five one-minute samples the
-  default 300s period (`kafka.msk.autoscaling.period_seconds`) holds would inflate the reading roughly fivefold against the
-  bytes-per-second threshold it is compared to. The telemetry dial
+- MSK's own broker-count scaler is a Lambda that EventBridge runs every
+  `kafka.msk.autoscaling.period_seconds`, wired from `kafka.msk.autoscaling`.
+  Each run reads the cluster's current broker count and the `BytesInPerSec` of
+  exactly those brokers over the last `evaluation_periods`, and adds `step`
+  brokers when every period's per-broker mean was over
+  `per_broker_capacity_mb_s` x `headroom`. A broker added by one run is in the
+  next run's reading, so pressure that outlasts one step brings the next, up to
+  `max_brokers`. It reads with the `Average` statistic, not `Sum` --
+  `BytesInPerSec` is already a per-second rate, so summing the five one-minute
+  samples a 300s period holds would read roughly five times hot. The telemetry dial
   (`telemetry.aws.sink`, default `otel`) governs the rest: broker logs land
   in an S3 bucket the fetcher reads, and only the opt-in `cloudwatch` sink
   keeps them in CloudWatch instead -- see the Telemetry section of
@@ -28,11 +32,6 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices): [aws.md](aws.md).
   is always scrape-only, read by the OTel collector gateway. Intelligent
   rebalancing is turned on, so a broker added later gets existing
   partitions moved onto it.
-- The alarm names one CloudWatch metric per broker, and a metric math
-  expression takes at most ten, so `autoscaling.enabled` is refused above
-  `broker_count: 10`. Refused at plan, because at apply the cluster, the
-  Lambda, the SNS topic and the IAM all exist before `PutMetricAlarm` rejects
-  it. A larger cluster scales by hand.
 - **Building the broker on its own.** `module.kafka` carries no module-wide
   `depends_on`, so `tofu apply -target='module.kafka[0].aws_msk_cluster.this'`
   plans the broker plus the VPC, its subnets and the KMS key and key policy --

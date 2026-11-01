@@ -43,13 +43,13 @@ output "bootstrap_role_arn" {
   value       = aws_iam_role.bootstrap.arn
 }
 
-output "autoscaler_alarm_arn" {
-  description = "The broker-count scale-out alarm's ARN, for a dashboard or composite alarm a caller adds outside this module. Empty when var.autoscaling.enabled is false."
-  value       = join("", aws_cloudwatch_metric_alarm.broker_scale_out[*].arn)
+output "autoscaler_schedule_arn" {
+  description = "The EventBridge rule that runs the broker scaler every autoscaling.period_seconds. Empty when var.autoscaling.enabled is false."
+  value       = join("", aws_cloudwatch_event_rule.broker_scaler[*].arn)
 }
 
 output "autoscaler_function_arn" {
-  description = "The Lambda that calls UpdateBrokerCount when the scale-out alarm fires. Empty when var.autoscaling.enabled is false."
+  description = "The Lambda that calls UpdateBrokerCount while the brokers stay over their throughput. Empty when var.autoscaling.enabled is false."
   value       = join("", aws_lambda_function.broker_scaler[*].arn)
 }
 

@@ -66,12 +66,12 @@ mock_provider "aws" {
     }
   }
 
-  // The autoscaler's SNS topic and Lambda ARNs feed the SNS subscription's
-  // endpoint and the Lambda permission's source_arn, both of which the
-  // provider checks are ARN-shaped before it would ever call AWS.
-  mock_resource "aws_sns_topic" {
+  // The schedule's and the Lambda's ARNs feed the event target and the Lambda
+  // permission's source_arn, which the provider checks are ARN-shaped before it
+  // would ever call AWS.
+  mock_resource "aws_cloudwatch_event_rule" {
     defaults = {
-      arn = "arn:aws:sns:us-west-2:000000000000:dfe-kafka-contract-msk-broker-scaler"
+      arn = "arn:aws:events:us-west-2:000000000000:rule/dfe-kafka-contract-msk-broker-scaler"
     }
   }
 
@@ -400,10 +400,9 @@ run "msk_rejects_standard_broker_type" {
   ]
 }
 
-// One CloudWatch metric per broker, and a metric math expression takes ten. The
-// refusal belongs at plan: at apply the cluster, the Lambda, the SNS topic and
-// the IAM all exist by the time PutMetricAlarm rejects the alarm.
-run "msk_autoscaling_refuses_more_brokers_than_one_alarm_can_name" {
+// The scaler reads every broker through GetMetricData, which takes 500 queries,
+// so a cluster past the ten metrics one alarm could name still autoscales.
+run "msk_a_large_cluster_still_autoscales" {
   command = plan
 
   module {
@@ -414,7 +413,7 @@ run "msk_autoscaling_refuses_more_brokers_than_one_alarm_can_name" {
     broker_count = 12
     autoscaling = {
       enabled                  = true
-      max_brokers              = 12
+      max_brokers              = 15
       per_broker_capacity_mb_s = 50
       headroom                 = 1.3
       period_seconds           = 300
@@ -422,13 +421,13 @@ run "msk_autoscaling_refuses_more_brokers_than_one_alarm_can_name" {
     }
   }
 
-  expect_failures = [
-    var.autoscaling,
-  ]
+  assert {
+    condition     = length(aws_lambda_function.broker_scaler) == 1 && length(aws_cloudwatch_event_rule.broker_scaler) == 1
+    error_message = "a 12-broker cluster with autoscaling on builds its scaler and schedule"
+  }
 }
 
-// Scaling by hand is the way past that ceiling, so the ceiling must not refuse a
-// cluster that never asked for an alarm.
+// Autoscaling off builds no scaler at all, whatever the broker count.
 run "msk_a_large_cluster_plans_cleanly_with_autoscaling_off" {
   command = plan
 
@@ -449,14 +448,14 @@ run "msk_a_large_cluster_plans_cleanly_with_autoscaling_off" {
   }
 
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.broker_scale_out) == 0
-    error_message = "autoscaling off must render no alarm, whatever the broker count"
+    condition     = length(aws_cloudwatch_event_rule.broker_scaler) == 0
+    error_message = "autoscaling off must render no schedule, whatever the broker count"
   }
 }
 
-// S1: the alarm threshold arithmetic -- broker_count x per_broker_capacity_mb_s
-// x 1e6 x headroom, with none of the four factors a literal in the resource.
-run "msk_autoscaler_threshold_arithmetic" {
+// S1: the per-broker threshold -- per_broker_capacity_mb_s x 1e6 x headroom,
+// the same at every broker count, with none of the factors a literal.
+run "msk_autoscaler_threshold_and_schedule" {
   command = plan
 
   module {
@@ -464,108 +463,42 @@ run "msk_autoscaler_threshold_arithmetic" {
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].threshold == 3 * 50 * 1000000 * 1.3
-    error_message = "the alarm threshold must be broker_count x per_broker_capacity_mb_s x 1e6 x headroom"
-  }
-
-  // The threshold above is bytes PER SECOND, so the metric compared against
-  // it has to be a rate too. BytesInPerSec is published once a minute, so a
-  // 300s period holds 5 samples -- the statistic has to be Average
-  // (Sum/SampleCount), not Sum (the raw total of those 5 already-averaged
-  // rate samples), or the compared value runs ~5x hot and the alarm fires at
-  // a fraction of the traffic it was sized for.
-  assert {
-    // metric_query is a SET of objects (no addressable index), so the
-    // per-broker queries are picked out by the id prefix instead.
-    condition = alltrue([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-      mq.metric[0].stat == "Average" if startswith(mq.id, "broker_")
-    ])
-    error_message = "the per-broker statistic must be Average, not Sum, or the cluster-wide figure is not actually bytes per second"
-  }
-
-  assert {
-    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == var.autoscaling.evaluation_periods && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == var.autoscaling.evaluation_periods
-    error_message = "the alarm must require every one of autoscaling.evaluation_periods datapoints -- that is the whole of its stabilisation, since nothing here re-arms"
-  }
-
-  // CloudWatch rejects SEARCH on a metric alarm with ValidationError: SEARCH
-  // is not supported on Metric Alarms, and a mocked provider never runs that
-  // validation, so the assertion is what keeps the expression out.
-  assert {
-    condition = alltrue([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-      mq.expression == null ? true : !strcontains(mq.expression, "SEARCH")
-    ])
-    error_message = "no metric_query may use SEARCH -- CloudWatch refuses PutMetricAlarm outright, whatever else the alarm carries"
-  }
-
-  // One query per broker, so the sum below covers the whole dialled cluster.
-  assert {
-    condition = length([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if startswith(mq.id, "broker_")
-    ]) == 3
-    error_message = "the alarm must carry one metric_query per broker id, and this contract dials broker_count = 3"
-  }
-
-  // Every per-broker query names one broker of one cluster, so a second MSK
-  // cluster's traffic can never land in this alarm's sum.
-  assert {
-    condition = alltrue([
-      for broker_id in [1, 2, 3] :
-      length([
-        for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-        mq
-        if mq.id == "broker_${broker_id}"
-        && mq.metric[0].metric_name == "BytesInPerSec"
-        && mq.metric[0].namespace == "AWS/Kafka"
-        && mq.metric[0].dimensions["Broker ID"] == tostring(broker_id)
-        && mq.metric[0].dimensions["Cluster Name"] == aws_msk_cluster.this.cluster_name
-      ]) == 1
-    ])
-    error_message = "each broker id 1..broker_count needs its own AWS/Kafka BytesInPerSec query dimensioned by Cluster Name and Broker ID"
-  }
-
-  // Each per-broker query carries the granularity, which is where the alarm's
-  // period lives once the expression no longer embeds one.
-  assert {
-    condition = alltrue([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-      mq.metric[0].period == var.autoscaling.period_seconds if startswith(mq.id, "broker_")
-    ])
-    error_message = "every per-broker metric_query must carry autoscaling.period_seconds, the window the threshold is sized against"
-  }
-
-  // Exactly one query returns data, and it is the sum the threshold compares.
-  assert {
-    condition = length([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.return_data
-    ]) == 1
-    error_message = "exactly one metric_query may set return_data -- CloudWatch evaluates the alarm against that one series"
+    condition     = tonumber(aws_lambda_function.broker_scaler[0].environment[0].variables["THRESHOLD_BYTES_PER_SEC_PER_BROKER"]) == 50 * 1000000 * 1.3
+    error_message = "the per-broker threshold must be per_broker_capacity_mb_s x 1e6 x headroom"
   }
 
   assert {
     condition = (
-      [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].expression
-      == "SUM([broker_1,broker_2,broker_3])"
+      aws_lambda_function.broker_scaler[0].environment[0].variables["PERIOD_SECONDS"] == "300"
+      && aws_lambda_function.broker_scaler[0].environment[0].variables["EVALUATION_PERIODS"] == "3"
     )
-    error_message = "the returned query must sum every per-broker series, or the threshold is compared against part of the cluster"
+    error_message = "the scaler judges autoscaling.evaluation_periods periods of autoscaling.period_seconds"
+  }
+
+  // Metrics are dimensioned by cluster name, so the scaler must be told the one MSK built.
+  assert {
+    condition     = aws_lambda_function.broker_scaler[0].environment[0].variables["CLUSTER_NAME"] == aws_msk_cluster.this.cluster_name
+    error_message = "CLUSTER_NAME is the cluster's own name"
   }
 
   assert {
-    condition     = [for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query : mq if mq.id == "cluster_bytes_in"][0].return_data
-    error_message = "the summing expression is the series the alarm watches, so it is the one that returns data"
+    condition     = aws_cloudwatch_event_rule.broker_scaler[0].schedule_expression == "rate(5 minutes)"
+    error_message = "the schedule runs every autoscaling.period_seconds"
   }
 
   assert {
-    // alarm_actions is a set, so its members have no index to select by.
-    condition     = contains(aws_cloudwatch_metric_alarm.broker_scale_out[0].alarm_actions, aws_sns_topic.broker_scaler[0].arn)
-    error_message = "the alarm must notify the broker-scaler SNS topic on ALARM"
+    condition     = aws_cloudwatch_event_target.broker_scaler[0].arn == aws_lambda_function.broker_scaler[0].arn && aws_lambda_permission.broker_scaler_schedule[0].source_arn == aws_cloudwatch_event_rule.broker_scaler[0].arn
+    error_message = "the schedule invokes the scaler, and only that schedule may"
+  }
+
+  assert {
+    condition     = aws_lambda_function.broker_scaler[0].handler == "broker_scaler.handler"
+    error_message = "the Lambda runs broker_scaler.py's handler, the file scripts/tests/test_msk_broker_scaler.py exercises"
   }
 }
 
-// The alarm window is the caller's: a value other than the dial's default reaches the alarm unchanged.
-run "msk_autoscaler_takes_the_callers_alarm_window" {
+// The window is the caller's: a value other than the dial's default reaches the scaler unchanged.
+run "msk_autoscaler_takes_the_callers_window" {
   command = plan
 
   module {
@@ -577,22 +510,19 @@ run "msk_autoscaler_takes_the_callers_alarm_window" {
       max_brokers              = 6
       per_broker_capacity_mb_s = 50
       headroom                 = 1.3
-      period_seconds           = 120
+      period_seconds           = 60
       evaluation_periods       = 5
     }
   }
 
   assert {
-    condition     = aws_cloudwatch_metric_alarm.broker_scale_out[0].evaluation_periods == 5 && aws_cloudwatch_metric_alarm.broker_scale_out[0].datapoints_to_alarm == 5
-    error_message = "autoscaling.evaluation_periods must set both evaluation_periods and datapoints_to_alarm"
+    condition     = aws_cloudwatch_event_rule.broker_scaler[0].schedule_expression == "rate(1 minute)"
+    error_message = "a 60-second period is EventBridge's singular rate(1 minute)"
   }
 
   assert {
-    condition = alltrue([
-      for mq in aws_cloudwatch_metric_alarm.broker_scale_out[0].metric_query :
-      mq.metric[0].period == 120 if startswith(mq.id, "broker_")
-    ])
-    error_message = "autoscaling.period_seconds must reach every per-broker metric_query"
+    condition     = aws_lambda_function.broker_scaler[0].environment[0].variables["EVALUATION_PERIODS"] == "5"
+    error_message = "autoscaling.evaluation_periods reaches the scaler"
   }
 }
 
@@ -636,8 +566,11 @@ run "msk_autoscaler_lambda_is_increase_only" {
   }
 
   assert {
-    condition     = length(aws_lambda_function.broker_scaler[0].environment[0].variables) == 3
-    error_message = "the Lambda's env must carry exactly CLUSTER_ARN, MAX_BROKERS and STEP -- an extra key here would be a scale-down or re-arm dial this design does not have"
+    condition = toset(keys(aws_lambda_function.broker_scaler[0].environment[0].variables)) == toset([
+      "CLUSTER_ARN", "CLUSTER_NAME", "MAX_BROKERS", "STEP",
+      "THRESHOLD_BYTES_PER_SEC_PER_BROKER", "PERIOD_SECONDS", "EVALUATION_PERIODS",
+    ])
+    error_message = "the Lambda's env carries what an increase acts on and no more -- an extra key would be a scale-down dial this design does not have"
   }
 
   assert {
@@ -795,7 +728,7 @@ run "msk_telemetry_cloudwatch_keeps_the_aws_native_path" {
   }
 }
 
-// S3: enabled = false renders none of it -- no alarm, no topic, no Lambda.
+// S3: enabled = false renders none of it -- no schedule, no Lambda, no role.
 run "msk_autoscaler_disabled_renders_nothing" {
   command = plan
 
@@ -815,13 +748,8 @@ run "msk_autoscaler_disabled_renders_nothing" {
   }
 
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.broker_scale_out) == 0
-    error_message = "enabled = false must render no alarm"
-  }
-
-  assert {
-    condition     = length(aws_sns_topic.broker_scaler) == 0
-    error_message = "enabled = false must render no SNS topic"
+    condition     = length(aws_cloudwatch_event_rule.broker_scaler) == 0
+    error_message = "enabled = false must render no schedule"
   }
 
   assert {

@@ -60,9 +60,9 @@ mock_provider "aws" {
     }
   }
 
-  mock_resource "aws_sns_topic" {
+  mock_resource "aws_cloudwatch_event_rule" {
     defaults = {
-      arn = "arn:aws:sns:us-west-2:000000000000:dfe-example-msk-broker-scaler"
+      arn = "arn:aws:events:us-west-2:000000000000:rule/dfe-example-msk-broker-scaler"
     }
   }
 
@@ -573,7 +573,7 @@ run "msk_keeps_one_copy_of_the_credential" {
       network_attachment      = { security_group_id = "sg-00000000000000001", subnet_ids = [] }
       cluster_arn             = "arn:aws:kafka:us-west-2:000000000000:cluster/dfe-example/00000000-0000-0000-0000-000000000000-1"
       bootstrap_role_arn      = "arn:aws:iam::000000000000:role/dfe-example-kafka-bootstrap"
-      autoscaler_alarm_arn    = ""
+      autoscaler_schedule_arn = ""
       autoscaler_function_arn = ""
       broker_log_bucket       = ""
     }

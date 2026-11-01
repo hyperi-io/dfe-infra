@@ -684,8 +684,8 @@ kafka:
     bootstrap_job:
       namespace: strimzi
       service_account: dfe-kafka-bootstrap
-    ## The broker-count scaler: a CloudWatch alarm on cluster-wide BytesInPerSec
-    ## driving a Lambda that raises the broker count (MSK Express has no native
+    ## The broker-count scaler: a Lambda run on a schedule that reads the current
+    ## brokers' BytesInPerSec and raises the broker count (MSK Express has no native
     ## equivalent -- UpdateBrokerCount is a manual API with no scaling policy of
     ## its own). Every field is optional: a value left blank takes the one
     ## render_dial.py documents here, and step left blank takes the zone count,
@@ -695,8 +695,8 @@ kafka:
       max_brokers: 6           # the ceiling; must be >= broker_count and a multiple of the zone count
       step: ""                 # brokers added per scale-out; empty takes the zone count
       per_broker_capacity_mb_s: 50  # the resolved broker shape's published network throughput
-      headroom: 1.3            # multiplies broker_count x per_broker_capacity_mb_s for the alarm threshold; must be > 1
-      period_seconds: 300      # the alarm's period; a multiple of 60, since MSK publishes BytesInPerSec once a minute
+      headroom: 1.3            # multiplies per_broker_capacity_mb_s for the per-broker threshold; must be > 1
+      period_seconds: 300      # how often the scaler runs and reads; a multiple of 60, since MSK publishes BytesInPerSec once a minute
       evaluation_periods: 3    # periods in breach before a scale-out; with the period, the stabilisation window
 
 ## CLICKHOUSE -- where the datastore runs. in_cluster (the default) deploys DFE's
