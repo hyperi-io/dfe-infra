@@ -17,7 +17,7 @@ this module's to close; see "Out of scope" at the end.
 | Input | Type | Meaning |
 |-------|------|---------|
 | `name`, `env` | `string` | Name prefix and environment, as everywhere else in this repo. |
-| `enabled` | `bool` | Whether the toolbox INSTANCE exists. `false` tears down the instance, its security group, its instance profile and both kinds of Session document. Does NOT gate the session-log bucket -- see below. |
+| `enabled` | `bool` | Whether the toolbox INSTANCE exists. `false` tears down the instance, its security group, its instance profile and both kinds of Session document. The session-log bucket is the aws root's, so nothing here gates it -- see below. |
 | `network` | `object({ vpc_id, cidr, private_subnet_ids })` | Where the instance lands. `cidr` scopes the egress rule of every target whose `scope` is `vpc`; a target outside the VPC says so and is opened to `0.0.0.0/0` on its own port instead. |
 | `instance_type` | `string` | Auto-selected by the shape resolver, newest arm64 generation in the region: the root passes the first type of the shape `toolbox.aws.shape_ref` names. Validated as a Graviton (arm64) family. |
 | `root_volume` | `object({ type, size_gib })` | The same resolved shape's root disk. |
@@ -25,12 +25,11 @@ this module's to close; see "Out of scope" at the end.
 | `ttl_minutes` | `number` | Idle-session bound, 15-480, enforced here AND by `dfe-ops`. |
 | `tool_versions` | `map(string)` | `kubectl`, `helm`, `argocd-cli`, `tofu`, `yq`, `aws-cli`, `aws-session-manager-plugin`, `clickhouse-client`, `psql`, `kafka-cli`, and the download checks `argocd-cli-arm64-sha256`, `yq-arm64-sha256` and `kafka-cli-signer` -- every key required and non-empty. Assembled by `render_dial.py` from `versions.yaml`; see "Where the tool versions come from" and "How each download is checked" below. |
 | `session` | `object({ idle_timeout_minutes, max_duration_minutes })` | The SHELL document's preferences only. |
-| `session_log_retention_days` | `number` | From tfvars, 90 when the dial is silent. Deliberately independent of `telemetry.retention_days` -- `#18`. |
+| `session_log_bucket`, `session_log_bucket_arn` | `string` | The aws root's `module.toolbox_session_logs`: the shell document logs there, and the instance role's one `s3:PutObject` grant is scoped to it. |
 | `kms_key_arn` | `string` | The deployment CMK. Used via an IAM role policy, never a key policy of this module's own -- `#6` (see "What this module deliberately does NOT write"). |
 | `targets` | `map(object({ host, port, scope }))` | Named forward targets, computed by the aws root from ITS OTHER modules' outputs and the dial. The PORT is fixed at plan time; a host may not resolve until apply -- `#1`, `#7`. `scope` is `vpc` (the default) or `internet`, and it is what aims the target's egress rule -- the root sets `internet` for an address it did not create inside the VPC, a ClickHouse Cloud host or a SaaS broker bootstrap. |
 | `backend_egress` | `list(object({ port, scope }))` | Egress-only ports on the deployment's managed backends, from the root's `managed-backends` module: a Kafka client run on the instance follows the brokers' metadata past the one bootstrap a target forwards to. Each entry is one rule aimed by its `scope` the way a target's is, and creates no Session document. |
 | `eks_cluster_security_group_id` | `string` | The EKS control plane's own group, which `karpenter.tf` also tags for node discovery. This module adds ONE ingress rule to it, 443 from the toolbox's own group, gated on `enabled`. Empty adds no rule. |
-| `force_destroy_session_logs` | `bool` | Follows the root's `tags.lifecycle` the way `cloudtrail.tf`'s bucket does. |
 | `tags` | `map(string)` | The governance tag set. Merged with `dfe.hyperi.io/component = toolbox` on every resource -- the tag every IAM condition example below scopes against. |
 
 ## Outputs
@@ -40,25 +39,23 @@ this module's to close; see "Out of scope" at the end.
 | `instance_id` | Empty when not enabled. |
 | `ssm_session_document` | The SHELL document's name. |
 | `targets` | Every target that ACTUALLY has a forward document and an open port -- derived from the resources this module created, never from `var.targets`, so a target a partial apply left without one or the other is absent here rather than advertised with a broken `document_name`. |
-| `session_log_bucket` | Persists across every up/down cycle. |
 | `security_group_id`, `iam_role_name` | For a `down` proof and for policy examples; empty when not enabled. |
 
-## Why the session-log bucket is not gated by `enabled`
+## Why the session-log bucket is not in this module
 
-Every other resource in this module exists only while `enabled` is true, using
+Every resource in this module exists only while `enabled` is true, using
 the SAME `count = var.enabled ? 1 : 0` pattern the aws root already uses for
 `module.kafka`/`module.confluent`/`module.redpanda` -- except this module is
-never conditionally INSTANTIATED at the root (no `count` on the `module
-"toolbox"` block itself); `enabled` is threaded through as a plain input
-instead. That is the one deliberate difference from the kafka bodies' own
-convention, and it exists for exactly one reason: `#18` requires the
-session-log bucket to carry its OWN 90-day retention, and a `bastion down`
-that also deleted the bucket would erase the evidence of the very session it
-is closing out, days before that retention window is up. Gating the module's
-INSTANTIATION on `enabled` would do exactly that, because every resource
-inside an uninstantiated module is destroyed with it. Gating each resource
-individually, with the bucket left out, is what lets the bucket survive an
-`up`/`down` cycle and disappear only when the whole deployment is torn down.
+never conditionally INSTANTIATED at the root. There is no `count` on the
+`module "toolbox"` block itself, and `enabled` is threaded through as a plain
+input instead.
+
+`#18` requires the session-log bucket to carry its OWN 90-day retention, and
+`bastion down` is `tofu destroy -target=module.toolbox`, which destroys every
+resource in the module whatever its gate. So the bucket lives in the aws root
+(`module.toolbox_session_logs`, on `terraform/modules/s3-bucket`), survives
+every `up`/`down` cycle, and goes only with the whole deployment -- or, on a
+persistent deployment, outlives that too.
 
 ## What this module deliberately does NOT write
 
@@ -146,9 +143,9 @@ A one-to-two-day window is fine for service telemetry
 and useless as a record of who was on a customer's private data plane and
 when. `session_log_retention_days` (90 when the dial is silent) is a deliberate, named
 exception to Q48 for exactly that reason -- a session log is evidence, not
-telemetry. No Object Lock: the bucket is torn down with the deployment, and
-Object Lock fights ephemeral teardown the same way it would on any other log
-bucket in this repo.
+telemetry. The aws root sets it on its own bucket. No Object Lock: an ephemeral
+deployment's teardown deletes the bucket, and Object Lock fights that the same
+way it would on any other log bucket in this repo.
 
 ## EKS access -- the toolbox instance gets none
 

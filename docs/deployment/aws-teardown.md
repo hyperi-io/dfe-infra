@@ -17,21 +17,21 @@ Provisioning: [aws.md](aws.md). Running the cluster:
 
 - `tags.lifecycle: ephemeral` (tyre-kick, provision-test-destroy) is the one
   governance tag that changes what gets built, not only what gets labelled.
-  It sets the CloudTrail bucket's `force_destroy`, the secret recovery
-  windows on both the deployment's own secrets and the Kafka SCRAM
-  credential (0 days instead of 30), and redpanda-cloud's `allow_deletion`
-  (true instead of the vendor's own default refusal) -- so a tyre-kick
-  deployment tears down cleanly and anything else keeps the vendor's normal
-  deletion protection, without a per-resource flag to remember. It also decides
-  the deployment's KMS key: an ephemeral key is scheduled for deletion on
-  destroy (7 days), any other key is left in place, because the ClickHouse
-  object-store, CloudTrail and session-log buckets keep their objects and every
-  one is encrypted under it. A bare `tofu destroy` then ends with `Destroy was
-  successful but left behind forgotten instances` unless you pass
-  `-suppress-forget-errors`. `dfe-ops teardown --with-terraform` passes it on a
-  persistent deployment only, read from the root's `retained_on_destroy`
-  output, and its last lines name the key and the buckets it kept. Schedule
-  that key's deletion yourself once those buckets are gone. Every `dfe-ops`
+  It sets the secret recovery windows on both the deployment's own secrets
+  and the Kafka SCRAM credential (0 days instead of 30), and redpanda-cloud's
+  `allow_deletion` (true instead of the vendor's own default refusal) -- so a
+  tyre-kick deployment tears down cleanly and anything else keeps the vendor's
+  normal deletion protection, without a per-resource flag to remember. It also
+  decides what a destroy keeps. An ephemeral deployment's KMS key is scheduled
+  for deletion (7 days) and its ClickHouse object-store, CloudTrail and
+  session-log buckets go with their objects. Any other deployment keeps the key
+  and all three buckets, each with its policy, encryption and lifecycle, because
+  tofu forgets them rather than deleting them. A bare `tofu destroy` then ends
+  with `Destroy was successful but left behind forgotten instances` unless you
+  pass `-suppress-forget-errors`. `dfe-ops teardown --with-terraform` passes it
+  on a persistent deployment only, read from the root's `retained_on_destroy`
+  output, and its last lines name every address it kept. Delete the buckets once
+  nothing needs what they hold, then schedule the key's deletion. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
   resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
   never a rate -- plus how long the cluster has been up, from the root's

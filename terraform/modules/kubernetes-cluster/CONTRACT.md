@@ -69,6 +69,7 @@ map(object({
 | `private_zone_id` | `string` | |
 | `private_zone_arn` | `string` | The private zone as an IAM resource, so the edge module's external-dns role is granted the internal half without creating the zone. |
 | `kms_key_arn` | `string` | The deployment's own key. Encrypts cluster secrets, and Kafka and block storage take the same key. Outlives a destroy unless `tags.lifecycle` is `ephemeral`, because the buckets a persistent deployment keeps are encrypted under it. |
+| `retained_on_destroy` | `map(string)` | AWS-only today. Every address, relative to this module, that a persistent deployment's destroy forgets (the key and the ClickHouse object-store bucket), mapped to its ARN. Empty when `tags.lifecycle` is `ephemeral`. The root prefixes `module.cluster.` and adds its own. |
 | `pod_identity_trust_policy_json` | `string` | The trust policy any further workload-identity role in this cluster assumes. Lets a sibling module mint a role without knowing how this cloud expresses cluster trust. |
 | `node_role_arn` | `string` | The node instance role, for a caller that has to grant nodes something extra. |
 | `karpenter` | `object({ interruption_queue, instance_profile, discovery_tag, controller_role_arn, node_role_arn })` | AWS-only, and the one output a body may omit: what the karpenter and node-pools charts have to be told. A body whose cloud has no Karpenter emits its own provisioner's handles under its own name, or nothing. |

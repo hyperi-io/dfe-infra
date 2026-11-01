@@ -52,19 +52,19 @@ TF_OUTPUTS = {
     "DFE_SECRETS_REGION": ("us-west-2", False),
     "DFE_ENGINE_SECRETS_PREFIX": (PREFIX, False),
 }
-KEY_ADDRESS = "module.cluster.aws_kms_key.retained[0]"
 KEY_ARN = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
-BUCKETS = ["dfe-prod-clickhouse-000000000000", "dfe-prod-toolbox-session-logs"]
 # A persistent root's retained_on_destroy, as `tofu output -json` stringifies it.
-PERSISTENT_OUTPUTS = {
-    **TF_OUTPUTS,
-    "retained_on_destroy": (json.dumps({"forgotten": {KEY_ADDRESS: KEY_ARN}, "buckets": BUCKETS}), False),
+FORGOTTEN = {
+    "module.cluster.aws_kms_key.retained[0]": KEY_ARN,
+    "module.cluster.module.clickhouse_object_store.aws_s3_bucket.retained[0]": "arn:aws:s3:::dfe-prod-clickhouse",
+    "module.toolbox_session_logs.aws_s3_bucket.retained[0]": "arn:aws:s3:::dfe-prod-toolbox-session-logs",
 }
+PERSISTENT_OUTPUTS = {**TF_OUTPUTS, "retained_on_destroy": (json.dumps(FORGOTTEN), False)}
 EPHEMERAL_OUTPUTS = {**TF_OUTPUTS, "retained_on_destroy": ("", False)}
 KEPT_LINES = [
-    f"  kept {KEY_ADDRESS} ({KEY_ARN}): a persistent deployment's key outlives the destroy. "
-    "Schedule its deletion once the buckets below are gone",
-    *(f"  kept s3://{b} while it holds objects: force_destroy is off on a persistent deployment" for b in BUCKETS),
+    *(f"  kept {address} ({arn})" for address, arn in sorted(FORGOTTEN.items())),
+    "  a persistent deployment keeps these through tofu destroy: delete the buckets once nothing needs "
+    "what they hold, then schedule the key's deletion",
 ]
 LISTED = [
     {"Name": f"{PREFIX}/jwt/signing-key"},
@@ -138,9 +138,10 @@ def test_the_engine_prefix_is_cleared_once_tofu_destroy_succeeds(
     assert calls.seen[0][1][-1] == "--force"
     assert calls.seen[1][1] == ["tofu", f"-chdir={TF_DIR}", "destroy", *destroy_flags]
     err = capsys.readouterr().err.splitlines()
-    assert [line for line in err if line.startswith("  kept ")] == kept
     if kept:
         assert err[-len(kept):] == kept
+    else:
+        assert not [line for line in err if line.startswith("  kept module.") or "keeps these" in line]
     listing = calls.seen[2][1]
     assert listing[:3] == ["secretsmanager", "list-secrets", "--include-planned-deletion"]
     assert listing[listing.index("--filters") + 1] == f"Key=name,Values={PREFIX}/"

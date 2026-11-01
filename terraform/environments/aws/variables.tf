@@ -356,7 +356,7 @@ variable "kafka" {
 // ---------------------------------------------------------------------------
 
 variable "toolbox" {
-  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop); the session-log bucket is not gated by it (CONTRACT.md). aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
+  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop). The session-log bucket is this root's (module.toolbox_session_logs), so it is not gated by it. session_log_retention_days is that bucket's expiry, deliberately its own field and never telemetry.retention_days: a session log is evidence of human access, not service telemetry. aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
   type = object({
     enabled = bool
     aws = object({
@@ -371,6 +371,11 @@ variable "toolbox" {
     session_log_retention_days = number
     tool_versions              = optional(map(string), {})
   })
+
+  validation {
+    condition     = var.toolbox.session_log_retention_days >= 1
+    error_message = "toolbox.session_log_retention_days must be at least 1."
+  }
 
   validation {
     condition     = !var.toolbox.enabled || var.toolbox.aws.operator_role_arn != ""

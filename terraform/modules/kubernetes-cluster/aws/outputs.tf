@@ -95,12 +95,12 @@ output "audit_log_group" {
 
 output "clickhouse_object_store_bucket" {
   description = "The S3 bucket ClickHouse's cached-object storage model writes its bulk parts to (object-store.tf). Empty consumers never read this; the endpoint output below is the one the chart actually takes."
-  value       = aws_s3_bucket.clickhouse_object_store.id
+  value       = module.clickhouse_object_store.bucket
 }
 
 output "clickhouse_object_store_endpoint" {
   description = "The bucket URL in the form ClickHouse's S3 disk takes -- clickhouse.objectStore.endpoint, trailing slash included. Carried onto the cluster secret as DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT."
-  value       = "https://${aws_s3_bucket.clickhouse_object_store.id}.s3.${var.provision.region}.amazonaws.com/dfe/"
+  value       = "https://${module.clickhouse_object_store.bucket}.s3.${var.provision.region}.amazonaws.com/dfe/"
 }
 
 output "clickhouse_object_store_role_arn" {
@@ -116,5 +116,13 @@ output "karpenter" {
     discovery_tag       = var.name
     controller_role_arn = aws_iam_role.karpenter.arn
     node_role_arn       = aws_iam_role.karpenter_node.arn
+  }
+}
+
+output "retained_on_destroy" {
+  description = "What tofu destroy forgets here on a persistent deployment: each address, relative to this module, mapped to its ARN. Empty on an ephemeral one. The root prefixes its own path."
+  value = local.kms_key_ephemeral ? {} : {
+    "aws_kms_key.retained[0]"                                                            = local.kms_key_arn
+    "module.clickhouse_object_store.${module.clickhouse_object_store.forgotten_address}" = module.clickhouse_object_store.arn
   }
 }

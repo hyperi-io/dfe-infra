@@ -136,7 +136,7 @@ output "DFE_KAFKA_BROKER_LOG_BUCKET" {
 
 output "DFE_CLOUDTRAIL_BUCKET" {
   description = "The S3 bucket CloudTrail delivers to, under both telemetry sinks. The fetcher's aws source reads it regardless of which sink is chosen. Empty when cloudtrail.enabled is false."
-  value       = join("", aws_s3_bucket.cloudtrail[*].bucket)
+  value       = join("", module.cloudtrail_bucket[*].bucket)
 }
 
 output "DFE_RUN_TAGS" {
@@ -319,16 +319,12 @@ output "kms_key_arn" {
 }
 
 output "retained_on_destroy" {
-  description = "What tofu destroy leaves behind on a persistent deployment, as JSON: forgotten maps each resource address lifecycle.destroy keeps to its ARN, and buckets names each bucket force_destroy keeps while it holds objects. Empty on an ephemeral deployment. dfe-ops teardown reads it to pass -suppress-forget-errors and report what stayed."
-  value = local.ephemeral ? "" : jsonencode({
-    // kubernetes-cluster/aws/kms.tf's retained key, the one resource carrying destroy = false.
-    forgotten = { "module.cluster.aws_kms_key.retained[0]" = module.cluster.kms_key_arn }
-    buckets = concat(
-      [module.cluster.clickhouse_object_store_bucket],
-      aws_s3_bucket.cloudtrail[*].bucket,
-      [module.toolbox.session_log_bucket],
-    )
-  })
+  description = "What tofu destroy forgets on a persistent deployment, as JSON: each resource address lifecycle.destroy keeps (the deployment key and the ClickHouse, CloudTrail and session-log buckets, each with its configuration) mapped to its ARN. Empty on an ephemeral deployment. dfe-ops teardown reads it to pass -suppress-forget-errors and report what stayed."
+  value = local.ephemeral ? "" : jsonencode(merge(
+    { for address, arn in module.cluster.retained_on_destroy : "module.cluster.${address}" => arn },
+    { for bucket in module.cloudtrail_bucket : "module.cloudtrail_bucket[0].${bucket.forgotten_address}" => bucket.arn },
+    { "module.toolbox_session_logs.${module.toolbox_session_logs.forgotten_address}" = module.toolbox_session_logs.arn },
+  ))
 }
 
 output "network" {
@@ -357,5 +353,5 @@ output "toolbox_targets" {
 
 output "toolbox_session_log_bucket" {
   description = "Where every shell session's transcript lands. Persists across up/down cycles."
-  value       = module.toolbox.session_log_bucket
+  value       = module.toolbox_session_logs.bucket
 }

@@ -815,6 +815,8 @@ def purge_engine_secrets(prefix: str, region: str) -> list[str]:
 def _destroy_inputs(tf_dir: str) -> tuple[str, str, dict[str, object]] | None:
     """The root's engine prefix, region and retained_on_destroy, read before the destroy empties its state.
 
+    retained_on_destroy maps each address a persistent destroy forgets to its ARN.
+
     Returns ("", region, {}) for a root that names no prefix and keeps nothing
     (every cloud but AWS, and an ephemeral AWS deployment), and None when the
     outputs cannot be read.
@@ -839,14 +841,12 @@ def _destroy_inputs(tf_dir: str) -> tuple[str, str, dict[str, object]] | None:
 
 def _report_retained(retained: dict[str, object]) -> None:
     """Say what a persistent deployment's destroy keeps on purpose, as the teardown's last lines."""
-    forgotten = retained.get("forgotten") or {}
-    for address, arn in sorted(forgotten.items() if isinstance(forgotten, dict) else []):
-        print(f"  kept {address} ({arn}): a persistent deployment's key outlives the destroy. "
-              "Schedule its deletion once the buckets below are gone", file=sys.stderr)
-    buckets = retained.get("buckets") or []
-    for bucket in buckets if isinstance(buckets, list) else []:
-        print(f"  kept s3://{bucket} while it holds objects: force_destroy is off on a persistent "
-              "deployment", file=sys.stderr)
+    if not retained:
+        return
+    for address, arn in sorted(retained.items()):
+        print(f"  kept {address} ({arn})", file=sys.stderr)
+    print("  a persistent deployment keeps these through tofu destroy: delete the buckets once nothing needs "
+          "what they hold, then schedule the key's deletion", file=sys.stderr)
 
 
 # Messages below name the output, not its value, so nothing read under a secrets key is printed.

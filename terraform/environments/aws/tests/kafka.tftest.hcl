@@ -203,7 +203,6 @@ override_module {
     instance_id          = ""
     ssm_session_document = ""
     targets              = {}
-    session_log_bucket   = "example-toolbox-session-logs"
     admin_cidr           = ""
     security_group_id    = ""
     iam_role_name        = ""
