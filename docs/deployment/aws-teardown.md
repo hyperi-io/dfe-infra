@@ -63,6 +63,36 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   export those two with any value for the run, or destroy by target. Do NOT
   reach for `-exclude`: it cannot be combined with `-target`.
 
+## Rebuilding a persistent deployment under the same name
+
+A persistent destroy leaves the key and the three buckets in the account, so an
+apply under the same dial name fails creating them (`BucketAlreadyOwnedByYou`).
+Import them first, from `terraform/environments/aws`, so the new deployment
+takes over the kept data rather than starting beside it. The key and each bucket
+are in the `kept` lines the teardown printed: the key's ID is its ARN after
+`key/`, and a bucket's name is its ARN after `arn:aws:s3:::`.
+
+| Address | Import ID |
+|---|---|
+| `module.cluster.aws_kms_key.retained[0]` | the key's ID |
+| `module.cluster.module.clickhouse_object_store.<resource>.retained[0]` | the ClickHouse bucket's name |
+| `module.cloudtrail_bucket[0].<resource>.retained[0]` | the CloudTrail bucket's name (only with `cloudtrail.enabled`) |
+| `module.toolbox_session_logs.<resource>.retained[0]` | the session-log bucket's name |
+
+`<resource>` is each of `aws_s3_bucket`, `aws_s3_bucket_public_access_block`,
+`aws_s3_bucket_ownership_controls`, `aws_s3_bucket_policy`,
+`aws_s3_bucket_server_side_encryption_configuration` and
+`aws_s3_bucket_lifecycle_configuration`, all imported by the bucket's name, plus
+`aws_s3_bucket_versioning` on the CloudTrail and session-log buckets. For example:
+
+```bash
+tofu import 'module.cluster.aws_kms_key.retained[0]' 00000000-0000-0000-0000-000000000000
+tofu import 'module.toolbox_session_logs.aws_s3_bucket.retained[0]' dfe-toolbox-session-logs
+```
+
+Then `tofu plan` shows the imported resources unchanged and everything else to
+create. The key's alias is recreated, pointing at the imported key.
+
 ## Sweeping what is left
 
 - Run `scripts/cloud_sweep.py --region
