@@ -16,7 +16,7 @@ does not name is a contract change, not a body detail: add it here first, then
 to every body, then to the test.
 
 The caller is a per-cloud root under `terraform/environments/<cloud>/`. The root
-owns the provider, the backend and the tags; the body owns the resources.
+owns the provider, the backend and the tags, and the body owns the resources.
 
 ## Inputs
 
@@ -33,8 +33,8 @@ owns the provider, the backend and the tags; the body owns the resources.
 | `network` | `object({ nat, az_count, subnet_newbits })` | From tfvars. `nat` is `per-az` (one NAT per availability zone, no cross-zone charge and no single point of failure) or `single` (one NAT for the whole network, cheaper). `az_count` is how many availability zones the VPC spans, 2-6. `subnet_newbits` is how many bits each subnet adds to `provision.cidr`, which sets the addresses each zone's nodes and pods draw from. |
 | `endpoint` | `object({ public, allowed_cidrs })` | The private API endpoint is always on. `public` adds the public one, restricted to `allowed_cidrs`. |
 | `dns` | `object({ private_zone })` | The private zone always exists. No public zone here -- it and the identities that write it are the edge module's. |
-| `telemetry` | `object({ sink, retention_days, forced_retention_days })` | From tfvars. Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` keeps it at `forced_retention_days` since it is an unavoidable exception, not a chosen destination; `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
-| `tags` | `map(string)` | The six required governance tags plus `iac-source`. The body VALIDATES them; the root APPLIES them through the provider's default-tag mechanism, so a body never tags a resource with this map itself. |
+| `telemetry` | `object({ sink, retention_days, forced_retention_days })` | From tfvars. Where a CloudWatch-only touchpoint lands. Every cloud's control plane delivers SOME logs to a CloudWatch-shaped sink with no other export path -- on `aws/` that is the EKS audit log, always on, always in CloudWatch. `sink = otel` keeps it at `forced_retention_days` since it is an unavoidable exception, not a chosen destination. `sink = cloudwatch` keeps it at `retention_days` like every other touchpoint under that sink. |
+| `tags` | `map(string)` | The six required governance tags plus `iac-source`. The body VALIDATES them, and the root APPLIES them through the provider's default-tag mechanism, so a body never tags a resource with this map itself. |
 | `node_user_data` | `string`, default `""` | A shell script every node the body launches runs before kubelet starts: the registry-cache module's containerd mirror script. Empty adds none. On `aws/` it rides a launch template, and a managed node group that gains its first template is replaced. |
 | `key_policy_grants` | `list(object({ sid, principals, actions, conditions }))`, default `[]` | AWS-only today. Extra KMS key policy statements for a service principal (`cloudtrail.amazonaws.com`, `delivery.logs.amazonaws.com`), which cannot be granted through an IAM role policy. This body is the key's ONE policy owner (`aws_kms_key_policy` replaces the whole policy), so a sibling module hands its statement in here rather than writing a second `aws_kms_key_policy` against the same key, which would silently replace this one's. The root computes the list. |
 
@@ -62,7 +62,7 @@ map(object({
 | `cluster_ca` | `string`, sensitive | Base64 cluster CA for a kubeconfig. |
 | `cluster_version` | `string` | The version the cloud actually runs, which can lead the requested one. |
 | `oidc_issuer` | `string` | The cluster's OIDC issuer URL. |
-| `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already; anything else in the VPC has to be admitted by name. |
+| `cluster_security_group_id` | `string` | The group that admits a caller to the Kubernetes API. Nodes and pods are trusted already, and anything else in the VPC has to be admitted by name. |
 | `network` | `object({ vpc_id, cidr, azs, private_subnet_ids, public_subnet_ids })` | What the managed-kafka module attaches to. |
 | `service_cidr` | `string` | The range Service addresses come from, as the cloud reports it. network-policies carves it out of every internet allow. |
 | `nat_public_ips` | `list(string)` | The public addresses the cluster's own egress leaves from, one per NAT gateway. A fence on a public load balancer that in-cluster callers also reach has to admit them. |
@@ -82,8 +82,8 @@ map(object({
   not carry that rule.
 - **Private by default.** Nodes, the data plane and every internal service sit
   in private subnets. Public subnets carry load balancers and egress only.
-- **No provider block.** A body declares `required_providers` and nothing else;
-  the root configures the provider.
+- **No provider block.** A body declares `required_providers` and nothing else,
+  and the root configures the provider.
 - **Nothing hardcoded.** An instance type, a size, a volume type, a count, a retention, a CIDR, a version or a node image arrives as an input with no default: an instance type and a root volume from the shape resolver, a node image from the node-image cascade below, everything else from tfvars. The only literals allowed are ones the cloud's own API defines: managed policy names, add-on names, Kubernetes label keys and service principals. Each carries a one-line comment saying why it is structural. The rule is stated once in `terraform/README.md`.
 
 ## Node images

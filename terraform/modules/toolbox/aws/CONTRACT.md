@@ -99,8 +99,8 @@ persistent deployment, outlives that too.
   CUSTOM `sessionType: Port` document PER entry in `var.targets`, with `host`
   and `portNumber` written as literal values in the document body and NO
   `host`/`portNumber` parameter declared at all -- `--parameters host=x`
-  against one of these documents is rejected as an unknown parameter, not
-  merely discouraged by convention. Only `localPortNumber` (which local port
+  against one of these documents is rejected as an unknown parameter. Only
+  `localPortNumber` (which local port
   on the OPERATOR's machine) is a real parameter.
 
 ## Session logging -- what is recorded and what is not (`#6`)
@@ -348,10 +348,6 @@ symlink would break them, because each script finds its own JARs via
 ## Out of scope for this module
 
 NetworkPolicy enforcement on the `vpc-cni` add-on (`enableNetworkPolicy`) and
-the in-cluster toolbox pod's own egress fence belong to the sibling
-workstream building the in-cluster toolbox chart and appset, and to whichever
-change eventually touches `kubernetes-cluster/aws/eks.tf` -- neither is this
-module's file to edit, and neither is this EC2 bastion's own concern: the
-pod's NetworkPolicy fence has nothing to do with an instance that carries no
-Kubernetes workload at all. Flagged back rather than silently applied or
-silently dropped.
+the in-cluster toolbox pod's own egress fence belong to the in-cluster toolbox
+chart and to `kubernetes-cluster/aws/eks.tf`. This EC2 bastion carries no
+Kubernetes workload for a pod fence to cover.
