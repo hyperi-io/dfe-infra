@@ -1605,6 +1605,15 @@ def test_a_managed_broker_is_never_a_kubernetes_node_pool(tmp_path: Path) -> Non
     assert "msk-broker" in doc["resolved_shapes"]
 
 
+@pytest.mark.parametrize(("estimate", "brokers"), [(1000, 3), (90000, 9)])
+def test_the_msk_broker_count_reaches_tofu_with_its_shape(tmp_path: Path, estimate: int, brokers: int) -> None:
+    """The broker size is chosen for a broker count, so that count is what MSK must build."""
+    _run(_dial(tmp_path, provider="msk", estimate=estimate), tmp_path)
+    doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    assert doc["resolved_shapes"]["msk-broker"]["count"] == brokers
+    assert all("count" not in shape for name, shape in doc["resolved_shapes"].items() if name != "msk-broker")
+
+
 def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> None:
     """Express manages its own storage and runs its own metadata quorum."""
     _run(_dial(tmp_path, provider="msk", estimate=1000), tmp_path)

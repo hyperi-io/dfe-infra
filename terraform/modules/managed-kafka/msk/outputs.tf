@@ -57,3 +57,8 @@ output "broker_log_bucket" {
   description = "The S3 bucket broker logs land in under telemetry.sink = otel, for the fetcher's object-store source to read. Empty under telemetry.sink = cloudwatch, where the logs go to aws_cloudwatch_log_group.brokers instead."
   value       = join("", aws_s3_bucket.broker_logs[*].bucket)
 }
+
+output "broker_count" {
+  description = "How many brokers the cluster is built with, read back from the cluster resource."
+  value       = aws_msk_cluster.this.number_of_broker_nodes
+}

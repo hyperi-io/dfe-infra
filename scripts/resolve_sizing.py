@@ -302,6 +302,10 @@ STANDALONE_USE_CASES = ("toolbox",)
 # can (see compute-shapes.yaml's ci-burst entry).
 NOT_A_NODE_POOL = ("eks-system", "general", "msk-broker", "ci-burst")
 
+# Shapes whose instance count no node pool carries: the resolver chose the size
+# for this many instances, so build_tfvars hands tofu the count with the shape.
+COUNTED_SHAPES = ("msk-broker",)
+
 # The label every derived pool carries and the key its taint uses -- the same
 # key argocd/values/local.yaml's toleration already names.
 WORKLOAD_LABEL = "dfe.hyperi.io/workload"
@@ -2751,9 +2755,10 @@ def build_tfvars(
     resolved_shapes: dict[str, object] = {}
     for use_case, choice in shaped.items():
         entry = _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
-        resolved_shapes[use_case] = _resolved_shape(
-            choice, entry if isinstance(entry, dict) else None
-        )
+        shape = _resolved_shape(choice, entry if isinstance(entry, dict) else None)
+        if use_case in COUNTED_SHAPES:
+            shape["count"] = choice.count
+        resolved_shapes[use_case] = shape
     return {"node_pools": pools, "resolved_shapes": resolved_shapes}
 
 

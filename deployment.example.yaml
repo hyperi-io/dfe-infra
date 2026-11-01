@@ -662,7 +662,8 @@ kafka:
   #   timeout_seconds: 900    # the apply fails naming the host after this
   msk:
     shape_ref: msk-broker     # indexes shapes/resolved/<cloud>-<region>.json
-    broker_count: 3           # >= 3, and a multiple of the zone count
+    broker_count: 3           # >= 3, a multiple of the zone count, and only used when the resolved shape carries no count:
+                              # scripts/resolve_sizing.py sizes the broker for its own count and that count wins
     ## The BROKER version, in MSK's own spelling, and defaulted nowhere, because
     ## a default rots into a deprecated line silently. Nothing resolves it: set
     ## the newest ACTIVE one `aws kafka list-kafka-versions` prints. (`version:`

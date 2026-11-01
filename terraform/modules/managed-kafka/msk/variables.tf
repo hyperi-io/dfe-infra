@@ -91,7 +91,7 @@ variable "resolved_shapes" {
 }
 
 variable "broker_count" {
-  description = "Total brokers in the cluster, from tfvars (the dial's kafka.msk.broker_count). Three is the floor -- one per availability zone -- and MSK requires a multiple of the client subnet count so the zones stay evenly loaded."
+  description = "Total brokers in the cluster. The aws root passes the count scripts/resolve_sizing.py sized the broker shape for (resolved_shapes[shape_ref].count), else the dial's kafka.msk.broker_count for a shape that carries none. Three is the floor -- one per availability zone -- and MSK requires a multiple of the client subnet count so the zones stay evenly loaded."
   type        = number
 
   validation {

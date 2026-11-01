@@ -309,8 +309,10 @@ module "kafka" {
 
   broker_shape_ref = var.kafka.msk.shape_ref
   resolved_shapes  = var.resolved_shapes
-  broker_count     = var.kafka.msk.broker_count
-  kafka_version    = var.kafka.msk.broker_version
+  // The resolver chose the broker size for its own count, so that count wins. The
+  // dial's broker_count is for a hand-written shape that carries none.
+  broker_count  = coalesce(try(var.resolved_shapes[var.kafka.msk.shape_ref].count, null), var.kafka.msk.broker_count)
+  kafka_version = var.kafka.msk.broker_version
 
   num_partitions    = var.kafka.msk.num_partitions
   log_retention_ms  = var.kafka.msk.log_retention_ms
