@@ -133,6 +133,36 @@ def test_a_window_with_missing_periods_is_no_pressure() -> None:
     assert kafka.updates == []
 
 
+def test_a_cluster_mid_operation_is_left_alone() -> None:
+    """A run that overlaps an UpdateBrokerCount still in flight requests nothing more."""
+    kafka, cloudwatch = Kafka(3, state="UPDATING"), CloudWatch(3 * PER_BROKER * 2)
+    assert scaler.scale(kafka, cloudwatch, SETTINGS, NOW)["scaled"] is False
+    assert kafka.updates == []
+    assert cloudwatch.asked_brokers == []
+
+
+@pytest.mark.parametrize(
+    ("ended_ago", "updates"),
+    [
+        pytest.param(timedelta(minutes=5), [], id="change-inside-the-window-waits"),
+        pytest.param(timedelta(minutes=15), [9], id="a-full-window-since-the-change-scales"),
+    ],
+)
+def test_a_replayed_run_never_scales_on_load_read_before_the_last_change(
+    ended_ago: timedelta, updates: list[int]
+) -> None:
+    """The replay that once asked for six brokers and then nine: the second run's window
+    still holds load from before the cluster grew, so it waits for a full window on six."""
+    operations = [
+        {"OperationType": "UPDATE_BROKER_COUNT", "StartTime": NOW - timedelta(hours=1), "EndTime": NOW - ended_ago},
+        {"OperationType": "UPDATE_CLUSTER_CONFIGURATION", "StartTime": NOW - timedelta(days=9),
+         "EndTime": NOW - timedelta(days=9)},
+    ]
+    kafka, cloudwatch = Kafka(6, operations=operations), CloudWatch(9 * PER_BROKER * 1.2)
+    scaler.scale(kafka, cloudwatch, SETTINGS, NOW)
+    assert kafka.updates == updates
+
+
 def test_settings_come_from_the_lambda_environment() -> None:
     env = {
         "CLUSTER_ARN": ARN, "CLUSTER_NAME": "dfe-example", "MAX_BROKERS": "9", "STEP": "3",

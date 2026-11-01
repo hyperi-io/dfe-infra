@@ -5,7 +5,9 @@
 // the cluster's current broker count, the BytesInPerSec of exactly those
 // brokers over the last evaluation_periods, and adds var.autoscaling.step when
 // every period's per-broker mean was over the threshold, refusing above
-// max_brokers and refusing to ever scale in (broker_scaler.py).
+// max_brokers and refusing to ever scale in (broker_scaler.py). It acts only on
+// an ACTIVE cluster a full window after its last operation ended, so a run that
+// overlaps or repeats another never adds a step on load read before the last one.
 //
 // A schedule, not a CloudWatch alarm: an alarm names a fixed broker set and
 // notifies once per transition, so it never saw an added broker and never fired
@@ -117,7 +119,7 @@ data "aws_iam_policy_document" "broker_scaler" {
 
   statement {
     effect    = "Allow"
-    actions   = ["kafka:DescribeClusterV2", "kafka:UpdateBrokerCount"]
+    actions   = ["kafka:DescribeClusterV2", "kafka:ListClusterOperationsV2", "kafka:UpdateBrokerCount"]
     resources = [aws_msk_cluster.this.arn]
   }
 

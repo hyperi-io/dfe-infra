@@ -4,6 +4,10 @@ EventBridge runs this every PERIOD_SECONDS. Each run reads the cluster's own
 broker count and the BytesInPerSec of exactly those brokers, so the load it
 judges is the cluster's as it is now, and pressure that outlasts one step brings
 the next. The event body is not read.
+
+A run acts only on a cluster that is ACTIVE and has had a full window since its
+last operation ended, so an overlapping, retried or replayed run never adds a
+second step on load read before the first one landed.
 """
 
 import logging
@@ -78,10 +82,30 @@ def per_broker_load(cloudwatch: Any, settings: Settings, brokers: int, now: date
     return [float(v) for r in result["MetricDataResults"] if r["Id"] == "per_broker" for v in r["Values"]]
 
 
+def last_operation_end(kafka: Any, cluster_arn: str) -> datetime | None:
+    """When the cluster's most recent operation of any kind ended, or None if it has none."""
+    ended: list[datetime] = []
+    kwargs: dict[str, Any] = {"ClusterArn": cluster_arn}
+    while True:
+        page = kafka.list_cluster_operations_v2(**kwargs)
+        ended += [op["EndTime"] for op in page.get("ClusterOperationInfoList", []) if op.get("EndTime")]
+        token = page.get("NextToken")
+        if not token:
+            return max(ended, default=None)
+        kwargs["NextToken"] = token
+
+
 def scale(kafka: Any, cloudwatch: Any, settings: Settings, now: datetime) -> dict[str, Any]:
     """One run: read the cluster, judge its current brokers' load, add a step if every period was over."""
     info = kafka.describe_cluster_v2(ClusterArn=settings.cluster_arn)["ClusterInfo"]
     current = int(info["Provisioned"]["NumberOfBrokerNodes"])
+    if info["State"] != "ACTIVE":
+        return {"scaled": False, "reason": f"cluster is {info['State']}", "current_brokers": current}
+
+    # Load read across a broker-count change belongs to the cluster before it.
+    changed = last_operation_end(kafka, settings.cluster_arn)
+    if changed is not None and now - changed < settings.window:
+        return {"scaled": False, "reason": "waiting a full window since the last change", "current_brokers": current}
 
     load = per_broker_load(cloudwatch, settings, current, now)
     if len(load) < settings.evaluation_periods or min(load) <= settings.threshold_bytes_per_sec:
