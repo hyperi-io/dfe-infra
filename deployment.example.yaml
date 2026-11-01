@@ -581,6 +581,10 @@ sizing:
   ## Peak over the daily average -- log volume is diurnal, and a broker built for
   ## the average falls over in the evening. Empty takes the researched 2.0.
   peak_factor: ""
+  ## The share of ingest a transform rewrites onto <source>_load, 0 to 1. Kafka
+  ## then holds that share twice, raw and enriched, and the broker disk is sized
+  ## for both. Empty is 0: the default path has no transform and no _load topic.
+  transformed_share: ""
   ## Average event size in bytes, which is what decides ClickHouse rows a second.
   avg_event_bytes: ""
   ## Uncompressed bytes in to compressed bytes on disk. Empty takes the

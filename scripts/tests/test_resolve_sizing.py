@@ -173,6 +173,8 @@ def _summary(out: Path, status: int, tier: str = "scale") -> dict[str, object]:
 # One case carries deployer overrides, so a change to how they are applied moves
 # a snapshot like any other change.
 OVERRIDE_CASE = "aws-scale-economy-10000-overridden"
+# Every event through a transform, so Kafka holds the _load copy beside _land.
+TRANSFORMED_CASE = "aws-scale-economy-10000-transformed"
 OVERRIDE_BLOCK = """  overrides:
     kafka-broker:
       cpu: 32
@@ -215,6 +217,7 @@ def _matrix_cases() -> dict[str, dict[str, object]]:
         for cloud, focus, band in _cases()
     }
     cases[OVERRIDE_CASE] = {"cloud": "aws", "estimate": 10000, "extra": OVERRIDE_BLOCK}
+    cases[TRANSFORMED_CASE] = {"cloud": "aws", "estimate": 10000, "extra": "  transformed_share: 1"}
     for name, provider in PROVIDER_AXIS_CASES.items():
         cases[name] = {"cloud": "aws", "focus": "economy", "estimate": 10000, "provider": provider}
     return cases
@@ -242,7 +245,7 @@ def test_the_matrix_matches_its_snapshots(matrix: dict[str, object]) -> None:
 
 def test_every_case_in_the_matrix_produced_a_snapshot(matrix: dict[str, object]) -> None:
     assert sorted(matrix) == sorted(
-        [*(_case_name(*case) for case in _cases()), OVERRIDE_CASE, *PROVIDER_AXIS_CASES]
+        [*(_case_name(*case) for case in _cases()), OVERRIDE_CASE, TRANSFORMED_CASE, *PROVIDER_AXIS_CASES]
     )
 
 
@@ -1605,14 +1608,33 @@ def test_a_managed_broker_is_never_a_kubernetes_node_pool(tmp_path: Path) -> Non
     assert "msk-broker" in doc["resolved_shapes"]
 
 
-def test_the_broker_disk_holds_the_land_and_the_load_copy(tmp_path: Path) -> None:
-    """Every event sits in Kafka twice for the retention window: raw on <source>_land and,
-    enriched, on <source>_load. 10,000 GB/day over 24h on three brokers at RF3 and
-    0.75 headroom is 12418 GiB for the land copy alone, and 2.48 times that with both."""
-    _run(_dial(tmp_path, estimate=10000), tmp_path)
+@pytest.mark.parametrize(
+    ("share", "size"),
+    [
+        pytest.param(None, "12418Gi", id="no-transform-keeps-the-land-copy-alone"),
+        pytest.param("0", "12418Gi", id="a-stated-zero-is-the-same"),
+        pytest.param("0.5", "21607Gi", id="half-transformed"),
+        pytest.param("1", "30796Gi", id="all-transformed-holds-both-copies"),
+    ],
+)
+def test_the_broker_disk_holds_a_load_copy_only_for_what_a_transform_rewrites(
+    tmp_path: Path, share: str | None, size: str
+) -> None:
+    """A transformed event sits in Kafka twice for the retention window: raw on
+    <source>_land and, 1.48 times larger, on <source>_load. The default path has no
+    transform and no _load topic. 10,000 GB/day over 24h on three brokers at RF3 and
+    0.75 headroom is 12418 GiB for the land copy alone."""
+    extra = f"  transformed_share: {share}" if share is not None else ""
+    _run(_dial(tmp_path, estimate=10000, extra=extra), tmp_path)
     values = yaml.safe_load((tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8"))
     assert values["kafka"]["replicas"] == 3
-    assert values["kafka"]["storage"]["size"] == "30796Gi"
+    assert values["kafka"]["storage"]["size"] == size
+
+
+@pytest.mark.parametrize("share", ["-0.1", "1.5"])
+def test_expected_fail_a_transformed_share_outside_0_and_1_is_refused(tmp_path: Path, share: str, capsys) -> None:
+    assert _run(_dial(tmp_path, estimate=10000, extra=f"  transformed_share: {share}"), tmp_path) != 0
+    assert "sizing.transformed_share" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(("estimate", "brokers"), [(1000, 3), (90000, 9)])
