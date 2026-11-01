@@ -4,10 +4,9 @@ terraform {
   // removes the DynamoDB lock table a customer would otherwise have to create.
   //
   // 1.11 is redpanda-cloud's own floor (write-only arguments for the SCRAM
-  // password), which this root inherits the moment kafka.provider can select
-  // it -- so the constraint states 1.11 rather than the 1.10 this root alone
-  // would need.
-  required_version = ">= 1.11"
+  // password), and 1.12 is kubernetes-cluster/aws's (lifecycle.destroy on the
+  // deployment key). This root inherits both, so the constraint states 1.12.
+  required_version = ">= 1.12"
 
   required_providers {
     // The lock holds 6.68.0: 6.69.0 fails decoding a large API response ("bufio.Scanner: token too long", terraform-provider-aws#50474, #50480, #50481).

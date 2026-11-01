@@ -22,146 +22,72 @@ locals {
   cloudtrail_cloudwatch_count = var.cloudtrail.enabled && var.telemetry.sink == "cloudwatch" ? 1 : 0
 }
 
-resource "aws_s3_bucket" "cloudtrail" {
+// A persistent deployment's audit trail survives a tofu destroy rather than
+// being deleted along with the record of the destroy itself, and so does the key
+// it is encrypted under (kubernetes-cluster/aws/kms.tf). Only an ephemeral one
+// gets the fast, no-confirmation teardown, the same rule as the secret recovery
+// windows above.
+//
+// Versioning means a principal holding s3:DeleteObject cannot remove a trail
+// file with nothing to recover it from, and the noncurrent rule frees what a
+// delete leaves. Versioning alone, not Object Lock: Object Lock has to be enabled
+// at bucket creation, needs its own retention-period variable, and in compliance
+// mode blocks deletion of locked objects outright, which fights an ephemeral
+// deployment's teardown. That is a design question for whoever owns the
+// tamper-evident-audit story.
+//
+// The policy is AWS's own documented one for CloudTrail delivery: the ACL check
+// plus the write, both scoped to this one trail via aws:SourceArn so a second
+// trail elsewhere in the account cannot write here. The bucket's ARN is built
+// from its name, because the module's arn is not known before the bucket exists.
+locals {
+  cloudtrail_bucket_name = "${var.s3_bucket_prefix}${local.cloudtrail_name}"
+  cloudtrail_bucket_arn  = "arn:${data.aws_partition.current.partition}:s3:::${local.cloudtrail_bucket_name}"
+}
+
+module "cloudtrail_bucket" {
   count = local.cloudtrail_count
 
-  bucket = "${var.s3_bucket_prefix}${local.cloudtrail_name}"
+  source = "../../modules/s3-bucket"
 
-  // Same rule as the KMS deletion window (kubernetes-cluster/aws/kms.tf) and
-  // the secret recovery windows above: only an ephemeral deployment gets the
-  // fast, no-confirmation teardown. A persistent deployment's audit trail
-  // survives a tofu destroy rather than being deleted along with the record
-  // of the destroy itself.
-  force_destroy = local.ephemeral
+  name        = local.cloudtrail_bucket_name
+  retain      = !local.ephemeral
+  kms_key_arn = module.cluster.kms_key_arn
+  versioning  = true
+
+  lifecycle_rules = [
+    {
+      id                         = "expire-cloudtrail-logs"
+      expiration_days            = var.telemetry.retention_days
+      noncurrent_expiration_days = var.telemetry.retention_days
+    },
+  ]
+
+  policy_statements = [
+    {
+      Sid       = "AWSCloudTrailAclCheck20150319"
+      Effect    = "Allow"
+      Principal = { Service = "cloudtrail.amazonaws.com" }
+      Action    = "s3:GetBucketAcl"
+      Resource  = local.cloudtrail_bucket_arn
+      Condition = { StringEquals = { "aws:SourceArn" = local.cloudtrail_arn } }
+    },
+    {
+      Sid       = "AWSCloudTrailWrite20150319"
+      Effect    = "Allow"
+      Principal = { Service = "cloudtrail.amazonaws.com" }
+      Action    = "s3:PutObject"
+      Resource  = "${local.cloudtrail_bucket_arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+      Condition = {
+        StringEquals = {
+          "s3:x-amz-acl"  = "bucket-owner-full-control"
+          "aws:SourceArn" = local.cloudtrail_arn
+        }
+      }
+    },
+  ]
 
   tags = { Name = local.cloudtrail_name }
-}
-
-resource "aws_s3_bucket_public_access_block" "cloudtrail" {
-  count = local.cloudtrail_count
-
-  bucket = aws_s3_bucket.cloudtrail[0].id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-// Without this, a principal holding s3:DeleteObject on the bucket (not just
-// s3:PutObject) can remove individual trail files with nothing to recover
-// them from. Versioning alone, not Object Lock: Object Lock has to be
-// enabled at bucket creation, needs its own retention-period variable, and in
-// compliance mode blocks deletion of locked objects outright -- which fights
-// force_destroy on an ephemeral deployment's teardown. That is a deliberate
-// design question for whoever owns the tamper-evident-audit story, not a
-// same-shaped fix as this one.
-resource "aws_s3_bucket_versioning" "cloudtrail" {
-  count = local.cloudtrail_count
-
-  bucket = aws_s3_bucket.cloudtrail[0].id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
-  count = local.cloudtrail_count
-
-  bucket = aws_s3_bucket.cloudtrail[0].id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = module.cluster.kms_key_arn
-    }
-
-    bucket_key_enabled = true
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
-  count = local.cloudtrail_count
-
-  bucket = aws_s3_bucket.cloudtrail[0].id
-
-  rule {
-    id     = "expire-cloudtrail-logs"
-    status = "Enabled"
-
-    filter {}
-
-    expiration {
-      days = var.telemetry.retention_days
-    }
-
-    // Versioning above means a delete no longer removes the object -- it
-    // becomes a noncurrent version. With no rule for THOSE, a bucket with
-    // s3:DeleteObject exercised against it (accidentally or not) grows
-    // forever instead of the delete actually freeing anything.
-    noncurrent_version_expiration {
-      noncurrent_days = var.telemetry.retention_days
-    }
-  }
-}
-
-// AWS's own documented bucket policy for CloudTrail delivery: the ACL check
-// plus the write, both scoped to this one trail via aws:SourceArn so a
-// second trail elsewhere in the account cannot write here.
-data "aws_iam_policy_document" "cloudtrail_bucket" {
-  count = local.cloudtrail_count
-
-  statement {
-    sid    = "AWSCloudTrailAclCheck20150319"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["cloudtrail.amazonaws.com"]
-    }
-
-    actions   = ["s3:GetBucketAcl"]
-    resources = [aws_s3_bucket.cloudtrail[0].arn]
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceArn"
-      values   = [local.cloudtrail_arn]
-    }
-  }
-
-  statement {
-    sid    = "AWSCloudTrailWrite20150319"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["cloudtrail.amazonaws.com"]
-    }
-
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.cloudtrail[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
-
-    condition {
-      test     = "StringEquals"
-      variable = "s3:x-amz-acl"
-      values   = ["bucket-owner-full-control"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceArn"
-      values   = [local.cloudtrail_arn]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "cloudtrail" {
-  count = local.cloudtrail_count
-
-  bucket = aws_s3_bucket.cloudtrail[0].id
-  policy = data.aws_iam_policy_document.cloudtrail_bucket[0].json
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +155,7 @@ resource "aws_cloudtrail" "this" {
   count = local.cloudtrail_count
 
   name           = local.cloudtrail_name
-  s3_bucket_name = aws_s3_bucket.cloudtrail[0].id
+  s3_bucket_name = module.cloudtrail_bucket[0].bucket
 
   include_global_service_events = true
   is_multi_region_trail         = false
@@ -246,43 +172,11 @@ resource "aws_cloudtrail" "this" {
   cloud_watch_logs_role_arn  = local.cloudtrail_cloudwatch_count == 1 ? aws_iam_role.cloudtrail_cloudwatch[0].arn : null
 
   // The bucket policy has to exist before CreateTrail validates against it.
-  depends_on = [aws_s3_bucket_policy.cloudtrail]
+  depends_on = [module.cloudtrail_bucket]
 }
 
-// The resources above gained `count` for cloudtrail.enabled. Without these a
-// deployment applied before it reads its trail as one destroy and one create,
-// and the destroy takes the audit bucket's history with it. moved.tf holds the
-// edge module's move alone, which scripts/tests/test_edge_moved_blocks.py asserts.
-
-moved {
-  from = aws_s3_bucket.cloudtrail
-  to   = aws_s3_bucket.cloudtrail[0]
-}
-
-moved {
-  from = aws_s3_bucket_public_access_block.cloudtrail
-  to   = aws_s3_bucket_public_access_block.cloudtrail[0]
-}
-
-moved {
-  from = aws_s3_bucket_versioning.cloudtrail
-  to   = aws_s3_bucket_versioning.cloudtrail[0]
-}
-
-moved {
-  from = aws_s3_bucket_server_side_encryption_configuration.cloudtrail
-  to   = aws_s3_bucket_server_side_encryption_configuration.cloudtrail[0]
-}
-
-moved {
-  from = aws_s3_bucket_lifecycle_configuration.cloudtrail
-  to   = aws_s3_bucket_lifecycle_configuration.cloudtrail[0]
-}
-
-moved {
-  from = aws_s3_bucket_policy.cloudtrail
-  to   = aws_s3_bucket_policy.cloudtrail[0]
-}
+// aws_cloudtrail.this gained `count` for cloudtrail.enabled. Without this a
+// deployment applied before it reads its trail as one destroy and one create.
 
 moved {
   from = aws_cloudtrail.this

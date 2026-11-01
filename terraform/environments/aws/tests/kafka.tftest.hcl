@@ -24,6 +24,53 @@ mock_provider "aws" {
       region = "us-west-2"
     }
   }
+
+  // The provider checks an ARN's shape before it would call AWS, and a generated
+  // default is a random string, so a run that plans the msk body for real needs these.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::000000000000:role/mock"
+    }
+  }
+
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = {
+      arn = "arn:aws:secretsmanager:us-west-2:000000000000:secret:AmazonMSK_mock-aBcDeF"
+    }
+  }
+
+  mock_resource "aws_msk_configuration" {
+    defaults = {
+      arn = "arn:aws:kafka:us-west-2:000000000000:configuration/dfe-example/00000000-0000-0000-0000-000000000000-3"
+    }
+  }
+
+  mock_resource "aws_msk_cluster" {
+    defaults = {
+      arn                          = "arn:aws:kafka:us-west-2:000000000000:cluster/dfe-example/00000000-0000-0000-0000-000000000000-3"
+      cluster_uuid                 = "00000000-0000-0000-0000-000000000000-3"
+      bootstrap_brokers_sasl_scram = "b-1.mock.kafka.us-west-2.amazonaws.com:9096"
+      bootstrap_brokers_sasl_iam   = "b-1.mock.kafka.us-west-2.amazonaws.com:9098"
+    }
+  }
+
+  mock_resource "aws_cloudwatch_event_rule" {
+    defaults = {
+      arn = "arn:aws:events:us-west-2:000000000000:rule/dfe-example-msk-broker-scaler"
+    }
+  }
+
+  mock_resource "aws_lambda_function" {
+    defaults = {
+      arn = "arn:aws:lambda:us-west-2:000000000000:function:dfe-example-msk-broker-scaler"
+    }
+  }
 }
 
 mock_provider "random" {}
@@ -203,7 +250,6 @@ override_module {
     instance_id          = ""
     ssm_session_document = ""
     targets              = {}
-    session_log_bucket   = "example-toolbox-session-logs"
     admin_cidr           = ""
     security_group_id    = ""
     iam_role_name        = ""
@@ -527,7 +573,7 @@ run "msk_keeps_one_copy_of_the_credential" {
       network_attachment      = { security_group_id = "sg-00000000000000001", subnet_ids = [] }
       cluster_arn             = "arn:aws:kafka:us-west-2:000000000000:cluster/dfe-example/00000000-0000-0000-0000-000000000000-1"
       bootstrap_role_arn      = "arn:aws:iam::000000000000:role/dfe-example-kafka-bootstrap"
-      autoscaler_alarm_arn    = ""
+      autoscaler_schedule_arn = ""
       autoscaler_function_arn = ""
       broker_log_bucket       = ""
     }
@@ -590,6 +636,63 @@ run "msk_keeps_one_copy_of_the_credential" {
   assert {
     condition     = output.DFE_KAFKA_RETENTION_MS == "259200000"
     error_message = "msk hands the engine the retention its brokers were built with"
+  }
+}
+
+// The resolver sizes each broker for the count it chose, so that count is what
+// MSK builds, whatever the dial's own broker_count says. The msk body is planned
+// for real here, against the mocks above.
+run "msk_builds_the_broker_count_the_resolver_sized" {
+  command = plan
+
+  variables {
+    resolved_shapes = {
+      eks-system = {
+        instance_types = ["m7g.large"]
+        arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 40 }
+      }
+      toolbox = {
+        instance_types = ["t4g.small"]
+        arch           = "arm64"
+        root_volume    = { type = "gp3", size_gib = 20 }
+      }
+      msk-broker = {
+        instance_types = ["express.m7g.large"]
+        arch           = "arm64"
+        count          = 6
+      }
+    }
+
+    kafka = {
+      provider = "msk"
+      msk = {
+        shape_ref         = "msk-broker"
+        broker_count      = 3
+        broker_version    = "4.2.x.kraft"
+        num_partitions    = 12
+        log_retention_ms  = 259200000
+        message_max_bytes = 16777216
+        scram_username    = "dfe-kafka-user"
+        bootstrap_job     = { namespace = "strimzi", service_account = "dfe-kafka-bootstrap" }
+        autoscaling = {
+          max_brokers              = 9
+          per_broker_capacity_mb_s = 50
+          headroom                 = 1.3
+          period_seconds           = 300
+          evaluation_periods       = 3
+        }
+      }
+    }
+
+    seeds = {
+      "ui/nextauth" = { secret = "" }
+    }
+  }
+
+  assert {
+    condition     = module.kafka[0].broker_count == 6
+    error_message = "MSK builds the broker count the resolver sized the shape for, not the dial's fallback"
   }
 }
 

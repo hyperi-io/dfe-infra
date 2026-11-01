@@ -10,7 +10,7 @@ NOTES.txt tells the operator why nothing rendered, since kafka.autoscaling.enabl
 being true with no ScaledObject to show for it looks like a bug rather than the
 armed-but-idle state it is.
 */}}
-{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") $a.enabled (or .Values.kafka.landingTopics.sources $hasPrometheusTrigger) }}
+{{- if include "dfe-kafka.autoscalerRendered" . }}
 {{- $minReplicas := int (include "dfe-kafka.brokerCount" .) }}
 # The broker-count autoscaler: a KEDA ScaledObject whose scaleTargetRef is the
 # broker KafkaNodePool (kafka-nodepool.yaml), NOT the Kafka CR -- Strimzi 1.2.0

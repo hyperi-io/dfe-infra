@@ -46,7 +46,14 @@ override_module {
 
     pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
 
-    audit_log_group                  = "/aws/eks/dfe-example/cluster"
+    audit_log_group                = "/aws/eks/dfe-example/cluster"
+    clickhouse_object_store_bucket = "example-bucket"
+
+    // What the module reports on a persistent deployment; the root ignores it on an ephemeral one.
+    retained_on_destroy = {
+      "aws_kms_key.retained[0]"                                  = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+      "module.clickhouse_object_store.aws_s3_bucket.retained[0]" = "arn:aws:s3:::example-bucket"
+    }
     clickhouse_object_store_endpoint = "https://example-bucket.s3.us-west-2.amazonaws.com/dfe/"
 
     network = {
@@ -122,7 +129,6 @@ override_module {
     instance_id          = ""
     ssm_session_document = ""
     targets              = {}
-    session_log_bucket   = "example-toolbox-session-logs"
     admin_cidr           = ""
     security_group_id    = ""
     iam_role_name        = ""
@@ -490,6 +496,62 @@ run "the_engine_store_reaches_bootstrap" {
   assert {
     condition     = module.secrets.engine_name_prefix == output.DFE_ENGINE_SECRETS_PREFIX
     error_message = "the prefix bootstrap writes is the one the engine's role is fenced to"
+  }
+}
+
+// dfe-ops teardown reads this to pass -suppress-forget-errors and say what stayed.
+// The file's own tags are ephemeral, which keeps nothing.
+run "an_ephemeral_destroy_keeps_nothing" {
+  command = plan
+
+  assert {
+    condition     = output.retained_on_destroy == ""
+    error_message = "an ephemeral deployment's destroy keeps nothing, so dfe-ops tears it down exactly as before"
+  }
+}
+
+run "a_persistent_destroy_names_what_it_keeps" {
+  command = plan
+
+  variables {
+    cloudtrail = { enabled = true }
+    tags = {
+      service-name      = "dfe"
+      service-namespace = "example"
+      environment       = "test"
+      owner             = "owner@example.com"
+      cost-center       = "experiments"
+      lifecycle         = "persistent"
+      iac-source        = "dfe-infra/terraform/environments/aws"
+    }
+  }
+
+  assert {
+    condition = jsondecode(output.retained_on_destroy) == {
+      "module.cluster.aws_kms_key.retained[0]"                                  = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+      "module.cluster.module.clickhouse_object_store.aws_s3_bucket.retained[0]" = "arn:aws:s3:::example-bucket"
+      "module.cloudtrail_bucket[0].aws_s3_bucket.retained[0]"                   = module.cloudtrail_bucket[0].arn
+      "module.toolbox_session_logs.aws_s3_bucket.retained[0]"                   = module.toolbox_session_logs.arn
+    }
+    error_message = "every resource a persistent destroy forgets is named by its address and ARN: the key and the ClickHouse, CloudTrail and session-log buckets"
+  }
+
+  assert {
+    condition     = module.cloudtrail_bucket[0].retained && module.toolbox_session_logs.retained
+    error_message = "a persistent deployment keeps its CloudTrail and session-log buckets through a destroy"
+  }
+}
+
+run "an_ephemeral_deployment_destroys_its_buckets" {
+  command = plan
+
+  variables {
+    cloudtrail = { enabled = true }
+  }
+
+  assert {
+    condition     = !module.cloudtrail_bucket[0].retained && !module.toolbox_session_logs.retained
+    error_message = "an ephemeral deployment destroys its CloudTrail and session-log buckets with their objects"
   }
 }
 

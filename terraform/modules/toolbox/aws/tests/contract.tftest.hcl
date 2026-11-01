@@ -75,8 +75,7 @@ variables {
     max_duration_minutes = 60
   }
 
-  session_log_retention_days = 90
-  kms_key_arn                = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+  kms_key_arn = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
 
   // The shape the aws root computes: the API, MSK's SCRAM and IAM listeners,
   // and a ClickHouse the deployer brought. An in-cluster Service name is never
@@ -89,7 +88,8 @@ variables {
     clickhouse = { host = "clickhouse.mock.internal", port = 9440 }
   }
 
-  force_destroy_session_logs = true
+  session_log_bucket     = "dfe-contract-toolbox-session-logs"
+  session_log_bucket_arn = "arn:aws:s3:::dfe-contract-toolbox-session-logs"
 
   enabled = true
 
@@ -559,6 +559,17 @@ run "the_terminate_permission_is_self_scoped_by_needing_no_iam_at_all" {
     condition     = !strcontains(aws_iam_role_policy.session_log[0].policy, "s3:*") && strcontains(aws_iam_role_policy.session_log[0].policy, "s3:PutObject")
     error_message = "the session-log grant must be s3:PutObject only, never a wildcard action"
   }
+
+  // The root owns the bucket, so the grant and the shell document must name the one it passes in.
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.session_log[0].policy).Statement : s.Resource if s.Sid == "SessionLogWrite"][0] == "${var.session_log_bucket_arn}/*"
+    error_message = "the PutObject grant is scoped to the root's session-log bucket"
+  }
+
+  assert {
+    condition     = jsondecode(aws_ssm_document.shell[0].content).inputs.s3BucketName == var.session_log_bucket
+    error_message = "the shell document logs to the root's session-log bucket"
+  }
 }
 
 // --- no ReadOnlyAccess -- only the three narrow grants CONTRACT.md names
@@ -743,12 +754,6 @@ run "disabled_renders_no_instance_but_keeps_the_log_bucket" {
     error_message = "instance_id must be empty when disabled"
   }
 
-  assert {
-    // aws_s3_bucket.session_logs carries no count/for_each at all -- it is a
-    // single, always-present object, unlike every count-gated resource above.
-    condition     = can(aws_s3_bucket.session_logs.arn)
-    error_message = "the session-log bucket must exist even when enabled = false -- it outlives the up/down cycle it records"
-  }
 }
 
 // --- the rest state (disabled, no versions.yaml toolbox stage yet) must not
@@ -880,7 +885,6 @@ run "the_instance_role_carries_the_permissions_boundary" {
   variables {
     permissions_boundary = "arn:aws:iam::000000000000:policy/contract-boundary"
     iam_path             = "/dfe-e2e/"
-    s3_bucket_prefix     = "dfe-e2e-"
   }
 
   assert {
@@ -891,10 +895,5 @@ run "the_instance_role_carries_the_permissions_boundary" {
   assert {
     condition     = aws_iam_role.this[0].path == "/dfe-e2e/" && aws_iam_instance_profile.this[0].path == "/dfe-e2e/"
     error_message = "the toolbox's role and instance profile must sit under var.iam_path"
-  }
-
-  assert {
-    condition     = startswith(aws_s3_bucket.session_logs.bucket, "dfe-e2e-")
-    error_message = "the session-log bucket must carry var.s3_bucket_prefix"
   }
 }

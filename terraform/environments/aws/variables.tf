@@ -69,7 +69,7 @@ variable "node_pools" {
 }
 
 variable "resolved_shapes" {
-  description = "Auto-selected by the shape resolver under each shape's generation policy in shapes/compute-shapes.yaml: the newest arm64 generation in the region, or the generation the shape pins. Every node pool shape is pinned to Graviton4 (generation 8) while aws-network-policy-agent #686 leaves pod traffic timing out on Graviton5 nodes, and compute-shapes.yaml names the unpin trigger beside each pin. scripts/resolve_sizing.py reads the region's live EC2 and Pricing APIs against shapes/compute-shapes.yaml and writes this into sizing.auto.tfvars.json. Every node pool, the MSK broker, the toolbox and the tunnel forwarder take their instance type from here, and every shape with a root disk carries its root_volume type and size. One region's instance-generation availability is never another's. instance_store_policy is RAID0 on a shape whose volume profile asks for its instance store, and a managed node group of that shape assembles its NVMe the way the shape's Karpenter pool does."
+  description = "Auto-selected by the shape resolver under each shape's generation policy in shapes/compute-shapes.yaml: the newest arm64 generation in the region, or the generation the shape pins. Every node pool shape is pinned to Graviton4 (generation 8) while aws-network-policy-agent #686 leaves pod traffic timing out on Graviton5 nodes, and compute-shapes.yaml names the unpin trigger beside each pin. scripts/resolve_sizing.py reads the region's live EC2 and Pricing APIs against shapes/compute-shapes.yaml and writes this into sizing.auto.tfvars.json. Every node pool, the MSK broker, the toolbox and the tunnel forwarder take their instance type from here, and every shape with a root disk carries its root_volume type and size. One region's instance-generation availability is never another's. instance_store_policy is RAID0 on a shape whose volume profile asks for its instance store, and a managed node group of that shape assembles its NVMe the way the shape's Karpenter pool does. count is how many instances the resolver sized the shape for, set on a shape no node pool counts (msk-broker), and MSK builds that many brokers."
   type = map(object({
     instance_types = list(string)
     arch           = string
@@ -78,6 +78,7 @@ variable "resolved_shapes" {
       size_gib = number
     }))
     instance_store_policy = optional(string)
+    count                 = optional(number)
   }))
 }
 
@@ -356,7 +357,7 @@ variable "kafka" {
 // ---------------------------------------------------------------------------
 
 variable "toolbox" {
-  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop); the session-log bucket is not gated by it (CONTRACT.md). aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
+  description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop). The session-log bucket is this root's (module.toolbox_session_logs), so it is not gated by it. session_log_retention_days is that bucket's expiry, deliberately its own field and never telemetry.retention_days: a session log is evidence of human access, not service telemetry. aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
   type = object({
     enabled = bool
     aws = object({
@@ -371,6 +372,11 @@ variable "toolbox" {
     session_log_retention_days = number
     tool_versions              = optional(map(string), {})
   })
+
+  validation {
+    condition     = var.toolbox.session_log_retention_days >= 1
+    error_message = "toolbox.session_log_retention_days must be at least 1."
+  }
 
   validation {
     condition     = !var.toolbox.enabled || var.toolbox.aws.operator_role_arn != ""

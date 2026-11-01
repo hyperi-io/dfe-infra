@@ -302,6 +302,10 @@ STANDALONE_USE_CASES = ("toolbox",)
 # can (see compute-shapes.yaml's ci-burst entry).
 NOT_A_NODE_POOL = ("eks-system", "general", "msk-broker", "ci-burst")
 
+# Shapes whose instance count no node pool carries: the resolver chose the size
+# for this many instances, so build_tfvars hands tofu the count with the shape.
+COUNTED_SHAPES = ("msk-broker",)
+
 # The label every derived pool carries and the key its taint uses -- the same
 # key argocd/values/local.yaml's toleration already names.
 WORKLOAD_LABEL = "dfe.hyperi.io/workload"
@@ -530,6 +534,9 @@ class Dial:
     peak_factor: float | None
     avg_event_bytes: float | None
     compression_ratio: float | None
+    # The share of ingest a transform rewrites onto <source>_load, 0 to 1. None is
+    # the default path, which has no transform and so no _load topic.
+    transformed_share: float | None
     retention_ttl_days: float | None
     hunt_window_days: float | None
     archiver_lag_hours: float | None
@@ -571,6 +578,14 @@ def _dial_number(tree: object, *path: str) -> float | None:
         return float(raw)
     except ValueError as err:
         raise ResolveError(f"{'.'.join(path)} must be a number, got {raw!r}") from err
+
+
+def _transformed_share(tree: object) -> float | None:
+    """sizing.transformed_share, refused outside 0 to 1."""
+    share = _dial_number(tree, "sizing", "transformed_share")
+    if share is not None and not 0 <= share <= 1:
+        raise ResolveError(f"sizing.transformed_share is a share of ingest, 0 to 1, got {share:g}")
+    return share
 
 
 def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -> Dial:
@@ -639,6 +654,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         peak_factor=_dial_number(tree, "sizing", "peak_factor"),
         avg_event_bytes=_dial_number(tree, "sizing", "avg_event_bytes"),
         compression_ratio=_dial_number(tree, "sizing", "compression_ratio"),
+        transformed_share=_transformed_share(tree),
         retention_ttl_days=_dial_number(tree, "retention", "default_ttl_days"),
         hunt_window_days=_dial_number(tree, "sizing", "hunt_window_days"),
         archiver_lag_hours=_dial_number(tree, "sizing", "archiver_lag_hours"),
@@ -1007,10 +1023,17 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         broker_disk_gib = 0
     else:
         disk_headroom = take("kafka", provider, "disk_headroom")
+        # Kafka holds every event raw on <source>_land, and the share a transform
+        # rewrites a second time, enriched, on <source>_load.
+        retained_copies = 1.0
+        if dial.transformed_share:
+            retained_copies += dial.transformed_share * take("event", "enrichment_growth_factor")
         # STORAGE IS SIZED FROM THE DAILY VOLUME, not the peak: a retention
         # window of a day or more spans the whole diurnal curve, so peak times
         # retention would count the evening twice. Ingest is what the peak sizes.
-        broker_disk_mb = retention_hours * avg_mb_s * 3600 * rf_disk / brokers / disk_headroom
+        broker_disk_mb = (
+            retention_hours * avg_mb_s * retained_copies * 3600 * rf_disk / brokers / disk_headroom
+        )
         broker_disk_gib = max(
             CHART_DEFAULTS["kafka_broker_disk_gib"][0],
             math.ceil(broker_disk_mb * BYTES_PER_MB / BYTES_PER_GIB),
@@ -2751,9 +2774,10 @@ def build_tfvars(
     resolved_shapes: dict[str, object] = {}
     for use_case, choice in shaped.items():
         entry = _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
-        resolved_shapes[use_case] = _resolved_shape(
-            choice, entry if isinstance(entry, dict) else None
-        )
+        shape = _resolved_shape(choice, entry if isinstance(entry, dict) else None)
+        if use_case in COUNTED_SHAPES:
+            shape["count"] = choice.count
+        resolved_shapes[use_case] = shape
     return {"node_pools": pools, "resolved_shapes": resolved_shapes}
 
 

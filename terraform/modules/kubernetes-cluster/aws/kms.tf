@@ -1,30 +1,53 @@
 // ONE customer-managed key per deployment, not one per service. EKS envelope-
-// encrypts Kubernetes Secrets with it today; MSK's data at rest, the EBS
-// volumes behind the stateful pods and every node Karpenter boots (its
-// EC2NodeClass encrypts the root volume with the same key) take it too, so a
-// customer has one key to audit, one to rotate and one to revoke.
+// encrypts Kubernetes Secrets with it, and MSK's data at rest, the ClickHouse
+// object store and the root volume of every node Karpenter boots (its
+// EC2NodeClass) take it too, so a customer has one key to audit, one to rotate
+// and one to revoke. The stateful pods' PVCs are the exception: the gp3 class
+// bootstrap.sh creates (bootstrap/templates/storageclass-aws.yaml.tpl) uses the
+// account's default EBS key.
 
+// lifecycle.destroy only takes a constant, so tags.lifecycle picks between two
+// keys rather than setting it.
 locals {
-  // KMS's own floor (it has no zero) for an ephemeral deployment, the vendor's 30-day default for any other.
-  kms_deletion_window_days = var.tags.lifecycle == "ephemeral" ? 7 : 30
+  kms_key_ephemeral = var.tags.lifecycle == "ephemeral"
+  kms_description   = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"
+
+  // KMS's own floor (it has no zero), so a rebuild under the same name is not held up.
+  kms_deletion_window_days = 7
+
+  kms_key_arn = one(concat(aws_kms_key.ephemeral[*].arn, aws_kms_key.retained[*].arn))
+  kms_key_id  = one(concat(aws_kms_key.ephemeral[*].key_id, aws_kms_key.retained[*].key_id))
 }
 
-resource "aws_kms_key" "this" {
-  description         = "${var.name} (${var.env}) -- Kubernetes secrets, Kafka and block storage"
+resource "aws_kms_key" "ephemeral" {
+  count = local.kms_key_ephemeral ? 1 : 0
+
+  description             = local.kms_description
+  enable_key_rotation     = true
+  deletion_window_in_days = local.kms_deletion_window_days
+}
+
+// A persistent deployment's ClickHouse object store, CloudTrail and toolbox
+// session-log buckets keep their objects through a destroy (force_destroy off),
+// and every object is encrypted under this key. So destroy forgets the key
+// rather than scheduling its deletion. Deleting it is the operator's call,
+// once those buckets are gone.
+resource "aws_kms_key" "retained" {
+  count = local.kms_key_ephemeral ? 0 : 1
+
+  description         = local.kms_description
   enable_key_rotation = true
 
-  // An ephemeral deployment (tags.lifecycle) gets the floor so a rebuild under
-  // the same name is not gated on a manual wait; anything else keeps the
-  // vendor default so destroying a real deployment needs a deliberate
-  // confirmation.
-  deletion_window_in_days = local.kms_deletion_window_days
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "aws_kms_alias" "this" {
   // The alias is how an operator finds the key in the console; the key id is
   // a UUID that tells nobody anything.
   name          = "alias/${var.name}"
-  target_key_id = aws_kms_key.this.key_id
+  target_key_id = local.kms_key_id
 }
 
 // aws_kms_key_policy REPLACES the key's whole policy, so this module is the
@@ -83,7 +106,7 @@ locals {
 }
 
 resource "aws_kms_key_policy" "this" {
-  key_id = aws_kms_key.this.id
+  key_id = local.kms_key_id
 
   policy = jsonencode({
     Version   = "2012-10-17"
@@ -107,7 +130,7 @@ data "aws_iam_policy_document" "cluster_kms" {
       "kms:CreateGrant",
     ]
 
-    resources = [aws_kms_key.this.arn]
+    resources = [local.kms_key_arn]
   }
 }
 

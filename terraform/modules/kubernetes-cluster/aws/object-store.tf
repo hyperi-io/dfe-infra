@@ -26,112 +26,38 @@
 // var.name is the dial's own metadata.name -- which deployment.example.yaml
 // ships as "dfe", so an unqualified name would be a bucket anyone could have
 // taken and the first apply would fail BucketAlreadyExists.
-resource "aws_s3_bucket" "clickhouse_object_store" {
-  bucket = "${var.s3_bucket_prefix}${var.name}-clickhouse-${var.provision.account}"
-
-  // Same rule as the KMS deletion window above and the root's CloudTrail
-  // bucket: only an ephemeral deployment gets the fast, no-confirmation
-  // teardown. A persistent deployment's ClickHouse data survives a tofu
-  // destroy of everything else that shares its lifecycle tag.
-  force_destroy = var.tags.lifecycle == "ephemeral"
-
-  tags = { Name = "${var.name}-clickhouse-${var.provision.account}" }
-}
-
-resource "aws_s3_bucket_public_access_block" "clickhouse_object_store" {
-  bucket = aws_s3_bucket.clickhouse_object_store.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-// ACLs off entirely. Every object here is written by the one Pod Identity role
-// below, so an ACL could only ever carry a grant that role's own policy does
-// not express.
-resource "aws_s3_bucket_ownership_controls" "clickhouse_object_store" {
-  bucket = aws_s3_bucket.clickhouse_object_store.id
-
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-}
-
-// The one deny this bucket carries: the public-access block above refuses a
-// policy or ACL that would grant anyone access, and this refuses a request that
-// already has access but arrives over plaintext HTTP. Same shape the root's
-// CloudTrail bucket uses, built with jsonencode() for the reason the role policy
-// below gives.
-resource "aws_s3_bucket_policy" "clickhouse_object_store" {
-  bucket = aws_s3_bucket.clickhouse_object_store.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "DenyInsecureTransport"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:*"
-        Resource = [
-          aws_s3_bucket.clickhouse_object_store.arn,
-          "${aws_s3_bucket.clickhouse_object_store.arn}/*",
-        ]
-        Condition = {
-          Bool = { "aws:SecureTransport" = "false" }
-        }
-      },
-    ]
-  })
-}
-
-// SSE-KMS on the deployment's own key -- the same key EKS secrets and MSK take,
-// so ClickHouse's object data adds no second key to audit or rotate. The EBS
-// volumes are NOT on it: the gp3 class bootstrap.sh creates
-// (bootstrap/templates/storageclass-aws.yaml.tpl) encrypts with the account's
+//
+// A persistent deployment's ClickHouse data survives a tofu destroy, and so does
+// the key it is encrypted under (kms.tf). SSE-KMS on that key adds no second key
+// to audit or rotate. The EBS volumes are NOT on it: the gp3 class bootstrap.sh
+// creates (bootstrap/templates/storageclass-aws.yaml.tpl) uses the account's
 // default EBS key, because naming this one also means granting the
 // aws-ebs-csi-driver add-on's role kms:CreateGrant over it.
-resource "aws_s3_bucket_server_side_encryption_configuration" "clickhouse_object_store" {
-  bucket = aws_s3_bucket.clickhouse_object_store.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.this.arn
-    }
-
-    bucket_key_enabled = true
-  }
-}
-
-// No versioning: unlike CloudTrail's audit trail, a MergeTree part deleted by
-// ClickHouse itself (a merge, a TTL expiry) is meant to go -- keeping the
-// noncurrent version around would grow the bucket for every merge cycle rather
-// than protecting anything the engine did not already choose to remove.
-
-// The cache in front of this bucket (objectStore.cache) is disposable by
-// design -- the bucket is what has to survive a failed multipart PUT, not the
-// upload itself, so ClickHouse retrying an insert cannot leave the bucket
-// silently growing with parts nothing will ever complete.
+//
+// No versioning: a MergeTree part ClickHouse deletes itself (a merge, a TTL
+// expiry) is meant to go, and a noncurrent copy would grow the bucket every merge.
 locals {
+  clickhouse_object_store_name = "${var.s3_bucket_prefix}${var.name}-clickhouse-${var.provision.account}"
+
   // A part this old belongs to an insert ClickHouse has long since retried or abandoned, never to data it keeps.
   multipart_abort_days = 7
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "clickhouse_object_store" {
-  bucket = aws_s3_bucket.clickhouse_object_store.id
+module "clickhouse_object_store" {
+  source = "../../s3-bucket"
 
-  rule {
-    id     = "abort-incomplete-multipart-uploads"
-    status = "Enabled"
+  name        = local.clickhouse_object_store_name
+  retain      = !local.kms_key_ephemeral
+  kms_key_arn = local.kms_key_arn
+  versioning  = false
 
-    filter {}
+  // The cache in front of the bucket (objectStore.cache) is disposable, so a
+  // killed insert's multipart PUT is aborted rather than left growing the bucket.
+  lifecycle_rules = [
+    { id = "abort-incomplete-multipart-uploads", abort_multipart_days = local.multipart_abort_days },
+  ]
 
-    abort_incomplete_multipart_upload {
-      days_after_initiation = local.multipart_abort_days
-    }
-  }
+  tags = { Name = "${var.name}-clickhouse-${var.provision.account}" }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +88,7 @@ locals {
       Sid      = "ListBucket"
       Effect   = "Allow"
       Action   = "s3:ListBucket"
-      Resource = aws_s3_bucket.clickhouse_object_store.arn
+      Resource = module.clickhouse_object_store.arn
     },
     {
       // Read and write parts, and clean up a multipart upload the server
@@ -176,7 +102,7 @@ locals {
         "s3:DeleteObject",
         "s3:AbortMultipartUpload",
       ]
-      Resource = "${aws_s3_bucket.clickhouse_object_store.arn}/*"
+      Resource = "${module.clickhouse_object_store.arn}/*"
     },
     {
       // GenerateDataKey and Decrypt are what S3 itself requires of the
@@ -190,7 +116,7 @@ locals {
         "kms:Decrypt",
         "kms:DescribeKey",
       ]
-      Resource = aws_kms_key.this.arn
+      Resource = local.kms_key_arn
       // The same key wraps EKS Secrets and MSK's data at rest, and the key
       // policy (kms.tf) delegates to IAM, so an unconditioned grant here would
       // let this pod decrypt any ciphertext under it. ViaService confines the

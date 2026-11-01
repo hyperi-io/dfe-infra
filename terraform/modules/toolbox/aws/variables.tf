@@ -1,9 +1,8 @@
 // This module is ALWAYS instantiated by the aws root (no `count` on the
 // module block) -- `enabled` gates every toggleable resource INSIDE it via a
-// per-resource `count`. The one exception is the session-log S3 bucket, which
-// carries no such gate at all and exists whenever the module does: it is the
-// deployment's record of human access, and `bastion down` must not erase the
-// evidence of the session it is closing out. See CONTRACT.md.
+// per-resource `count`. The session-log bucket is not here at all: the aws root
+// owns it, so `bastion down` (a destroy targeted at this module) cannot erase
+// the evidence of the session it is closing out. See CONTRACT.md.
 
 variable "name" {
   description = "Name prefix for every resource this module creates -- the tf-naming canonical_name for the toolbox component."
@@ -16,7 +15,7 @@ variable "env" {
 }
 
 variable "enabled" {
-  description = "Whether the toolbox INSTANCE exists. false (the `bastion down` state) tears down the instance, its security group, its instance profile and both kinds of Session document -- never merely stops the instance. The session-log bucket is NOT gated by this: it outlives every up/down cycle so a session's log is not deleted by the same call that closes the session."
+  description = "Whether the toolbox INSTANCE exists. false (the `bastion down` state) tears down the instance, its security group, its instance profile and both kinds of Session document -- never merely stops the instance. The session-log bucket is the root's, so it outlives every up/down cycle."
   type        = bool
 }
 
@@ -138,15 +137,6 @@ variable "session" {
   }
 }
 
-variable "session_log_retention_days" {
-  description = "S3 lifecycle expiry on the session-log bucket, from tfvars (the dial's toolbox.session_log_retention_days). Deliberately its OWN field, never telemetry.retention_days: a session log is evidence of human access to a customer's private data plane, not service telemetry, and the telemetry window is far too short for it."
-  type        = number
-
-  validation {
-    condition     = var.session_log_retention_days >= 1
-    error_message = "session_log_retention_days must be at least 1."
-  }
-}
 
 variable "kms_key_arn" {
   description = "The deployment's customer-managed key (kubernetes-cluster/aws's kms_key_arn output). Used for the session-log bucket's SSE-KMS and the root volume's encryption. This module NEVER writes to the key's own resource policy: aws_kms_key_policy replaces the whole policy and the cluster module is its one owner (kms.tf). The key's account-root delegation statement is what makes a plain IAM role policy on the instance role sufficient for the bucket grant -- no key_policy_grants entry is needed either, unlike the CloudTrail/MSK-broker-log grants, which exist only because THOSE callers are AWS service principals with no IAM identity of their own; this module's caller is the instance's own IAM role."
@@ -219,10 +209,6 @@ variable "eks_cluster_security_group_id" {
   default     = ""
 }
 
-variable "force_destroy_session_logs" {
-  description = "Whether the session-log bucket may be destroyed while it still holds objects. Follows the ROOT's tags.lifecycle the same way cloudtrail.tf's bucket does (main.tf's local.ephemeral) -- an ephemeral tyre-kick deployment is rebuilt under the same name and needs the fast teardown; a persistent one keeps the vendor default so destroying real session evidence needs a deliberate confirmation."
-  type        = bool
-}
 
 variable "tags" {
   description = "The governance tag set. Merged with dfe.hyperi.io/component = toolbox on every resource this module tags -- the key every IAM policy example in CONTRACT.md scopes ssm:StartSession against, so an unconditioned grant elsewhere in the account cannot reach this instance and this instance's own tag cannot be renamed without also being the thing every relevant condition matches on."
@@ -241,8 +227,13 @@ variable "iam_path" {
   default     = null
 }
 
-variable "s3_bucket_prefix" {
-  description = "Prepended to the name of every bucket this module creates. Empty by default; an account that scopes S3 writes to a name prefix sets it."
+
+variable "session_log_bucket" {
+  description = "The S3 bucket every shell session's transcript lands in. The aws root owns it, outside this module, so `bastion down` never deletes the log of the session it closes."
   type        = string
-  default     = ""
+}
+
+variable "session_log_bucket_arn" {
+  description = "That bucket's ARN, which the instance role's PutObject grant is scoped to."
+  type        = string
 }

@@ -309,8 +309,10 @@ module "kafka" {
 
   broker_shape_ref = var.kafka.msk.shape_ref
   resolved_shapes  = var.resolved_shapes
-  broker_count     = var.kafka.msk.broker_count
-  kafka_version    = var.kafka.msk.broker_version
+  // The resolver chose the broker size for its own count, so that count wins. The
+  // dial's broker_count is for a hand-written shape that carries none.
+  broker_count  = coalesce(try(var.resolved_shapes[var.kafka.msk.shape_ref].count, null), var.kafka.msk.broker_count)
+  kafka_version = var.kafka.msk.broker_version
 
   num_partitions    = var.kafka.msk.num_partitions
   log_retention_ms  = var.kafka.msk.log_retention_ms
@@ -618,6 +620,30 @@ locals {
   toolbox_shape = var.resolved_shapes[var.toolbox.aws.shape_ref]
 }
 
+// Every shell session's transcript: evidence of human access to the data plane,
+// not service telemetry, so it keeps its own retention and outlives every
+// toolbox up/down cycle. It sits here, outside module.toolbox, because
+// `bastion down` is a destroy targeted at that module. A persistent
+// deployment's destroy keeps it, the way it keeps the CloudTrail bucket.
+module "toolbox_session_logs" {
+  source = "../../modules/s3-bucket"
+
+  name        = "${var.s3_bucket_prefix}${module.toolbox_naming.canonical_name}-toolbox-session-logs"
+  retain      = !local.ephemeral
+  kms_key_arn = module.cluster.kms_key_arn
+  versioning  = true
+
+  lifecycle_rules = [
+    {
+      id                         = "expire-session-logs"
+      expiration_days            = var.toolbox.session_log_retention_days
+      noncurrent_expiration_days = var.toolbox.session_log_retention_days
+    },
+  ]
+
+  tags = merge(local.tags, { Name = "${module.toolbox_naming.canonical_name}-toolbox-session-logs" })
+}
+
 module "toolbox" {
   source = "../../modules/toolbox/aws"
 
@@ -638,8 +664,9 @@ module "toolbox" {
   ttl_minutes   = var.toolbox.ttl_minutes
   tool_versions = var.toolbox.tool_versions
 
-  session                    = var.toolbox.session
-  session_log_retention_days = var.toolbox.session_log_retention_days
+  session                = var.toolbox.session
+  session_log_bucket     = module.toolbox_session_logs.bucket
+  session_log_bucket_arn = module.toolbox_session_logs.arn
 
   kms_key_arn    = module.cluster.kms_key_arn
   targets        = local.toolbox_targets
@@ -667,14 +694,8 @@ module "toolbox" {
   // away again on `bastion down`.
   eks_cluster_security_group_id = module.cluster.cluster_security_group_id
 
-  // Follows tags.lifecycle the same way cloudtrail.tf's bucket does: an
-  // ephemeral tyre-kick deployment is rebuilt under the same name and needs
-  // the fast teardown; a persistent one keeps the safer default.
-  force_destroy_session_logs = local.ephemeral
-
   permissions_boundary = var.permissions_boundary
   iam_path             = var.iam_path
-  s3_bucket_prefix     = var.s3_bucket_prefix
 
   tags = local.tags
 }

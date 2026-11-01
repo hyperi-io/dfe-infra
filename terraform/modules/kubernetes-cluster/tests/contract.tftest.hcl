@@ -344,6 +344,68 @@ run "aws_kms_key_policy_with_no_grants_is_root_only" {
   }
 }
 
+// A persistent deployment's object-store, CloudTrail and session-log buckets
+// survive a destroy, so the key their objects are encrypted under has to as
+// well. scripts/tests/test_retained_on_destroy.py reads the lifecycle itself,
+// which is not a resource attribute.
+run "aws_kms_key_is_retained_for_a_persistent_deployment" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = length(aws_kms_key.retained) == 1 && length(aws_kms_key.ephemeral) == 0
+    error_message = "a deployment whose tags.lifecycle is not \"ephemeral\" must take the retained key"
+  }
+
+  assert {
+    condition     = output.kms_key_arn == aws_kms_key.retained[0].arn && aws_eks_cluster.this.encryption_config[0].provider[0].key_arn == aws_kms_key.retained[0].arn
+    error_message = "the output and the cluster's secrets encryption must both use the retained key"
+  }
+
+  assert {
+    condition     = module.clickhouse_object_store.kms_key_arn == aws_kms_key.retained[0].arn
+    error_message = "the retained object-store bucket must be encrypted under the retained key"
+  }
+}
+
+run "aws_kms_key_goes_with_an_ephemeral_deployment" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    tags = {
+      "service-name"      = "dfe"
+      "service-namespace" = "hyperi"
+      "environment"       = "test"
+      "owner"             = "owner@example.com"
+      "cost-center"       = "experiments"
+      "lifecycle"         = "ephemeral"
+      "iac-source"        = "dfe-infra/terraform/modules/kubernetes-cluster/tests"
+    }
+  }
+
+  assert {
+    condition     = length(aws_kms_key.ephemeral) == 1 && length(aws_kms_key.retained) == 0
+    error_message = "tags.lifecycle = ephemeral must take the key a destroy schedules for deletion"
+  }
+
+  assert {
+    condition     = aws_kms_key.ephemeral[0].deletion_window_in_days == 7
+    error_message = "an ephemeral deployment's key must take KMS's 7-day floor, so a rebuild under the same name is not held up"
+  }
+
+  assert {
+    condition     = output.kms_key_arn == aws_kms_key.ephemeral[0].arn
+    error_message = "kms_key_arn must be the ephemeral key"
+  }
+}
+
 run "aws_network_object" {
   command = plan
 
@@ -806,7 +868,7 @@ run "aws_karpenter_controller_can_use_the_deployment_key_for_ebs_encryption" {
 
   assert {
     condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Resource == aws_kms_key.this.arn
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Resource == output.kms_key_arn
     ])
     error_message = "both statements must be scoped to this deployment's own key, never a wildcard resource"
   }
@@ -1139,121 +1201,47 @@ run "aws_toolbox_operator_gets_read_only_access_entry" {
   }
 }
 
-// The ClickHouse object-store bucket: encrypted, unreachable from the
-// internet, and torn down according to the same lifecycle dial as the KMS
-// deletion window above -- never a fixed answer either way.
-run "aws_clickhouse_object_store_bucket_is_locked_down" {
+// The ClickHouse object-store bucket: a legal, account-qualified name, and
+// kept or destroyed by the same lifecycle dial as the KMS key above. Privacy,
+// encryption and the multipart rule are terraform/modules/s3-bucket's contract.
+run "aws_clickhouse_object_store_bucket_is_retained_when_persistent" {
   command = plan
 
   module {
     source = "./aws"
   }
 
-  assert {
-    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.block_public_acls == true
-    error_message = "the object-store bucket must block public ACLs"
-  }
-
-  assert {
-    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.block_public_policy == true
-    error_message = "the object-store bucket must block public bucket policies"
-  }
-
-  assert {
-    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.ignore_public_acls == true
-    error_message = "the object-store bucket must ignore any public ACL that somehow gets set"
-  }
-
-  assert {
-    condition     = aws_s3_bucket_public_access_block.clickhouse_object_store.restrict_public_buckets == true
-    error_message = "the object-store bucket must restrict public bucket policies"
-  }
-
-  assert {
-    // rule and apply_server_side_encryption_by_default are both sets of
-    // objects (no addressable index), so one() is what reaches inside.
-    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).sse_algorithm == "aws:kms"
-    error_message = "the object-store bucket must be SSE-KMS, not SSE-S3"
-  }
-
-  assert {
-    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == aws_kms_key.this.arn
-    error_message = "the object-store bucket must be encrypted with the deployment's own key -- the same one EKS secrets and MSK use"
-  }
-
-  assert {
-    condition     = one(aws_s3_bucket_ownership_controls.clickhouse_object_store.rule).object_ownership == "BucketOwnerEnforced"
-    error_message = "ACLs must be disabled outright, not left to whatever the account default happens to be"
-  }
-
-  // The bucket policy exists to REFUSE, never to grant: a public-access block
-  // cannot stop a request that already has access arriving over plaintext.
-  assert {
-    condition = alltrue([
-      for s in jsondecode(aws_s3_bucket_policy.clickhouse_object_store.policy).Statement : s.Effect == "Deny"
-    ])
-    error_message = "every statement on the object-store bucket policy must be a Deny -- this policy grants nothing"
-  }
-
-  assert {
-    condition = [
-      for s in jsondecode(aws_s3_bucket_policy.clickhouse_object_store.policy).Statement :
-      s.Condition.Bool["aws:SecureTransport"] if s.Sid == "DenyInsecureTransport"
-    ][0] == "false"
-    error_message = "the bucket must refuse a request that arrives over plaintext HTTP"
-  }
-
-  // No versioning assertion here: this module declares no
-  // aws_s3_bucket_versioning resource for this bucket at all (unlike
-  // cloudtrail.tf's own bucket in the root), so there is nothing to reference
-  // -- the absence itself is the contract (object-store.tf, "No versioning").
-
-  assert {
-    condition     = aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].abort_incomplete_multipart_upload[0].days_after_initiation == 7
-    error_message = "an abandoned multipart upload must be aborted after 7 days, or a killed insert leaves the bucket growing forever"
-  }
-
-  // A Disabled rule, or one with no filter block, is present and inert -- the
-  // days above would still assert green while nothing was ever aborted.
-  assert {
-    condition     = aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].status == "Enabled"
-    error_message = "the abort rule must be Enabled, not merely declared"
-  }
-
-  assert {
-    condition     = length(aws_s3_bucket_lifecycle_configuration.clickhouse_object_store.rule[0].filter) == 1
-    error_message = "the abort rule needs its empty filter block, or it matches no object at all"
-  }
-
   // S3's namespace is global and var.name comes from the dial, so the name has
   // to be both unique and legal before the apply finds out.
   assert {
-    condition     = length(aws_s3_bucket.clickhouse_object_store.bucket) <= 63 && can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", aws_s3_bucket.clickhouse_object_store.bucket))
+    condition     = length(output.clickhouse_object_store_bucket) <= 63 && can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", output.clickhouse_object_store_bucket))
     error_message = "the bucket name must be a legal S3 name -- lowercase, 3-63 characters, no underscore"
   }
 
   assert {
-    condition     = strcontains(aws_s3_bucket.clickhouse_object_store.bucket, var.provision.account)
+    condition     = strcontains(output.clickhouse_object_store_bucket, var.provision.account)
     error_message = "the bucket name must carry the account id, or two deployments of the same dial name collide in S3's global namespace"
   }
 
+  // The default test tags carry lifecycle = "throwaway", not "ephemeral".
   assert {
-    condition     = aws_s3_bucket.clickhouse_object_store.tags.Name == aws_s3_bucket.clickhouse_object_store.bucket
-    error_message = "the Name tag must be the bucket's own name, not a second spelling of it"
+    condition     = module.clickhouse_object_store.retained == true
+    error_message = "a deployment whose tags.lifecycle is not \"ephemeral\" keeps its ClickHouse data through a destroy"
   }
 
-  // The default test tags carry lifecycle = "throwaway", not "ephemeral" --
-  // the persistent branch, so force_destroy must be off.
   assert {
-    condition     = aws_s3_bucket.clickhouse_object_store.force_destroy == false
-    error_message = "a deployment whose tags.lifecycle is not \"ephemeral\" must keep the safer default and refuse force_destroy"
+    condition = output.retained_on_destroy == tomap({
+      "aws_kms_key.retained[0]"                                  = output.kms_key_arn
+      "module.clickhouse_object_store.aws_s3_bucket.retained[0]" = module.clickhouse_object_store.arn
+    })
+    error_message = "retained_on_destroy names the key and the bucket a persistent destroy forgets, each with its ARN"
   }
 }
 
 // An ephemeral (tyre-kick) deployment gets the fast, no-confirmation teardown
-// on this bucket too -- the same dial the KMS deletion window and the root's
-// CloudTrail/toolbox buckets already follow.
-run "aws_clickhouse_object_store_force_destroy_follows_lifecycle" {
+// on this bucket too -- the same dial the KMS key and the root's
+// CloudTrail/toolbox buckets follow.
+run "aws_clickhouse_object_store_goes_with_an_ephemeral_deployment" {
   command = plan
 
   module {
@@ -1273,8 +1261,8 @@ run "aws_clickhouse_object_store_force_destroy_follows_lifecycle" {
   }
 
   assert {
-    condition     = aws_s3_bucket.clickhouse_object_store.force_destroy == true
-    error_message = "tags.lifecycle = ephemeral must force_destroy the object-store bucket, matching the KMS deletion window's own rule"
+    condition     = module.clickhouse_object_store.retained == false && length(output.retained_on_destroy) == 0
+    error_message = "tags.lifecycle = ephemeral destroys the object-store bucket and keeps nothing"
   }
 }
 
@@ -1289,17 +1277,17 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ListBucket"][0] == aws_s3_bucket.clickhouse_object_store.arn
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ListBucket"][0] == module.clickhouse_object_store.arn
     error_message = "ListBucket must be scoped to this bucket's own ARN"
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ReadWriteObjects"][0] == "${aws_s3_bucket.clickhouse_object_store.arn}/*"
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "ReadWriteObjects"][0] == "${module.clickhouse_object_store.arn}/*"
     error_message = "object read/write must be scoped to this bucket's own objects"
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "UseTheDeploymentKey"][0] == aws_kms_key.this.arn
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "UseTheDeploymentKey"][0] == output.kms_key_arn
     error_message = "the KMS grant must be scoped to the deployment's own key"
   }
 
@@ -1322,9 +1310,9 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
       for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement :
       contains(
         [
-          aws_s3_bucket.clickhouse_object_store.arn,
-          "${aws_s3_bucket.clickhouse_object_store.arn}/*",
-          aws_kms_key.this.arn,
+          module.clickhouse_object_store.arn,
+          "${module.clickhouse_object_store.arn}/*",
+          output.kms_key_arn,
         ],
         s.Resource
       )
@@ -1480,7 +1468,7 @@ run "aws_guardrail_inputs_reach_every_role_profile_and_bucket" {
   }
 
   assert {
-    condition     = startswith(aws_s3_bucket.clickhouse_object_store.bucket, "dfe-e2e-")
+    condition     = startswith(output.clickhouse_object_store_bucket, "dfe-e2e-")
     error_message = "the object-store bucket must carry var.s3_bucket_prefix"
   }
 }

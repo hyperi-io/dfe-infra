@@ -279,16 +279,18 @@ spec:
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
-      # KEDA owns the broker KafkaNodePool's replica count (kafka-autoscaler.yaml),
-      # so selfHeal must not revert a scale-out as drift -- the same
-      # ignoreDifferences + RespectIgnoreDifferences=true pattern layer2-apps.yaml
-      # uses for Deployment replicas. Inert for every other app in this
-      # ApplicationSet's matrix: none of them render a KafkaNodePool.
+      # KEDA owns the broker KafkaNodePool's replica count when the kafka chart
+      # renders its ScaledObject, and the chart then labels that pool
+      # dfe.hyperi.io/replicas-owner=keda. selfHeal must not revert a scale-out as
+      # drift there -- the same ignoreDifferences + RespectIgnoreDifferences=true
+      # pattern layer2-apps.yaml uses for Deployment replicas. Any other pool (the
+      # controller pool, a broker pool with no trigger) converges to its declared
+      # replicas. Inert for every other app in this matrix: none render a KafkaNodePool.
       ignoreDifferences:
         - group: kafka.strimzi.io
           kind: KafkaNodePool
-          jsonPointers:
-            - /spec/replicas
+          jqPathExpressions:
+            - 'select(.metadata.labels["dfe.hyperi.io/replicas-owner"] == "keda") | .spec.replicas'
       syncPolicy:
         automated:
           prune: true

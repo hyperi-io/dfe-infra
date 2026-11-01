@@ -20,7 +20,7 @@ Every dial field, sizing lock and backend detail is in [aws-configuration.md](aw
 
 You need:
 
-- OpenTofu 1.10 or later, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3.
+- OpenTofu 1.12 or later, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3.
 - A shell signed in to the target account. `aws sts get-caller-identity` must print the account the dial names, and the plan refuses if it does not.
 - The state bucket, once per account. In `terraform/environments/aws-state`, copy `example.tfvars.json` to `state.auto.tfvars.json`, set the account, region, name, env, `bucket_prefix` and tags, then `tofu init && tofu apply`. Its `state_bucket` output goes in the dial's `state.bucket`, beside a `state.key` no other deployment shares.
 - A public DNS zone you control, if you want public hostnames. The apply creates the Route 53 zone, and delegating to it from the parent is yours to do.

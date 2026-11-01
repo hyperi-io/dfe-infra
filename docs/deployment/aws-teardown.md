@@ -17,12 +17,21 @@ Provisioning: [aws.md](aws.md). Running the cluster:
 
 - `tags.lifecycle: ephemeral` (tyre-kick, provision-test-destroy) is the one
   governance tag that changes what gets built, not only what gets labelled.
-  It sets the CloudTrail bucket's `force_destroy`, the secret recovery
-  windows on both the deployment's own secrets and the Kafka SCRAM
-  credential (0 days instead of 30), and redpanda-cloud's `allow_deletion`
-  (true instead of the vendor's own default refusal) -- so a tyre-kick
-  deployment tears down cleanly and anything else keeps the vendor's normal
-  deletion protection, without a per-resource flag to remember. Every `dfe-ops`
+  It sets the secret recovery windows on both the deployment's own secrets
+  and the Kafka SCRAM credential (0 days instead of 30), and redpanda-cloud's
+  `allow_deletion` (true instead of the vendor's own default refusal) -- so a
+  tyre-kick deployment tears down cleanly and anything else keeps the vendor's
+  normal deletion protection, without a per-resource flag to remember. It also
+  decides what a destroy keeps. An ephemeral deployment's KMS key is scheduled
+  for deletion (7 days) and its ClickHouse object-store, CloudTrail and
+  session-log buckets go with their objects. Any other deployment keeps the key
+  and all three buckets, each with its policy, encryption and lifecycle, because
+  tofu forgets them rather than deleting them. A bare `tofu destroy` then ends
+  with `Destroy was successful but left behind forgotten instances` unless you
+  pass `-suppress-forget-errors`. `dfe-ops teardown --with-terraform` passes it
+  on a persistent deployment only, read from the root's `retained_on_destroy`
+  output, and its last lines name every address it kept. Delete the buckets once
+  nothing needs what they hold, then schedule the key's deletion. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
   resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
   never a rate -- plus how long the cluster has been up, from the root's
@@ -53,6 +62,36 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   `REDPANDA_CLIENT_SECRET` or fails. Until the root stops requiring it, either
   export those two with any value for the run, or destroy by target. Do NOT
   reach for `-exclude`: it cannot be combined with `-target`.
+
+## Rebuilding a persistent deployment under the same name
+
+A persistent destroy leaves the key and the three buckets in the account, so an
+apply under the same dial name fails creating them (`BucketAlreadyOwnedByYou`).
+Import them first, from `terraform/environments/aws`, so the new deployment
+takes over the kept data rather than starting beside it. The key and each bucket
+are in the `kept` lines the teardown printed: the key's ID is its ARN after
+`key/`, and a bucket's name is its ARN after `arn:aws:s3:::`.
+
+| Address | Import ID |
+|---|---|
+| `module.cluster.aws_kms_key.retained[0]` | the key's ID |
+| `module.cluster.module.clickhouse_object_store.<resource>.retained[0]` | the ClickHouse bucket's name |
+| `module.cloudtrail_bucket[0].<resource>.retained[0]` | the CloudTrail bucket's name (only with `cloudtrail.enabled`) |
+| `module.toolbox_session_logs.<resource>.retained[0]` | the session-log bucket's name |
+
+`<resource>` is each of `aws_s3_bucket`, `aws_s3_bucket_public_access_block`,
+`aws_s3_bucket_ownership_controls`, `aws_s3_bucket_policy`,
+`aws_s3_bucket_server_side_encryption_configuration` and
+`aws_s3_bucket_lifecycle_configuration`, all imported by the bucket's name, plus
+`aws_s3_bucket_versioning` on the CloudTrail and session-log buckets. For example:
+
+```bash
+tofu import 'module.cluster.aws_kms_key.retained[0]' 00000000-0000-0000-0000-000000000000
+tofu import 'module.toolbox_session_logs.aws_s3_bucket.retained[0]' dfe-toolbox-session-logs
+```
+
+Then `tofu plan` shows the imported resources unchanged and everything else to
+create. The key's alias is recreated, pointing at the imported key.
 
 ## Sweeping what is left
 

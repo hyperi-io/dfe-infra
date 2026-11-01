@@ -212,7 +212,7 @@ resource "aws_iam_role_policy" "session_log" {
         Sid      = "SessionLogWrite"
         Effect   = "Allow"
         Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.session_logs.arn}/*"
+        Resource = "${var.session_log_bucket_arn}/*"
       },
     ]
   })
@@ -322,67 +322,6 @@ resource "aws_instance" "this" {
 }
 
 // ---------------------------------------------------------------------------
-// Session logs -- NOT gated by `enabled`. Evidence of human access to a
-// customer's private data plane, not service telemetry (CONTRACT.md #18), so
-// it outlives every up/down cycle and carries its own retention -- never
-// telemetry.retention_days. No Object Lock: this bucket is torn down with the
-// deployment, and Object Lock fights that the same way it does on every other
-// log bucket in this repo.
-// ---------------------------------------------------------------------------
-
-resource "aws_s3_bucket" "session_logs" {
-  bucket        = "${var.s3_bucket_prefix}${var.name}-toolbox-session-logs"
-  force_destroy = var.force_destroy_session_logs
-
-  tags = merge(var.tags, { Name = "${var.name}-toolbox-session-logs" })
-}
-
-resource "aws_s3_bucket_public_access_block" "session_logs" {
-  bucket = aws_s3_bucket.session_logs.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "session_logs" {
-  bucket = aws_s3_bucket.session_logs.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = var.kms_key_arn
-    }
-
-    bucket_key_enabled = true
-  }
-}
-
-resource "aws_s3_bucket_versioning" "session_logs" {
-  bucket = aws_s3_bucket.session_logs.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "session_logs" {
-  bucket = aws_s3_bucket.session_logs.id
-
-  rule {
-    id     = "expire-session-logs"
-    status = "Enabled"
-
-    filter {}
-
-    expiration {
-      days = var.session_log_retention_days
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Session documents -- ONE per purpose. The shell document carries the
 // account default's job (idle timeout, max duration, S3 logging, non-root
 // runAs) so a caller never has to fall back to SSM-SessionManagerRunShell to
@@ -402,7 +341,7 @@ resource "aws_ssm_document" "shell" {
     description   = "Interactive shell on the ${var.name} (${var.env}) toolbox -- fully logged, unlike a forward session (CONTRACT.md #6)."
     sessionType   = "Standard_Stream"
     inputs = {
-      s3BucketName                = aws_s3_bucket.session_logs.bucket
+      s3BucketName                = var.session_log_bucket
       s3KeyPrefix                 = "shell/"
       s3EncryptionEnabled         = true
       cloudWatchLogGroupName      = ""
