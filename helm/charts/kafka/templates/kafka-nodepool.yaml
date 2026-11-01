@@ -17,6 +17,11 @@ metadata:
   labels:
     strimzi.io/cluster: {{ .Values.kafka.name }}
     {{- include "dfe-common.labels" . | nindent 4 }}
+    {{- if include "dfe-kafka.autoscalerRendered" . }}
+    # KEDA scales this pool (kafka-autoscaler.yaml), so layer2-data leaves its
+    # spec.replicas alone. Without the ScaledObject, replicas converge as declared.
+    dfe.hyperi.io/replicas-owner: keda
+    {{- end }}
 spec:
   replicas: {{ $replicas }}
   roles:

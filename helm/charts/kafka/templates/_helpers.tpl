@@ -224,6 +224,20 @@ is out of scope for this change).
 {{- end }}
 
 {{/*
+dfe-kafka.autoscalerRendered -- "true" when kafka-autoscaler.yaml renders its
+ScaledObject, empty otherwise. ONE definition: the autoscaler renders on it, and
+the broker pool carries the dfe.hyperi.io/replicas-owner label on it, which is
+the only pool layer2-data then leaves spec.replicas to KEDA on.
+*/}}
+{{- define "dfe-kafka.autoscalerRendered" -}}
+{{- $a := .Values.kafka.autoscaling -}}
+{{- $hasPrometheusTrigger := and $a.metrics.usePrometheus $a.metrics.prometheusUrl -}}
+{{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") $a.enabled (or .Values.kafka.landingTopics.sources $hasPrometheusTrigger) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-kafka.bootstrapServers -- the in-namespace address of Strimzi's own
 bootstrap Service for the plain (SASL/SCRAM, non-TLS) listener. Strimzi names
 it <cluster>-kafka-bootstrap (kafka.yaml's "plain" listener, port 9092) --

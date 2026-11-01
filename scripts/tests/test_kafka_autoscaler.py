@@ -159,12 +159,58 @@ def test_the_prometheus_trigger_alone_is_enough_to_render() -> None:
            "no KEDA ScaledObject was rendered" not in notes, notes)
 
 
+REPLICAS_OWNER = "dfe.hyperi.io/replicas-owner"
+APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
+
+
+def _pool_owners(docs: list[dict]) -> dict[str, str | None]:
+    """Each KafkaNodePool's replicas-owner label, by pool name."""
+    return {
+        d["metadata"]["name"]: (d["metadata"].get("labels") or {}).get(REPLICAS_OWNER)
+        for d in docs if d.get("kind") == "KafkaNodePool"
+    }
+
+
+def test_only_the_pool_keda_scales_is_marked_as_keda_owned() -> None:
+    """layer2-data ignores spec.replicas only on a pool carrying the label, so a pool
+    KEDA does not scale (no trigger, or the controller pool) still converges."""
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+        fh.write("kafka:\n  controllerPool:\n    enabled: true\n")
+        split = Path(fh.name)
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+        fh.write("kafka:\n  landingTopics:\n    sources:\n      - name: okta\n")
+        source = Path(fh.name)
+    idle = _pool_owners(render(split))
+    scaled = _pool_owners(render(split, source))
+    split.unlink()
+    source.unlink()
+    expect("no pool is KEDA-owned while no ScaledObject renders",
+           set(idle.values()) == {None}, idle)
+    expect("the broker pool is KEDA-owned once the ScaledObject renders",
+           scaled.get("dfe-kafka-pool") == "keda", scaled)
+    expect("the controller pool never is", scaled.get("dfe-kafka-controller") is None, scaled)
+
+
+def test_the_appset_ignores_replicas_only_on_a_keda_owned_pool() -> None:
+    spec = yaml.safe_load(APPSET.read_text(encoding="utf-8"))["spec"]["template"]["spec"]
+    rules = [d for d in spec["ignoreDifferences"] if d.get("kind") == "KafkaNodePool"]
+    expect("one KafkaNodePool rule", len(rules) == 1, rules)
+    rule = rules[0] if rules else {}
+    expect("no unconditional jsonPointer on replicas", "jsonPointers" not in rule, rule)
+    expect("the jq path selects on the replicas-owner label",
+           rule.get("jqPathExpressions")
+           == [f'select(.metadata.labels["{REPLICAS_OWNER}"] == "keda") | .spec.replicas'],
+           rule)
+
+
 def main() -> int:
     with standalone():
         test_scale_defaults_render_no_autoscaler_and_say_why()
         test_one_landing_source_renders_one_trigger()
         test_two_landing_sources_render_two_triggers()
         test_the_prometheus_trigger_alone_is_enough_to_render()
+        test_only_the_pool_keda_scales_is_marked_as_keda_owned()
+        test_the_appset_ignores_replicas_only_on_a_keda_owned_pool()
         return summary()
 
 
