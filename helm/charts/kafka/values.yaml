@@ -517,6 +517,20 @@ kafka:
   # kafka.mode=cluster -- a single broker has nothing to scale -- so this is
   # silently absent there rather than an error, the same way
   # kafka.rebalancing.enabled already is.
+  # Broker disk pressure, as a PrometheusRule on the kubelet's own volume stats
+  # for each broker PVC. Time retention keeps a record for its whole window and
+  # the per-partition size cap lets any one topic use the whole volume, so a disk
+  # sized too small FILLS rather than dropping unread data, and this is how an
+  # operator hears before it does. Rendered at kafka.mode cluster on
+  # Strimzi, and only where the cluster serves monitoring.coreos.com/v1
+  # (Prometheus Operator); anything else renders nothing.
+  diskAlert:
+    enabled: true
+    # Percent of the broker PVC used before each level fires. warning < critical.
+    warningPercent: 70
+    criticalPercent: 85
+    # How long the volume stays over a level before it fires.
+    for: 10m
   autoscaling:
     enabled: true
     # KEDA maxReplicaCount. There is no floor dial: minReplicaCount is always

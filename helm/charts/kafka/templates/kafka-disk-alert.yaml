@@ -1,0 +1,33 @@
+{{- $d := .Values.kafka.diskAlert }}
+{{- if and $d.enabled (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") }}
+{{- if not (lt (float64 $d.warningPercent) (float64 $d.criticalPercent)) }}
+{{- fail (printf "kafka.diskAlert.warningPercent (%v) must be below kafka.diskAlert.criticalPercent (%v)" $d.warningPercent $d.criticalPercent) }}
+{{- end }}
+{{- /* Strimzi names a JBOD volume's claim data-<volume id>-<cluster>-<pool>-<pod id>; kafka-nodepool.yaml declares volume 0. */}}
+{{- $claims := printf "data-0-%s-%s-[0-9]+" .Values.kafka.name (include "dfe-kafka.nodePoolName" .) }}
+{{- $selector := printf "namespace=%q, persistentvolumeclaim=~%q" .Release.Namespace $claims }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Values.kafka.name }}-broker-disk
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: {{ .Values.kafka.name }}-broker-disk
+      rules:
+        {{- range $level := list (dict "alert" "KafkaBrokerDiskWarning" "severity" "warning" "percent" $d.warningPercent) (dict "alert" "KafkaBrokerDiskCritical" "severity" "critical" "percent" $d.criticalPercent) }}
+        - alert: {{ $level.alert }}
+          expr: |
+            100 * kubelet_volume_stats_used_bytes{ {{- $selector -}} }
+              / kubelet_volume_stats_capacity_bytes{ {{- $selector -}} } > {{ $level.percent }}
+          for: {{ $d.for }}
+          labels:
+            severity: {{ $level.severity }}
+          annotations:
+            summary: Kafka broker volume {{ "{{" }} $labels.persistentvolumeclaim {{ "}}" }} is {{ "{{" }} $value | humanize {{ "}}" }}% full.
+            description: >-
+              A full broker disk stops the broker. Grow the broker volume or add
+              brokers before it reaches 100%.
+        {{- end }}
+{{- end }}
