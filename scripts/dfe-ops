@@ -812,20 +812,41 @@ def purge_engine_secrets(prefix: str, region: str) -> list[str]:
     return names
 
 
-def _engine_store(tf_dir: str) -> tuple[str, str] | None:
-    """The root's engine prefix and region, read before the destroy empties its state.
+def _destroy_inputs(tf_dir: str) -> tuple[str, str, dict[str, object]] | None:
+    """The root's engine prefix, region and retained_on_destroy, read before the destroy empties its state.
 
-    Returns ("", region) for a root that names no prefix (every cloud but AWS),
-    and None when the outputs cannot be read.
+    Returns ("", region, {}) for a root that names no prefix and keeps nothing
+    (every cloud but AWS, and an ephemeral AWS deployment), and None when the
+    outputs cannot be read.
     """
     try:
-        outputs = terraform_settings(tf_dir)
+        outputs = {k: value for k, (value, _sensitive) in _bridge().get_tf_outputs(tf_dir).items()}
     except _bridge().TerraformOutputError as exc:
         print(f"  WARN: could not read the outputs of {tf_dir} ({exc}), so dfe-engine's secrets "
               "will not be cleared", file=sys.stderr)
         return None
+    raw = outputs.get("retained_on_destroy", "")
+    try:
+        retained = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        print(f"  WARN: retained_on_destroy of {tf_dir} is not JSON, so what the destroy keeps goes "
+              "unreported", file=sys.stderr)
+        retained = {}
     # The provider's region, which the engine's role is fenced to and the engine writes in.
-    return outputs.get("DFE_ENGINE_SECRETS_PREFIX", ""), outputs.get("DFE_REGION", "")
+    return (outputs.get("DFE_ENGINE_SECRETS_PREFIX", ""), outputs.get("DFE_REGION", ""),
+            retained if isinstance(retained, dict) else {})
+
+
+def _report_retained(retained: dict[str, object]) -> None:
+    """Say what a persistent deployment's destroy keeps on purpose, as the teardown's last lines."""
+    forgotten = retained.get("forgotten") or {}
+    for address, arn in sorted(forgotten.items() if isinstance(forgotten, dict) else []):
+        print(f"  kept {address} ({arn}): a persistent deployment's key outlives the destroy. "
+              "Schedule its deletion once the buckets below are gone", file=sys.stderr)
+    buckets = retained.get("buckets") or []
+    for bucket in buckets if isinstance(buckets, list) else []:
+        print(f"  kept s3://{bucket} while it holds objects: force_destroy is off on a persistent "
+              "deployment", file=sys.stderr)
 
 
 # Messages below name the output, not its value, so nothing read under a secrets key is printed.
@@ -880,8 +901,8 @@ def cmd_teardown(args: argparse.Namespace) -> int:
     # Optionally also destroy terraform state (OpenBao KV mounts + AppRoles).
     tf_dir = args.tf_dir or str(REPO_ROOT / "terraform" / "environments" / args.cloud)
     tf_cmd = [args.tf_bin, f"-chdir={tf_dir}", "destroy"]
-    store = _engine_store(tf_dir)
-    prefix, region = store or ("", "")
+    inputs = _destroy_inputs(tf_dir)
+    prefix, region, retained = inputs or ("", "", {})
     if args.dry_run:
         print(f"[dry-run] would run: {' '.join(tf_cmd)}", file=sys.stderr)
         if prefix:
@@ -890,15 +911,21 @@ def cmd_teardown(args: argparse.Namespace) -> int:
         return rc
     if args.force:
         tf_cmd.append("-auto-approve")  # non-interactive teardown when --force
+    if retained:
+        # The key tofu forgets rather than deletes is the intent, not a failure (kms.tf).
+        tf_cmd.append("-suppress-forget-errors")
     destroyed = _run_streaming(tf_cmd, env=env)
     # A refused or failed destroy leaves the deployment up, and its engine needs these secrets.
     if destroyed != 0:
         if prefix:
             _report_engine_store_kept(prefix, region, tf_dir)
+        _report_retained(retained)
         return destroyed
-    if store is None:
+    if inputs is None:
         return 1
-    return _purge_engine_store(prefix, region) if prefix else 0
+    purged = _purge_engine_store(prefix, region) if prefix else 0
+    _report_retained(retained)
+    return purged
 
 
 def _apply_domain(env: dict[str, str], mode: str | None, *, deploying: bool = True) -> dict[str, str]:

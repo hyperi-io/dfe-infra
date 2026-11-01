@@ -12,11 +12,14 @@
 """What a persistent AWS deployment's teardown does with dfe-engine's own secrets.
 
 The engine creates them itself, so they sit outside tofu state: a destroy would
-leave them in the account, holding their names, encrypted with a key scheduled
-for deletion. A test run's are swept by their run tag; a deployment that is not a
-run has no such tag, so the teardown clears the engine's prefix after the
-destroy. A destroy that is refused or fails leaves the deployment up, and its
-engine still needs them, so they stay.
+leave them in the account, holding their names. A test run's are swept by their
+run tag; a deployment that is not a run has no such tag, so the teardown clears
+the engine's prefix after the destroy. A destroy that is refused or fails leaves
+the deployment up, and its engine still needs them, so they stay.
+
+A persistent deployment's destroy forgets its KMS key on purpose (kms.tf), so the
+teardown passes -suppress-forget-errors and ends on what it kept, read from the
+root's retained_on_destroy output.
 
     python3 -m pytest scripts/tests/test_dfe_ops_teardown_engine_secrets.py -q
 """
@@ -49,6 +52,20 @@ TF_OUTPUTS = {
     "DFE_SECRETS_REGION": ("us-west-2", False),
     "DFE_ENGINE_SECRETS_PREFIX": (PREFIX, False),
 }
+KEY_ADDRESS = "module.cluster.aws_kms_key.retained[0]"
+KEY_ARN = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
+BUCKETS = ["dfe-prod-clickhouse-000000000000", "dfe-prod-toolbox-session-logs"]
+# A persistent root's retained_on_destroy, as `tofu output -json` stringifies it.
+PERSISTENT_OUTPUTS = {
+    **TF_OUTPUTS,
+    "retained_on_destroy": (json.dumps({"forgotten": {KEY_ADDRESS: KEY_ARN}, "buckets": BUCKETS}), False),
+}
+EPHEMERAL_OUTPUTS = {**TF_OUTPUTS, "retained_on_destroy": ("", False)}
+KEPT_LINES = [
+    f"  kept {KEY_ADDRESS} ({KEY_ARN}): a persistent deployment's key outlives the destroy. "
+    "Schedule its deletion once the buckets below are gone",
+    *(f"  kept s3://{b} while it holds objects: force_destroy is off on a persistent deployment" for b in BUCKETS),
+]
 LISTED = [
     {"Name": f"{PREFIX}/jwt/signing-key"},
     {"Name": f"{PREFIX}/ch/orgs/acme"},
@@ -100,12 +117,30 @@ def _teardown(monkeypatch: pytest.MonkeyPatch, calls: Calls, outputs: dict | Exc
     return dfeops.cmd_teardown(dfeops.build_parser().parse_args(args))
 
 
-def test_the_engine_prefix_is_cleared_once_tofu_destroy_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("outputs", "destroy_flags", "kept"),
+    [
+        pytest.param(TF_OUTPUTS, ["-auto-approve"], [], id="root-without-the-output"),
+        pytest.param(EPHEMERAL_OUTPUTS, ["-auto-approve"], [], id="ephemeral"),
+        pytest.param(PERSISTENT_OUTPUTS, ["-auto-approve", "-suppress-forget-errors"], KEPT_LINES,
+                     id="persistent"),
+    ],
+)
+def test_the_engine_prefix_is_cleared_once_tofu_destroy_succeeds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    outputs: dict, destroy_flags: list[str], kept: list[str],
+) -> None:
+    """A persistent destroy forgets its key on purpose, so that is no failure, and the
+    teardown ends on what it kept. An ephemeral one runs exactly as it always has."""
     calls = Calls()
-    assert _teardown(monkeypatch, calls, TF_OUTPUTS, "--force") == 0
+    assert _teardown(monkeypatch, calls, outputs, "--force") == 0
     assert [kind for kind, _cmd in calls.seen] == ["run", "run", "aws", "aws", "aws"]
     assert calls.seen[0][1][-1] == "--force"
-    assert calls.seen[1][1] == ["tofu", f"-chdir={TF_DIR}", "destroy", "-auto-approve"]
+    assert calls.seen[1][1] == ["tofu", f"-chdir={TF_DIR}", "destroy", *destroy_flags]
+    err = capsys.readouterr().err.splitlines()
+    assert [line for line in err if line.startswith("  kept ")] == kept
+    if kept:
+        assert err[-len(kept):] == kept
     listing = calls.seen[2][1]
     assert listing[:3] == ["secretsmanager", "list-secrets", "--include-planned-deletion"]
     assert listing[listing.index("--filters") + 1] == f"Key=name,Values={PREFIX}/"
@@ -136,6 +171,18 @@ def test_expected_fail_a_failed_destroy_deletes_nothing_and_says_what_it_kept(
     assert "kept 2 dfe-engine secret(s) under DFE_ENGINE_SECRETS_PREFIX in us-west-2" in err
     assert f"tofu -chdir={TF_DIR} output -raw DFE_ENGINE_SECRETS_PREFIX" in err
     assert PREFIX not in err
+
+
+def test_expected_fail_a_failed_persistent_destroy_still_ends_on_what_it_kept(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """A bucket that still holds objects fails the destroy, and the summary still closes it."""
+    calls = Calls(destroy=1)
+    assert _teardown(monkeypatch, calls, PERSISTENT_OUTPUTS, "--force") == 1
+    assert calls.seen[1][1][-1] == "-suppress-forget-errors"
+    assert calls.deleted() == []
+    err = capsys.readouterr().err.splitlines()
+    assert err[-len(KEPT_LINES):] == KEPT_LINES
 
 
 def test_a_root_with_no_engine_prefix_calls_no_aws(monkeypatch: pytest.MonkeyPatch) -> None:

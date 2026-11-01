@@ -26,10 +26,12 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   the deployment's KMS key: an ephemeral key is scheduled for deletion on
   destroy (7 days), any other key is left in place, because the ClickHouse
   object-store, CloudTrail and session-log buckets keep their objects and every
-  one is encrypted under it. OpenTofu then ends the destroy with `Destroy was
-  successful but left behind forgotten instances`, which
-  `-suppress-forget-errors` silences. Schedule that key's deletion yourself
-  once those buckets are gone. Every `dfe-ops`
+  one is encrypted under it. A bare `tofu destroy` then ends with `Destroy was
+  successful but left behind forgotten instances` unless you pass
+  `-suppress-forget-errors`. `dfe-ops teardown --with-terraform` passes it on a
+  persistent deployment only, read from the root's `retained_on_destroy`
+  output, and its last lines name the key and the buckets it kept. Schedule
+  that key's deletion yourself once those buckets are gone. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
   resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
   never a rate -- plus how long the cluster has been up, from the root's

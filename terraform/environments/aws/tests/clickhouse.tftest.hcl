@@ -47,6 +47,7 @@ override_module {
     pod_identity_trust_policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
 
     audit_log_group                  = "/aws/eks/dfe-example/cluster"
+    clickhouse_object_store_bucket   = "example-bucket"
     clickhouse_object_store_endpoint = "https://example-bucket.s3.us-west-2.amazonaws.com/dfe/"
 
     network = {
@@ -490,6 +491,44 @@ run "the_engine_store_reaches_bootstrap" {
   assert {
     condition     = module.secrets.engine_name_prefix == output.DFE_ENGINE_SECRETS_PREFIX
     error_message = "the prefix bootstrap writes is the one the engine's role is fenced to"
+  }
+}
+
+// dfe-ops teardown reads this to pass -suppress-forget-errors and say what stayed.
+// The file's own tags are ephemeral, which keeps nothing.
+run "an_ephemeral_destroy_keeps_nothing" {
+  command = plan
+
+  assert {
+    condition     = output.retained_on_destroy == ""
+    error_message = "an ephemeral deployment's destroy keeps nothing, so dfe-ops tears it down exactly as before"
+  }
+}
+
+run "a_persistent_destroy_names_what_it_keeps" {
+  command = plan
+
+  variables {
+    cloudtrail = { enabled = true }
+    tags = {
+      service-name      = "dfe"
+      service-namespace = "example"
+      environment       = "test"
+      owner             = "owner@example.com"
+      cost-center       = "experiments"
+      lifecycle         = "persistent"
+      iac-source        = "dfe-infra/terraform/environments/aws"
+    }
+  }
+
+  assert {
+    condition     = jsondecode(output.retained_on_destroy).forgotten == { "module.cluster.aws_kms_key.retained[0]" = "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000" }
+    error_message = "the forgotten key is named by its address and ARN, the one resource kms.tf keeps with lifecycle.destroy"
+  }
+
+  assert {
+    condition     = jsondecode(output.retained_on_destroy).buckets == ["example-bucket", "dfe-example-cloudtrail", "example-toolbox-session-logs"]
+    error_message = "every bucket a persistent destroy leaves while it holds objects is named: ClickHouse, CloudTrail and the session logs"
   }
 }
 

@@ -46,6 +46,12 @@ def test_destroy_forgets_only_the_persistent_key(name: str, forgotten: bool) -> 
     assert bool(_DESTROY_FALSE.search(_block(name))) is forgotten
 
 
+def test_the_roots_retained_report_names_the_forgotten_key() -> None:
+    """dfe-ops teardown reports what a destroy kept from this output, so it names the real address."""
+    outputs = (REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf").read_text(encoding="utf-8")
+    assert '"module.cluster.aws_kms_key.retained[0]"' in outputs
+
+
 def test_no_other_key_resource_escapes_the_split() -> None:
     names = re.findall(r'(?m)^resource "aws_kms_key" "([^"]+)"', KMS_TF.read_text(encoding="utf-8"))
     assert sorted(names) == ["ephemeral", "retained"]

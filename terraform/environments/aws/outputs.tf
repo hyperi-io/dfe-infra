@@ -318,6 +318,19 @@ output "kms_key_arn" {
   value       = module.cluster.kms_key_arn
 }
 
+output "retained_on_destroy" {
+  description = "What tofu destroy leaves behind on a persistent deployment, as JSON: forgotten maps each resource address lifecycle.destroy keeps to its ARN, and buckets names each bucket force_destroy keeps while it holds objects. Empty on an ephemeral deployment. dfe-ops teardown reads it to pass -suppress-forget-errors and report what stayed."
+  value = local.ephemeral ? "" : jsonencode({
+    // kubernetes-cluster/aws/kms.tf's retained key, the one resource carrying destroy = false.
+    forgotten = { "module.cluster.aws_kms_key.retained[0]" = module.cluster.kms_key_arn }
+    buckets = concat(
+      [module.cluster.clickhouse_object_store_bucket],
+      aws_s3_bucket.cloudtrail[*].bucket,
+      [module.toolbox.session_log_bucket],
+    )
+  })
+}
+
 output "network" {
   description = "VPC, CIDR, zones and subnets, for whatever attaches to them next."
   value       = module.cluster.network
