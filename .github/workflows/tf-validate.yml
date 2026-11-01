@@ -16,8 +16,9 @@ permissions:
 # CI pins its own tooling -- versions.yaml pins the stack, not CI -- but this
 # tracks versions.yaml toolbox.tofu so the operator shell and CI validate on
 # one OpenTofu and the state format cannot drift between them. The AWS
-# modules declare required_version >= 1.10, and edge/aws, toolbox/aws and
-# managed-kafka/redpanda-cloud declare >= 1.11.
+# modules declare required_version >= 1.10, edge/aws, toolbox/aws and
+# managed-kafka/redpanda-cloud declare >= 1.11, and kubernetes-cluster/aws and
+# the aws root declare >= 1.12.
 env:
   TOFU_VERSION: "1.13.2"
 

@@ -22,7 +22,14 @@ Provisioning: [aws.md](aws.md). Running the cluster:
   credential (0 days instead of 30), and redpanda-cloud's `allow_deletion`
   (true instead of the vendor's own default refusal) -- so a tyre-kick
   deployment tears down cleanly and anything else keeps the vendor's normal
-  deletion protection, without a per-resource flag to remember. Every `dfe-ops`
+  deletion protection, without a per-resource flag to remember. It also decides
+  the deployment's KMS key: an ephemeral key is scheduled for deletion on
+  destroy (7 days), any other key is left in place, because the ClickHouse
+  object-store, CloudTrail and session-log buckets keep their objects and every
+  one is encrypted under it. OpenTofu then ends the destroy with `Destroy was
+  successful but left behind forgotten instances`, which
+  `-suppress-forget-errors` silences. Schedule that key's deletion yourself
+  once those buckets are gone. Every `dfe-ops`
   command against an ephemeral dial also opens with one stderr line: the
   resolved `compute_bucket` from `sizing/resolved.yaml` -- a T-shirt bucket, <!-- doc-paths: ignore -->
   never a rate -- plus how long the cluster has been up, from the root's

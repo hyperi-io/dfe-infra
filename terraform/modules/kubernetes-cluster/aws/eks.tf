@@ -104,7 +104,7 @@ resource "aws_eks_cluster" "this" {
     resources = ["secrets"]
 
     provider {
-      key_arn = aws_kms_key.this.arn
+      key_arn = local.kms_key_arn
     }
   }
 

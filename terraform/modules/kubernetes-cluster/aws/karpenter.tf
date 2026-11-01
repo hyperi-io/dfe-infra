@@ -412,7 +412,7 @@ locals {
         "kms:GenerateDataKey*",
         "kms:DescribeKey",
       ]
-      Resource = aws_kms_key.this.arn
+      Resource = local.kms_key_arn
       // The controller has no reason to touch this key outside a node launch,
       // so the grant is usable only when EC2 is the caller on its behalf.
       Condition = {
@@ -427,7 +427,7 @@ locals {
       Sid      = "AllowEBSEncryptionGrants"
       Effect   = "Allow"
       Action   = "kms:CreateGrant"
-      Resource = aws_kms_key.this.arn
+      Resource = local.kms_key_arn
       Condition = {
         StringEquals = {
           "kms:ViaService" = "ec2.${var.provision.region}.amazonaws.com"

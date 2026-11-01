@@ -27,11 +27,11 @@ resource "aws_s3_bucket" "cloudtrail" {
 
   bucket = "${var.s3_bucket_prefix}${local.cloudtrail_name}"
 
-  // Same rule as the KMS deletion window (kubernetes-cluster/aws/kms.tf) and
-  // the secret recovery windows above: only an ephemeral deployment gets the
-  // fast, no-confirmation teardown. A persistent deployment's audit trail
-  // survives a tofu destroy rather than being deleted along with the record
-  // of the destroy itself.
+  // Same rule as the secret recovery windows above: only an ephemeral
+  // deployment gets the fast, no-confirmation teardown. A persistent
+  // deployment's audit trail survives a tofu destroy rather than being deleted
+  // along with the record of the destroy itself, and so does the key it is
+  // encrypted under (kubernetes-cluster/aws/kms.tf).
   force_destroy = local.ephemeral
 
   tags = { Name = local.cloudtrail_name }

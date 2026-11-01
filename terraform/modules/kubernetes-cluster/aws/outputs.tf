@@ -68,7 +68,7 @@ output "private_zone_arn" {
 
 output "kms_key_arn" {
   description = "The deployment's customer-managed key, ordered against its POLICY as well as the key itself. Encrypts cluster secrets now; Kafka and block storage take the same one."
-  value       = aws_kms_key.this.arn
+  value       = local.kms_key_arn
 
   // aws_kms_key_policy.this is a sibling resource producing no value this ARN
   // carries, so a consumer reading the ARN alone could apply before the grants

@@ -3,7 +3,8 @@
 // so that one deployment has one provider however many modules it composes.
 
 terraform {
-  required_version = ">= 1.10"
+  // 1.12 for lifecycle.destroy, which keeps a persistent deployment's key (kms.tf).
+  required_version = ">= 1.12"
 
   required_providers {
     aws = {

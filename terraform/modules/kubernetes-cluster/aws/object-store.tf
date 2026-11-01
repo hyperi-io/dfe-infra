@@ -29,10 +29,10 @@
 resource "aws_s3_bucket" "clickhouse_object_store" {
   bucket = "${var.s3_bucket_prefix}${var.name}-clickhouse-${var.provision.account}"
 
-  // Same rule as the KMS deletion window above and the root's CloudTrail
-  // bucket: only an ephemeral deployment gets the fast, no-confirmation
-  // teardown. A persistent deployment's ClickHouse data survives a tofu
-  // destroy of everything else that shares its lifecycle tag.
+  // Same rule as the root's CloudTrail bucket: only an ephemeral deployment
+  // gets the fast, no-confirmation teardown. A persistent deployment's
+  // ClickHouse data survives a tofu destroy of everything else that shares its
+  // lifecycle tag, and so does the key it is encrypted under (kms.tf).
   force_destroy = var.tags.lifecycle == "ephemeral"
 
   tags = { Name = "${var.name}-clickhouse-${var.provision.account}" }
@@ -98,7 +98,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "clickhouse_object
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.this.arn
+      kms_master_key_id = local.kms_key_arn
     }
 
     bucket_key_enabled = true
@@ -190,7 +190,7 @@ locals {
         "kms:Decrypt",
         "kms:DescribeKey",
       ]
-      Resource = aws_kms_key.this.arn
+      Resource = local.kms_key_arn
       // The same key wraps EKS Secrets and MSK's data at rest, and the key
       // policy (kms.tf) delegates to IAM, so an unconditioned grant here would
       // let this pod decrypt any ciphertext under it. ViaService confines the

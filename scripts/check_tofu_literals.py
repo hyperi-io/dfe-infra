@@ -132,8 +132,8 @@ ALLOWED: dict[str, str] = {
         "Karpenter's published retention for its interruption queue."
     ),
     f"{_CLUSTER}/kms.tf:locals:kms_deletion_window_days": (
-        "KMS's own 7-day floor for an ephemeral deployment and its 30-day default otherwise, "
-        "picked by tags.lifecycle."
+        "KMS's own 7-day floor, on an ephemeral deployment's key only. A persistent "
+        "deployment's key is never scheduled for deletion by tofu."
     ),
     f"{_CLUSTER}/object-store.tf:locals:multipart_abort_days": (
         "Housekeeping for the parts of inserts ClickHouse has already retried, never a window "

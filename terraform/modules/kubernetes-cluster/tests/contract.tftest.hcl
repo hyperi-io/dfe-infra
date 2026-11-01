@@ -344,6 +344,68 @@ run "aws_kms_key_policy_with_no_grants_is_root_only" {
   }
 }
 
+// A persistent deployment's object-store, CloudTrail and session-log buckets
+// survive a destroy, so the key their objects are encrypted under has to as
+// well. scripts/tests/test_kms_key_retention.py reads the lifecycle itself,
+// which is not a resource attribute.
+run "aws_kms_key_is_retained_for_a_persistent_deployment" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  assert {
+    condition     = length(aws_kms_key.retained) == 1 && length(aws_kms_key.ephemeral) == 0
+    error_message = "a deployment whose tags.lifecycle is not \"ephemeral\" must take the retained key"
+  }
+
+  assert {
+    condition     = output.kms_key_arn == aws_kms_key.retained[0].arn && aws_eks_cluster.this.encryption_config[0].provider[0].key_arn == aws_kms_key.retained[0].arn
+    error_message = "the output and the cluster's secrets encryption must both use the retained key"
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == aws_kms_key.retained[0].arn
+    error_message = "the retained object-store bucket must be encrypted under the retained key"
+  }
+}
+
+run "aws_kms_key_goes_with_an_ephemeral_deployment" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    tags = {
+      "service-name"      = "dfe"
+      "service-namespace" = "hyperi"
+      "environment"       = "test"
+      "owner"             = "owner@example.com"
+      "cost-center"       = "experiments"
+      "lifecycle"         = "ephemeral"
+      "iac-source"        = "dfe-infra/terraform/modules/kubernetes-cluster/tests"
+    }
+  }
+
+  assert {
+    condition     = length(aws_kms_key.ephemeral) == 1 && length(aws_kms_key.retained) == 0
+    error_message = "tags.lifecycle = ephemeral must take the key a destroy schedules for deletion"
+  }
+
+  assert {
+    condition     = aws_kms_key.ephemeral[0].deletion_window_in_days == 7
+    error_message = "an ephemeral deployment's key must take KMS's 7-day floor, so a rebuild under the same name is not held up"
+  }
+
+  assert {
+    condition     = output.kms_key_arn == aws_kms_key.ephemeral[0].arn
+    error_message = "kms_key_arn must be the ephemeral key"
+  }
+}
+
 run "aws_network_object" {
   command = plan
 
@@ -806,7 +868,7 @@ run "aws_karpenter_controller_can_use_the_deployment_key_for_ebs_encryption" {
 
   assert {
     condition = alltrue([
-      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Resource == aws_kms_key.this.arn
+      for s in jsondecode(aws_iam_role_policy.karpenter_kms.policy).Statement : s.Resource == output.kms_key_arn
     ])
     error_message = "both statements must be scoped to this deployment's own key, never a wildcard resource"
   }
@@ -1141,7 +1203,7 @@ run "aws_toolbox_operator_gets_read_only_access_entry" {
 
 // The ClickHouse object-store bucket: encrypted, unreachable from the
 // internet, and torn down according to the same lifecycle dial as the KMS
-// deletion window above -- never a fixed answer either way.
+// key above -- never a fixed answer either way.
 run "aws_clickhouse_object_store_bucket_is_locked_down" {
   command = plan
 
@@ -1177,7 +1239,7 @@ run "aws_clickhouse_object_store_bucket_is_locked_down" {
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == aws_kms_key.this.arn
+    condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.clickhouse_object_store.rule).apply_server_side_encryption_by_default).kms_master_key_id == output.kms_key_arn
     error_message = "the object-store bucket must be encrypted with the deployment's own key -- the same one EKS secrets and MSK use"
   }
 
@@ -1251,7 +1313,7 @@ run "aws_clickhouse_object_store_bucket_is_locked_down" {
 }
 
 // An ephemeral (tyre-kick) deployment gets the fast, no-confirmation teardown
-// on this bucket too -- the same dial the KMS deletion window and the root's
+// on this bucket too -- the same dial the KMS key and the root's
 // CloudTrail/toolbox buckets already follow.
 run "aws_clickhouse_object_store_force_destroy_follows_lifecycle" {
   command = plan
@@ -1274,7 +1336,7 @@ run "aws_clickhouse_object_store_force_destroy_follows_lifecycle" {
 
   assert {
     condition     = aws_s3_bucket.clickhouse_object_store.force_destroy == true
-    error_message = "tags.lifecycle = ephemeral must force_destroy the object-store bucket, matching the KMS deletion window's own rule"
+    error_message = "tags.lifecycle = ephemeral must force_destroy the object-store bucket, matching the KMS key's own rule"
   }
 }
 
@@ -1299,7 +1361,7 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
   }
 
   assert {
-    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "UseTheDeploymentKey"][0] == aws_kms_key.this.arn
+    condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Resource if s.Sid == "UseTheDeploymentKey"][0] == output.kms_key_arn
     error_message = "the KMS grant must be scoped to the deployment's own key"
   }
 
@@ -1324,7 +1386,7 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
         [
           aws_s3_bucket.clickhouse_object_store.arn,
           "${aws_s3_bucket.clickhouse_object_store.arn}/*",
-          aws_kms_key.this.arn,
+          output.kms_key_arn,
         ],
         s.Resource
       )

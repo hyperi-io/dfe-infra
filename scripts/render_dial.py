@@ -1826,9 +1826,9 @@ def _tags(dial: dict[str, object], cloud: str) -> dict[str, str]:
     )
     tags = {key: _text(dial, ("tags", key)) for key in keys}
     # tags.lifecycle drives real behaviour downstream (secret recovery windows,
-    # the KMS deletion window, whether a managed broker may be destroyed), so
-    # it is checked against the two values deployment.example.yaml documents
-    # rather than passed through as free text like the other five tags.
+    # whether the KMS key outlives a destroy, whether a managed broker may be
+    # destroyed), so it is checked against the two values deployment.example.yaml
+    # documents rather than passed through as free text like the other five tags.
     if tags["lifecycle"] and tags["lifecycle"] not in LIFECYCLE_VALUES:
         raise DialError(
             f"tags.lifecycle must be one of {' or '.join(LIFECYCLE_VALUES)}, got {tags['lifecycle']!r}"
