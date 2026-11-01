@@ -62,6 +62,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import aggregate
 
 GATE_FILE = aggregate.SITE_ROOT / "gate.yaml"
+# The site's own copy, gated beside every assembled tree.
+COPY_DIR = aggregate.SITE_ROOT / "copy"
+_COPY_LINE = re.compile(r"^(\s*)(-\s+)?([A-Za-z_][\w-]*):(?:\s+(.*))?$")
+_FLOW_LABEL = re.compile(r"label:\s*([^,}]+)")
+_BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+")
+_NOT_PROSE = frozenset({"to", "href", "icon", "value", "primary", "logo_alt"})
 PHRASE_RULES = ("process", "hedge", "register")
 RULES = frozenset({*PHRASE_RULES, "semicolon", "ascii", "elasticsearch"})
 ALL = "all"
@@ -370,8 +376,50 @@ def gate_tree(content: Path, phrases: Phrases) -> list[Finding]:
     return findings
 
 
+def copy_prose(text: str) -> str:
+    """The prose in a copy/ YAML file, every other line blanked so line numbers hold.
+
+    Keys, link targets, icons, comments and `code:` blocks are not prose. A flow
+    mapping keeps its label only.
+
+    Args:
+        text: The YAML file's text.
+
+    Returns:
+        The text with only prose values left, one per original line.
+    """
+    lines: list[str] = []
+    code_indent: int | None = None
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if code_indent is not None and (not line.strip() or indent > code_indent):
+            lines.append("")
+            continue
+        code_indent = None
+        stripped = line.strip()
+        if stripped.startswith("- {"):
+            lines.append(" ".join(_FLOW_LABEL.findall(stripped)))
+            continue
+        match = _COPY_LINE.match(line)
+        if not stripped or stripped.startswith("#") or not match:
+            lines.append("")
+            continue
+        _, dash, key, value = match.groups()
+        value = (value or "").strip()
+        if key == "code" and value in _BLOCK_SCALARS:
+            code_indent = indent + len(dash or "")
+            lines.append("")
+        elif key in _NOT_PROSE:
+            lines.append("")
+        elif value.startswith("{"):
+            lines.append(" ".join(_FLOW_LABEL.findall(value)))
+        else:
+            lines.append(value.strip("\"'"))
+    return "\n".join(lines)
+
+
 def gate_files(paths: Iterable[Path], phrases: Phrases) -> list[Finding]:
-    """Every finding in markdown files named directly, or found under named directories.
+    """Every finding in markdown or copy/ YAML files named, or found under named directories.
 
     Args:
         paths: Files or directories.
@@ -384,9 +432,16 @@ def gate_files(paths: Iterable[Path], phrases: Phrases) -> list[Finding]:
     for named in paths:
         files = sorted(named.rglob("*")) if named.is_dir() else [named]
         for path in files:
-            if path.is_file() and path.name.lower().endswith(aggregate.MARKDOWN):
+            name = path.name.lower()
+            if not path.is_file():
+                continue
+            if name.endswith(aggregate.MARKDOWN):
                 text = path.read_text(encoding="utf-8", errors="replace")
-                findings += check_page(text, phrases, build="", page=path.as_posix())
+            elif name.endswith((".yaml", ".yml")):
+                text = copy_prose(path.read_text(encoding="utf-8", errors="replace"))
+            else:
+                continue
+            findings += check_page(text, phrases, build="", page=path.as_posix())
     return findings
 
 
@@ -466,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.content / aggregate.SITE_FILE).is_file():
             raise SystemExit(f"error: {args.content} holds no site.json: run aggregate.py first")
         findings, repos = gate_tree(args.content, phrases), sources(args.content)
+        findings += gate_files([COPY_DIR], phrases)
     new = findings
     if args.baseline:
         old = {finding.key for finding in gate_tree(args.baseline, phrases)}

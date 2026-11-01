@@ -1,0 +1,38 @@
+# The site's own words outside the pages: title, navbar, footer and the release bar.
+# docusaurus.config.js reads this file. {name} is filled per build: stack, version,
+# newest, release_notes, api_path, year. An item whose link fills to nothing is left out.
+
+title: DFE documentation
+tagline: The Data Fusion Engine suite
+
+navbar:
+  title: Data Fusion Engine
+  logo_alt: HyperI
+  items:
+    - {label: Docs, to: /overview/}
+    - {label: Quickstart, to: /quickstart/}
+    - {label: API, to: "{api_path}"}
+  github: {label: GitHub, href: "https://github.com/hyperi-io"}
+
+announcement:
+  tag: Latest
+  text: "DFE {newest} is the current release."
+  link: Release notes
+
+footer:
+  columns:
+    - title: Docs
+      items:
+        - {label: Overview, to: /overview/}
+        - {label: Quickstarts, to: /quickstart/}
+        - {label: HTTP API reference, to: "{api_path}"}
+        - {label: Release notes, href: "{release_notes}"}
+    - title: Source
+      items:
+        - {label: GitHub, href: "https://github.com/hyperi-io"}
+        - {label: dfe-infra, href: "https://github.com/hyperi-io/dfe-infra"}
+        - {label: dfe-docker, href: "https://github.com/hyperi-io/dfe-docker"}
+    - title: HyperI
+      items:
+        - {label: hyperi.io, href: "https://hyperi.io"}
+  copyright: "Copyright (c) {year} HYPERI PTY LIMITED"

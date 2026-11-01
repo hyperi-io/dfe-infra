@@ -11,6 +11,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const yaml = require('js-yaml');
 const {journeySidebar} = require('./sidebar-journeys.js');
 
 const CONTENT = path.join(__dirname, 'content');
@@ -48,6 +49,52 @@ function apiIntroPath(openapi) {
   return `/${path.posix.dirname(openapi.slice)}/${slug}/`;
 }
 const apiPath = apiIntroPath(build.openapi);
+
+const COPY_VARS = {
+  stack,
+  version: versionLabel,
+  newest: site.newest,
+  release_notes: releaseNotes,
+  api_path: apiPath,
+  year: String(new Date().getFullYear()),
+};
+
+// Fills {name} from COPY_VARS. A name with no value drops the map holding it, so an item linking to a page this build lacks disappears.
+function fillCopy(node) {
+  if (typeof node === 'string') {
+    let missing = false;
+    const text = node.replace(/\{(\w+)\}/g, (_, name) => {
+      if (!(name in COPY_VARS)) {
+        throw new Error(`copy/: {${name}} is not one of ${Object.keys(COPY_VARS).join(', ')}`);
+      }
+      missing = missing || COPY_VARS[name] == null;
+      return COPY_VARS[name] ?? '';
+    });
+    return missing ? undefined : text;
+  }
+  if (Array.isArray(node)) {
+    return node.map(fillCopy).filter((item) => item !== undefined);
+  }
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(node)) {
+      const filled = fillCopy(value);
+      if (filled === undefined) {
+        return undefined;
+      }
+      out[key] = filled;
+    }
+    return out;
+  }
+  return node;
+}
+
+function loadCopy(name) {
+  return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
+}
+
+const siteCopy = loadCopy('site');
+const landingCopy = loadCopy('landing');
 
 // Every listed build, as a full-page load without this build's own baseUrl in front.
 const versionItems = site.builds
@@ -109,12 +156,12 @@ const openapiPlugins = build.openapi
   : [];
 
 module.exports = {
-  title: 'DFE documentation',
-  tagline: 'The Data Fusion Engine suite',
+  title: siteCopy.title,
+  tagline: siteCopy.tagline,
   favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
   // The brand tokens and @font-face rules, read anonymously like every other build input.
   stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
-  customFields: {stack, versionLabel, newest: site.newest, releaseNotes, apiPath},
+  customFields: {landing: landingCopy},
   url: 'https://dfe.docs.hyperi.io',
   baseUrl: build.base_url,
   trailingSlash: true,
@@ -168,71 +215,47 @@ module.exports = {
   themeConfig: {
     // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
     colorMode: {defaultMode: 'light', disableSwitch: false, respectPrefersColorScheme: true},
-    announcementBar: releaseNotes
+    announcementBar: siteCopy.announcement && releaseNotes
       ? {
           // Keyed on the release, so a reader who closed one sees the next.
           id: `release-${site.newest}`,
           content:
-            `<span class="announcement-tag">Latest</span>DFE ${site.newest} is the current release. ` +
-            `<a href="${releaseNotes}">Release notes${ARROW_SVG}</a>`,
+            `<span class="announcement-tag">${siteCopy.announcement.tag}</span>${siteCopy.announcement.text} ` +
+            `<a href="${releaseNotes}">${siteCopy.announcement.link}${ARROW_SVG}</a>`,
           backgroundColor: 'var(--dfe-accent)',
           textColor: 'var(--dfe-navy)',
           isCloseable: true,
         }
       : undefined,
     navbar: {
-      title: 'Data Fusion Engine',
+      title: siteCopy.navbar.title,
       // hyperi-graphics public/hyperi-hound/tertiary: the one hound colour that reads on both modes.
       logo: {
-        alt: 'HyperI',
+        alt: siteCopy.navbar.logo_alt,
         src: 'img/hyperi-hound.svg',
         width: 47,
         height: 32,
       },
       items: [
-        {to: '/overview/', label: 'Docs', position: 'left'},
-        {to: '/quickstart/', label: 'Quickstart', position: 'left'},
-        ...(apiPath ? [{to: apiPath, label: 'API', position: 'left'}] : []),
+        ...siteCopy.navbar.items.map((item) => ({...item, position: 'left'})),
         {
           type: 'dropdown',
           label: versionLabel,
           position: 'right',
           items: versionItems,
         },
-        {href: 'https://github.com/hyperi-io', label: 'GitHub', position: 'right'},
+        {...siteCopy.navbar.github, position: 'right'},
       ],
     },
     footer: {
       style: 'dark',
       logo: {
-        alt: 'HyperI',
+        alt: siteCopy.navbar.logo_alt,
         src: `${GRAPHICS}/hyperi-horizontal/dark/hyperi-horizontal_bare.svg`,
         href: 'https://hyperi.io',
       },
-      links: [
-        {
-          title: 'Docs',
-          items: [
-            {label: 'Overview', to: '/overview/'},
-            {label: 'Quickstarts', to: '/quickstart/'},
-            ...(apiPath ? [{label: 'HTTP API reference', to: apiPath}] : []),
-            ...(releaseNotes ? [{label: 'Release notes', href: releaseNotes}] : []),
-          ],
-        },
-        {
-          title: 'Source',
-          items: [
-            {label: 'GitHub', href: 'https://github.com/hyperi-io'},
-            {label: 'dfe-infra', href: 'https://github.com/hyperi-io/dfe-infra'},
-            {label: 'dfe-docker', href: 'https://github.com/hyperi-io/dfe-docker'},
-          ],
-        },
-        {
-          title: 'HyperI',
-          items: [{label: 'hyperi.io', href: 'https://hyperi.io'}],
-        },
-      ],
-      copyright: `Copyright (c) ${new Date().getFullYear()} HYPERI PTY LIMITED`,
+      links: siteCopy.footer.columns,
+      copyright: siteCopy.footer.copyright,
     },
     mermaid: {theme: {light: 'neutral', dark: 'dark'}},
     prism: {

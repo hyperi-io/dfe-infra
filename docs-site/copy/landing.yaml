@@ -1,0 +1,175 @@
+# The landing page's words. src/pages/index.js and src/components/landing/ lay them out.
+# {name} is filled per build: stack, version, newest, release_notes, api_path. A card whose
+# link fills to nothing is left out. In prose, `code` and [text](link) are rendered.
+# Every claim is checkable on the page its card links to.
+
+description: "The Data Fusion Engine documentation: quickstarts, deployment guides and references for every suite repository."
+
+hero:
+  eyebrow: "DFE {version} documentation"
+  title: Data Fusion
+  accent: Engine
+  tagline: A data pipeline you run yourself. Every agent in, ClickHouse out.
+  actions:
+    - {label: Get started, to: /quickstart/, primary: true}
+    - {label: Install, to: /dfe-infra/deployment/}
+    - {label: Docs, to: /overview/}
+  badges:
+    - {label: BUSL-1.1 and Apache-2.0 source, href: "https://github.com/hyperi-io"}
+    - {label: Kubernetes and Docker Compose, to: /quickstart/}
+    - {label: ClickHouse via Kafka or gRPC, to: /overview/}
+
+whats_new:
+  eyebrow: Updates
+  title: "What's new"
+  link: {label: All releases, href: "https://github.com/hyperi-io/dfe-infra/releases"}
+  cards:
+    - eyebrow: Latest release
+      title: "DFE {newest}"
+      text: What changed, from the dfe-infra release that certifies this stack.
+      action: Release notes
+      href: "{release_notes}"
+    - eyebrow: Deploy
+      title: DFE on AWS
+      text: OpenTofu builds EKS on Graviton, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud. Then the same bootstrap as every other cluster.
+      action: Read the guide
+      to: /dfe-infra/deployment/aws/
+    - eyebrow: Reference
+      title: HTTP API reference
+      text: Every dfe-engine endpoint, generated from the OpenAPI spec this release pins.
+      action: Browse the API
+      to: "{api_path}"
+
+capabilities:
+  eyebrow: Capabilities
+  title: What the suite does
+  cards:
+    - icon: ingest
+      eyebrow: Ingest
+      title: Every agent, one edge
+      text: dfe-receiver takes each agent in its own protocol and hands everything on as JSON.
+      chips: [Elastic Beats, OpenTelemetry, Syslog, Webhooks]
+      to: /dfe-receiver/architecture/
+    - icon: routing
+      eyebrow: Routing
+      title: Define a source once
+      text: Routing, schema and detections hang off the source. The receiver, the loader and the hunt runner all read that one definition.
+      chips: [Sources, Kafka topics, Schemas]
+      to: /dfe-engine/data-plane/source/
+    - icon: storage
+      eyebrow: Storage
+      title: Into ClickHouse
+      text: dfe-loader batches into ClickHouse as RowBinary. Delivery from Kafka is at-least-once.
+      chips: [ClickHouse, RowBinary, Dead-letter queue]
+      to: /dfe-loader/
+    - icon: hunting
+      eyebrow: Hunting
+      title: Rules and scheduled hunts
+      text: A rule is a SQL detection on a source. A hunt runs rules on a schedule and writes what matches to the alerts table.
+      chips: [SQL rules, Hunts, Alerts]
+      to: /dfe-engine/data-plane/source-detections/
+    - icon: observability
+      eyebrow: Observability
+      title: The stack reports on itself
+      text: Every service answers health and metrics probes. The stack ships its own logs and metrics over OpenTelemetry, so HyperDX shows its health before your first event.
+      chips: [OpenTelemetry, HyperDX, /livez /readyz /metrics]
+      to: /dfe-docker/observability/
+
+deploy:
+  eyebrow: Deploy
+  title: Where it runs
+  lead: Docker on one host. Kubernetes when it has to scale, on your own cluster or on EKS.
+  action: Quickstart
+  cards:
+    - icon: host
+      eyebrow: dfe-docker
+      title: Docker Compose
+      text: One host. A laptop, a demo box or a proof of concept.
+      to: /quickstart/docker/
+    - icon: cluster
+      eyebrow: dfe-infra
+      title: Kubernetes on-premises
+      text: Your cluster, Kubernetes 1.35 or later. RKE2 is the reference distribution. The charts need no particular one.
+      to: /quickstart/kubernetes/
+    - icon: cloud
+      eyebrow: dfe-infra
+      title: Amazon EKS
+      text: OpenTofu builds it on Graviton. Kafka comes from Amazon MSK, Confluent Cloud or Redpanda Cloud.
+      to: /quickstart/aws/
+
+closing:
+  title: Start with the demo
+  lead: One host with Docker. Live firewall syslog, parsed into one ClickHouse table per vendor.
+  actions:
+    - {label: Run the demo, to: /quickstart/demo/, primary: true}
+    - {label: Source on GitHub, href: "https://github.com/hyperi-io"}
+
+# Each command must match the source named beside it, and the matching page under
+# content-root/quickstart/.
+quickstart:
+  eyebrow: Quickstart
+  title: Stand DFE up
+  tabs:
+    - value: demo
+      label: Demo
+      blocks:
+        - text: "Live firewall syslog, parsed per vendor, on one host. You need Docker Compose v2, Python 3 and [uv](https://docs.astral.sh/uv/)."
+        # dfe-docker Makefile targets init, stack, up and demo. The profile names are service_profiles.yaml's.
+        - code: |-
+            git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
+            make init
+            make stack VERSION={stack}
+            echo 'DFE_PROFILE=single-kafka' >> .env
+            make up
+            make demo
+        - text: "Cisco ASA and FortiGate lines stream in at 20 a second. Each is matched to its vendor, parsed, and lands in `dfe.cisco-asa` or `dfe.fortinet`. `make demo-stop` ends it."
+      guide: {label: The demo, to: /quickstart/demo/}
+    - value: docker
+      label: Docker
+      blocks:
+        - text: "One host, your own data. `slim-grpc` is the core path over gRPC, the least that moves data. `single-kafka` adds Kafka and every per-source app."
+        - code: |-
+            git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
+            make init
+            make stack VERSION={stack}
+            echo 'DFE_PROFILE=slim-grpc' >> .env
+            make up
+        - text: "`make up` ends on a self test and prints the console login. Then send it an event. It lands in `dfe.main` a couple of seconds later:"
+        # dfe-docker docs/evaluating.md, "Seeing your own data go through".
+        - code: |-
+            curl -X POST http://localhost:8080/ingest \
+              -H 'Content-Type: application/json' \
+              -d '{"_source":"main","message":"hello dfe"}'
+      guide: {label: Docker quickstart, to: /quickstart/docker/}
+    - value: kubernetes
+      label: Kubernetes
+      blocks:
+        - text: "A cluster you run, Kubernetes 1.35 or later, with `kubectl` pointed at it. Set `DFE_DOMAIN` and `DFE_REPO_URL` in the env file before the preflight:"
+        # bootstrap/local.env.example and scripts/dfe-ops preflight, stack-deploy.
+        - code: |-
+            git clone --branch {stack} https://github.com/hyperi-io/dfe-infra && cd dfe-infra
+            (umask 077 && cp bootstrap/local.env.example bootstrap/local.env)
+            python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env
+            python3 scripts/dfe-ops stack-deploy --stack {stack} --mode single \
+              --target-revision {stack} --env-file bootstrap/local.env
+        - text: "It finishes by sending an event through to ClickHouse and checking the stack's own telemetry landed."
+      guide: {label: Kubernetes on-premises quickstart, to: /quickstart/kubernetes/}
+    - value: aws
+      label: AWS
+      blocks:
+        - text: "Amazon EKS on Graviton. From a dfe-infra checkout at `{stack}`, answer the wizard: aws, the `scale` tier, and Kafka from MSK, Confluent Cloud or Redpanda Cloud."
+        # dfe-infra docs/deployment/wizard.md, then docs/deployment/aws.md "Resolving sizing artefacts".
+        - code: |-
+            python3 scripts/dfe-ops init
+            python3 scripts/resolve_sizing.py --dial deployment.yaml --live \
+              --out terraform/environments/aws
+            python3 scripts/render_dial.py --tofu
+        - text: "Then build the cluster and deploy onto it:"
+        # dfe-infra docs/deployment/aws.md, "Applying the plan".
+        - code: |-
+            (cd terraform/environments/aws && tofu init \
+              && tofu plan -out=deployment.tfplan && tofu apply deployment.tfplan)
+            eval "$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)"
+            python3 scripts/dfe-ops stack-deploy --stack {stack} --mode scale \
+              --from-terraform terraform/environments/aws
+      guide: {label: AWS quickstart, to: /quickstart/aws/}
