@@ -150,13 +150,15 @@ kafka:
       confidence: vendor-documented
       spot_test: Fill a broker volume to the alarm line and confirm retention enforcement keeps up.
     ## Arithmetic over the terms above; the 0.75 is the vendor-documented part.
+    ## The (1 + enrichment_growth_factor) term is the two copies Kafka keeps: the
+    ## raw event on <source>_land and the enriched one on <source>_load.
     ## THE RATE HERE IS THE AVERAGE, not the peak. Brokers and ingest are sized
     ## for peak (average x peak_factor) because a broker built for the average
     ## falls over at the evening peak; STORAGE is sized from the daily volume,
     ## because a retention window of a day or more spans the whole diurnal curve
     ## and peak x retention counts the evening twice.
     disk_formula:
-      value: retention_h * avg_mb_s * 3600 * replication_disk_factor / brokers / disk_headroom
+      value: retention_h * avg_mb_s * (1 + event.enrichment_growth_factor) * 3600 * replication_disk_factor / brokers / disk_headroom
       unit: formula
       applies_to: strimzi
       source: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices-express.html
@@ -236,7 +238,7 @@ kafka:
       spot_test: Fill a broker volume to the alarm line and confirm retention enforcement keeps up.
     ## The average rate, for the reason stated on the Strimzi formula above.
     disk_formula:
-      value: retention_h * avg_mb_s * 3600 * replication_disk_factor / brokers / disk_headroom
+      value: retention_h * avg_mb_s * (1 + event.enrichment_growth_factor) * 3600 * replication_disk_factor / brokers / disk_headroom
       unit: formula
       applies_to: redpanda
       source: https://docs.redpanda.com/current/deploy/redpanda/manual/sizing-use-cases/

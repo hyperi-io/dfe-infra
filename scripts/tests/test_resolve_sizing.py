@@ -1605,6 +1605,16 @@ def test_a_managed_broker_is_never_a_kubernetes_node_pool(tmp_path: Path) -> Non
     assert "msk-broker" in doc["resolved_shapes"]
 
 
+def test_the_broker_disk_holds_the_land_and_the_load_copy(tmp_path: Path) -> None:
+    """Every event sits in Kafka twice for the retention window: raw on <source>_land and,
+    enriched, on <source>_load. 10,000 GB/day over 24h on three brokers at RF3 and
+    0.75 headroom is 12418 GiB for the land copy alone, and 2.48 times that with both."""
+    _run(_dial(tmp_path, estimate=10000), tmp_path)
+    values = yaml.safe_load((tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8"))
+    assert values["kafka"]["replicas"] == 3
+    assert values["kafka"]["storage"]["size"] == "30796Gi"
+
+
 @pytest.mark.parametrize(("estimate", "brokers"), [(1000, 3), (90000, 9)])
 def test_the_msk_broker_count_reaches_tofu_with_its_shape(tmp_path: Path, estimate: int, brokers: int) -> None:
     """The broker size is chosen for a broker count, so that count is what MSK must build."""

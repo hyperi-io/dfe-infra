@@ -1011,10 +1011,15 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         broker_disk_gib = 0
     else:
         disk_headroom = take("kafka", provider, "disk_headroom")
+        # Each event is retained twice: raw on <source>_land and, enriched, on
+        # <source>_load, which the transform writes back to Kafka.
+        retained_copies = 1 + take("event", "enrichment_growth_factor")
         # STORAGE IS SIZED FROM THE DAILY VOLUME, not the peak: a retention
         # window of a day or more spans the whole diurnal curve, so peak times
         # retention would count the evening twice. Ingest is what the peak sizes.
-        broker_disk_mb = retention_hours * avg_mb_s * 3600 * rf_disk / brokers / disk_headroom
+        broker_disk_mb = (
+            retention_hours * avg_mb_s * retained_copies * 3600 * rf_disk / brokers / disk_headroom
+        )
         broker_disk_gib = max(
             CHART_DEFAULTS["kafka_broker_disk_gib"][0],
             math.ceil(broker_disk_mb * BYTES_PER_MB / BYTES_PER_GIB),
