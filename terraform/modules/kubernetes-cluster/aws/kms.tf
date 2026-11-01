@@ -1,8 +1,10 @@
 // ONE customer-managed key per deployment, not one per service. EKS envelope-
-// encrypts Kubernetes Secrets with it today; MSK's data at rest, the EBS
-// volumes behind the stateful pods and every node Karpenter boots (its
-// EC2NodeClass encrypts the root volume with the same key) take it too, so a
-// customer has one key to audit, one to rotate and one to revoke.
+// encrypts Kubernetes Secrets with it, and MSK's data at rest, the ClickHouse
+// object store and the root volume of every node Karpenter boots (its
+// EC2NodeClass) take it too, so a customer has one key to audit, one to rotate
+// and one to revoke. The stateful pods' PVCs are the exception: the gp3 class
+// bootstrap.sh creates (bootstrap/templates/storageclass-aws.yaml.tpl) uses the
+// account's default EBS key.
 
 // lifecycle.destroy only takes a constant, so tags.lifecycle picks between two
 // keys rather than setting it.
