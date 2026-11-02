@@ -315,7 +315,7 @@ variables {
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
   endpoint  = { public = false, allowed_cidrs = [] }
   dns       = { private_zone = "dfe-example.internal", public_zone = "" }
-  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
+  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1, eks_log_types = ["audit"] }
 
   storage_class = "gp3"
 

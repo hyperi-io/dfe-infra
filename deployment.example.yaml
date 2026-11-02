@@ -567,6 +567,12 @@ telemetry:
     ## log under otel, the MSK broker scaler's Lambda log. Empty takes 1, the
     ## CloudWatch floor; it must be a period CloudWatch accepts.
     forced_retention_days: ""
+    ## The EKS control-plane log streams switched on, comma-separated from api,
+    ## audit, authenticator, controllerManager, scheduler. Each is billed as
+    ## CloudWatch ingestion per GB. Empty takes audit, the only record of who
+    ## changed the cluster. `none` switches every stream off and creates no log
+    ## group.
+    eks_log_types: ""
 
 ## SIZING -- `python3 scripts/resolve_sizing.py` turns these into node counts,
 ## CPU, memory, disk, IOPS, partitions and retention. Scale tier only.

@@ -57,6 +57,7 @@ class FakeGuard:
         self.account = ACCOUNT
         self.missing: set[str] = set()
         self.sweeper_state = "Active"
+        self.scanning: dict = {"scanType": "BASIC", "rules": []}
         self.expiry: float | None = NOW + 10 * 3600
         self.expiry_error: str | None = None
         self.leftovers: list[cloud_sweep.Resource] = []
@@ -88,6 +89,10 @@ class FakeGuard:
 
     def policy(self, arn: str) -> str:
         return self._maybe_missing("policy", arn)
+
+    def registry_scanning(self) -> dict:
+        self._maybe_missing("scanning", "")
+        return self.scanning
 
     def credential_expiry(self, env: object) -> tuple[float | None, str]:
         if self.expiry_error:
@@ -331,6 +336,64 @@ def test_refusal_a_a_failed_sweeper_fails(root: Path) -> None:
 
 def test_refusal_a_a_malformed_budget_action_fails(root: Path) -> None:
     assert _failed(_preflight(root, FakeGuard(), guard_budget_action="no-separator")) == ["(a) budget action"]
+
+
+CACHE_TFVARS = {
+    "name": "dfe-example",
+    "registry_cache": {"enabled": True, "namespace": "", "upstreams": {"quay": {}, "k8s": {}}},
+}
+
+
+def _enhanced(*rules: tuple[str, str]) -> dict:
+    return {
+        "scanType": "ENHANCED",
+        "rules": [
+            {"scanFrequency": frequency, "repositoryFilters": [{"filter": pattern, "filterType": "WILDCARD"}]}
+            for frequency, pattern in rules
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("scanning", "cache", "failing"),
+    [
+        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), CACHE_TFVARS, True, id="a_registry_wide_rule"),
+        pytest.param(_enhanced(("SCAN_ON_PUSH", "dfe-example/*")), CACHE_TFVARS, True, id="the_namespace_rule"),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "dfe-fetcher-inspector-seed")), CACHE_TFVARS, False, id="the_seed_repo_only"
+        ),
+        pytest.param(_enhanced(("MANUAL", "*")), CACHE_TFVARS, False, id="a_manual_rule_assesses_nothing"),
+        pytest.param({"scanType": "BASIC", "rules": []}, CACHE_TFVARS, False, id="basic_scanning"),
+        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), {"name": "dfe-example"}, False, id="no_cache_in_the_dial"),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "*")),
+            {**CACHE_TFVARS, "registry_cache": {"enabled": False, "upstreams": {"quay": {}}}},
+            False,
+            id="the_cache_switched_off",
+        ),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "run-ns/*")),
+            {**CACHE_TFVARS, "registry_cache": {"namespace": "run-ns", "upstreams": {"quay": {}}}},
+            True,
+            id="a_namespace_the_dial_names",
+        ),
+    ],
+)
+def test_the_registry_scanning_check_refuses_a_rule_that_assesses_the_cache(
+    root: Path, scanning: dict, cache: dict, failing: bool
+) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **cache}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.scanning = scanning
+    failed = _failed(_preflight(root, guard))
+    assert failed == (["(a) registry scanning"] if failing else [])
+
+
+def test_the_registry_scanning_that_cannot_be_read_fails_the_check(root: Path) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **CACHE_TFVARS}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.missing = {"scanning"}
+    assert _failed(_preflight(root, guard)) == ["(a) registry scanning"]
 
 
 def test_a_configured_boundary_must_exist_too(root: Path) -> None:
@@ -849,6 +912,104 @@ def test_the_run_records_are_listed_under_the_prefix_in_the_state_region(
     (call,) = calls
     assert call[call.index("--prefix") + 1] == "dfe-e2e-runs/"
     assert call[call.index("--region") + 1] == "us-west-2"
+
+
+# --- the guardrails the preflight reads ---------------------------------------------------------
+
+ARMED_ACTION = {
+    "ApprovalModel": "AUTOMATIC",
+    "ActionType": "APPLY_IAM_POLICY",
+    "NotificationType": "ACTUAL",
+    "ActionThreshold": {"ActionThresholdValue": 100.0, "ActionThresholdType": "PERCENTAGE"},
+    "Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["runner"]}},
+    "Status": "STANDBY",
+}
+
+
+@pytest.mark.parametrize(
+    ("change", "refusal"),
+    [
+        pytest.param({}, None, id="armed_automatic_deny_at_the_ceiling"),
+        pytest.param({"ActionType": "APPLY_SCP_POLICY", "Definition": {}}, None, id="an_scp_needs_no_iam_targets"),
+        pytest.param({"ApprovalModel": "MANUAL"}, "approval model is MANUAL", id="manual_approval"),
+        pytest.param({"ApprovalModel": None}, "approval model is None", id="no_approval_model"),
+        pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "its type is RUN_SSM_DOCUMENTS", id="a_non_deny_type"),
+        pytest.param({"Status": "EXECUTION_FAILURE"}, "status is EXECUTION_FAILURE", id="a_failed_action"),
+        pytest.param({"Status": "EXECUTION_SUCCESS"}, "status is EXECUTION_SUCCESS", id="a_brake_already_on"),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 150.0, "ActionThresholdType": "PERCENTAGE"}},
+            "past the budget",
+            id="a_percentage_past_the_ceiling",
+        ),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 0, "ActionThresholdType": "PERCENTAGE"}},
+            "not a positive number",
+            id="a_zero_threshold",
+        ),
+        pytest.param({"ActionThreshold": {}}, "not a positive number", id="no_threshold"),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 50, "ActionThresholdType": "BYTES"}},
+            "threshold type is BYTES",
+            id="an_unknown_threshold_type",
+        ),
+        pytest.param(
+            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny"}}},
+            "no role, user or group",
+            id="a_policy_applied_to_nobody",
+        ),
+        pytest.param({"Definition": {}}, "no role, user or group", id="no_iam_definition"),
+    ],
+)
+def test_a_budget_action_passes_only_as_an_armed_automatic_deny(change: dict, refusal: str | None) -> None:
+    action = {**ARMED_ACTION, **change}
+    if refusal is None:
+        assert guard_mod.check_budget_action(action).startswith("STANDBY, AUTOMATIC")
+        return
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_budget_action(action)
+
+
+SWEEPER_ARN = f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:e2e-sweeper"
+
+
+def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict]) -> None:
+    def read(args: list[str], _region: str) -> dict:
+        if args[0] == "lambda":
+            return {"State": state, "FunctionArn": SWEEPER_ARN}
+        return {"Schedules": schedules}
+
+    monkeypatch.setattr(cloud_sweep, "run_aws", read)
+
+
+@pytest.mark.parametrize(
+    ("state", "schedules", "outcome"),
+    [
+        pytest.param(
+            "Active", [{"Name": "e2e-sweeper", "State": "ENABLED", "Target": {"Arn": SWEEPER_ARN}}],
+            "Active, run by e2e-sweeper", id="an_enabled_schedule_targets_it",
+        ),
+        pytest.param("Failed", [], "Failed", id="failed_is_left_to_the_caller"),
+        pytest.param(
+            "Active", [{"Name": "e2e-sweeper", "State": "DISABLED", "Target": {"Arn": SWEEPER_ARN}}],
+            None, id="a_disabled_schedule",
+        ),
+        pytest.param(
+            "Active", [{"Name": "other", "State": "ENABLED", "Target": {"Arn": SWEEPER_ARN + "-other"}}],
+            None, id="a_schedule_for_another_function",
+        ),
+        pytest.param("Active", [], None, id="no_schedule_at_all"),
+    ],
+)
+def test_the_sweeper_passes_only_with_an_enabled_schedule_that_targets_it(
+    monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict], outcome: str | None
+) -> None:
+    _aws_reads(monkeypatch, state, schedules)
+    guard = guard_mod.AwsGuard("us-west-2")
+    if outcome is None:
+        with pytest.raises(guard_mod.GuardError, match="no enabled EventBridge Scheduler schedule"):
+            guard.sweeper("e2e-sweeper")
+        return
+    assert guard.sweeper("e2e-sweeper") == outcome
 
 
 # --- the run's overlay ----------------------------------------------------------------------------

@@ -49,6 +49,26 @@ variable "kms_key_arn" {
   default     = ""
 }
 
+variable "noncurrent_version_days" {
+  description = "Days a superseded version of a state or run-record object is kept after a newer one replaces it, for recovering from a bad apply. From tfvars, never defaulted: it is a retention."
+  type        = number
+
+  validation {
+    condition     = var.noncurrent_version_days >= 1
+    error_message = "noncurrent_version_days must be at least 1."
+  }
+}
+
+variable "incomplete_upload_days" {
+  description = "Days after which an unfinished multipart upload to the bucket is aborted. From tfvars, never defaulted: it is a retention."
+  type        = number
+
+  validation {
+    condition     = var.incomplete_upload_days >= 1
+    error_message = "incomplete_upload_days must be at least 1."
+  }
+}
+
 variable "tags" {
   description = "The governance tag set, applied through the provider's default_tags."
   type        = map(string)

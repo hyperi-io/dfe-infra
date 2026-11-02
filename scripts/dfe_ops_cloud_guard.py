@@ -120,6 +120,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -350,6 +351,108 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
 
 # --- the cloud the guard reads ------------------------------------------------
 
+# The action types that deny spend. RUN_SSM_DOCUMENTS runs a document and stops nothing by itself.
+BUDGET_ACTION_DENY_TYPES = ("APPLY_IAM_POLICY", "APPLY_SCP_POLICY")
+# The only status of an action that is armed and has not fired. Every other one is a brake that
+# is already engaged, mid-execution or broken.
+BUDGET_ACTION_ARMED = "STANDBY"
+# A percentage threshold past the budget lets spend run over it before the brake applies.
+BUDGET_ACTION_MAX_PERCENT = 100
+
+
+def check_budget_action(action: Mapping[str, object]) -> str:
+    """Return what an armed deny-spend budget action looks like, or refuse it.
+
+    Args:
+        action: The `Action` object `aws budgets describe-budget-action` returns.
+
+    Returns:
+        One line: the status, approval model, type and threshold.
+
+    Raises:
+        GuardError: The action needs manual approval, is not a deny-spend type, has no
+            usable threshold, is not armed, or applies its policy to nobody.
+    """
+    approval = str(action.get("ApprovalModel", ""))
+    if approval != "AUTOMATIC":
+        raise GuardError(
+            f"its approval model is {approval or 'unreadable'}, so nothing applies the brake unattended"
+        )
+    action_type = str(action.get("ActionType", ""))
+    if action_type not in BUDGET_ACTION_DENY_TYPES:
+        raise GuardError(
+            f"its type is {action_type or 'unreadable'}, "
+            f"not one of {', '.join(BUDGET_ACTION_DENY_TYPES)}"
+        )
+
+    threshold = action.get("ActionThreshold")
+    threshold = threshold if isinstance(threshold, Mapping) else {}
+    threshold_type = str(threshold.get("ActionThresholdType", ""))
+    value = threshold.get("ActionThresholdValue")
+    if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
+        raise GuardError(f"its threshold {value!r} is not a positive number")
+    if threshold_type == "PERCENTAGE" and value > BUDGET_ACTION_MAX_PERCENT:
+        raise GuardError(f"its threshold is {value:g}%, past the budget it is meant to hold")
+    if threshold_type not in ("PERCENTAGE", "ABSOLUTE_VALUE"):
+        raise GuardError(f"its threshold type is {threshold_type or 'unreadable'}")
+
+    status = str(action.get("Status", "unknown"))
+    if status != BUDGET_ACTION_ARMED:
+        raise GuardError(f"its status is {status}, not {BUDGET_ACTION_ARMED}")
+
+    if action_type == "APPLY_IAM_POLICY":
+        definition = action.get("Definition")
+        iam = definition.get("IamActionDefinition") if isinstance(definition, Mapping) else None
+        iam = iam if isinstance(iam, Mapping) else {}
+        targets = [name for key in ("Roles", "Users", "Groups") for name in iam.get(key) or []]
+        if not iam.get("PolicyArn") or not targets:
+            raise GuardError("it names no policy, or no role, user or group to apply it to")
+    return f"{status}, {approval} {action_type} at {value:g} {threshold_type}"
+
+
+def cached_repository_samples(tfvars: Mapping[str, object]) -> list[str]:
+    """One repository name per registry the pull-through cache will create repositories under.
+
+    The cache names them `<namespace>/<upstream>/<path>`, and an empty namespace takes the
+    deployment's name. The result is empty when the cache is off or caches nothing.
+    """
+    cache = tfvars.get("registry_cache")
+    if not isinstance(cache, Mapping) or cache.get("enabled", True) is False:
+        return []
+    upstreams = cache.get("upstreams")
+    if not isinstance(upstreams, Mapping) or not upstreams:
+        return []
+    namespace = str(cache.get("namespace") or tfvars.get("name") or "")
+    return [f"{namespace}/{upstream}/image" for upstream in upstreams]
+
+
+def enhanced_scan_filters(scanning: Mapping[str, object], repositories: list[str]) -> list[str]:
+    """The registry scanning filters that would assess an image pushed to any of `repositories`.
+
+    ECR enhanced scanning bills each image it assesses, and the cache pulls in fresh repositories
+    every run. BASIC scanning, and a rule that scans only on demand, cost nothing.
+
+    Args:
+        scanning: The `scanningConfiguration` of `aws ecr get-registry-scanning-configuration`.
+        repositories: Sample names of the repositories the cache will create.
+
+    Returns:
+        Each matching filter, in rule order. Empty when no image would be assessed.
+    """
+    if scanning.get("scanType") != "ENHANCED":
+        return []
+    matching: list[str] = []
+    for rule in scanning.get("rules") or []:
+        if rule.get("scanFrequency") not in ("SCAN_ON_PUSH", "CONTINUOUS_SCAN"):
+            continue
+        for repository_filter in rule.get("repositoryFilters") or []:
+            pattern = str(repository_filter.get("filter", ""))
+            # ECR's wildcard filter takes `*` and nothing else.
+            regex = ".*".join(re.escape(part) for part in pattern.split("*"))
+            if any(re.fullmatch(regex, name) for name in repositories):
+                matching.append(pattern)
+    return matching
+
 
 def _parse_instant(raw: str) -> float:
     """Epoch seconds from an ISO-8601 instant; a naive one is refused, since it names no instant."""
@@ -378,12 +481,43 @@ class AwsGuard:
         return str(self._read(["iam", "get-role", "--role-name", name])["Role"]["Arn"])
 
     def sweeper(self, identifier: str) -> str:
-        """The sweeper function's state; Failed is refused by the caller."""
+        """The sweeper function's state, once an enabled schedule is known to invoke it.
+
+        Failed is returned as it is and refused by the caller.
+
+        Raises:
+            GuardError: The function is not Failed and no enabled EventBridge Scheduler
+                schedule targets it, so nothing would ever run it.
+        """
         body = self._read(["lambda", "get-function-configuration", "--function-name", identifier])
-        return str(body.get("State") or "Active")
+        state = str(body.get("State") or "Active")
+        if state == "Failed":
+            return state
+        function_arn = str(body.get("FunctionArn", ""))
+        schedules = self._read(["scheduler", "list-schedules", "--group-name", "default"]).get("Schedules", [])
+        # A target may name the function or one of its versions or aliases, which extend the ARN
+        # after a colon. A bare prefix test would also match another function that shares the name.
+        enabled = []
+        for schedule in schedules:
+            target = str(schedule.get("Target", {}).get("Arn", ""))
+            names_it = bool(function_arn) and (
+                target == function_arn or target.startswith(f"{function_arn}:")
+            )
+            if schedule.get("State") == "ENABLED" and names_it:
+                enabled.append(str(schedule.get("Name")))
+        if not enabled:
+            raise GuardError(
+                "no enabled EventBridge Scheduler schedule in the default group targets "
+                f"{function_arn or identifier}"
+            )
+        return f"{state}, run by {', '.join(sorted(enabled))}"
 
     def budget_action(self, account: str, identifier: str) -> str:
-        """The budget action's status, from `<budget-name>:<action-id>` (a budget name cannot hold ':')."""
+        """The budget action's armed state, from `<budget-name>:<action-id>` (a budget name cannot hold ':').
+
+        Raises:
+            GuardError: The identifier is malformed, or the action is not an armed deny-spend brake.
+        """
         budget, sep, action_id = identifier.rpartition(":")
         if not sep or not budget or not action_id:
             raise GuardError(f"budget action {identifier!r} is not <budget-name>:<action-id>")
@@ -391,10 +525,16 @@ class AwsGuard:
             ["budgets", "describe-budget-action", "--account-id", account, "--budget-name", budget,
              "--action-id", action_id]
         )
-        return str(body.get("Action", {}).get("Status", "unknown"))
+        return check_budget_action(body.get("Action", {}))
 
     def policy(self, arn: str) -> str:
         return str(self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["Arn"])
+
+    def registry_scanning(self) -> dict:
+        """The registry's scanning configuration in the run's region."""
+        body = self._read(["ecr", "get-registry-scanning-configuration"])
+        configuration = body.get("scanningConfiguration")
+        return configuration if isinstance(configuration, dict) else {}
 
     def credential_expiry(self, env: Mapping[str, str]) -> tuple[float | None, str]:
         """When the active credential expires, and where that reading came from.
@@ -553,6 +693,29 @@ def _identifier_check(report: PreflightReport, name: str, identifier: str, env_n
         report.add(name, False, f"{identifier} could not be read: {exc}")
 
 
+def _registry_scanning_check(report: PreflightReport, config: GuardConfig, guard) -> None:
+    """Refuse a run whose cache repositories the registry would put under enhanced scanning."""
+    repositories = cached_repository_samples(config.tfvars)
+    if not repositories:
+        return
+    name = "(a) registry scanning"
+    try:
+        filters = enhanced_scan_filters(guard.registry_scanning(), repositories)
+    except (cloud_sweep.CloudSweepError, KeyError) as exc:
+        report.add(name, False, f"the scanning configuration could not be read: {exc}")
+        return
+    if filters:
+        report.add(
+            name,
+            False,
+            f"enhanced scanning filter {', '.join(filters)} matches the pull-through cache's "
+            "repositories, so every image cached is assessed and billed: narrow the registry's "
+            "scanning rules to exclude them",
+        )
+    else:
+        report.add(name, True, "no enhanced scanning rule matches the pull-through cache's repositories")
+
+
 def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, str]) -> PreflightReport:
     """Run every read-only check; a check that cannot run is a FAIL, never a skip."""
     report = PreflightReport()
@@ -580,6 +743,8 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
             report, "(a) permissions boundary", config.permissions_boundary, "DFE_GUARD_PERMISSIONS_BOUNDARY",
             guard.policy,
         )
+
+    _registry_scanning_check(report, config, guard)
 
     # (b) the credential has to outlive the run and its teardown.
     needed_until = now + config.window

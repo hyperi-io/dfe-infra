@@ -158,7 +158,7 @@ variables {
   network   = { nat = "single", az_count = 3, subnet_newbits = 4 }
   endpoint  = { public = true, allowed_cidrs = ["198.51.100.10/32"] }
   dns       = { private_zone = "contract.internal" }
-  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1 }
+  telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1, eks_log_types = ["audit"] }
 
   tags = {
     "service-name"      = "dfe"
@@ -1066,16 +1066,16 @@ run "aws_audit_log_is_the_only_stream_enabled" {
     // enabled_cluster_log_types is a set: no index, so contains() is the
     // membership check and length() is what proves nothing else is enabled.
     condition     = length(aws_eks_cluster.this.enabled_cluster_log_types) == 1 && contains(aws_eks_cluster.this.enabled_cluster_log_types, "audit")
-    error_message = "only the audit stream may be enabled -- api/controllerManager/scheduler would be CloudWatch cost with nothing downstream to read them"
+    error_message = "a product deploy enables only the audit stream -- api/controllerManager/scheduler would be CloudWatch cost with nothing downstream to read them"
   }
 
   assert {
-    condition     = aws_cloudwatch_log_group.cluster.retention_in_days == var.telemetry.forced_retention_days
+    condition     = aws_cloudwatch_log_group.cluster[0].retention_in_days == var.telemetry.forced_retention_days
     error_message = "the otel sink must keep the audit log group at telemetry.forced_retention_days"
   }
 
   assert {
-    condition     = aws_cloudwatch_log_group.cluster.name == "/aws/eks/dfe-contract/cluster"
+    condition     = aws_cloudwatch_log_group.cluster[0].name == "/aws/eks/dfe-contract/cluster"
     error_message = "the log group must be pre-created under EKS's own naming convention, so EKS never auto-creates one with no expiration"
   }
 }
@@ -1094,11 +1094,12 @@ run "aws_audit_log_follows_cloudwatch_retention" {
       sink                  = "cloudwatch"
       retention_days        = 7
       forced_retention_days = 1
+      eks_log_types         = ["audit"]
     }
   }
 
   assert {
-    condition     = aws_cloudwatch_log_group.cluster.retention_in_days == 7
+    condition     = aws_cloudwatch_log_group.cluster[0].retention_in_days == 7
     error_message = "the cloudwatch sink must carry telemetry.retention_days, not the forced retention"
   }
 }
@@ -1112,7 +1113,74 @@ run "aws_rejects_a_forced_retention_cloudwatch_refuses" {
   }
 
   variables {
-    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 2 }
+    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 2, eks_log_types = ["audit"] }
+  }
+
+  expect_failures = [var.telemetry]
+}
+
+// An empty list switches every stream off. EKS then has nothing to deliver, so no
+// log group is created and the output is empty rather than a dangling name.
+run "aws_no_control_plane_stream_creates_no_log_group" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1, eks_log_types = [] }
+  }
+
+  assert {
+    condition     = length(aws_eks_cluster.this.enabled_cluster_log_types) == 0
+    error_message = "an empty telemetry.eks_log_types must enable no control-plane stream"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_log_group.cluster) == 0
+    error_message = "with no stream enabled there is nothing to deliver, so no log group may be created"
+  }
+
+  assert {
+    condition     = output.audit_log_group == ""
+    error_message = "audit_log_group must be empty when no log group exists"
+  }
+}
+
+// Each stream named is enabled, and only those.
+run "aws_enables_exactly_the_streams_named" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1, eks_log_types = ["audit", "api"] }
+  }
+
+  assert {
+    condition     = length(aws_eks_cluster.this.enabled_cluster_log_types) == 2 && contains(aws_eks_cluster.this.enabled_cluster_log_types, "audit") && contains(aws_eks_cluster.this.enabled_cluster_log_types, "api")
+    error_message = "telemetry.eks_log_types must enable exactly the streams it names"
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_log_group.cluster) == 1
+    error_message = "any enabled stream needs the pre-created log group"
+  }
+}
+
+// EKS refuses a stream it does not know, and a repeated one is a typo.
+run "aws_rejects_an_unknown_or_repeated_control_plane_stream" {
+  command = plan
+
+  module {
+    source = "./aws"
+  }
+
+  variables {
+    telemetry = { sink = "otel", retention_days = 2, forced_retention_days = 1, eks_log_types = ["audit", "audit", "kernel"] }
   }
 
   expect_failures = [var.telemetry]

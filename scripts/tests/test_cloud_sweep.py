@@ -1312,6 +1312,121 @@ def test_expected_fail_a_protected_tag_that_protects_nothing_is_refused_before_a
     assert "--protected-tag" in capsys.readouterr().err
 
 
+def _recording_aws(monkeypatch: pytest.MonkeyPatch, replies: list[object]) -> list[list[str]]:
+    """Answer each aws call with the next reply and return the calls made, in order."""
+    calls: list[list[str]] = []
+    pending = iter(replies)
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        calls.append(args)
+        return _ok(next(pending, {}))
+
+    monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", fake_run)
+    return calls
+
+
+def test_a_versioned_bucket_is_emptied_of_versions_markers_and_uploads_before_it_is_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _recording_aws(
+        monkeypatch,
+        [
+            {"Versions": [{"Key": "a", "VersionId": "v1"}], "DeleteMarkers": [{"Key": "a", "VersionId": "m1"}]},
+            {},  # delete-objects
+            {},  # list-object-versions: now empty
+            {"Uploads": [{"Key": "big", "UploadId": "u1"}]},
+            {},  # abort-multipart-upload
+            {},  # list-multipart-uploads: now empty
+            {},  # delete-bucket
+        ],
+    )
+    cloud_sweep.DELETE_FNS["s3-bucket"](_resource("s3-bucket", "run-bucket", tagged=True), REGION)
+    assert [c[:2] for c in calls] == [
+        ["s3api", "list-object-versions"],
+        ["s3api", "delete-objects"],
+        ["s3api", "list-object-versions"],
+        ["s3api", "list-multipart-uploads"],
+        ["s3api", "abort-multipart-upload"],
+        ["s3api", "list-multipart-uploads"],
+        ["s3api", "delete-bucket"],
+    ]
+    payload = json.loads(calls[1][calls[1].index("--delete") + 1])
+    assert payload["Objects"] == [{"Key": "a", "VersionId": "v1"}, {"Key": "a", "VersionId": "m1"}]
+    assert calls[4][calls[4].index("--upload-id") + 1] == "u1"
+
+
+def test_a_bucket_whose_versions_are_refused_is_not_deleted_and_the_sweep_does_not_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _recording_aws(
+        monkeypatch,
+        [
+            {"Versions": [{"Key": "a", "VersionId": "v1"}]},
+            {"Errors": [{"Key": "a", "Code": "AccessDenied"}]},
+        ],
+    )
+    with pytest.raises(cloud_sweep.CloudSweepError, match="refused"):
+        cloud_sweep.DELETE_FNS["s3-bucket"](_resource("s3-bucket", "run-bucket", tagged=True), REGION)
+    assert all(c[1] != "delete-bucket" for c in calls)
+
+
+KMS_KEY_ARN = f"arn:aws:kms:{REGION}:{ACCOUNT_ID}:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+LAMBDA_ARN = f"arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:dfe-example-msk-broker-scaler"
+RULE_ARN = f"arn:aws:events:{REGION}:{ACCOUNT_ID}:rule/dfe-example-msk-broker-scaler"
+BUS_RULE_ARN = f"arn:aws:events:{REGION}:{ACCOUNT_ID}:rule/custom-bus/scaler"
+
+
+def test_a_run_tagged_kms_key_is_scheduled_for_deletion_by_its_arn(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recording_aws(monkeypatch, [{}])
+    cloud_sweep.DELETE_FNS["tagged:kms"](_tagging_hit(KMS_KEY_ARN, "tagged:kms"), REGION)
+    (call,) = calls
+    assert call[:2] == ["kms", "schedule-key-deletion"]
+    assert call[call.index("--key-id") + 1] == KMS_KEY_ARN
+    assert call[call.index("--pending-window-in-days") + 1] == "7"
+
+
+def test_a_run_tagged_lambda_function_is_deleted_by_its_arn(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _recording_aws(monkeypatch, [{}])
+    cloud_sweep.DELETE_FNS["tagged:lambda"](_tagging_hit(LAMBDA_ARN, "tagged:lambda"), REGION)
+    (call,) = calls
+    assert call[:2] == ["lambda", "delete-function"]
+    assert call[call.index("--function-name") + 1] == LAMBDA_ARN
+
+
+@pytest.mark.parametrize(
+    ("arn", "name", "scope"),
+    [
+        pytest.param(RULE_ARN, "dfe-example-msk-broker-scaler", [], id="default_bus"),
+        pytest.param(BUS_RULE_ARN, "scaler", ["--event-bus-name", "custom-bus"], id="named_bus"),
+    ],
+)
+def test_an_event_rule_stops_firing_loses_its_targets_then_is_deleted(
+    monkeypatch: pytest.MonkeyPatch, arn: str, name: str, scope: list[str]
+) -> None:
+    calls = _recording_aws(monkeypatch, [{}, {"Targets": [{"Id": "t1"}, {"Id": "t2"}]}, {}, {}])
+    cloud_sweep.DELETE_FNS["tagged:events"](_tagging_hit(arn, "tagged:events"), REGION)
+    assert [c[:2] for c in calls] == [
+        ["events", "disable-rule"],
+        ["events", "list-targets-by-rule"],
+        ["events", "remove-targets"],
+        ["events", "delete-rule"],
+    ]
+    for call in calls:
+        assert call[call.index("--name" if "--name" in call else "--rule") + 1] == name
+        assert ("--event-bus-name" in call) == bool(scope)
+        if scope:
+            assert call[call.index("--event-bus-name") + 1] == scope[1]
+    remove = calls[2]
+    assert remove[remove.index("--ids") + 1 : remove.index("--region")] == ["t1", "t2"]
+
+
+def test_the_schedule_and_the_function_go_before_what_they_act_on_and_the_key_goes_last() -> None:
+    order = cloud_sweep.DELETE_ORDER
+    assert order.index("tagged:events") < order.index("tagged:lambda") < order.index("msk-cluster")
+    assert order.index("tagged:lambda") < order.index("log-group")
+    assert order.index("s3-bucket") < order.index("tagged:kms")
+
+
 def test_delete_resources_names_a_kind_with_no_scripted_delete() -> None:
     resources = [_resource("tagged:rds", "arn:aws:rds:us-west-2:0:db:dfe-db", tagged=True)]
     failures = cloud_sweep.delete_resources(resources, REGION)
@@ -1995,11 +2110,14 @@ def test_expected_fail_an_unknown_kind_is_refused_before_any_aws_call(
 
 def test_every_kind_a_sweep_deletes_has_exactly_one_lister() -> None:
     """--kind picks listers by the kind each reports, so a kind with none could never be swept."""
-    assert sorted([*cloud_sweep.LISTERS, "s3-bucket"]) == sorted(cloud_sweep.DELETE_ORDER)
+    listed = sorted(set(cloud_sweep.DELETE_ORDER) - set(cloud_sweep.TAGGED_DELETE_KINDS))
+    assert sorted([*cloud_sweep.LISTERS, "s3-bucket"]) == listed
     assert cloud_sweep.PER_SERVICE_COLLECTORS == list(cloud_sweep.LISTERS.values())
 
 
-@pytest.mark.parametrize("kind", sorted(set(cloud_sweep.DELETE_ORDER) - {"s3-bucket"}))
+@pytest.mark.parametrize(
+    "kind", sorted(set(cloud_sweep.DELETE_ORDER) - {"s3-bucket", *cloud_sweep.TAGGED_DELETE_KINDS})
+)
 def test_each_lister_reports_the_kind_it_is_listed_under(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
     """A lister filed under the wrong kind would be skipped by a --kind sweep that asked for it."""
     body = {

@@ -126,7 +126,7 @@ Three things narrow that gap, none of them a substitute for a transcript:
    before any doc states parameter-level logging as fact rather than an
    assumption.
 2. **The EKS control-plane audit log stays on** under both telemetry sinks
-   (`kubernetes-cluster/aws/eks.tf`, `enabled_cluster_log_types = ["audit"]`),
+   (`kubernetes-cluster/aws/eks.tf`, `telemetry.eks_log_types`, which defaults to `audit`),
    so a `kubectl` call through the EKS-API forward is recorded, attributed to
    the OPERATOR's own identity (the tunnel terminates TLS at the laptop -- see
    "EKS access" below) -- even though the tunnel that carried it is not.

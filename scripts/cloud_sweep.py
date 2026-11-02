@@ -27,7 +27,9 @@ ENIs, non-default VPCs and their subnets/route tables/internet gateways/
 endpoints, Route 53 hosted zones, CloudWatch log groups, Secrets Manager
 secrets (including ones already scheduled for deletion), KMS aliases, ECR
 repositories (a pull-through cache creates them on a first pull, outside tofu
-state), and S3 buckets. AWS account defaults (the default VPC and everything that comes
+state), and S3 buckets (every object version, delete marker and multipart upload
+included). Three more kinds come from route 1 alone and have a scripted delete:
+EventBridge rules, Lambda functions and KMS keys (scheduled for deletion). AWS account defaults (the default VPC and everything that comes
 with it, AWS-managed KMS aliases) are never listed or touched -- a proof did
 not create them and this sweep has no business reporting on them.
 
@@ -1423,12 +1425,91 @@ def _delete_ecr_repository(r: Resource, region: str) -> None:
     run_aws(["ecr", "delete-repository", "--repository-name", r.name, "--force"], region)
 
 
+# One DeleteObjects call takes at most 1000 keys, and one list call returns at most 1000 entries.
+S3_DELETE_BATCH = 1000
+
+
+def _empty_s3_bucket(bucket: str, region: str) -> None:
+    """Delete every object version, delete marker and unfinished multipart upload in `bucket`.
+
+    A recursive `s3 rm` only writes delete markers over a versioned bucket's current objects,
+    which leaves the versions behind and the bucket undeletable.
+
+    Raises:
+        CloudSweepError: A list or delete call failed, or DeleteObjects refused a key.
+    """
+    while True:
+        listing = run_aws(
+            ["s3api", "list-object-versions", "--bucket", bucket, "--max-items", str(S3_DELETE_BATCH)], region
+        )
+        entries = [*(listing.get("Versions") or []), *(listing.get("DeleteMarkers") or [])]
+        if not entries:
+            break
+        objects = [{"Key": e["Key"], "VersionId": e["VersionId"]} for e in entries]
+        result = run_aws(
+            ["s3api", "delete-objects", "--bucket", bucket, "--delete",
+             json.dumps({"Objects": objects, "Quiet": True})],
+            region,
+        )
+        if result.get("Errors"):
+            raise CloudSweepError(f"s3://{bucket}: {len(result['Errors'])} versions were refused, first {result['Errors'][0]}")
+    while True:
+        uploads = run_aws(["s3api", "list-multipart-uploads", "--bucket", bucket], region).get("Uploads") or []
+        if not uploads:
+            return
+        for upload in uploads:
+            run_aws(
+                ["s3api", "abort-multipart-upload", "--bucket", bucket, "--key", upload["Key"],
+                 "--upload-id", upload["UploadId"]],
+                region,
+            )
+
+
 def _delete_s3_bucket(r: Resource, region: str) -> None:
-    run_aws_text(["s3", "rm", f"s3://{r.id}", "--recursive"], region)
+    _empty_s3_bucket(r.id, region)
     run_aws(["s3api", "delete-bucket", "--bucket", r.id], region)
 
 
+# AWS's shortest window, in days, between scheduling a key's deletion and its end. It can be cancelled until then.
+KMS_KEY_DELETION_WINDOW_DAYS = 7
+
+
+def _delete_kms_key(r: Resource, region: str) -> None:
+    """Schedule the key's deletion; KMS keeps it, disabled, for the window.
+
+    The tagging API finds the key by its run tags, so a key whose alias is already gone is found too.
+    """
+    run_aws(
+        ["kms", "schedule-key-deletion", "--key-id", r.id,
+         "--pending-window-in-days", str(KMS_KEY_DELETION_WINDOW_DAYS)],
+        region,
+    )
+
+
+def _delete_lambda_function(r: Resource, region: str) -> None:
+    run_aws(["lambda", "delete-function", "--function-name", r.id], region)
+
+
+def _delete_event_rule(r: Resource, region: str) -> None:
+    """Stop the rule firing, remove its targets, then delete it: DeleteRule refuses a rule with targets."""
+    bus_and_name = r.id.partition(":rule/")[2]
+    bus, _, name = bus_and_name.rpartition("/")
+    scope = ["--event-bus-name", bus] if bus else []
+    run_aws(["events", "disable-rule", "--name", name, *scope], region)
+    targets = run_aws(["events", "list-targets-by-rule", "--rule", name, *scope], region).get("Targets") or []
+    if targets:
+        run_aws(["events", "remove-targets", "--rule", name, *scope, "--ids", *[t["Id"] for t in targets]], region)
+    run_aws(["events", "delete-rule", "--name", name, *scope], region)
+
+
+# Kinds found by the tagging API alone, labelled by the service in their ARN. Each one is reliably
+# listed there, so none needs a lister of its own.
+TAGGED_DELETE_KINDS = ("tagged:events", "tagged:lambda", "tagged:kms")
+
 DELETE_ORDER: list[str] = [
+    # Tier 0: whatever fires on a schedule, before the resources it acts on or logs to.
+    "tagged:events",
+    "tagged:lambda",
     # Tier 1: workloads and load balancers.
     "ec2-instance",
     "load-balancer",
@@ -1456,6 +1537,8 @@ DELETE_ORDER: list[str] = [
     "secret",
     "kms-alias",
     "s3-bucket",
+    # Last, once what it encrypts is gone.
+    "tagged:kms",
 ]
 
 DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
@@ -1482,6 +1565,9 @@ DELETE_FNS: dict[str, Callable[[Resource, str], None]] = {
     "secret": _delete_secret,
     "kms-alias": _delete_kms_alias,
     "s3-bucket": _delete_s3_bucket,
+    "tagged:events": _delete_event_rule,
+    "tagged:lambda": _delete_lambda_function,
+    "tagged:kms": _delete_kms_key,
 }
 
 
