@@ -167,14 +167,19 @@
 #                            only. Empty on an in-cluster broker, whose charts
 #                            keep common.yaml's kafka.securityProtocol.
 #   DFE_TELEMETRY_SINK       otel (default) | cloudwatch, from the cloud root's
-#                            telemetry dial. On DFE_CLOUD=aws with otel, renders
-#                            the fetcher's AWS telemetry pre-config (below);
-#                            empty or cloudwatch renders nothing here.
+#                            telemetry dial.
 #   DFE_KAFKA_BROKER_LOG_BUCKET  the S3 bucket MSK's broker logs land in under
 #                            the otel sink; empty on every other provider or sink.
 #   DFE_CLOUDTRAIL_BUCKET    the S3 bucket the aws root's CloudTrail delivers to.
-#   DFE_EKS_AUDIT_LOG_GROUP  the CloudWatch log group EKS's control-plane audit
-#                            stream lands in -- unavoidable under either sink.
+#   DFE_PROVIDER_LOGS_FLAVOUR  aws | azure | gcp | rancher, or empty for none.
+#                            Switches on the otel collector's provider-logs
+#                            workload, which reads the infra provider's own logs
+#                            into the otel database. The aws root outputs it; a
+#                            rancher deploy sets it, and its auditing is the
+#                            operator's to turn on.
+#   DFE_EKS_AUDIT_LOG_GROUP  the CloudWatch log group EKS's control-plane
+#                            streams land in. Empty when none are enabled.
+#   DFE_CLOUDTRAIL_LOG_GROUP the CloudWatch log group CloudTrail delivers to.
 #   DFE_CLICKHOUSE_DEFAULT_TTL_DAYS  days every time-series table keeps rows, the
 #                            OTel tables included (default 90; 0 = no default
 #                            TTL). A source or a dfe-schemas definition with its
@@ -587,13 +592,15 @@ export DFE_GATEWAY_IP="${DFE_GATEWAY_IP:-}"
 export DFE_RECEIVER_IP="${DFE_RECEIVER_IP:-}"
 # DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --
 # otel is the default sink a cloud root renders, and cloudwatch is the opt-in
-# AWS-native path. Empty (a non-cloud caller, or one with nothing to report)
-# renders no fetcher pre-config step below, the same as any other unset
-# optional fact.
+# AWS-native path.
 export DFE_TELEMETRY_SINK="${DFE_TELEMETRY_SINK:-}"
 export DFE_KAFKA_BROKER_LOG_BUCKET="${DFE_KAFKA_BROKER_LOG_BUCKET:-}"
 export DFE_CLOUDTRAIL_BUCKET="${DFE_CLOUDTRAIL_BUCKET:-}"
+# The infra provider's own logs, read by the otel collector's provider-logs workload.
+# Empty renders no workload.
+export DFE_PROVIDER_LOGS_FLAVOUR="${DFE_PROVIDER_LOGS_FLAVOUR:-}"
 export DFE_EKS_AUDIT_LOG_GROUP="${DFE_EKS_AUDIT_LOG_GROUP:-}"
+export DFE_CLOUDTRAIL_LOG_GROUP="${DFE_CLOUDTRAIL_LOG_GROUP:-}"
 # The EKS cluster name for the LBC appset's cluster_name annotation, rendered only when set.
 export DFE_KUBE_CLUSTER_NAME="${DFE_KUBE_CLUSTER_NAME:-}"
 export DFE_KUBE_CLUSTER_NAME_ANNOTATION="${DFE_KUBE_CLUSTER_NAME:+dfe.hyperi.io/cluster_name: \"${DFE_KUBE_CLUSTER_NAME}\"}"
@@ -1380,33 +1387,6 @@ elif [[ "${DFE_BUNDLED_DEPLOY_REPO}" != "true" ]] && [[ "${DFE_DRY_RUN:-false}" 
     echo "  NOTE: Karpenter takes its gated node image from sizing/${DFE_NODE_POOLS_VALUES_FILE##*/} in ${DFE_CONFIG_REPO_URL}."
     echo "        Commit it with sizing/${DFE_NODE_IMAGES_FILE##*/}, or nodes run the chart's default image."
   fi
-fi
-
-echo "==> [4d/7] Fetcher AWS telemetry pre-config (otel sink only)"
-# DFE's monitoring goes to its own OTel feed, never CloudWatch, so on AWS with
-# sink=otel the broker-log bucket, the CloudTrail trail and the EKS audit log
-# have a fetcher-readable path instead. Under sink=cloudwatch these touchpoints
-# already have an AWS-native destination, so nothing is rendered. A STARTER
-# fragment, not a wired instance -- see the template's own header.
-if [[ "${DFE_CLOUD}" == "aws" && "${DFE_TELEMETRY_SINK}" == "otel" ]]; then
-  # `run` echoes instead of executing, so piping `run cmd-a | run cmd-b` under
-  # DFE_DRY_RUN carries the left side's echo TEXT into the right side, which
-  # also just echoes -- neither side ever sees real input. Guarded with an
-  # `if`, like the ConfigMap apply two lines below, so a dry run prints one
-  # readable line and a real run pipes for real.
-  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-    echo "[DRY-RUN] kubectl create namespace ${DFE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
-  else
-    kubectl create namespace "${DFE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-  fi
-  if [[ "${DFE_DRY_RUN:-false}" == "true" ]]; then
-    echo "[DRY-RUN] python3 render_env.py < ${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl | kubectl apply -f -"
-  else
-    python3 "${SCRIPT_DIR}/render_env.py" < "${TEMPLATES_DIR}/fetcher-aws-telemetry.yaml.tpl" | kubectl apply -f -
-    echo "  ConfigMap dfe-fetcher-aws-telemetry-preconfig applied in ${DFE_NAMESPACE}"
-  fi
-else
-  echo "  Skipped (DFE_CLOUD=${DFE_CLOUD}, DFE_TELEMETRY_SINK=${DFE_TELEMETRY_SINK:-<unset>}) -- otel on aws only"
 fi
 
 # Valkey for ArgoCD cache — check if already running, skip install if so.

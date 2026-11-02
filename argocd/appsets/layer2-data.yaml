@@ -146,6 +146,16 @@ spec:
                 value: '{{ $p := index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}{{ if has $p (list "strimzi" "redpanda") }}{{ $p }}{{ else }}strimzi{{ end }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
+              # The infra provider's own logs (otel-collector's provider-logs
+              # workload). A blank flavour is none, and the chart renders nothing.
+              - name: clusterTelemetry.providerLogs.flavour
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/provider_logs_flavour" | default "none" }}'
+              - name: clusterTelemetry.providerLogs.aws.region
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/region" | default "" }}'
+              - name: clusterTelemetry.providerLogs.aws.eksAuditLogGroup
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/eks_audit_log_group" | default "" }}'
+              - name: clusterTelemetry.providerLogs.aws.cloudTrailLogGroup
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/cloudtrail_log_group" | default "" }}'
               # Whether dfe-internal-ca exists: the gateway chart that mints it is
               # deployed unless the edge label is "false" (layer2-edge.yaml, and
               # layer2-platform.yaml for a secret with no label, hence the "true"

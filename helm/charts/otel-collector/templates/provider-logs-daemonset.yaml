@@ -1,0 +1,91 @@
+{{- $pl := .Values.clusterTelemetry.providerLogs }}
+{{- if eq $pl.flavour "rancher" }}
+# rancher: the kube-apiserver audit log only exists on the control-plane nodes, so
+# this is a DaemonSet of its own, selected onto them. The chart's node agent
+# stays where it was.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-provider-logs
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/provider-logs-configmap.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    spec:
+      # Root: the audit log is written by the API server as root with a restrictive mode.
+      {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
+      serviceAccountName: {{ include "otel-collector.providerLogsServiceAccount" . }}
+      {{- with $pl.rancher.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $pl.rancher.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
+          args: ["--config=/etc/otel/config.yaml"]
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          env:
+            - name: K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: GOMEMLIMIT
+              value: {{ include "otel-collector.goMemLimit" (include "otel-collector.providerLogsMemory" .) | quote }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthCheckPort }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml $pl.rancher.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+            - name: audit
+              mountPath: {{ dir $pl.rancher.auditLogPath }}
+              readOnly: true
+            - name: checkpoint
+              mountPath: {{ $pl.rancher.checkpoint.mountPath }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-provider-logs-config
+        # The log's directory, not the file: the file rotates, and a directory
+        # that does not exist yet (auditing off) is created empty rather than
+        # refusing to start the pod.
+        - name: audit
+          hostPath:
+            path: {{ dir $pl.rancher.auditLogPath }}
+            type: DirectoryOrCreate
+        - name: checkpoint
+          hostPath:
+            path: {{ $pl.rancher.checkpoint.hostPath }}
+            type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -125,7 +125,7 @@ output "DFE_OTEL_ENDPOINT" {
 }
 
 output "DFE_TELEMETRY_SINK" {
-  description = "otel or cloudwatch, echoed from the dial. bootstrap.sh reads this to decide whether the fetcher's AWS telemetry pre-config template renders at all -- it is otel-only, since the cloudwatch sink has nothing for the fetcher to pre-configure against."
+  description = "otel or cloudwatch, echoed from the dial."
   value       = var.telemetry.sink
 }
 
@@ -150,8 +150,18 @@ output "DFE_RESOURCE_TAGS" {
 }
 
 output "DFE_EKS_AUDIT_LOG_GROUP" {
-  description = "The CloudWatch log group EKS's control-plane audit stream lands in -- unavoidable under either sink. No documented fetcher CloudWatch Logs source exists today, so this is named for when one does, not consumed by bootstrap.sh yet."
+  description = "The CloudWatch log group EKS's control-plane streams land in -- unavoidable under either sink. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/eks_audit_log_group annotation for the otel collector's provider-logs receiver. Empty when telemetry.eks_log_types enables no stream."
   value       = module.cluster.audit_log_group
+}
+
+output "DFE_CLOUDTRAIL_LOG_GROUP" {
+  description = "The CloudWatch log group CloudTrail delivers to, under both telemetry sinks. Bootstrap reads it into the Argo cluster secret's dfe.hyperi.io/cloudtrail_log_group annotation for the otel collector's provider-logs receiver. Empty when cloudtrail.enabled is false."
+  value       = join("", aws_cloudwatch_log_group.cloudtrail[*].name)
+}
+
+output "DFE_PROVIDER_LOGS_FLAVOUR" {
+  description = "aws when the otel collector reads this deployment's provider logs (EKS audit and CloudTrail) from CloudWatch Logs into the otel database, which is telemetry.sink = otel with at least one log group to read. Empty otherwise. Bootstrap reads it into the dfe.hyperi.io/provider_logs_flavour annotation, which layer2-data.yaml passes to the chart's clusterTelemetry.providerLogs.flavour."
+  value       = local.provider_logs_count == 1 ? "aws" : ""
 }
 
 output "DFE_TUNNEL_ADDRESS" {

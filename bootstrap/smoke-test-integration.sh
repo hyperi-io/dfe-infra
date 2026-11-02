@@ -112,6 +112,8 @@ PASS=0; FAIL=0; SKIP=0
 pass() { echo "  [PASS] $1"; PASS=$((PASS+1)); }
 fail() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
+# A finding that does not fail the run.
+warn() { echo "  [WARN] $1"; }
 
 # The failure-evidence redactor, the one place that knows what a credential looks like.
 DFE_OPS="${POST_DIR}/../scripts/dfe-ops"
@@ -615,6 +617,39 @@ done
 echo "  waited ${otel_waited}s of ${OTEL_WAIT}s for a row newer than ${FRESH_WINDOW}s"
 check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s, polled up to ${OTEL_WAIT}s)" \
   otel_logs_fresh
+
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== CORE 1c: the infra provider's own logs reach the same database ==="
+# The collector's provider-logs workload reads the provider's native log service
+# into the otel database, off the DFE ingest path. On aws the EKS audit log is
+# always busy (controllers call the API server all the time), so a row from it
+# inside the freshness window is a hard check. CloudTrail management events can
+# be sparse on a quiet account, so its absence only warns.
+PROVIDER_LOGS="${DFE_PROVIDER_LOGS_FLAVOUR:-$(cluster_fact provider_logs_flavour)}"
+provider_log_fresh() {
+  test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND AND ResourceAttributes['dfe.provider_log.source'] = '$1'")" -gt 0 2>/dev/null
+}
+if [ "$PROVIDER_LOGS" = aws ]; then
+  provider_waited=0
+  while ! provider_log_fresh eks-audit; do
+    [ "$provider_waited" -ge "$OTEL_WAIT" ] && break
+    sleep "$OTEL_WAIT_INTERVAL"
+    provider_waited=$((provider_waited + OTEL_WAIT_INTERVAL))
+  done
+  echo "  waited ${provider_waited}s of ${OTEL_WAIT}s for an EKS audit row newer than ${FRESH_WINDOW}s"
+  check "EKS audit log landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (dfe.provider_log.source=eks-audit)" \
+    "provider_log_fresh eks-audit"
+  if provider_log_fresh cloudtrail; then
+    pass "CloudTrail events landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (dfe.provider_log.source=cloudtrail)"
+  else
+    warn "no CloudTrail row newer than ${FRESH_WINDOW}s -- management events are sparse on a quiet account"
+  fi
+elif [ -n "$PROVIDER_LOGS" ]; then
+  skip "provider logs (${PROVIDER_LOGS}) -- only the aws flavour is asserted here"
+else
+  skip "provider logs -- this deployment reads none"
+fi
 
 # ---------------------------------------------------------------------------
 echo ""

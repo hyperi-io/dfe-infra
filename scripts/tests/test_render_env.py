@@ -201,7 +201,6 @@ def test_bootstrap_renders_every_template_through_render_env_and_never_envsubst(
     renders = [
         line for line in code if "render_env.py" in line and not line.lstrip().startswith("echo ")
     ]
-    # The cluster secret, the AWS StorageClass, the MetalLB pool, both secret store
-    # bodies and the fetcher's telemetry ConfigMap.
-    assert len(renders) == 6, renders
+    # The cluster secret, the AWS StorageClass, the MetalLB pool and both secret store bodies.
+    assert len(renders) == 5, renders
     assert all('python3 "${SCRIPT_DIR}/render_env.py" < "' in line for line in renders)

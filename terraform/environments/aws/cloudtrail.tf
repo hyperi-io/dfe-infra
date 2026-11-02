@@ -3,8 +3,7 @@
 // the root rather than to any one of them. Management events only, under
 // BOTH telemetry sinks -- unlike MSK's broker logs there is no S3-vs-otel
 // choice at this layer, since a trail always delivers to S3 regardless of
-// var.telemetry.sink. What the dial actually gates is the CloudWatch Logs
-// attachment, the AWS-native half that sink = cloudwatch opts into.
+// var.telemetry.sink, and to CloudWatch Logs as well.
 
 data "aws_partition" "current" {}
 
@@ -16,10 +15,13 @@ locals {
   // Constructing it from account, region and name breaks that cycle.
   cloudtrail_arn = "arn:${data.aws_partition.current.partition}:cloudtrail:${var.provision.region}:${data.aws_caller_identity.current.account_id}:trail/${local.cloudtrail_name}"
 
-  // var.cloudtrail.enabled gates everything in this file; the sink gates the
-  // CloudWatch half inside it.
+  // var.cloudtrail.enabled gates everything in this file. The CloudWatch half
+  // is built under both sinks: sink = cloudwatch keeps it for the AWS-native
+  // path, and sink = otel reads it from there into the otel database
+  // (provider_logs.tf). Only the retention differs.
   cloudtrail_count            = var.cloudtrail.enabled ? 1 : 0
-  cloudtrail_cloudwatch_count = var.cloudtrail.enabled && var.telemetry.sink == "cloudwatch" ? 1 : 0
+  cloudtrail_cloudwatch_count = var.cloudtrail.enabled ? 1 : 0
+  cloudtrail_log_retention    = var.telemetry.sink == "otel" ? var.telemetry.forced_retention_days : var.telemetry.retention_days
 }
 
 // A persistent deployment's audit trail survives a tofu destroy rather than
@@ -91,17 +93,17 @@ module "cloudtrail_bucket" {
 }
 
 // ---------------------------------------------------------------------------
-// cloudwatch sink only: the AWS-native half. otel builds none of this --
-// CloudTrail's events already reach the OTel feed some other way once the
-// fetcher is wired to the S3 bucket above, so a duplicate CloudWatch copy
-// would be pure cost with nothing new to read it.
+// The CloudWatch Logs half. Under sink = otel the collector's provider-logs
+// receiver polls it into the otel database, so it keeps only the catch-up
+// window (telemetry.forced_retention_days). Under sink = cloudwatch it is the
+// AWS-native copy and keeps telemetry.retention_days.
 // ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "cloudtrail" {
   count = local.cloudtrail_cloudwatch_count
 
   name              = "/aws/cloudtrail/${local.cloudtrail_name}"
-  retention_in_days = var.telemetry.retention_days
+  retention_in_days = local.cloudtrail_log_retention
 }
 
 data "aws_iam_policy_document" "cloudtrail_assume" {

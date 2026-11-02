@@ -80,6 +80,39 @@ def test_the_wait_is_bounded_and_the_bound_is_a_dial() -> None:
     )
 
 
+def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
+    """The EKS audit log is a hard check, CloudTrail only warns, and other flavours skip."""
+    out, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("the EKS audit row passes", "[PASS] EKS audit log landing fresh" in out.stdout, out.stdout)
+    expect("a quiet CloudTrail only warns", "[WARN] no CloudTrail row" in out.stdout, out.stdout)
+    expect("and fails nothing", "[FAIL] CloudTrail" not in out.stdout, out.stdout)
+
+    both, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7, "cloudtrail": 2}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("CloudTrail rows pass when present", "[PASS] CloudTrail events landing fresh" in both.stdout, both.stdout)
+
+    dead, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"cloudtrail": 2}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("no EKS audit row fails the suite", "[FAIL] EKS audit log landing fresh" in dead.stdout, dead.stdout)
+    expect("and the exit code says so", dead.returncode != 0, f"rc={dead.returncode}")
+
+    rancher, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0", DFE_PROVIDER_LOGS_FLAVOUR="rancher")
+    expect("another flavour is skipped by name", "[SKIP] provider logs (rancher)" in rancher.stdout, rancher.stdout)
+
+    none, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0")
+    expect("a deployment reading none skips", "[SKIP] provider logs -- this deployment reads none" in none.stdout, none.stdout)
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

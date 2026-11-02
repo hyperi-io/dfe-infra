@@ -217,7 +217,9 @@ variable "telemetry" {
     for a compliance need CloudWatch itself satisfies, and keeps every
     touchpoint at retention_days instead. eks_log_types names the EKS
     control-plane streams switched on (audit by default, an empty list
-    creates no log group). Passed unchanged to the cluster
+    creates no log group). The log groups stay on the STANDARD class: the Essentials
+    (INFREQUENT_ACCESS) class does not support FilterLogEvents, which the
+    collector's aws_cloudwatch receiver calls. Passed unchanged to the cluster
     module (the EKS audit log) and to the msk module (the broker logs) --
     confluent-cloud and redpanda-cloud take no telemetry input, since neither
     emits a CloudWatch-shaped broker log.

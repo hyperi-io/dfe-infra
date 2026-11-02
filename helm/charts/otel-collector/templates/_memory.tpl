@@ -77,3 +77,13 @@ shipped without these dials was OOMKilled 1555 times in 13 days.
 {{- define "otel-collector.gatewayMemory" -}}
 {{- required "gateway.resources.limits.memory is required: memory_limiter and GOMEMLIMIT derive from it" (dig "resources" "limits" "memory" "" .Values.gateway) -}}
 {{- end -}}
+
+{{/* The provider-logs workloads' budget: the Deployment's, or the rancher DaemonSet's. */}}
+{{- define "otel-collector.providerLogsMemory" -}}
+{{- $pl := .Values.clusterTelemetry.providerLogs -}}
+{{- if eq $pl.flavour "rancher" -}}
+{{- required "clusterTelemetry.providerLogs.rancher.resources.limits.memory is required" (dig "resources" "limits" "memory" "" $pl.rancher) -}}
+{{- else -}}
+{{- required "clusterTelemetry.providerLogs.deployment.resources.limits.memory is required" (dig "resources" "limits" "memory" "" $pl.deployment) -}}
+{{- end -}}
+{{- end -}}
