@@ -118,6 +118,7 @@ import functools
 import importlib.machinery
 import importlib.util
 import ipaddress
+import itertools
 import json
 import os
 import re
@@ -129,7 +130,7 @@ import tempfile
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import NoReturn
@@ -360,18 +361,36 @@ BUDGET_ACTION_ARMED = "STANDBY"
 BUDGET_ACTION_MAX_PERCENT = 100
 
 
-def check_budget_action(action: Mapping[str, object]) -> str:
+def policy_document_denies(document: object) -> bool:
+    """Whether an IAM or service control policy document holds at least one Deny statement."""
+    if not isinstance(document, Mapping):
+        return False
+    statements = document.get("Statement")
+    if isinstance(statements, Mapping):
+        statements = [statements]
+    if not isinstance(statements, list):
+        return False
+    return any(isinstance(s, Mapping) and s.get("Effect") == "Deny" for s in statements)
+
+
+def check_budget_action(action: Mapping[str, object], *, account: str, role: str) -> str:
     """Return what an armed deny-spend budget action looks like, or refuse it.
+
+    The policy itself is judged by the caller, which has to read it. This judges the action: how it
+    runs, what triggers it, and whether it lands on the principal the guard deploys as.
 
     Args:
         action: The `Action` object `aws budgets describe-budget-action` returns.
+        account: The account the run deploys into, which an SCP target must name.
+        role: The deploy principal the guard knows (a role name or ARN), which an IAM action's
+            roles must include.
 
     Returns:
         One line: the status, approval model, type and threshold.
 
     Raises:
         GuardError: The action needs manual approval, is not a deny-spend type, has no
-            usable threshold, is not armed, or applies its policy to nobody.
+            usable threshold, is not armed, or does not cover the deploy principal.
     """
     approval = str(action.get("ApprovalModel", ""))
     if approval != "AUTOMATIC":
@@ -400,14 +419,177 @@ def check_budget_action(action: Mapping[str, object]) -> str:
     if status != BUDGET_ACTION_ARMED:
         raise GuardError(f"its status is {status}, not {BUDGET_ACTION_ARMED}")
 
+    definition = action.get("Definition")
+    definition = definition if isinstance(definition, Mapping) else {}
     if action_type == "APPLY_IAM_POLICY":
-        definition = action.get("Definition")
-        iam = definition.get("IamActionDefinition") if isinstance(definition, Mapping) else None
+        iam = definition.get("IamActionDefinition")
         iam = iam if isinstance(iam, Mapping) else {}
-        targets = [name for key in ("Roles", "Users", "Groups") for name in iam.get(key) or []]
-        if not iam.get("PolicyArn") or not targets:
-            raise GuardError("it names no policy, or no role, user or group to apply it to")
+        role_name = role.rsplit("/", 1)[-1]
+        if not iam.get("PolicyArn"):
+            raise GuardError("it names no policy to apply")
+        if not role_name or role_name not in (iam.get("Roles") or []):
+            raise GuardError(
+                f"its roles {list(iam.get('Roles') or [])} do not include the deploy role "
+                f"{role_name or 'the guard was given none of'}, so the brake would not reach the run"
+            )
+    else:
+        scp = definition.get("ScpActionDefinition")
+        scp = scp if isinstance(scp, Mapping) else {}
+        if not scp.get("PolicyId"):
+            raise GuardError("it names no policy to apply")
+        if account not in (scp.get("TargetIds") or []):
+            raise GuardError(
+                f"its targets {list(scp.get('TargetIds') or [])} do not name account {account}: "
+                "an organizational unit is not resolved, so coverage cannot be established"
+            )
     return f"{status}, {approval} {action_type} at {value:g} {threshold_type}"
+
+
+_RATE = re.compile(r"^rate\(\s*(\d+)\s+(minute|minutes|hour|hours|day|days)\s*\)$")
+_RATE_UNIT_SECONDS = {"minute": 60, "hour": 3600, "day": 86400}
+_CRON = re.compile(r"^cron\(\s*(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*\)$")
+_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+_WEEKDAY_NAMES = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+
+
+def _cron_values(field: str, low: int, high: int, names: tuple[str, ...] = (), name_base: int = 0) -> set[int]:
+    """The values one EventBridge cron field selects, or GuardError for a form this cannot judge."""
+    values: set[int] = set()
+    for part in field.split(","):
+        step = 1
+        if "/" in part:
+            part, _, raw_step = part.partition("/")
+            if not raw_step.isdigit() or int(raw_step) < 1:
+                raise GuardError(f"cron step {raw_step!r} is not a positive number")
+            step = int(raw_step)
+        if part in ("*", "?"):
+            start, end = low, high
+        else:
+            bounds = []
+            for bound in part.split("-"):
+                upper = bound.upper()
+                if upper in names:
+                    bounds.append(names.index(upper) + name_base)
+                elif bound.isdigit():
+                    bounds.append(int(bound))
+                else:
+                    raise GuardError(f"cron field {field!r} uses {bound!r}, which this check cannot judge")
+            if len(bounds) > 2:
+                raise GuardError(f"cron field {field!r} is not a value, a range or a list")
+            start, end = bounds[0], bounds[-1]
+            if len(bounds) == 1 and step > 1:
+                end = high
+        if not low <= start <= end <= high:
+            raise GuardError(f"cron field {field!r} is outside {low}-{high}")
+        values.update(range(start, end + 1, step))
+    return values
+
+
+def schedule_gap_seconds(expression: str, now: float, horizon: int) -> int:
+    """The longest wait between firings of a recurring schedule expression over the next `horizon` seconds.
+
+    Measured from `now` through the first firing, between firings, and from the last to the horizon,
+    so a schedule that fires too rarely to see within the horizon reads as a gap of the horizon.
+
+    Raises:
+        GuardError: A one-shot at() expression, or one this check cannot read.
+    """
+    expression = expression.strip()
+    rate = _RATE.match(expression)
+    if rate:
+        return int(rate.group(1)) * _RATE_UNIT_SECONDS[rate.group(2).rstrip("s")]
+    if expression.startswith("at("):
+        raise GuardError("its schedule is a one-shot at(), which runs once and never again")
+    cron = _CRON.match(expression)
+    if cron is None:
+        raise GuardError(f"its schedule expression {expression!r} is neither rate() nor cron()")
+    minutes, hours, days, months, weekdays, years = cron.groups()
+    allowed_minutes = _cron_values(minutes, 0, 59)
+    allowed_hours = _cron_values(hours, 0, 23)
+    allowed_days = _cron_values(days, 1, 31)
+    allowed_months = _cron_values(months, 1, 12, _MONTH_NAMES, 1)
+    # EventBridge numbers the week from Sunday = 1.
+    allowed_weekdays = _cron_values(weekdays, 1, 7, _WEEKDAY_NAMES, 1)
+    allowed_years = _cron_values(years, 1970, 2199)
+    days_open = days not in ("*", "?")
+    weekdays_open = weekdays not in ("*", "?")
+    first = int(now // 60) * 60 + 60
+    fires: list[int] = []
+    for stamp in range(first, int(now) + horizon, 60):
+        moment = datetime.fromtimestamp(stamp, tz=UTC)
+        weekday = (moment.weekday() + 1) % 7 + 1
+        day_ok = moment.day in allowed_days
+        weekday_ok = weekday in allowed_weekdays
+        if days_open and weekdays_open:
+            date_ok = day_ok and weekday_ok
+        else:
+            date_ok = day_ok if days_open else weekday_ok if weekdays_open else True
+        if (
+            moment.minute in allowed_minutes
+            and moment.hour in allowed_hours
+            and moment.month in allowed_months
+            and moment.year in allowed_years
+            and date_ok
+        ):
+            fires.append(stamp)
+    edges = [int(now), *fires, int(now) + horizon]
+    return max(later - earlier for earlier, later in itertools.pairwise(edges))
+
+
+def _schedule_instant(raw: object) -> float | None:
+    """Epoch seconds from a schedule's StartDate or EndDate as the CLI prints it, None when unset."""
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, int | float):
+        return float(raw)
+    try:
+        return _parse_instant(str(raw))
+    except ValueError as exc:
+        raise GuardError(f"schedule date {raw!r} is not an instant: {exc}") from exc
+
+
+def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window: int, now: float) -> str:
+    """Return what a working recurring schedule for the sweeper looks like, or refuse it.
+
+    Args:
+        schedule: The body `aws scheduler get-schedule` returns.
+        function_arn: The sweeper function's ARN, which the target has to name.
+        window: Seconds the run and its teardown take. The schedule has to fire at least that often.
+        now: Epoch seconds.
+
+    Returns:
+        One line: the expression.
+
+    Raises:
+        GuardError: Disabled, not started, ended or ending inside the window, one-shot or too
+            infrequent, or aimed at something else or with no role to invoke it.
+    """
+    if schedule.get("State") != "ENABLED":
+        raise GuardError(f"its schedule is {schedule.get('State')!r}, not ENABLED")
+    start = _schedule_instant(schedule.get("StartDate"))
+    if start is not None and start > now:
+        raise GuardError("its schedule has not started yet")
+    end = _schedule_instant(schedule.get("EndDate"))
+    if end is not None and end <= now + window:
+        raise GuardError("its schedule ends before the run and its teardown are over")
+    target = schedule.get("Target")
+    target = target if isinstance(target, Mapping) else {}
+    target_arn = str(target.get("Arn", ""))
+    if not function_arn or not (target_arn == function_arn or target_arn.startswith(f"{function_arn}:")):
+        raise GuardError(f"its schedule targets {target_arn or 'nothing'}, not {function_arn}")
+    if not target.get("RoleArn"):
+        raise GuardError("its schedule names no role to invoke the function with")
+    expression = str(schedule.get("ScheduleExpression", ""))
+    gap = schedule_gap_seconds(expression, now, 2 * window)
+    flexible = schedule.get("FlexibleTimeWindow")
+    flexible = flexible if isinstance(flexible, Mapping) else {}
+    slack = int(flexible.get("MaximumWindowInMinutes") or 0) * 60 if flexible.get("Mode") == "FLEXIBLE" else 0
+    if gap + slack > window:
+        raise GuardError(
+            f"its schedule {expression} can leave {gap + slack}s between runs, more than the "
+            f"{window}s the run and its teardown take"
+        )
+    return expression
 
 
 def cached_repository_samples(tfvars: Mapping[str, object]) -> list[str]:
@@ -480,43 +662,53 @@ class AwsGuard:
         name = identifier.rsplit("/", 1)[-1]
         return str(self._read(["iam", "get-role", "--role-name", name])["Role"]["Arn"])
 
-    def sweeper(self, identifier: str) -> str:
-        """The sweeper function's state, once an enabled schedule is known to invoke it.
+    def sweeper(self, identifier: str, window: int = 0, now: float = 0.0) -> str:
+        """The sweeper function's state, once a working schedule is known to invoke it.
 
         Failed is returned as it is and refused by the caller.
 
         Raises:
-            GuardError: The function is not Failed and no enabled EventBridge Scheduler
-                schedule targets it, so nothing would ever run it.
+            GuardError: The function is not Failed and no schedule in the default group passes
+                `check_schedule` for it, so nothing would run it often enough.
         """
         body = self._read(["lambda", "get-function-configuration", "--function-name", identifier])
         state = str(body.get("State") or "Active")
         if state == "Failed":
             return state
         function_arn = str(body.get("FunctionArn", ""))
-        schedules = self._read(["scheduler", "list-schedules", "--group-name", "default"]).get("Schedules", [])
-        # A target may name the function or one of its versions or aliases, which extend the ARN
-        # after a colon. A bare prefix test would also match another function that shares the name.
-        enabled = []
-        for schedule in schedules:
-            target = str(schedule.get("Target", {}).get("Arn", ""))
-            names_it = bool(function_arn) and (
-                target == function_arn or target.startswith(f"{function_arn}:")
+        summaries = self._read(["scheduler", "list-schedules", "--group-name", "default"]).get("Schedules", [])
+        passing: list[str] = []
+        refusals: list[str] = []
+        for summary in summaries:
+            target = str(summary.get("Target", {}).get("Arn", ""))
+            if not function_arn or not (target == function_arn or target.startswith(f"{function_arn}:")):
+                continue
+            name = str(summary.get("Name"))
+            schedule = self._read(
+                ["scheduler", "get-schedule", "--name", name,
+                 "--group-name", str(summary.get("GroupName") or "default")]
             )
-            if schedule.get("State") == "ENABLED" and names_it:
-                enabled.append(str(schedule.get("Name")))
-        if not enabled:
+            try:
+                check_schedule(schedule, function_arn=function_arn, window=window, now=now)
+            except GuardError as exc:
+                refusals.append(f"{name}: {exc}")
+            else:
+                passing.append(name)
+        if not passing:
             raise GuardError(
-                "no enabled EventBridge Scheduler schedule in the default group targets "
-                f"{function_arn or identifier}"
+                f"no working EventBridge Scheduler schedule in the default group runs {function_arn or identifier}"
+                + (f" ({'; '.join(refusals)})" if refusals else "")
             )
-        return f"{state}, run by {', '.join(sorted(enabled))}"
+        return f"{state}, run by {', '.join(sorted(passing))}"
 
-    def budget_action(self, account: str, identifier: str) -> str:
+    def budget_action(self, account: str, identifier: str, role: str = "") -> str:
         """The budget action's armed state, from `<budget-name>:<action-id>` (a budget name cannot hold ':').
 
+        The action's policy is read too, and must hold a Deny statement.
+
         Raises:
-            GuardError: The identifier is malformed, or the action is not an armed deny-spend brake.
+            GuardError: The identifier is malformed, the action is not an armed deny-spend brake
+                that covers `role`, or its policy denies nothing.
         """
         budget, sep, action_id = identifier.rpartition(":")
         if not sep or not budget or not action_id:
@@ -525,7 +717,25 @@ class AwsGuard:
             ["budgets", "describe-budget-action", "--account-id", account, "--budget-name", budget,
              "--action-id", action_id]
         )
-        return check_budget_action(body.get("Action", {}))
+        action = body.get("Action", {})
+        summary = check_budget_action(action, account=account, role=role)
+        definition = action.get("Definition", {})
+        if action.get("ActionType") == "APPLY_IAM_POLICY":
+            arn = str(definition["IamActionDefinition"]["PolicyArn"])
+            version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
+            document = self._read(
+                ["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)]
+            )["PolicyVersion"]["Document"]
+        else:
+            policy_id = str(definition["ScpActionDefinition"]["PolicyId"])
+            content = self._read(["organizations", "describe-policy", "--policy-id", policy_id])["Policy"]["Content"]
+            try:
+                document = json.loads(content) if isinstance(content, str) else content
+            except json.JSONDecodeError as exc:
+                raise GuardError(f"its service control policy is not JSON: {exc}") from exc
+        if not policy_document_denies(document):
+            raise GuardError("its policy holds no Deny statement, so applying it stops nothing")
+        return summary
 
     def policy(self, arn: str) -> str:
         return str(self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["Arn"])
@@ -728,7 +938,10 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
 
     # (a) the guardrails this account is meant to carry, each read by its identifier.
     _identifier_check(report, "(a) guardrail role", config.role, "DFE_GUARD_ROLE", guard.role)
-    _identifier_check(report, "(a) sweeper", config.sweeper, "DFE_GUARD_SWEEPER", guard.sweeper)
+    _identifier_check(
+        report, "(a) sweeper", config.sweeper, "DFE_GUARD_SWEEPER",
+        lambda ident: guard.sweeper(ident, config.window, now),
+    )
     if report.checks[-1].ok and report.checks[-1].detail.endswith("-> Failed"):
         report.checks[-1] = Check("(a) sweeper", False, f"{config.sweeper} is in state Failed")
     _identifier_check(
@@ -736,7 +949,7 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
         "(a) budget action",
         config.budget_action,
         "DFE_GUARD_BUDGET_ACTION",
-        lambda ident: guard.budget_action(config.account, ident),
+        lambda ident: guard.budget_action(config.account, ident, config.role),
     )
     if config.permissions_boundary:
         _identifier_check(

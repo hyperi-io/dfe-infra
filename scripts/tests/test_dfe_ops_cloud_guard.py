@@ -79,10 +79,10 @@ class FakeGuard:
     def role(self, identifier: str) -> str:
         return self._maybe_missing("role", f"arn:aws:iam::{ACCOUNT}:role/{identifier}")
 
-    def sweeper(self, identifier: str) -> str:
+    def sweeper(self, identifier: str, window: int = 0, now: float = 0.0) -> str:
         return self._maybe_missing("sweeper", self.sweeper_state)
 
-    def budget_action(self, account: str, identifier: str) -> str:
+    def budget_action(self, account: str, identifier: str, role: str = "") -> str:
         if ":" not in identifier:
             raise guard_mod.GuardError(f"budget action {identifier!r} is not <budget-name>:<action-id>")
         return self._maybe_missing("budget", "STANDBY")
@@ -921,8 +921,13 @@ ARMED_ACTION = {
     "ActionType": "APPLY_IAM_POLICY",
     "NotificationType": "ACTUAL",
     "ActionThreshold": {"ActionThresholdValue": 100.0, "ActionThresholdType": "PERCENTAGE"},
-    "Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["runner"]}},
+    "Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["e2e-runner"]}},
     "Status": "STANDBY",
+}
+SCP_ACTION = {
+    **ARMED_ACTION,
+    "ActionType": "APPLY_SCP_POLICY",
+    "Definition": {"ScpActionDefinition": {"PolicyId": "p-1", "TargetIds": [ACCOUNT]}},
 }
 
 
@@ -930,7 +935,7 @@ ARMED_ACTION = {
     ("change", "refusal"),
     [
         pytest.param({}, None, id="armed_automatic_deny_at_the_ceiling"),
-        pytest.param({"ActionType": "APPLY_SCP_POLICY", "Definition": {}}, None, id="an_scp_needs_no_iam_targets"),
+        pytest.param(SCP_ACTION, None, id="an_scp_on_the_account"),
         pytest.param({"ApprovalModel": "MANUAL"}, "approval model is MANUAL", id="manual_approval"),
         pytest.param({"ApprovalModel": None}, "approval model is None", id="no_approval_model"),
         pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "its type is RUN_SSM_DOCUMENTS", id="a_non_deny_type"),
@@ -953,30 +958,163 @@ ARMED_ACTION = {
             id="an_unknown_threshold_type",
         ),
         pytest.param(
-            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny"}}},
-            "no role, user or group",
+            {"Definition": {"IamActionDefinition": {"Roles": ["e2e-runner"]}}}, "no policy", id="no_policy_named"
+        ),
+        pytest.param(
+            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": []}}},
+            "do not include the deploy role",
             id="a_policy_applied_to_nobody",
         ),
-        pytest.param({"Definition": {}}, "no role, user or group", id="no_iam_definition"),
+        pytest.param(
+            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Users": ["alice"]}}},
+            "do not include the deploy role",
+            id="a_user_is_not_the_deploy_role",
+        ),
+        pytest.param(
+            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["other"]}}},
+            "do not include the deploy role",
+            id="another_role",
+        ),
+        pytest.param({**SCP_ACTION, "Definition": {"ScpActionDefinition": {"PolicyId": "p-1", "TargetIds": ["ou-1"]}}},
+                     "do not name account", id="an_ou_target_is_not_resolved"),
+        pytest.param({"Definition": {}}, "no policy", id="no_iam_definition"),
     ],
 )
-def test_a_budget_action_passes_only_as_an_armed_automatic_deny(change: dict, refusal: str | None) -> None:
+def test_a_budget_action_passes_only_as_an_armed_automatic_deny_that_reaches_the_deploy_role(
+    change: dict, refusal: str | None
+) -> None:
     action = {**ARMED_ACTION, **change}
     if refusal is None:
-        assert guard_mod.check_budget_action(action).startswith("STANDBY, AUTOMATIC")
+        assert guard_mod.check_budget_action(action, account=ACCOUNT, role="e2e-runner").startswith("STANDBY")
         return
     with pytest.raises(guard_mod.GuardError, match=refusal):
-        guard_mod.check_budget_action(action)
+        guard_mod.check_budget_action(action, account=ACCOUNT, role="e2e-runner")
+
+
+def test_a_budget_action_with_no_known_deploy_role_fails_closed() -> None:
+    with pytest.raises(guard_mod.GuardError, match="do not include the deploy role"):
+        guard_mod.check_budget_action(ARMED_ACTION, account=ACCOUNT, role="")
+
+
+def test_a_role_given_as_an_arn_with_a_path_is_matched_by_its_name() -> None:
+    role = f"arn:aws:iam::{ACCOUNT}:role/dfe-e2e/e2e-runner"
+    assert guard_mod.check_budget_action(ARMED_ACTION, account=ACCOUNT, role=role)
+
+
+DENY_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "ec2:RunInstances", "Resource": "*"}]}
+ALLOW_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+
+
+@pytest.mark.parametrize(
+    ("document", "denies"),
+    [
+        pytest.param(DENY_DOCUMENT, True, id="a_deny_statement"),
+        pytest.param({"Statement": {"Effect": "Deny", "Action": "*", "Resource": "*"}}, True, id="one_statement_as_an_object"),
+        pytest.param(ALLOW_DOCUMENT, False, id="allow_only"),
+        pytest.param({"Statement": []}, False, id="no_statements"),
+        pytest.param({}, False, id="no_statement_key"),
+        pytest.param("not a document", False, id="not_a_document"),
+    ],
+)
+def test_a_policy_stops_something_only_if_it_holds_a_deny(document: object, denies: bool) -> None:
+    assert guard_mod.policy_document_denies(document) is denies
+
+
+def _budget_reads(monkeypatch: pytest.MonkeyPatch, action: dict, document: object) -> None:
+    def read(args: list[str], _region: str) -> dict:
+        if args[0] == "budgets":
+            return {"Action": action}
+        if args[:2] == ["iam", "get-policy"]:
+            return {"Policy": {"DefaultVersionId": "v3"}}
+        if args[:2] == ["iam", "get-policy-version"]:
+            return {"PolicyVersion": {"Document": document}}
+        return {"Policy": {"Content": json.dumps(document)}}
+
+    monkeypatch.setattr(cloud_sweep, "run_aws", read)
+
+
+@pytest.mark.parametrize(
+    ("action", "document", "passes"),
+    [
+        pytest.param(ARMED_ACTION, DENY_DOCUMENT, True, id="iam_deny"),
+        pytest.param(SCP_ACTION, DENY_DOCUMENT, True, id="scp_deny"),
+        pytest.param(ARMED_ACTION, ALLOW_DOCUMENT, False, id="iam_allow_only"),
+        pytest.param(SCP_ACTION, ALLOW_DOCUMENT, False, id="scp_allow_only"),
+    ],
+)
+def test_the_guard_reads_the_budget_actions_policy_and_wants_a_deny(
+    monkeypatch: pytest.MonkeyPatch, action: dict, document: dict, passes: bool
+) -> None:
+    _budget_reads(monkeypatch, action, document)
+    guard = guard_mod.AwsGuard("us-west-2")
+    if passes:
+        assert guard.budget_action(ACCOUNT, BUDGET_ACTION, "e2e-runner").startswith("STANDBY")
+        return
+    with pytest.raises(guard_mod.GuardError, match="no Deny statement"):
+        guard.budget_action(ACCOUNT, BUDGET_ACTION, "e2e-runner")
 
 
 SWEEPER_ARN = f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:e2e-sweeper"
+SWEEPER_WINDOW = 9000  # run 2h plus teardown 30m
+SCHEDULE = {
+    "Name": "e2e-sweeper",
+    "State": "ENABLED",
+    "ScheduleExpression": "rate(15 minutes)",
+    "FlexibleTimeWindow": {"Mode": "OFF"},
+    "Target": {"Arn": SWEEPER_ARN, "RoleArn": f"arn:aws:iam::{ACCOUNT}:role/scheduler"},
+}
+
+
+@pytest.mark.parametrize(
+    ("change", "refusal"),
+    [
+        pytest.param({}, None, id="a_recurring_rate_inside_the_window"),
+        pytest.param({"ScheduleExpression": "rate(1 hour)"}, None, id="hourly"),
+        pytest.param({"ScheduleExpression": "cron(0/30 * * * ? *)"}, None, id="a_half_hourly_cron"),
+        pytest.param({"ScheduleExpression": "cron(0 * ? * SUN-SAT *)"}, None, id="hourly_on_every_named_weekday"),
+        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + ":live"}}, None, id="an_alias_target"),
+        pytest.param({"State": "DISABLED"}, "not ENABLED", id="disabled"),
+        pytest.param({"ScheduleExpression": "at(2999-01-01T00:00:00)"}, "one-shot", id="a_one_shot_at"),
+        pytest.param({"ScheduleExpression": "rate(1 day)"}, "between runs", id="a_daily_rate"),
+        pytest.param({"ScheduleExpression": "cron(0 3 * * ? *)"}, "between runs", id="a_daily_cron"),
+        pytest.param({"ScheduleExpression": "cron(0 * ? * 2 *)"}, "between runs", id="hourly_on_mondays_only"),
+        pytest.param({"ScheduleExpression": "cron(0 0 1 1 ? 2099)"}, "between runs", id="a_far_year"),
+        pytest.param({"ScheduleExpression": "every day"}, "neither rate", id="an_unreadable_expression"),
+        pytest.param({"ScheduleExpression": "cron(0 L * * ? *)"}, "cannot judge", id="a_cron_form_it_cannot_judge"),
+        pytest.param({"EndDate": "2020-01-01T00:00:00+00:00"}, "ends before", id="an_end_date_in_the_past"),
+        pytest.param({"EndDate": "2026-10-08T13:00:00+00:00"}, "ends before", id="an_end_date_inside_the_window"),
+        pytest.param({"StartDate": "2999-01-01T00:00:00+00:00"}, "not started", id="a_future_start"),
+        pytest.param({"FlexibleTimeWindow": {"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 180}},
+                     "between runs", id="a_flexible_window_that_pushes_it_out"),
+        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}, "not arn", id="another_function"),
+        pytest.param({"Target": {"Arn": SWEEPER_ARN}}, "no role", id="no_invoking_role"),
+    ],
+)
+def test_a_sweeper_schedule_has_to_recur_often_enough_and_be_aimed_at_the_function(
+    change: dict, refusal: str | None
+) -> None:
+    schedule = {**SCHEDULE, **change}
+    now = 1791460800.0
+    if refusal is None:
+        assert guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
+        return
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
 
 
 def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict]) -> None:
     def read(args: list[str], _region: str) -> dict:
         if args[0] == "lambda":
             return {"State": state, "FunctionArn": SWEEPER_ARN}
-        return {"Schedules": schedules}
+        if args[:2] == ["scheduler", "get-schedule"]:
+            name = args[args.index("--name") + 1]
+            return next(s for s in schedules if s["Name"] == name)
+        return {
+            "Schedules": [
+                {"Name": s["Name"], "GroupName": "default", "State": s["State"], "Target": {"Arn": s["Target"]["Arn"]}}
+                for s in schedules
+            ]
+        }
 
     monkeypatch.setattr(cloud_sweep, "run_aws", read)
 
@@ -984,32 +1122,32 @@ def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict
 @pytest.mark.parametrize(
     ("state", "schedules", "outcome"),
     [
-        pytest.param(
-            "Active", [{"Name": "e2e-sweeper", "State": "ENABLED", "Target": {"Arn": SWEEPER_ARN}}],
-            "Active, run by e2e-sweeper", id="an_enabled_schedule_targets_it",
-        ),
+        pytest.param("Active", [SCHEDULE], "Active, run by e2e-sweeper", id="a_working_schedule_targets_it"),
         pytest.param("Failed", [], "Failed", id="failed_is_left_to_the_caller"),
+        pytest.param("Active", [{**SCHEDULE, "State": "DISABLED"}], None, id="a_disabled_schedule"),
+        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "at(2999-01-01T00:00:00)"}], None, id="a_one_shot"),
+        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "rate(1 day)"}], None, id="too_infrequent"),
         pytest.param(
-            "Active", [{"Name": "e2e-sweeper", "State": "DISABLED", "Target": {"Arn": SWEEPER_ARN}}],
-            None, id="a_disabled_schedule",
-        ),
-        pytest.param(
-            "Active", [{"Name": "other", "State": "ENABLED", "Target": {"Arn": SWEEPER_ARN + "-other"}}],
-            None, id="a_schedule_for_another_function",
+            "Active", [{**SCHEDULE, "Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}], None,
+            id="a_schedule_for_another_function",
         ),
         pytest.param("Active", [], None, id="no_schedule_at_all"),
+        pytest.param(
+            "Active", [{**SCHEDULE, "State": "DISABLED"}, {**SCHEDULE, "Name": "second"}],
+            "Active, run by second", id="one_working_schedule_among_broken_ones",
+        ),
     ],
 )
-def test_the_sweeper_passes_only_with_an_enabled_schedule_that_targets_it(
+def test_the_sweeper_passes_only_with_a_working_schedule_that_targets_it(
     monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict], outcome: str | None
 ) -> None:
     _aws_reads(monkeypatch, state, schedules)
     guard = guard_mod.AwsGuard("us-west-2")
     if outcome is None:
-        with pytest.raises(guard_mod.GuardError, match="no enabled EventBridge Scheduler schedule"):
-            guard.sweeper("e2e-sweeper")
+        with pytest.raises(guard_mod.GuardError, match="no working EventBridge Scheduler schedule"):
+            guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0)
         return
-    assert guard.sweeper("e2e-sweeper") == outcome
+    assert guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0) == outcome
 
 
 # --- the run's overlay ----------------------------------------------------------------------------

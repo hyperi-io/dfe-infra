@@ -520,7 +520,7 @@ def test_an_expired_sweep_is_clean_when_every_expired_hit_is_already_deleted(
     monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
     deleted: list[str] = []
     monkeypatch.setattr(
-        cloud_sweep, "delete_resources", lambda resources, region: deleted.extend(r.id for r in resources) or []
+        cloud_sweep, "delete_resources", lambda resources, region, expiry=None: deleted.extend(r.id for r in resources) or []
     )
     code = cloud_sweep.main(
         ["--region", REGION, "--expired", "--grace", "0", "--delete", "--account", ACCOUNT_ID, "--yes"]
@@ -1376,13 +1376,69 @@ RULE_ARN = f"arn:aws:events:{REGION}:{ACCOUNT_ID}:rule/dfe-example-msk-broker-sc
 BUS_RULE_ARN = f"arn:aws:events:{REGION}:{ACCOUNT_ID}:rule/custom-bus/scaler"
 
 
+def _kms_key(tags: dict[str, str]) -> cloud_sweep.Resource:
+    return cloud_sweep.Resource(
+        kind="tagged:kms", id=KMS_KEY_ARN, name="1234abcd", created=None, tagged=True, tags=tags
+    )
+
+
+RUN_TAGS = {"dfe-e2e": "run-1", "expires-at": "2026-10-01T00:00:00Z"}
+
+
 def test_a_run_tagged_kms_key_is_scheduled_for_deletion_by_its_arn(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _recording_aws(monkeypatch, [{}])
-    cloud_sweep.DELETE_FNS["tagged:kms"](_tagging_hit(KMS_KEY_ARN, "tagged:kms"), REGION)
+    cloud_sweep.DELETE_FNS["tagged:kms"](_kms_key(RUN_TAGS), REGION)
     (call,) = calls
     assert call[:2] == ["kms", "schedule-key-deletion"]
     assert call[call.index("--key-id") + 1] == KMS_KEY_ARN
     assert call[call.index("--pending-window-in-days") + 1] == "7"
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        pytest.param({}, id="no_tags"),
+        pytest.param({"service-name": "dfe", "environment": "test"}, id="only_the_manual_filter_tags"),
+        pytest.param({"dfe-e2e": "", "expires-at": "2026-10-01T00:00:00Z"}, id="an_empty_run_tag"),
+        pytest.param({"dfe-e2e": "Not A Run!", "expires-at": "2026-10-01T00:00:00Z"}, id="a_malformed_run_id"),
+    ],
+)
+def test_a_kms_key_without_a_valid_run_tag_is_never_scheduled_for_deletion(
+    monkeypatch: pytest.MonkeyPatch, tags: dict[str, str]
+) -> None:
+    """A manual --tag-filter can select a key the run never made, and its deletion is not ours to schedule."""
+    calls = _recording_aws(monkeypatch, [{}])
+    failures = cloud_sweep.delete_resources([_kms_key(tags)], REGION)
+    assert calls == []
+    assert len(failures) == 1
+    assert "run tag" in failures[0]
+
+
+@pytest.mark.parametrize(
+    ("tags", "deleted"),
+    [
+        pytest.param(RUN_TAGS, True, id="expired"),
+        pytest.param({"dfe-e2e": "run-1", "expires-at": "2999-01-01T00:00:00Z"}, False, id="not_expired_yet"),
+        pytest.param({"dfe-e2e": "run-1"}, False, id="no_expiry"),
+        pytest.param({"dfe-e2e": "run-1", "expires-at": "tomorrow"}, False, id="malformed_expiry"),
+    ],
+)
+def test_an_expired_sweep_schedules_a_kms_key_only_when_its_expiry_is_valid_and_past(
+    monkeypatch: pytest.MonkeyPatch, tags: dict[str, str], deleted: bool
+) -> None:
+    calls = _recording_aws(monkeypatch, [{}])
+    expiry = cloud_sweep.ExpirySelection(keys=cloud_run.RunTagKeys(), now=NOW, grace=0)
+    failures = cloud_sweep.delete_resources([_kms_key(tags)], REGION, expiry=expiry)
+    assert bool(calls) is deleted
+    assert bool(failures) is not deleted
+
+
+def test_a_runs_own_teardown_may_schedule_its_key_without_an_expiry_judgement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A --tag-filter on the run's own id carries no expiry selection, and the run tag is the proof."""
+    calls = _recording_aws(monkeypatch, [{}])
+    live = _kms_key({"dfe-e2e": "run-1", "expires-at": "2999-01-01T00:00:00Z"})
+    assert cloud_sweep.delete_resources([live], REGION) == []
+    assert len(calls) == 1
 
 
 def test_a_run_tagged_lambda_function_is_deleted_by_its_arn(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1462,7 +1518,7 @@ def test_main_with_delete_recollects_and_reports_what_survived(monkeypatch: pyte
     responses = iter([first, second])
     monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
     monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
-    monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
+    monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region, expiry=None: [])
     code = cloud_sweep.main(["--region", REGION, "--delete", "--account", "000000000000", "--yes"])
     assert code == 0
     assert "sweep clean" in capsys.readouterr().out
@@ -1547,7 +1603,7 @@ def test_delete_with_yes_skips_the_prompt_and_deletes(
     second: list[cloud_sweep.Resource] = []
     responses = iter([first, second])
     monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
-    monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region: [])
+    monkeypatch.setattr(cloud_sweep, "delete_resources", lambda resources, region, expiry=None: [])
 
     def refuse_to_prompt(prompt: str) -> str:
         raise AssertionError("--yes must skip the interactive confirmation entirely")
@@ -1804,7 +1860,7 @@ def test_main_expired_with_delete_removes_only_the_expired_set(
     monkeypatch.setattr(cloud_sweep, "verify_account", lambda region, account: None)
     monkeypatch.setattr(cloud_sweep, "collect", lambda region, tf, bucket, **_: next(responses))
     monkeypatch.setattr(
-        cloud_sweep, "delete_resources", lambda resources, region: deleted.extend(r.id for r in resources) or []
+        cloud_sweep, "delete_resources", lambda resources, region, expiry=None: deleted.extend(r.id for r in resources) or []
     )
     code = cloud_sweep.main(
         ["--region", REGION, "--expired", "--grace", "0", "--delete", "--account", "000000000000", "--yes"]

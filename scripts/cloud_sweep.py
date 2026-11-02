@@ -1474,11 +1474,36 @@ def _delete_s3_bucket(r: Resource, region: str) -> None:
 KMS_KEY_DELETION_WINDOW_DAYS = 7
 
 
+def kms_key_refusal(r: Resource, keys: cloud_run.RunTagKeys, expiry: ExpirySelection | None = None) -> str:
+    """Why this key may not be scheduled for deletion, or an empty string when it may.
+
+    A tag filter can select a key no run made, and scheduling its deletion is not ours to do. So the
+    key needs the run tag with a valid run id in every mode, and an expired sweep also needs a valid
+    expiry in the past.
+    """
+    run_id = r.tags.get(keys.run, "")
+    if not run_id:
+        return f"kms key {r.name}: carries no {keys.run} run tag, so it is not a run's"
+    try:
+        cloud_run.validate_run_id(run_id)
+    except cloud_run.RunTagError:
+        return f"kms key {r.name}: its {keys.run} run tag {run_id!r} is not a valid run id"
+    if expiry is not None and expiry.state(r) is not cloud_run.ExpiryState.EXPIRED:
+        return f"kms key {r.name}: its run is {expiry.state(r)}, not expired"
+    return ""
+
+
 def _delete_kms_key(r: Resource, region: str) -> None:
     """Schedule the key's deletion; KMS keeps it, disabled, for the window.
 
     The tagging API finds the key by its run tags, so a key whose alias is already gone is found too.
+
+    Raises:
+        CloudSweepError: The key carries no valid run tag.
     """
+    refusal = kms_key_refusal(r, cloud_run.RunTagKeys.from_env())
+    if refusal:
+        raise CloudSweepError(refusal)
     run_aws(
         ["kms", "schedule-key-deletion", "--key-id", r.id,
          "--pending-window-in-days", str(KMS_KEY_DELETION_WINDOW_DAYS)],
@@ -1606,16 +1631,30 @@ def _outcomes(kind: str, batch: list[Resource], region: str) -> Iterator[tuple[s
         yield from pool.map(functools.partial(_delete_one, kind, region=region), batch)
 
 
-def delete_resources(resources: list[Resource], region: str) -> list[str]:
+def delete_resources(
+    resources: list[Resource], region: str, expiry: ExpirySelection | None = None
+) -> list[str]:
     """Delete `resources` in DELETE_ORDER, returning one message per failure.
 
     A resource AWS no longer has when its delete arrives is reported as already
-    gone and is no failure: this sweep did not delete it.
+    gone and is no failure: this sweep did not delete it. `expiry` is the --expired
+    selection, which a KMS key must also be past.
     """
     by_kind: dict[str, list[Resource]] = {}
     for r in resources:
         by_kind.setdefault(r.kind, []).append(r)
     failures: list[str] = []
+    keys = expiry.keys if expiry else cloud_run.RunTagKeys.from_env()
+    kept: list[Resource] = []
+    for key in by_kind.get("tagged:kms", []):
+        refusal = kms_key_refusal(key, keys, expiry)
+        if refusal:
+            print(f"REFUSED {refusal}", file=sys.stderr)
+            failures.append(refusal)
+        else:
+            kept.append(key)
+    if "tagged:kms" in by_kind:
+        by_kind["tagged:kms"] = kept
     for kind in DELETE_ORDER:
         for line, failure in _outcomes(kind, by_kind.get(kind, []), region):
             print(line, file=sys.stderr if failure else sys.stdout)
@@ -1673,7 +1712,7 @@ class SweepProvider(Protocol):
         """
         ...
 
-    def delete(self, resources: list[Resource]) -> list[str]:
+    def delete(self, resources: list[Resource], expiry: ExpirySelection | None = None) -> list[str]:
         """Delete in dependency order, returning one message per failure."""
         ...
 
@@ -1702,8 +1741,8 @@ class AwsProvider:
             self.region, tag_filter, exclude_bucket, route1_filter=route1, kinds=kinds, gone=gone
         )
 
-    def delete(self, resources: list[Resource]) -> list[str]:
-        return delete_resources(resources, self.region)
+    def delete(self, resources: list[Resource], expiry: ExpirySelection | None = None) -> list[str]:
+        return delete_resources(resources, self.region, expiry)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1734,7 +1773,7 @@ class _UnbuiltProvider:
     ) -> list[Resource]:
         self._refuse()
 
-    def delete(self, resources: list[Resource]) -> list[str]:
+    def delete(self, resources: list[Resource], expiry: ExpirySelection | None = None) -> list[str]:
         self._refuse()
 
 
@@ -1964,7 +2003,7 @@ def _sweep(
             print("delete cancelled: no 'yes' received", file=sys.stderr)
             return 1
 
-        failures = provider.delete(eligible)
+        failures = provider.delete(eligible, expiry)
         resources = provider.collect(tag_filter, args.exclude_bucket, run_key=run_key, kinds=args.kind)
         eligible = _eligible(resources, args, expiry)
         if failures:
