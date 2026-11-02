@@ -221,11 +221,12 @@ variable "telemetry" {
   description = <<-DESCRIPTION
     Where a CloudWatch-only touchpoint lands, and for how long, from tfvars (the
     dial's telemetry block). EKS delivers control-plane logs to CloudWatch and
-    nowhere else -- there is no S3 or OTel export for them -- so this module
-    always enables the audit stream (the one that matters for compliance) and
-    always writes it to CloudWatch under both sinks. sink = otel (DFE's
-    monitoring goes to its own OTel feed and HyperDX everywhere else) keeps it
-    at forced_retention_days, since this log group is an unavoidable exception
+    nowhere else -- there is no S3 or OTel export for them -- so the streams
+    named in eks_log_types (audit by default, the one that matters for
+    compliance) are always written to CloudWatch under both sinks. An empty
+    eks_log_types creates no log group. sink = otel (DFE's monitoring goes to
+    its own OTel feed and HyperDX everywhere else) keeps it at
+    forced_retention_days, since this log group is an unavoidable exception
     rather than a chosen destination. sink = cloudwatch, the opt-in AWS-native
     path, keeps it at retention_days like every other CloudWatch touchpoint
     under that sink.
@@ -235,11 +236,21 @@ variable "telemetry" {
     sink                  = string
     retention_days        = number
     forced_retention_days = number
+    eks_log_types         = list(string)
   })
 
   validation {
     condition     = contains(["otel", "cloudwatch"], var.telemetry.sink)
     error_message = "telemetry.sink must be otel or cloudwatch."
+  }
+
+  // The five streams the EKS API accepts. Each one enabled is CloudWatch ingestion billed per GB.
+  validation {
+    condition = alltrue([
+      for t in var.telemetry.eks_log_types :
+      contains(["api", "audit", "authenticator", "controllerManager", "scheduler"], t)
+    ]) && length(distinct(var.telemetry.eks_log_types)) == length(var.telemetry.eks_log_types)
+    error_message = "telemetry.eks_log_types must list each of api, audit, authenticator, controllerManager and scheduler at most once."
   }
 
   validation {

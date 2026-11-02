@@ -40,7 +40,7 @@ import dfe_ops_cloud_guard as guard_mod  # noqa: E402
 
 NOW = 1791460800.0
 ACCOUNT = "000000000000"
-BUDGET_ACTION = "e2e-budget:00000000-0000-0000-0000-000000000000"
+BUDGET_ACTION = "e2e-account-cost:00000000-0000-0000-0000-000000000000"
 TFVARS = {
     "provision": {"cloud": "aws", "account": ACCOUNT, "region": "us-west-2", "cidr": "10.90.0.0/16"},
     "state": {"bucket": "example-state", "key": "deployments/example.tfstate", "region": "us-west-2"},
@@ -57,6 +57,7 @@ class FakeGuard:
         self.account = ACCOUNT
         self.missing: set[str] = set()
         self.sweeper_state = "Active"
+        self.scanning: dict = {"scanType": "BASIC", "rules": []}
         self.expiry: float | None = NOW + 10 * 3600
         self.expiry_error: str | None = None
         self.leftovers: list[cloud_sweep.Resource] = []
@@ -78,7 +79,7 @@ class FakeGuard:
     def role(self, identifier: str) -> str:
         return self._maybe_missing("role", f"arn:aws:iam::{ACCOUNT}:role/{identifier}")
 
-    def sweeper(self, identifier: str) -> str:
+    def sweeper(self, identifier: str, window: int = 0, now: float = 0.0) -> str:
         return self._maybe_missing("sweeper", self.sweeper_state)
 
     def budget_action(self, account: str, identifier: str) -> str:
@@ -88,6 +89,10 @@ class FakeGuard:
 
     def policy(self, arn: str) -> str:
         return self._maybe_missing("policy", arn)
+
+    def registry_scanning(self) -> dict:
+        self._maybe_missing("scanning", "")
+        return self.scanning
 
     def credential_expiry(self, env: object) -> tuple[float | None, str]:
         if self.expiry_error:
@@ -331,6 +336,64 @@ def test_refusal_a_a_failed_sweeper_fails(root: Path) -> None:
 
 def test_refusal_a_a_malformed_budget_action_fails(root: Path) -> None:
     assert _failed(_preflight(root, FakeGuard(), guard_budget_action="no-separator")) == ["(a) budget action"]
+
+
+CACHE_TFVARS = {
+    "name": "dfe-example",
+    "registry_cache": {"enabled": True, "namespace": "", "upstreams": {"quay": {}, "k8s": {}}},
+}
+
+
+def _enhanced(*rules: tuple[str, str]) -> dict:
+    return {
+        "scanType": "ENHANCED",
+        "rules": [
+            {"scanFrequency": frequency, "repositoryFilters": [{"filter": pattern, "filterType": "WILDCARD"}]}
+            for frequency, pattern in rules
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("scanning", "cache", "failing"),
+    [
+        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), CACHE_TFVARS, True, id="a_registry_wide_rule"),
+        pytest.param(_enhanced(("SCAN_ON_PUSH", "dfe-example/*")), CACHE_TFVARS, True, id="the_namespace_rule"),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "dfe-fetcher-inspector-seed")), CACHE_TFVARS, False, id="the_seed_repo_only"
+        ),
+        pytest.param(_enhanced(("MANUAL", "*")), CACHE_TFVARS, False, id="a_manual_rule_assesses_nothing"),
+        pytest.param({"scanType": "BASIC", "rules": []}, CACHE_TFVARS, False, id="basic_scanning"),
+        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), {"name": "dfe-example"}, False, id="no_cache_in_the_dial"),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "*")),
+            {**CACHE_TFVARS, "registry_cache": {"enabled": False, "upstreams": {"quay": {}}}},
+            False,
+            id="the_cache_switched_off",
+        ),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "run-ns/*")),
+            {**CACHE_TFVARS, "registry_cache": {"namespace": "run-ns", "upstreams": {"quay": {}}}},
+            True,
+            id="a_namespace_the_dial_names",
+        ),
+    ],
+)
+def test_the_registry_scanning_check_refuses_a_rule_that_assesses_the_cache(
+    root: Path, scanning: dict, cache: dict, failing: bool
+) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **cache}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.scanning = scanning
+    failed = _failed(_preflight(root, guard))
+    assert failed == (["(a) registry scanning"] if failing else [])
+
+
+def test_the_registry_scanning_that_cannot_be_read_fails_the_check(root: Path) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **CACHE_TFVARS}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.missing = {"scanning"}
+    assert _failed(_preflight(root, guard)) == ["(a) registry scanning"]
 
 
 def test_a_configured_boundary_must_exist_too(root: Path) -> None:
@@ -849,6 +912,245 @@ def test_the_run_records_are_listed_under_the_prefix_in_the_state_region(
     (call,) = calls
     assert call[call.index("--prefix") + 1] == "dfe-e2e-runs/"
     assert call[call.index("--region") + 1] == "us-west-2"
+
+
+# --- the guardrails the preflight reads ---------------------------------------------------------
+
+BUDGET = "e2e-account-cost"
+BRAKE = "arn:aws:iam::000000000000:policy/e2e-deny-create"
+ARMED_ACTION = {
+    "ApprovalModel": "AUTOMATIC",
+    "ActionType": "APPLY_IAM_POLICY",
+    "NotificationType": "ACTUAL",
+    "ActionThreshold": {"ActionThresholdValue": 100.0, "ActionThresholdType": "PERCENTAGE"},
+    "Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"]}},
+    "Status": "STANDBY",
+}
+
+
+def _applies(**iam: object) -> dict:
+    return {"Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"], **iam}}}
+
+
+@pytest.mark.parametrize(
+    ("change", "refusal"),
+    [
+        pytest.param({}, None, id="armed_automatic_known_brake_at_the_ceiling"),
+        pytest.param({"ApprovalModel": "MANUAL"}, "approval model is MANUAL", id="manual_approval"),
+        pytest.param({"ApprovalModel": None}, "approval model is None", id="no_approval_model"),
+        pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "not APPLY_IAM_POLICY", id="a_non_deny_type"),
+        pytest.param({"ActionType": "APPLY_SCP_POLICY"}, "not APPLY_IAM_POLICY", id="an_scp_has_no_known_brake"),
+        pytest.param({"Status": "EXECUTION_FAILURE"}, "status is EXECUTION_FAILURE", id="a_failed_action"),
+        pytest.param({"Status": "EXECUTION_SUCCESS"}, "status is EXECUTION_SUCCESS", id="a_brake_already_on"),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 150.0, "ActionThresholdType": "PERCENTAGE"}},
+            "past the budget",
+            id="a_percentage_past_the_ceiling",
+        ),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 0, "ActionThresholdType": "PERCENTAGE"}},
+            "not a positive number",
+            id="a_zero_threshold",
+        ),
+        pytest.param({"ActionThreshold": {}}, "not a positive number", id="no_threshold"),
+        pytest.param(
+            {"ActionThreshold": {"ActionThresholdValue": 50, "ActionThresholdType": "BYTES"}},
+            "threshold type is BYTES",
+            id="an_unknown_threshold_type",
+        ),
+        pytest.param(_applies(PolicyArn="arn:aws:iam::0:policy/some-other-deny"), "not the guardrails' e2e-deny-create",
+                     id="another_policy_that_may_hold_a_deny"),
+        pytest.param(_applies(PolicyArn=""), "applies no policy", id="no_policy_named"),
+        pytest.param({"Definition": {}}, "applies no policy", id="no_iam_definition"),
+        pytest.param(_applies(Roles=[]), "do not include e2e-runner", id="a_policy_applied_to_nobody"),
+        pytest.param(_applies(Roles=[], Users=["alice"]), "do not include e2e-runner", id="a_user_is_not_the_role"),
+        pytest.param(_applies(Roles=["other"]), "do not include e2e-runner", id="another_role"),
+    ],
+)
+def test_a_budget_action_passes_only_as_an_armed_automatic_known_brake_that_reaches_the_role(
+    change: dict, refusal: str | None
+) -> None:
+    action = {**ARMED_ACTION, **change}
+    if refusal is None:
+        assert guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner").startswith("STANDBY")
+        return
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner")
+
+
+@pytest.mark.parametrize(
+    ("budget", "role", "refusal"),
+    [
+        pytest.param("e2e-account-cost", "", "do not include a role this run", id="no_role_known"),
+        pytest.param("other-budget", "e2e-runner", "is not a -account-cost budget", id="not_the_guardrail_budget"),
+        pytest.param("dfe-account-cost", "e2e-runner", "not the guardrails' dfe-deny-create", id="the_prefix_names_the_policy"),
+    ],
+)
+def test_a_budget_action_fails_closed_without_a_role_or_the_guardrail_budget(
+    budget: str, role: str, refusal: str
+) -> None:
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_budget_action(ARMED_ACTION, budget=budget, role=role)
+
+
+DENY_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "ec2:RunInstances", "Resource": "*"}]}
+ALLOW_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+
+
+@pytest.mark.parametrize(
+    ("document", "denies"),
+    [
+        pytest.param(DENY_DOCUMENT, True, id="a_deny_statement"),
+        pytest.param({"Statement": {"Effect": "Deny", "Action": "*", "Resource": "*"}}, True, id="one_statement_as_an_object"),
+        pytest.param(ALLOW_DOCUMENT, False, id="allow_only"),
+        pytest.param({"Statement": []}, False, id="no_statements"),
+        pytest.param({}, False, id="no_statement_key"),
+        pytest.param("not a document", False, id="not_a_document"),
+    ],
+)
+def test_a_policy_stops_something_only_if_it_holds_a_deny(document: object, denies: bool) -> None:
+    assert guard_mod.policy_document_denies(document) is denies
+
+
+def _budget_reads(monkeypatch: pytest.MonkeyPatch, action: dict, document: object, caller: str) -> None:
+    def read(args: list[str], _region: str) -> dict:
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return {"Account": ACCOUNT, "Arn": caller}
+        if args[0] == "budgets":
+            return {"Action": action}
+        if args[:2] == ["iam", "get-policy"]:
+            return {"Policy": {"DefaultVersionId": "v3"}}
+        return {"PolicyVersion": {"Document": document}}
+
+    monkeypatch.setattr(cloud_sweep, "run_aws", read)
+
+
+RUNNER_SESSION = f"arn:aws:sts::{ACCOUNT}:assumed-role/e2e-runner/dfe-cloud-cycle-1"
+
+
+@pytest.mark.parametrize(
+    ("caller", "document", "refusal"),
+    [
+        pytest.param(RUNNER_SESSION, DENY_DOCUMENT, None, id="the_runner_role_and_a_deny"),
+        pytest.param(RUNNER_SESSION, ALLOW_DOCUMENT, "no Deny statement", id="the_known_policy_without_a_deny"),
+        pytest.param(
+            f"arn:aws:sts::{ACCOUNT}:assumed-role/AWSReservedSSO_AdministratorAccess_abc/someone@example.com",
+            DENY_DOCUMENT, "do not include AWSReservedSSO_AdministratorAccess_abc",
+            id="an_sso_admin_session_the_brake_does_not_reach",
+        ),
+        pytest.param(f"arn:aws:iam::{ACCOUNT}:user/alice", DENY_DOCUMENT, "not an assumed role", id="an_iam_user"),
+        pytest.param(f"arn:aws:iam::{ACCOUNT}:root", DENY_DOCUMENT, "not an assumed role", id="the_account_root"),
+    ],
+)
+def test_the_guard_covers_the_role_it_runs_as_not_the_configured_one(
+    monkeypatch: pytest.MonkeyPatch, caller: str, document: dict, refusal: str | None
+) -> None:
+    _budget_reads(monkeypatch, ARMED_ACTION, document, caller)
+    guard = guard_mod.AwsGuard("us-west-2")
+    if refusal is None:
+        assert guard.budget_action(ACCOUNT, BUDGET_ACTION).startswith("STANDBY")
+        return
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard.budget_action(ACCOUNT, BUDGET_ACTION)
+
+
+SWEEPER_ARN = f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:e2e-sweeper"
+SWEEPER_WINDOW = 9000  # run 2h plus teardown 30m
+SCHEDULE = {
+    "Name": "e2e-sweeper",
+    "State": "ENABLED",
+    "ScheduleExpression": "rate(15 minutes)",
+    "FlexibleTimeWindow": {"Mode": "OFF"},
+    "Target": {"Arn": SWEEPER_ARN, "RoleArn": f"arn:aws:iam::{ACCOUNT}:role/scheduler"},
+}
+
+
+@pytest.mark.parametrize(
+    ("change", "refusal"),
+    [
+        pytest.param({}, None, id="a_recurring_rate_inside_the_window"),
+        pytest.param({"ScheduleExpression": "rate(1 hour)"}, None, id="hourly"),
+        pytest.param({"ScheduleExpression": "cron(0/30 * * * ? *)"}, None, id="a_half_hourly_cron"),
+        pytest.param({"ScheduleExpression": "cron(0 * ? * SUN-SAT *)"}, None, id="hourly_on_every_named_weekday"),
+        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + ":live"}}, None, id="an_alias_target"),
+        pytest.param({"State": "DISABLED"}, "not ENABLED", id="disabled"),
+        pytest.param({"ScheduleExpression": "at(2999-01-01T00:00:00)"}, "one-shot", id="a_one_shot_at"),
+        pytest.param({"ScheduleExpression": "rate(1 day)"}, "between runs", id="a_daily_rate"),
+        pytest.param({"ScheduleExpression": "cron(0 3 * * ? *)"}, "between runs", id="a_daily_cron"),
+        pytest.param({"ScheduleExpression": "cron(0 * ? * 2 *)"}, "between runs", id="hourly_on_mondays_only"),
+        pytest.param({"ScheduleExpression": "cron(0 0 1 1 ? 2099)"}, "between runs", id="a_far_year"),
+        pytest.param({"ScheduleExpression": "every day"}, "neither rate", id="an_unreadable_expression"),
+        pytest.param({"ScheduleExpression": "cron(0 L * * ? *)"}, "cannot judge", id="a_cron_form_it_cannot_judge"),
+        pytest.param({"EndDate": "2020-01-01T00:00:00+00:00"}, "ends before", id="an_end_date_in_the_past"),
+        pytest.param({"EndDate": "2026-10-08T13:00:00+00:00"}, "ends before", id="an_end_date_inside_the_window"),
+        pytest.param({"StartDate": "2999-01-01T00:00:00+00:00"}, "not started", id="a_future_start"),
+        pytest.param({"ScheduleExpressionTimezone": "Etc/UTC"}, None, id="etc_utc"),
+        pytest.param({"ScheduleExpressionTimezone": "UTC"}, None, id="utc"),
+        pytest.param({"ScheduleExpressionTimezone": "Australia/Sydney"}, "only judged in UTC", id="a_local_timezone"),
+        pytest.param({"FlexibleTimeWindow": {"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 180}},
+                     "between runs", id="a_flexible_window_that_pushes_it_out"),
+        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}, "not arn", id="another_function"),
+        pytest.param({"Target": {"Arn": SWEEPER_ARN}}, "no role", id="no_invoking_role"),
+    ],
+)
+def test_a_sweeper_schedule_has_to_recur_often_enough_and_be_aimed_at_the_function(
+    change: dict, refusal: str | None
+) -> None:
+    schedule = {**SCHEDULE, **change}
+    now = 1791460800.0
+    if refusal is None:
+        assert guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
+        return
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
+
+
+def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict]) -> None:
+    def read(args: list[str], _region: str) -> dict:
+        if args[0] == "lambda":
+            return {"State": state, "FunctionArn": SWEEPER_ARN}
+        if args[:2] == ["scheduler", "get-schedule"]:
+            name = args[args.index("--name") + 1]
+            return next(s for s in schedules if s["Name"] == name)
+        return {
+            "Schedules": [
+                {"Name": s["Name"], "GroupName": "default", "State": s["State"], "Target": {"Arn": s["Target"]["Arn"]}}
+                for s in schedules
+            ]
+        }
+
+    monkeypatch.setattr(cloud_sweep, "run_aws", read)
+
+
+@pytest.mark.parametrize(
+    ("state", "schedules", "outcome"),
+    [
+        pytest.param("Active", [SCHEDULE], "Active, run by e2e-sweeper", id="a_working_schedule_targets_it"),
+        pytest.param("Failed", [], "Failed", id="failed_is_left_to_the_caller"),
+        pytest.param("Active", [{**SCHEDULE, "State": "DISABLED"}], None, id="a_disabled_schedule"),
+        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "at(2999-01-01T00:00:00)"}], None, id="a_one_shot"),
+        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "rate(1 day)"}], None, id="too_infrequent"),
+        pytest.param(
+            "Active", [{**SCHEDULE, "Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}], None,
+            id="a_schedule_for_another_function",
+        ),
+        pytest.param("Active", [], None, id="no_schedule_at_all"),
+        pytest.param(
+            "Active", [{**SCHEDULE, "State": "DISABLED"}, {**SCHEDULE, "Name": "second"}],
+            "Active, run by second", id="one_working_schedule_among_broken_ones",
+        ),
+    ],
+)
+def test_the_sweeper_passes_only_with_a_working_schedule_that_targets_it(
+    monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict], outcome: str | None
+) -> None:
+    _aws_reads(monkeypatch, state, schedules)
+    guard = guard_mod.AwsGuard("us-west-2")
+    if outcome is None:
+        with pytest.raises(guard_mod.GuardError, match="no working EventBridge Scheduler schedule"):
+            guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0)
+        return
+    assert guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0) == outcome
 
 
 # --- the run's overlay ----------------------------------------------------------------------------

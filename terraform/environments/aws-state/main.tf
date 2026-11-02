@@ -40,6 +40,36 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
+// Every run leaves a state key and a record, and every apply a version of
+// each, so an unbounded history grows with the number of runs. The newest
+// version of every key is never touched: only superseded versions, delete
+// markers nothing sits under, and unfinished uploads age out.
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  rule {
+    id     = "expire-superseded-state"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_days
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = var.incomplete_upload_days
+    }
+  }
+
+  // The rule acts on versions, so versioning has to be on first.
+  depends_on = [aws_s3_bucket_versioning.state]
+}
+
 // State routinely holds secrets in plaintext -- generated passwords, tokens,
 // certificate keys -- so the bucket encrypts by default rather than trusting
 // every writer to ask for it. SSE-KMS even with no CMK supplied: this root
