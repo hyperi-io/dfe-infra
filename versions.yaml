@@ -8155,7 +8155,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.18"             # 2026-10-22. The engine applies it at startup and reads its source catalogue. dfe-engine v1.22.63 requires >=0.2.18 and locks 0.2.18, the release that ships the catalogue (dfe-schemas#79).
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
+      dfe-deploy: "v1.0.10"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 406c01cb (2026-10-27) is "fix: leave the receiver's raw capture off in make demo (#316)", which also makes make demo a continuous stream.
       dfe-docker: "406c01cb997337c517042dc1ea04cda78e45e77f"
       dfe-hyperdx: "v0.3.17"             # 2026-10-25, amd64 and arm64. Still upstream HyperDX 2.41.0, now on Node.js v24.22.1 (#173).
