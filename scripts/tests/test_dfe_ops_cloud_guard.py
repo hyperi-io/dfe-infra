@@ -40,7 +40,7 @@ import dfe_ops_cloud_guard as guard_mod  # noqa: E402
 
 NOW = 1791460800.0
 ACCOUNT = "000000000000"
-BUDGET_ACTION = "e2e-budget:00000000-0000-0000-0000-000000000000"
+BUDGET_ACTION = "e2e-account-cost:00000000-0000-0000-0000-000000000000"
 TFVARS = {
     "provision": {"cloud": "aws", "account": ACCOUNT, "region": "us-west-2", "cidr": "10.90.0.0/16"},
     "state": {"bucket": "example-state", "key": "deployments/example.tfstate", "region": "us-west-2"},
@@ -82,7 +82,7 @@ class FakeGuard:
     def sweeper(self, identifier: str, window: int = 0, now: float = 0.0) -> str:
         return self._maybe_missing("sweeper", self.sweeper_state)
 
-    def budget_action(self, account: str, identifier: str, role: str = "") -> str:
+    def budget_action(self, account: str, identifier: str) -> str:
         if ":" not in identifier:
             raise guard_mod.GuardError(f"budget action {identifier!r} is not <budget-name>:<action-id>")
         return self._maybe_missing("budget", "STANDBY")
@@ -916,29 +916,30 @@ def test_the_run_records_are_listed_under_the_prefix_in_the_state_region(
 
 # --- the guardrails the preflight reads ---------------------------------------------------------
 
+BUDGET = "e2e-account-cost"
+BRAKE = "arn:aws:iam::000000000000:policy/e2e-deny-create"
 ARMED_ACTION = {
     "ApprovalModel": "AUTOMATIC",
     "ActionType": "APPLY_IAM_POLICY",
     "NotificationType": "ACTUAL",
     "ActionThreshold": {"ActionThresholdValue": 100.0, "ActionThresholdType": "PERCENTAGE"},
-    "Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["e2e-runner"]}},
+    "Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"]}},
     "Status": "STANDBY",
 }
-SCP_ACTION = {
-    **ARMED_ACTION,
-    "ActionType": "APPLY_SCP_POLICY",
-    "Definition": {"ScpActionDefinition": {"PolicyId": "p-1", "TargetIds": [ACCOUNT]}},
-}
+
+
+def _applies(**iam: object) -> dict:
+    return {"Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"], **iam}}}
 
 
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [
-        pytest.param({}, None, id="armed_automatic_deny_at_the_ceiling"),
-        pytest.param(SCP_ACTION, None, id="an_scp_on_the_account"),
+        pytest.param({}, None, id="armed_automatic_known_brake_at_the_ceiling"),
         pytest.param({"ApprovalModel": "MANUAL"}, "approval model is MANUAL", id="manual_approval"),
         pytest.param({"ApprovalModel": None}, "approval model is None", id="no_approval_model"),
-        pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "its type is RUN_SSM_DOCUMENTS", id="a_non_deny_type"),
+        pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "not APPLY_IAM_POLICY", id="a_non_deny_type"),
+        pytest.param({"ActionType": "APPLY_SCP_POLICY"}, "not APPLY_IAM_POLICY", id="an_scp_has_no_known_brake"),
         pytest.param({"Status": "EXECUTION_FAILURE"}, "status is EXECUTION_FAILURE", id="a_failed_action"),
         pytest.param({"Status": "EXECUTION_SUCCESS"}, "status is EXECUTION_SUCCESS", id="a_brake_already_on"),
         pytest.param(
@@ -957,48 +958,39 @@ SCP_ACTION = {
             "threshold type is BYTES",
             id="an_unknown_threshold_type",
         ),
-        pytest.param(
-            {"Definition": {"IamActionDefinition": {"Roles": ["e2e-runner"]}}}, "no policy", id="no_policy_named"
-        ),
-        pytest.param(
-            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": []}}},
-            "do not include the deploy role",
-            id="a_policy_applied_to_nobody",
-        ),
-        pytest.param(
-            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Users": ["alice"]}}},
-            "do not include the deploy role",
-            id="a_user_is_not_the_deploy_role",
-        ),
-        pytest.param(
-            {"Definition": {"IamActionDefinition": {"PolicyArn": "arn:aws:iam::0:policy/deny", "Roles": ["other"]}}},
-            "do not include the deploy role",
-            id="another_role",
-        ),
-        pytest.param({**SCP_ACTION, "Definition": {"ScpActionDefinition": {"PolicyId": "p-1", "TargetIds": ["ou-1"]}}},
-                     "do not name account", id="an_ou_target_is_not_resolved"),
-        pytest.param({"Definition": {}}, "no policy", id="no_iam_definition"),
+        pytest.param(_applies(PolicyArn="arn:aws:iam::0:policy/some-other-deny"), "not the guardrails' e2e-deny-create",
+                     id="another_policy_that_may_hold_a_deny"),
+        pytest.param(_applies(PolicyArn=""), "applies no policy", id="no_policy_named"),
+        pytest.param({"Definition": {}}, "applies no policy", id="no_iam_definition"),
+        pytest.param(_applies(Roles=[]), "do not include e2e-runner", id="a_policy_applied_to_nobody"),
+        pytest.param(_applies(Roles=[], Users=["alice"]), "do not include e2e-runner", id="a_user_is_not_the_role"),
+        pytest.param(_applies(Roles=["other"]), "do not include e2e-runner", id="another_role"),
     ],
 )
-def test_a_budget_action_passes_only_as_an_armed_automatic_deny_that_reaches_the_deploy_role(
+def test_a_budget_action_passes_only_as_an_armed_automatic_known_brake_that_reaches_the_role(
     change: dict, refusal: str | None
 ) -> None:
     action = {**ARMED_ACTION, **change}
     if refusal is None:
-        assert guard_mod.check_budget_action(action, account=ACCOUNT, role="e2e-runner").startswith("STANDBY")
+        assert guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner").startswith("STANDBY")
         return
     with pytest.raises(guard_mod.GuardError, match=refusal):
-        guard_mod.check_budget_action(action, account=ACCOUNT, role="e2e-runner")
+        guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner")
 
 
-def test_a_budget_action_with_no_known_deploy_role_fails_closed() -> None:
-    with pytest.raises(guard_mod.GuardError, match="do not include the deploy role"):
-        guard_mod.check_budget_action(ARMED_ACTION, account=ACCOUNT, role="")
-
-
-def test_a_role_given_as_an_arn_with_a_path_is_matched_by_its_name() -> None:
-    role = f"arn:aws:iam::{ACCOUNT}:role/dfe-e2e/e2e-runner"
-    assert guard_mod.check_budget_action(ARMED_ACTION, account=ACCOUNT, role=role)
+@pytest.mark.parametrize(
+    ("budget", "role", "refusal"),
+    [
+        pytest.param("e2e-account-cost", "", "do not include a role this run", id="no_role_known"),
+        pytest.param("other-budget", "e2e-runner", "is not a -account-cost budget", id="not_the_guardrail_budget"),
+        pytest.param("dfe-account-cost", "e2e-runner", "not the guardrails' dfe-deny-create", id="the_prefix_names_the_policy"),
+    ],
+)
+def test_a_budget_action_fails_closed_without_a_role_or_the_guardrail_budget(
+    budget: str, role: str, refusal: str
+) -> None:
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard_mod.check_budget_action(ARMED_ACTION, budget=budget, role=role)
 
 
 DENY_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "ec2:RunInstances", "Resource": "*"}]}
@@ -1020,38 +1012,46 @@ def test_a_policy_stops_something_only_if_it_holds_a_deny(document: object, deni
     assert guard_mod.policy_document_denies(document) is denies
 
 
-def _budget_reads(monkeypatch: pytest.MonkeyPatch, action: dict, document: object) -> None:
+def _budget_reads(monkeypatch: pytest.MonkeyPatch, action: dict, document: object, caller: str) -> None:
     def read(args: list[str], _region: str) -> dict:
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return {"Account": ACCOUNT, "Arn": caller}
         if args[0] == "budgets":
             return {"Action": action}
         if args[:2] == ["iam", "get-policy"]:
             return {"Policy": {"DefaultVersionId": "v3"}}
-        if args[:2] == ["iam", "get-policy-version"]:
-            return {"PolicyVersion": {"Document": document}}
-        return {"Policy": {"Content": json.dumps(document)}}
+        return {"PolicyVersion": {"Document": document}}
 
     monkeypatch.setattr(cloud_sweep, "run_aws", read)
 
 
+RUNNER_SESSION = f"arn:aws:sts::{ACCOUNT}:assumed-role/e2e-runner/dfe-cloud-cycle-1"
+
+
 @pytest.mark.parametrize(
-    ("action", "document", "passes"),
+    ("caller", "document", "refusal"),
     [
-        pytest.param(ARMED_ACTION, DENY_DOCUMENT, True, id="iam_deny"),
-        pytest.param(SCP_ACTION, DENY_DOCUMENT, True, id="scp_deny"),
-        pytest.param(ARMED_ACTION, ALLOW_DOCUMENT, False, id="iam_allow_only"),
-        pytest.param(SCP_ACTION, ALLOW_DOCUMENT, False, id="scp_allow_only"),
+        pytest.param(RUNNER_SESSION, DENY_DOCUMENT, None, id="the_runner_role_and_a_deny"),
+        pytest.param(RUNNER_SESSION, ALLOW_DOCUMENT, "no Deny statement", id="the_known_policy_without_a_deny"),
+        pytest.param(
+            f"arn:aws:sts::{ACCOUNT}:assumed-role/AWSReservedSSO_AdministratorAccess_abc/someone@example.com",
+            DENY_DOCUMENT, "do not include AWSReservedSSO_AdministratorAccess_abc",
+            id="an_sso_admin_session_the_brake_does_not_reach",
+        ),
+        pytest.param(f"arn:aws:iam::{ACCOUNT}:user/alice", DENY_DOCUMENT, "not an assumed role", id="an_iam_user"),
+        pytest.param(f"arn:aws:iam::{ACCOUNT}:root", DENY_DOCUMENT, "not an assumed role", id="the_account_root"),
     ],
 )
-def test_the_guard_reads_the_budget_actions_policy_and_wants_a_deny(
-    monkeypatch: pytest.MonkeyPatch, action: dict, document: dict, passes: bool
+def test_the_guard_covers_the_role_it_runs_as_not_the_configured_one(
+    monkeypatch: pytest.MonkeyPatch, caller: str, document: dict, refusal: str | None
 ) -> None:
-    _budget_reads(monkeypatch, action, document)
+    _budget_reads(monkeypatch, ARMED_ACTION, document, caller)
     guard = guard_mod.AwsGuard("us-west-2")
-    if passes:
-        assert guard.budget_action(ACCOUNT, BUDGET_ACTION, "e2e-runner").startswith("STANDBY")
+    if refusal is None:
+        assert guard.budget_action(ACCOUNT, BUDGET_ACTION).startswith("STANDBY")
         return
-    with pytest.raises(guard_mod.GuardError, match="no Deny statement"):
-        guard.budget_action(ACCOUNT, BUDGET_ACTION, "e2e-runner")
+    with pytest.raises(guard_mod.GuardError, match=refusal):
+        guard.budget_action(ACCOUNT, BUDGET_ACTION)
 
 
 SWEEPER_ARN = f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:e2e-sweeper"
@@ -1084,6 +1084,9 @@ SCHEDULE = {
         pytest.param({"EndDate": "2020-01-01T00:00:00+00:00"}, "ends before", id="an_end_date_in_the_past"),
         pytest.param({"EndDate": "2026-10-08T13:00:00+00:00"}, "ends before", id="an_end_date_inside_the_window"),
         pytest.param({"StartDate": "2999-01-01T00:00:00+00:00"}, "not started", id="a_future_start"),
+        pytest.param({"ScheduleExpressionTimezone": "Etc/UTC"}, None, id="etc_utc"),
+        pytest.param({"ScheduleExpressionTimezone": "UTC"}, None, id="utc"),
+        pytest.param({"ScheduleExpressionTimezone": "Australia/Sydney"}, "only judged in UTC", id="a_local_timezone"),
         pytest.param({"FlexibleTimeWindow": {"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 180}},
                      "between runs", id="a_flexible_window_that_pushes_it_out"),
         pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}, "not arn", id="another_function"),

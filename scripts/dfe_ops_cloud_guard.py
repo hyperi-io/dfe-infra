@@ -352,13 +352,16 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
 
 # --- the cloud the guard reads ------------------------------------------------
 
-# The action types that deny spend. RUN_SSM_DOCUMENTS runs a document and stops nothing by itself.
-BUDGET_ACTION_DENY_TYPES = ("APPLY_IAM_POLICY", "APPLY_SCP_POLICY")
 # The only status of an action that is armed and has not fired. Every other one is a brake that
 # is already engaged, mid-execution or broken.
 BUDGET_ACTION_ARMED = "STANDBY"
 # A percentage threshold past the budget lets spend run over it before the brake applies.
 BUDGET_ACTION_MAX_PERCENT = 100
+# hyperi-infra's e2e-guardrails module names its budget `<prefix>-account-cost` and the policy the
+# action applies `<prefix>-deny-create`. Only that policy is the brake: any other one that holds
+# a Deny is not known to stop what a run creates.
+BUDGET_NAME_SUFFIX = "-account-cost"
+BRAKE_POLICY_SUFFIX = "-deny-create"
 
 
 def policy_document_denies(document: object) -> bool:
@@ -373,24 +376,26 @@ def policy_document_denies(document: object) -> bool:
     return any(isinstance(s, Mapping) and s.get("Effect") == "Deny" for s in statements)
 
 
-def check_budget_action(action: Mapping[str, object], *, account: str, role: str) -> str:
+def check_budget_action(action: Mapping[str, object], *, budget: str, role: str) -> str:
     """Return what an armed deny-spend budget action looks like, or refuse it.
 
-    The policy itself is judged by the caller, which has to read it. This judges the action: how it
-    runs, what triggers it, and whether it lands on the principal the guard deploys as.
+    The policy's contents are judged by the caller, which has to read them. This judges the
+    action: how it runs, what triggers it, which policy it applies, and whether that lands on
+    the role the run is executing as.
 
     Args:
         action: The `Action` object `aws budgets describe-budget-action` returns.
-        account: The account the run deploys into, which an SCP target must name.
-        role: The deploy principal the guard knows (a role name or ARN), which an IAM action's
-            roles must include.
+        budget: The budget the action belongs to, which names the brake policy it must apply.
+        role: The role the guard is running as (the caller's, resolved from its identity),
+            which the action's roles must include.
 
     Returns:
         One line: the status, approval model, type and threshold.
 
     Raises:
-        GuardError: The action needs manual approval, is not a deny-spend type, has no
-            usable threshold, is not armed, or does not cover the deploy principal.
+        GuardError: The action needs manual approval, is not an IAM policy action, has no
+            usable threshold, is not armed, applies a policy other than the known brake, or does
+            not cover the role.
     """
     approval = str(action.get("ApprovalModel", ""))
     if approval != "AUTOMATIC":
@@ -398,11 +403,8 @@ def check_budget_action(action: Mapping[str, object], *, account: str, role: str
             f"its approval model is {approval or 'unreadable'}, so nothing applies the brake unattended"
         )
     action_type = str(action.get("ActionType", ""))
-    if action_type not in BUDGET_ACTION_DENY_TYPES:
-        raise GuardError(
-            f"its type is {action_type or 'unreadable'}, "
-            f"not one of {', '.join(BUDGET_ACTION_DENY_TYPES)}"
-        )
+    if action_type != "APPLY_IAM_POLICY":
+        raise GuardError(f"its type is {action_type or 'unreadable'}, not APPLY_IAM_POLICY")
 
     threshold = action.get("ActionThreshold")
     threshold = threshold if isinstance(threshold, Mapping) else {}
@@ -420,28 +422,19 @@ def check_budget_action(action: Mapping[str, object], *, account: str, role: str
         raise GuardError(f"its status is {status}, not {BUDGET_ACTION_ARMED}")
 
     definition = action.get("Definition")
-    definition = definition if isinstance(definition, Mapping) else {}
-    if action_type == "APPLY_IAM_POLICY":
-        iam = definition.get("IamActionDefinition")
-        iam = iam if isinstance(iam, Mapping) else {}
-        role_name = role.rsplit("/", 1)[-1]
-        if not iam.get("PolicyArn"):
-            raise GuardError("it names no policy to apply")
-        if not role_name or role_name not in (iam.get("Roles") or []):
-            raise GuardError(
-                f"its roles {list(iam.get('Roles') or [])} do not include the deploy role "
-                f"{role_name or 'the guard was given none of'}, so the brake would not reach the run"
-            )
-    else:
-        scp = definition.get("ScpActionDefinition")
-        scp = scp if isinstance(scp, Mapping) else {}
-        if not scp.get("PolicyId"):
-            raise GuardError("it names no policy to apply")
-        if account not in (scp.get("TargetIds") or []):
-            raise GuardError(
-                f"its targets {list(scp.get('TargetIds') or [])} do not name account {account}: "
-                "an organizational unit is not resolved, so coverage cannot be established"
-            )
+    iam = definition.get("IamActionDefinition") if isinstance(definition, Mapping) else None
+    iam = iam if isinstance(iam, Mapping) else {}
+    policy = str(iam.get("PolicyArn", ""))
+    if not budget.endswith(BUDGET_NAME_SUFFIX):
+        raise GuardError(f"its budget {budget!r} is not a {BUDGET_NAME_SUFFIX} budget from hyperi-infra's guardrails")
+    brake = budget.removesuffix(BUDGET_NAME_SUFFIX) + BRAKE_POLICY_SUFFIX
+    if policy.rsplit("/", 1)[-1] != brake:
+        raise GuardError(f"it applies {policy or 'no policy'}, not the guardrails' {brake}")
+    if not role or role not in (iam.get("Roles") or []):
+        raise GuardError(
+            f"its roles {list(iam.get('Roles') or [])} do not include {role or 'a role this run is executing as'}, "
+            "so the brake would not reach the run"
+        )
     return f"{status}, {approval} {action_type} at {value:g} {threshold_type}"
 
 
@@ -566,6 +559,9 @@ def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window:
     """
     if schedule.get("State") != "ENABLED":
         raise GuardError(f"its schedule is {schedule.get('State')!r}, not ENABLED")
+    timezone = str(schedule.get("ScheduleExpressionTimezone") or "UTC")
+    if timezone not in ("UTC", "Etc/UTC"):
+        raise GuardError(f"its schedule runs in {timezone}, and the cadence is only judged in UTC")
     start = _schedule_instant(schedule.get("StartDate"))
     if start is not None and start > now:
         raise GuardError("its schedule has not started yet")
@@ -701,14 +697,27 @@ class AwsGuard:
             )
         return f"{state}, run by {', '.join(sorted(passing))}"
 
-    def budget_action(self, account: str, identifier: str, role: str = "") -> str:
-        """The budget action's armed state, from `<budget-name>:<action-id>` (a budget name cannot hold ':').
-
-        The action's policy is read too, and must hold a Deny statement.
+    def caller_role(self) -> str:
+        """The role the session is executing as, resolved from its assumed-role ARN.
 
         Raises:
-            GuardError: The identifier is malformed, the action is not an armed deny-spend brake
-                that covers `role`, or its policy denies nothing.
+            GuardError: The caller is not an assumed role (a user, or the account root), so no
+                role-scoped brake can cover it.
+        """
+        arn = str(self._read(["sts", "get-caller-identity"]).get("Arn", ""))
+        match = re.match(r"^arn:[^:]+:sts::\d{12}:assumed-role/([^/]+)/", arn)
+        if match is None:
+            raise GuardError(f"the caller {arn or 'unreadable'} is not an assumed role, which the brake cannot cover")
+        return match.group(1)
+
+    def budget_action(self, account: str, identifier: str) -> str:
+        """The budget action's armed state, from `<budget-name>:<action-id>` (a budget name cannot hold ':').
+
+        The action has to cover the role this session runs as, and apply the known brake
+        policy, whose document is read and must hold a Deny statement.
+
+        Raises:
+            GuardError: The identifier is malformed, or the action is not that armed brake.
         """
         budget, sep, action_id = identifier.rpartition(":")
         if not sep or not budget or not action_id:
@@ -718,21 +727,12 @@ class AwsGuard:
              "--action-id", action_id]
         )
         action = body.get("Action", {})
-        summary = check_budget_action(action, account=account, role=role)
-        definition = action.get("Definition", {})
-        if action.get("ActionType") == "APPLY_IAM_POLICY":
-            arn = str(definition["IamActionDefinition"]["PolicyArn"])
-            version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
-            document = self._read(
-                ["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)]
-            )["PolicyVersion"]["Document"]
-        else:
-            policy_id = str(definition["ScpActionDefinition"]["PolicyId"])
-            content = self._read(["organizations", "describe-policy", "--policy-id", policy_id])["Policy"]["Content"]
-            try:
-                document = json.loads(content) if isinstance(content, str) else content
-            except json.JSONDecodeError as exc:
-                raise GuardError(f"its service control policy is not JSON: {exc}") from exc
+        summary = check_budget_action(action, budget=budget, role=self.caller_role())
+        arn = str(action["Definition"]["IamActionDefinition"]["PolicyArn"])
+        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
+        document = self._read(
+            ["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)]
+        )["PolicyVersion"]["Document"]
         if not policy_document_denies(document):
             raise GuardError("its policy holds no Deny statement, so applying it stops nothing")
         return summary
@@ -949,7 +949,7 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
         "(a) budget action",
         config.budget_action,
         "DFE_GUARD_BUDGET_ACTION",
-        lambda ident: guard.budget_action(config.account, ident, config.role),
+        lambda ident: guard.budget_action(config.account, ident),
     )
     if config.permissions_boundary:
         _identifier_check(
