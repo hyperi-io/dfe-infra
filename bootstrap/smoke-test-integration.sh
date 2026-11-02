@@ -631,15 +631,25 @@ provider_log_fresh() {
   test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND AND ResourceAttributes['dfe.provider_log.source'] = '$1'")" -gt 0 2>/dev/null
 }
 if [ "$PROVIDER_LOGS" = aws ]; then
-  provider_waited=0
+  # Sized from the pipeline, not borrowed from CORE 1: the receiver's first poll lands one
+  # poll_interval (1m) after it starts, EKS delivers its audit stream to CloudWatch some
+  # time after the event, and the batch and export add a few seconds. Two polls plus an
+  # allowance for the delivery lag is 300s. Counted in elapsed seconds, because each query
+  # runs through kubectl exec and takes far longer than the sleep between them.
+  PROVIDER_LOGS_WAIT="${DFE_PROVIDER_LOGS_WAIT:-300}"
+  provider_started=$SECONDS
   while ! provider_log_fresh eks-audit; do
-    [ "$provider_waited" -ge "$OTEL_WAIT" ] && break
+    [ $((SECONDS - provider_started)) -ge "$PROVIDER_LOGS_WAIT" ] && break
     sleep "$OTEL_WAIT_INTERVAL"
-    provider_waited=$((provider_waited + OTEL_WAIT_INTERVAL))
   done
-  echo "  waited ${provider_waited}s of ${OTEL_WAIT}s for an EKS audit row newer than ${FRESH_WINDOW}s"
+  echo "  waited $((SECONDS - provider_started))s of ${PROVIDER_LOGS_WAIT}s for an EKS audit row newer than ${FRESH_WINDOW}s"
   check "EKS audit log landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (dfe.provider_log.source=eks-audit)" \
     "provider_log_fresh eks-audit"
+  if ! provider_log_fresh eks-audit; then
+    # The receiver logs a denied or missing group on every poll and carries on, so its log is the evidence.
+    echo "  provider-logs collector, last lines:"
+    kubectl -n "${DFE_OTEL_NS:-otel}" logs deploy/dfe-otel-collector-provider-logs --tail=20 2>&1 | sed 's/^/    /' || true
+  fi
   if provider_log_fresh cloudtrail; then
     pass "CloudTrail events landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (dfe.provider_log.source=cloudtrail)"
   else

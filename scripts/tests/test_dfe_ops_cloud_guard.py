@@ -58,6 +58,7 @@ class FakeGuard:
         self.missing: set[str] = set()
         self.sweeper_state = "Active"
         self.scanning: dict = {"scanType": "BASIC", "rules": []}
+        self.boundary: object = {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:FilterLogEvents"]}]}
         self.expiry: float | None = NOW + 10 * 3600
         self.expiry_error: str | None = None
         self.leftovers: list[cloud_sweep.Resource] = []
@@ -93,6 +94,10 @@ class FakeGuard:
     def registry_scanning(self) -> dict:
         self._maybe_missing("scanning", "")
         return self.scanning
+
+    def policy_document(self, arn: str) -> object:
+        self._maybe_missing("boundary", "")
+        return self.boundary
 
     def credential_expiry(self, env: object) -> tuple[float | None, str]:
         if self.expiry_error:
@@ -394,6 +399,45 @@ def test_the_registry_scanning_that_cannot_be_read_fails_the_check(root: Path) -
     guard = FakeGuard()
     guard.missing = {"scanning"}
     assert _failed(_preflight(root, guard)) == ["(a) registry scanning"]
+
+
+OTEL_TELEMETRY = {"sink": "otel", "retention_days": 2, "forced_retention_days": 1, "eks_log_types": ["audit"]}
+BOUNDARY_ARN = f"arn:aws:iam::{ACCOUNT}:policy/dfe-e2e-boundary"
+
+
+@pytest.mark.parametrize(
+    ("tfvars", "boundary", "failing"),
+    [
+        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*"]}]}, True,
+                     id="the_boundary_lacks_filterlogevents"),
+        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:FilterLogEvents"]}]}, False,
+                     id="the_boundary_names_it"),
+        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": "logs:*"}]}, False, id="a_wildcard_covers_it"),
+        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Deny", "Action": ["logs:FilterLogEvents"]}]}, True,
+                     id="a_deny_is_not_an_allow"),
+        pytest.param({"telemetry": OTEL_TELEMETRY}, "not a document", True, id="an_unreadable_document_fails_closed"),
+        pytest.param({"telemetry": {**OTEL_TELEMETRY, "sink": "cloudwatch"}}, {"Statement": []}, False, id="the_cloudwatch_sink_reads_nothing"),
+        pytest.param({"telemetry": {**OTEL_TELEMETRY, "eks_log_types": []}}, {"Statement": []}, False, id="no_stream_and_no_trail_reads_nothing"),
+        pytest.param({"telemetry": {**OTEL_TELEMETRY, "eks_log_types": []}, "cloudtrail": {"enabled": True}}, {"Statement": []}, True,
+                     id="the_trail_alone_is_read"),
+        pytest.param({}, {"Statement": []}, False, id="no_telemetry_in_the_dial"),
+    ],
+)
+def test_the_provider_logs_boundary_check_refuses_a_boundary_that_denies_the_receiver(
+    root: Path, tfvars: dict, boundary: object, failing: bool
+) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **tfvars}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.boundary = boundary
+    report = _preflight(root, guard, permissions_boundary=BOUNDARY_ARN)
+    assert _failed(report) == (["(a) provider logs boundary"] if failing else [])
+
+
+def test_no_boundary_means_no_provider_logs_boundary_check(root: Path) -> None:
+    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, "telemetry": OTEL_TELEMETRY}), encoding="utf-8")
+    guard = FakeGuard()
+    guard.boundary = {"Statement": []}
+    assert _failed(_preflight(root, guard)) == []
 
 
 def test_a_configured_boundary_must_exist_too(root: Path) -> None:

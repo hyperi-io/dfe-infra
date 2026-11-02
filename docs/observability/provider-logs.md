@@ -27,6 +27,8 @@ Under the `otel` sink both groups keep `telemetry.aws.forced_retention_days` in 
 
 `telemetry.aws.eks_log_types` picks the EKS streams. It defaults to `audit`.
 
+The role is created under the account's permissions boundary when the cloud guard configures one, and the boundary has to allow `logs:FilterLogEvents`. Without it the role's own grant has no effect, the receiver is denied on every poll, and no row arrives. The cloud guard's preflight refuses a run whose boundary lacks it.
+
 The receiver keeps its read offsets on a small PersistentVolumeClaim, one replica, replaced with `Recreate`. A replacement pod resumes from the checkpoint. The lookback (`aws.initialLookback`) only applies when there is no checkpoint yet.
 
 Recovery after an outage has three limits:

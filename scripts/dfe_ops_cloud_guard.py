@@ -114,6 +114,7 @@ bucket come from the root's own JSON tfvars.
 
 import argparse
 import contextlib
+import fnmatch
 import functools
 import importlib.machinery
 import importlib.util
@@ -588,6 +589,44 @@ def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window:
     return expression
 
 
+# What the collector's provider-logs receiver calls on the log groups it reads. A permissions
+# boundary that does not allow it leaves the role's own grant with no effect: the receiver is
+# denied on every poll, logs it, and stays up, so the only symptom is rows that never arrive.
+PROVIDER_LOGS_ACTION = "logs:FilterLogEvents"
+
+
+def reads_provider_logs(tfvars: Mapping[str, object]) -> bool:
+    """Whether the dial has the collector read CloudWatch log groups: the otel sink with a group to read."""
+    telemetry = tfvars.get("telemetry")
+    if not isinstance(telemetry, Mapping) or telemetry.get("sink") != "otel":
+        return False
+    cloudtrail = tfvars.get("cloudtrail")
+    trail_on = isinstance(cloudtrail, Mapping) and bool(cloudtrail.get("enabled"))
+    return bool(telemetry.get("eks_log_types")) or trail_on
+
+
+def boundary_allows(document: object, action: str) -> bool:
+    """Whether an Allow statement of a permissions boundary names `action`, by exact name or wildcard.
+
+    Deny statements and conditions are not evaluated: this answers whether the boundary ever
+    grants the action, which is the half a missing entry makes certain.
+    """
+    if not isinstance(document, Mapping):
+        return False
+    statements = document.get("Statement")
+    statements = [statements] if isinstance(statements, Mapping) else statements
+    if not isinstance(statements, list):
+        return False
+    for statement in statements:
+        if not isinstance(statement, Mapping) or statement.get("Effect") != "Allow":
+            continue
+        actions = statement.get("Action") or []
+        for pattern in [actions] if isinstance(actions, str) else actions:
+            if fnmatch.fnmatchcase(action.lower(), str(pattern).lower()):
+                return True
+    return False
+
+
 def cached_repository_samples(tfvars: Mapping[str, object]) -> list[str]:
     """One repository name per registry the pull-through cache will create repositories under.
 
@@ -739,6 +778,13 @@ class AwsGuard:
 
     def policy(self, arn: str) -> str:
         return str(self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["Arn"])
+
+    def policy_document(self, arn: str) -> object:
+        """The default version's document of a managed policy."""
+        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
+        return self._read(["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)])[
+            "PolicyVersion"
+        ]["Document"]
 
     def registry_scanning(self) -> dict:
         """The registry's scanning configuration in the run's region."""
@@ -903,6 +949,28 @@ def _identifier_check(report: PreflightReport, name: str, identifier: str, env_n
         report.add(name, False, f"{identifier} could not be read: {exc}")
 
 
+def _provider_logs_boundary_check(report: PreflightReport, config: GuardConfig, guard) -> None:
+    """Refuse a run whose permissions boundary would deny the provider-logs receiver."""
+    if not config.permissions_boundary or not reads_provider_logs(config.tfvars):
+        return
+    name = "(a) provider logs boundary"
+    try:
+        allowed = boundary_allows(guard.policy_document(config.permissions_boundary), PROVIDER_LOGS_ACTION)
+    except (cloud_sweep.CloudSweepError, KeyError) as exc:
+        report.add(name, False, f"the boundary could not be read: {exc}")
+        return
+    if allowed:
+        report.add(name, True, f"{config.permissions_boundary} allows {PROVIDER_LOGS_ACTION}")
+    else:
+        report.add(
+            name,
+            False,
+            f"{config.permissions_boundary} does not allow {PROVIDER_LOGS_ACTION}, so the collector's "
+            "role could not read the log groups and no EKS audit or CloudTrail row would land: add it "
+            "to the boundary's service actions",
+        )
+
+
 def _registry_scanning_check(report: PreflightReport, config: GuardConfig, guard) -> None:
     """Refuse a run whose cache repositories the registry would put under enhanced scanning."""
     repositories = cached_repository_samples(config.tfvars)
@@ -957,6 +1025,7 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
             guard.policy,
         )
 
+    _provider_logs_boundary_check(report, config, guard)
     _registry_scanning_check(report, config, guard)
 
     # (b) the credential has to outlive the run and its teardown.

@@ -24,7 +24,9 @@ No third-party deps and no test runner, matching the script it tests.
 
 from __future__ import annotations
 
+import re
 import sys
+import time
 
 from _expect import expect, standalone, summary
 from _smoke import run_smoke
@@ -85,6 +87,7 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
     out, _ = run_smoke(
         {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7}},
         DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
     expect("the EKS audit row passes", "[PASS] EKS audit log landing fresh" in out.stdout, out.stdout)
@@ -94,6 +97,7 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
     both, _ = run_smoke(
         {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7, "cloudtrail": 2}},
         DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
     expect("CloudTrail rows pass when present", "[PASS] CloudTrail events landing fresh" in both.stdout, both.stdout)
@@ -101,10 +105,25 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
     dead, _ = run_smoke(
         {"otel_zero_answers": 0, "provider_log_rows": {"cloudtrail": 2}},
         DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
     expect("no EKS audit row fails the suite", "[FAIL] EKS audit log landing fresh" in dead.stdout, dead.stdout)
     expect("and the exit code says so", dead.returncode != 0, f"rc={dead.returncode}")
+
+    started = time.monotonic()
+    slow, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="3",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect(
+        "the provider-logs wait is real elapsed seconds, not a count of sleeps",
+        time.monotonic() - started >= 3 and re.search(r"waited [3-9]s of 3s for an EKS audit row", slow.stdout) is not None,
+        slow.stdout,
+    )
+    expect("and a dead EKS audit feed prints the collector's own log", "provider-logs collector, last lines:" in slow.stdout, slow.stdout)
 
     rancher, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0", DFE_PROVIDER_LOGS_FLAVOUR="rancher")
     expect("another flavour is skipped by name", "[SKIP] provider logs (rancher)" in rancher.stdout, rancher.stdout)
