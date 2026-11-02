@@ -8426,7 +8426,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.22"             # 2026-11-01. The engine applies it at startup and reads its source catalogue. dfe-engine v1.22.79 requires >=0.2.22 and locks 0.2.22.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.11"              # 2026-11-02. The deploy-repo template, seeded from this tag. Its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
+      dfe-deploy: "v1.0.12"              # 2026-11-02. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
       # A commit, not a version: dfe-docker cuts no per-stack tag. 2b4fcfa6 (2026-11-01) is "fix(builder): link the dev Rust builds against static C libraries (#341)".
       dfe-docker: "2b4fcfa69241d695313dbff474ee56771387c3b3"
       dfe-hyperdx: "v0.3.21"             # 2026-11-01, amd64 and arm64. Upstream HyperDX 2.43.0. Fixes a SQL injection (#189) and pins follow-redirects 1.16.2 (#188).
