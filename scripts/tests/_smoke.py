@@ -263,6 +263,7 @@ if "exec" in args:
         sys.exit(0)
     if "otel_logs" in query:
         # A real query runs through kubectl exec and takes seconds; this is how long one takes here.
+        counts.setdefault("otel_times", []).append(time.time())
         time.sleep(fixture.get("otel_query_seconds", 0))
         asked = bump("otel")
         print(0 if asked <= fixture.get("otel_zero_answers", 0) else 1)

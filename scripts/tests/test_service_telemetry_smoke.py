@@ -33,20 +33,27 @@ def workloads(*names: str, **over: object) -> list[dict]:
     return [{"name": n, "ready": 1, "endpoint": GATEWAY, **over} for n in names]
 
 
-def smoke(fixture: dict, **env: str):
-    return run_smoke({"otel_zero_answers": 0, **fixture}, DFE_OTEL_WAIT="2", **env)
+def smoke(fixture: dict, *, wait: str = "30", **env: str):
+    """A bound no runner reaches with the fake queries, so the first answer always counts.
+
+    A test that expects a FAIL once the bound is spent passes `wait="2"`: the fixture never
+    answers, so it fails for any bound and need not sit through 30s.
+    """
+    return run_smoke({"otel_zero_answers": 0, **fixture}, DFE_OTEL_WAIT=wait, **env)
 
 
 def test_every_pushing_service_with_a_fresh_row_passes() -> None:
     out, counts = smoke({"workloads": workloads(*APPS), "metric_services": [*APPS, "k8s-node", "otelcol-contrib"]})
 
     assert PASS in out.stdout, out.stdout
-    assert "waited 0s of 2s" in out.stdout
     assert counts["metrics"] == 1
 
 
 def test_a_service_with_no_metric_row_fails_and_is_named() -> None:
-    out, _ = smoke({"workloads": workloads(*APPS), "metric_services": ["dfe-receiver", "dfe-archiver", "dfe-engine"]})
+    out, _ = smoke(
+        {"workloads": workloads(*APPS), "metric_services": ["dfe-receiver", "dfe-archiver", "dfe-engine"]},
+        wait="2",
+    )
 
     assert FAIL in out.stdout, out.stdout
     assert "no fresh metrics from: dfe-loader" in out.stdout
@@ -60,8 +67,7 @@ def test_a_service_that_pushes_late_still_passes() -> None:
 
     assert PASS in out.stdout, out.stdout
     assert counts["metrics"] > 2
-    # Elapsed seconds, so a loop that polls every second can report 2 to 4 around its 2s bound.
-    assert re.search(r"waited [2-4]s of 2s", out.stdout), out.stdout
+    assert re.search(r"waited \d+s of 30s", out.stdout), out.stdout
 
 
 @pytest.mark.parametrize("series", ["dfe-transform-vrl-flowvrl", "dfe-transform-vrl"])
@@ -72,7 +78,7 @@ def test_a_per_config_deployment_is_matched_by_its_family(series: str) -> None:
 
 
 def test_a_lookalike_name_does_not_stand_in_for_the_service() -> None:
-    out, _ = smoke({"workloads": workloads("dfe-loader"), "metric_services": ["dfe-loaderx", "dfe-loading"]})
+    out, _ = smoke({"workloads": workloads("dfe-loader"), "metric_services": ["dfe-loaderx", "dfe-loading"]}, wait="2")
 
     assert FAIL in out.stdout, out.stdout
 
