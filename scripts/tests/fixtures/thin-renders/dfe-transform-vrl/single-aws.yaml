@@ -235,6 +235,8 @@ spec:
         - mountPath: /etc/dfe-transform-vrl
           name: config
           readOnly: true
+        - mountPath: /var/spool/scalo/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /etc/dfe-transform-vrl-enrichment
@@ -281,6 +283,8 @@ spec:
       - configMap:
           name: dfe-transform-vrl-config
         name: config
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - configMap:

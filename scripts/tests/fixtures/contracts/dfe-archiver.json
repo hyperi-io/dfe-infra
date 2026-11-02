@@ -144,6 +144,7 @@
       "queue_capacity": 10000,
       "batch_size": 256,
       "flush_interval_ms": 100,
+      "max_payload_bytes": null,
       "file": {
         "enabled": true,
         "path": "/var/spool/dfe/dlq",
@@ -182,23 +183,8 @@
   },
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
-    "apt_repos": [
-      {
-        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
-        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
-        "url": "https://packages.confluent.io/clients/deb",
-        "codename": "bookworm",
-        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
-        "packages": [
-          "librdkafka1"
-        ]
-      }
-    ],
-    "apt_packages": [
-      "libssl3t64",
-      "zlib1g",
-      "libzstd1"
-    ],
+    "apt_repos": [],
+    "apt_packages": [],
     "distro": "trixie"
   },
   "image_profile": "production",
@@ -312,7 +298,7 @@
         }
       },
       "dlq": {
-        "description": "Dead letter queue configuration",
+        "description": "Dead letter queue configuration. A field a `dlq:` block leaves out\nkeeps the archiver's default.",
         "$ref": "#/$defs/DlqConfig",
         "default": {
           "enabled": true,
@@ -320,6 +306,7 @@
           "queue_capacity": 10000,
           "batch_size": 256,
           "flush_interval_ms": 100,
+          "max_payload_bytes": null,
           "file": {
             "enabled": true,
             "path": "/var/spool/dfe/dlq",
@@ -575,7 +562,7 @@
             "default": 8388608
           },
           "max_writers": {
-            "description": "Maximum number of concurrent archive writers (one per unique routing\ndestination). When the cap is reached, the least-recently-used writer\nis evicted and closed asynchronously. Caps file-handle use and bounds\nthe `dfe_archiver_unique_destinations` metric for expression-routed\npods on high-cardinality keys (e.g. per-org-id routing).",
+            "description": "Maximum number of archive writers open at once, one per routing\ndestination, evicted ones still closing included. At the cap the\nleast recently used writer is evicted and closed in the background,\nand a write for a new destination waits for that close. Caps file\nhandles and bounds `dfe_archiver_unique_destinations` on\nhigh-cardinality keys such as per-org routing.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
@@ -632,26 +619,29 @@
         }
       },
       "S3Config": {
-        "description": "S3 configuration",
+        "description": "S3 configuration. A section with no `bucket` takes the destination URL's.",
         "type": "object",
         "properties": {
           "region": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "endpoint": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "access_key_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "secret_access_key": {
             "type": [
@@ -659,30 +649,30 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "bucket": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "allow_http": {
             "description": "Allow plaintext HTTP (for local/dev endpoints only). Defaults to false (HTTPS required).",
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "bucket"
-        ]
+        }
       },
       "GcsConfig": {
-        "description": "GCS configuration",
+        "description": "GCS configuration. A section with no `bucket` takes the destination URL's.",
         "type": "object",
         "properties": {
           "project_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "service_account_key": {
             "type": [
@@ -690,28 +680,29 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "credentials_path": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "bucket": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           }
-        },
-        "required": [
-          "bucket"
-        ]
+        }
       },
       "AzureConfig": {
-        "description": "Azure Blob configuration",
+        "description": "Azure Blob configuration. A section with no `container` takes the\ndestination URL's.",
         "type": "object",
         "properties": {
           "account_name": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "account_key": {
             "type": [
@@ -719,7 +710,8 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "sas_token": {
             "type": [
@@ -727,26 +719,25 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "container": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "use_emulator": {
-            "type": "boolean"
+            "type": "boolean",
+            "default": false
           },
           "endpoint": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           }
-        },
-        "required": [
-          "account_name",
-          "container",
-          "use_emulator"
-        ]
+        }
       },
       "MinioConfig": {
         "description": "`MinIO` configuration (S3-compatible)",
@@ -900,6 +891,16 @@
             "format": "uint64",
             "minimum": 0,
             "default": 100
+          },
+          "max_payload_bytes": {
+            "description": "Payload bytes an entry keeps: a longer payload is cut to this and the\nentry marked `truncated` with its original length, so it lands where\nthe whole record could not. `None` keeps every payload whole. Default\n[`DEFAULT_MAX_PAYLOAD_BYTES`].",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "default": 524288
           },
           "file": {
             "description": "File backend configuration.",
@@ -1118,6 +1119,11 @@
       "name": "spool",
       "path": "/var/spool/dfe/archiver",
       "size_limit": "10Gi",
+      "size": "1Gi"
+    },
+    {
+      "name": "dlq",
+      "path": "/var/spool/dfe/dlq",
       "size": "1Gi"
     }
   ],

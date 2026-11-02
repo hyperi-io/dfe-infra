@@ -199,6 +199,8 @@ spec:
           readOnly: true
         - mountPath: /var/spool/dfe/archiver
           name: writable-spool
+        - mountPath: /var/spool/dfe/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -252,6 +254,8 @@ spec:
       - emptyDir:
           sizeLimit: 10Gi
         name: writable-spool
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - name: serviceaccount-files
