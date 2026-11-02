@@ -1,0 +1,18 @@
+{{- if eq .Values.clusterTelemetry.providerLogs.flavour "aws" }}
+# The aws_cloudwatch receiver's read offsets (file_storage in provider-logs-configmap.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-provider-logs-checkpoint
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.clusterTelemetry.providerLogs.deployment.checkpoint.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ required "clusterTelemetry.providerLogs.deployment.checkpoint.size is required" .Values.clusterTelemetry.providerLogs.deployment.checkpoint.size }}
+{{- end }}

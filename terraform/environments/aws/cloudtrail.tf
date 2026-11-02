@@ -173,8 +173,10 @@ resource "aws_cloudtrail" "this" {
   cloud_watch_logs_group_arn = local.cloudtrail_cloudwatch_count == 1 ? "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*" : null
   cloud_watch_logs_role_arn  = local.cloudtrail_cloudwatch_count == 1 ? aws_iam_role.cloudtrail_cloudwatch[0].arn : null
 
-  // The bucket policy has to exist before CreateTrail validates against it.
-  depends_on = [module.cloudtrail_bucket]
+  // The bucket policy has to exist before CreateTrail validates against it, and so does the
+  // role's policy: CreateTrail checks that CloudTrail can write to the log group, and the role
+  // is not enough on its own to let it.
+  depends_on = [module.cloudtrail_bucket, aws_iam_role_policy.cloudtrail_cloudwatch]
 }
 
 // aws_cloudtrail.this gained `count` for cloudtrail.enabled. Without this a

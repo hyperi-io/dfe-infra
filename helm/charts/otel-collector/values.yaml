@@ -245,6 +245,12 @@ clusterTelemetry:
       # Retry ceiling on the push to the gateway, as for the node agent.
       export:
         maxElapsedTime: 60s
+      # aws only: the receiver's read offsets, on a claim so a replacement pod resumes
+      # where the last one stopped instead of rereading the lookback or skipping a longer gap.
+      # Empty storageClass takes the cluster's default class.
+      checkpoint:
+        size: 1Gi
+        storageClass: ""
     aws:
       region: ""
       # CloudWatch keeps only a catch-up window, so a restart reads back at most this far.

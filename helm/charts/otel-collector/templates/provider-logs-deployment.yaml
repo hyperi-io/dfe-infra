@@ -9,8 +9,12 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  # One poller: a second would read every log group twice.
+  # One poller: a second would read every log group twice and fight over the checkpoint.
   replicas: 1
+  # The old pod stops before the new one starts, since the claim is ReadWriteOnce and one
+  # poller owns the checkpoint.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
@@ -62,15 +66,19 @@ spec:
               mountPath: /etc/otel
             - name: tmp
               mountPath: /tmp
+            {{- if eq $pl.flavour "aws" }}
             - name: checkpoint
               mountPath: /var/lib/otelcol/storage
+            {{- end }}
       volumes:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-provider-logs-config
         - name: tmp
           emptyDir: {}
-        # Survives a container restart, which is the crash the receiver can cause.
+        {{- if eq $pl.flavour "aws" }}
         - name: checkpoint
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: {{ include "dfe-common.fullname" . }}-provider-logs-checkpoint
+        {{- end }}
 {{- end }}

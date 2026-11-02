@@ -101,6 +101,51 @@ def test_the_aws_flavour_polls_the_named_groups_in_a_process_of_its_own() -> Non
     )
 
 
+def test_the_aws_checkpoint_lives_on_a_claim_with_one_poller_that_replaces_in_place() -> None:
+    docs = rendered("aws", *AWS)
+    (deployment,) = named(docs, "Deployment", "-provider-logs")
+    spec = deployment["spec"]
+    expect("one replica", spec["replicas"] == 1)
+    expect("the old pod stops before the new one starts", spec["strategy"] == {"type": "Recreate"}, repr(spec["strategy"]))
+    (claim,) = named(docs, "PersistentVolumeClaim", "-provider-logs-checkpoint")
+    expect("a ReadWriteOnce claim", claim["spec"]["accessModes"] == ["ReadWriteOnce"], repr(claim["spec"]))
+    expect("sized from values", claim["spec"]["resources"]["requests"]["storage"] == "1Gi", repr(claim["spec"]))
+    expect("on the cluster's default class unless values name one", "storageClassName" not in claim["spec"], repr(claim["spec"]))
+    pod = spec["template"]["spec"]
+    volume = next(v for v in pod["volumes"] if v["name"] == "checkpoint")
+    expect(
+        "the pod mounts that claim",
+        volume["persistentVolumeClaim"]["claimName"] == claim["metadata"]["name"],
+        repr(volume),
+    )
+    mounts = {m["name"]: m["mountPath"] for m in pod["containers"][0]["volumeMounts"]}
+    config = collector_config(docs, "config.yaml")
+    directory = config["extensions"]["file_storage/provider_logs"]["directory"]
+    expect("at the directory file_storage writes to", mounts["checkpoint"] == directory, f"{mounts} vs {directory}")
+    expect(
+        "every aws receiver keeps its offsets there",
+        all(r["storage"] == "file_storage/provider_logs" for r in config["receivers"].values()),
+        repr(config["receivers"]),
+    )
+    expect(
+        "and the extension is enabled",
+        "file_storage/provider_logs" in config["service"]["extensions"],
+        repr(config["service"]["extensions"]),
+    )
+    sized = rendered("aws", *AWS, "deployment.checkpoint.size=5Gi", "deployment.checkpoint.storageClass=gp3")
+    (custom,) = named(sized, "PersistentVolumeClaim", "-provider-logs-checkpoint")
+    expect(
+        "a deployer's size and class are honoured",
+        custom["spec"]["resources"]["requests"]["storage"] == "5Gi" and custom["spec"]["storageClassName"] == "gp3",
+        repr(custom["spec"]),
+    )
+    for flavour, sets in (("azure", ("azure.connectionSecretName=hub",)), ("gcp", ("gcp.subscription=projects/p/subscriptions/s",))):
+        expect(
+            f"{flavour} keeps no checkpoint claim",
+            not named(rendered(flavour, *sets), "PersistentVolumeClaim", "-provider-logs-checkpoint"),
+        )
+
+
 def test_the_aws_flavour_leaves_a_source_out_when_its_group_is_empty() -> None:
     docs = rendered("aws", "aws.region=us-west-2", "aws.eksAuditLogGroup=/aws/eks/example/cluster")
     receivers = collector_config(docs, "config.yaml")["receivers"]

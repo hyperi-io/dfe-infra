@@ -1,10 +1,10 @@
 # Provider logs in HyperDX
 
-HyperDX already received the stack's own OTLP. Provider logs add a second self-monitoring feed: EKS audit logs, CloudTrail and Rancher API server audit logs.
+Self-monitoring has two feeds. The stack's own OTLP was always in HyperDX. The infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log) were not. Now they are.
 
-Each provider's native log service feeds a receiver in the otel collector. The collector writes rows to the otel database HyperDX reads. Provider logs bypass DFE ingest without a fetcher source or customer table.
+Receivers in the otel collector read the provider's cloud log service, or the Rancher audit file, and send the rows through the collector gateway to the otel database HyperDX reads. They bypass DFE ingest: no fetcher source, no customer table.
 
-Every row carries `cloud.provider` and `dfe.provider_log.source` for filtering in HyperDX. Rows use the generic OTel log format without typed columns.
+Every row carries `cloud.provider` and `dfe.provider_log.source`, so HyperDX can filter on them. The rows are generic OTel logs, not typed columns.
 
 ## Flavours
 
@@ -12,33 +12,46 @@ Every row carries `cloud.provider` and `dfe.provider_log.source` for filtering i
 
 | Flavour | Source | Receiver | State |
 |---|---|---|---|
-| `aws` | EKS control-plane log group, CloudTrail's CloudWatch group | `aws_cloudwatch` (alpha) | Built. The cloud root sets it under `telemetry.sink: otel`. |
+| `aws` | EKS control-plane log group, CloudTrail's CloudWatch group | `aws_cloudwatch` (alpha) | Built. The cloud root sets it when `telemetry.sink` is `otel` and at least one of the two groups exists. |
 | `rancher` | kube-apiserver audit log on the control-plane nodes | `filelog` | Built. The deployer sets the flavour. |
 | `azure` | Diagnostic settings through an Event Hub | `azure_event_hub` | Chart only. No Azure cloud root exists. |
 | `gcp` | A log sink through a Pub/Sub subscription | `googlecloudpubsub` | Chart only. No GCP cloud root exists. |
 
-The receivers run separately from the gateway in `<project>-otel-collector-provider-logs`. `aws_cloudwatch` dereferences an STS identity call's result without checking it. A failed call exits the collector. This restarts the provider-logs pod without restarting the gateway.
+The receivers run in a workload of their own, `<project>-otel-collector-provider-logs`, with their own ServiceAccount. `aws_cloudwatch` makes an STS identity call and dereferences the result without checking it. A failed call exits the collector process. In its own pod that restarts the provider-logs container and leaves the gateway alone.
 
 ## AWS
 
-The cloud root outputs the two log group names and the flavour. Bootstrap writes them to the cluster secret. `layer2-data.yaml` passes them to the chart. The receiver accesses the two groups through a Pod Identity role scoped to them.
+The cloud root outputs the flavour and the two log group names. Bootstrap writes them to the cluster secret, `layer2-data.yaml` passes them to the chart, and the receiver reads the groups through a Pod Identity role scoped to those two.
 
-CloudWatch retention is `telemetry.forced_retention_days`, its minimum retention period. `telemetry.aws.eks_log_types` selects the EKS log types and defaults to `audit`.
+Under the `otel` sink both groups keep `telemetry.aws.forced_retention_days` in the dial. That defaults to CloudWatch's shortest period and can be set to another it accepts. Under the `cloudwatch` sink the groups keep `retention_days` and nothing here reads them.
 
-The receiver logs missing groups or denied role access on every poll without exiting.
+`telemetry.aws.eks_log_types` picks the EKS streams. It defaults to `audit`.
+
+The receiver keeps its read offsets on a small PersistentVolumeClaim, one replica, replaced with `Recreate`. A replacement pod resumes from the checkpoint. The lookback (`aws.initialLookback`) only applies when there is no checkpoint yet.
+
+Recovery after an outage has three limits:
+- The checkpoint. Events before it are already delivered.
+- The CloudWatch retention. Events older than it are gone, whatever the checkpoint says.
+- The exporter retry ceiling. If the gateway is down for longer than `maxElapsedTime`, the queued batches are dropped.
+
+A missing group or a role without access is logged by the receiver on every poll and nothing more.
 
 ## Rancher
 
-The audit log path, node selector and tolerations come from values. RKE2 defaults use `/var/lib/rancher/rke2/server/logs/audit.log` and the `node-role.kubernetes.io/control-plane` label. Other distributions need their own audit log path, node selector and tolerations.
+The audit log path, the node selector and the tolerations all come from values. The defaults are RKE2's: `/var/lib/rancher/rke2/server/logs/audit.log` and the `node-role.kubernetes.io/control-plane` label. Another distribution sets its own.
 
-The operator must turn on API server auditing. RKE2 writes the audit log only when an audit policy is set. With auditing off, the file is absent. The collector stays up when the receiver has no file to read.
+Turning API server auditing on is the operator's job. RKE2 writes that file only once an audit policy is set. With auditing off the file isn't there, the receiver finds nothing to read, and the collector stays up.
 
 ## Why this path
 
-dfe-fetcher supports only a static AWS key pair and cannot use Pod Identity. A reserved dfe-fetcher source would route self-monitoring through managed ingest. Self-monitoring must keep reporting when ingest breaks.
+We looked at a reserved dfe-fetcher source on the normal data path first. dfe-fetcher reads only a static AWS key pair, so it can't use Pod Identity. It would also put self-monitoring on the managed ingest path, and self-monitoring has to keep reporting when ingest breaks.
 
-The collector ships a receiver per cloud. Its Go SDK supports Pod Identity.
+The collector already ships a receiver per cloud, and its Go SDK picks up Pod Identity natively.
 
-CloudWatch keeps only a catch-up window and the otel database holds the history, so retention is pre-trimmed.
+Under the `otel` sink, CloudWatch is a catch-up window and the otel database holds the history, so retention is pre-trimmed. Hence the shortest period by default.
 
-The AWS receivers are alpha. The collector version is pinned and tested by the cloud cycle. GuardDuty and Security Hub findings are excluded because they have no receiver.
+What it costs. The AWS receivers are alpha, so we pin the collector and the cloud cycle tests it. The rows are generic OTel logs. GuardDuty and Security Hub findings have no receiver, so they stay out.
+
+## What the cloud cycle checks
+
+The integration smoke test requires a fresh EKS audit row from the AWS flavour. CloudTrail is reported and never fails the run, because management events are sparse on a quiet account.
