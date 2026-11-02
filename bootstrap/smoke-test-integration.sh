@@ -608,12 +608,14 @@ OTEL_WAIT_INTERVAL="${DFE_OTEL_WAIT_INTERVAL:-5}"
 otel_logs_fresh() {
   test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND")" -gt 0 2>/dev/null
 }
-otel_waited=0
+# The bound is elapsed seconds, not a count of sleeps: each query runs through kubectl
+# exec and takes far longer than the sleep between them, so a count read 180s over ten minutes.
+otel_started=$SECONDS
 while ! otel_logs_fresh; do
-  [ "$otel_waited" -ge "$OTEL_WAIT" ] && break
+  [ $((SECONDS - otel_started)) -ge "$OTEL_WAIT" ] && break
   sleep "$OTEL_WAIT_INTERVAL"
-  otel_waited=$((otel_waited + OTEL_WAIT_INTERVAL))
 done
+otel_waited=$((SECONDS - otel_started))
 echo "  waited ${otel_waited}s of ${OTEL_WAIT}s for a row newer than ${FRESH_WINDOW}s"
 check "infra OTel logs landing fresh in ${OTEL_DB}.${OTEL_LOGS_TABLE} (last ${FRESH_WINDOW}s, polled up to ${OTEL_WAIT}s)" \
   otel_logs_fresh
@@ -714,13 +716,13 @@ else
   if [ -z "$expected" ]; then
     skip "per-service telemetry -- no ready scalo workload in ns/${NS_APP} exports to the collector gateway"
   else
-    service_waited=0
+    service_started=$SECONDS
     silent="$(silent_apps "$expected")"
-    while [ -n "$silent" ] && [ "$service_waited" -lt "$OTEL_WAIT" ]; do
+    while [ -n "$silent" ] && [ $((SECONDS - service_started)) -lt "$OTEL_WAIT" ]; do
       sleep "$OTEL_WAIT_INTERVAL"
-      service_waited=$((service_waited + OTEL_WAIT_INTERVAL))
       silent="$(silent_apps "$expected")"
     done
+    service_waited=$((SECONDS - service_started))
     echo "  waited ${service_waited}s of ${OTEL_WAIT}s for a metric row from each of: $(echo $expected)"
     check "every deployed DFE service has a metric row newer than ${FRESH_WINDOW}s in ${OTEL_DB}" \
       "[ -z \"\$silent\" ] || { echo \"no fresh metrics from: \$(echo \$silent)\"; false; }"

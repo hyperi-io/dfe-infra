@@ -55,7 +55,23 @@ def test_a_collector_that_exports_late_still_passes() -> None:
         out.stdout,
     )
     expect("having polled rather than sampled", (counts.get("otel") or 0) > 2, str(counts))
-    expect("and saying how long it waited", "waited 2s of 10s" in out.stdout, out.stdout)
+    expect("and saying how long it waited", re.search(r"waited [2-4]s of 10s", out.stdout) is not None, out.stdout)
+
+
+def test_the_wait_is_counted_in_elapsed_seconds_not_in_sleeps() -> None:
+    """Each query runs through kubectl exec and takes seconds, so counting sleeps read a 180s bound over ten minutes."""
+    started = time.monotonic()
+    out, _ = run_smoke({"otel_zero_answers": 99, "otel_query_seconds": 2}, DFE_OTEL_WAIT="3")
+    elapsed = time.monotonic() - started
+    reported = re.search(r"waited (\d+)s of 3s for a row", out.stdout)
+    expect("it reports a wait", reported is not None, out.stdout)
+    if reported is not None:
+        expect(
+            "and the wait is the time that passed, queries included",
+            int(reported.group(1)) >= 4,
+            f"reported {reported.group(1)}s after {elapsed:.0f}s",
+        )
+    expect("it still stops, near the bound plus one query", elapsed < 20, f"{elapsed:.0f}s")
 
 
 def test_a_dead_pipeline_still_fails_inside_the_bound() -> None:

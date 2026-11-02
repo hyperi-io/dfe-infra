@@ -17,6 +17,8 @@ each one's ServiceName.
     python3 -m pytest scripts/tests/test_service_telemetry_smoke.py
 """
 
+import re
+
 import pytest
 
 from _smoke import run_smoke
@@ -58,7 +60,8 @@ def test_a_service_that_pushes_late_still_passes() -> None:
 
     assert PASS in out.stdout, out.stdout
     assert counts["metrics"] > 2
-    assert "waited 2s of 2s" in out.stdout or "waited 1s of 2s" in out.stdout
+    # Elapsed seconds, so a loop that polls every second can report 2 to 4 around its 2s bound.
+    assert re.search(r"waited [2-4]s of 2s", out.stdout), out.stdout
 
 
 @pytest.mark.parametrize("series", ["dfe-transform-vrl-flowvrl", "dfe-transform-vrl"])
