@@ -102,14 +102,14 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
-                "dfe-archiver" "sha256:e55cd72b115ed6e7dc2906578968fc1bcf3f80bf4b0298146be40b93ea8c037c"
+                "dfe-archiver" "sha256:67aa4b887499c3dfbc4f3d2f62b5abbb10e4e6008259f8d2008264d783984d74"
                 "dfe-engine" "sha256:7ceba619f8522f5cc15eeba0f247b982ed2cd3084315a4bf0524e2d54f5dbed3"
-                "dfe-fetcher" "sha256:4b0c07e1efbe0f92845aec37f147e5f71f44784efefa6f4d76bfdbbf515d9450"
-                "dfe-loader" "sha256:671131524f35b0bda75f6b37335f1a207416f07bf98d55d2ebf898fb3d3a6a51"
-                "dfe-receiver" "sha256:9d4c8969bd3fa464dcca6e7e7c31065326398111ba3adcdaaf0e2e2f306f11a9"
-                "dfe-transform-elastic" "sha256:f4bb56582dad105458241df46005bf72281b21fa6e7c7be3f4819d5fa8cd21d1"
-                "dfe-transform-vector" "sha256:cd8dd35c974526a7c1d562daaadef6436dfe2113a3e032e03da7cc39203859dc"
-                "dfe-transform-vrl" "sha256:8e9124552770fb333300e1593eb01d348ff9b92768b438da502e2e5d37cf262c"
+                "dfe-fetcher" "sha256:f36c919fa32dd1585d268c17fcf503eff92023829d86ffa174598ec65c3be978"
+                "dfe-loader" "sha256:7d952057efb69c24c1d93cf104713b6ad5c5b96630837dc921445b26abd2f6d4"
+                "dfe-receiver" "sha256:dd334350b83b38ee7cd18ed924fc300fa9d99b41ace194c7f100823c5330b7ff"
+                "dfe-transform-elastic" "sha256:8063043032b9771229a753f05927b9abed2c8d157796835cfd6c1329989c0ddc"
+                "dfe-transform-vector" "sha256:3ddd07c6c6633ff01308408391dd3ea7d13d78579ffb77e1f11536cbf03ca75d"
+                "dfe-transform-vrl" "sha256:713aafeeaf03ed4309ba429995b4e49ddbaef551a4aae724d0040a1967eed575"
                 "dfe-ui" "sha256:5bad13f2091b7e5790c037479ab56907b0d1afd4295c6075e6e828d82c69db21"
                 "hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
             -}}

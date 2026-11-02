@@ -8346,13 +8346,13 @@ stacks:
     apps:
       dfe-engine: "v1.22.79"        # 2026-11-02, amd64 and arm64. scalo-py 2.32.4 and dfe-schemas 0.2.22. Source reads open to a caller whose source:read is bound to orgs (#1032 #1035 #1038), a VRL transform that calls get_env_var, http_request or another host function is refused (#1021), and a rule ClickHouse cannot plan is refused at save (#1020).
       dfe-ui: "v1.7.36"              # 2026-11-01, amd64 and arm64. A source catalogue setup wizard (#671), a variant is required when a source runs the elastic transform (#661), and form errors are announced without moving the form (#637).
-      dfe-receiver: "v1.15.61"      # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Ingest decodes are bounded and silent, idle and surplus connections are closed (#230), Kafka holds spooled records until broker delivery (#233), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#229).
-      dfe-loader: "v1.18.62"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. A ClickHouse outage gauge, with restart tests (#305).
-      dfe-archiver: "v1.7.43"       # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Fixes a data-loss path (#157).
-      dfe-fetcher: "v1.4.46"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25, with cursor and resource bounds fixed (#269). Zero intervals are refused and numeric env secrets kept (#265), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#263).
-      dfe-transform-vrl: "v1.1.41"   # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. vrl 0.35.0 so NaN float arithmetic fails the record (#124), enrichment repaired and a file DLQ added (#126).
-      dfe-transform-vector: "v1.0.58"  # 2026-11-01, amd64 and arm64. scalo-rs 2.14.25. Secrets are kept from Vector and transform files that reach past their tables are refused (#136), reloads are repaired and a bridge DLQ added (#138).
-      dfe-transform-elastic: "v1.1.24" # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. NDJSON fan-out memory is bounded (#152) and a dotted path deeper than the decode is refused (#150).
+      dfe-receiver: "v1.15.62"      # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Ingest decodes are bounded and silent, idle and surplus connections are closed (#230), Kafka holds spooled records until broker delivery (#233), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#229).
+      dfe-loader: "v1.18.63"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. A ClickHouse outage gauge, with restart tests (#305).
+      dfe-archiver: "v1.7.45"       # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Fixes a data-loss path (#157).
+      dfe-fetcher: "v1.4.47"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25, with cursor and resource bounds fixed (#269). Zero intervals are refused and numeric env secrets kept (#265), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#263).
+      dfe-transform-vrl: "v1.1.42"   # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. vrl 0.35.0 so NaN float arithmetic fails the record (#124), enrichment repaired and a file DLQ added (#126).
+      dfe-transform-vector: "v1.0.59"  # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Secrets are kept from Vector and transform files that reach past their tables are refused (#136), reloads are repaired and a bridge DLQ added (#138).
+      dfe-transform-elastic: "v1.1.25" # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. NDJSON fan-out memory is bounded (#152) and a dotted path deeper than the decode is refused (#150).
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -8364,13 +8364,13 @@ stacks:
     digests:
       dfe-engine: "sha256:d0f67aa3c6fe422281d7415c2e2f498d8801c45f21028716dd00fa7128bff4a5"
       dfe-ui: "sha256:226da9cdafd538616669edbef101a5f523cf2805c7f7e0935742a0c18d05b918"
-      dfe-receiver: "sha256:89c58ef3fca26e8f6fdb242c0997809c205c2a2d54b4d92fe156849d9c559b1d"
-      dfe-loader: "sha256:7b23e32d4c67a8ab08186e1c684b5fa460a32ded7508c1f92b255efe4514a905"
-      dfe-archiver: "sha256:6d34a706c8734d625449c6ec616748a8a6dd7c75a9ceb4dde5076142b80fbe4e"
-      dfe-fetcher: "sha256:c89b976a9b6aada417d7c8367d8277d737fdef633f8e771b061a43f21a464bfa"
-      dfe-transform-vrl: "sha256:55bfe66a082b818033311a05f31f500687feee6dfe23a28807e8a3f8a1e63766"
-      dfe-transform-vector: "sha256:761df586ec6a61930918cd61c76069b9cbe3dbd8f04c7d9b9c0f5600d0a27c64"
-      dfe-transform-elastic: "sha256:4e18c2cae44b9ccdaa571213fa977bb00c88a2e7e6c3391153f22618e2da1a42"
+      dfe-receiver: "sha256:acfe646ae68a50b94330a0b1ec7debd3719ce82a9a7771ba42e1f7102440ccb3"
+      dfe-loader: "sha256:a31f9a93e9c1890629bb4f1eb4707a9a3573cdadfbb428ea1644fb475252b9e0"
+      dfe-archiver: "sha256:323ea5dcd54c81269e44d1aa5e23cd0361c79b5d590f511f245869d7acc33b1f"
+      dfe-fetcher: "sha256:2edd93de0ff50de7d777de1de0d3a2c2ac1b66ce5a071e83a8d05542ad77efa9"
+      dfe-transform-vrl: "sha256:5097ab304695a11c4f4d2c1009757aed4492b471fde57632fa542660287c92df"
+      dfe-transform-vector: "sha256:5e33784e074fca8f5f9edf7befaf8db9fd10132ea3596ff0311b84b28149f887"
+      dfe-transform-elastic: "sha256:95e2e27a6eddd6db6de8edc6ece97ff2ba2b28bd332b3789c5dd1bd4c9479e50"
       dfe-hyperdx: "sha256:db9cb2fd415d3fe57524f52e2364e7dea0c9c3e61c59b5f16346f823a82d04a3"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       # Tagged by toolbox.dfe-toolbox.
@@ -8383,14 +8383,14 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
-      dfe-archiver: "sha256:e55cd72b115ed6e7dc2906578968fc1bcf3f80bf4b0298146be40b93ea8c037c"           # 1.7.43
+      dfe-archiver: "sha256:67aa4b887499c3dfbc4f3d2f62b5abbb10e4e6008259f8d2008264d783984d74"           # 1.7.45
       dfe-engine: "sha256:7ceba619f8522f5cc15eeba0f247b982ed2cd3084315a4bf0524e2d54f5dbed3"             # 1.22.79
-      dfe-fetcher: "sha256:4b0c07e1efbe0f92845aec37f147e5f71f44784efefa6f4d76bfdbbf515d9450"            # 1.4.46
-      dfe-loader: "sha256:671131524f35b0bda75f6b37335f1a207416f07bf98d55d2ebf898fb3d3a6a51"             # 1.18.62
-      dfe-receiver: "sha256:9d4c8969bd3fa464dcca6e7e7c31065326398111ba3adcdaaf0e2e2f306f11a9"           # 1.15.61
-      dfe-transform-elastic: "sha256:f4bb56582dad105458241df46005bf72281b21fa6e7c7be3f4819d5fa8cd21d1"  # 1.1.24
-      dfe-transform-vector: "sha256:cd8dd35c974526a7c1d562daaadef6436dfe2113a3e032e03da7cc39203859dc"   # 1.0.58
-      dfe-transform-vrl: "sha256:8e9124552770fb333300e1593eb01d348ff9b92768b438da502e2e5d37cf262c"      # 1.1.41
+      dfe-fetcher: "sha256:f36c919fa32dd1585d268c17fcf503eff92023829d86ffa174598ec65c3be978"            # 1.4.47
+      dfe-loader: "sha256:7d952057efb69c24c1d93cf104713b6ad5c5b96630837dc921445b26abd2f6d4"             # 1.18.63
+      dfe-receiver: "sha256:dd334350b83b38ee7cd18ed924fc300fa9d99b41ace194c7f100823c5330b7ff"           # 1.15.62
+      dfe-transform-elastic: "sha256:8063043032b9771229a753f05927b9abed2c8d157796835cfd6c1329989c0ddc"  # 1.1.25
+      dfe-transform-vector: "sha256:3ddd07c6c6633ff01308408391dd3ea7d13d78579ffb77e1f11536cbf03ca75d"   # 1.0.59
+      dfe-transform-vrl: "sha256:713aafeeaf03ed4309ba429995b4e49ddbaef551a4aae724d0040a1967eed575"      # 1.1.42
       dfe-ui: "sha256:5bad13f2091b7e5790c037479ab56907b0d1afd4295c6075e6e828d82c69db21"                # 1.7.36
       hyperdx: "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"                # 0.3.21
 
