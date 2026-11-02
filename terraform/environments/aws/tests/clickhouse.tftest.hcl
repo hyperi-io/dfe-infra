@@ -23,6 +23,26 @@ mock_provider "aws" {
       region = "us-west-2"
     }
   }
+
+  // CloudTrail's CloudWatch role is built under both sinks and takes its policies from documents.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
+  // The Pod Identity association and CloudTrail refuse an ARN that is not one.
+  mock_resource "aws_iam_role" {
+    defaults = {
+      arn = "arn:aws:iam::000000000000:role/mock"
+    }
+  }
+
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = {
+      arn = "arn:aws:logs:us-west-2:000000000000:log-group:/aws/mock"
+    }
+  }
 }
 
 mock_provider "random" {}

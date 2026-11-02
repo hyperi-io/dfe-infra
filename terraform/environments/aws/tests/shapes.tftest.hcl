@@ -38,6 +38,13 @@ mock_provider "aws" {
     }
   }
 
+  // CloudTrail refuses a log group ARN that is not one.
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = {
+      arn = "arn:aws:logs:us-west-2:000000000000:log-group:/aws/cloudtrail/mock"
+    }
+  }
+
   mock_resource "aws_iam_role" {
     defaults = {
       arn = "arn:aws:iam::000000000000:role/mock"
@@ -415,4 +422,84 @@ run "a_redpanda_broker_refuses_a_missing_tier" {
   }
 
   expect_failures = [var.kafka]
+}
+
+// The collector's provider-logs workload reads the EKS control-plane group and
+// CloudTrail's through one Pod Identity role, and nothing else.
+run "the_provider_logs_role_reads_exactly_the_eks_and_cloudtrail_groups" {
+  command = plan
+
+  variables {
+    cloudtrail = { enabled = true }
+  }
+
+  assert {
+    condition     = length(aws_eks_pod_identity_association.provider_logs) == 1
+    error_message = "sink = otel must bind the provider-logs account to a Pod Identity role"
+  }
+
+  assert {
+    condition     = aws_eks_pod_identity_association.provider_logs[0].namespace == "otel" && aws_eks_pod_identity_association.provider_logs[0].service_account == "dfe-otel-collector-provider-logs"
+    error_message = "the association must name the chart's provider-logs account in the otel namespace"
+  }
+
+  assert {
+    condition     = sort(local.provider_logs_group_names) == sort(["/aws/eks/dfe-example/cluster", "/aws/cloudtrail/dfe-example-cloudtrail"])
+    error_message = "the role must be scoped to the EKS and CloudTrail log groups"
+  }
+
+  assert {
+    condition     = alltrue([for arn in local.provider_logs_group_arns : startswith(arn, "arn:aws:logs:us-west-2:000000000000:log-group:/aws/")])
+    error_message = "every ARN the role reads must be a log group in this account and region"
+  }
+
+  assert {
+    condition     = output.DFE_PROVIDER_LOGS_FLAVOUR == "aws"
+    error_message = "the flavour fact must say aws so the chart renders the receiver"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_group.cloudtrail[0].retention_in_days == var.telemetry.forced_retention_days
+    error_message = "under sink = otel CloudTrail's log group keeps only the forced retention, since the otel database holds the history"
+  }
+}
+
+// With the trail disabled the role covers the EKS group alone.
+run "the_provider_logs_role_drops_cloudtrail_when_the_trail_is_off" {
+  command = plan
+
+  assert {
+    condition     = length(local.provider_logs_group_names) == 1 && local.provider_logs_group_names[0] == "/aws/eks/dfe-example/cluster"
+    error_message = "no trail means no CloudTrail group to read"
+  }
+
+  assert {
+    condition     = output.DFE_CLOUDTRAIL_LOG_GROUP == ""
+    error_message = "the CloudTrail log group fact must be empty when the trail is off"
+  }
+}
+
+// DFE reads neither group into its own database under the AWS-native sink.
+run "the_cloudwatch_sink_builds_no_provider_logs_role" {
+  command = plan
+
+  variables {
+    cloudtrail = { enabled = true }
+    telemetry  = { sink = "cloudwatch", retention_days = 7, forced_retention_days = 1, eks_log_types = ["audit"] }
+  }
+
+  assert {
+    condition     = length(aws_iam_role.provider_logs) == 0 && length(aws_eks_pod_identity_association.provider_logs) == 0
+    error_message = "sink = cloudwatch must build no provider-logs role"
+  }
+
+  assert {
+    condition     = output.DFE_PROVIDER_LOGS_FLAVOUR == ""
+    error_message = "the flavour fact must be empty so the chart renders nothing"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_log_group.cloudtrail[0].retention_in_days == 7
+    error_message = "under sink = cloudwatch CloudTrail's log group keeps telemetry.retention_days"
+  }
 }

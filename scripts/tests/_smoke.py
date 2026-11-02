@@ -256,6 +256,11 @@ if "exec" in args:
     if "mongosh" in args or "wget" in args:
         sys.exit(1)
     query = args[args.index("--query") + 1] if "--query" in args else ""
+    if "dfe.provider_log.source" in query:
+        # Rows per provider-log source, e.g. {"eks-audit": 3}; a source not named has none.
+        rows = fixture.get("provider_log_rows", {})
+        print(next((n for source, n in rows.items() if "'" + source + "'" in query), 0))
+        sys.exit(0)
     if "otel_logs" in query:
         asked = bump("otel")
         print(0 if asked <= fixture.get("otel_zero_answers", 0) else 1)
