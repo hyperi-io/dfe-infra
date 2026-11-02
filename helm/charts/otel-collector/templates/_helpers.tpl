@@ -248,3 +248,37 @@ explicitly, or the broker is a managed provider. Renders "" otherwise.
 true
 {{- end -}}
 {{- end }}
+
+{{/*
+otel-collector.validateProviderLogs -- the providerLogs render guards. A flavour
+that names a source it cannot read fails the render, so the miss shows up when the
+chart is applied rather than as a collector that polls nothing.
+*/}}
+{{- define "otel-collector.validateProviderLogs" -}}
+{{- $pl := .Values.clusterTelemetry.providerLogs -}}
+{{- if not (has $pl.flavour (list "none" "aws" "azure" "gcp" "rancher")) -}}
+{{- fail (printf "clusterTelemetry.providerLogs.flavour is %q -- one of none, aws, azure, gcp, rancher" (toString $pl.flavour)) -}}
+{{- end -}}
+{{- if eq $pl.flavour "aws" -}}
+{{- if not $pl.aws.region -}}
+{{- fail "clusterTelemetry.providerLogs.flavour is aws and aws.region is empty -- the receiver cannot pick a region for itself" -}}
+{{- end -}}
+{{- if not (or $pl.aws.eksAuditLogGroup $pl.aws.cloudTrailLogGroup) -}}
+{{- fail "clusterTelemetry.providerLogs.flavour is aws and no log group is named -- set aws.eksAuditLogGroup and/or aws.cloudTrailLogGroup (the cloud root outputs both)" -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $pl.flavour "azure") (not $pl.azure.connectionSecretName) -}}
+{{- fail "clusterTelemetry.providerLogs.flavour is azure and azure.connectionSecretName is empty -- name the Secret holding the Event Hub connection string" -}}
+{{- end -}}
+{{- if and (eq $pl.flavour "gcp") (not $pl.gcp.subscription) -}}
+{{- fail "clusterTelemetry.providerLogs.flavour is gcp and gcp.subscription is empty -- name the Pub/Sub subscription as projects/<project>/subscriptions/<name>" -}}
+{{- end -}}
+{{- if and (eq $pl.flavour "rancher") (not $pl.rancher.auditLogPath) -}}
+{{- fail "clusterTelemetry.providerLogs.flavour is rancher and rancher.auditLogPath is empty -- name the kube-apiserver audit log file" -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The provider-logs workloads' ServiceAccount. Its own, so a cloud role bound to it reaches nothing else in the chart. */}}
+{{- define "otel-collector.providerLogsServiceAccount" -}}
+{{- printf "%s-provider-logs" (include "dfe-common.fullname" .) -}}
+{{- end -}}

@@ -208,6 +208,82 @@ clusterTelemetry:
     jmxPort: 11001
     nodeExporterPort: 11002
 
+  # The infra provider's own logs (the second self-monitoring feed beside the
+  # stack's OTLP). Each provider's native log service feeds a receiver in a
+  # collector OF ITS OWN, which pushes OTLP to the gateway and so into the otel
+  # database HyperDX reads. Off the DFE ingest path: no fetcher source, no
+  # customer table, so self-monitoring stays up when ingest breaks.
+  #
+  # Its own process, not the gateway, because a failed receiver must not take
+  # the rest of self-monitoring with it. The aws_cloudwatch receiver dereferences
+  # a nil pointer when its STS identity call fails, which exits the whole
+  # collector, so it is isolated here and restarts alone.
+  #
+  # flavour:
+  #   none     nothing renders (the chart default).
+  #   aws      aws_cloudwatch (alpha) polling the named CloudWatch log groups,
+  #            read through the pod's own Pod Identity role. Needs aws.region and
+  #            at least one log group. The group names are cluster facts the
+  #            cloud root outputs, so they are not defaulted here.
+  #   azure    azure_event_hub, fed by a diagnostic setting streaming to an Event Hub.
+  #   gcp      googlecloudpubsub, fed by a log sink into a Pub/Sub subscription.
+  #   rancher  filelog on the control-plane nodes, reading the kube-apiserver audit log.
+  #
+  # Auditing is the operator's to turn on, on rancher. With it off the file does
+  # not exist, the receiver finds nothing to read and the collector stays up.
+  providerLogs:
+    flavour: none
+    # The workload that runs aws, azure and gcp. A DaemonSet runs rancher instead.
+    deployment:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 250m
+          memory: 256Mi
+      # Retry ceiling on the push to the gateway, as for the node agent.
+      export:
+        maxElapsedTime: 60s
+    aws:
+      region: ""
+      # CloudWatch keeps only a catch-up window, so a restart reads back at most this far.
+      initialLookback: 5m
+      pollInterval: 1m
+      # EKS control-plane audit stream and CloudTrail's CloudWatch group. Empty
+      # leaves that source out.
+      eksAuditLogGroup: ""
+      cloudTrailLogGroup: ""
+    azure:
+      # The Secret holding the Event Hub connection string, with its EntityPath.
+      connectionSecretName: ""
+      connectionSecretKey: connection-string
+      consumerGroup: $Default
+    gcp:
+      # Fully qualified: projects/<project>/subscriptions/<name>. A Pull subscription.
+      subscription: ""
+    rancher:
+      # RKE2's documented path once its audit-policy-file is set. Auditing is
+      # the operator's to enable. Any other distribution sets its own path.
+      auditLogPath: /var/lib/rancher/rke2/server/logs/audit.log
+      # The control-plane nodes, by the label RKE2 puts on them.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      # Every taint, so a tainted control plane still runs it.
+      tolerations:
+        - operator: Exists
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 250m
+          memory: 256Mi
+      # Read offsets, on the node so they outlive the pod.
+      checkpoint:
+        hostPath: /var/lib/dfe-otel-provider-logs
+        mountPath: /var/lib/otelcol/storage
+
   # KEDA needs no receiver here: the operator pushes its own metrics over OTLP to
   # the gateway, enabled in argocd/appsets/layer1-addons.yaml. Kept as a documented
   # absence so the next reader does not add a scrape job for it.

@@ -1,0 +1,76 @@
+{{- $pl := .Values.clusterTelemetry.providerLogs }}
+{{- if has $pl.flavour (list "aws" "azure" "gcp") }}
+# aws, azure and gcp: one replica polling or pulling the provider's log service,
+# in a process of its own so that a receiver that exits takes nothing else down.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-provider-logs
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  # One poller: a second would read every log group twice.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/provider-logs-configmap.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      serviceAccountName: {{ include "otel-collector.providerLogsServiceAccount" . }}
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
+          args: ["--config=/etc/otel/config.yaml"]
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          env:
+            - name: GOMEMLIMIT
+              value: {{ include "otel-collector.goMemLimit" (include "otel-collector.providerLogsMemory" .) | quote }}
+            {{- if eq $pl.flavour "azure" }}
+            - name: AZURE_EVENT_HUB_CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pl.azure.connectionSecretName }}
+                  key: {{ $pl.azure.connectionSecretKey }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthCheckPort }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml $pl.deployment.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+            - name: tmp
+              mountPath: /tmp
+            - name: checkpoint
+              mountPath: /var/lib/otelcol/storage
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-provider-logs-config
+        - name: tmp
+          emptyDir: {}
+        # Survives a container restart, which is the crash the receiver can cause.
+        - name: checkpoint
+          emptyDir: {}
+{{- end }}
