@@ -215,7 +215,9 @@ variable "telemetry" {
     at forced_retention_days rather than removed, because there is nowhere
     else for AWS to put it. sink = cloudwatch is the OPT-IN AWS-native path
     for a compliance need CloudWatch itself satisfies, and keeps every
-    touchpoint at retention_days instead. Passed unchanged to the cluster
+    touchpoint at retention_days instead. eks_log_types names the EKS
+    control-plane streams switched on (audit by default, an empty list
+    creates no log group). Passed unchanged to the cluster
     module (the EKS audit log) and to the msk module (the broker logs) --
     confluent-cloud and redpanda-cloud take no telemetry input, since neither
     emits a CloudWatch-shaped broker log.
@@ -225,6 +227,7 @@ variable "telemetry" {
     sink                  = string
     retention_days        = number
     forced_retention_days = number
+    eks_log_types         = list(string)
   })
 
   validation {

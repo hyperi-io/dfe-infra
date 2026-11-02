@@ -616,7 +616,12 @@ def test_a_missing_broker_field_is_named() -> None:
 
 def test_the_dial_supplies_the_telemetry_sink_and_retention() -> None:
     """The fixture sets cloudwatch explicitly, to prove non-default values thread through."""
-    assert render()["telemetry"] == {"sink": "cloudwatch", "retention_days": 5, "forced_retention_days": 1}
+    assert render()["telemetry"] == {
+        "sink": "cloudwatch",
+        "retention_days": 5,
+        "forced_retention_days": 1,
+        "eks_log_types": ["audit"],
+    }
 
 
 def test_telemetry_defaults_to_otel_with_a_two_day_retention() -> None:
@@ -627,7 +632,12 @@ def test_telemetry_defaults_to_otel_with_a_two_day_retention() -> None:
         if line.strip() not in ("telemetry:", "aws:", "sink: cloudwatch", "retention_days: 5")
     )
     _, variables = render_dial._tofu_vars(parse_dial(without_telemetry, source="test-dial"))
-    assert variables["telemetry"] == {"sink": "otel", "retention_days": 2, "forced_retention_days": 1}
+    assert variables["telemetry"] == {
+        "sink": "otel",
+        "retention_days": 2,
+        "forced_retention_days": 1,
+        "eks_log_types": ["audit"],
+    }
 
 
 def test_telemetry_retention_defaults_to_seven_days_under_cloudwatch() -> None:
@@ -637,6 +647,7 @@ def test_telemetry_retention_defaults_to_seven_days_under_cloudwatch() -> None:
         "sink": "cloudwatch",
         "retention_days": 7,
         "forced_retention_days": 1,
+        "eks_log_types": ["audit"],
     }
 
 
@@ -649,6 +660,26 @@ def test_a_forced_retention_cloudwatch_refuses_is_refused_by_name() -> None:
     """The forced log groups are CloudWatch under either sink, so 2 is never a period they take."""
     with pytest.raises(render_dial.DialError, match=r"telemetry\.aws\.forced_retention_days"):
         render(replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 2"))
+
+
+@pytest.mark.parametrize(
+    ("value", "want"),
+    [
+        pytest.param("audit", ["audit"], id="one_stream"),
+        pytest.param("audit, api", ["audit", "api"], id="two_streams_in_dial_order"),
+        pytest.param("none", [], id="none_switches_every_stream_off"),
+        pytest.param("", ["audit"], id="empty_takes_audit"),
+    ],
+)
+def test_the_dial_names_the_eks_control_plane_streams(value: str, want: list[str]) -> None:
+    rendered = render(replace=("retention_days: 5", f'retention_days: 5\n    eks_log_types: "{value}"'))
+    assert rendered["telemetry"]["eks_log_types"] == want
+
+
+@pytest.mark.parametrize("value", ["audit, audit", "scheduler, kernel", "Audit", "none, audit"])
+def test_an_eks_log_stream_the_api_refuses_is_refused_by_name(value: str) -> None:
+    with pytest.raises(render_dial.DialError, match=r"telemetry\.aws\.eks_log_types"):
+        render(replace=("retention_days: 5", f'retention_days: 5\n    eks_log_types: "{value}"'))
 
 
 def test_an_unknown_telemetry_sink_is_refused() -> None:
