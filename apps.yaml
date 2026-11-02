@@ -425,25 +425,25 @@ apps:
       - config.archive.destination
       - config.kafka.topics
       - config.kafka.topic_include
-    # Bare KAFKA_*, ARCHIVER_*, S3_* and DLQ_*, this app's own flat-env contract
-    # (core config.rs), not a DFE_ARCHIVER_* family.
+    # DFE_ARCHIVER_*, this app's flat-env contract (core config.rs). Pre-prefix
+    # names still work through a startup shim that warns.
     deployment_owned:
-      config.transport: ARCHIVER_TRANSPORT
-      config.grpc.listen: ARCHIVER_GRPC_LISTEN
-      config.kafka.brokers: KAFKA_BROKERS
-      config.kafka.security_protocol: KAFKA_SECURITY_PROTOCOL
-      config.kafka.sasl_username: KAFKA_SASL_USER
-      config.kafka.sasl_password: KAFKA_SASL_PASSWORD
-      config.kafka.sasl_mechanism: KAFKA_SASL_MECHANISM
-      config.archive.destination: ARCHIVER_DESTINATION
-      config.archive.s3.endpoint: S3_ENDPOINT
-      config.archive.s3.bucket: S3_BUCKET
-      config.buffer.spool_dir: ARCHIVER_SPOOL_DIR
-      config.dlq.enabled: DLQ_ENABLED
-      config.dlq.mode: DLQ_MODE
+      config.transport: DFE_ARCHIVER_TRANSPORT
+      config.grpc.listen: DFE_ARCHIVER_GRPC_LISTEN
+      config.kafka.brokers: DFE_ARCHIVER_KAFKA_BROKERS
+      config.kafka.security_protocol: DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL
+      config.kafka.sasl_username: DFE_ARCHIVER_KAFKA_SASL_USER
+      config.kafka.sasl_password: DFE_ARCHIVER_KAFKA_SASL_PASSWORD
+      config.kafka.sasl_mechanism: DFE_ARCHIVER_KAFKA_SASL_MECHANISM
+      config.archive.destination: DFE_ARCHIVER_DESTINATION
+      config.archive.s3.endpoint: DFE_ARCHIVER_S3_ENDPOINT
+      config.archive.s3.bucket: DFE_ARCHIVER_S3_BUCKET
+      config.buffer.spool_dir: DFE_ARCHIVER_SPOOL_DIR
+      config.dlq.enabled: DFE_ARCHIVER_DLQ_ENABLED
+      config.dlq.mode: DFE_ARCHIVER_DLQ_MODE
       # One env var sets both: naming a common topic also pins the routing to it.
-      config.dlq.kafka.common_topic: DLQ_TOPIC
-      config.dlq.kafka.routing: DLQ_TOPIC
+      config.dlq.kafka.common_topic: DFE_ARCHIVER_DLQ_TOPIC
+      config.dlq.kafka.routing: DFE_ARCHIVER_DLQ_TOPIC
     # Each renders empty, which the app reads as unset, until the deployment
     # names a local path or a store, so the engine's destination stands until then.
     deployment_owned_when:

@@ -878,7 +878,7 @@ def archive_directory(prefixes: list[list[str]]) -> tuple[str, str]:
     second copy of a path the chart owns.
     """
     for prefix in prefixes:
-        code, out = in_archiver(prefix, "printenv ARCHIVER_DESTINATION")
+        code, out = in_archiver(prefix, "printenv DFE_ARCHIVER_DESTINATION")
         if code != 0 or not out:
             continue
         if not out.startswith("file://"):

@@ -64,11 +64,11 @@ def test_the_archiver_contract_declares_its_secrets() -> None:
         "s3": True,
     }
     env = _env(golden("dfe-archiver", "scale", "aws"))
-    assert env["KAFKA_SASL_MECHANISM"]["valueFrom"]["secretKeyRef"] == {
+    assert env["DFE_ARCHIVER_KAFKA_SASL_MECHANISM"]["valueFrom"]["secretKeyRef"] == {
         "name": "dfe-kafka-user",
         "key": "sasl.mechanism",
     }
-    assert env["S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"] is True
+    assert env["DFE_ARCHIVER_S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"] is True
 
 
 @pytest.mark.parametrize("service", SERVICES)

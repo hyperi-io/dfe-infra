@@ -110,24 +110,24 @@ spec:
         - --config
         - /etc/dfe/archiver.yaml
         env:
-        - name: ARCHIVER_DESTINATION
+        - name: DFE_ARCHIVER_DESTINATION
           value: ''
-        - name: ARCHIVER_SPOOL_DIR
-          value: /var/spool/dfe/archiver
-        - name: DLQ_MODE
+        - name: DFE_ARCHIVER_DLQ_MODE
           value: kafka_only
-        - name: DLQ_TOPIC
+        - name: DFE_ARCHIVER_DLQ_TOPIC
           value: dfe_archiver_dlq
-        - name: KAFKA_BROKERS
+        - name: DFE_ARCHIVER_KAFKA_BROKERS
           value: dfe-kafka.strimzi.svc.cluster.local:9092
-        - name: KAFKA_SECURITY_PROTOCOL
+        - name: DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
+        - name: DFE_ARCHIVER_S3_BUCKET
+          value: ''
+        - name: DFE_ARCHIVER_S3_ENDPOINT
+          value: ''
+        - name: DFE_ARCHIVER_SPOOL_DIR
+          value: /var/spool/dfe/archiver
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
-        - name: S3_BUCKET
-          value: ''
-        - name: S3_ENDPOINT
-          value: ''
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:

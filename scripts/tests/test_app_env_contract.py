@@ -166,7 +166,7 @@ def _version_check(app: str, prefix: str, where: str) -> tuple[tuple[str, str, s
 
 # The four apps known to set up scalo's cascade under --config.
 VERSION_CHECK = (
-    *_version_check("dfe-archiver", "ARCHIVER_", "crates/archiver/src/config/loader.rs:40"),
+    *_version_check("dfe-archiver", "DFE_ARCHIVER_", "crates/archiver/src/config/loader.rs:41"),
     *_version_check("dfe-loader", "DFE_LOADER_", "src/main.rs:79"),
     *_version_check("dfe-transform-vrl", "DFE_TRANSFORM_", "src/cli.rs:93"),
     *_version_check("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_", "src/config/loader.rs:151"),
@@ -186,19 +186,18 @@ SCALO_OTEL = (
 
 # (app, when, env name, where the app reads it), for the names each app reads itself.
 APP_ROWS = (
-    # Bare KAFKA_*/DLQ_*/ARCHIVER_*, applied after the file at
-    # crates/archiver/src/config/loader.rs:89.
-    ("dfe-archiver", BUS, "KAFKA_BROKERS", "crates/core/src/config.rs:587"),
-    ("dfe-archiver", BUS, "KAFKA_SECURITY_PROTOCOL", "crates/core/src/config.rs:608"),
-    ("dfe-archiver", BUS, "KAFKA_SASL_USER", "crates/core/src/config.rs:611"),
-    ("dfe-archiver", BUS, "KAFKA_SASL_PASSWORD", "crates/core/src/config.rs:614"),
-    ("dfe-archiver", BUS, "KAFKA_SASL_MECHANISM", "crates/core/src/config.rs:605"),
-    ("dfe-archiver", BUS, "DLQ_TOPIC", "crates/core/src/config.rs:632"),
-    ("dfe-archiver", BUS, "DLQ_MODE", "crates/core/src/config.rs:636"),
-    ("dfe-archiver", DIRECT, "ARCHIVER_TRANSPORT", "crates/core/src/config.rs:577"),
-    ("dfe-archiver", DIRECT, "ARCHIVER_GRPC_LISTEN", "crates/core/src/config.rs:580"),
-    ("dfe-archiver", DIRECT, "DLQ_ENABLED", "crates/core/src/config.rs:629"),
-    ("dfe-archiver", ALWAYS, "ARCHIVER_SPOOL_DIR", "crates/core/src/config.rs:676"),
+    # DFE_ARCHIVER_*, applied after the file at crates/archiver/src/config/loader.rs:89.
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_KAFKA_BROKERS", "crates/core/src/config.rs:696"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL", "crates/core/src/config.rs:717"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_KAFKA_SASL_USER", "crates/core/src/config.rs:720"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_KAFKA_SASL_PASSWORD", "crates/core/src/config.rs:723"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_KAFKA_SASL_MECHANISM", "crates/core/src/config.rs:714"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_DLQ_TOPIC", "crates/core/src/config.rs:741"),
+    ("dfe-archiver", BUS, "DFE_ARCHIVER_DLQ_MODE", "crates/core/src/config.rs:745"),
+    ("dfe-archiver", DIRECT, "DFE_ARCHIVER_TRANSPORT", "crates/core/src/config.rs:686"),
+    ("dfe-archiver", DIRECT, "DFE_ARCHIVER_GRPC_LISTEN", "crates/core/src/config.rs:689"),
+    ("dfe-archiver", DIRECT, "DFE_ARCHIVER_DLQ_ENABLED", "crates/core/src/config.rs:738"),
+    ("dfe-archiver", ALWAYS, "DFE_ARCHIVER_SPOOL_DIR", "crates/core/src/config.rs:785"),
     # DFE_FETCHER_*, applied after the file at crates/fetcher/src/config/mod.rs:354.
     ("dfe-fetcher", BUS, "DFE_FETCHER_KAFKA_BROKERS", "crates/fetcher/src/config/mod.rs:989"),
     ("dfe-fetcher", BUS, "DFE_FETCHER_KAFKA_SASL_USER", "crates/fetcher/src/config/mod.rs:935"),

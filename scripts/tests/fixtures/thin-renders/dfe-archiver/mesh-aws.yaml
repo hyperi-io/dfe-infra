@@ -137,22 +137,22 @@ spec:
         - --config
         - /etc/dfe/archiver.yaml
         env:
-        - name: ARCHIVER_DESTINATION
+        - name: DFE_ARCHIVER_DESTINATION
           value: ''
-        - name: ARCHIVER_GRPC_LISTEN
-          value: 0.0.0.0:6000
-        - name: ARCHIVER_SPOOL_DIR
-          value: /var/spool/dfe/archiver
-        - name: ARCHIVER_TRANSPORT
-          value: grpc
-        - name: DLQ_ENABLED
+        - name: DFE_ARCHIVER_DLQ_ENABLED
           value: 'false'
+        - name: DFE_ARCHIVER_GRPC_LISTEN
+          value: 0.0.0.0:6000
+        - name: DFE_ARCHIVER_S3_BUCKET
+          value: ''
+        - name: DFE_ARCHIVER_S3_ENDPOINT
+          value: ''
+        - name: DFE_ARCHIVER_SPOOL_DIR
+          value: /var/spool/dfe/archiver
+        - name: DFE_ARCHIVER_TRANSPORT
+          value: grpc
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
-        - name: S3_BUCKET
-          value: ''
-        - name: S3_ENDPOINT
-          value: ''
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
