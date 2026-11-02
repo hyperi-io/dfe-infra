@@ -138,7 +138,9 @@
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
     "apt_repos": [],
-    "apt_packages": [],
+    "apt_packages": [
+      "curl"
+    ],
     "distro": "trixie"
   },
   "image_profile": "production",

@@ -134,28 +134,28 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-archiver
-        - name: KAFKA_SASL_USER
+        - name: DFE_ARCHIVER_KAFKA_SASL_USER
           valueFrom:
             secretKeyRef:
               key: username
               name: dfe-kafka-user
-        - name: KAFKA_SASL_PASSWORD
+        - name: DFE_ARCHIVER_KAFKA_SASL_PASSWORD
           valueFrom:
             secretKeyRef:
               key: password
               name: dfe-kafka-user
-        - name: KAFKA_SASL_MECHANISM
+        - name: DFE_ARCHIVER_KAFKA_SASL_MECHANISM
           valueFrom:
             secretKeyRef:
               key: sasl.mechanism
               name: dfe-kafka-user
-        - name: S3_ACCESS_KEY_ID
+        - name: DFE_ARCHIVER_S3_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
               key: access_key_id
               name: dfe-archiver-s3
               optional: true
-        - name: S3_SECRET_ACCESS_KEY
+        - name: DFE_ARCHIVER_S3_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               key: secret_access_key

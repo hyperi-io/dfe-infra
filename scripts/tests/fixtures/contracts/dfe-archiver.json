@@ -10,7 +10,7 @@
     "metrics_path": "/metrics",
     "startup_budget_seconds": 120
   },
-  "env_prefix": "ARCHIVER",
+  "env_prefix": "DFE_ARCHIVER",
   "metric_prefix": "archiver",
   "config_mount_path": "/etc/dfe/archiver.yaml",
   "image_registry": "ghcr.io/hyperi-io",
@@ -37,17 +37,17 @@
       "group_name": "kafka",
       "env_vars": [
         {
-          "env_var": "KAFKA_SASL_USER",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_USER",
           "key_name": "username",
           "secret_key": "username"
         },
         {
-          "env_var": "KAFKA_SASL_PASSWORD",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         },
         {
-          "env_var": "KAFKA_SASL_MECHANISM",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_MECHANISM",
           "key_name": "mechanism",
           "secret_key": "sasl.mechanism"
         }
@@ -57,12 +57,12 @@
       "group_name": "s3",
       "env_vars": [
         {
-          "env_var": "S3_ACCESS_KEY_ID",
+          "env_var": "DFE_ARCHIVER_S3_ACCESS_KEY_ID",
           "key_name": "access_key_id",
           "secret_key": "access_key_id"
         },
         {
-          "env_var": "S3_SECRET_ACCESS_KEY",
+          "env_var": "DFE_ARCHIVER_S3_SECRET_ACCESS_KEY",
           "key_name": "secret_access_key",
           "secret_key": "secret_access_key"
         }
@@ -184,7 +184,9 @@
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
     "apt_repos": [],
-    "apt_packages": [],
+    "apt_packages": [
+      "curl"
+    ],
     "distro": "trixie"
   },
   "image_profile": "production",
@@ -199,7 +201,7 @@
   "config_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Config",
-    "description": "Root configuration for dfe-archiver.\n\nCovers the archiver's own sections only. The memory guard, the metrics\nlistener and the scaling-pressure engine are scalo's, built by\n`ServiceRuntime` before the archiver exists, and are configured through the\ncascade (`ARCHIVER_MEMORY_*` for the guard, `--metrics-addr` /\n`METRICS_ADDR` / `ARCHIVER_METRICS__ADDRESS` for the listener,\n`ARCHIVER_SCALING__*` for the engine). A parallel `memory:` / `metrics:` /\n`scaling:` block here parsed, validated and reached nothing.\n\n## Hot-reload behavior\n\n**Hot-reloaded**, because the pipeline re-reads it from the shared config:\n- `kafka.batch_size` -- once per receive\n\n**Requires pod restart** -- everything else. `Archiver` snapshots the config\nat construction into `startup_config`, so a reload of `transport`,\n`kafka.*`, `grpc.*`, `archive.*`, `buffer.*`, `routing.*`, `compression.*`\nor `dlq.*` is accepted and validated but does not reach the running\npipeline. `restart_required_changes` names those sections, and\nthe reloader warns instead of reporting a reload.",
+    "description": "Root configuration for dfe-archiver.\n\nCovers the archiver's own sections only. The memory guard, the metrics\nlistener and the scaling-pressure engine are scalo's, built by\n`ServiceRuntime` before the archiver exists, and are configured through the\ncascade (`DFE_ARCHIVER_MEMORY_*` for the guard, `--metrics-addr` /\n`METRICS_ADDR` / `DFE_ARCHIVER_METRICS__ADDRESS` for the listener,\n`DFE_ARCHIVER_SCALING__*` for the engine). A parallel `memory:` / `metrics:` /\n`scaling:` block here parsed, validated and reached nothing.\n\n## Hot-reload behavior\n\n**Hot-reloaded**, because the pipeline re-reads it from the shared config:\n- `kafka.batch_size` -- once per receive\n\n**Requires pod restart** -- everything else. `Archiver` snapshots the config\nat construction into `startup_config`, so a reload of `transport`,\n`kafka.*`, `grpc.*`, `archive.*`, `buffer.*`, `routing.*`, `compression.*`\nor `dlq.*` is accepted and validated but does not reach the running\npipeline. `restart_required_changes` names those sections, and\nthe reloader warns instead of reporting a reload.",
     "type": "object",
     "properties": {
       "transport": {
