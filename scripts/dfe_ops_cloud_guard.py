@@ -357,7 +357,7 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
 BUDGET_ACTION_ARMED = "STANDBY"
 # A percentage threshold past the budget lets spend run over it before the brake applies.
 BUDGET_ACTION_MAX_PERCENT = 100
-# hyperi-infra's e2e-guardrails module names its budget `<prefix>-account-cost` and the policy the
+# The e2e-guardrails module names its budget `<prefix>-account-cost` and the policy the
 # action applies `<prefix>-deny-create`. Only that policy is the brake: any other one that holds
 # a Deny is not known to stop what a run creates.
 BUDGET_NAME_SUFFIX = "-account-cost"
@@ -426,7 +426,7 @@ def check_budget_action(action: Mapping[str, object], *, budget: str, role: str)
     iam = iam if isinstance(iam, Mapping) else {}
     policy = str(iam.get("PolicyArn", ""))
     if not budget.endswith(BUDGET_NAME_SUFFIX):
-        raise GuardError(f"its budget {budget!r} is not a {BUDGET_NAME_SUFFIX} budget from hyperi-infra's guardrails")
+        raise GuardError(f"its budget {budget!r} is not a {BUDGET_NAME_SUFFIX} budget from the e2e guardrails")
     brake = budget.removesuffix(BUDGET_NAME_SUFFIX) + BRAKE_POLICY_SUFFIX
     if policy.rsplit("/", 1)[-1] != brake:
         raise GuardError(f"it applies {policy or 'no policy'}, not the guardrails' {brake}")
