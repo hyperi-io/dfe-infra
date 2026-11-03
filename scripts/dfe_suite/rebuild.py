@@ -114,6 +114,11 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
 
 
 # The suite.yaml node key naming the features the local gate leaves out.
+# Where a Rust rebuild's clippy and tests run: here, or in the PR's own CI.
+GATE_LOCAL = "local"
+GATE_PR_CI = "pr-ci"
+GATES = (GATE_LOCAL, GATE_PR_CI)
+
 _GATE_EXCLUDE_KEY = "local_gate_exclude_features"
 
 # The suite.yaml node key giving how many minutes a release run is followed.
@@ -433,6 +438,33 @@ def _check_unoptimized_caller(repo: Path) -> Path:
     return workflow
 
 
+def _local_gate(repo: Path, features: Sequence[str], *, run_tests: bool) -> None:
+    """Run clippy, and nextest unless ``run_tests`` is False, in the checkout."""
+    say("gate: clippy (all targets, gate features, -D warnings)")
+    run(
+        ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
+        cwd=repo,
+        capture=False,
+    )
+    if run_tests:
+        # nextest, not `cargo test`: these apps hold process-global state (the
+        # metrics recorder, the config registry) that cross-talks under cargo
+        # test's in-process parallelism and produces false failures.
+        say("gate: tests (nextest, gate features)")
+        require_tools("cargo-nextest")
+        run(
+            ["cargo", "nextest", "run", "--workspace", *features],
+            cwd=repo,
+            capture=False,
+        )
+    else:
+        # dfe-loader's integration and e2e suites are Docker-bound (ClickHouse
+        # and Redpanda via testcontainers), so the local gate fails on a
+        # Docker-less box for infra reasons rather than code ones. CI runs the
+        # full suite as the publish gate.
+        say("gate: tests SKIPPED (--no-tests) -- CI runs the suite as the publish gate")
+
+
 def rebuild_rust(
     repo: Path,
     version: str,
@@ -444,6 +476,7 @@ def rebuild_rust(
     dry_run: bool = False,
     org: str = DEFAULT_ORG,
     release_unoptimized: bool = False,
+    gate: str = GATE_LOCAL,
 ) -> int:
     """Move one Rust consumer onto a new producer release and ship it.
 
@@ -464,6 +497,9 @@ def rebuild_rust(
             before touching anything, land with no release trailer, then
             release main's HEAD through a ``workflow_dispatch`` that sets
             ``skip-optimize`` and ``release-unoptimized``.
+        gate: ``local`` runs clippy (and nextest unless ``run_tests`` is False)
+            here. ``pr-ci`` runs neither and takes the PR's CI Quality and Test
+            as the gate, for a host without the memory for an all-features build.
 
     Returns:
         The process exit code -- non-zero means STOP.
@@ -472,6 +508,8 @@ def rebuild_rust(
         FleetError: If any step fails, including a caller workflow that cannot
             carry the consent.
     """
+    if gate not in GATES:
+        raise FleetError(f"unknown gate {gate!r}, expected one of {', '.join(GATES)}")
     require_tools("git", "gh", "cargo")
     repo = Path(repo).expanduser().resolve()
     if not (repo / ".git").exists():
@@ -516,10 +554,13 @@ def rebuild_rust(
     say(f"release wait: up to {timeout // 60} minutes")
 
     if dry_run:
-        gate = "fmt, clippy, nextest" if run_tests else "fmt, clippy"
+        if gate == GATE_PR_CI:
+            gates = "fmt here, clippy and tests in the PR's CI"
+        else:
+            gates = "fmt, clippy, nextest" if run_tests else "fmt, clippy"
         say(f"[dry-run] would pin {package} to {version} and relock")
         say("[dry-run] would regenerate the Dockerfile and docs/ artefacts")
-        say(f"[dry-run] would gate on {gate}, then commit '{subject}'")
+        say(f"[dry-run] would gate on {gates}, then commit '{subject}'")
         if unoptimized:
             say(f"[dry-run] would land it on {slug} main via a PR without the release trailer")
             say("[dry-run] would wait for the merge's push run, then dispatch the release:")
@@ -565,29 +606,10 @@ def rebuild_rust(
     )
     say("gate: fmt")
     run(["cargo", "fmt", "--all", "--", "--check"], cwd=repo, capture=False)
-    say("gate: clippy (all targets, gate features, -D warnings)")
-    run(
-        ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
-        cwd=repo,
-        capture=False,
-    )
-    if run_tests:
-        # nextest, not `cargo test`: these apps hold process-global state (the
-        # metrics recorder, the config registry) that cross-talks under cargo
-        # test's in-process parallelism and produces false failures.
-        say("gate: tests (nextest, gate features)")
-        require_tools("cargo-nextest")
-        run(
-            ["cargo", "nextest", "run", "--workspace", *features],
-            cwd=repo,
-            capture=False,
-        )
+    if gate == GATE_PR_CI:
+        say("gate: clippy and tests SKIPPED (--gate pr-ci) -- the PR's CI Quality and Test gate the merge")
     else:
-        # dfe-loader's integration and e2e suites are Docker-bound (ClickHouse
-        # and Redpanda via testcontainers), so the local gate fails on a
-        # Docker-less box for infra reasons rather than code ones. CI runs the
-        # full suite as the publish gate.
-        say("gate: tests SKIPPED (--no-tests) -- CI runs the suite as the publish gate")
+        _local_gate(repo, features, run_tests=run_tests)
 
     # add -u folds in migration work already in the tree, while leaving
     # untracked legacy files (.releaserc.yaml, set-version.py) out.
