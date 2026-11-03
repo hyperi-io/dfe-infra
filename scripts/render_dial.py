@@ -1671,6 +1671,18 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
 # existence under the otel sink keeps when the dial names none.
 TELEMETRY_FORCED_RETENTION_DAYS = 1
 
+# The control-plane streams the EKS API accepts. Each one switched on is billed
+# as CloudWatch ingestion per GB.
+EKS_LOG_TYPES = ("api", "audit", "authenticator", "controllerManager", "scheduler")
+
+# What a deployment keeps on when the dial names none: audit, the only record of
+# who changed the cluster.
+TELEMETRY_EKS_LOG_TYPES = ("audit",)
+
+# The dial value that turns every stream off. An empty value takes the default,
+# so "no streams" needs a word of its own.
+EKS_LOG_TYPES_NONE = "none"
+
 # The retention periods CloudWatch Logs accepts, and refuses anything else.
 CLOUDWATCH_RETENTION_DAYS = (
     1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557,
@@ -1688,7 +1700,8 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     AWS-native compliance path, kept short rather than left at a service
     default). forced_retention_days is the CloudWatch log group AWS forces into
     existence whatever the sink (the EKS audit log under otel, the MSK broker
-    scaler's Lambda log), defaulting to CloudWatch's floor. Read from
+    scaler's Lambda log), defaulting to CloudWatch's floor. eks_log_types is
+    which EKS control-plane streams that audit log group carries. Read from
     telemetry.<cloud> so a future gcp or azure root carries its own block
     rather than sharing one.
     """
@@ -1712,7 +1725,35 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
             f"one of {', '.join(str(days) for days in CLOUDWATCH_RETENTION_DAYS)}"
         )
 
-    return {"sink": sink, "retention_days": retention_days, "forced_retention_days": forced}
+    return {
+        "sink": sink,
+        "retention_days": retention_days,
+        "forced_retention_days": forced,
+        "eks_log_types": _eks_log_types(dial, cloud),
+    }
+
+
+def _eks_log_types(dial: dict[str, object], cloud: str) -> list[str]:
+    """The EKS control-plane streams the dial switches on, as a list for tfvars.
+
+    Empty takes TELEMETRY_EKS_LOG_TYPES. `none` switches every stream off, so
+    no log group is created. Otherwise a comma-separated list of EKS stream
+    names, each at most once.
+    """
+    path = ("telemetry", cloud, "eks_log_types")
+    raw = _scalar(dial, path)
+    if raw is None:
+        return list(TELEMETRY_EKS_LOG_TYPES)
+    if raw == EKS_LOG_TYPES_NONE:
+        return []
+    names = list(split_list(raw))
+    unknown = [name for name in names if name not in EKS_LOG_TYPES]
+    if unknown or len(set(names)) != len(names):
+        raise DialError(
+            f"telemetry.{cloud}.eks_log_types is {raw!r}, which is not each of "
+            f"{', '.join(EKS_LOG_TYPES)} at most once, or {EKS_LOG_TYPES_NONE}"
+        )
+    return names
 
 
 CLICKHOUSE_MODES = ("in_cluster", "external")

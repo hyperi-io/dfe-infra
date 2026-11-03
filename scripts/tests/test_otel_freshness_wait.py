@@ -24,15 +24,20 @@ No third-party deps and no test runner, matching the script it tests.
 
 from __future__ import annotations
 
+import re
 import sys
+import time
 
 from _expect import expect, standalone, summary
 from _smoke import run_smoke
 
+# A bound no runner reaches with the fake queries, wherever a test wants the first answer to count.
+GENEROUS = "30"
+
 
 def test_a_row_that_is_already_there_is_not_waited_for() -> None:
     """The pipeline streaming before the suite starts must cost no wait at all."""
-    out, counts = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="10")
+    out, counts = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT=GENEROUS)
 
     expect(
         "CORE 1 passes on the first sample",
@@ -40,12 +45,12 @@ def test_a_row_that_is_already_there_is_not_waited_for() -> None:
         out.stdout,
     )
     expect("and asks once to pass, once to check", counts.get("otel") == 2, str(counts))
-    expect("with no wait reported", "waited 0s of 10s" in out.stdout, out.stdout)
+    expect("and it did not poll", re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None, out.stdout)
 
 
 def test_a_collector_that_exports_late_still_passes() -> None:
     """The #270 case: nothing has landed when the suite starts, and it lands shortly after."""
-    out, counts = run_smoke({"otel_zero_answers": 2}, DFE_OTEL_WAIT="10")
+    out, counts = run_smoke({"otel_zero_answers": 2}, DFE_OTEL_WAIT=GENEROUS)
 
     expect(
         "CORE 1 passes once the first row lands",
@@ -53,7 +58,34 @@ def test_a_collector_that_exports_late_still_passes() -> None:
         out.stdout,
     )
     expect("having polled rather than sampled", (counts.get("otel") or 0) > 2, str(counts))
-    expect("and saying how long it waited", "waited 2s of 10s" in out.stdout, out.stdout)
+    expect("and saying how long it waited", re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None, out.stdout)
+
+
+def test_the_wait_is_counted_in_elapsed_seconds_not_in_sleeps() -> None:
+    """Each query runs through kubectl exec and takes seconds, so counting sleeps read a 180s bound over ten minutes.
+
+    The fake logs when each CORE 1 query started. The loop runs from the first query to the end
+    of the one before the final check, so the reported wait has to match that span. The tolerance
+    is the whole-second granularity of bash's SECONDS on both ends, which is the same on any
+    runner. A count of sleeps misses by the queries' own time, which is the point.
+    """
+    query_seconds = 2
+    bound = 3
+    tolerance = 3
+    out, counts = run_smoke({"otel_zero_answers": 99, "otel_query_seconds": query_seconds}, DFE_OTEL_WAIT=str(bound))
+    reported = re.search(rf"waited (\d+)s of {bound}s for a row", out.stdout)
+    expect("it reports a wait", reported is not None, out.stdout)
+    starts = counts.get("otel_times") or []
+    expect("with more than one query in the loop", len(starts) >= 3, str(starts))
+    if reported is None or len(starts) < 3:
+        return
+    loop_span = starts[-2] + query_seconds - starts[0]
+    wait = int(reported.group(1))
+    expect(
+        "and the wait is the time the loop ran, queries included",
+        abs(wait - loop_span) <= tolerance and wait >= bound,
+        f"reported {wait}s, loop ran {loop_span:.1f}s, tolerance {tolerance}s",
+    )
 
 
 def test_a_dead_pipeline_still_fails_inside_the_bound() -> None:
@@ -78,6 +110,57 @@ def test_the_wait_is_bounded_and_the_bound_is_a_dial() -> None:
         "[FAIL] infra OTel logs landing fresh" in out.stdout,
         out.stdout,
     )
+
+
+def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
+    """The EKS audit log is a hard check, CloudTrail only warns, and other flavours skip."""
+    out, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("the EKS audit row passes", "[PASS] EKS audit log landing fresh" in out.stdout, out.stdout)
+    expect("a quiet CloudTrail only warns", "[WARN] no CloudTrail row" in out.stdout, out.stdout)
+    expect("and fails nothing", "[FAIL] CloudTrail" not in out.stdout, out.stdout)
+
+    both, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7, "cloudtrail": 2}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("CloudTrail rows pass when present", "[PASS] CloudTrail events landing fresh" in both.stdout, both.stdout)
+
+    dead, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {"cloudtrail": 2}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="0",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    expect("no EKS audit row fails the suite", "[FAIL] EKS audit log landing fresh" in dead.stdout, dead.stdout)
+    expect("and the exit code says so", dead.returncode != 0, f"rc={dead.returncode}")
+
+    started = time.monotonic()
+    slow, _ = run_smoke(
+        {"otel_zero_answers": 0, "provider_log_rows": {}},
+        DFE_OTEL_WAIT="0",
+        DFE_PROVIDER_LOGS_WAIT="3",
+        DFE_PROVIDER_LOGS_FLAVOUR="aws",
+    )
+    waited = re.search(r"waited (\d+)s of 3s for an EKS audit row", slow.stdout)
+    expect(
+        "the provider-logs wait is real elapsed seconds, not a count of sleeps",
+        waited is not None and int(waited.group(1)) >= 3 and time.monotonic() - started >= 3,
+        slow.stdout,
+    )
+    expect("and a dead EKS audit feed prints the collector's own log", "provider-logs collector, last lines:" in slow.stdout, slow.stdout)
+
+    rancher, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0", DFE_PROVIDER_LOGS_FLAVOUR="rancher")
+    expect("another flavour is skipped by name", "[SKIP] provider logs (rancher)" in rancher.stdout, rancher.stdout)
+
+    none, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0")
+    expect("a deployment reading none skips", "[SKIP] provider logs -- this deployment reads none" in none.stdout, none.stdout)
 
 
 def main() -> int:

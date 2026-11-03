@@ -89,8 +89,8 @@ output "node_role_arn" {
 }
 
 output "audit_log_group" {
-  description = "The CloudWatch log group EKS's control-plane audit stream lands in -- the one CloudWatch touchpoint this module cannot avoid, whatever telemetry.sink says. A caller that documents or scrapes it (a fetcher CloudWatch Logs source, for instance) reads this rather than reconstructing the naming convention."
-  value       = aws_cloudwatch_log_group.cluster.name
+  description = "The CloudWatch log group EKS's control-plane streams land in -- the one CloudWatch touchpoint this module cannot avoid, whatever telemetry.sink says. A caller that documents or scrapes it (a fetcher CloudWatch Logs source, for instance) reads this rather than reconstructing the naming convention. Empty when telemetry.eks_log_types enables no stream, since no log group exists then."
+  value       = join("", aws_cloudwatch_log_group.cluster[*].name)
 }
 
 output "clickhouse_object_store_bucket" {
