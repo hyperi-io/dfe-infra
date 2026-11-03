@@ -77,6 +77,9 @@ DFE_STACK = Path(__file__).resolve().parent.parent / "dfe-stack"
 GH_TIMEOUT = 120.0
 # GitHub serves at most this many records a page, whatever per_page asks for.
 GH_PAGE_MAX = 100
+# Completed runs read per workflow. The newest by created_at is the workflow's state, because
+# GitHub does not promise row 0 is it.
+RUNS_PER_WORKFLOW = 5
 
 # Most urgent first; the order findings are ranked and printed in.
 SEVERITIES = ("critical", "high", "medium", "low", "info")
@@ -1428,10 +1431,31 @@ def dashboard_findings(repo: str, row: dict, api: Api | None = None) -> list[Fin
     ]
 
 
-def run_findings(repo: str, runs: list[dict], head_sha: str) -> list[Finding]:
-    """Each workflow's latest run on the default branch, where it did not succeed."""
-    findings = []
+def latest_runs(runs: list[dict]) -> list[dict]:
+    """Keep each workflow's newest run by created_at, in the order workflows first appear."""
+    newest: dict[object, dict] = {}
     for run in runs:
+        key = run.get("workflow_id") or run.get("path") or run.get("id")
+        held = newest.get(key)
+        if held is None or _text(run.get("created_at")) > _text(held.get("created_at")):
+            newest[key] = run
+    return list(newest.values())
+
+
+def run_findings(repo: str, runs: list[dict], head_sha: str) -> list[Finding]:
+    """Each workflow's latest run on the default branch, where it did not succeed.
+
+    Args:
+        repo: The member's owner/name.
+        runs: Completed main runs, several per workflow. Only the newest of each is judged, so
+            a stale failure with a newer success behind it is never a finding.
+        head_sha: The default branch's head, empty when unknown.
+
+    Returns:
+        One finding per workflow whose newest run did not succeed.
+    """
+    findings = []
+    for run in latest_runs(runs):
         conclusion = _text(run.get("conclusion"))
         severity = RUN_SEVERITY.get(conclusion)
         if severity is None:
@@ -1552,7 +1576,7 @@ def _ci(
     config: SweepConfig,
     unreadable: list[Unreadable],
 ) -> list[Finding]:
-    """The CI tools: each active workflow's latest completed run, and that run's annotations.
+    """The CI tools: each active workflow's newest completed run, and that run's annotations.
 
     Each workflow is read through its own runs list. The repo-wide list holds only the newest
     100 runs, so a workflow that runs rarely fell out of it, and it has answered one query with
@@ -1566,7 +1590,7 @@ def _ci(
     except GhError as exc:
         unreadable.extend(Unreadable(repo, tool, exc.reason) for tool in wanted)
         return []
-    on_branch = f"branch={quote(branch, safe='')}&status=completed&per_page=1"
+    on_branch = f"branch={quote(branch, safe='')}&status=completed&per_page={RUNS_PER_WORKFLOW}"
     runs: list[dict] = []
     for workflow in workflows:
         ident = workflow.get("id")
@@ -1579,14 +1603,14 @@ def _ci(
             continue
         try:
             runs += api(f"repos/{repo}/actions/workflows/{ident}/runs?{on_branch}",
-                        RUNS_JQ, False)[:1]
+                        RUNS_JQ, False)
         except GhError as exc:
             reason = f"{workflow.get('path') or ident}: {exc.reason}"
             unreadable.extend(Unreadable(repo, tool, reason) for tool in wanted)
     findings = run_findings(repo, runs, head_sha) if "ci_runs" in config.tools else []
     if "ci_annotations" not in config.tools:
         return findings
-    for run in runs:
+    for run in latest_runs(runs):
         suite = run.get("check_suite_id")
         if not suite:
             continue
