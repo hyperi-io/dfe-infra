@@ -541,6 +541,27 @@ class RebuildRsTests(OnPathTestCase):
         assert "emit-dockerfile" in argv
         assert "config-schema" in argv
 
+    def test_the_gate_decides_whether_clippy_runs_here(self) -> None:
+        cases = [((), True), (("--gate", "local"), True), (("--gate", "pr-ci"), False)]
+        for extra, clippy in cases:
+            with self.subTest(gate=extra):
+                (self.bindir / "cargo.argv").unlink(missing_ok=True)
+                assert sf.cmd_rebuild_rs(self._args("--no-tests", *extra)) == 0
+                argv = _fake_argv(self.bindir, "cargo")
+                assert ("clippy" in argv) is clippy
+                assert "nextest" not in argv
+                assert "fmt" in argv
+
+    def test_pr_ci_runs_no_tests_here_even_without_no_tests(self) -> None:
+        assert sf.cmd_rebuild_rs(self._args("--gate", "pr-ci")) == 0
+        argv = _fake_argv(self.bindir, "cargo")
+        assert "nextest" not in argv
+        assert "clippy" not in argv
+
+    def test_an_unknown_gate_is_refused_by_the_parser(self) -> None:
+        with pytest.raises(SystemExit):
+            self._args("--gate", "remote")
+
     def test_a_worktree_named_anything_builds_its_repos_app_and_the_main_checkout_stays_on_main(self) -> None:
         wt = self.repo.parent / "ga-rebuild"
         _git(self.repo, "worktree", "add", "-b", "scratch", str(wt))
