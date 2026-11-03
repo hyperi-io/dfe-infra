@@ -736,10 +736,10 @@ def test_each_active_workflow_is_read_once_on_the_default_branch() -> None:
     listed = [call for call in calls if call[0].startswith(
         "repos/example-org/dfe-engine/actions/workflows?")]
     assert [paginate for _, _, paginate in listed] == [True]
-    runs = [endpoint for endpoint, _, _ in calls if endpoint.endswith("&per_page=1")]
+    runs = [endpoint for endpoint, _, _ in calls if endpoint.endswith("&per_page=5")]
     assert runs == [
         f"repos/example-org/dfe-engine/actions/workflows/{n}/runs"
-        "?branch=main&status=completed&per_page=1"
+        "?branch=main&status=completed&per_page=5"
         for n in (1, 2)
     ]
 
@@ -758,15 +758,64 @@ def test_a_faked_inconsistent_repo_wide_list_cannot_change_the_result() -> None:
     assert [f.id for f in _by_tool(results[0])["ci_runs"]] == ["100"]
 
 
-def test_each_workflows_own_newest_run_wins() -> None:
-    newest = {"id": 120, "name": "CI", "path": ".github/workflows/ci.yml", "workflow_id": 1,
-              "conclusion": "success", "head_sha": HEAD, "created_at": "2026-10-07T03:00:00Z"}
-    older = {**newest, "id": 100, "conclusion": "failure", "created_at": "2026-10-06T01:00:00Z"}
-    for answer in ([newest], [newest, older]):
-        api, _ = _answers({"repos/example-org/dfe-engine/actions/workflows/1/runs": answer})
-        assert "ci_runs" not in _by_tool(_collect(api))
-    api, _ = _answers({"repos/example-org/dfe-engine/actions/workflows/1/runs": [older]})
-    assert [f.id for f in _by_tool(_collect(api))["ci_runs"]] == ["100"]
+def _main_run(run: int, conclusion: str, created_at: str, sha: str = HEAD) -> dict:
+    return {
+        "id": run,
+        "name": "CI",
+        "path": ".github/workflows/ci.yml",
+        "workflow_id": 1,
+        "conclusion": conclusion,
+        "head_sha": sha,
+        "created_at": created_at,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        pytest.param(
+            [_main_run(100, "failure", "2026-10-06T01:00:00Z")],
+            ["100"],
+            id="single row, a failure",
+        ),
+        pytest.param(
+            [_main_run(120, "success", "2026-10-07T03:00:00Z")],
+            [],
+            id="single row, a success",
+        ),
+        pytest.param(
+            [
+                _main_run(120, "success", "2026-10-07T03:00:00Z"),
+                _main_run(100, "failure", "2026-10-06T01:00:00Z"),
+            ],
+            [],
+            id="newest first, success over an older failure",
+        ),
+        pytest.param(
+            [
+                _main_run(100, "failure", "2026-04-08T01:00:00Z", sha="c" * 40),
+                _main_run(110, "success", "2026-11-01T01:00:00Z"),
+                _main_run(111, "success", "2026-11-02T01:00:00Z"),
+            ],
+            [],
+            id="a stale failure in row 0 with newer successes behind it",
+        ),
+        pytest.param(
+            [
+                _main_run(110, "success", "2026-10-30T01:00:00Z"),
+                _main_run(130, "failure", "2026-11-02T01:00:00Z"),
+                _main_run(120, "success", "2026-10-31T01:00:00Z"),
+            ],
+            ["130"],
+            id="the latest run is the failure, mid-list",
+        ),
+    ],
+)
+def test_each_workflows_own_newest_run_wins(rows: list[dict], expected: list[str]) -> None:
+    api, _ = _answers({"repos/example-org/dfe-engine/actions/workflows/1/runs": rows})
+    result = _collect(api)
+    assert [f.id for f in _by_tool(result).get("ci_runs", [])] == expected
+    assert [f.id for f in sweep.run_findings("r", rows, HEAD)] == expected
 
 
 def test_dependabot_and_agent_runs_are_never_read_but_a_code_scanning_run_is() -> None:
