@@ -5,26 +5,37 @@ sidebar_label: Docker
 
 # Quickstart: Docker
 
-The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. Same images as a Kubernetes deployment, packaged differently.
+The whole DFE stack on one host, and one event through it. Four steps.
 
-You need Docker with Compose v2 and Python 3. `<version>` is the DFE release you are running, the one in the version menu at the top of this page. Pick a profile first:
+You need Docker with Compose v2, Python 3 and [uv](https://docs.astral.sh/uv/). Ports 3000, 8003, 8080 and 8123 need to be free. `<version>` is the DFE release in the version menu at the top of this page.
 
-| Profile | Transport | Runs |
-|---|---|---|
-| `slim-grpc` | gRPC | The core path alone: receiver, loader and ClickHouse, with the engine, the console and HyperDX. The default. |
-| `single-kafka` | Kafka | All of that, plus Kafka, the archiver, and the fetcher and transforms, one per source. |
+## 1. Start DFE
+
+<!--
+ONE-COMMAND START: replace the block below with this once the stack ships as a compose artefact
+(hyperi-io/dfe-docker#337, hyperi-io/dfe-engine#1034). Keep the paragraph under it.
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe:<version> up
+```
+-->
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make init                                   # write .env and mint the logins
-make stack VERSION=<version>                # pin every image to that release
-echo 'DFE_PROFILE=slim-grpc' >> .env        # or single-kafka
-make up                                     # pull, start, self test, print the console login
+make init                      # write .env and mint the logins
+make stack VERSION=<version>   # pin every image to that release
+make up                        # pull, start, self test, print the console login
 ```
 
-`make stack` is not optional. The stack refuses to start on an unpinned image rather than pull `latest`. `make up` ends with a self test that sends marked events through and prints `PASS` as each check lands.
+`make up` ends on a self test that sends marked events through and prints `PASS` as each one lands. The default profile, `slim-grpc`, runs the core path over gRPC. Put `DFE_PROFILE=single-kafka` in `.env` before `make up` for Kafka and the per-source apps.
 
-Then send it an event of your own:
+## 2. Open the console
+
+Go to http://localhost:3000 and log in as `admin` with the password `make up` printed. `make creds` prints it again.
+
+The first login walks you through setup: name your organisation, pick how people log in, and add your first user.
+
+## 3. Send an event
 
 ```bash
 curl -X POST http://localhost:8080/ingest \
@@ -32,13 +43,21 @@ curl -X POST http://localhost:8080/ingest \
   -d '{"_source":"main","message":"hello dfe"}'
 ```
 
-`_source` routes it, so `"main"` lands in `dfe.main` a couple of seconds later. The console is at http://localhost:3000, ClickHouse HTTP at http://localhost:8123 and the engine API at http://localhost:8003. `single-kafka` adds the Kafka UI at http://localhost:8081. The ingest ports listen on every interface, and everything else on this host only.
+`_source` routes it. `"main"` lands in the ClickHouse table `dfe.main`.
 
-Next:
+## 4. See it land
 
-1. The full first look, including reading the event back: [Taking DFE for a first look](../dfe-docker/evaluating.md).
-2. What each profile runs: [profiles](../dfe-docker/profiles.md).
-3. Set the deployment's configuration: [configuration](../dfe-docker/configuration.md).
-4. Deploy, and move to a newer release: [deploying](../dfe-docker/deploying.md).
-5. Run it day to day: [operating](../dfe-docker/operating.md).
-6. When something does not come up: [troubleshooting](../dfe-docker/troubleshooting.md).
+In the console, open **Observe**, then **Search**. Pick the `main` source and search for `hello dfe`. It shows up a couple of seconds after the `curl`.
+
+Prefer SQL? [Taking DFE for a first look](../dfe-docker/evaluating.md) reads it straight out of ClickHouse.
+
+## Next steps
+
+| You want to | Read |
+|---|---|
+| Send from your agents: Beats, OTLP, Splunk HEC | [Receiver ports](../dfe-docker/configuration.md#default-ports) |
+| Route and store each feed by where it came from | [Sources](../dfe-engine/data-plane/source.md) |
+| Run the same images on your own cluster | [Kubernetes on-premises](kubernetes.md) |
+| Run it day to day and move to a newer release | [Operating](../dfe-docker/operating.md) |
+
+`make down` stops the stack and keeps the data. `make clean` deletes the data too.

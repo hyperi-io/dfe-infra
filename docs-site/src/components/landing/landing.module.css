@@ -87,7 +87,7 @@
   margin: 0 0 var(--dfe-space-6);
   color: var(--role-ink);
   font-family: var(--dfe-font-logo);
-  font-size: var(--dfe-text-5xl);
+  font-size: var(--dfe-text-4xl);
   font-weight: 800;
   letter-spacing: -0.01em;
   line-height: 1.02;
@@ -312,34 +312,16 @@
   font-size: var(--dfe-text-lg);
 }
 
-.gridThree,
-.gridCapabilities {
+.gridThree {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--dfe-space-6);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.gridThree {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-/* Five cards: three across, then two wider, so neither row leaves a gap. */
-.gridCapabilities {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-.gridCapabilities > li {
-  grid-column: span 2;
-}
-
-.gridCapabilities > li:nth-child(n + 4) {
-  grid-column: span 3;
-}
-
-.gridThree > li,
-.gridCapabilities > li {
+.gridThree > li {
   display: flex;
 }
 
@@ -448,6 +430,158 @@
   line-height: var(--dfe-leading-snug);
 }
 
+/* The hero screenshot sits in a browser frame with the quickstart panel's gradient edge. */
+.shot {
+  margin: 0;
+  overflow: hidden;
+  border: var(--dfe-stroke-hairline) solid transparent;
+  border-radius: var(--dfe-radius-lg);
+  background:
+    linear-gradient(var(--role-canvas), var(--role-canvas)) padding-box,
+    linear-gradient(135deg, var(--dfe-blue), var(--role-border) 45%, var(--dfe-accent)) border-box;
+  box-shadow: 0 var(--dfe-space-6) var(--dfe-space-16) calc(-1 * var(--dfe-space-8)) var(--role-glow);
+}
+
+.shotBar {
+  display: flex;
+  align-items: center;
+  gap: var(--dfe-space-2);
+  padding: var(--dfe-space-3) var(--dfe-space-4);
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
+  background: var(--role-raised);
+}
+
+.shotDot {
+  width: var(--dfe-space-3);
+  height: var(--dfe-space-3);
+  border-radius: var(--dfe-radius-pill);
+  background: var(--role-border);
+}
+
+.shotAddress {
+  margin-left: var(--dfe-space-3);
+  padding: var(--dfe-space-1) var(--dfe-space-3);
+  border-radius: var(--dfe-radius-pill);
+  background: var(--role-canvas);
+  color: var(--role-muted);
+  font-family: var(--dfe-font-mono);
+  font-size: var(--dfe-text-xs);
+}
+
+.shotImage {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.shotEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dfe-space-2);
+  aspect-ratio: 16 / 10;
+  margin: var(--dfe-space-4);
+  border: var(--dfe-stroke-hairline) dashed var(--role-card-border);
+  border-radius: var(--dfe-radius-md);
+  background: var(--role-tint);
+  text-align: center;
+}
+
+.shotEmptyTitle {
+  color: var(--role-ink);
+  font-size: var(--dfe-text-lg);
+  font-weight: 700;
+}
+
+.shotEmptyText {
+  color: var(--role-muted);
+  font-size: var(--dfe-text-sm);
+}
+
+/* The diagram reads at its natural width, centred, on the raised band. */
+.diagram {
+  margin: 0;
+  padding: var(--dfe-space-8);
+  border: var(--dfe-stroke-hairline) solid var(--role-card-border);
+  border-radius: var(--dfe-radius-md);
+  background: var(--role-card);
+}
+
+.diagramCanvas {
+  overflow-x: auto;
+  text-align: center;
+}
+
+.diagramCanvas :global(.docusaurus-mermaid-container) svg {
+  max-width: 100% !important;
+  height: auto;
+}
+
+.diagramCaption {
+  margin-top: var(--dfe-space-6);
+  color: var(--role-muted);
+  font-size: var(--dfe-text-sm);
+  text-align: center;
+}
+
+.container.quickstartWrap {
+  max-width: calc(var(--dfe-container) * 0.75);
+}
+
+/* FAQ rows open in place, with a plus that turns to a cross. */
+.faq {
+  max-width: calc(var(--dfe-container) * 0.75);
+  margin-inline: auto;
+  border-top: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+.faqItem {
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+.faqQuestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dfe-space-4);
+  padding: var(--dfe-space-6) 0;
+  color: var(--role-ink);
+  font-size: var(--dfe-text-lg);
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.faqQuestion::-webkit-details-marker {
+  display: none;
+}
+
+.faqQuestion::after {
+  content: '';
+  flex: none;
+  width: var(--dfe-space-4);
+  height: var(--dfe-space-4);
+  background:
+    linear-gradient(var(--role-link), var(--role-link)) center / 100% var(--dfe-stroke-focus) no-repeat,
+    linear-gradient(var(--role-link), var(--role-link)) center / var(--dfe-stroke-focus) 100% no-repeat;
+  transition: transform 160ms var(--dfe-ease);
+}
+
+.faqItem[open] .faqQuestion::after {
+  transform: rotate(45deg);
+}
+
+.faqAnswer {
+  padding: 0 0 var(--dfe-space-6);
+}
+
+.faqAnswer p {
+  max-width: 48rem;
+  margin: 0 0 var(--dfe-space-3);
+  color: var(--role-body);
+}
+
 .closing {
   padding-block: var(--dfe-space-24);
   background: var(--role-band);
@@ -477,6 +611,10 @@
 
   .linkCard:hover {
     transform: none;
+  }
+
+  .faqQuestion::after {
+    transition: none;
   }
 }
 
@@ -512,12 +650,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .gridCapabilities {
-    grid-template-columns: minmax(0, 1fr);
+  /* Below this width the diagram keeps a readable size and scrolls sideways instead of shrinking. */
+  .diagramCanvas :global(.docusaurus-mermaid-container) svg {
+    min-width: 56rem;
   }
 
-  .gridCapabilities > li,
-  .gridCapabilities > li:nth-child(n + 4) {
-    grid-column: span 1;
+  .diagram {
+    padding: var(--dfe-space-4);
   }
 }
