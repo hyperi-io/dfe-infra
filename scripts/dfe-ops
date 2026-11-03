@@ -1804,6 +1804,7 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 # created through the console and proven at every hop. Not part of `all`: it
 # runs after POST on the deployments that showcase the data path.
 SOURCE_SUITE = "source"
+SOURCE_CASES = ("filebeat", "cloudwatch", "elastic", "vector", "syslog")
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
 # A send from an allow-listed address outside the cloud to the receiver's public
 # door, found in main, the console and HyperDX, and refused from the cluster's own
@@ -4831,8 +4832,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
         if _engine_checkout_gate(str(engine_repo), args.stack, args.dev) != 0:
             return 2
-        if _companion_checkouts_gate(args.acceptance_suite, "filebeat", args.stack, args.dev) != 0:
-            return 2
+        for case in args.acceptance_source_case or ["filebeat"]:
+            if _companion_checkouts_gate(args.acceptance_suite, case, args.stack, args.dev) != 0:
+                return 2
     if args.ui_repo and _checkout_gate(args.ui_repo, "dfe-ui", args.stack, args.dev, "the ui stage runs") != 0:
         return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
@@ -4910,7 +4912,15 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         # source, which takes that source's transform pods with it.
         if args.diagnostics_dir:
             acceptance_cmd += ["--diagnostics-dir", args.diagnostics_dir]
-        stages.append(("acceptance", acceptance_cmd))
+        cases = args.acceptance_source_case or []
+        if not cases:
+            stages.append(("acceptance", acceptance_cmd))
+        # One stage per case, in order, each with its own shots dir: a case run after
+        # another starts on topics the earlier one deleted at teardown.
+        for n, case in enumerate(cases, 1):
+            cmd = [*acceptance_cmd, "--source-case", case]
+            cmd[cmd.index("--shots-dir") + 1] = str(Path(args.acceptance_shots_dir) / f"{n}-{case}")
+            stages.append((f"acceptance {n}/{len(cases)} {case}", cmd))
     # The UI stage is opt-in: it needs a dfe-ui checkout and node, which not
     # every cycle runner has, and a cycle that starts failing for want of a
     # browser would be worse than one that says the stage did not run.
@@ -5167,6 +5177,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run `acceptance --suite <name>` as a stage after smoke (needs the engine "
                          "checkout acceptance --repo finds, and a browser for onboarding, source and "
                          f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
+    cy.add_argument("--acceptance-source-case", action="append", default=None, metavar="CASE",
+                    choices=SOURCE_CASES,
+                    help="with --acceptance-suite source, run this case (`acceptance --source-case`); "
+                         "repeatable, one acceptance stage per case in the order given, so "
+                         "`syslog` twice runs the second on topics the first deleted (default: filebeat once)")
     cy.add_argument("--dev", action="store_true",
                     help="let the acceptance and ui stages run from checkouts (engine, transform, dfe-ui) that are not the stack's pinned releases, with a WARNING naming both versions")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
@@ -5379,7 +5394,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the source suite leaves the source it made deployed, and the edge suite the "
                          "ingest allow list it wrote, for a look")
     ac.add_argument("--source-case", default="filebeat",
-                    choices=("filebeat", "cloudwatch", "elastic", "vector", "syslog"),
+                    choices=SOURCE_CASES,
                     help="which source the source suite creates: syslog sent raw to the receiver's "
                          "syslog listeners over TCP and UDP, filebeat pushed at the receiver "
                          "through the bundled VRL, vector pushed through the same program run by a "
