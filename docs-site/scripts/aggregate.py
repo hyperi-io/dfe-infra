@@ -69,6 +69,8 @@ PUBLISH_FILE = SITE_ROOT / "publish.yaml"
 JOURNEYS_FILE = SITE_ROOT / "journeys.yaml"
 # journeys.yaml's name for the suite's own pages, and for a member's catch-all rule.
 ROOT_PAGES = "content-root"
+# Where the site's own pages sit in STACK_REPO_MEMBER, so its docs/ can link to them.
+ROOT_PAGES_IN_REPO = f"{SITE_ROOT.relative_to(REPO_ROOT).as_posix()}/{ROOT_PAGES}/"
 DEFAULT_PLACE = "default"
 # The publish.yaml internal path that keeps a member's whole docs/ off the site.
 WHOLE_MEMBER = "all-pages"
@@ -345,17 +347,22 @@ def anonymous_git_env() -> dict[str, str]:
 class Fetcher:
     """Anonymous, shallow, sparse checkouts of member repositories, one per repo and ref."""
 
-    def __init__(self, work: Path, git_base: str = GITHUB) -> None:
+    def __init__(
+        self, work: Path, git_base: str = GITHUB, local: Mapping[str, Path] | None = None
+    ) -> None:
         """Fetch into `work`, from repositories under `git_base`.
 
         Args:
             work: The directory the checkouts are made in. A checkout already there,
                 at a ref other than HEAD, is reused.
             git_base: The URL the owner/name repo paths are appended to.
+            local: owner/name -> a working tree served as that repo at every ref, so
+                uncommitted docs/ edits can be previewed.
         """
         self._work = work
         self._base = git_base.rstrip("/")
         self._env = anonymous_git_env()
+        self._local = dict(local) if local is not None else {}
         self._done: dict[tuple[str, str], Checkout] = {}
 
     def fetch(self, repo: str, ref: str) -> Checkout:
@@ -372,6 +379,8 @@ class Fetcher:
             RefusedError: The anonymous fetch was refused.
             FetchError: Any other git failure, a missing ref among them.
         """
+        if repo in self._local:
+            return local_checkout(self._local[repo])
         key = (repo, ref)
         if key in self._done:
             return self._done[key]
@@ -554,6 +563,52 @@ def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journey
     return Journeys(order, rules)
 
 
+def local_checkout(path: Path) -> Checkout:
+    """Return a working tree as a checkout, at its HEAD commit, or "local" outside git.
+
+    Args:
+        path: The working tree's root.
+
+    Returns:
+        The checkout.
+    """
+    done = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return Checkout(path, done.stdout.strip() if done.returncode == 0 else "local")
+
+
+def parse_local(values: Iterable[str], members: Iterable[Member]) -> dict[str, Path]:
+    """Read --local MEMBER=PATH values into owner/name -> working tree.
+
+    Args:
+        values: The values as given.
+        members: The suite members, which name the repos.
+
+    Returns:
+        owner/name -> the working tree's root.
+
+    Raises:
+        SystemExit: A value is not MEMBER=PATH, names no member, or has no docs/.
+    """
+    repos = {member.name: member.repo for member in members}
+    local: dict[str, Path] = {}
+    for value in values:
+        name, eq, path = value.partition("=")
+        if not eq or name not in repos:
+            raise SystemExit(f"error: --local {value}: want MEMBER=PATH for a suite member")
+        root = Path(path).expanduser().resolve()
+        if not (root / "docs").is_dir():
+            raise SystemExit(f"error: --local {value}: {root} has no docs/")
+        local[repos[name]] = root
+    return local
+
+
 def is_internal(repo_path: str, internal: frozenset[str]) -> bool:
     """Whether a repo path is one of a member's internal pages, or sits in an internal directory.
 
@@ -632,6 +687,7 @@ def relink(
     repo: str,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> tuple[str, bool]:
     """Point one link target that leaves the published docs at the file on GitHub, at `ref`.
 
@@ -642,6 +698,8 @@ def relink(
         ref: The tag or commit the file was fetched at.
         internal: The member's internal paths, which are linked on GitHub like any
             file outside docs/.
+        mount: Where the member's docs/ lands in the build, set for STACK_REPO_MEMBER
+            only. A link into the site's own pages then stays on the site.
 
     Returns:
         The target to write, and whether it escaped the repository (left unchanged).
@@ -660,6 +718,10 @@ def relink(
     if resolved == ".." or resolved.startswith("../"):
         return target, True
     suffix = f"{query_mark}{query}{hash_mark}{fragment}"
+    if mount and resolved.startswith(ROOT_PAGES_IN_REPO):
+        here = posixpath.normpath(posixpath.join(mount, posixpath.relpath(doc_dir, "docs")))
+        new = posixpath.relpath(resolved[len(ROOT_PAGES_IN_REPO) :], here) + suffix
+        return (f"<{new}>" if bracketed else new), False
     parts = resolved.split("/")
     # A directory link lands on its README.md, so an internal landing unpublishes the link.
     landing = f"{resolved}/{LANDING}" if path.endswith("/") else resolved
@@ -691,6 +753,7 @@ def rewrite_links(
     repo: str,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> tuple[str, list[str]]:
     """Rewrite every link in a markdown file that leaves the published docs, outside code.
 
@@ -703,6 +766,7 @@ def rewrite_links(
         repo: The member's owner/name.
         ref: The tag or commit the file was fetched at.
         internal: The member's internal paths.
+        mount: Where the member's docs/ lands in the build, as `relink` takes it.
 
     Returns:
         The rewritten markdown, and each target that escaped the repository.
@@ -712,7 +776,7 @@ def rewrite_links(
 
     def fix(match: re.Match[str]) -> str:
         new, escapes = relink(
-            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal
+            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal, mount=mount
         )
         if escapes:
             escaped.append(match.group(2))
@@ -871,6 +935,7 @@ def copy_docs(
     member: Member,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> list[Finding]:
     """Copy one member's docs/ into the build, rewriting links in its markdown.
 
@@ -883,6 +948,7 @@ def copy_docs(
         member: The member.
         ref: The tag or commit the docs were fetched at, for the GitHub links.
         internal: The member's internal paths.
+        mount: Where `dest` sits in the build, as `relink` takes it.
 
     Returns:
         A LINK finding for each link that escaped the repository.
@@ -904,7 +970,7 @@ def copy_docs(
             continue
         text = drop_leading_comments(path.read_text(encoding="utf-8", errors="replace"))
         rewritten, escaped = rewrite_links(
-            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal
+            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal, mount=mount
         )
         target.write_text(rewritten, encoding="utf-8", newline="\n")
         findings += [Finding(member.name, repo_path, Rule.LINK, link) for link in escaped]
@@ -1040,7 +1106,10 @@ def assemble(
         if member.classification not in UPSTREAM_LED:
             result.findings += find_strays(docs, member.name)
         internal = policy.internal_to(member.name)
-        result.findings += copy_docs(docs, dest, member=member, ref=link_ref, internal=internal)
+        mount = dest.relative_to(root).as_posix() if member.name == STACK_REPO_MEMBER else ""
+        result.findings += copy_docs(
+            docs, dest, member=member, ref=link_ref, internal=internal, mount=mount
+        )
         if not dest.is_dir():
             result.findings.append(Finding(member.name, "docs/", Rule.ALL_INTERNAL))
             continue
@@ -1396,6 +1465,13 @@ def main(argv: list[str] | None = None) -> int:
         default=GITHUB,
         help="the URL member repos are fetched under, such as a mirror",
     )
+    parser.add_argument(
+        "--local",
+        action="append",
+        default=[],
+        metavar="MEMBER=PATH",
+        help="read a member's docs/ from a working tree, uncommitted edits included (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     text = VERSIONS_FILE.read_text(encoding="utf-8")
@@ -1412,7 +1488,7 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)
         work.mkdir(parents=True, exist_ok=True)
-        fetcher = Fetcher(work, args.git_base)
+        fetcher = Fetcher(work, args.git_base, parse_local(args.local, members))
         try:
             results = [
                 assemble(build, members, fetcher, args.out, policy, journeys) for build in builds

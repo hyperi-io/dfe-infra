@@ -63,3 +63,18 @@ def test_the_gate_reads_a_copy_file(tmp_path: Path, yaml_text: str, rules: set[s
     copy.write_text(yaml_text, encoding="utf-8")
     phrases = gate.load_phrases(gate.aggregate.yaml_subset.parse(gate.GATE_FILE.read_text()))
     assert {finding.rule for finding in gate.gate_files([copy], phrases)} == rules
+
+
+@pytest.mark.parametrize(
+    ("line", "flagged"),
+    [
+        pytest.param(
+            "Index engines such as Elasticsearch build an index.", False, id="product_name"
+        ),
+        pytest.param("Index engines such as ElasticSearch build an index.", True, id="misspelt"),
+        pytest.param("Your Elastic ingest pipelines come across.", False, id="company_and_stack"),
+    ],
+)
+def test_the_gate_flags_only_the_misspelt_product_name(line: str, flagged: bool) -> None:
+    rules = {rule for rule, _, _ in gate.check_line(line, {})}
+    assert ("elasticsearch" in rules) is flagged

@@ -96,6 +96,50 @@ function loadCopy(name) {
 const siteCopy = loadCopy('site');
 const landingCopy = loadCopy('landing');
 
+// Markdown links and backticks as the plain text another site can show.
+function plainText(text) {
+  return text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '');
+}
+
+// The hero's quickstart tabs as /quickstart.json, so other sites show the same commands.
+// A note between two code blocks rides into the next command as a shell comment.
+function quickstartJson(siteUrl, baseUrl) {
+  const tabs = landingCopy.quickstart.tabs.map((tab) => {
+    const texts = [];
+    const commands = [];
+    let pending = null;
+    for (const block of tab.blocks) {
+      if (block.code !== undefined) {
+        commands.push(pending ? `# ${pending}\n${block.code}` : block.code);
+        pending = null;
+      } else if (commands.length === 0) {
+        texts.push(plainText(block.text));
+      } else {
+        pending = plainText(block.text);
+      }
+    }
+    return {
+      id: tab.value,
+      label: tab.label,
+      needs: texts.join(' ') || null,
+      commands,
+      then: pending,
+      guide: tab.guide ? `${siteUrl}${baseUrl}${tab.guide.to.replace(/^\//, '')}` : null,
+    };
+  });
+  return {stack, tabs};
+}
+
+function quickstartJsonPlugin(context) {
+  return {
+    name: 'quickstart-json',
+    async postBuild({outDir}) {
+      const body = quickstartJson(context.siteConfig.url, context.siteConfig.baseUrl);
+      fs.writeFileSync(path.join(outDir, 'quickstart.json'), `${JSON.stringify(body, null, 2)}\n`);
+    },
+  };
+}
+
 // Every listed build, as a full-page load without this build's own baseUrl in front.
 const versionItems = site.builds
   .filter((candidate) => candidate.listed)
@@ -195,7 +239,7 @@ module.exports = {
       },
     ],
   ],
-  plugins: ['docusaurus-plugin-sass', ...openapiPlugins],
+  plugins: ['docusaurus-plugin-sass', quickstartJsonPlugin, ...openapiPlugins],
   themes: [
     '@docusaurus/theme-mermaid',
     'docusaurus-theme-openapi-docs',

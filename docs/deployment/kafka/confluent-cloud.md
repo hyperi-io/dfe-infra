@@ -11,55 +11,36 @@ Copyright: HyperI / DFE contributors
 
 # DFE on Confluent Cloud
 
-DFE does NOT auto-deploy Confluent Cloud -- you provision it, then point DFE at
-it with `kafka.mode=external`. Confluent Cloud is the DFE provider
-`confluent-cloud`, and it is the ONE built-in provider that does NOT do SCRAM:
-auth is **SASL_SSL with PLAIN** using a Confluent **API key/secret** pair. The
-DFE security floor still holds -- PLAIN is only ever sent over TLS, enforced by
-scalo `providers::validate` and `KafkaConfig::validate`.
+DFE doesn't deploy Confluent Cloud. You provision it, then point DFE at it with `kafka.mode=external`. Confluent Cloud is the DFE provider `confluent-cloud`, and it's the ONE built-in provider that doesn't do SCRAM. Auth is SASL_SSL with PLAIN, using a Confluent API key and secret pair. The security floor still holds, because PLAIN only ever goes over TLS. scalo `providers::validate` and `KafkaConfig::validate` enforce that.
 
-Read the opinionated baseline in [README.md](README.md) first. Confluent Cloud
-is the most managed of the three clouds: it exposes very few broker dials and
-expresses the rest per topic.
+Read the baseline in [README.md](README.md) first. Confluent Cloud exposes very few broker dials. You set the rest per topic.
 
-**On the AWS path, tofu builds this for you.** Setting `kafka.provider: confluent-cloud` in the deployment dial makes `terraform/environments/aws` call the maintained, contract-tested `terraform/modules/managed-kafka/confluent-cloud` module instead of hand-rolling the snippet below -- see [aws-configuration.md](../aws-configuration.md#kafka-and-clickhouse) and that module's `CONTRACT.md`. That module defaults to the **Freight** tier (private networking, no public endpoint, autoscales on eCKUs) rather than the `standard` tier this page's own worked example uses. Confluent caps a topic's `max.message.bytes` by cluster type: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, and 20 MB on Freight. So Freight and Enterprise carry DFE's 16 MiB size chain and Basic and Standard do not. The example below is for a deployment standing Confluent Cloud up by some other means and pointing DFE at it with `kafka.mode=external`.
+On the AWS path, tofu builds this for you. Set `kafka.provider: confluent-cloud` in the deployment dial and `terraform/environments/aws` calls the maintained, tested `terraform/modules/managed-kafka/confluent-cloud` module, so you skip the hand-rolled snippet below. See [aws-configuration.md](../aws-configuration.md#kafka-and-clickhouse) and that module's `CONTRACT.md`. The module defaults to the Freight tier (private networking, no public endpoint, autoscales on eCKUs). The worked example on this page uses `standard`. Confluent caps a topic's `max.message.bytes` by cluster type: 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, and 20 MB on Freight. So Freight and Enterprise carry DFE's 16 MiB size chain and Basic and Standard don't. The example below is for a deployment that stands Confluent Cloud up some other way and points DFE at it with `kafka.mode=external`.
 
 ## What Confluent Cloud lets you set vs manages
 
-Confluent Cloud manages the broker fleet, KRaft metadata plane, segment sizing,
-and leader election. You express durability and retention PER TOPIC, within a
-narrow allowed range.
+Confluent Cloud manages the broker fleet, the KRaft metadata plane, segment sizing and leader election. You set durability and retention PER TOPIC, within a narrow range.
 
 | DFE default | On Confluent Cloud |
 |---|---|
-| KRaft (no ZooKeeper) | Managed -- Confluent runs KRaft; nothing to set. |
-| `replication.factor=3` | LOCKED -- fixed at 3 across three availability zones, platform-wide. You cannot set it; it already matches the DFE default. |
+| KRaft (no ZooKeeper) | Managed. Confluent runs KRaft and there's nothing to set. |
+| `replication.factor=3` | LOCKED. Fixed at 3 across three availability zones, platform-wide. You can't set it, and it already matches the DFE default. |
 | `min.insync.replicas=2` | Settable PER TOPIC, but only 1 or 2. Set 2 (the DFE default). |
-| `unclean.leader.election.enable=false` | Managed -- not exposed. Confluent does not do unclean election; the DFE intent already holds. |
-| `num.partitions=12` | PER TOPIC (`partitions_count`; the Terraform default is 6 -- set 12). Increase-only; you cannot shrink later. |
+| `unclean.leader.election.enable=false` | Managed and not exposed. Confluent doesn't do unclean election, so the DFE intent already holds. |
+| `num.partitions=12` | PER TOPIC (`partitions_count`, and the Terraform default is 6, so set 12). Increase-only, so you can't shrink later. |
 | `compression.type=producer` | Settable per topic. |
 | `log.retention.hours=72` | PER TOPIC as `retention.ms` (72h = 259200000). |
 | `log.retention.bytes` (unset) | PER TOPIC as `retention.bytes` (leave unset for time-only). |
-| `log.segment.bytes=512 MiB` | LOCKED -- not exposed (Confluent manages segments). |
+| `log.segment.bytes=512 MiB` | LOCKED and not exposed. Confluent manages segments. |
 | `cleanup.policy=delete` | Settable per topic (default `delete`). |
-| `message.max.bytes` (default) | PER TOPIC as `max.message.bytes` (default 2,097,164; at most 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, 20 MB on Freight -- keep aligned with the scalo client budgets). |
-| App record limits (16 MiB producers, 8,000,000-byte receiver request body) | Producers follow the size bootstrap writes on the cluster secret from `DFE_KAFKA_MESSAGE_MAX_BYTES`, which the aws root sets: the receiver, loader, fetcher, archiver and transform producers take it as `message.max.bytes`, and dfe-transform-elastic drops a record over 15/16 of it. The receiver refuses a request body over the DFE-wide 8,000,000-byte cap on every tier, which fits Basic's 8,388,608 with room for the message framing. dfe-fetcher and dfe-archiver read it from their first release after v1.4.36 and v1.7.32; an earlier image ignores it and keeps 16 MiB. |
+| `message.max.bytes` (default) | PER TOPIC as `max.message.bytes` (default 2,097,164, at most 8,388,608 on Basic and Standard, 20,971,520 on Enterprise and Dedicated, 20 MB on Freight. Keep it in step with the scalo client budgets). |
+| App record limits (16 MiB producers, 8,000,000-byte receiver request body) | Producers follow the size bootstrap writes on the cluster secret from `DFE_KAFKA_MESSAGE_MAX_BYTES`, which the aws root sets. The receiver, loader, fetcher, archiver and transform producers take it as `message.max.bytes`, and dfe-transform-elastic drops a record over 15/16 of it. The receiver refuses a request body over the DFE-wide 8,000,000-byte cap on every tier, which fits Basic's 8,388,608 with room for the message framing. dfe-fetcher and dfe-archiver read it from their first release after v1.4.36 and v1.7.32. An earlier image ignores it and keeps 16 MiB. |
 
-Net: on Confluent Cloud the DFE opinion reduces to a per-topic config of
-`min.insync.replicas=2`, `partitions=12`, `retention.ms=259200000`,
-`compression.type=producer`, `cleanup.policy=delete`, `max.message.bytes` at the
-default. RF3, KRaft, unclean-election-off, and segment sizing are all handled by
-the platform (and already match the DFE intent). Note that some topic configs are
-not editable after create. dfe-engine creates every topic at startup, so they
-are set at creation from its settings (see Wiring back to DFE).
+Some topic configs can't be edited after create. dfe-engine creates every topic at startup, so it sets them at creation from its settings (see Wiring back to DFE).
 
 ## Terraform / OpenTofu -- Confluent Cloud (API-key PLAIN)
 
-Standard cluster (multi-AZ, RF3) with the DFE service account, its
-cluster-scoped API key, and the ACLs a manager account writes for it. The
-`confluent` provider needs a CLOUD API key (org-level, for management) and DFE a
-KAFKA API key (cluster-level, for the data plane) -- both are shown. There is no
-topic resource: dfe-engine creates every topic.
+A Standard cluster (multi-AZ, RF3) with the DFE service account, its cluster-scoped API key, and the ACLs a manager account writes for it. The `confluent` provider needs a CLOUD API key (org-level, for management) and DFE needs a KAFKA API key (cluster-level, for the data plane). Both are shown. There's no topic resource, because dfe-engine creates every topic.
 
 ```hcl
 terraform {
@@ -173,46 +154,38 @@ output "bootstrap_endpoint" {
 }
 ```
 
-The API key `id` is the SASL username and its `secret` is the SASL password;
-that pair is what DFE's `confluent-cloud` provider sends as PLAIN over TLS.
+The API key `id` is the SASL username and its `secret` is the SASL password. DFE's `confluent-cloud` provider sends that pair as PLAIN over TLS.
 
 ## Wiring back to DFE
 
-- `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>` (strip
-  the `SASL_SSL://` scheme if your endpoint output includes it).
-- `kafka.external.provider=confluent-cloud` -> the chart derives `SASL_SSL` +
-  `PLAIN` and puts the mechanism in the credential Secret beside the API key, so
-  that Secret carries the same `username` / `password` / `sasl.mechanism` shape
-  a DFE-owned broker's does.
-- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. PLAIN never crosses a cleartext transport. On the aws root you set none of the mode, the endpoint or this by hand: `DFE_KAFKA_PROVIDER=confluent-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
-- Credentials: put the Kafka API key (username) + secret (password) in the
-  Vault-backed external secret; `kafka.external.auth.type=scram` still works as
-  the user/password carrier (the mechanism itself is PLAIN, derived from the
-  provider, not from `auth.type`).
+- `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>`. Strip the `SASL_SSL://` scheme if your endpoint output includes it.
+- `kafka.external.provider=confluent-cloud`. The chart derives `SASL_SSL` and `PLAIN` from it and puts the mechanism in the credential Secret beside the API key. So that Secret has the same `username`, `password` and `sasl.mechanism` shape a DFE-owned broker's does.
+- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. PLAIN never crosses a cleartext transport. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=confluent-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
+- Credentials: put the Kafka API key (username) and secret (password) in the Vault-backed external secret. `kafka.external.auth.type=scram` still works as the user/password carrier. The mechanism itself is PLAIN, derived from the provider and not from `auth.type`.
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
 - Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its own default size, which a cluster capped below it refuses. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
 - Topic retention: set the dfe-engine chart's `kafka.topicRetentionMs`, or the topics keep Confluent's default. On the AWS path tofu sets it through `DFE_KAFKA_RETENTION_MS`.
 - Replication: set the dfe-engine chart's `kafka.topicReplicationFactor` to 3. Confluent Cloud refuses any other factor and creates no topic on first write, so a source whose topics are refused never takes data. The layer 2 appsets set it for every external broker.
 
-Note: Confluent Cloud auto-provisions a billable Flink compute pool on cluster
-create (scalo `ProviderCapabilities.has_billable_side_resources`). If you tear a
-cluster down, sweep that pool too or it keeps billing.
+Confluent Cloud auto-provisions a billable Flink compute pool on cluster create (scalo `ProviderCapabilities.has_billable_side_resources`). Sweep that pool when you tear a cluster down, or it keeps billing.
 
-## Verification -- what is and is not confirmed
+## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in README): RF is fixed at 3 platform-wide;
-`min.insync.replicas` is settable per topic but only 1 or 2; `partitions_count`
-defaults to 6 and is increase-only; topic configs `cleanup.policy`,
-`retention.ms`, `retention.bytes`, `max.message.bytes`, `compression.type`,
-`min.insync.replicas` are settable; segment sizing and leader election are not
-exposed; the `confluent_kafka_cluster` / `confluent_kafka_topic` /
-`confluent_api_key` / `confluent_service_account` resources and the CLOUD-key +
-KAFKA-key split are current. The DFE `confluent-cloud` provider is SASL_SSL PLAIN
-(scalo `providers.rs`, canonical table).
+Confirmed by 2026 research (sources in the README):
 
-NOT verified (no Confluent Cloud account here, cannot deploy): the exact current
-provider version to pin, the precise `region` string, whether the Standard tier
-(vs Enterprise/Dedicated/Freight) meets your throughput, and that every topic
-config key above is editable post-create on your tier (some are create-only --
-Confluent's own docs warn config edits can fail after creation). Run
-`tofu validate` and plan against your org before apply.
+- RF is fixed at 3 platform-wide.
+- `min.insync.replicas` is settable per topic, but only 1 or 2.
+- `partitions_count` defaults to 6 and is increase-only.
+- Topic configs `cleanup.policy`, `retention.ms`, `retention.bytes`, `max.message.bytes`, `compression.type` and `min.insync.replicas` are settable.
+- Segment sizing and leader election aren't exposed.
+- The `confluent_kafka_cluster`, `confluent_kafka_topic`, `confluent_api_key` and `confluent_service_account` resources, and the CLOUD-key and KAFKA-key split, are current.
+- The DFE `confluent-cloud` provider is SASL_SSL PLAIN (scalo `providers.rs`, canonical table).
+
+NOT verified, because we have no Confluent Cloud account here and can't deploy:
+
+- The exact current provider version to pin.
+- The precise `region` string.
+- Whether the Standard tier (against Enterprise, Dedicated or Freight) meets your throughput.
+- That every topic config key above is editable after create on your tier. Some are create-only, and Confluent's own docs warn config edits can fail after creation.
+
+Run `tofu validate` and plan against your org before you apply.

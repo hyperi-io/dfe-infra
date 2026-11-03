@@ -2,7 +2,7 @@
 #  Project:      dfe-infra
 #  File:         docs-site/scripts/gate.py
 #  Purpose:      Report process talk, hedges, register words, semicolons, non-ASCII
-#                typography and "Elasticsearch" on the pages the docs site publishes.
+#                typography and "ElasticSearch" on the pages the docs site publishes.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
@@ -26,7 +26,7 @@ Rules:
     register       words the house style replaces (gate.yaml)
     semicolon      a semicolon in prose
     ascii          non-ASCII typography in prose: dashes, curly quotes, arrows
-    elasticsearch  "Elasticsearch", where the product is Elastic
+    elasticsearch  "ElasticSearch", the product's name misspelt
     marker         an override marker the gate cannot read, which nothing overrides
 
 Only prose is read: front matter, code blocks, inline code, link targets, HTML
@@ -94,7 +94,7 @@ _EXTRA_PROCESS = (
     (re.compile(r"\bTBD\b"), "TBD", "write it, or leave it out"),
 )
 _STUB_ADMONITION = re.compile(r"^\s*:::\s*\w*\s*(stub|placeholder|todo)\b", re.IGNORECASE)
-_ELASTICSEARCH = re.compile(r"\belasticsearch\b", re.IGNORECASE)
+_ELASTICSEARCH = re.compile(r"\bElasticSearch\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +240,7 @@ def check_line(prose: str, phrases: Phrases) -> Iterator[tuple[str, str, str]]:
     if odd:
         yield "ascii", _char_names(odd), "-- or - for a dash, ' and \" for quotes, -> for an arrow"
     if _ELASTICSEARCH.search(prose):
-        yield "elasticsearch", "Elasticsearch", "say Elastic"
+        yield "elasticsearch", "ElasticSearch", "say Elasticsearch"
 
 
 def _marker_problem(verb: str, rules: set[str], reason: str) -> str:

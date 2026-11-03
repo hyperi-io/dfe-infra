@@ -537,6 +537,50 @@ def test_a_placement_key_places_both_spellings_of_a_page(doc_id: str, expected: 
     assert done.stdout == expected
 
 
+@pytest.mark.parametrize(
+    ("doc_dir", "target", "mount", "expected"),
+    [
+        (
+            "docs",
+            "../docs-site/content-root/coming-from.md#sources-join",
+            "dfe-infra",
+            "../coming-from.md#sources-join",
+        ),
+        (
+            "docs/deployment",
+            "../../docs-site/content-root/coming-from.md",
+            "dfe-infra",
+            "../../coming-from.md",
+        ),
+        (
+            "docs",
+            "../docs-site/content-root/quickstart/aws.md",
+            "dfe-infra",
+            "../quickstart/aws.md",
+        ),
+        (
+            "docs",
+            "../docs-site/content-root/coming-from.md",
+            "",
+            f"https://github.com/{REPO}/blob/2.2.0/docs-site/content-root/coming-from.md",
+        ),
+        (
+            "docs",
+            "../docs-site/README.md",
+            "dfe-infra",
+            f"https://github.com/{REPO}/blob/2.2.0/docs-site/README.md",
+        ),
+    ],
+)
+def test_a_link_to_the_sites_own_pages_stays_on_the_site(
+    doc_dir: str, target: str, mount: str, expected: str
+) -> None:
+    assert aggregate.relink(target, doc_dir=doc_dir, repo=REPO, ref="2.2.0", mount=mount) == (
+        expected,
+        False,
+    )
+
+
 def test_a_link_out_of_the_repository_is_left_and_flagged() -> None:
     assert aggregate.relink(
         "../../../other/x.md", doc_dir="docs/deployment", repo=REPO, ref="2.2.0"
@@ -1119,9 +1163,13 @@ def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
     )
     build_site = importlib.util.module_from_spec(build_spec)
     build_spec.loader.exec_module(build_site)
-    lines = build_site.redirects("2.2.1", dropped).splitlines()
+    lines = build_site.redirects("2.2.1", dropped, ["quickstart"]).splitlines()
     assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
-    assert lines[3:] == expected
+    assert lines[3:5] == [
+        "/quickstart /v/2.2.1/quickstart/ 302",
+        "/quickstart/* /v/2.2.1/quickstart/:splat 302",
+    ]
+    assert lines[5:] == expected
 
 
 # --- the docs gate -------------------------------------------------------------------
@@ -1145,7 +1193,8 @@ EM_DASH = "\u2014"
         ("Leverage the seam.\n", [(1, "register", "seam"), (1, "register", "leverage")]),
         ("Ships in 2.2.1-rc.7.\n", [(1, "process", "rc.N")]),
         ("It is expected to run.\n", [(1, "hedge", "is expected to")]),
-        ("Elasticsearch output\n", [(1, "elasticsearch", "Elasticsearch")]),
+        ("ElasticSearch output\n", [(1, "elasticsearch", "ElasticSearch")]),
+        ("Elasticsearch output\n", []),
         (f"A {EM_DASH} dash\n", [(1, "ascii", "U+2014 em dash")]),
         ("$$\n\\alpha; \u03b2\n$$\nInline $\\beta;$ fine\n", []),
         ("<!-- a; b\nstill; comment -->\nok\n", []),
@@ -1243,3 +1292,26 @@ def test_the_gate_reads_named_files_without_a_build(tmp_path: Path) -> None:
     write_tree(tmp_path, {"docs/aws.md": "# AWS\n\nGo; now.\n", "docs/x.txt": "a; b"})
     assert gate.main([str(tmp_path / "docs"), "--report-only"]) == 0
     assert gate.main([str(page)]) == 1
+
+
+def test_a_local_member_is_served_from_its_working_tree(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    members = [aggregate.Member("dfe-infra", "o/dfe-infra", "toolchain", 10)]
+    local = aggregate.parse_local([f"dfe-infra={tmp_path}"], members)
+    fetcher = aggregate.Fetcher(tmp_path / "work", local=local)
+    checkout = fetcher.fetch("o/dfe-infra", "2.2.1")
+    assert (checkout.path, checkout.commit) == (tmp_path.resolve(), "local")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("dfe-infra", id="no_path"),
+        pytest.param("not-a-member=.", id="unknown_member"),
+        pytest.param("dfe-infra={missing}", id="no_docs_dir"),
+    ],
+)
+def test_a_bad_local_value_is_refused(tmp_path: Path, value: str) -> None:
+    members = [aggregate.Member("dfe-infra", "o/dfe-infra", "toolchain", 10)]
+    with pytest.raises(SystemExit):
+        aggregate.parse_local([value.format(missing=tmp_path / "none")], members)

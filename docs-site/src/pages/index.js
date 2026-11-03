@@ -11,6 +11,7 @@
 import React from 'react';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
+import Inline from '@site/src/components/landing/Inline';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Quickstart from '@site/src/components/landing/Quickstart';
 import {
@@ -97,6 +98,11 @@ function Hero({hero, quickstart}) {
             {hero.title} <span className={styles.heroAccent}>{hero.accent}</span>
           </h1>
           <p className={styles.tagline}>{hero.tagline}</p>
+          {hero.lead && (
+            <p className={styles.heroLead}>
+              <Inline text={hero.lead} />
+            </p>
+          )}
           <Actions actions={hero.actions} />
           <ul className={styles.badges} aria-label="Facts">
             {hero.badges.map((badge) => (
@@ -117,11 +123,41 @@ function Hero({hero, quickstart}) {
 export default function Home() {
   const {siteConfig} = useDocusaurusContext();
   const {landing} = siteConfig.customFields;
-  const {whats_new: news, capabilities, deploy, closing} = landing;
+  const {differences, whats_new: news, capabilities, deploy, closing} = landing;
   return (
     <Layout description={landing.description}>
       <main>
         <Hero hero={landing.hero} quickstart={landing.quickstart} />
+        <section className={`${styles.section} ${styles.sectionRaised}`} aria-labelledby="differences">
+          <div className={styles.container}>
+            <SectionHeader
+              id="differences"
+              eyebrow={differences.eyebrow}
+              title={differences.title}
+              lead={differences.lead}
+              link={
+                <Link className={styles.textLink} to={differences.link.to}>
+                  {differences.link.label}
+                  <IconArrow />
+                </Link>
+              }
+            />
+            <ul className={styles.gridThree}>
+              {differences.cards.map((card) => (
+                <li key={card.title}>
+                  <Link className={`${styles.card} ${styles.linkCard}`} to={card.to}>
+                    <p className={styles.eyebrow}>{card.eyebrow}</p>
+                    <h3 className={styles.cardTitle}>{card.title}</h3>
+                    <p className={styles.cardText}>
+                      <Inline text={card.text} />
+                    </p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
         <section className={styles.section} aria-labelledby="whats-new">
           <div className={styles.container}>
             <SectionHeader
