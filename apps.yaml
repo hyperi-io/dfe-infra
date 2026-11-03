@@ -6,7 +6,7 @@
 # this file, so adding or changing an app is an edit HERE and never a code change
 # in the engine.
 #
-# The engine resolves it in this order: DFE_APP_CATALOGUE_FILE, then a copy
+# The engine resolves it in this order: DFE_ENGINE_APP_CATALOGUE_FILE, then a copy
 # mounted into the engine pod from this file, then the snapshot bundled in the
 # engine image. A deployment that mounts this file picks up a new app without
 # waiting for an engine release. Helm reads only files inside a chart, so the
@@ -464,7 +464,7 @@ apps:
     # On the Kubernetes tiers one instance per fetcher source, written by the
     # engine when the source is written, so no tier seeds one. docker-single
     # starts one fetcher idle, and the engine accepts a source there only where
-    # it renders app config (DFE_DEPLOYMENT_APP_CONFIG_DIR). The instance
+    # it renders app config (DFE_ENGINE_DEPLOYMENT_APP_CONFIG_DIR). The instance
     # ceiling is 0 without that and unbounded with it: dfe-engine
     # appmgmt/scaling.py, instance_ceiling.
     default_in: [docker-single]
@@ -606,28 +606,28 @@ apps:
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
-    # configOverrides carries the transport, and the flat DFE_TRANSFORM_* env
+    # configOverrides carries the transport, and the flat DFE_TRANSFORM_VRL_* env
     # outranks the config file.
     deployment_owned:
       config.source.transport: configOverrides.source.transport
       config.sink.transport: configOverrides.sink.transport
       config.source.listen: configOverrides.source.listen
-      config.source.brokers: DFE_TRANSFORM_SOURCE_BROKERS
-      config.sink.brokers: DFE_TRANSFORM_SINK_BROKERS
-      config.source.topics: DFE_TRANSFORM_SOURCE_TOPICS
-      config.sink.topic: DFE_TRANSFORM_SINK_TOPIC
-      config.source.group_id: DFE_TRANSFORM_SOURCE_GROUP_ID
-      config.source.sasl.username: DFE_TRANSFORM_SOURCE_SASL_USERNAME
-      config.source.sasl.password: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
-      config.sink.sasl.username: DFE_TRANSFORM_SINK_SASL_USERNAME
-      config.sink.sasl.password: DFE_TRANSFORM_SINK_SASL_PASSWORD
-      config.transforms.dir: DFE_TRANSFORM_TRANSFORMS_DIR
+      config.source.brokers: DFE_TRANSFORM_VRL_SOURCE_BROKERS
+      config.sink.brokers: DFE_TRANSFORM_VRL_SINK_BROKERS
+      config.source.topics: DFE_TRANSFORM_VRL_SOURCE_TOPICS
+      config.sink.topic: DFE_TRANSFORM_VRL_SINK_TOPIC
+      config.source.group_id: DFE_TRANSFORM_VRL_SOURCE_GROUP_ID
+      config.source.sasl.username: DFE_TRANSFORM_VRL_SOURCE_SASL_USERNAME
+      config.source.sasl.password: DFE_TRANSFORM_VRL_SOURCE_SASL_PASSWORD
+      config.sink.sasl.username: DFE_TRANSFORM_VRL_SINK_SASL_USERNAME
+      config.sink.sasl.password: DFE_TRANSFORM_VRL_SINK_SASL_PASSWORD
+      config.transforms.dir: DFE_TRANSFORM_VRL_TRANSFORMS_DIR
       # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
-      config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
-      config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      config.source.tls.enabled: DFE_TRANSFORM_VRL_KAFKA_SECURITY_PROTOCOL
+      config.sink.tls.enabled: DFE_TRANSFORM_VRL_KAFKA_SECURITY_PROTOCOL
       # And the Kafka Secret's mechanism, mounted into one name both endpoints read.
-      config.source.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
-      config.sink.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+      config.source.sasl.mechanism: DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM
+      config.sink.sasl.mechanism: DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM
     # Each of these renders empty, which the app reads as unset, until the
     # overlay value beside it is set.
     deployment_owned_when:
@@ -683,29 +683,29 @@ apps:
         suffixes: [".csv", ".json", ".yaml", ".mmdb"]
         language: data
         reload: roll
-    # configOverrides carries the transport, and the flat DFE_TRANSFORM_* env
+    # configOverrides carries the transport, and the flat DFE_TRANSFORM_VECTOR_* env
     # outranks the config file.
     deployment_owned:
       config.source.transport: configOverrides.source.transport
       config.sink.transport: configOverrides.sink.transport
       config.source.listen: configOverrides.source.listen
-      config.source.brokers: DFE_TRANSFORM_SOURCE_BROKERS
-      config.sink.brokers: DFE_TRANSFORM_SINK_BROKERS
-      config.source.topics: DFE_TRANSFORM_SOURCE_TOPICS
-      config.sink.topic: DFE_TRANSFORM_SINK_TOPIC
-      config.source.group_id: DFE_TRANSFORM_SOURCE_GROUP_ID
-      config.source.sasl.username: DFE_TRANSFORM_SOURCE_SASL_USERNAME
-      config.source.sasl.password: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
-      config.sink.sasl.username: DFE_TRANSFORM_SINK_SASL_USERNAME
-      config.sink.sasl.password: DFE_TRANSFORM_SINK_SASL_PASSWORD
-      config.transforms.dir: DFE_TRANSFORM_TRANSFORMS_DIR
-      config.vector.data_dir: DFE_TRANSFORM_VECTOR_DATA_DIR
+      config.source.brokers: DFE_TRANSFORM_VECTOR_SOURCE_BROKERS
+      config.sink.brokers: DFE_TRANSFORM_VECTOR_SINK_BROKERS
+      config.source.topics: DFE_TRANSFORM_VECTOR_SOURCE_TOPICS
+      config.sink.topic: DFE_TRANSFORM_VECTOR_SINK_TOPIC
+      config.source.group_id: DFE_TRANSFORM_VECTOR_SOURCE_GROUP_ID
+      config.source.sasl.username: DFE_TRANSFORM_VECTOR_SOURCE_SASL_USERNAME
+      config.source.sasl.password: DFE_TRANSFORM_VECTOR_SOURCE_SASL_PASSWORD
+      config.sink.sasl.username: DFE_TRANSFORM_VECTOR_SINK_SASL_USERNAME
+      config.sink.sasl.password: DFE_TRANSFORM_VECTOR_SINK_SASL_PASSWORD
+      config.transforms.dir: DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR
+      config.vector.data_dir: DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR
       # One env var sets both: a protocol naming SSL turns TLS on for both endpoints.
-      config.source.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
-      config.sink.tls.enabled: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+      config.source.tls.enabled: DFE_TRANSFORM_VECTOR_KAFKA_SECURITY_PROTOCOL
+      config.sink.tls.enabled: DFE_TRANSFORM_VECTOR_KAFKA_SECURITY_PROTOCOL
       # And the Kafka Secret's mechanism, mounted into one name both endpoints read.
-      config.source.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
-      config.sink.sasl.mechanism: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+      config.source.sasl.mechanism: DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM
+      config.sink.sasl.mechanism: DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM
     # Each of these renders empty, which the app reads as unset, until the
     # overlay value beside it is set.
     deployment_owned_when:

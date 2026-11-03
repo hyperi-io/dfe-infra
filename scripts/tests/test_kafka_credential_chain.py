@@ -942,13 +942,13 @@ def test_the_redpanda_user_takes_the_password_its_clients_are_given() -> None:
 # The env name each client reads its mechanism from, in librdkafka's spelling.
 MECHANISM_ENV = {
     "dfe-archiver": "DFE_ARCHIVER_KAFKA_SASL_MECHANISM",
-    "dfe-engine": "DFE_KAFKA_SASL_MECHANISM",
+    "dfe-engine": "DFE_ENGINE_KAFKA_SASL_MECHANISM",
     "dfe-fetcher": "DFE_FETCHER_KAFKA_SASL_MECHANISM",
     "dfe-loader": "DFE_LOADER_KAFKA_SASL_MECHANISM",
     "dfe-receiver": "DFE_RECEIVER_KAFKA_SASL_MECHANISM",
     "dfe-transform-elastic": "KAFKA_SASL_MECHANISM",
-    "dfe-transform-vector": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
-    "dfe-transform-vrl": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM",
 }
 
 BUS_CELLS = [(profile, cloud) for profile in ("single", "scale") for cloud in CLOUDS]

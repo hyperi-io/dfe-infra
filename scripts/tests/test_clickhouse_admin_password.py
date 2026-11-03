@@ -49,7 +49,7 @@ APP_NS = "dfe"
 # Each app's deploy.service, its workload, the env var carrying a ClickHouse
 # password, and whether that is the admin copy.
 CLIENTS = (
-    ("dfe-engine", "Deployment/dfe-engine", "DFE_CLICKHOUSE_PASSWORD", True),
+    ("dfe-engine", "Deployment/dfe-engine", "DFE_ENGINE_CLICKHOUSE_PASSWORD", True),
     ("dfe-loader", "Deployment/dfe-loader", "DFE_LOADER__CLICKHOUSE__PASSWORD", False),
     ("hyperdx", "Deployment/dfe-hyperdx", "CLICKHOUSE_PASSWORD", False),
 )

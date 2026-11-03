@@ -14,7 +14,7 @@
 apps.yaml names each file set an app consumes: where the engine keeps its files
 in an instance's values file (values_path) and where the chart mounts them
 (mount_path). The engine's files API lists the set from that values file in its
-own deploy-repo working tree, at DFE_GITOPS_LOCAL_PATH in its pod, which this
+own deploy-repo working tree, at DFE_ENGINE_GITOPS_LOCAL_PATH in its pod, which this
 reads the same file from. Each instance's pod is then asked what its mount
 holds, and the sha256 of each file in it. A chart that reads the set from
 another key mounts nothing while the engine still lists every file, which reads
@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     for app, instance, deployment in found:
         read = _kubectl(
             args.kubeconfig, "-n", args.namespace, "exec", args.engine, "--",
-            "sh", "-c", 'cat "$DFE_GITOPS_LOCAL_PATH/values/$1"', "sh", f"{app}-{instance}-values.yaml",
+            "sh", "-c", 'cat "$DFE_ENGINE_GITOPS_LOCAL_PATH/values/$1"', "sh", f"{app}-{instance}-values.yaml",
         )
         if read.returncode != 0:
             print(f"[UNREAD] the engine's values file for {app}/{instance}: {read.stderr.strip()}")

@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 # The slug is the URL segment: /setup/<slug>.
 WELCOME = "welcome"
 ORGANISATION = "configureOrganisation"
+# A console-only screen: the engine's setup contract does not report it.
+SOURCE = "configureSource"
 LOGIN = "configureLogin"
 FIRST_USER = "configureUser"
 RESET_BREAK_GLASS = "resetBreakGlassAccount"
@@ -41,6 +43,7 @@ COMPLETE = "complete"
 WIZARD_SLUGS: tuple[str, ...] = (
     WELCOME,
     ORGANISATION,
+    SOURCE,
     LOGIN,
     FIRST_USER,
     RESET_BREAK_GLASS,
@@ -147,8 +150,10 @@ def expected_slugs(steps: Iterable[str], pending: Iterable[str] | None = None) -
     # screen either way and only what it does there changes.
     if "organisations" in declared:
         slugs.append(ORGANISATION)
+    # The console puts its source screen ahead of any pending engine step after the
+    # organisation, and a setup that completes at the organisation never renders it.
     if "first_user" in still:
-        slugs += [LOGIN, FIRST_USER]
+        slugs += [SOURCE, LOGIN, FIRST_USER]
         if ADMIN_PASSWORD_STEP in declared and ADMIN_PASSWORD_STEP in still:
             slugs.append(RESET_BREAK_GLASS)
         slugs.append(COMPLETE)

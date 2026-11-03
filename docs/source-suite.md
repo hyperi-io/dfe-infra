@@ -93,6 +93,18 @@ Both stand containers on the stack's docker network (`--beats-network`), write t
 
 Compose only. The Kubernetes tier wants a Job instead, which is not built.
 
+## `syslog`
+
+The other cases reach the receiver over HTTP or lumberjack, so a drop in its syslog listeners never shows in them. This one sends the dfe-docker demo's cisco-asa and fortinet lines (the first 20 of each, vendored under `scripts/acceptance/source/fixtures/syslog/` from dfe-docker `9e06976b`) as bare RFC 3164 syslog, with the run id as the header's hostname.
+
+The case switches the syslog listeners on through the engine API (`receiver-syslog`) and puts them back at teardown, like the lumberjack listener. An unauthenticated listener is never a default (`scripts/tests/test_default_config_no_test_keys.py`). They bind the contract's 514 TCP and UDP, and the receiver overlay (`argocd/values/apps/dfe-receiver/values.yaml`) carries a pod sysctl so uid 1000 can bind 514. The case then creates a source per vendor named for the label the detector stamps (`cisco-asa`, `fortinet`), deployed and then set dormant, and a run-named agentless dfe-transform-elastic intake on `_source equals syslog` that detects the vendor per line. The intake's topics are fresh every run. A vendor source the deployment already holds is used as it is and never removed. Counts are the table's gain, so rows already there do not count.
+
+Each transport sends the whole corpus: TCP newline framed, TCP octet counted (RFC 6587) and UDP. On TCP a second connection sends a good line, one past `syslog.max_message_size` (64 KiB) and a good line. From receiver v1.15.64 the oversize message is discarded and counted, and the connection carries on, so the good line after it must land. Per transport (`syslog-tcp-lf`, `syslog-tcp-octet`, `syslog-udp`) each vendor table must gain exactly what was sent to it. The detail ends on the hop at fault: lines sent, lines the receiver accepted, rows the vendor tables got, rows in the intake, run-tagged rows that reached `main`. A receiver that accepted every line while the tables stayed short reads `Rows stopped at the loader`, which is the loader's consumer not picking up the run's fresh topics after an earlier source's topics were deleted. `syslog-counters` then holds `receiver_requests_total` to the good frames sent, `receiver_records_dropped_total{reason="oversize"}` to the oversize frames sent, any other drop reason to zero, and `receiver_parse_failures_total` to zero (label `transport="syslog"` covers all three listeners). It reads `unproven` without `--receiver-metrics-url`.
+
+`syslog-tls` reads `skipped` with `NOT COVERED`: the receiver chart has no TLS syslog listener, and no overlay sets `syslog.tls.enabled`.
+
+dfe-ops sends from inside the cluster, because `kubectl port-forward` carries TCP only: `--syslog-exec` is `kubectl exec -i` into the first archiver pod, and bash there opens `/dev/tcp` and `/dev/udp` to `--syslog-host` (default `dfe-receiver`). It forwards the receiver's metrics port to `--receiver-metrics-port`. With no `--syslog-exec` the runner connects from its own machine.
+
 ## `cloudwatch`, run as `--aws-service cloudtrail`
 
 The meta schema is authored by hand in the console, the fetcher stanza goes

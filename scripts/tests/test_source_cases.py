@@ -27,9 +27,11 @@ import io
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import types
 from dataclasses import dataclass
@@ -37,11 +39,12 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+import yaml
 
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
-from acceptance.source import cases, fetcher, steps  # noqa: E402
+from acceptance.source import cases, fetcher, steps, syslog  # noqa: E402
 from acceptance.source.run import build_parser, teardown, walk  # noqa: E402
 
 PROGRAM = "# a filebeat program\n" * 8
@@ -2572,6 +2575,500 @@ class TestWhatTheRunTidiesUp:
         case = cases.build(parse())
 
         assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), parse(), case.name, Path("/"))) == []
+
+
+# --- the syslog case ----------------------------------------------------------
+
+STAMP = "Nov  3 12:00:00"
+RUN_TAG = "src-abc123def456"
+
+
+class Collector:
+    """A local syslog listener: TCP bytes by connection, UDP datagrams, and a frame limit.
+
+    With ``close_over`` set it closes a connection on a line longer than that, which is what
+    receivers before v1.15.64 did with an oversize frame. Without it, the connection carries
+    on, as v1.15.64 does.
+    """
+
+    def __init__(self, close_over: int = 0) -> None:
+        self.close_over = close_over
+        self.streams: list[bytes] = []
+        self.datagrams: list[bytes] = []
+        self._tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._tcp.bind(("127.0.0.1", 0))
+        self._tcp.listen()
+        self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._udp.bind(("127.0.0.1", 0))
+        self._udp.settimeout(0.2)
+        self.tcp_port = self._tcp.getsockname()[1]
+        self.udp_port = self._udp.getsockname()[1]
+        self._stop = threading.Event()
+        self._threads = [
+            threading.Thread(target=self._accept, daemon=True),
+            threading.Thread(target=self._receive, daemon=True),
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    def _accept(self) -> None:
+        self._tcp.settimeout(0.2)
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._tcp.accept()
+            except OSError:
+                continue
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+
+    def _serve(self, conn: socket.socket) -> None:
+        held = b""
+        with conn:
+            while True:
+                try:
+                    chunk = conn.recv(65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                held += chunk
+                if self.close_over and max(map(len, held.split(b"\n"))) > self.close_over:
+                    break
+        self.streams.append(held)
+
+    def _receive(self) -> None:
+        while not self._stop.is_set():
+            try:
+                data, _ = self._udp.recvfrom(70000)
+            except OSError:
+                continue
+            self.datagrams.append(data)
+
+    def settle(self, want_streams: int = 0, want_datagrams: int = 0) -> None:
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            if len(self.streams) >= want_streams and len(self.datagrams) >= want_datagrams:
+                return
+            time.sleep(0.02)
+
+    def close(self) -> None:
+        self._stop.set()
+        for thread in self._threads:
+            thread.join(timeout=2)
+        self._tcp.close()
+        self._udp.close()
+
+
+@pytest.fixture
+def collector():
+    held = Collector(close_over=syslog.MAX_MESSAGE)
+    yield held
+    held.close()
+
+
+@pytest.fixture
+def lenient_collector():
+    held = Collector()
+    yield held
+    held.close()
+
+
+LINE = "%ASA-6-302013: Built inbound TCP connection 1 for outside:198.51.100.99/1 to dmz:192.168.70.22/110"
+
+
+class TestTheSyslogFraming:
+    @pytest.mark.parametrize(
+        ("transport", "framed"),
+        [
+            ("tcp-lf", lambda body: body + b"\n"),
+            ("tcp-octet", lambda body: b"%d " % len(body) + body),
+            ("udp", lambda body: body),
+        ],
+    )
+    def test_each_transport_frames_the_message_the_way_rfc_6587_and_a_datagram_do(self, transport, framed):
+        chosen = next(t for t in syslog.TRANSPORTS if t.slug == transport)
+        body = syslog.message(LINE, RUN_TAG, STAMP)
+
+        assert syslog.frame(chosen, body) == framed(body)
+
+    def test_a_message_carries_the_run_as_its_hostname_and_the_vendor_line_unchanged(self):
+        body = syslog.message(LINE, RUN_TAG, STAMP).decode()
+
+        assert body == f"<134>{STAMP} {RUN_TAG} replay: {LINE}"
+
+    def test_the_oversize_message_is_past_the_receivers_limit_and_the_good_one_is_not(self):
+        assert len(syslog.oversize(RUN_TAG, STAMP)) > syslog.MAX_MESSAGE
+        assert len(syslog.message(LINE, RUN_TAG, STAMP)) < syslog.MAX_MESSAGE
+
+    @pytest.mark.parametrize("vendor", syslog.VENDORS)
+    def test_the_vendored_corpus_is_the_demos_first_lines_for_each_vendor(self, vendor):
+        lines = syslog.corpus(vendor, 20)
+
+        assert len(lines) == 20
+        assert all(line and not line.startswith("<") for line in lines)
+
+    def test_the_vendored_corpus_names_the_commit_it_was_taken_at(self):
+        assert "9e06976b" in (syslog.FIXTURES / "SOURCE.txt").read_text(encoding="utf-8")
+
+    def test_the_cases_vendors_are_the_ones_the_demo_defines(self):
+        assert set(syslog.VENDOR_SOURCES) == set(syslog.VENDORS)
+        for vendor in syslog.VENDORS:
+            body = syslog.vendor_body(vendor, "sy00000000")
+            assert body["match"] == {"field": "_source", "operator": "equals", "value": vendor}
+        assert syslog.intake_body("sy00000000")["match"]["value"] == "syslog"
+
+
+class TestTheReceiverCounters:
+    EXPOSITION = "\n".join([
+        "# TYPE receiver_requests_total counter",
+        'receiver_requests_total{transport="syslog"} 44',
+        'receiver_requests_total{transport="http"} 7',
+        'dfe_receiver_records_dropped_total{transport="syslog",reason="unavailable"} 2',
+        'dfe_receiver_records_dropped_total{transport="syslog",reason="rejected"} 1',
+        'dfe_receiver_records_dropped_total{transport="flow",reason="rejected"} 9',
+    ])
+
+    @pytest.mark.parametrize(
+        ("name", "labels", "want"),
+        [
+            (syslog.METRIC_ACCEPTED, {"transport": "syslog"}, 44),
+            (syslog.METRIC_ACCEPTED, {}, 51),
+            (syslog.METRIC_DROPPED, {"transport": "syslog"}, 3),
+            (syslog.METRIC_DROPPED, {"transport": "syslog", "reason": "rejected"}, 1),
+            (syslog.METRIC_PARSE_FAILED, {"transport": "syslog"}, 0),
+        ],
+    )
+    def test_a_counter_sums_the_series_that_carry_its_labels_with_or_without_a_namespace(
+        self, name, labels, want
+    ):
+        assert syslog.counter(self.EXPOSITION, name, **labels) == want
+
+    def test_an_unreachable_metrics_endpoint_is_an_error_not_a_zero(self):
+        with pytest.raises(RuntimeError, match="did not answer"):
+            syslog.read_counters("http://127.0.0.1:1/metrics")
+
+
+class TestTheSyslogSenders:
+    def _frames(self, transport: str) -> list[bytes]:
+        chosen = next(t for t in syslog.TRANSPORTS if t.slug == transport)
+        return [syslog.frame(chosen, syslog.message(f"{LINE} {n}", RUN_TAG, STAMP)) for n in range(3)]
+
+    @pytest.mark.parametrize("prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"])
+    @pytest.mark.parametrize("transport", ["tcp-lf", "tcp-octet"])
+    def test_tcp_frames_arrive_whole_and_in_order(self, collector, prefix, transport):
+        frames = self._frames(transport)
+
+        note = syslog.send_tcp("127.0.0.1", collector.tcp_port, frames, prefix)
+        collector.settle(want_streams=1)
+
+        assert note == ""
+        assert collector.streams == [b"".join(frames)]
+
+    @pytest.mark.parametrize("prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"])
+    def test_each_datagram_is_its_own_packet(self, collector, prefix):
+        frames = self._frames("udp")
+
+        syslog.send_udp("127.0.0.1", collector.udp_port, frames, prefix)
+        collector.settle(want_datagrams=3)
+
+        assert sorted(collector.datagrams) == sorted(frames)
+
+    def test_a_receiver_that_keeps_the_connection_open_past_an_oversize_frame_takes_the_next_one(
+        self, lenient_collector
+    ):
+        lf = syslog.TRANSPORTS[0]
+        good = syslog.frame(lf, syslog.message(LINE, RUN_TAG, STAMP))
+        big = syslog.frame(lf, syslog.oversize(RUN_TAG, STAMP))
+
+        note = syslog.send_tcp("127.0.0.1", lenient_collector.tcp_port, [good, big, good], watch=1)
+        lenient_collector.settle(want_streams=1)
+
+        assert note == ""
+        assert lenient_collector.streams[0].count(good) == 2
+
+    def test_a_receiver_that_closes_on_the_oversize_frame_is_named_and_the_next_frame_is_lost(self, collector):
+        lf = syslog.TRANSPORTS[0]
+        good = syslog.frame(lf, syslog.message(LINE, RUN_TAG, STAMP))
+        big = syslog.frame(lf, syslog.oversize(RUN_TAG, STAMP))
+
+        note = syslog.send_tcp("127.0.0.1", collector.tcp_port, [good, big, good], watch=1)
+        collector.settle(want_streams=1)
+
+        assert "closed the connection after frame 2" in note
+        assert collector.streams[0].count(good) == 1
+
+    def test_an_exec_prefix_that_cannot_reach_the_receiver_says_why(self):
+        note = syslog.send_tcp("127.0.0.1", 1, [b"x\n"], ("env",))
+
+        assert note.startswith("the sender exited")
+
+
+class TestTheSyslogVerdicts:
+    BEFORE: ClassVar[dict[str, int]] = {
+        "accepted": 100, "dropped": 0, "oversize": 0, "parse_failed": 0,
+    }
+
+    @pytest.mark.parametrize(
+        ("after", "status", "named"),
+        [
+            ({"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 0}, "done", ""),
+            # A receiver that closes on the oversize frame counts nothing.
+            ({"accepted": 242, "dropped": 0, "oversize": 0, "parse_failed": 0}, "failed",
+             "reason=oversize} rose 0, 2 oversize"),
+            # A drop under another reason, such as the kernel's UDP buffer.
+            ({"accepted": 244, "dropped": 5, "oversize": 2, "parse_failed": 0}, "failed",
+             "rose 5 in all, 2 expected"),
+            # A line the listener took and could not parse.
+            ({"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 1}, "failed",
+             "parse_failures_total rose 1"),
+            # A UDP burst that did not all arrive.
+            ({"accepted": 230, "dropped": 2, "oversize": 2, "parse_failed": 0}, "failed",
+             "rose 130, 144 good"),
+        ],
+    )
+    def test_the_receivers_counters_must_agree_with_what_was_sent(self, after, status, named):
+        got, detail = syslog.counters_outcome(144, 2, self.BEFORE, after)
+
+        assert got == status
+        assert named in detail
+
+    @pytest.mark.parametrize(
+        ("landed", "status"),
+        [
+            ({"cisco-asa": 22, "fortinet": 20}, "done"),
+            ({"cisco-asa": 21, "fortinet": 20}, "failed"),
+            ({"cisco-asa": 22, "fortinet": 21}, "failed"),
+            ({"cisco-asa": 0, "fortinet": 0}, "failed"),
+        ],
+    )
+    def test_a_table_must_hold_exactly_what_was_sent_to_it(self, landed, status):
+        hops = syslog.hop_report(42, 40, sum(landed.values()), 0, 0)
+
+        got, detail = syslog.phase_outcome({"cisco-asa": 22, "fortinet": 20}, landed, hops, "")
+
+        assert got == status
+        assert f"cisco-asa {landed['cisco-asa']} of 22" in detail
+
+    def test_a_sender_note_fails_a_row_whose_tables_are_whole(self):
+        got, _ = syslog.phase_outcome({"cisco-asa": 1}, {"cisco-asa": 1}, "", "the receiver closed it")
+
+        assert got == "failed"
+
+    def test_a_short_count_names_the_hop_that_has_the_lines(self):
+        hops = syslog.hop_report(42, 42, 30, 0, 3)
+
+        assert "receiver accepted 42, vendor tables got 30" in hops
+        assert "3 run-tagged row(s) reached dfe.main unrouted" in hops
+        assert "Rows stopped at the loader: 42 accepted, 30 in the vendor tables" in hops
+        assert "may not have subscribed the new topic" in hops
+        assert "Lost before the receiver counted it" in syslog.hop_report(42, 30, 30, 0, 0)
+        assert "Lost" not in syslog.hop_report(42, 42, 42, 0, 0)
+        assert "receiver accepted unread" in syslog.hop_report(42, None, 0, 0, 0)
+
+
+class TestTheSyslogOverlay:
+    """The receiver overlay leaves syslog off, and the case opens it at the contract's ports."""
+
+    def test_the_case_not_the_overlay_switches_syslog_on_at_the_ports_the_contract_opens(self):
+        values = yaml.safe_load(
+            (SCRIPTS.parent / "argocd/values/apps/dfe-receiver/values.yaml").read_text(encoding="utf-8")
+        )
+        contract = json.loads(
+            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(encoding="utf-8")
+        )
+        opened = {(p["protocol"], p["port"]) for p in contract["extra_ports"] if p["name"] in ("syslog", "syslog-udp")}
+        args = parse("--case", "syslog")
+
+        assert "syslog" not in (values.get("config") or {})
+        assert syslog.SYSLOG_SWITCHES == {
+            "config.syslog.enabled": True,
+            "config.syslog.accept_unauthenticated": True,
+        }
+        assert opened == {("TCP", args.syslog_port), ("UDP", args.syslog_udp_port)}
+        sysctls = values["podSecurityContext"]["sysctls"]
+        assert {"name": "net.ipv4.ip_unprivileged_port_start", "value": "0"} in sysctls
+
+
+class SyslogStore(FakeStore):
+    """Vendor tables that fill as the fake receiver delivers lines to them."""
+
+    def __init__(self, tables: dict[str, str]) -> None:
+        self.rows = dict.fromkeys(tables.values(), 0)
+        self.by_vendor = tables
+
+    def scalar(self, sql):
+        found = re.search(r"FROM `?([\w-]+)`?", sql)
+        return self.rows.get(found.group(1), 0) if found else 0
+
+
+class NoVendorSources(ReceiverEngine):
+    """A deployment with no cisco-asa or fortinet source yet."""
+
+    def call(self, method, path, body=None):
+        if method == "GET" and path in ("/sources/cisco-asa", "/sources/fortinet"):
+            return reply(404, {"message": "no such source"})
+        return super().call(method, path, body)
+
+
+class TestTheSyslogCase:
+    @pytest.fixture
+    def feeding(self, monkeypatch):
+        """Run the case's feed against a receiver that discards the oversize message, or closes on it."""
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+        def go(closes_on_oversize: bool, *argv: str):
+            args = parse("--case", "syslog", *argv)
+            case = cases.build(args)
+            case.LAND_DEADLINE = case.MISS_DEADLINE = 0.0
+            store = SyslogStore(case.tables)
+            driver = FakeDriver(FakePage())
+            run = a_run(driver, FakeEngine(), args, case.name, Path("/"))
+            run.store = store
+
+            def deliver(frames):
+                for piece in frames:
+                    if len(piece) > syslog.MAX_MESSAGE and closes_on_oversize:
+                        return "the receiver closed the connection after frame 2."
+                    if len(piece) > syslog.MAX_MESSAGE:
+                        continue
+                    vendor = "cisco-asa" if b"%ASA" in piece else "fortinet"
+                    store.rows[case.tables[vendor]] += 1
+                return ""
+
+            monkeypatch.setattr(syslog, "send_tcp", lambda host, port, frames, prefix=(), watch=-1: deliver(frames))
+            monkeypatch.setattr(syslog, "send_udp", lambda host, port, frames, prefix=(): deliver(frames))
+            case.feed(run)
+            return case, driver
+
+        return go
+
+    def test_the_default_ports_are_the_ones_the_receiver_contract_opens_for_syslog(self):
+        contract = json.loads(
+            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(encoding="utf-8")
+        )
+        ports = {(e["protocol"], e["port"]) for e in contract["extra_ports"] if e["name"].startswith("syslog")}
+        args = parse("--case", "syslog")
+
+        assert ("TCP", args.syslog_port) in ports
+        assert ("UDP", args.syslog_udp_port) in ports
+
+    def test_it_is_registered_with_no_archive_and_no_observe_step_of_its_own(self):
+        case = cases.build(parse("--case", "syslog"))
+
+        assert isinstance(case, cases.SyslogCase)
+        assert (case.service, case.observes, case.archives) == ("dfe-transform-elastic", False, False)
+        assert case.console is False
+        assert cases.FilebeatCase.console is True
+        assert steps.RUN_NAME.fullmatch(case.name)
+        assert case.tables == {"cisco-asa": "cisco-asa", "fortinet": "fortinet"}
+
+    def test_a_receiver_that_keeps_every_line_passes_every_transport_with_tls_not_covered(self, feeding):
+        _, driver = feeding(False)
+
+        for slug in ("syslog-tcp-lf", "syslog-tcp-octet", "syslog-udp"):
+            assert driver.status(slug) == "done", driver.detail(slug)
+        assert driver.status("syslog-tls") == "skipped"
+        assert "NOT COVERED" in driver.detail("syslog-tls")
+
+    def test_a_receiver_that_closes_on_the_oversize_frame_fails_the_tcp_rows_and_says_so(self, feeding):
+        _, driver = feeding(True)
+
+        # The good line after the oversize frame never arrives, so each TCP table is one short.
+        assert driver.status("syslog-tcp-lf") == "failed"
+        assert "cisco-asa 21 of 22" in driver.detail("syslog-tcp-lf")
+        assert "closed the connection" in driver.detail("syslog-tcp-lf")
+        assert driver.status("syslog-udp") == "done"
+
+    def test_the_counters_are_unproven_without_a_metrics_url_rather_than_passed(self, feeding):
+        case, driver = feeding(False)
+        run = a_run(driver, FakeEngine(), parse("--case", "syslog"), case.name, Path("/"))
+        run.store = SyslogStore(case.tables)
+
+        case.prove(run)
+
+        assert driver.status("syslog-counters") == "unproven"
+
+    def test_it_sends_nothing_and_says_so_when_the_run_has_no_datastore(self):
+        args = parse("--case", "syslog")
+        case = cases.build(args)
+        driver = FakeDriver(FakePage())
+        run = a_run(driver, FakeEngine(), args, case.name, Path("/"))
+        run.store = types.SimpleNamespace(host="")
+
+        case.feed(run)
+
+        assert driver.status("feed") == "unproven"
+
+    @pytest.mark.parametrize(("resets", "outcome"), [(1, 7), (3, 7), (4, "raises")])
+    def test_a_count_survives_a_reset_connection_up_to_its_retries(self, monkeypatch, resets, outcome):
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+        class Resetting(FakeStore):
+            def __init__(self) -> None:
+                self.left = resets
+
+            def scalar(self, _sql):
+                if self.left:
+                    self.left -= 1
+                    raise ConnectionResetError("reset by peer")
+                return 7
+
+        run = types.SimpleNamespace(store=Resetting())
+        if outcome == "raises":
+            with pytest.raises(ConnectionResetError):
+                cases.SyslogCase._scalar(run, "SELECT 1")
+        else:
+            assert cases.SyslogCase._scalar(run, "SELECT 1") == outcome
+
+    def test_cleanup_removes_only_the_tables_the_engine_accepted(self):
+        args = parse("--case", "syslog")
+        case = cases.build(args)
+        run = a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, Path("/"))
+
+        assert case.cleanup(run) == []
+
+    def test_it_creates_the_vendor_tables_dormant_and_then_the_intake(self):
+        args = parse("--case", "syslog")
+        case = cases.build(args)
+        engine = NoVendorSources()
+        run = a_run(FakeDriver(FakePage()), engine, args, case.name, Path("/"))
+
+        hints = case.create(run)
+
+        posted = [path for method, path in engine.calls if method == "POST" and path == "/sources"]
+        assert len(posted) == 3
+        assert ("PATCH", "/sources/cisco-asa") in engine.calls
+        assert engine.changes == [dict(syslog.SYSLOG_SWITCHES)]
+        assert set(case._made) == {"cisco-asa", "fortinet"}
+        # A dormant vendor source runs no transform, so its deploy names nothing to restart.
+        assert hints == [FakeEngine.RECEIVER_HINT]
+
+    def test_a_vendor_source_the_deployment_already_holds_is_used_and_never_removed(self):
+        args = parse("--case", "syslog")
+        case = cases.build(args)
+        engine = ReceiverEngine()
+        run = a_run(FakeDriver(FakePage()), engine, args, case.name, Path("/"))
+
+        case.create(run)
+
+        posted = [path for method, path in engine.calls if method == "POST" and path == "/sources"]
+        assert len(posted) == 1
+        assert case._made == {}
+
+
+@pytest.mark.requires_tool("clickhouse")
+class TestTheStrayQueryAgainstClickHouse:
+    def test_a_probe_is_never_counted_and_a_run_tagged_corpus_line_in_main_is(self):
+        args = parse("--case", "syslog")
+        case = cases.build(args)
+        run = a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, Path("/"))
+        run.run_id = RUN_TAG
+        run.store = LocalClickHouse("main", [
+            {"hostname": f"{RUN_TAG}-probe"},
+            {"hostname": f"{RUN_TAG}-udp"},
+            {"hostname": "src-other-udp"},
+        ])
+
+        assert case._strayed(run) == 1
 
 
 # --- standalone runner (mirrors the other tests in this dir) ------------------

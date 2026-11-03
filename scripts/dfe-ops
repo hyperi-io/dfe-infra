@@ -2260,6 +2260,9 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
     # The edge suite writes the ingest allow list through the deploy repo's own API.
     if EDGE_SUITE in steps:
         forwards.append(("git", args.git_namespace, args.git_target, args.git_port, 3000))
+    syslog_case = SOURCE_SUITE in steps and args.source_case == "syslog"
+    if syslog_case:
+        forwards.append(("receiver-metrics", namespace, args.receiver_target, args.receiver_metrics_port, 9090))
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
     # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
@@ -2329,6 +2332,8 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
         "DFE_E2E_CH_DB": args.ch_database,
         "DFE_E2E_TRANSPORT": transport,
     })
+    if syslog_case:
+        env["DFE_E2E_RECEIVER_METRICS_URL"] = f"http://localhost:{args.receiver_metrics_port}/metrics"
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
         # Both suites authenticate as the deploy's own minted admin: the flow
@@ -2430,8 +2435,14 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
             # The whole way in, not its parts: the docker lane passes its own.
             # One per replica, because the consumer group splits the topic's
             # partitions and each replica archives only what it was assigned.
-            for pod in _pods_of(kube, namespace, args.archive_selector):
+            archiver_pods = _pods_of(kube, namespace, args.archive_selector)
+            for pod in archiver_pods:
                 runner += ["--archive-exec", shlex.join([*kube, "-n", namespace, "exec", pod, "--"])]
+            # A port-forward carries TCP only, so the syslog case sends from inside the
+            # cluster: bash in an app pod opens /dev/tcp and /dev/udp to the receiver's Service.
+            if syslog_case and archiver_pods:
+                pod = archiver_pods[0]
+                runner += ["--syslog-exec", shlex.join([*kube, "-n", namespace, "exec", "-i", pod, "--"])]
             if args.insecure:
                 runner.append("--insecure")
             if args.keep:
@@ -2516,16 +2527,16 @@ def engine_secret_names(
     def ref(name: str) -> dict:
         return ((env.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
 
-    admin_ref = ref("DFE_AUTH_LOCAL_ADMIN_PASSWORD")
+    admin_ref = ref("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD")
     admin = (
-        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
+        (env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
         or admin_ref.get("name")
         or _ENGINE_ADMIN[0],
-        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
+        (env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
         or admin_ref.get("key")
         or _ENGINE_ADMIN[1],
     )
-    breakglass_ref = ref("DFE_AUTH_BREAKGLASS_PASSWORD")
+    breakglass_ref = ref("DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD")
     breakglass = (
         breakglass_ref.get("name") or _ENGINE_BREAKGLASS[0],
         breakglass_ref.get("key") or _ENGINE_BREAKGLASS[1],
@@ -4479,8 +4490,8 @@ def _offline_preflight(args: argparse.Namespace) -> int:
             for what, marker in (
                 ("the manifest", composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ") + "\n"),
                 (
-                    "DFE_APP_CATALOGUE_FILE",
-                    "  DFE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n",
+                    "DFE_ENGINE_APP_CATALOGUE_FILE",
+                    "  DFE_ENGINE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n",
                 ),
             )
             if marker not in out
@@ -4652,7 +4663,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
     print(
         "  E2E posture: "
-        + ("ON (engine DFE_ENV=test, /api/e2e seed routes mounted)" if args.e2e else "off"),
+        + ("ON (engine DFE_ENGINE_ENV=test, /api/e2e seed routes mounted)" if args.e2e else "off"),
         file=sys.stderr,
     )
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
@@ -5097,7 +5108,7 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
     sd.add_argument("--e2e", action="store_true",
-                    help="the e2e posture the dfe-ui suite needs: the engine runs as DFE_ENV=test with "
+                    help="the e2e posture the dfe-ui suite needs: the engine runs as DFE_ENGINE_ENV=test with "
                          "unauthenticated seed routes that wipe every account. Refused outside a dev "
                          "posture; for a throwaway deployment under test only")
     sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
@@ -5323,6 +5334,9 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--git-namespace", default="forgejo", help="namespace the bundled deploy repo runs in")
     ac.add_argument("--git-port", type=int, default=13000,
                     help="local port for the deploy repo, the one deploy-values defaults to")
+    ac.add_argument("--receiver-metrics-port", type=int, default=19091,
+                    help="local port for the receiver's metrics, which the syslog case reads its "
+                         "accepted and dropped counters from")
     ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
                     help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
@@ -5365,8 +5379,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the source suite leaves the source it made deployed, and the edge suite the "
                          "ingest allow list it wrote, for a look")
     ac.add_argument("--source-case", default="filebeat",
-                    choices=("filebeat", "cloudwatch", "elastic", "vector"),
-                    help="which source the source suite creates: filebeat pushed at the receiver "
+                    choices=("filebeat", "cloudwatch", "elastic", "vector", "syslog"),
+                    help="which source the source suite creates: syslog sent raw to the receiver's "
+                         "syslog listeners over TCP and UDP, filebeat pushed at the receiver "
                          "through the bundled VRL, vector pushed through the same program run by a "
                          "supervised Vector, elastic pushed at a compiled-in transform, or an "
                          "AWS upstream a fetcher polls")

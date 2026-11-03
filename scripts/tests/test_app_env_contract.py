@@ -145,7 +145,7 @@ OVERLAY_TLS_VALUES = {
 DIAL_CELL = ("single", "local")
 MANAGED_CELL = ("scale", "aws")
 
-# The two transforms read their TLS switch from DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+# The two transforms read their TLS switch from DFE_TRANSFORM_{VRL,VECTOR}_KAFKA_SECURITY_PROTOCOL
 # one way only -- an SSL value turns source and sink TLS on, any other leaves the
 # file's setting -- so a plaintext value reaching them is safe.
 ONE_WAY_TLS = ("dfe-transform-vector", "dfe-transform-vrl")
@@ -168,7 +168,7 @@ def _version_check(app: str, prefix: str, where: str) -> tuple[tuple[str, str, s
 VERSION_CHECK = (
     *_version_check("dfe-archiver", "DFE_ARCHIVER_", "crates/archiver/src/config/loader.rs:41"),
     *_version_check("dfe-loader", "DFE_LOADER_", "src/main.rs:79"),
-    *_version_check("dfe-transform-vrl", "DFE_TRANSFORM_", "src/cli.rs:93"),
+    *_version_check("dfe-transform-vrl", "DFE_TRANSFORM_VRL_", "src/cli.rs:93"),
     *_version_check("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_", "src/config/loader.rs:151"),
 )
 
@@ -256,39 +256,38 @@ APP_ROWS = (
     # The source's broker list, applied after the file at src/config/loader.rs:182.
     ("dfe-transform-elastic", BUS, "DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS",
      "src/config/loader.rs:258"),
-    # DFE_TRANSFORM_* -- the shared transform prefix, not a per-app one -- applied
-    # after the file at src/config/loader.rs:864.
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SOURCE_BROKERS", "src/config/loader.rs:697"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SINK_BROKERS", "src/config/loader.rs:723"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SOURCE_GROUP_ID", "src/config/loader.rs:703"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SOURCE_SASL_USERNAME",
+    # DFE_TRANSFORM_VECTOR_*, applied after the file at src/config/loader.rs:864.
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SOURCE_BROKERS", "src/config/loader.rs:697"),
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SINK_BROKERS", "src/config/loader.rs:723"),
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SOURCE_GROUP_ID", "src/config/loader.rs:703"),
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SOURCE_SASL_USERNAME",
      "src/config/loader.rs:706"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SOURCE_SASL_PASSWORD",
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SOURCE_SASL_PASSWORD",
      "src/config/loader.rs:709"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SINK_SASL_USERNAME", "src/config/loader.rs:738"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_SINK_SASL_PASSWORD", "src/config/loader.rs:741"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL",
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SINK_SASL_USERNAME", "src/config/loader.rs:738"),
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_SINK_SASL_PASSWORD", "src/config/loader.rs:741"),
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_KAFKA_SECURITY_PROTOCOL",
      "src/config/loader.rs:715"),
-    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+    ("dfe-transform-vector", BUS, "DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM",
      "src/config/loader.rs:761"),
-    ("dfe-transform-vector", ALWAYS, "DFE_TRANSFORM_VECTOR_DATA_DIR", "src/config/loader.rs:768"),
-    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_SOURCE_TOPICS", "src/config/loader.rs:700"),
-    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_SINK_TOPIC", "src/config/loader.rs:726"),
-    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_TRANSFORMS_DIR", "src/config/loader.rs:760"),
+    ("dfe-transform-vector", ALWAYS, "DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR", "src/config/loader.rs:768"),
+    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_VECTOR_SOURCE_TOPICS", "src/config/loader.rs:700"),
+    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_VECTOR_SINK_TOPIC", "src/config/loader.rs:726"),
+    ("dfe-transform-vector", DIALLED, "DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR", "src/config/loader.rs:760"),
     # The same prefix, applied after the file at src/config/loader.rs:703.
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SOURCE_BROKERS", "src/config/loader.rs:563"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SINK_BROKERS", "src/config/loader.rs:585"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SOURCE_GROUP_ID", "src/config/loader.rs:569"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SOURCE_SASL_USERNAME", "src/config/loader.rs:572"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SOURCE_SASL_PASSWORD", "src/config/loader.rs:575"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SINK_SASL_USERNAME", "src/config/loader.rs:597"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_SINK_SASL_PASSWORD", "src/config/loader.rs:600"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL",
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SOURCE_BROKERS", "src/config/loader.rs:563"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SINK_BROKERS", "src/config/loader.rs:585"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SOURCE_GROUP_ID", "src/config/loader.rs:569"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SOURCE_SASL_USERNAME", "src/config/loader.rs:572"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SOURCE_SASL_PASSWORD", "src/config/loader.rs:575"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SINK_SASL_USERNAME", "src/config/loader.rs:597"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_SINK_SASL_PASSWORD", "src/config/loader.rs:600"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_KAFKA_SECURITY_PROTOCOL",
      "src/config/loader.rs:576"),
-    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_KAFKA_SASL_MECHANISM", "src/config/loader.rs:609"),
-    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_SOURCE_TOPICS", "src/config/loader.rs:566"),
-    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_SINK_TOPIC", "src/config/loader.rs:588"),
-    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_TRANSFORMS_DIR", "src/config/loader.rs:604"),
+    ("dfe-transform-vrl", BUS, "DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM", "src/config/loader.rs:609"),
+    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_VRL_SOURCE_TOPICS", "src/config/loader.rs:566"),
+    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_VRL_SINK_TOPIC", "src/config/loader.rs:588"),
+    ("dfe-transform-vrl", DIALLED, "DFE_TRANSFORM_VRL_TRANSFORMS_DIR", "src/config/loader.rs:604"),
 )
 
 CONTRACT = (*APP_ROWS, *VERSION_CHECK, *SCALO_OTEL)
@@ -300,7 +299,7 @@ PROTOCOL_ENV = {
 
 # dfe-engine carries no data, but on the bus it dials the same broker to create
 # each source's topics (dfe-engine src/dfe_engine/settings.py:1945).
-ENGINE_PROTOCOL = {"dfe-engine": "DFE_KAFKA_SECURITY_PROTOCOL"}
+ENGINE_PROTOCOL = {"dfe-engine": "DFE_ENGINE_KAFKA_SECURITY_PROTOCOL"}
 
 # Names a deployment rendered once and no app reads. A regression here is invisible
 # in a cluster, so it is asserted rather than left to review. dfe-transform-elastic

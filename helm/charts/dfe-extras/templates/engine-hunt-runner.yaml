@@ -84,9 +84,9 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-hunt-runner") }}
-      # The runner loads the engine's settings module, and svc/dfe-keda-shim makes the
-      # kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080", which settings.py:1292 reads
-      # as an int and exits on ("invalid literal for int() with base 10").
+      # The runner loads the engine's settings module, which reads DFE_ENGINE_KEDA_SHIM_PORT
+      # as an int. Service links add a "tcp://IP:PORT" value per Service, and svc/dfe-engine's
+      # land under that same DFE_ENGINE_ prefix.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- if $alerts }}
@@ -141,7 +141,7 @@ spec:
             # The engine mints its key into its own store, which this pod
             # cannot read; without the shared Secret it falls back to the dev
             # placeholder and DFESettings rejects that under env=production.
-            - name: DFE_API_JWT_SECRET
+            - name: DFE_ENGINE_API_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
@@ -154,26 +154,26 @@ spec:
             {{- if $gitSync }}
             # Through git-sync's link, which is swapped atomically, so a reload
             # never reads a half-written worktree.
-            - name: DFE_HUNTS_DIR
+            - name: DFE_ENGINE_HUNTS_DIR
               value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.huntsPath | quote }}
-            - name: DFE_HUNTS_RULES_DIR
+            - name: DFE_ENGINE_HUNTS_RULES_DIR
               value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.rulesPath | quote }}
             {{- else }}
             # No sync: the directories sit on the pod's own scratch volume, which
             # nothing fills, so the runner loads no specs.
-            - name: DFE_HUNTS_DIR
+            - name: DFE_ENGINE_HUNTS_DIR
               value: {{ .Values.config.mountPath }}/hunts
-            - name: DFE_HUNTS_RULES_DIR
+            - name: DFE_ENGINE_HUNTS_RULES_DIR
               value: {{ .Values.config.mountPath }}/rules
             {{- end }}
             {{- if $alerts }}
             # Where the engine API writes alert destinations, mounted below.
-            - name: DFE_HUNTS_ALERT_DESTINATIONS_DIR
+            - name: DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR
               value: {{ .Values.config.mountPath }}/alerts
             {{- end }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
-            # No DFE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
+            # No DFE_ENGINE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
             # ensure_schema() reads the tree the engine image ships.
             {{- with (include "dfe-extras.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved

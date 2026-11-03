@@ -188,8 +188,8 @@ def test_the_engine_reaches_a_managed_broker() -> None:
         if object_id(d) == "ConfigMap/dfe-engine-env"
     )["data"]
     expect("the engine is pointed at the managed broker",
-           env.get("DFE_KAFKA_BOOTSTRAP_SERVERS") == MANAGED_BOOTSTRAP,
-           f"got {env.get('DFE_KAFKA_BOOTSTRAP_SERVERS')!r}")
+           env.get("DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS") == MANAGED_BOOTSTRAP,
+           f"got {env.get('DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS')!r}")
     engine = [
         p
         for p in kafka_egress(with_managed("network-policies"))
@@ -341,8 +341,8 @@ def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
     docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
     env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
     expect("the engine creates its topics at the managed size",
-           env.get("DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
-           f"got {env.get('DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
+           env.get("DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
+           f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
 
 
 RETENTION_ENV = "DFE_KAFKA_RETENTION_MS"
@@ -387,14 +387,14 @@ def test_the_managed_overlay_gives_the_engine_the_topic_retention() -> None:
     docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
     env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
     expect("the engine creates its topics with the dial's retention",
-           env.get("DFE_KAFKA_TOPIC_RETENTION_MS") == "259200000",
-           f"got {env.get('DFE_KAFKA_TOPIC_RETENTION_MS')!r}")
+           env.get("DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS") == "259200000",
+           f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS')!r}")
     in_cluster = effective_env(golden("dfe-engine", *APP_CELL), "Deployment/dfe-engine")
     expect("an in-cluster broker leaves the engine's default",
-           "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")
+           "DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")
 
 
-TOPIC_RF_ENV = "DFE_KAFKA_TOPIC_REPLICATION_FACTOR"
+TOPIC_RF_ENV = "DFE_ENGINE_KAFKA_TOPIC_REPLICATION_FACTOR"
 MANAGED_TOPIC_RF = "3"
 
 

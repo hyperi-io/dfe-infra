@@ -905,7 +905,7 @@ DFE_PULL_SECRET_SERVER="${DFE_PULL_SECRET_SERVER:-${DFE_REGISTRY%%/*}}"
 # creds, see [4d] below); unset -> bundled Forgejo fallback.
 export DFE_CONFIG_REPO_REVISION="${DFE_CONFIG_REPO_REVISION:-main}"
 # Admin user owns the bundled deploy repo (fallback path only). The engine's
-# DFE_GITOPS_REPO_URL is injected from the config_repo_url annotation by the
+# DFE_ENGINE_GITOPS_REPO_URL is injected from the config_repo_url annotation by the
 # layer2-apps appset, so it tracks this URL automatically -- no manual
 # owner-matching to keep in sync, and the engine cannot write a different repo
 # than Argo reads.

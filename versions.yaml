@@ -1792,7 +1792,7 @@ stacks:
       # the app image the profile deploys: the reference pipelines move on their
       # own cadence, and a deployment that runs no transform still shows them.
       # The engine's content init containers materialise these into content.mountPath,
-      # and the engine seeds its library from them (DFE_LIBRARY_SEED_DIR).
+      # and the engine seeds its library from them (DFE_ENGINE_LIBRARY_SEED_DIR).
       #
       # NOT YET FETCHABLE, both of them. Neither release carries the files as an
       # asset (`gh release view <tag> --json assets` returns []) and neither
@@ -8344,15 +8344,15 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.79"        # 2026-11-02, amd64 and arm64. scalo-py 2.32.4 and dfe-schemas 0.2.22. Source reads open to a caller whose source:read is bound to orgs (#1032 #1035 #1038), a VRL transform that calls get_env_var, http_request or another host function is refused (#1021), and a rule ClickHouse cannot plan is refused at save (#1020).
-      dfe-ui: "v1.7.36"              # 2026-11-01, amd64 and arm64. A source catalogue setup wizard (#671), a variant is required when a source runs the elastic transform (#661), and form errors are announced without moving the form (#637).
-      dfe-receiver: "v1.15.62"      # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Ingest decodes are bounded and silent, idle and surplus connections are closed (#230), Kafka holds spooled records until broker delivery (#233), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#229).
-      dfe-loader: "v1.18.63"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. A ClickHouse outage gauge, with restart tests (#305).
-      dfe-archiver: "v1.7.45"       # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Fixes a data-loss path (#157).
-      dfe-fetcher: "v1.4.47"        # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25, with cursor and resource bounds fixed (#269). Zero intervals are refused and numeric env secrets kept (#265), and libz-sys 1.1.31 for RUSTSEC-2026-0418 (#263).
-      dfe-transform-vrl: "v1.1.42"   # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. vrl 0.35.0 so NaN float arithmetic fails the record (#124), enrichment repaired and a file DLQ added (#126).
-      dfe-transform-vector: "v1.0.59"  # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. Secrets are kept from Vector and transform files that reach past their tables are refused (#136), reloads are repaired and a bridge DLQ added (#138).
-      dfe-transform-elastic: "v1.1.25" # 2026-11-02, amd64 and arm64. scalo-rs 2.14.25. NDJSON fan-out memory is bounded (#152) and a dotted path deeper than the decode is refused (#150).
+      dfe-engine: "v1.22.80"        # 2026-11-03, amd64 and arm64. Reads its env under DFE_ENGINE_ only and writes each transform's env under that app's own prefix (#1058, #1059, #1060). Sources take external origins and run transforms on the bus (#1061). The loader's raw_source_fields is no longer seeded with logoriginal.
+      dfe-ui: "v1.7.37"              # 2026-11-03, amd64 and arm64. Uses the engine's DFE_ENGINE_ prefix (#682) and sets up external origin and transform pipelines (#684).
+      dfe-receiver: "v1.15.64"      # 2026-11-03, amd64 and arm64. Syslog is decoded with its originals stripped, oversize syslog frames and GELF TCP messages are skipped and the connection kept (#241, #242), idle peers are closed, and a record it never stored is no longer acknowledged.
+      dfe-loader: "v1.18.66"        # 2026-11-03, amd64 and arm64. logoriginal stays out of _raw by default (#303), and external topic routing is held to the allowed tenants (#311). scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
+      dfe-archiver: "v1.7.46"       # 2026-11-03, amd64 and arm64. Fixes a data-loss path (#157). scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
+      dfe-fetcher: "v1.4.48"        # 2026-11-03, amd64 and arm64. An absent row pointer is rejected and an oversize drop warns (#273). pulldown-cmark 0.13.6.
+      dfe-transform-vrl: "v1.1.44"   # 2026-11-03, amd64 and arm64. Reads its env under DFE_TRANSFORM_VRL_ only (#131). scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
+      dfe-transform-vector: "v1.0.61"  # 2026-11-03, amd64 and arm64. Reads its env under DFE_TRANSFORM_VECTOR_ only (#141). pulldown-cmark 0.13.6. scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
+      dfe-transform-elastic: "v1.1.27" # 2026-11-03, amd64 and arm64. Duplicate originals are dropped and unparsed lines restored (#154). scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -8362,15 +8362,15 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:d0f67aa3c6fe422281d7415c2e2f498d8801c45f21028716dd00fa7128bff4a5"
-      dfe-ui: "sha256:226da9cdafd538616669edbef101a5f523cf2805c7f7e0935742a0c18d05b918"
-      dfe-receiver: "sha256:acfe646ae68a50b94330a0b1ec7debd3719ce82a9a7771ba42e1f7102440ccb3"
-      dfe-loader: "sha256:a31f9a93e9c1890629bb4f1eb4707a9a3573cdadfbb428ea1644fb475252b9e0"
-      dfe-archiver: "sha256:323ea5dcd54c81269e44d1aa5e23cd0361c79b5d590f511f245869d7acc33b1f"
-      dfe-fetcher: "sha256:2edd93de0ff50de7d777de1de0d3a2c2ac1b66ce5a071e83a8d05542ad77efa9"
-      dfe-transform-vrl: "sha256:5097ab304695a11c4f4d2c1009757aed4492b471fde57632fa542660287c92df"
-      dfe-transform-vector: "sha256:5e33784e074fca8f5f9edf7befaf8db9fd10132ea3596ff0311b84b28149f887"
-      dfe-transform-elastic: "sha256:95e2e27a6eddd6db6de8edc6ece97ff2ba2b28bd332b3789c5dd1bd4c9479e50"
+      dfe-engine: "sha256:36bce45484e791c8bb074b2ed6ac96486e7dd14d23caafcc8097f963e2a4804c"
+      dfe-ui: "sha256:70fc0d5ccd205a5502da1ea4ed59fab3efba83324b2ff91a703643b34dc20119"
+      dfe-receiver: "sha256:1332c4d10e9274df5a5098439c5f24605cca90de327c37a0517d956876c0ba19"
+      dfe-loader: "sha256:cc783ee6511be1461d4af8867dc649ff96ecf40e56b5b52620eac11f4c1bc973"
+      dfe-archiver: "sha256:41ebe4601d340f2fe87cf2c681c47fbcbf19caabc0f867dbc405aa5a6f4879d0"
+      dfe-fetcher: "sha256:b88ea7e2b747816a276c61756696570e43c11f869eeaa1ecc8b4388d9bc7799e"
+      dfe-transform-vrl: "sha256:8cacb39fdf2fcece7021cb873b40102c3e2f9468c57d81900a53a5fe6d84ae6f"
+      dfe-transform-vector: "sha256:7ba3c474787a12ed2fca6fb8eb4f33ad208008d5df8be4dc3046c9e3aec5575a"
+      dfe-transform-elastic: "sha256:a8e0686cd26632a9d2ea2372544935dc294d28249a6f0e416032f65c7b799ce7"
       dfe-hyperdx: "sha256:db9cb2fd415d3fe57524f52e2364e7dea0c9c3e61c59b5f16346f823a82d04a3"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       # Tagged by toolbox.dfe-toolbox.
@@ -8383,15 +8383,15 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
-      dfe-archiver: "sha256:67aa4b887499c3dfbc4f3d2f62b5abbb10e4e6008259f8d2008264d783984d74"           # 1.7.45
-      dfe-engine: "sha256:7ceba619f8522f5cc15eeba0f247b982ed2cd3084315a4bf0524e2d54f5dbed3"             # 1.22.79
-      dfe-fetcher: "sha256:f36c919fa32dd1585d268c17fcf503eff92023829d86ffa174598ec65c3be978"            # 1.4.47
-      dfe-loader: "sha256:7d952057efb69c24c1d93cf104713b6ad5c5b96630837dc921445b26abd2f6d4"             # 1.18.63
-      dfe-receiver: "sha256:dd334350b83b38ee7cd18ed924fc300fa9d99b41ace194c7f100823c5330b7ff"           # 1.15.62
-      dfe-transform-elastic: "sha256:8063043032b9771229a753f05927b9abed2c8d157796835cfd6c1329989c0ddc"  # 1.1.25
-      dfe-transform-vector: "sha256:3ddd07c6c6633ff01308408391dd3ea7d13d78579ffb77e1f11536cbf03ca75d"   # 1.0.59
-      dfe-transform-vrl: "sha256:713aafeeaf03ed4309ba429995b4e49ddbaef551a4aae724d0040a1967eed575"      # 1.1.42
-      dfe-ui: "sha256:5bad13f2091b7e5790c037479ab56907b0d1afd4295c6075e6e828d82c69db21"                # 1.7.36
+      dfe-archiver: "sha256:7bab5157d6aaf92f7805b9bf62d84c72e60e45c51f546c1f5078c22e5ae526c2"           # 1.7.46
+      dfe-engine: "sha256:6084ab1365a6b8296b74549904796ee2eaa98ea4818ea18d4964e2fb9d364955"             # 1.22.80
+      dfe-fetcher: "sha256:0a8f8408b33e5873c26a26000f9b33d2da2e82e09ef479e1f8ba8a74b010f064"            # 1.4.48
+      dfe-loader: "sha256:c9e2e27d7c541ddf8619715cf620946b5446fe31d44b0a58f181219132cacd4d"             # 1.18.66
+      dfe-receiver: "sha256:43d68add4949d393425f98e8ebf5cec0ae12cb2a47f744d84a78c25d44288942"           # 1.15.64
+      dfe-transform-elastic: "sha256:ca444d2b4ea292a923c8fe7b98e275917a62ee85d3fb9cbcbf3037749c778b54"  # 1.1.27
+      dfe-transform-vector: "sha256:d20ffc236b1f93487015315204cc0ed0fee05bbf89c36373f9b9de4fd8fef042"   # 1.0.61
+      dfe-transform-vrl: "sha256:a2ca316d4db6a67ecd1b318edf75a1f8301e1b5f7092213549e8206dc5ab20c1"      # 1.1.44
+      dfe-ui: "sha256:22f215625ba9443a2a06d1045ffbea974a66f328f733cecb6dfb26d758a6a154"                # 1.7.37
       hyperdx: "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"                # 0.3.21
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
@@ -8427,8 +8427,8 @@ stacks:
       dfe-schemas: "v0.2.22"             # 2026-11-01. The engine applies it at startup and reads its source catalogue. dfe-engine v1.22.79 requires >=0.2.22 and locks 0.2.22.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.12"              # 2026-11-02. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
-      # A commit, not a version: dfe-docker cuts no per-stack tag. 2b4fcfa6 (2026-11-01) is "fix(builder): link the dev Rust builds against static C libraries (#341)".
-      dfe-docker: "2b4fcfa69241d695313dbff474ee56771387c3b3"
+      # A commit, not a version: dfe-docker cuts no per-stack tag. 2b3d02df (2026-11-03) carries the engine's DFE_ENGINE_ env (#343), the demo pack (#345) and the installer (#346, #347).
+      dfe-docker: "2b3d02dfd6ef3f23df1c789fe5bb2e98e0e49ed6"
       dfe-hyperdx: "v0.3.21"             # 2026-11-01, amd64 and arm64. Upstream HyperDX 2.43.0. Fixes a SQL injection (#189) and pins follow-redirects 1.16.2 (#188).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.

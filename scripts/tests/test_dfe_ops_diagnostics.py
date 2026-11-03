@@ -629,7 +629,7 @@ def test_no_call_reads_a_secret_or_a_workloads_environment(
     facts = next(call for call in calls if dg.ENGINE in call and "deploy" in call)
     template = facts[-1]
     assert template.count('@.name=="') == 3
-    assert "DFE_KAFKA_SASL_PASSWORD" not in template
+    assert "DFE_ENGINE_KAFKA_SASL_PASSWORD" not in template
     configmap = next(call for call in calls if "configmap" in call)
     assert configmap[-1].count(".data.") == 2
 

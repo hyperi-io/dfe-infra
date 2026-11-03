@@ -12,8 +12,8 @@ argocd/values/common.yaml or per app in its overlay:
     instanceId: ""        # operator-chosen id, sent verbatim
 
 Usage in a container env block (prefix = the app's cascade env prefix
-INCLUDING its trailing underscore; the engine passes "" -- its cascade
-reads bare vars):
+INCLUDING its trailing underscore; the engine passes "DFE_ENGINE_API_", its
+ServiceApp cascade prefix):
 
   {{- include "dfe-common.versionCheckEnv" (dict "ctx" . "prefix" "DFE_LOADER_") | nindent 12 }}
 */}}

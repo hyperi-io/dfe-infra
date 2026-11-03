@@ -10,7 +10,7 @@
     "metrics_path": "/metrics",
     "startup_budget_seconds": 120
   },
-  "env_prefix": "DFE_TRANSFORM",
+  "env_prefix": "DFE_TRANSFORM_VECTOR",
   "metric_prefix": "transform_vector",
   "config_mount_path": "/etc/dfe-transform-vector/config.yaml",
   "image_registry": "ghcr.io/hyperi-io",
@@ -40,27 +40,27 @@
       "group_name": "kafka",
       "env_vars": [
         {
-          "env_var": "DFE_TRANSFORM_SOURCE_SASL_USERNAME",
+          "env_var": "DFE_TRANSFORM_VECTOR_SOURCE_SASL_USERNAME",
           "key_name": "source-username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_TRANSFORM_SOURCE_SASL_PASSWORD",
+          "env_var": "DFE_TRANSFORM_VECTOR_SOURCE_SASL_PASSWORD",
           "key_name": "source-password",
           "secret_key": "password"
         },
         {
-          "env_var": "DFE_TRANSFORM_SINK_SASL_USERNAME",
+          "env_var": "DFE_TRANSFORM_VECTOR_SINK_SASL_USERNAME",
           "key_name": "sink-username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_TRANSFORM_SINK_SASL_PASSWORD",
+          "env_var": "DFE_TRANSFORM_VECTOR_SINK_SASL_PASSWORD",
           "key_name": "sink-password",
           "secret_key": "password"
         },
         {
-          "env_var": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+          "env_var": "DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM",
           "key_name": "mechanism",
           "secret_key": "sasl.mechanism"
         }

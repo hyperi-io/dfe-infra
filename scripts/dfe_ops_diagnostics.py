@@ -134,14 +134,14 @@ APPLICATIONS = "applications.argoproj.io"
 _ENV = 'spec.template.spec.containers[*].env[?(@.name=="{}")]'
 _NEWLINE = '{"\\n"}'
 ENGINE_KAFKA = (
-    f"bootstrap={{.{_ENV.format('DFE_KAFKA_BOOTSTRAP_SERVERS')}.value}}{_NEWLINE}"
-    f"protocol={{.{_ENV.format('DFE_KAFKA_SECURITY_PROTOCOL')}.value}}{_NEWLINE}"
-    f"secret={{.{_ENV.format('DFE_KAFKA_SASL_MECHANISM')}.valueFrom.secretKeyRef.name}}{_NEWLINE}"
+    f"bootstrap={{.{_ENV.format('DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS')}.value}}{_NEWLINE}"
+    f"protocol={{.{_ENV.format('DFE_ENGINE_KAFKA_SECURITY_PROTOCOL')}.value}}{_NEWLINE}"
+    f"secret={{.{_ENV.format('DFE_ENGINE_KAFKA_SASL_MECHANISM')}.valueFrom.secretKeyRef.name}}{_NEWLINE}"
     f"configmaps={{.spec.template.spec.containers[*].envFrom[*].configMapRef.name}}{_NEWLINE}"
 )
 CONFIGMAP_KAFKA = (
-    f"bootstrap={{.data.DFE_KAFKA_BOOTSTRAP_SERVERS}}{_NEWLINE}"
-    f"protocol={{.data.DFE_KAFKA_SECURITY_PROTOCOL}}{_NEWLINE}"
+    f"bootstrap={{.data.DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS}}{_NEWLINE}"
+    f"protocol={{.data.DFE_ENGINE_KAFKA_SECURITY_PROTOCOL}}{_NEWLINE}"
 )
 MAX_ENGINE_CONFIGMAPS = 5
 KAFKA_KEYS = ("bootstrap", "protocol", "secret")

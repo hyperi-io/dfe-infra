@@ -1,0 +1,20 @@
+%ASA-6-302013: Built inbound TCP connection 180222 for outside:198.51.100.99/15921 (198.51.100.99/15921) to dmz:192.168.70.22/110 (192.0.2.16/110)
+%ASA-6-302014: Teardown TCP connection 180222 for outside:198.51.100.99/15921 to dmz:192.168.70.22/110 duration 1:26:26 bytes 1162432 TCP FINs
+%ASA-6-302013: Built outbound TCP connection 180225 for outside:203.0.113.123/443 (203.0.113.123/443) to inside:10.20.50.14/17786 (192.0.2.17/17786)
+%ASA-6-302014: Teardown TCP connection 180225 for outside:203.0.113.123/443 to inside:10.20.50.14/17786 duration 0:31:49 bytes 684840 TCP Reset-O
+%ASA-4-106023: Deny tcp src outside:198.51.100.134/55882 dst dmz:192.168.60.28/22 by access-group "dmz_access_in" [0x0, 0x0]
+%ASA-6-302013: Built outbound TCP connection 180272 for outside:198.51.100.140/8443 (198.51.100.140/8443) to inside:10.10.30.185/50245 (192.0.2.19/50245)
+%ASA-6-302014: Teardown TCP connection 180272 for outside:198.51.100.140/8443 to inside:10.10.30.185/50245 duration 1:45:37 bytes 1950329 SYN Timeout
+%ASA-6-302015: Built outbound UDP connection 180279 for outside:203.0.113.40/514 (203.0.113.40/514) to inside:10.20.10.248/29515 (192.0.2.22/29515)
+%ASA-6-302016: Teardown UDP connection 180279 for outside:203.0.113.40/514 to inside:10.20.10.248/29515 duration 0:00:58 bytes 626
+%ASA-4-106023: Deny tcp src outside:198.51.100.194/41145 dst dmz:192.168.60.55/443 by access-group "inside_access_out" [0x0, 0x0]
+%ASA-6-302015: Built outbound UDP connection 180284 for outside:203.0.113.240/161 (203.0.113.240/161) to inside:10.10.30.86/20583 (192.0.2.27/20583)
+%ASA-6-302016: Teardown UDP connection 180284 for outside:203.0.113.240/161 to inside:10.10.30.86/20583 duration 0:00:36 bytes 2798
+%ASA-6-302013: Built outbound TCP connection 180299 for outside:203.0.113.101/993 (203.0.113.101/993) to inside:10.20.50.212/55432 (192.0.2.12/55432)
+%ASA-6-302014: Teardown TCP connection 180299 for outside:203.0.113.101/993 to inside:10.20.50.212/55432 duration 1:45:25 bytes 1443788 Conn-timeout
+%ASA-2-106001: Inbound TCP connection denied from 198.51.100.207/35820 to 192.168.60.25/8443 flags SYN on interface outside
+%ASA-6-302013: Built outbound TCP connection 180322 for outside:198.51.100.61/5432 (198.51.100.61/5432) to inside:10.20.50.113/24470 (192.0.2.17/24470)
+%ASA-6-302014: Teardown TCP connection 180322 for outside:198.51.100.61/5432 to inside:10.20.50.113/24470 duration 0:18:03 bytes 1428197 SYN Timeout
+%ASA-6-302015: Built outbound UDP connection 180344 for outside:198.51.100.114/4500 (198.51.100.114/4500) to inside:10.10.50.95/14611 (192.0.2.26/14611)
+%ASA-6-302016: Teardown UDP connection 180344 for outside:198.51.100.114/4500 to inside:10.10.50.95/14611 duration 0:00:29 bytes 3246
+%ASA-6-302013: Built inbound TCP connection 180363 for outside:203.0.113.85/39413 (203.0.113.85/39413) to dmz:192.168.70.10/443 (192.0.2.22/443)

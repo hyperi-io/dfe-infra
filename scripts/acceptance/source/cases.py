@@ -26,11 +26,13 @@ import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
-from acceptance.clients import Datastore, Engine
+from acceptance.clients import Datastore, Engine, remove_source
+from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
-from acceptance.source import beats, fetcher, steps
+from acceptance.source import beats, fetcher, steps, syslog
+from acceptance.source.listener import Listener
 from acceptance.source.steps import STEP_TIMEOUT_MS
 
 # The bundled filebeat program is a few hundred kilobytes, so the editor write
@@ -93,6 +95,13 @@ class Case:
     reporting_step: str = ""
     instance_deadline: float = 120.0
     reporting_deadline: float = steps.ROUTING_DEADLINE
+    #: Whether the run ends on the console's Observe search and the archive assertion.
+    #: A case whose source is neither archived nor shown in HyperDX turns them off.
+    observes: bool = True
+    archives: bool = True
+    #: Whether the run signs in through the console. A case that only drives the engine API
+    #: and the receiver's listeners needs the engine's login alone.
+    console: bool = True
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -179,9 +188,8 @@ class FilebeatCase(Case):
         self._posted = 0
         #: The agent's containers, on a run that ships through a real filebeat only.
         self._pair: beats.Pair | None = None
-        #: The receiver instance a --via beats run opened lumberjack on, and what
-        #: its overlay set at those paths before, so cleanup can put it back.
-        self._listener: tuple[str, dict[str, object]] | None = None
+        #: The receiver's lumberjack listener, which a --via beats run opens and cleanup closes.
+        self._listener = Listener("receiver-lumberjack", beats.LUMBERJACK_SWITCHES, beats.LUMBERJACK_ENV)
         #: Whether the source asks to be archived, which only a deployment running
         #: an archiver can honour.
         self._archive = True
@@ -482,79 +490,15 @@ class FilebeatCase(Case):
         )
         driver.record("feed", "done" if sent >= len(lines) else "failed", f"{detail}, {route}")
 
-    def _receiver_config(self, run: Run) -> str:
-        """The receiver's config route, or empty when the engine lists no instance of it."""
-        for entry in run.engine.call("GET", "/apps").body or []:
-            if isinstance(entry, dict) and entry.get("service") == beats.RECEIVER_SERVICE:
-                instances = [str(i) for i in entry.get("instances") or []]
-                if instances:
-                    return f"/apps/{beats.RECEIVER_SERVICE}/{instances[0]}/config"
-        return ""
-
     def _open_lumberjack(self, run: Run) -> bool:
-        """Switch the receiver's lumberjack listener on through the engine, as an operator would.
-
-        Nothing is written that cannot be put back: the overlay's current values at
-        those paths are read first, and cleanup restores them.
-        """
-        driver = run.driver
-        route = self._receiver_config(run)
-        if not route:
-            driver.record("receiver-lumberjack", "failed",
-                          f"the engine lists no {beats.RECEIVER_SERVICE} instance")
+        """Switch the receiver's lumberjack listener on through the engine, as an operator would."""
+        hints = self._listener.open(run)
+        if hints is None:
             return False
-        current = run.engine.call("GET", route)
-        if current.status != 200:
-            driver.record("receiver-lumberjack", "failed",
-                          f"could not read {route} to put it back afterwards: {current.status} {current.body}")
-            return False
-        before = beats.held(current.body, beats.LUMBERJACK_SWITCHES)
-        wrote = run.engine.call("PUT", route, {"changes": dict(beats.LUMBERJACK_SWITCHES)})
-        if wrote.status != 200:
-            driver.record(
-                "receiver-lumberjack", "failed",
-                f"the engine refused the switch: {wrote.status} {wrote.body}. Set {beats.LUMBERJACK_ENV} "
-                "in the receiver's environment instead",
-            )
-            return False
-        self._listener = (route, before)
-        driver.record(
-            "receiver-lumberjack", "done",
-            f"{', '.join(beats.LUMBERJACK_SWITCHES)} set through {route} for this run, and "
-            f"put back by the teardown to what the overlay held ({before or 'nothing'})",
-        )
         prefix = shlex.split(run.args.restart_exec)
-        status, detail = steps.restart_outcome(prefix, steps.reply_hints(wrote.body))
-        driver.record("receiver-restart", status, detail)
+        status, detail = steps.restart_outcome(prefix, hints)
+        run.driver.record("receiver-restart", status, detail)
         return status != "failed"
-
-    def _close_lumberjack(self, run: Run) -> wizard.StepResult:
-        """Put the receiver's lumberjack paths back as the run found them, and apply that."""
-        route, before = self._listener or ("", {})
-        rewrite, clears = beats.restore_plan(before, beats.LUMBERJACK_SWITCHES)
-        hints: list[str] = []
-        refused = []
-        if rewrite:
-            reply = run.engine.call("PUT", route, {"changes": rewrite})
-            hints += steps.reply_hints(reply.body)
-            if reply.status != 200:
-                refused.append(f"rewrite {reply.status} {reply.body}")
-        if clears:
-            query = urlencode({"path": clears}, doseq=True)
-            reply = run.engine.call("DELETE", f"{route}?{query}")
-            hints += steps.reply_hints(reply.body)
-            if reply.status != 200:
-                refused.append(f"clear {reply.status} {reply.body}")
-        if refused:
-            return wizard.StepResult(
-                "receiver-lumberjack-restored", "failed",
-                f"{route} was not put back ({', '.join(refused)}), so lumberjack may still be open",
-            )
-        status, detail = steps.restart_outcome(shlex.split(run.args.restart_exec), hints)
-        return wizard.StepResult(
-            "receiver-lumberjack-restored", "failed" if status == "failed" else "done",
-            f"{route} put back to {before or 'the app defaults'}, restart {status}: {detail}",
-        )
 
     def prove(self, run: Run) -> None:
         if not run.receiver_url:
@@ -624,13 +568,13 @@ class FilebeatCase(Case):
         rows = []
         if self._pair is not None:
             rows.append(wizard.StepResult("beats-removed", "done", beats.stop(self._pair)))
-        if self._listener is not None:
+        if self._listener.is_open:
             try:
-                rows.append(self._close_lumberjack(run))
+                rows.append(self._listener.close(run))
             except (OSError, RuntimeError) as exc:
                 rows.append(wizard.StepResult(
                     "receiver-lumberjack-restored", "failed",
-                    f"{self._listener[0]} was not put back ({exc}), so lumberjack may still be open",
+                    f"{self._listener.route} was not put back ({exc}), so lumberjack may still be open",
                 ))
         return rows
 
@@ -717,6 +661,316 @@ class VectorCase(FilebeatCase):
     #: The checkout the program and its table are read from.
     program_repo = "dfe-transform-vector"
     prefix = "vc"
+
+
+# --- syslog: raw vendor lines at the receiver's own listeners ----------------
+
+
+class SyslogCase(Case):
+    """The dfe-docker demo's cisco-asa and fortinet syslog, over every listener the cycle can reach.
+
+    One source on the syslog listener detects the vendor per line and routes it to the
+    source named for that vendor, which is the label the detector stamps, so the vendor
+    tables carry the vendor's name and not a per-run one. Each transport sends the whole corpus, and on TCP a second
+    connection carries a good line, an oversize one and a good line. The oversize message
+    is discarded and counted, and the connection carries on. Every table must hold exactly
+    what was sent, and the receiver's own counters must agree, so a short count names the
+    hop that lost the line.
+    """
+
+    service = "dfe-transform-elastic"
+    instance_step = "transform-instance"
+    reporting_step = "transform-reporting"
+    prefix = "sy"
+    observes = False
+    archives = False
+    console = False
+    LAND_DEADLINE = 180.0
+    # Once nothing has landed anywhere, later transports get this long, not the full wait.
+    MISS_DEADLINE = 30.0
+    PROBE_EVERY = 20.0
+    SETTLE_POLL = 10.0
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        super().__init__(args)
+        self.name = fetcher.new_name(self.prefix)
+        #: The table each vendor's lines land in, which the detector names by the vendor.
+        self.tables = {vendor: vendor for vendor in syslog.VENDORS}
+        self._listener = Listener("receiver-syslog", syslog.SYSLOG_SWITCHES, syslog.SYSLOG_ENV)
+        self._before: dict[str, int] | None = None
+        #: The tables this run created, which are the only ones cleanup removes.
+        self._made: dict[str, str] = {}
+        self._good = 0
+        self._oversize = 0
+
+    # -- create ---------------------------------------------------------------
+
+    def create(self, run: Run) -> list[str]:
+        """Open the listener, then create the vendor tables and the intake over the engine API."""
+        hints = self._listener.open(run)
+        if hints is None:
+            raise RuntimeError(
+                "the receiver's syslog listener did not open, so there is nothing to send to"
+            )
+        reused = []
+        for vendor, table in self.tables.items():
+            if run.engine.call("GET", f"/sources/{table}").status == 200:
+                reused.append(table)
+                continue
+            created = run.engine.call("POST", "/sources", syslog.vendor_body(vendor, table))
+            if created.status not in (200, 201, 202):
+                raise RuntimeError(
+                    f"creating {table} for {vendor} was refused: {created.status} {created.body}"
+                )
+            self._made[vendor] = table
+            steps.deploy(run.engine, table)
+            # A source created dormant gets no table, so it is deployed first and set dormant after.
+            dormant = run.engine.call("PATCH", f"/sources/{table}", {"state": "dormant"})
+            if dormant.status != 200:
+                raise RuntimeError(
+                    f"setting {table} dormant was refused: {dormant.status} {dormant.body}"
+                )
+        created = run.engine.call("POST", "/sources", syslog.intake_body(self.name))
+        if created.status not in (200, 201, 202):
+            raise RuntimeError(
+                f"creating the intake {self.name} was refused: {created.status} {created.body}"
+            )
+        made = ", ".join(self._made.values()) or "none"
+        kept = f", and found {', '.join(reused)} already there" if reused else ""
+        run.driver.record(
+            "add-source", "api-fallback",
+            f"the engine created {self.name} on the syslog listener and the vendor tables {made}{kept}",
+        )
+        # A dormant vendor source runs no transform, so only the intake's write can need a restart.
+        return hints + steps.reply_hints(created.body)
+
+    # -- feed -----------------------------------------------------------------
+
+    @staticmethod
+    def _tag(run: Run, slug: str) -> str:
+        """The hostname a transport's lines carry, which names the run."""
+        return f"{run.run_id}-{slug}"
+
+    @staticmethod
+    def _exec(run: Run) -> list[str]:
+        return shlex.split(run.args.syslog_exec)
+
+    def _counts(self, run: Run) -> dict[str, int]:
+        """Rows each vendor table holds, which is the run's alone."""
+        return {vendor: self._scalar(run, f"SELECT count() FROM `{table}`")
+                for vendor, table in self.tables.items()}
+
+    @staticmethod
+    def _scalar(run: Run, sql: str, tries: int = 4) -> int:
+        """One count, retried on a dropped connection, which ClickHouse's HTTP port gives under load."""
+        for attempt in range(tries):
+            try:
+                return run.store.scalar(sql)
+            except OSError:
+                if attempt == tries - 1:
+                    raise
+                time.sleep(2)
+        raise AssertionError("unreachable")
+
+    @staticmethod
+    def _strayed(run: Run) -> int:
+        """Run-tagged lines that reached dfe.main, which no source's match claimed."""
+        host = "_json.hostname.:String"
+        return SyslogCase._scalar(
+            run,
+            f"SELECT count() FROM main WHERE startsWith({host}, '{run.run_id}-') "
+            f"AND NOT endsWith({host}, '-probe')",
+        )
+
+    @staticmethod
+    def _read_counters(run: Run) -> dict[str, int] | None:
+        """The receiver's syslog counters now, None when no metrics URL was given or it did not answer."""
+        if not run.args.receiver_metrics_url:
+            return None
+        try:
+            return syslog.read_counters(run.args.receiver_metrics_url)
+        except RuntimeError:
+            return None
+
+    def _accepted(self, run: Run) -> int | None:
+        """What the receiver has accepted since the run began, None when it cannot be read."""
+        if not run.args.receiver_metrics_url or self._before is None:
+            return None
+        try:
+            now = syslog.read_counters(run.args.receiver_metrics_url)
+        except RuntimeError:
+            return None
+        return now["accepted"] - self._before["accepted"]
+
+    def _probe(self, run: Run, start: dict[str, int]) -> tuple[bool, dict[str, int], int]:
+        """Send a cisco-asa line until its table gains a row, then wait for the counts to settle.
+
+        The receiver rolls onto the new rule and Argo spawns the intake's transform, so the
+        first lines can take minutes to route. Probes are tagged so they are never counted
+        as the corpus, and the settled counts are the baseline the transports add to.
+
+        Returns:
+            Whether a row arrived, the counts after they settled, and the probes sent.
+        """
+        args, line = run.args, syslog.corpus("cisco-asa", 1)[0]
+        host = self._tag(run, "probe")
+        until = time.monotonic() + steps.ROUTING_DEADLINE
+        tcp, sent = syslog.TRANSPORTS[0], 0
+        while self._counts(run)["cisco-asa"] <= start["cisco-asa"]:
+            probe = syslog.frame(tcp, syslog.message(line, host, syslog.stamp_now()))
+            syslog.send_tcp(args.syslog_host, args.syslog_port, [probe], self._exec(run))
+            sent += 1
+            if time.monotonic() >= until:
+                return False, self._counts(run), sent
+            time.sleep(self.PROBE_EVERY)
+        last = self._counts(run)
+        while True:
+            time.sleep(self.SETTLE_POLL)
+            now = self._counts(run)
+            if now == last:
+                return True, now, sent
+            last = now
+
+    def _land(self, run: Run, wanted: dict[str, int], deadline: float) -> dict[str, int]:
+        """Rows by vendor, polled until every table reaches *wanted* or the deadline passes."""
+        until = time.monotonic() + deadline
+        while True:
+            found = self._counts(run)
+            reached = all(found[vendor] >= want for vendor, want in wanted.items())
+            if reached or time.monotonic() >= until:
+                return found
+            time.sleep(5)
+
+    def _send(self, run: Run, transport: syslog.Transport,
+              lines: dict[str, list[str]]) -> tuple[int, int, str]:
+        """Send one transport's corpus.
+
+        Returns:
+            The good frames, the oversize ones, and what the sender saw of the connection.
+        """
+        args, prefix = run.args, self._exec(run)
+        host, stamp = self._tag(run, transport.slug), syslog.stamp_now()
+        frames = [
+            syslog.frame(transport, syslog.message(line, host, stamp))
+            for vendor in syslog.VENDORS for line in lines[vendor]
+        ]
+        if not transport.tcp:
+            note = syslog.send_udp(args.syslog_host, args.syslog_udp_port, frames, prefix)
+            return len(frames), 0, note
+        notes = [syslog.send_tcp(args.syslog_host, args.syslog_port, frames, prefix)]
+        # A second connection: a good line, one past the limit, then a good line.
+        good = syslog.frame(transport, syslog.message(lines["cisco-asa"][0], host, stamp))
+        big = syslog.frame(transport, syslog.oversize(host, stamp))
+        notes.append(
+            syslog.send_tcp(args.syslog_host, args.syslog_port, [good, big, good], prefix, watch=1)
+        )
+        return len(frames) + 2, 1, " ".join(note for note in notes if note)
+
+    def feed(self, run: Run) -> None:
+        driver, args = run.driver, run.args
+        if not run.store.host:
+            driver.record("feed", "unproven", "no datastore access in this run, so nothing sent could be counted")
+            return
+        start = self._counts(run)
+        self._before = self._read_counters(run)
+        routed, base, probes = self._probe(run, start)
+        table = self.tables["cisco-asa"]
+        if routed:
+            driver.record("routed", "done", f"cisco-asa lines reached dfe.`{table}` through the syslog listener")
+        else:
+            hops = syslog.hop_report(
+                probes, self._accepted(run), sum(base[v] - start[v] for v in base),
+                self._scalar(run, f"SELECT count() FROM `{self.name}`"), self._strayed(run),
+            )
+            driver.record(
+                "routed", "failed",
+                f"no cisco-asa row in dfe.`{table}` after {steps.ROUTING_DEADLINE:.0f}s of probes; {hops}",
+            )
+            return
+        self._before = self._read_counters(run)
+        lines = {vendor: syslog.corpus(vendor, args.syslog_lines) for vendor in syslog.VENDORS}
+        seen, nothing_yet = dict(base), True
+        started = dict(base)
+        for transport in syslog.TRANSPORTS:
+            good, big, note = self._send(run, transport, lines)
+            self._good += good
+            self._oversize += big
+            # The TCP connection around the oversize frame adds a good cisco-asa line either side.
+            expected = {
+                vendor: len(rows) + (2 if transport.tcp and vendor == "cisco-asa" else 0)
+                for vendor, rows in lines.items()
+            }
+            wanted = {vendor: seen[vendor] + count for vendor, count in expected.items()}
+            wait = self.MISS_DEADLINE if nothing_yet else self.LAND_DEADLINE
+            found = self._land(run, wanted, wait)
+            landed = {vendor: found[vendor] - seen[vendor] for vendor in found}
+            nothing_yet = nothing_yet and not any(landed.values())
+            seen = found
+            hops = syslog.hop_report(
+                self._good, self._accepted(run), sum(found[v] - started[v] for v in found),
+                self._scalar(run, f"SELECT count() FROM `{self.name}`"), self._strayed(run),
+            )
+            driver.record(f"syslog-{transport.slug}", *syslog.phase_outcome(expected, landed, hops, note))
+        driver.record(
+            "syslog-tls", "skipped",
+            "NOT COVERED: the receiver chart has no TLS syslog listener, "
+            "and no overlay in the cycle sets syslog.tls.enabled",
+        )
+        driver.record(
+            "feed", "done",
+            f"sent {self._good} good frame(s) and {self._oversize} oversize frame(s) over "
+            f"{', '.join(t.slug for t in syslog.TRANSPORTS)}, tagged {run.run_id}",
+        )
+
+    # -- prove ----------------------------------------------------------------
+
+    def prove(self, run: Run) -> None:
+        driver, url = run.driver, run.args.receiver_metrics_url
+        if not run.store.host or not self._good:
+            driver.record("syslog-counters", "unproven", "nothing was sent, so there is nothing to count")
+            return
+        strayed = self._strayed(run)
+        driver.record(
+            "unrouted", "failed" if strayed else "done",
+            f"{strayed} run-tagged line(s) reached dfe.main, where a line no source's match claims lands",
+        )
+        if not url or self._before is None:
+            driver.record(
+                "syslog-counters", "unproven",
+                "the receiver's counters were not read before the send "
+                "(set --receiver-metrics-url or DFE_E2E_RECEIVER_METRICS_URL)",
+            )
+            return
+        try:
+            after = syslog.read_counters(url)
+        except RuntimeError as exc:
+            driver.record("syslog-counters", "failed", str(exc))
+            return
+        driver.record(
+            "syslog-counters", *syslog.counters_outcome(self._good, self._oversize, self._before, after)
+        )
+
+    def cleanup(self, run: Run) -> list[wizard.StepResult]:
+        """Close the listener, and remove the vendor tables the runner's own teardown does not know."""
+        rows = []
+        if not run.args.keep:
+            for vendor, table in self._made.items():
+                detail = remove_source(
+                    run.engine.base, run.engine.verify, run.engine.token or "", table,
+                    onboarding.TEARDOWN_DEADLINE,
+                )
+                rows.append(wizard.StepResult(
+                    f"teardown-{vendor}", "done" if detail.startswith("removed") else "failed", detail
+                ))
+        if self._listener.is_open:
+            try:
+                rows.append(self._listener.close(run))
+            except (OSError, RuntimeError) as exc:
+                rows.append(wizard.StepResult(
+                    "receiver-syslog-restored", "failed",
+                    f"{self._listener.route} was not put back ({exc}), so syslog may still be open",
+                ))
+        return rows
 
 
 # --- a fetched AWS upstream --------------------------------------------------
@@ -819,6 +1073,7 @@ CASES: dict[str, type[Case]] = {
     "cloudwatch": FetchedAwsCase,
     "elastic": ElasticCase,
     "vector": VectorCase,
+    "syslog": SyslogCase,
 }
 
 
