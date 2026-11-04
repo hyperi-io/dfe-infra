@@ -107,13 +107,13 @@ def engine_env(
     """The engine Deployment's auth env, as the chart writes it."""
     return [
         {
-            "name": "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+            "name": "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
             "valueFrom": {"secretKeyRef": {"name": admin[0], "key": admin[1]}},
         },
-        {"name": "DFE_AUTH_LOCAL_ADMIN_SECRET_NAME", "value": admin[0]},
-        {"name": "DFE_AUTH_LOCAL_ADMIN_SECRET_KEY", "value": admin[1]},
+        {"name": "DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME", "value": admin[0]},
+        {"name": "DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_KEY", "value": admin[1]},
         {
-            "name": "DFE_AUTH_BREAKGLASS_PASSWORD",
+            "name": "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
             "valueFrom": {"secretKeyRef": {"name": breakglass[0], "key": breakglass[1]}},
         },
     ]

@@ -13,7 +13,7 @@ Helm's `with` sets the scope only when its argument is non-empty, and `false`
 is empty. A template that renders an env var, a flag or a field inside
 `{{- with .Values.some.switch }}` therefore renders nothing at all when a
 deployment sets that switch to false -- and "absent" and "false" are different
-things to every consumer that has its own default. `DFE_CLICKHOUSE_VERIFY` was
+things to every consumer that has its own default. `DFE_ENGINE_CLICKHOUSE_VERIFY` was
 written that way and would have left certificate verification on for exactly
 the deployment that asked for it off. `if` is the form that renders both.
 
@@ -112,12 +112,12 @@ def gated_booleans(template_text: str, values: dict) -> list[str]:
 
 
 def test_the_check_fires_on_a_boolean_dial() -> None:
-    """The shape it exists to catch, which is how DFE_CLICKHOUSE_VERIFY was
+    """The shape it exists to catch, which is how DFE_ENGINE_CLICKHOUSE_VERIFY was
     written before #277: `false` is empty, so `with` renders the whole block
     away and the consumer's own default stands."""
     found = gated_booleans(
         "            {{- with .Values.clickhouse.verify }}\n"
-        "            - name: DFE_CLICKHOUSE_VERIFY\n"
+        "            - name: DFE_ENGINE_CLICKHOUSE_VERIFY\n"
         "              value: {{ . | quote }}\n"
         "            {{- end }}\n",
         {"clickhouse": {"verify": False}},

@@ -27,12 +27,21 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
   logs/<namespace>/<pod>.<container>.log
                              the last --log-minutes of each container of dfe-receiver,
                              dfe-loader, dfe-archiver, dfe-engine, dfe-hunt-runner, dfe-hyperdx,
+                             the dfe-clickhouse servers,
                              every dfe-fetcher-* and dfe-transform-* deployment, the per-source
                              ones included, and the dfe-documentdb store's instances. The cycle
                              passes the failed stage's own length when it ran longer than the
                              default
   logs/<namespace>/<pod>.<container>.previous.log
                              the run before, for a container that restarted
+  metrics/<namespace>/<pod>.txt
+                             each running dfe-receiver and dfe-loader pod's /metrics, read
+                             with curl inside the pod
+  clickhouse/<pod>.part_log.tsv, clickhouse/<pod>.inserts.tsv
+                             each in-cluster ClickHouse server's system.part_log and the
+                             INSERT rows of system.query_log for database dfe, over the
+                             --log-minutes window, and clickhouse/<namespace>.pods.txt, each
+                             server container's restarts and last termination reason
   kafka/engine.txt           the bootstrap address, security protocol and SASL Secret name
                              dfe-engine's Deployment sets, and the ConfigMaps it loads
   kafka/configmap-<name>.txt the bootstrap address and security protocol each of those
@@ -118,12 +127,39 @@ LOGGED_APPS = (
     "dfe-hyperdx",
     "dfe-fetcher",
     "dfe-transform",
+    # The ClickHouse servers, whose logs carry a memory-limit or replication fault.
+    "dfe-clickhouse",
     # The store's CloudNativePG Cluster, which owns its PostgreSQL and gateway instance pods.
     "dfe-documentdb",
 )
 # Namespaces whose every pod is read: the collector's gateway, node agent and provider-logs
 # workloads, which carry the stack's own telemetry and say why it stopped.
 LOGGED_NAMESPACES = ("otel",)
+# Workloads whose /metrics is read inside each pod: what the receiver took and the loader wrote.
+METERED_APPS = ("dfe-receiver", "dfe-loader")
+METRICS_URL = "http://localhost:9090/metrics"
+CLICKHOUSE_ROLE = ("clickhouse.com/role", "clickhouse-server")
+CLICKHOUSE_CONTAINER = "clickhouse-server"
+# Restarts and the last termination of each server container, read without the pod spec.
+CLICKHOUSE_STATE = (
+    "jsonpath={range .items[*]}{.metadata.name} restarts={.status.containerStatuses[*].restartCount}"
+    " last={.status.containerStatuses[*].lastState.terminated.reason}"
+    " at={.status.containerStatuses[*].lastState.terminated.finishedAt}{\"\\n\"}{end}"
+)
+# Each server's own record of the parts written and the INSERTs run into the dfe database.
+CLICKHOUSE_READS = {
+    "part_log": (
+        "SELECT event_time, event_type, table, part_name, rows, error, exception "
+        "FROM system.part_log WHERE database = 'dfe' "
+        "AND event_time > now() - INTERVAL {minutes} MINUTE ORDER BY event_time"
+    ),
+    "inserts": (
+        "SELECT event_time, type, tables, written_rows, exception_code, "
+        "substring(exception, 1, 300) AS exception FROM system.query_log "
+        "WHERE query_kind = 'Insert' AND has(databases, 'dfe') "
+        "AND event_time > now() - INTERVAL {minutes} MINUTE ORDER BY event_time"
+    ),
+}
 ENGINE = "dfe-engine"
 ARGOCD = "argocd"
 APPLICATIONS = "applications.argoproj.io"
@@ -134,14 +170,14 @@ APPLICATIONS = "applications.argoproj.io"
 _ENV = 'spec.template.spec.containers[*].env[?(@.name=="{}")]'
 _NEWLINE = '{"\\n"}'
 ENGINE_KAFKA = (
-    f"bootstrap={{.{_ENV.format('DFE_KAFKA_BOOTSTRAP_SERVERS')}.value}}{_NEWLINE}"
-    f"protocol={{.{_ENV.format('DFE_KAFKA_SECURITY_PROTOCOL')}.value}}{_NEWLINE}"
-    f"secret={{.{_ENV.format('DFE_KAFKA_SASL_MECHANISM')}.valueFrom.secretKeyRef.name}}{_NEWLINE}"
+    f"bootstrap={{.{_ENV.format('DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS')}.value}}{_NEWLINE}"
+    f"protocol={{.{_ENV.format('DFE_ENGINE_KAFKA_SECURITY_PROTOCOL')}.value}}{_NEWLINE}"
+    f"secret={{.{_ENV.format('DFE_ENGINE_KAFKA_SASL_MECHANISM')}.valueFrom.secretKeyRef.name}}{_NEWLINE}"
     f"configmaps={{.spec.template.spec.containers[*].envFrom[*].configMapRef.name}}{_NEWLINE}"
 )
 CONFIGMAP_KAFKA = (
-    f"bootstrap={{.data.DFE_KAFKA_BOOTSTRAP_SERVERS}}{_NEWLINE}"
-    f"protocol={{.data.DFE_KAFKA_SECURITY_PROTOCOL}}{_NEWLINE}"
+    f"bootstrap={{.data.DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS}}{_NEWLINE}"
+    f"protocol={{.data.DFE_ENGINE_KAFKA_SECURITY_PROTOCOL}}{_NEWLINE}"
 )
 MAX_ENGINE_CONFIGMAPS = 5
 KAFKA_KEYS = ("bootstrap", "protocol", "secret")
@@ -347,6 +383,27 @@ def _identity(item: dict) -> tuple[str, str]:
 def _by_workload(pod: dict) -> tuple[str, str, str]:
     namespace, name = _identity(pod)
     return namespace, owning_workload(pod), name
+
+
+def metered(pods: list[dict]) -> list[tuple[str, str, str]]:
+    """Namespace, name and workload of each running pod whose /metrics a bundle reads."""
+    return [
+        (*_identity(pod), owning_workload(pod))
+        for pod in pods
+        if all(_identity(pod)) and owning_workload(pod) in METERED_APPS
+        and (pod.get("status") or {}).get("phase") == "Running"
+    ]
+
+
+def clickhouse_servers(pods: list[dict]) -> list[tuple[str, str]]:
+    """Namespace and name of each running in-cluster ClickHouse server pod."""
+    key, value = CLICKHOUSE_ROLE
+    return [
+        _identity(pod)
+        for pod in pods
+        if ((pod.get("metadata") or {}).get("labels") or {}).get(key) == value
+        and (pod.get("status") or {}).get("phase") == "Running"
+    ]
 
 
 def log_targets(pods: list[dict]) -> list[dict]:
@@ -938,6 +995,30 @@ def capture_logs(bundle: Bundle, targets: list[dict], *, minutes: int, keep: flo
         bundle.note("logs/", f"+{len(skipped)} pods not read: {', '.join(skipped)}")
 
 
+def capture_metrics(bundle: Bundle, pods: list[dict]) -> None:
+    """Each receiver and loader pod's /metrics, read with curl inside the pod."""
+    for namespace, name, workload in metered(pods):
+        args = ["-n", namespace, "exec", name, "-c", workload, "--", "curl", "-sf", METRICS_URL]
+        bundle.capture(f"metrics/{fe.safe_name(namespace)}/{fe.safe_name(name)}.txt", args)
+
+
+def capture_clickhouse(bundle: Bundle, pods: list[dict], *, minutes: int) -> None:
+    """Each ClickHouse server's part_log and INSERTs into dfe over the last `minutes`."""
+    servers = clickhouse_servers(pods)
+    if not servers:
+        bundle.note("clickhouse/", "no in-cluster ClickHouse server pod, nothing read")
+    selector = "=".join(CLICKHOUSE_ROLE)
+    for namespace in sorted({namespace for namespace, _name in servers}):
+        args = ["-n", namespace, "get", "pods", "-l", selector, "-o", CLICKHOUSE_STATE]
+        bundle.capture(f"clickhouse/{fe.safe_name(namespace)}.pods.txt", args)
+    for namespace, name in servers:
+        for read, sql in CLICKHOUSE_READS.items():
+            query = sql.format(minutes=minutes)
+            args = ["-n", namespace, "exec", name, "-c", CLICKHOUSE_CONTAINER, "--",
+                    "clickhouse-client", "--format", "TSVWithNames", "-q", query]
+            bundle.capture(f"clickhouse/{fe.safe_name(name)}.{read}.tsv", args)
+
+
 def _collect_cluster(
     bundle: Bundle,
     pods: list[dict] | None,
@@ -959,6 +1040,8 @@ def _collect_cluster(
     guarded(bundle, "events/", lambda: capture_events(bundle, dfe_namespaces(apps, targets)))
     keep = bundle.budget * KAFKA_SHARE if client and client.started else 0.0
     guarded(bundle, "logs/", lambda: capture_logs(bundle, targets, minutes=minutes, keep=keep))
+    guarded(bundle, "metrics/", lambda: capture_metrics(bundle, pods or []))
+    guarded(bundle, "clickhouse/", lambda: capture_clickhouse(bundle, pods or [], minutes=minutes))
     if client and client.started:
         guarded(bundle, "kafka/", lambda: read_kafka(bundle, client))
 

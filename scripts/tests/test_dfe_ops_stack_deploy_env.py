@@ -561,4 +561,4 @@ def test_the_preflight_renders_each_apps_extras_and_finds_the_catalogue(mode: st
         if app == "dfe-engine":
             banner = dfeops.composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ")
             assert banner in done.stdout, "the app catalogue ConfigMap carries the manifest"
-            assert "  DFE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n" in done.stdout
+            assert "  DFE_ENGINE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n" in done.stdout

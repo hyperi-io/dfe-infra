@@ -21,9 +21,9 @@ fileSets:
 extraEnv:
   # Outranks the config file, so the app reads the transforms mounted above. The
   # app reads an empty value as unset, which leaves its own config to decide.
-  DFE_TRANSFORM_TRANSFORMS_DIR: '{{ with .Values.fileSets.transforms.files }}{{ $.Values.fileSets.transforms.mountPath }}{{ end }}'
+  DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR: '{{ with .Values.fileSets.transforms.files }}{{ $.Values.fileSets.transforms.mountPath }}{{ end }}'
   # Vector's data dir, the contract's writable path `data`.
-  DFE_TRANSFORM_VECTOR_DATA_DIR: /var/lib/vector
+  DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR: /var/lib/vector
 
 # The contract's secret group, on the Secret these values name.
 secrets:

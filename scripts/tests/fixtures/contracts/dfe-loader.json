@@ -190,6 +190,7 @@
       "org_id_field": "_org_id",
       "default_org_id": "default",
       "org_routes": [],
+      "external_topics": [],
       "source_to_table": {},
       "topic_suffixes": [
         "_land",
@@ -206,7 +207,7 @@
       }
     },
     "buffer": {
-      "flush_bytes": 1048576,
+      "flush_bytes": 67108864,
       "flush_rows": 20000,
       "flush_age_secs": 5
     },
@@ -247,9 +248,7 @@
       "capture_json": true,
       "json_output": "_json",
       "capture_raw": true,
-      "raw_source_fields": [
-        "logoriginal"
-      ],
+      "raw_source_fields": [],
       "raw_output": "_raw",
       "capture_source": true,
       "source_fields": [
@@ -333,21 +332,9 @@
   },
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
-    "apt_repos": [
-      {
-        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
-        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
-        "url": "https://packages.confluent.io/clients/deb",
-        "codename": "bookworm",
-        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
-        "packages": [
-          "librdkafka1"
-        ]
-      }
-    ],
+    "apt_repos": [],
     "apt_packages": [
-      "libssl3t64",
-      "zlib1g"
+      "curl"
     ],
     "distro": "trixie"
   },
@@ -555,6 +542,7 @@
           "org_id_field": "_org_id",
           "default_org_id": "default",
           "org_routes": [],
+          "external_topics": [],
           "source_to_table": {},
           "topic_suffixes": [
             "_land",
@@ -575,7 +563,7 @@
         "description": "Buffer flush thresholds. **Hot-reloaded.**",
         "$ref": "#/$defs/BufferConfig",
         "default": {
-          "flush_bytes": 1048576,
+          "flush_bytes": 67108864,
           "flush_rows": 20000,
           "flush_age_secs": 5
         }
@@ -632,9 +620,7 @@
           "capture_json": true,
           "json_output": "_json",
           "capture_raw": true,
-          "raw_source_fields": [
-            "logoriginal"
-          ],
+          "raw_source_fields": [],
           "raw_output": "_raw",
           "capture_source": true,
           "source_fields": [
@@ -647,7 +633,7 @@
         }
       },
       "coercion": {
-        "description": "Type coercion config. **Hot-reloaded.**",
+        "description": "Type coercion config. Refused unless every field is at its default: the\ndynamic insert applies fixed coercion rules.",
         "$ref": "#/$defs/CoercionConfig",
         "default": {
           "type_mappings": {},
@@ -1550,7 +1536,7 @@
         "description": "Pre-route filter applied to each message before routing decisions.\n\nFilters are evaluated in order. The first filter that matches determines\nthe message's [`super::types::PreRouteResult`].",
         "oneOf": [
           {
-            "description": "Route to DLQ if a required field is absent.",
+            "description": "Drop the record, committed with its block, if a required field is absent.",
             "type": "object",
             "properties": {
               "type": {
@@ -1656,6 +1642,14 @@
             },
             "default": []
           },
+          "external_topics": {
+            "description": "Topics an external pipeline writes directly, each with the tenant policy\nthat keeps its records in their own `_org_id` and `_source`. A topic not\nlisted here is trusted as it arrives.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ExternalTopic"
+            },
+            "default": []
+          },
           "source_to_table": {
             "description": "Source value to table name mapping\nMaps extracted source values to destination table names",
             "type": "object",
@@ -1711,6 +1705,45 @@
           "org_id"
         ]
       },
+      "ExternalTopic": {
+        "description": "Tenant policy for a topic an external pipeline writes straight to.\n\nNo dfe-receiver stands in front of such a topic, so the loader itself keeps\na record from claiming another tenant or table. A record's `_org_id` and\n`_source` stay only when they are the source's own value or on the matching\nallow-list, and are replaced with the source's own otherwise.",
+        "type": "object",
+        "properties": {
+          "topic": {
+            "description": "The Kafka topic the policy covers, for example `cisco-ios_land`.",
+            "type": "string"
+          },
+          "org_id": {
+            "description": "The source's own tenant: the `_org_id` a record gets when it carries none\nor one outside the allow-list.",
+            "type": "string"
+          },
+          "allowed_org_ids": {
+            "description": "Further tenants a record on this topic may carry. Empty allows only `org_id`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "source": {
+            "description": "The source's own name: the `_source` a record gets when it carries none\nor one outside the allow-list.",
+            "type": "string"
+          },
+          "allowed_sources": {
+            "description": "Further sources a record on this topic may carry. Empty allows only `source`.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "required": [
+          "topic",
+          "org_id",
+          "source"
+        ]
+      },
       "DlqConfig": {
         "type": "object",
         "properties": {
@@ -1761,18 +1794,21 @@
         "type": "object",
         "properties": {
           "flush_bytes": {
+            "description": "Flush a table's buffer once its rows' input bytes reach this. A row\ncounts the bytes of the message it came from.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
-            "default": 1048576
+            "default": 67108864
           },
           "flush_rows": {
+            "description": "Flush a table's buffer once it holds this many rows.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
             "default": 20000
           },
           "flush_age_secs": {
+            "description": "Flush a table's buffer once this many seconds have passed since it last flushed.",
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
@@ -1926,14 +1962,12 @@
             "default": true
           },
           "raw_source_fields": {
-            "description": "Source fields to try for rename (first match wins). Default: [\"logoriginal\"]",
+            "description": "Fields renamed to `_raw` when the record has no `_raw` of its own, first\nmatch wins. Default: none, because `_json` already stores the field's\ntext.",
             "type": "array",
             "items": {
               "type": "string"
             },
-            "default": [
-              "logoriginal"
-            ]
+            "default": []
           },
           "raw_output": {
             "description": "Output field name for raw log line",
@@ -2009,7 +2043,7 @@
         ]
       },
       "CoercionConfig": {
-        "description": "Type coercion configuration\n\nFollowing the Go clickhouse-loader pattern:\n- Type mappings for custom types\n- Configurable null handling\n- Timezone handling for naive timestamps",
+        "description": "Type coercion configuration. No encoder reads it, so `Config::validate`\nrefuses any field set away from its default.",
         "type": "object",
         "properties": {
           "type_mappings": {
@@ -2267,7 +2301,7 @@
           "type": "enum",
           "required": false,
           "default": "http",
-          "description": "Wire protocol. 'native' is rejected at startup: the pinned clickhouse client has no TCP row fetch, so schema queries stall silently.",
+          "description": "Wire protocol: 'http' (8123, 8443 with TLS) or 'native' (9000, 9440 with TLS). json_each_row inserts need 'http'.",
           "enum_values": [
             "native",
             "http"
@@ -2330,6 +2364,11 @@
         "path": "config.geoip.enabled",
         "value": "true"
       }
+    },
+    {
+      "name": "dlq",
+      "path": "/var/spool/dfe/dlq",
+      "size": "1Gi"
     }
   ],
   "termination_grace_seconds": 45,

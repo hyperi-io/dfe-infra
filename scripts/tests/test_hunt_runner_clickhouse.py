@@ -91,13 +91,13 @@ def test_the_runner_dials_as_its_own_user() -> None:
         runner = env(golden(ENGINE, profile, cloud), "dfe-hunt-runner")
         expect(
             f"{profile}/{cloud}: the runner's username is {RUNNER_USER}",
-            runner.get("DFE_CLICKHOUSE_USERNAME") == RUNNER_USER,
-            f"{runner.get('DFE_CLICKHOUSE_USERNAME')}",
+            runner.get("DFE_ENGINE_CLICKHOUSE_USERNAME") == RUNNER_USER,
+            f"{runner.get('DFE_ENGINE_CLICKHOUSE_USERNAME')}",
         )
         expect(
             f"{profile}/{cloud}: its password comes from the runner's Secret, not the admin one",
-            secret_ref(runner.get("DFE_CLICKHOUSE_PASSWORD")) == (SECRET, KEY),
-            f"{runner.get('DFE_CLICKHOUSE_PASSWORD')}",
+            secret_ref(runner.get("DFE_ENGINE_CLICKHOUSE_PASSWORD")) == (SECRET, KEY),
+            f"{runner.get('DFE_ENGINE_CLICKHOUSE_PASSWORD')}",
         )
 
 
@@ -108,11 +108,11 @@ def test_the_engine_is_handed_the_same_secret() -> None:
         runner = env(docs, "dfe-hunt-runner")
         expect(
             f"{profile}/{cloud}: the engine reads the runner's password off the same Secret",
-            secret_ref(engine.get("DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD"))
-            == secret_ref(runner.get("DFE_CLICKHOUSE_PASSWORD"))
+            secret_ref(engine.get("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD"))
+            == secret_ref(runner.get("DFE_ENGINE_CLICKHOUSE_PASSWORD"))
             == (SECRET, KEY),
-            f"engine {engine.get('DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')} "
-            f"runner {runner.get('DFE_CLICKHOUSE_PASSWORD')}",
+            f"engine {engine.get('DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')} "
+            f"runner {runner.get('DFE_ENGINE_CLICKHOUSE_PASSWORD')}",
         )
 
 
@@ -127,9 +127,9 @@ def test_the_engine_keeps_the_admin_account_and_the_shim_reads_as_the_query_read
             found = env(docs, deployment)
             expect(
                 f"{profile}/{cloud}: {deployment} dials as {user}",
-                found.get("DFE_CLICKHOUSE_USERNAME") == user
-                and secret_ref(found.get("DFE_CLICKHOUSE_PASSWORD")) == secret,
-                f"{found.get('DFE_CLICKHOUSE_USERNAME')} {found.get('DFE_CLICKHOUSE_PASSWORD')}",
+                found.get("DFE_ENGINE_CLICKHOUSE_USERNAME") == user
+                and secret_ref(found.get("DFE_ENGINE_CLICKHOUSE_PASSWORD")) == secret,
+                f"{found.get('DFE_ENGINE_CLICKHOUSE_USERNAME')} {found.get('DFE_ENGINE_CLICKHOUSE_PASSWORD')}",
             )
 
 
@@ -192,11 +192,11 @@ def test_creation_can_be_handed_to_the_deployment() -> None:
     runner = env(docs, "dfe-hunt-runner")
     expect(
         "both pods still read the deployment's Secret",
-        secret_ref(engine.get("DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD"))
-        == secret_ref(runner.get("DFE_CLICKHOUSE_PASSWORD"))
+        secret_ref(engine.get("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD"))
+        == secret_ref(runner.get("DFE_ENGINE_CLICKHOUSE_PASSWORD"))
         == (SECRET, KEY),
-        f"engine {engine.get('DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')} "
-        f"runner {runner.get('DFE_CLICKHOUSE_PASSWORD')}",
+        f"engine {engine.get('DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')} "
+        f"runner {runner.get('DFE_ENGINE_CLICKHOUSE_PASSWORD')}",
     )
 
 
@@ -216,8 +216,8 @@ def test_no_runner_means_no_secret_and_no_reference() -> None:
     engine = env(docs, ENGINE)
     expect(
         "and the engine does not wait on it",
-        "DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" not in engine,
-        f"{engine.get('DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
+        "DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" not in engine,
+        f"{engine.get('DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
     )
 
 
@@ -232,8 +232,8 @@ def test_a_paused_runner_leaves_the_engines_password_minted() -> None:
     )
     expect(
         "the engine still reads the runner's password",
-        secret_ref(env(docs, ENGINE).get("DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD")) == (SECRET, KEY),
-        f"{env(docs, ENGINE).get('DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
+        secret_ref(env(docs, ENGINE).get("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD")) == (SECRET, KEY),
+        f"{env(docs, ENGINE).get('DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
     )
     for kind, name in MINTED[:2]:
         expect(f"and the {kind} behind it renders", len(named(docs, kind, name)) == 1, "absent")

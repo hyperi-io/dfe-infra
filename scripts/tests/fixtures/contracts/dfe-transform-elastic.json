@@ -84,7 +84,7 @@
       "brokers": [
         "kafka:9092"
       ],
-      "max_message_bytes": 15728640
+      "max_message_bytes": 8000000
     },
     "geoip": {
       "enabled": true,
@@ -94,6 +94,21 @@
         "data_dir": "/var/lib/dfe/geoip",
         "max_age_days": 30,
         "max_database_bytes": 536870912
+      }
+    },
+    "dlq": {
+      "enabled": true,
+      "mode": "cascade",
+      "queue_capacity": 10000,
+      "batch_size": 256,
+      "flush_interval_ms": 100,
+      "max_payload_bytes": 524288,
+      "file": {
+        "enabled": true,
+        "path": "/var/spool/scalo/dlq",
+        "rotation": "hourly",
+        "max_age_days": 30,
+        "compress_rotated": true
       }
     }
   },
@@ -119,21 +134,9 @@
   },
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
-    "apt_repos": [
-      {
-        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
-        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
-        "url": "https://packages.confluent.io/clients/deb",
-        "codename": "bookworm",
-        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
-        "packages": [
-          "librdkafka1"
-        ]
-      }
-    ],
+    "apt_repos": [],
     "apt_packages": [
-      "libssl3t64",
-      "zlib1g"
+      "curl"
     ],
     "distro": "trixie"
   },
@@ -184,11 +187,11 @@
           "transport": "bus",
           "endpoint": "http://dfe-loader:6000",
           "brokers": null,
-          "max_message_bytes": 15728640
+          "max_message_bytes": 8000000
         }
       },
       "geoip": {
-        "description": "Which MMDB databases the geoip processors read, and how to obtain them.\n\nscalo's type verbatim: provisioning is shared across the fleet, and the\nlookup engine and its cache stay in `dfe-runtime`. Read once at startup,\nso a change needs a restart.",
+        "description": "Which MMDB databases the geoip processors read, and how to obtain them.\n\nscalo's type verbatim: provisioning is shared across the fleet, and the\nlookup engine and its cache stay in `dfe-runtime`. Read once at startup,\nso a change needs a restart. A key the section leaves out takes\n[`default_geoip`], whose `auto_download.data_dir` is the image's writable\nvolume rather than scalo's `/var/lib/geoip`.",
         "$ref": "#/$defs/GeoIpConfig",
         "default": {
           "enabled": true,
@@ -197,12 +200,31 @@
           "asn_db_path": null,
           "auto_download": {
             "enabled": true,
-            "data_dir": "/var/lib/geoip",
+            "data_dir": "/var/lib/dfe/geoip",
             "maxmind_account_id": null,
             "maxmind_license_key": null,
             "ipinfo_token": null,
             "max_age_days": 30,
             "max_database_bytes": 536870912
+          }
+        }
+      },
+      "dlq": {
+        "description": "Where a record goes that no retry can deliver: input that is not JSON,\nand an event the sink transport would refuse.\n\nscalo's type verbatim. The default writes NDJSON files under\n`/var/spool/scalo/dlq`, which the deployment contract declares as a\nwritable volume. With `enabled: false` such a record is dropped and\ncounted on `pipeline_dead_letters_dropped_total`.",
+        "$ref": "#/$defs/DlqConfig",
+        "default": {
+          "enabled": true,
+          "mode": "cascade",
+          "queue_capacity": 10000,
+          "batch_size": 256,
+          "flush_interval_ms": 100,
+          "max_payload_bytes": 524288,
+          "file": {
+            "enabled": true,
+            "path": "/var/spool/scalo/dlq",
+            "rotation": "hourly",
+            "max_age_days": 30,
+            "compress_rotated": true
           }
         }
       }
@@ -255,14 +277,14 @@
             "default": []
           },
           "batch_size": {
-            "description": "Events pulled per batch.",
+            "description": "The most records one receive takes, and the most parsed events held at once.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
             "default": 20000
           },
           "max_batch_bytes": {
-            "description": "Ceiling on the BYTES one fetch may bring back, the inbound mirror of\n`sink.max_message_bytes`.\n\n`batch_size` bounds the event count and nothing bounds their size, so a\nproducer sending large records decides this service's memory. Applied as\nlibrdkafka's `fetch.max.bytes`, which enforces it at the broker rather\nthan after the bytes have arrived; the pod's memory limit has to cover\nthis plus the parsed document trees, which are several times larger.",
+            "description": "Ceiling on the BYTES one receive may bring back, the inbound mirror of\n`sink.max_message_bytes`.\n\n`batch_size` bounds the record count and nothing bounds their size, so a\nproducer sending large records decides this service's memory. Applied\ntwice: as librdkafka's `fetch.max.bytes`, which the broker enforces per\nfetch, and as the byte budget every receive stops at, which the\nself-regulation governor can lower but never raise. The pod's memory\nlimit has to cover this plus the outbound records built from it.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
@@ -437,11 +459,11 @@
             "default": null
           },
           "max_message_bytes": {
-            "description": "Ceiling on one outbound record. An event that serialises larger is\ndropped and counted on `events_oversize_total`.\n\nThe default fits the stack's 16 MiB record ceiling. Against a broker or\ntopic whose `message.max.bytes` is lower, set this below that limit, or\nthe broker refuses those events instead and they count on\n`send_filtered_dlq_total`.",
+            "description": "Ceiling on one outbound record. An event that serialises larger is\ndropped and counted on `events_oversize_total`.\n\nThe default is the DFE record cap, 8,000,000 bytes. Against a broker or\ntopic whose `message.max.bytes` is lower, set this below that limit, or\nthe broker refuses those events instead and they count on\n`send_filtered_dlq_total`. Brokers that carry more can raise it, up to\n16 MiB.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
-            "default": 15728640
+            "default": 8000000
           }
         }
       },
@@ -584,6 +606,137 @@
             "default": 536870912
           }
         }
+      },
+      "DlqConfig": {
+        "description": "Top-level DLQ configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Whether DLQ is enabled.",
+            "type": "boolean",
+            "default": true
+          },
+          "mode": {
+            "description": "Backend routing mode.",
+            "$ref": "#/$defs/DlqMode",
+            "default": "cascade"
+          },
+          "queue_capacity": {
+            "description": "Bounded mpsc capacity. When the queue is full, `try_send` returns\n`QueueFull` (overflow=Drop). Sized for failure-burst tolerance.\nDefault 10_000.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "batch_size": {
+            "description": "Drain coalesces up to this many entries into one backend write.\nDefault 256.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 256
+          },
+          "flush_interval_ms": {
+            "description": "Flush a partial batch after this duration, even if not full.\nDefault 100 ms.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          },
+          "max_payload_bytes": {
+            "description": "Payload bytes an entry keeps: a longer payload is cut to this and the\nentry marked `truncated` with its original length, so it lands where\nthe whole record could not. `None` keeps every payload whole. Default\n[`DEFAULT_MAX_PAYLOAD_BYTES`].",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "default": 524288
+          },
+          "file": {
+            "description": "File backend configuration.",
+            "$ref": "#/$defs/FileDlqConfig",
+            "default": {
+              "enabled": true,
+              "path": "/var/spool/scalo/dlq",
+              "rotation": "hourly",
+              "max_age_days": 30,
+              "compress_rotated": true
+            }
+          }
+        }
+      },
+      "DlqMode": {
+        "description": "How backends are used when multiple are enabled.",
+        "oneOf": [
+          {
+            "description": "Try backends in order; stop on first success.\nDefault order: Kafka first, file fallback.",
+            "type": "string",
+            "const": "cascade"
+          },
+          {
+            "description": "Write every batch to all enabled backends. The write succeeds when at\nleast one backend takes the whole batch, and fails only when none does.",
+            "type": "string",
+            "const": "fan_out"
+          },
+          {
+            "description": "File backend only (no Kafka dependency).",
+            "type": "string",
+            "const": "file_only"
+          },
+          {
+            "description": "Kafka backend only (matches a typical consumer's current behaviour).",
+            "type": "string",
+            "const": "kafka_only"
+          }
+        ]
+      },
+      "FileDlqConfig": {
+        "description": "File-based DLQ configuration.\n\nWrites NDJSON files with automatic rotation and cleanup.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the file backend.",
+            "type": "boolean",
+            "default": true
+          },
+          "path": {
+            "description": "Base directory for DLQ files.\nService name is appended as a subdirectory. Default `/var/spool/scalo/dlq`.",
+            "type": "string",
+            "default": "/var/spool/scalo/dlq"
+          },
+          "rotation": {
+            "description": "File rotation period.",
+            "$ref": "#/$defs/RotationPeriod",
+            "default": "hourly"
+          },
+          "max_age_days": {
+            "description": "Auto-cleanup files older than this many days.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30
+          },
+          "compress_rotated": {
+            "description": "Compress rotated files with flate2/gzip.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RotationPeriod": {
+        "description": "File rotation period.",
+        "oneOf": [
+          {
+            "description": "Rotate files every hour.",
+            "type": "string",
+            "const": "hourly"
+          },
+          {
+            "description": "Rotate files every day.",
+            "type": "string",
+            "const": "daily"
+          }
+        ]
       }
     }
   },
@@ -7266,6 +7419,12 @@
       "name": "geoip",
       "path": "/var/lib/dfe/geoip",
       "size_limit": "512Mi",
+      "size": "1Gi"
+    },
+    {
+      "name": "dlq",
+      "path": "/var/spool/scalo/dlq",
+      "size_limit": "1Gi",
       "size": "1Gi"
     }
   ],
