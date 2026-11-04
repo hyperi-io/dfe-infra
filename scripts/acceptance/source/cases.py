@@ -782,25 +782,55 @@ class SyslogCase(Case):
             f"AND NOT endsWith({host}, '-probe')",
         )
 
+    #: Where the syslog header's hostname lands: the elastic transform's ECS copy, or
+    #: the receiver's own field on a row that went through untransformed.
+    TAG_PATHS = ("_json.log.syslog.hostname.:String", "_json.hostname.:String")
+
+    def _by_tag(self, run: Run, tag: str) -> dict[str, int]:
+        """Rows carrying *tag* in each vendor table, the intake table and dfe.main."""
+        match = " OR ".join(f"{path} = '{tag}'" for path in self.TAG_PATHS)
+        tables = {**self.tables, "intake": self.name, "dfe.main": "main"}
+        return {
+            label: self._scalar(run, f"SELECT count() FROM `{table}` WHERE {match}")
+            for label, table in tables.items()
+        }
+
     @staticmethod
-    def _read_counters(run: Run) -> dict[str, int] | None:
-        """The receiver's syslog counters now, None when no metrics URL was given or it did not answer."""
-        if not run.args.receiver_metrics_url:
+    def _counted(run: Run) -> bool:
+        """Whether the run was told where the receiver's counters are."""
+        args = run.args
+        return bool(args.receiver_metrics_url or (args.receiver_metrics_selector and args.kubectl))
+
+    @staticmethod
+    def _counters(run: Run) -> dict[str, int]:
+        """The receiver's syslog counters now, summed over every pod when a selector is given.
+
+        Raises:
+            RuntimeError: The counters could not be read.
+        """
+        args = run.args
+        if args.receiver_metrics_selector and args.kubectl:
+            return syslog.read_pod_counters(
+                shlex.split(args.kubectl), args.namespace, args.receiver_metrics_selector
+            )
+        return syslog.read_counters(args.receiver_metrics_url)
+
+    @classmethod
+    def _read_counters(cls, run: Run) -> dict[str, int] | None:
+        """The receiver's syslog counters now, None when none were named or they did not answer."""
+        if not cls._counted(run):
             return None
         try:
-            return syslog.read_counters(run.args.receiver_metrics_url)
+            return cls._counters(run)
         except RuntimeError:
             return None
 
     def _accepted(self, run: Run) -> int | None:
         """What the receiver has accepted since the run began, None when it cannot be read."""
-        if not run.args.receiver_metrics_url or self._before is None:
+        if self._before is None:
             return None
-        try:
-            now = syslog.read_counters(run.args.receiver_metrics_url)
-        except RuntimeError:
-            return None
-        return now["accepted"] - self._before["accepted"]
+        now = self._read_counters(run)
+        return None if now is None else now["accepted"] - self._before["accepted"]
 
     def _probe(self, run: Run, start: dict[str, int]) -> tuple[bool, dict[str, int], int]:
         """Send a cisco-asa line until its table gains a row, then wait for the counts to settle.
@@ -910,7 +940,13 @@ class SyslogCase(Case):
                 self._good, self._accepted(run), sum(found[v] - started[v] for v in found),
                 self._scalar(run, f"SELECT count() FROM `{self.name}`"), self._strayed(run),
             )
-            driver.record(f"syslog-{transport.slug}", *syslog.phase_outcome(expected, landed, hops, note))
+            tagged = self._by_tag(run, self._tag(run, transport.slug))
+            status, detail = syslog.phase_outcome(expected, landed, hops, note)
+            placed = {**expected, "intake": 0, "dfe.main": 0}
+            if tagged != placed:
+                status = "failed"
+            by_tag = ", ".join(f"{label} {count}" for label, count in tagged.items())
+            driver.record(f"syslog-{transport.slug}", status, f"{detail}; by tag: {by_tag}")
         driver.record(
             "syslog-tls", "skipped",
             "NOT COVERED: the receiver chart has no TLS syslog listener, "
@@ -925,7 +961,7 @@ class SyslogCase(Case):
     # -- prove ----------------------------------------------------------------
 
     def prove(self, run: Run) -> None:
-        driver, url = run.driver, run.args.receiver_metrics_url
+        driver = run.driver
         if not run.store.host or not self._good:
             driver.record("syslog-counters", "unproven", "nothing was sent, so there is nothing to count")
             return
@@ -934,15 +970,15 @@ class SyslogCase(Case):
             "unrouted", "failed" if strayed else "done",
             f"{strayed} run-tagged line(s) reached dfe.main, where a line no source's match claims lands",
         )
-        if not url or self._before is None:
+        if not self._counted(run) or self._before is None:
             driver.record(
                 "syslog-counters", "unproven",
-                "the receiver's counters were not read before the send "
-                "(set --receiver-metrics-url or DFE_E2E_RECEIVER_METRICS_URL)",
+                "the receiver's counters were not read before the send (set "
+                "--receiver-metrics-selector with --kubectl, or --receiver-metrics-url)",
             )
             return
         try:
-            after = syslog.read_counters(url)
+            after = self._counters(run)
         except RuntimeError as exc:
             driver.record("syslog-counters", "failed", str(exc))
             return

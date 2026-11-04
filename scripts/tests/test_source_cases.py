@@ -20,6 +20,7 @@ here opens a socket.
     python3 scripts/tests/test_source_cases.py
 """
 
+import collections
 import contextlib
 import importlib.machinery
 import importlib.util
@@ -2746,6 +2747,39 @@ class TestTheReceiverCounters:
         with pytest.raises(RuntimeError, match="did not answer"):
             syslog.read_counters("http://127.0.0.1:1/metrics")
 
+    def test_the_counters_are_summed_over_every_replica(self):
+        other = 'receiver_requests_total{transport="syslog"} 6\n'
+
+        assert syslog.counters_of([self.EXPOSITION, other]) == {
+            "accepted": 50, "dropped": 3, "oversize": 0, "parse_failed": 0,
+        }
+
+    @pytest.mark.parametrize(
+        ("pods", "failing", "want"),
+        [
+            pytest.param("pod/a pod/b", "", 88, id="every-pod-summed"),
+            pytest.param("", "", "no running receiver pod", id="no-pod"),
+            pytest.param("pod/a pod/b", "pod/b", "metrics in pod/b did not answer", id="one-pod-silent"),
+        ],
+    )
+    def test_the_pod_counters_come_from_every_running_receiver_pod(self, tmp_path, pods, failing, want):
+        kubectl = tmp_path / "kubectl"
+        kubectl.write_text(
+            "#!/bin/bash\n"
+            f'if [[ " $* " == *" get "* ]]; then echo "{pods}"; exit 0; fi\n'
+            f'[[ "$3" == "exec" && "$4" == "{failing}" ]] && {{ echo refused >&2; exit 7; }}\n'
+            f"printf '%s\\n' '{self.EXPOSITION.splitlines()[1]}'\n",
+            encoding="utf-8",
+        )
+        kubectl.chmod(0o755)
+        kube = [str(kubectl)]
+
+        if isinstance(want, int):
+            assert syslog.read_pod_counters(kube, "dfe", "app=r")["accepted"] == want
+        else:
+            with pytest.raises(RuntimeError, match=want):
+                syslog.read_pod_counters(kube, "dfe", "app=r")
+
 
 class TestTheSyslogSenders:
     def _frames(self, transport: str) -> list[bytes]:
@@ -2894,10 +2928,22 @@ class SyslogStore(FakeStore):
     def __init__(self, tables: dict[str, str]) -> None:
         self.rows = dict.fromkeys(tables.values(), 0)
         self.by_vendor = tables
+        self.tagged: collections.Counter[tuple[str, str]] = collections.Counter()
+
+    def land(self, table: str, frame: bytes) -> None:
+        """One row in *table*, tagged with the hostname in the frame's syslog header."""
+        self.rows[table] += 1
+        host = re.search(rb"\d\d:\d\d:\d\d (\S+) ", frame)
+        self.tagged[table, host.group(1).decode() if host else ""] += 1
 
     def scalar(self, sql):
-        found = re.search(r"FROM `?([\w-]+)`?", sql)
-        return self.rows.get(found.group(1), 0) if found else 0
+        found = re.search(r"FROM `?([\w.-]+)`?", sql)
+        if not found:
+            return 0
+        tag = re.search(r"= '([^']+)'", sql)
+        if tag:
+            return self.tagged[found.group(1), tag.group(1)]
+        return self.rows.get(found.group(1), 0)
 
 
 class NoVendorSources(ReceiverEngine):
@@ -2915,7 +2961,7 @@ class TestTheSyslogCase:
         """Run the case's feed against a receiver that discards the oversize message, or closes on it."""
         monkeypatch.setattr(time, "sleep", lambda _s: None)
 
-        def go(closes_on_oversize: bool, *argv: str):
+        def go(closes_on_oversize: bool, *argv: str, misplace: str = ""):
             args = parse("--case", "syslog", *argv)
             case = cases.build(args)
             case.LAND_DEADLINE = case.MISS_DEADLINE = 0.0
@@ -2931,7 +2977,9 @@ class TestTheSyslogCase:
                     if len(piece) > syslog.MAX_MESSAGE:
                         continue
                     vendor = "cisco-asa" if b"%ASA" in piece else "fortinet"
-                    store.rows[case.tables[vendor]] += 1
+                    if misplace and misplace.encode() in piece and vendor == "fortinet":
+                        vendor = "cisco-asa"
+                    store.land(case.tables[vendor], piece)
                 return ""
 
             monkeypatch.setattr(syslog, "send_tcp", lambda host, port, frames, prefix=(), watch=-1: deliver(frames))
@@ -2968,6 +3016,15 @@ class TestTheSyslogCase:
             assert driver.status(slug) == "done", driver.detail(slug)
         assert driver.status("syslog-tls") == "skipped"
         assert "NOT COVERED" in driver.detail("syslog-tls")
+
+    def test_a_row_in_the_wrong_table_is_named_by_its_run_tag(self, feeding):
+        _, driver = feeding(False, misplace="-tcp-lf ")
+
+        assert driver.status("syslog-tcp-lf") == "failed"
+        assert driver.detail("syslog-tcp-lf").endswith(
+            "by tag: cisco-asa 42, fortinet 0, intake 0, dfe.main 0"
+        )
+        assert driver.status("syslog-tcp-octet") == "done", driver.detail("syslog-tcp-octet")
 
     def test_a_receiver_that_closes_on_the_oversize_frame_fails_the_tcp_rows_and_says_so(self, feeding):
         _, driver = feeding(True)

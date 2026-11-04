@@ -2262,8 +2262,6 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
     if EDGE_SUITE in steps:
         forwards.append(("git", args.git_namespace, args.git_target, args.git_port, 3000))
     syslog_case = SOURCE_SUITE in steps and args.source_case == "syslog"
-    if syslog_case:
-        forwards.append(("receiver-metrics", namespace, args.receiver_target, args.receiver_metrics_port, 9090))
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
     # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
@@ -2333,8 +2331,6 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
         "DFE_E2E_CH_DB": args.ch_database,
         "DFE_E2E_TRANSPORT": transport,
     })
-    if syslog_case:
-        env["DFE_E2E_RECEIVER_METRICS_URL"] = f"http://localhost:{args.receiver_metrics_port}/metrics"
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
         # Both suites authenticate as the deploy's own minted admin: the flow
@@ -2414,6 +2410,7 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
                 "--aws-service", args.aws_service,
                 "--kubectl", shlex.join(kube),
                 "--namespace", namespace,
+                "--receiver-metrics-selector", args.receiver_selector,
             ]
             # The upstream a fetched case polls is a property of the DEPLOYMENT,
             # so it comes from the env files rather than from this script.
@@ -5349,9 +5346,9 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--git-namespace", default="forgejo", help="namespace the bundled deploy repo runs in")
     ac.add_argument("--git-port", type=int, default=13000,
                     help="local port for the deploy repo, the one deploy-values defaults to")
-    ac.add_argument("--receiver-metrics-port", type=int, default=19091,
-                    help="local port for the receiver's metrics, which the syslog case reads its "
-                         "accepted and dropped counters from")
+    ac.add_argument("--receiver-selector", default="app.kubernetes.io/name=dfe-receiver",
+                    help="label selector for the receiver's pods, whose syslog counters the syslog "
+                         "case sums")
     ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
                     help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")

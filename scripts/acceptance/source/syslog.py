@@ -61,6 +61,7 @@ UDP_SCRIPT = (
 METRIC_ACCEPTED = "receiver_requests_total"
 METRIC_DROPPED = "receiver_records_dropped_total"
 METRIC_PARSE_FAILED = "receiver_parse_failures_total"
+METRICS_PORT = 9090
 #: Every syslog listener counts under this one label, whatever its transport.
 TRANSPORT_LABEL = {"transport": "syslog"}
 
@@ -196,8 +197,22 @@ def counter(exposition: str, name: str, **labels: str) -> int:
     return int(total)
 
 
+def counters_of(bodies: Sequence[str]) -> dict[str, int]:
+    """The syslog counters summed over every replica's exposition."""
+    wanted = {
+        "accepted": (METRIC_ACCEPTED, {}),
+        "dropped": (METRIC_DROPPED, {}),
+        "oversize": (METRIC_DROPPED, {"reason": "oversize"}),
+        "parse_failed": (METRIC_PARSE_FAILED, {}),
+    }
+    return {
+        key: sum(counter(body, name, **labels, **TRANSPORT_LABEL) for body in bodies)
+        for key, (name, labels) in wanted.items()
+    }
+
+
 def read_counters(url: str) -> dict[str, int]:
-    """The syslog counters off the receiver's metrics endpoint.
+    """The syslog counters off one receiver's metrics endpoint.
 
     Raises:
         RuntimeError: The endpoint did not answer.
@@ -207,12 +222,38 @@ def read_counters(url: str) -> dict[str, int]:
             body = response.read().decode("utf-8", errors="replace")
     except OSError as exc:
         raise RuntimeError(f"the receiver's metrics at {url} did not answer: {exc}") from exc
-    return {
-        "accepted": counter(body, METRIC_ACCEPTED, **TRANSPORT_LABEL),
-        "dropped": counter(body, METRIC_DROPPED, **TRANSPORT_LABEL),
-        "oversize": counter(body, METRIC_DROPPED, reason="oversize", **TRANSPORT_LABEL),
-        "parse_failed": counter(body, METRIC_PARSE_FAILED, **TRANSPORT_LABEL),
-    }
+    return counters_of([body])
+
+
+def read_pod_counters(kube: Sequence[str], namespace: str, selector: str) -> dict[str, int]:
+    """The syslog counters summed over every running receiver pod.
+
+    A pod counts only the connections kube-proxy sent it, so one pod's counters fall
+    short whenever the Service has more than one replica.
+
+    Raises:
+        RuntimeError: No pod matched, or one did not answer.
+    """
+    listed = subprocess.run(
+        [*kube, "-n", namespace, "get", "pods", "-l", selector,
+         "--field-selector", "status.phase=Running", "-o", "name"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+    )
+    pods = listed.stdout.split() if listed.returncode == 0 else []
+    if not pods:
+        raise RuntimeError(f"no running receiver pod matched {selector} in {namespace}")
+    bodies = []
+    for pod in pods:
+        read = subprocess.run(
+            [*kube, "-n", namespace, "exec", pod, "--",
+             "curl", "-sf", f"http://localhost:{METRICS_PORT}/metrics"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            timeout=30,
+        )
+        if read.returncode != 0:
+            raise RuntimeError(f"the receiver's metrics in {pod} did not answer: {read.stderr.strip()}")
+        bodies.append(read.stdout)
+    return counters_of(bodies)
 
 
 # --- what the run reports ----------------------------------------------------

@@ -400,6 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--receiver-metrics-url", default=os.environ.get("DFE_E2E_RECEIVER_METRICS_URL", ""),
                         metavar="URL", help="the receiver's /metrics, whose syslog counters the syslog case "
                                             "asserts (default: DFE_E2E_RECEIVER_METRICS_URL)")
+    parser.add_argument("--receiver-metrics-selector", default="", metavar="SELECTOR",
+                        help="label selector of the receiver's pods. With --kubectl, the syslog case "
+                             "sums the counters of every running pod in --namespace instead of "
+                             "reading --receiver-metrics-url")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")
