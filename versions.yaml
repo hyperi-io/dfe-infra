@@ -8033,12 +8033,12 @@ stacks:
       # image: code.forgejo.org/forgejo/forgejo
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
-      otel-collector: "0.163.2"      # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. The gateway and daemonset configs rendered for aws/scale and local/slim, and dfe-docker's collector config, pass otelcol validate on it.
+      otel-collector: "0.164.0"      # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. The gateway and daemonset configs rendered for aws/scale and local/slim, and dfe-docker's collector config, pass otelcol validate on it.
       hyperdx: "2.41.0"              # The upstream HyperDX release dfe-hyperdx v0.3.17 merges, its packages/app version. The image is content.dfe-hyperdx.
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
       # renovate: datasource=docker depName=envoyproxy/envoy
-      envoy-proxy: "v1.40.1"         # 2026-10-23, inside the 7-day cooldown, which is waived for 2.2.1. Its image no longer trusts the compromised eMudhra intermediate CAs. dfe-docker's four proxy configs pass envoy --mode validate on it. The docker stack's front proxy. Ubuntu build, not distroless: the compose healthcheck needs bash.
+      envoy-proxy: "v1.40.2"         # 2026-10-23, inside the 7-day cooldown, which is waived for 2.2.1. Its image no longer trusts the compromised eMudhra intermediate CAs. dfe-docker's four proxy configs pass envoy --mode validate on it. The docker stack's front proxy. Ubuntu build, not distroless: the compose healthcheck needs bash.
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31.7-trixie"  # 2026-10-14. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
@@ -8155,7 +8155,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.18"             # 2026-10-22. The engine applies it at startup and reads its source catalogue. dfe-engine v1.22.63 requires >=0.2.18 and locks 0.2.18, the release that ships the catalogue (dfe-schemas#79).
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.8"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
+      dfe-deploy: "v1.0.12"               # 2026-10-10. The deploy-repo template, seeded from this tag. Hunts-pause also switches the hunt-runner secret group off, so the engine pod no longer waits on a secret nothing mints (dfe-deploy#10).
       # A commit, not a version: dfe-docker cuts no per-stack tag. 406c01cb (2026-10-27) is "fix: leave the receiver's raw capture off in make demo (#316)", which also makes make demo a continuous stream.
       dfe-docker: "406c01cb997337c517042dc1ea04cda78e45e77f"
       dfe-hyperdx: "v0.3.17"             # 2026-10-25, amd64 and arm64. Still upstream HyperDX 2.41.0, now on Node.js v24.22.1 (#173).
@@ -8168,7 +8168,7 @@ stacks:
       # renovate: datasource=docker depName=debian
       debian: "trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"  # Debian 13.7, pushed 2026-10-21 (Docker Hub tag API, shared with 13.7-slim and trixie-20261020-slim). The index carries linux/amd64 and linux/arm64/v8.
       # renovate: datasource=github-releases depName=kubernetes/kubernetes
-      kubectl: "v1.35.9"                 # 2026-09-23. The middle of the platform window, so within kubectl's one-minor skew of both 1.34 and 1.36. renovate.json holds it to 1.35.x.
+      kubectl: "v1.35.10"                 # 2026-09-23. The middle of the platform window, so within kubectl's one-minor skew of both 1.34 and 1.36. renovate.json holds it to 1.35.x.
       # renovate: datasource=github-releases depName=helm/helm
       helm: "v4.3.1"                     # 2026-10-15.
       # renovate: datasource=github-releases depName=argoproj/argo-cd
@@ -8184,7 +8184,7 @@ stacks:
       # renovate: datasource=docker depName=ghcr.io/mikefarah/yq
       yq-image: "4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"  # The image yq's own release workflow pushes to GHCR, by index digest (amd64 and arm64), read 2026-10-24. The build fails unless the binary reports toolbox.yq.
       # renovate: datasource=github-tags depName=aws/aws-cli
-      aws-cli: "2.38.5"                  # 2026-10-22, inside the 7-day cooldown, which is waived for 2.2.1.
+      aws-cli: "2.39.1"                  # 2026-10-22, inside the 7-day cooldown, which is waived for 2.2.1.
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
       aws-session-manager-plugin: "1.2.896.0"  # Release 2026-10-10. The aws Dockerfile and the AWS bastion fetch this version's own package and its AWS signature, so where latest points no longer matters. Renovate watches the GitHub releases.
       gcloud: "587.0.0"                  # 2026-09-29. No Renovate feed; moves by hand.
