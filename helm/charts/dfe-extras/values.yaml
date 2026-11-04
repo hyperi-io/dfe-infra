@@ -22,7 +22,7 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.80"
+    dfe-engine: "v1.22.81"
     dfe-ui: "v1.7.37"
     dfe-receiver: "v1.15.64"
     dfe-loader: "v1.18.66"
@@ -286,7 +286,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:36bce45484e791c8bb074b2ed6ac96486e7dd14d23caafcc8097f963e2a4804c"
+        digest: "sha256:04a24819206dd74b6280d31d3c4d17e1801036e66a70e77afa4e810319586f39"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""

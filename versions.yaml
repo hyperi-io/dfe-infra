@@ -8344,7 +8344,7 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.80"        # 2026-11-03, amd64 and arm64. Reads its env under DFE_ENGINE_ only and writes each transform's env under that app's own prefix (#1058, #1059, #1060). Sources take external origins and run transforms on the bus (#1061). The loader's raw_source_fields is no longer seeded with logoriginal.
+      dfe-engine: "v1.22.81"        # 2026-11-04, amd64 and arm64. Hunts read up to a safe horizon across ClickHouse replicas, with overlap and dedupe, so replica lag delays a detection rather than losing it (#1063). API contract: token paging and problem+json errors. CPU is reported as cores (#1062). Reads its env under DFE_ENGINE_ only. Requires and locks dfe-schemas 0.2.23.
       dfe-ui: "v1.7.37"              # 2026-11-03, amd64 and arm64. Uses the engine's DFE_ENGINE_ prefix (#682) and sets up external origin and transform pipelines (#684).
       dfe-receiver: "v1.15.64"      # 2026-11-03, amd64 and arm64. Syslog is decoded with its originals stripped, oversize syslog frames and GELF TCP messages are skipped and the connection kept (#241, #242), idle peers are closed, and a record it never stored is no longer acknowledged.
       dfe-loader: "v1.18.66"        # 2026-11-03, amd64 and arm64. logoriginal stays out of _raw by default (#303), and external topic routing is held to the allowed tenants (#311). scalo-rs 2.14.26: the consumer no longer wedges after its topic is deleted.
@@ -8362,7 +8362,7 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:36bce45484e791c8bb074b2ed6ac96486e7dd14d23caafcc8097f963e2a4804c"
+      dfe-engine: "sha256:04a24819206dd74b6280d31d3c4d17e1801036e66a70e77afa4e810319586f39"
       dfe-ui: "sha256:70fc0d5ccd205a5502da1ea4ed59fab3efba83324b2ff91a703643b34dc20119"
       dfe-receiver: "sha256:1332c4d10e9274df5a5098439c5f24605cca90de327c37a0517d956876c0ba19"
       dfe-loader: "sha256:cc783ee6511be1461d4af8867dc649ff96ecf40e56b5b52620eac11f4c1bc973"
@@ -8384,7 +8384,7 @@ stacks:
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
       dfe-archiver: "sha256:7bab5157d6aaf92f7805b9bf62d84c72e60e45c51f546c1f5078c22e5ae526c2"           # 1.7.46
-      dfe-engine: "sha256:6084ab1365a6b8296b74549904796ee2eaa98ea4818ea18d4964e2fb9d364955"             # 1.22.80
+      dfe-engine: "sha256:7cedb2838b9c571f34c2061051784315285a962057496158244e96014770c0de"             # 1.22.81
       dfe-fetcher: "sha256:0a8f8408b33e5873c26a26000f9b33d2da2e82e09ef479e1f8ba8a74b010f064"            # 1.4.48
       dfe-loader: "sha256:c9e2e27d7c541ddf8619715cf620946b5446fe31d44b0a58f181219132cacd4d"             # 1.18.66
       dfe-receiver: "sha256:43d68add4949d393425f98e8ebf5cec0ae12cb2a47f744d84a78c25d44288942"           # 1.15.64
@@ -8424,7 +8424,7 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.22"             # 2026-11-01. The engine applies it at startup and reads its source catalogue. dfe-engine v1.22.79 requires >=0.2.22 and locks 0.2.22.
+      dfe-schemas: "v0.2.23"             # 2026-11-04. The engine applies it at startup and reads its source catalogue. Grants hunt_runner system.replicas. dfe-engine v1.22.81 requires >=0.2.23 and locks 0.2.23.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.12"              # 2026-11-02. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
       # A commit, not a version: dfe-docker cuts no per-stack tag. 2b3d02df (2026-11-03) carries the engine's DFE_ENGINE_ env (#343), the demo pack (#345) and the installer (#346, #347).
