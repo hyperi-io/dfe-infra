@@ -343,7 +343,7 @@ import profiles  # noqa: E402
 import s3_empty  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
-from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
+from dfe_ops_cloud_guard import DESTROY_MARK_ENV, add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_diagnostics import BUDGET as DIAGNOSTICS_BUDGET  # noqa: E402
 from dfe_ops_diagnostics import LOG_MINUTES as DIAGNOSTICS_LOG_MINUTES  # noqa: E402
 from dfe_ops_diagnostics import add_diagnostics_subparser  # noqa: E402
@@ -5003,6 +5003,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
             print("\n--keep: leaving the deployment up (destroy it yourself: dfe-ops teardown).", file=sys.stderr)
         else:
             print("\n=== cycle stage: destroy ===", file=sys.stderr)
+            # A guarded cloud run gives the destroy its teardown margin once this file exists.
+            if mark := os.environ.get(DESTROY_MARK_ENV):
+                Path(mark).touch()
             teardown_cmd = [*self_cmd, "teardown", "--force"]
             if args.from_terraform:
                 teardown_cmd += [
