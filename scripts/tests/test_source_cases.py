@@ -1411,8 +1411,11 @@ class LocalClickHouse:
              "--input-format", "JSONEachRow", "--output-format", "JSONCompact", "--query", sql],
             input="\n".join(self._line(record) for record in self.records),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=True, timeout=60,
+            check=False, timeout=60,
         )
+        # Datastore.query's contract: a query the server refuses raises RuntimeError.
+        if done.returncode != 0:
+            raise RuntimeError(f"datastore refused the query: {done.returncode} {done.stderr[:300]}")
         return json.loads(done.stdout)["data"]
 
     def scalar(self, sql: str) -> int:
@@ -2929,12 +2932,18 @@ class SyslogStore(FakeStore):
         self.rows = dict.fromkeys(tables.values(), 0)
         self.by_vendor = tables
         self.tagged: collections.Counter[tuple[str, str]] = collections.Counter()
+        self.history: collections.defaultdict[tuple[str, str], list[int]] = collections.defaultdict(list)
 
     def land(self, table: str, frame: bytes) -> None:
         """One row in *table*, tagged with the hostname in the frame's syslog header."""
         self.rows[table] += 1
         host = re.search(rb"\d\d:\d\d:\d\d (\S+) ", frame)
         self.tagged[table, host.group(1).decode() if host else ""] += 1
+
+    #: The replicas a clustered datastore answers for, and how many reads of the same query
+    #: the others trail the first by. None is a datastore with no cluster, which refuses the query.
+    replicas: tuple[str, ...] | None = ("ch-0",)
+    trails = 0
 
     def scalar(self, sql):
         found = re.search(r"FROM `?([\w.-]+)`?", sql)
@@ -2944,6 +2953,18 @@ class SyslogStore(FakeStore):
         if tag:
             return self.tagged[found.group(1), tag.group(1)]
         return self.rows.get(found.group(1), 0)
+
+    def query(self, sql):
+        if "clusterAllReplicas" not in sql:
+            return []
+        if self.replicas is None:
+            raise RuntimeError("datastore refused the query: 400 CLUSTER_DOESNT_EXIST")
+        table = re.search(r"`([\w.-]+)`\)", sql).group(1)
+        count = self.scalar(sql.replace(f"clusterAllReplicas(getMacro('cluster'), dfe, `{table}`)", f"`{table}`"))
+        seen = self.history[table, sql]
+        seen.append(count)
+        late = seen[-1 - self.trails] if len(seen) > self.trails else 0
+        return [[self.replicas[0], count], *([host, late] for host in self.replicas[1:])]
 
 
 class NoVendorSources(ReceiverEngine):
@@ -2961,11 +2982,18 @@ class TestTheSyslogCase:
         """Run the case's feed against a receiver that discards the oversize message, or closes on it."""
         monkeypatch.setattr(time, "sleep", lambda _s: None)
 
-        def go(closes_on_oversize: bool, *argv: str, misplace: str = ""):
+        def go(
+            closes_on_oversize: bool,
+            *argv: str,
+            misplace: str = "",
+            replicas: tuple[str, ...] | None = ("ch-0",),
+            trails: int = 0,
+        ):
             args = parse("--case", "syslog", *argv)
             case = cases.build(args)
             case.LAND_DEADLINE = case.MISS_DEADLINE = 0.0
             store = SyslogStore(case.tables)
+            store.replicas, store.trails = replicas, trails
             driver = FakeDriver(FakePage())
             run = a_run(driver, FakeEngine(), args, case.name, Path("/"))
             run.store = store
@@ -3017,13 +3045,31 @@ class TestTheSyslogCase:
         assert driver.status("syslog-tls") == "skipped"
         assert "NOT COVERED" in driver.detail("syslog-tls")
 
+    @pytest.mark.parametrize(
+        ("replicas", "trails", "spread"),
+        [
+            pytest.param(("ch-0",), 0, "cisco-asa first on ch-0 at 0s, every replica at 0s", id="one-replica"),
+            pytest.param(
+                ("ch-0", "ch-1"), 1, "cisco-asa first on ch-0 at 0s, not on every replica after 0s",
+                id="a-replica-still-fetching",
+            ),
+            pytest.param(None, 0, "cisco-asa first on the datastore at 0s", id="no-cluster"),
+        ],
+    )
+    def test_the_rows_are_counted_on_the_fullest_replica_and_the_lag_is_named(
+        self, feeding, replicas, trails, spread
+    ):
+        _, driver = feeding(False, replicas=replicas, trails=trails)
+
+        for slug in ("syslog-tcp-lf", "syslog-tcp-octet", "syslog-udp"):
+            assert driver.status(slug) == "done", driver.detail(slug)
+            assert spread in driver.detail(slug)
+
     def test_a_row_in_the_wrong_table_is_named_by_its_run_tag(self, feeding):
         _, driver = feeding(False, misplace="-tcp-lf ")
 
         assert driver.status("syslog-tcp-lf") == "failed"
-        assert driver.detail("syslog-tcp-lf").endswith(
-            "by tag: cisco-asa 42, fortinet 0, intake 0, dfe.main 0"
-        )
+        assert "by tag: cisco-asa 42, fortinet 0, intake 0, dfe.main 0;" in driver.detail("syslog-tcp-lf")
         assert driver.status("syslog-tcp-octet") == "done", driver.detail("syslog-tcp-octet")
 
     def test_a_receiver_that_closes_on_the_oversize_frame_fails_the_tcp_rows_and_says_so(self, feeding):

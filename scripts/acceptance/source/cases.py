@@ -686,7 +686,7 @@ class SyslogCase(Case):
     archives = False
     console = False
     LAND_DEADLINE = 180.0
-    # Once nothing has landed anywhere, later transports get this long, not the full wait.
+    # A transport whose rows reached no replica by now is a miss, and stops waiting.
     MISS_DEADLINE = 30.0
     PROBE_EVERY = 20.0
     SETTLE_POLL = 10.0
@@ -698,6 +698,8 @@ class SyslogCase(Case):
         self.tables = {vendor: vendor for vendor in syslog.VENDORS}
         self._listener = Listener("receiver-syslog", syslog.SYSLOG_SWITCHES, syslog.SYSLOG_ENV)
         self._before: dict[str, int] | None = None
+        #: Whether the datastore answers clusterAllReplicas, None until the first count asks.
+        self._clustered: bool | None = None
         #: The tables this run created, which are the only ones cleanup removes.
         self._made: dict[str, str] = {}
         self._good = 0
@@ -756,9 +758,47 @@ class SyslogCase(Case):
         return shlex.split(run.args.syslog_exec)
 
     def _counts(self, run: Run) -> dict[str, int]:
-        """Rows each vendor table holds, which is the run's alone."""
-        return {vendor: self._scalar(run, f"SELECT count() FROM `{table}`")
-                for vendor, table in self.tables.items()}
+        """Rows each vendor table holds on its fullest replica, which is the run's alone."""
+        return {vendor: self._count(run, table) for vendor, table in self.tables.items()}
+
+    def _replicas(self, run: Run, table: str, where: str = "") -> dict[str, int]:
+        """Rows *table* holds on each replica, under "" for a datastore with no cluster.
+
+        A part lands on the replica that took the INSERT and reaches the others later,
+        so one replica's count runs short until they fetch it.
+        """
+        clause = f" WHERE {where}" if where else ""
+        if self._clustered is not False:
+            sql = (
+                f"SELECT hostName(), count() FROM clusterAllReplicas(getMacro('cluster'), "
+                f"{run.store.database}, `{table}`){clause} GROUP BY 1"
+            )
+            try:
+                rows = self._retried(run, sql)
+            except RuntimeError:
+                if self._clustered:
+                    raise
+                self._clustered = False
+            else:
+                self._clustered = True
+                return {str(host): int(count) for host, count in rows}
+        return {"": self._scalar(run, f"SELECT count() FROM `{table}`{clause}")}
+
+    def _count(self, run: Run, table: str, where: str = "") -> int:
+        """Rows *table* holds on its fullest replica."""
+        return max(self._replicas(run, table, where).values(), default=0)
+
+    @staticmethod
+    def _retried(run: Run, sql: str, tries: int = 4) -> list[list]:
+        """One query, retried on a dropped connection."""
+        for attempt in range(tries):
+            try:
+                return run.store.query(sql)
+            except OSError:
+                if attempt == tries - 1:
+                    raise
+                time.sleep(2)
+        raise AssertionError("unreachable")
 
     @staticmethod
     def _scalar(run: Run, sql: str, tries: int = 4) -> int:
@@ -772,14 +812,11 @@ class SyslogCase(Case):
                 time.sleep(2)
         raise AssertionError("unreachable")
 
-    @staticmethod
-    def _strayed(run: Run) -> int:
+    def _strayed(self, run: Run) -> int:
         """Run-tagged lines that reached dfe.main, which no source's match claimed."""
         host = "_json.hostname.:String"
-        return SyslogCase._scalar(
-            run,
-            f"SELECT count() FROM main WHERE startsWith({host}, '{run.run_id}-') "
-            f"AND NOT endsWith({host}, '-probe')",
+        return self._count(
+            run, "main", f"startsWith({host}, '{run.run_id}-') AND NOT endsWith({host}, '-probe')"
         )
 
     #: Where the syslog header's hostname lands: the elastic transform's ECS copy, or
@@ -791,7 +828,7 @@ class SyslogCase(Case):
         match = " OR ".join(f"{path} = '{tag}'" for path in self.TAG_PATHS)
         tables = {**self.tables, "intake": self.name, "dfe.main": "main"}
         return {
-            label: self._scalar(run, f"SELECT count() FROM `{table}` WHERE {match}")
+            label: self._count(run, table, match)
             for label, table in tables.items()
         }
 
@@ -861,15 +898,51 @@ class SyslogCase(Case):
                 return True, now, sent
             last = now
 
-    def _land(self, run: Run, wanted: dict[str, int], deadline: float) -> dict[str, int]:
-        """Rows by vendor, polled until every table reaches *wanted* or the deadline passes."""
-        until = time.monotonic() + deadline
+    def _land(
+        self, run: Run, wanted: dict[str, int], base: dict[str, int], deadline: float
+    ) -> tuple[dict[str, int], str]:
+        """Rows by vendor on the fullest replica, polled until every replica holds *wanted*.
+
+        Stops at *deadline*, or at MISS_DEADLINE when no new row reached any replica.
+
+        Returns:
+            The counts, and per vendor the replica that held its rows first and when every
+            replica did, so a slow fetch shows without failing the step.
+        """
+        start = time.monotonic()
+        first: dict[str, tuple[str, float]] = {}
+        every: dict[str, float] = {}
         while True:
-            found = self._counts(run)
-            reached = all(found[vendor] >= want for vendor, want in wanted.items())
-            if reached or time.monotonic() >= until:
-                return found
+            spread = {vendor: self._replicas(run, table) for vendor, table in self.tables.items()}
+            found = {vendor: max(held.values(), default=0) for vendor, held in spread.items()}
+            took = time.monotonic() - start
+            for vendor, want in wanted.items():
+                holding = sorted(host for host, count in spread[vendor].items() if count >= want)
+                if holding and vendor not in first:
+                    first[vendor] = (holding[0], took)
+                if holding and len(holding) == len(spread[vendor]) and vendor not in every:
+                    every[vendor] = took
+            missed = took >= self.MISS_DEADLINE and found == base
+            if all(vendor in every for vendor in wanted) or missed or took >= deadline:
+                return found, self._lag_note(wanted, first, every, took)
             time.sleep(5)
+
+    @staticmethod
+    def _lag_note(
+        wanted: dict[str, int], first: dict[str, tuple[str, float]], every: dict[str, float],
+        took: float,
+    ) -> str:
+        """Where each vendor's rows were first seen, and how long every replica took."""
+        parts = []
+        for vendor in wanted:
+            if vendor not in first:
+                parts.append(f"{vendor} on no replica after {took:.0f}s")
+                continue
+            host, at = first[vendor]
+            tail = (f"every replica at {every[vendor]:.0f}s" if vendor in every
+                    else f"not on every replica after {took:.0f}s")
+            parts.append(f"{vendor} first on {host or 'the datastore'} at {at:.0f}s, {tail}")
+        return "replicas: " + ", ".join(parts)
 
     def _send(self, run: Run, transport: syslog.Transport,
               lines: dict[str, list[str]]) -> tuple[int, int, str]:
@@ -910,7 +983,7 @@ class SyslogCase(Case):
         else:
             hops = syslog.hop_report(
                 probes, self._accepted(run), sum(base[v] - start[v] for v in base),
-                self._scalar(run, f"SELECT count() FROM `{self.name}`"), self._strayed(run),
+                self._count(run, self.name), self._strayed(run),
             )
             driver.record(
                 "routed", "failed",
@@ -919,7 +992,7 @@ class SyslogCase(Case):
             return
         self._before = self._read_counters(run)
         lines = {vendor: syslog.corpus(vendor, args.syslog_lines) for vendor in syslog.VENDORS}
-        seen, nothing_yet = dict(base), True
+        seen = dict(base)
         started = dict(base)
         for transport in syslog.TRANSPORTS:
             good, big, note = self._send(run, transport, lines)
@@ -931,14 +1004,12 @@ class SyslogCase(Case):
                 for vendor, rows in lines.items()
             }
             wanted = {vendor: seen[vendor] + count for vendor, count in expected.items()}
-            wait = self.MISS_DEADLINE if nothing_yet else self.LAND_DEADLINE
-            found = self._land(run, wanted, wait)
+            found, spread = self._land(run, wanted, seen, self.LAND_DEADLINE)
             landed = {vendor: found[vendor] - seen[vendor] for vendor in found}
-            nothing_yet = nothing_yet and not any(landed.values())
             seen = found
             hops = syslog.hop_report(
                 self._good, self._accepted(run), sum(found[v] - started[v] for v in found),
-                self._scalar(run, f"SELECT count() FROM `{self.name}`"), self._strayed(run),
+                self._count(run, self.name), self._strayed(run),
             )
             tagged = self._by_tag(run, self._tag(run, transport.slug))
             status, detail = syslog.phase_outcome(expected, landed, hops, note)
@@ -946,7 +1017,7 @@ class SyslogCase(Case):
             if tagged != placed:
                 status = "failed"
             by_tag = ", ".join(f"{label} {count}" for label, count in tagged.items())
-            driver.record(f"syslog-{transport.slug}", status, f"{detail}; by tag: {by_tag}")
+            driver.record(f"syslog-{transport.slug}", status, f"{detail}; by tag: {by_tag}; {spread}")
         driver.record(
             "syslog-tls", "skipped",
             "NOT COVERED: the receiver chart has no TLS syslog listener, "
