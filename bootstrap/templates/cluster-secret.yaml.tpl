@@ -121,6 +121,13 @@ metadata:
     # SASL_SSL on a managed broker, which serves TLS only, and blank otherwise
     # so the charts keep common.yaml's kafka.securityProtocol.
     dfe.hyperi.io/kafka_security_protocol: "${DFE_KAFKA_SECURITY_PROTOCOL}"
+    # The infra provider's own logs, read by the otel collector's provider-logs
+    # workload into the otel database: the flavour (aws, azure, gcp, rancher,
+    # blank for none) and, on aws, the two CloudWatch log groups. Blank on a
+    # deployment that reads none.
+    dfe.hyperi.io/provider_logs_flavour: "${DFE_PROVIDER_LOGS_FLAVOUR}"
+    dfe.hyperi.io/eks_audit_log_group: "${DFE_EKS_AUDIT_LOG_GROUP}"
+    dfe.hyperi.io/cloudtrail_log_group: "${DFE_CLOUDTRAIL_LOG_GROUP}"
     # Bare broker hosts (no port), for the otel-collector chart's MSK
     # open_monitoring scrape. Empty on every provider but msk.
     dfe.hyperi.io/kafka_broker_hosts: "${DFE_KAFKA_BROKER_HOSTS}"

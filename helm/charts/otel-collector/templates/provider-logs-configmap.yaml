@@ -1,0 +1,150 @@
+{{- $pl := .Values.clusterTelemetry.providerLogs }}
+{{- if ne $pl.flavour "none" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-provider-logs-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.healthCheckPort }}
+      {{- if or (eq $pl.flavour "aws") (eq $pl.flavour "rancher") }}
+      # Read offsets, so a restart resumes where it stopped rather than re-reading the lookback.
+      file_storage/provider_logs:
+        directory: {{ if eq $pl.flavour "rancher" }}{{ $pl.rancher.checkpoint.mountPath }}{{ else }}/var/lib/otelcol/storage{{ end }}
+        create_directory: true
+        timeout: 10s
+      {{- end }}
+      {{- if eq $pl.flavour "gcp" }}
+      # Cloud Logging writes each Pub/Sub message as a LogEntry JSON document.
+      googlecloudlogentry_encoding: {}
+      {{- end }}
+
+    receivers:
+      {{- if eq $pl.flavour "aws" }}
+      {{- /*
+        A group the role cannot read, or a missing one, is logged by the receiver
+        on every poll and nothing more. What it does NOT survive is a failed STS
+        identity call, which is why this runs in its own process.
+      */}}
+      {{- range $source, $group := dict "eks_audit" $pl.aws.eksAuditLogGroup "cloudtrail" $pl.aws.cloudTrailLogGroup }}
+      {{- if $group }}
+      aws_cloudwatch/{{ $source }}:
+        region: {{ $pl.aws.region | quote }}
+        storage: file_storage/provider_logs
+        logs:
+          poll_interval: {{ $pl.aws.pollInterval }}
+          initial_lookback: {{ $pl.aws.initialLookback }}
+          groups:
+            named:
+              {{ $group | quote }}: {}
+      {{- end }}
+      {{- end }}
+      {{- else if eq $pl.flavour "azure" }}
+      azure_event_hub:
+        connection: ${env:AZURE_EVENT_HUB_CONNECTION}
+        group: {{ $pl.azure.consumerGroup | quote }}
+        apply_semantic_conventions: true
+      {{- else if eq $pl.flavour "gcp" }}
+      googlecloudpubsub:
+        subscription: {{ $pl.gcp.subscription | quote }}
+        encoding: googlecloudlogentry_encoding
+        # One undecodable message is dropped and counted rather than stopping the stream.
+        ignore_encoding_error: true
+      {{- else if eq $pl.flavour "rancher" }}
+      filelog/kube_apiserver_audit:
+        include: [{{ $pl.rancher.auditLogPath | quote }}]
+        storage: file_storage/provider_logs
+        # A file that does not exist (auditing off) matches nothing and is logged, not fatal.
+        start_at: end
+        include_file_path: true
+        operators:
+          - type: json_parser
+            id: audit-json
+            on_error: send
+            timestamp:
+              parse_from: attributes.requestReceivedTimestamp
+              layout_type: gotime
+              layout: '2006-01-02T15:04:05.000000Z07:00'
+      {{- end }}
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.providerLogsMemory" .) }}
+        spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.providerLogsMemory" .) }}
+      {{- /* cloud.provider and the source name every row, so HyperDX can filter on them. */}}
+      {{- if eq $pl.flavour "aws" }}
+      resource/eks_audit:
+        attributes:
+          - {key: cloud.provider, value: aws, action: upsert}
+          - {key: dfe.provider_log.source, value: eks-audit, action: upsert}
+          - {key: service.name, value: eks-audit, action: upsert}
+      resource/cloudtrail:
+        attributes:
+          - {key: cloud.provider, value: aws, action: upsert}
+          - {key: dfe.provider_log.source, value: cloudtrail, action: upsert}
+          - {key: service.name, value: cloudtrail, action: upsert}
+      {{- else if eq $pl.flavour "azure" }}
+      resource/provider_logs:
+        attributes:
+          - {key: cloud.provider, value: azure, action: upsert}
+          - {key: dfe.provider_log.source, value: diagnostic-settings, action: upsert}
+          - {key: service.name, value: azure-diagnostic-settings, action: upsert}
+      {{- else if eq $pl.flavour "gcp" }}
+      resource/provider_logs:
+        attributes:
+          - {key: cloud.provider, value: gcp, action: upsert}
+          - {key: dfe.provider_log.source, value: cloud-logging, action: upsert}
+          - {key: service.name, value: gcp-cloud-logging, action: upsert}
+      {{- else if eq $pl.flavour "rancher" }}
+      resource/provider_logs:
+        attributes:
+          - {key: cloud.provider, value: rancher, action: upsert}
+          - {key: dfe.provider_log.source, value: kube-apiserver-audit, action: upsert}
+          - {key: service.name, value: kube-apiserver-audit, action: upsert}
+          - {key: k8s.node.name, value: "${env:K8S_NODE_NAME}", action: upsert}
+      {{- end }}
+
+    exporters:
+      otlp/gateway:
+        endpoint: {{ include "dfe-common.fullname" . }}-gateway.{{ .Release.Namespace }}.svc.cluster.local:4317
+        tls:
+          insecure: true
+        sending_queue:
+          enabled: true
+          queue_size: {{ include "otel-collector.queueSize" (include "otel-collector.providerLogsMemory" .) }}
+        # A gateway refusing data or gone drops after this, rather than the queue filling the container.
+        retry_on_failure:
+          enabled: true
+          max_elapsed_time: {{ $pl.deployment.export.maxElapsedTime }}
+
+    service:
+      extensions: [health_check{{ if or (eq $pl.flavour "aws") (eq $pl.flavour "rancher") }}, file_storage/provider_logs{{ end }}{{ if eq $pl.flavour "gcp" }}, googlecloudlogentry_encoding{{ end }}]
+      pipelines:
+        {{- if eq $pl.flavour "aws" }}
+        {{- if $pl.aws.eksAuditLogGroup }}
+        logs/eks_audit:
+          receivers: [aws_cloudwatch/eks_audit]
+          processors: [memory_limiter, resource/eks_audit, batch]
+          exporters: [otlp/gateway]
+        {{- end }}
+        {{- if $pl.aws.cloudTrailLogGroup }}
+        logs/cloudtrail:
+          receivers: [aws_cloudwatch/cloudtrail]
+          processors: [memory_limiter, resource/cloudtrail, batch]
+          exporters: [otlp/gateway]
+        {{- end }}
+        {{- else }}
+        logs/provider_logs:
+          receivers: [{{ if eq $pl.flavour "azure" }}azure_event_hub{{ else if eq $pl.flavour "gcp" }}googlecloudpubsub{{ else }}filelog/kube_apiserver_audit{{ end }}]
+          processors: [memory_limiter, resource/provider_logs, batch]
+          exporters: [otlp/gateway]
+        {{- end }}
+{{- end }}

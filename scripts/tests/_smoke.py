@@ -65,7 +65,7 @@ SMOKE = REPO_ROOT / "bootstrap" / "smoke-test-integration.sh"
 # times the freshness query returns 0 before it returns 1, which is the collector
 # that has not exported yet; the call count lands in FAKE_KUBECTL_CALLS.
 FAKE_KUBECTL = """#!/usr/bin/env python3
-import json, os, re, subprocess, sys
+import json, os, re, subprocess, sys, time
 
 args = sys.argv[1:]
 with open(os.environ["FAKE_KUBECTL_FIXTURE"], encoding="utf-8") as fh:
@@ -256,7 +256,15 @@ if "exec" in args:
     if "mongosh" in args or "wget" in args:
         sys.exit(1)
     query = args[args.index("--query") + 1] if "--query" in args else ""
+    if "dfe.provider_log.source" in query:
+        # Rows per provider-log source, e.g. {"eks-audit": 3}; a source not named has none.
+        rows = fixture.get("provider_log_rows", {})
+        print(next((n for source, n in rows.items() if "'" + source + "'" in query), 0))
+        sys.exit(0)
     if "otel_logs" in query:
+        # A real query runs through kubectl exec and takes seconds; this is how long one takes here.
+        counts.setdefault("otel_times", []).append(time.time())
+        time.sleep(fixture.get("otel_query_seconds", 0))
         asked = bump("otel")
         print(0 if asked <= fixture.get("otel_zero_answers", 0) else 1)
         sys.exit(0)

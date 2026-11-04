@@ -308,6 +308,26 @@ def test_the_logged_apps_are_the_dfe_apps_hyperdx_and_its_store() -> None:
     assert not any("keda" in name or "kafka" in name or "operator" in name for _, name in chosen)
 
 
+def test_every_pod_of_the_collector_namespace_is_read_the_provider_logs_one_included() -> None:
+    otel = [
+        _pod("otel", "dfe-otel-collector-gateway", "a1", ("otel-collector",)),
+        _pod("otel", "dfe-otel-collector-provider-logs", "b2", ("otel-collector",)),
+        _pod("otel", "dfe-otel-collector-daemonset", "c3", ("otel-collector",), owner_kind="DaemonSet"),
+        _pod("otel", "anything-else-in-the-namespace", "d4", ("main",)),
+        _pod("kube-system", "dfe-otel-collector-lookalike", "e5", ("main",)),
+    ]
+    chosen = [name for _, name in (dg._identity(pod) for pod in dg.log_targets(otel))]
+    assert sorted(chosen) == sorted(
+        [
+            "dfe-otel-collector-daemonset-c3",
+            "dfe-otel-collector-gateway-a1",
+            "dfe-otel-collector-provider-logs-b2",
+            "anything-else-in-the-namespace-d4",
+        ]
+    )
+    assert "dfe-otel-collector-lookalike-e5" not in chosen
+
+
 def test_a_documentdb_instance_is_its_cluster_and_every_container_is_read() -> None:
     instance = next(pod for pod in PODS if pod["metadata"]["name"] == "dfe-documentdb-1")
     assert dg.owning_workload(instance) == "dfe-documentdb"

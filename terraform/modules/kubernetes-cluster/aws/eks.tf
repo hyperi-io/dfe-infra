@@ -63,12 +63,23 @@ resource "aws_iam_role_policy_attachment" "cluster" {
 // EKS delivers control-plane logs to CloudWatch and nowhere else -- there is
 // no S3 or OTel export path for them, unlike MSK's broker logs -- so this is
 // created explicitly rather than left to EKS's own auto-create-on-enable
-// behaviour, which carries NO expiration at all. audit is the one stream kept
-// on: it is the compliance-relevant one, and api/controllerManager/scheduler
-// would be pure CloudWatch cost with nothing downstream to read them.
+// behaviour, which carries NO expiration at all. Which streams are on is
+// telemetry.eks_log_types, from tfvars. A product deploy keeps audit, the
+// compliance-relevant one. api/controllerManager/scheduler are CloudWatch
+// ingestion cost with nothing downstream to read them. An empty list enables
+// no stream, so there is nothing to deliver and no log group to create.
 resource "aws_cloudwatch_log_group" "cluster" {
+  count = length(var.telemetry.eks_log_types) > 0 ? 1 : 0
+
   name              = "/aws/eks/${var.name}/cluster"
   retention_in_days = var.telemetry.sink == "otel" ? var.telemetry.forced_retention_days : var.telemetry.retention_days
+}
+
+// Keeps a deployment that already runs the group from planning a delete and a
+// create, which would drop its audit history.
+moved {
+  from = aws_cloudwatch_log_group.cluster
+  to   = aws_cloudwatch_log_group.cluster[0]
 }
 
 resource "aws_eks_cluster" "this" {
@@ -76,7 +87,7 @@ resource "aws_eks_cluster" "this" {
   role_arn = aws_iam_role.cluster.arn
   version  = var.kubernetes_version
 
-  enabled_cluster_log_types = ["audit"]
+  enabled_cluster_log_types = var.telemetry.eks_log_types
 
   vpc_config {
     // PRIVATE subnets only. The control-plane network interfaces belong on the
@@ -108,8 +119,9 @@ resource "aws_eks_cluster" "this" {
     }
   }
 
-  // The log group has to exist before enabled_cluster_log_types takes effect,
-  // or EKS auto-creates one of its own with no expiration set.
+  // The log group (when any stream is enabled) has to exist before
+  // enabled_cluster_log_types takes effect, or EKS auto-creates one of its own
+  // with no expiration set.
   //
   // The private zone's teardown is in this list for the DESTROY order, which is
   // the reverse: a dependent is destroyed BEFORE what it depends on, so naming

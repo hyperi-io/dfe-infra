@@ -121,6 +121,9 @@ LOGGED_APPS = (
     # The store's CloudNativePG Cluster, which owns its PostgreSQL and gateway instance pods.
     "dfe-documentdb",
 )
+# Namespaces whose every pod is read: the collector's gateway, node agent and provider-logs
+# workloads, which carry the stack's own telemetry and say why it stopped.
+LOGGED_NAMESPACES = ("otel",)
 ENGINE = "dfe-engine"
 ARGOCD = "argocd"
 APPLICATIONS = "applications.argoproj.io"
@@ -347,8 +350,13 @@ def _by_workload(pod: dict) -> tuple[str, str, str]:
 
 
 def log_targets(pods: list[dict]) -> list[dict]:
-    """The pods of every logged app, by namespace, workload and name."""
-    chosen = [pod for pod in pods if all(_identity(pod)) and logged(owning_workload(pod))]
+    """The pods of every logged app and of every logged namespace, by namespace, workload and name."""
+    chosen = [
+        pod
+        for pod in pods
+        if all(_identity(pod))
+        and (logged(owning_workload(pod)) or _identity(pod)[0] in LOGGED_NAMESPACES)
+    ]
     return sorted(chosen, key=_by_workload)
 
 
