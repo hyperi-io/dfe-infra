@@ -511,6 +511,23 @@ def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
         if want:
             expect("and names the app and its tag", "an-app v1.0.0-rc.1" in out, out)
 
+    for label, content, service, want in (
+        ("a hand-edited prerelease dfe-hyperdx", 'dfe-hyperdx: "v0.3.0-rc.1"', "26.3.17.56", 1),
+        ("a released dfe-hyperdx, a dfe-docker commit and a four-part upstream tag",
+         'dfe-hyperdx: "v0.3.0"\n      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"', "26.3.17.56", 0),
+    ):
+        block = (
+            "    maturity: release\n"
+            '    apps:\n      an-app: "v1.0.0"\n'
+            f"    content:\n      {content}\n"
+            f'    services:\n      clickhouse-version: "{service}"\n'
+            '    digests:\n      an-app: "sha256:aaa"\n      dfe-hyperdx: "sha256:bbb"\n'
+        )
+        rc, out = _run_release_gate(block, both)
+        expect(f"{label}: release-gate exits {want}", rc == want, f"exit {rc}\n{out}")
+        if want:
+            expect(f"{label}: and names it", "dfe-hyperdx v0.3.0-rc.1" in out, out)
+
 
 def test_release_gate_fails_closed_when_the_registry_cannot_be_read() -> None:
     rc, out = _release_gate_over("release", lambda ref: (None, "403 Forbidden"))
@@ -2617,14 +2634,16 @@ stacks:
 """
 
 
-def _release_cut_from_rc(apps: str | None, published: dict[str, str]) -> tuple[str | None, str]:
+def _release_cut_from_rc(
+    apps: str | None, published: dict[str, str], fixture: str = _RC_STACK_FIXTURE
+) -> tuple[str | None, str]:
     """Cut 9.9.1 at release maturity from an rc stack, and return the refusal and the file after."""
     import argparse
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        (tmp / "versions.yaml").write_text(_RC_STACK_FIXTURE, encoding="utf-8", newline="\n")
+        (tmp / "versions.yaml").write_text(fixture, encoding="utf-8", newline="\n")
 
         def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
             tag = published.get(app)
@@ -2665,6 +2684,18 @@ def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
         expect(f"{label}: and writes nothing", "9.9.1:" not in text, text)
     refusal, text = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"})
     expect("every app promoted: the release cut writes", refusal is None, f"{refusal}")
+
+    with_content = _RC_STACK_FIXTURE.replace(
+        "    digests:\n",
+        '    content:\n      dfe-hyperdx: "v0.3.0-rc.1"\n'
+        "    digests:\n",
+    )
+    refusal, _ = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"}, with_content)
+    expect(
+        "a cloned prerelease content pin refuses the cut",
+        refusal is not None and "dfe-hyperdx v0.3.0-rc.1" in refusal,
+        f"{refusal}",
+    )
 
 
 def test_the_new_stack_maturity_picks_rc_or_release_app_tags() -> None:

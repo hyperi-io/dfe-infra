@@ -292,10 +292,21 @@ def unpublished_apps(v: dict) -> list[str]:
     return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
 
 
-def non_release_app_pins(apps: dict) -> list[str]:
-    """`app tag` for every app pin that is not a plain vX.Y.Z, which a release must not ship."""
+# The content entries DFE versions with release tags. dfe-docker is pinned by
+# commit, and third-party upstream tags follow their own schemes.
+VERSIONED_CONTENT = ("dfe-deploy", "dfe-hyperdx", "dfe-schemas")
+
+
+def non_release_pins(v: dict) -> list[str]:
+    """`name tag` for every DFE app or versioned content pin that is not a plain vX.Y.Z.
+
+    A release must ship none of them.
+    """
+    content = v.get("content", {})
+    pins = dict(v.get("apps", {}))
+    pins |= {name: content[name] for name in VERSIONED_CONTENT if name in content}
     return [
-        f"{app} {tag}" for app, tag in sorted(apps.items())
+        f"{name} {tag}" for name, tag in sorted(pins.items())
         if (key := semver_key(str(tag))) is None or key[3] != 1
     ]
 
@@ -1498,10 +1509,10 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         )
         return 1 if pins_failed else 0
     failed = pins_failed
-    rc_pins = non_release_app_pins(v.get("apps", {}))
+    rc_pins = non_release_pins(v)
     if rc_pins:
         print(
-            f"release-gate FAIL: {name} is maturity=release but these app pins are not "
+            f"release-gate FAIL: {name} is maturity=release but these DFE pins are not "
             f"plain vX.Y.Z releases: {', '.join(rc_pins)}",
             file=sys.stderr,
         )
@@ -1878,7 +1889,6 @@ def cmd_cut(args: argparse.Namespace) -> int:
     wanted = set(args.apps.split(",")) if args.apps else None
     moved: list[str] = []
     held: list[str] = []
-    result_apps = dict(from_pins.get("apps", {}))
 
     for app, current in sorted(from_pins.get("apps", {}).items()):
         if wanted is not None and app not in wanted:
@@ -1904,20 +1914,20 @@ def cmd_cut(args: argparse.Namespace) -> int:
                 f"block and re-run"
             )
         moved.append(f"{app} {current} -> {tag}")
-        result_apps[app] = tag
-
-    # A held or --apps-excluded pin carries over as it was, which may be an rc.
-    rc_pins = non_release_app_pins(result_apps) if not want_rc else []
-    if rc_pins:
-        raise SystemExit(
-            f"error: a release stack must pin plain vX.Y.Z apps, but {new} would carry "
-            f"{', '.join(rc_pins)} -- promote those builds first"
-        )
 
     moved += _stamp_git_content(block, from_pins, args.org, held)
     # After the tags move, so each chart is read at the version its tag now names.
     host = args.registry.partition("/")[0]
     moved += repin_charts(block, args.org, host, held)
+
+    # A held, --apps-excluded or cloned content pin carries over as it was, which may be an rc.
+    if not want_rc:
+        rc_pins = non_release_pins(parse_simple_yaml("".join(block)).get(new, {}))
+        if rc_pins:
+            raise SystemExit(
+                f"error: a release stack must pin plain vX.Y.Z DFE builds, but {new} would "
+                f"carry {', '.join(rc_pins)} -- promote those builds first"
+            )
 
     print(f"cut {new} from {from_name}")
     if from_withdrawn:
