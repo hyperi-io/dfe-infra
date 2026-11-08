@@ -496,6 +496,22 @@ def test_release_gate_passes_a_release_that_carries_both() -> None:
     expect("and says how many images it read", "all 2 image(s)" in out, out)
 
 
+def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
+    """However the stack was produced, a release ships promoted builds only."""
+    both = lambda ref: ({"linux/amd64", "linux/arm64"}, "")  # noqa: E731
+    for maturity, tag, want in (("release", "v1.0.0-rc.1", 1), ("release", "v1.0.0", 0), ("rc", "v1.0.0-rc.1", 0)):
+        block = (
+            f"    maturity: {maturity}\n"
+            f'    apps:\n      an-app: "{tag}"\n'
+            '    content:\n      a-fork: "v0.2.7"\n'
+            '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
+        )
+        rc, out = _run_release_gate(block, both)
+        expect(f"{maturity} pinning {tag} exits {want}", rc == want, f"exit {rc}\n{out}")
+        if want:
+            expect("and names the app and its tag", "an-app v1.0.0-rc.1" in out, out)
+
+
 def test_release_gate_fails_closed_when_the_registry_cannot_be_read() -> None:
     rc, out = _release_gate_over("release", lambda ref: (None, "403 Forbidden"))
     expect("an unread registry fails the gate", rc == 1, f"exit {rc}\n{out}")
@@ -2578,6 +2594,77 @@ def test_an_rc_cut_takes_the_newest_rc_or_release_and_a_release_cut_releases_onl
         with registry.serving():
             found = stack._latest_published("hyperi-io", "dfe-engine", prerelease=prerelease)
         expect(label, found is not None and found[0] == want, f"{found}")
+
+
+_RC_STACK_FIXTURE = """\
+schema: 2
+current: "9.9.1-rc.4"
+
+stacks:
+
+  9.9.1-rc.4:
+    maturity: rc
+    support: standard
+    apps:
+      app-a: "v1.1.0-rc.2"
+      app-b: "v2.0.0-rc.1"
+    digests:
+      app-a: "sha256:aaa"
+      app-b: "sha256:bbb"
+    stack:
+      previous: "9.9.0"
+      upgrade-order: "app-a, app-b"
+"""
+
+
+def _release_cut_from_rc(apps: str | None, published: dict[str, str]) -> tuple[str | None, str]:
+    """Cut 9.9.1 at release maturity from an rc stack, and return the refusal and the file after."""
+    import argparse
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(_RC_STACK_FIXTURE, encoding="utf-8", newline="\n")
+
+        def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
+            tag = published.get(app)
+            return (tag, f"sha256:{app}") if tag else None
+
+        original = (stack.REPO_ROOT, stack._latest_published)
+        stack.REPO_ROOT, stack._latest_published = tmp, latest
+        refusal = None
+        try:
+            stack.cmd_cut(
+                argparse.Namespace(
+                    version="9.9.1", from_stack=None, maturity="release", apps=apps,
+                    org="test-org", dry_run=False, registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
+                )
+            )
+        except SystemExit as exc:
+            refusal = str(exc)
+        finally:
+            stack.REPO_ROOT, stack._latest_published = original
+        return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+
+def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
+    """A held pin or an --apps-excluded one keeps its rc, so the cut checks every app."""
+    for label, apps, published, named in (
+        ("no release published for app-b", None, {"app-a": "v1.1.0"}, ["app-b v2.0.0-rc.1"]),
+        ("--apps leaves app-b out", "app-a", {"app-a": "v1.1.0", "app-b": "v2.0.0"}, ["app-b v2.0.0-rc.1"]),
+        ("nothing promoted at all", None, {}, ["app-a v1.1.0-rc.2", "app-b v2.0.0-rc.1"]),
+    ):
+        refusal, text = _release_cut_from_rc(apps, published)
+        expect(f"{label}: the cut refuses", refusal is not None, "it wrote a release with an rc pin")
+        expect(
+            f"{label}: and names each rc pin",
+            refusal is not None and all(n in refusal for n in named),
+            f"{refusal}",
+        )
+        expect(f"{label}: and writes nothing", "9.9.1:" not in text, text)
+    refusal, text = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"})
+    expect("every app promoted: the release cut writes", refusal is None, f"{refusal}")
 
 
 def test_the_new_stack_maturity_picks_rc_or_release_app_tags() -> None:

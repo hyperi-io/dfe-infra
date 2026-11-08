@@ -292,6 +292,14 @@ def unpublished_apps(v: dict) -> list[str]:
     return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
 
 
+def non_release_app_pins(apps: dict) -> list[str]:
+    """`app tag` for every app pin that is not a plain vX.Y.Z, which a release must not ship."""
+    return [
+        f"{app} {tag}" for app, tag in sorted(apps.items())
+        if (key := semver_key(str(tag))) is None or key[3] != 1
+    ]
+
+
 def untagged_digests(v: dict) -> list[str]:
     """`digests:` keys with no tag to build a ref from, which app_images drops."""
     return sorted(name for name in v.get("digests", {}) if not image_tag(v, name))
@@ -1490,6 +1498,14 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         )
         return 1 if pins_failed else 0
     failed = pins_failed
+    rc_pins = non_release_app_pins(v.get("apps", {}))
+    if rc_pins:
+        print(
+            f"release-gate FAIL: {name} is maturity=release but these app pins are not "
+            f"plain vX.Y.Z releases: {', '.join(rc_pins)}",
+            file=sys.stderr,
+        )
+        failed = True
     if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "
@@ -1862,6 +1878,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
     wanted = set(args.apps.split(",")) if args.apps else None
     moved: list[str] = []
     held: list[str] = []
+    result_apps = dict(from_pins.get("apps", {}))
 
     for app, current in sorted(from_pins.get("apps", {}).items()):
         if wanted is not None and app not in wanted:
@@ -1887,6 +1904,15 @@ def cmd_cut(args: argparse.Namespace) -> int:
                 f"block and re-run"
             )
         moved.append(f"{app} {current} -> {tag}")
+        result_apps[app] = tag
+
+    # A held or --apps-excluded pin carries over as it was, which may be an rc.
+    rc_pins = non_release_app_pins(result_apps) if not want_rc else []
+    if rc_pins:
+        raise SystemExit(
+            f"error: a release stack must pin plain vX.Y.Z apps, but {new} would carry "
+            f"{', '.join(rc_pins)} -- promote those builds first"
+        )
 
     moved += _stamp_git_content(block, from_pins, args.org, held)
     # After the tags move, so each chart is read at the version its tag now names.
