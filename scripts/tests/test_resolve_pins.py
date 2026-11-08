@@ -253,6 +253,8 @@ def test_a_registry_that_stays_busy_raises(monkeypatch):
 
 def test_version_key_orders_numerically():
     assert registry_pins.version_key("v1.18.19") > registry_pins.version_key("v1.18.9")
+    assert registry_pins.version_key("v1.22.81-rc.1") < registry_pins.version_key("v1.22.81")
+    assert registry_pins.version_key("v1.22.81-rc.1") > registry_pins.version_key("v1.22.80")
 
 
 # --- registry_pins digest resolution ------------------------------------------

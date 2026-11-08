@@ -91,6 +91,45 @@ def test_a_compound_tag_parses_per_segment_rather_than_raising() -> None:
     )
 
 
+def test_an_rc_ranks_below_its_release() -> None:
+    """An app rc pin must not satisfy a bound its promoted release would."""
+    order = [
+        "v1.22.80",
+        "v1.22.81-rc.1",
+        "v1.22.81-rc.2",
+        "v1.22.81-rc.10",
+        "v1.22.81",
+        "v1.22.82-rc.1",
+    ]
+    shuffled = [order[i] for i in (4, 2, 5, 0, 3, 1)]
+    got = sorted(shuffled, key=version_range.version_key)
+    expect("rc.N orders numerically and below its release", got == order, f"{got}")
+    for version, spec, want in (
+        ("1.22.81-rc.1", "<1.22.81", True),
+        ("1.22.81-rc.1", ">=1.22.81", False),
+        ("1.22.81-rc.1", "==1.22.81", False),
+        ("1.22.81-rc.1", ">=1.22.80 <1.22.81", True),
+        ("v1.22.81", "==1.22.81", True),
+    ):
+        expect(f"{version} {spec} is {want}", version_range.satisfies(version, spec) is want)
+
+
+def test_only_a_trailing_alpha_beta_or_rc_is_a_prerelease() -> None:
+    """Other dashes are upstream build names and keep comparing as they always did."""
+    for tag, want in (
+        ("v1.22.81-rc.1", True),
+        ("2.2.0-beta.3", True),
+        ("v1.22.81", False),
+        ("17-0.107.0-ferretdb-2.7.0", False),
+        ("1.34.1-20251010", False),
+    ):
+        expect(f"{tag} prerelease is {want}", version_range.is_prerelease(tag) is want)
+    expect(
+        "a non-rc dash still satisfies the bound it did",
+        version_range.satisfies("17-0.107.0-ferretdb-2.7.0", ">=17"),
+    )
+
+
 def main() -> int:
     with standalone():
         for name, fn in sorted(globals().items()):

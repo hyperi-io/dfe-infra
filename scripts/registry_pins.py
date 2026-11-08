@@ -32,7 +32,7 @@ Everything here is decoupled from any pin FILE. The public surface is:
   package_tags(org, app)       -> every tag the package carries
   resolve(org, app, tag)       -> a Resolved(digest, published) or None
   resolve_digest(org, app, tag)-> just the digest string, or None
-  version_key(tag)             -> numeric sort key for vX.Y.Z tags
+  version_key(tag)             -> sort key for vX.Y.Z[-rc.N] tags, rc below its release
   head_commit(org, repo, ref)  -> the commit sha a branch or tag points at
   commit_summary(org, repo, sha) -> (subject line, commit date) of that commit
   repo_file(org, repo, ref, path) -> one file of a public repository at a ref, read anonymously
@@ -69,6 +69,7 @@ import urllib.request
 from dataclasses import dataclass, field
 
 import oci_registry
+import version_range
 
 GHCR = "ghcr.io"
 
@@ -441,9 +442,9 @@ def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None
         ) from api_exc
 
 
-def version_key(tag: str) -> tuple[int, ...]:
-    """Numeric sort key so v1.18.19 ranks above v1.18.9, unlike a string sort."""
-    return tuple(int(part) if part.isdigit() else 0 for part in tag.lstrip("v").split("."))
+def version_key(tag: str) -> tuple:
+    """Sort key: v1.18.19 above v1.18.9, and v1.22.81-rc.1 below v1.22.81."""
+    return version_range.version_key(tag)
 
 
 def head_commit(org: str, repo: str, ref: str = "main") -> str:

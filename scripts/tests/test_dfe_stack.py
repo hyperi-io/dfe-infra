@@ -1494,7 +1494,7 @@ def _cut_into(
     )
     stack.REPO_ROOT = tmp
     # Offline: no published release, so every app pin holds and no registry is hit.
-    stack._latest_published = lambda org, app: None
+    stack._latest_published = lambda org, app, prerelease=False: None
     stack.registry_pins.head_commit = head
     stack.registry_pins.commit_summary = summary
     try:
@@ -1831,7 +1831,7 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
         original_root, original_published = stack.REPO_ROOT, stack._latest_published
         stack.REPO_ROOT = tmp
         # The app has just published, so the tag moves and the digest has no home.
-        stack._latest_published = lambda org, app: ("v3.0.0", "sha256:ccc")
+        stack._latest_published = lambda org, app, prerelease=False: ("v3.0.0", "sha256:ccc")
         try:
             stack.cmd_cut(
                 argparse.Namespace(
@@ -1885,7 +1885,7 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
         asked.append((org, package, tag))
         return served.get((package, tag))
 
-    def latest(org: str, app: str) -> tuple[str, str] | None:
+    def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
         return ("v3.0.0", "sha256:img-three") if app == "an-app" else None
 
     with tempfile.TemporaryDirectory() as td:
@@ -2122,6 +2122,7 @@ def _withdrawn_cut(
     maturity: str | None = None,
     replace: bool = False,
     dry_run: bool = False,
+    kinds: list[bool] | None = None,
 ) -> tuple[str | None, str, list[str]]:
     """Run a cut over the replace fixture with the registry stubbed out.
 
@@ -2140,8 +2141,10 @@ def _withdrawn_cut(
         )
     asked: list[str] = []
 
-    def latest(org: str, app: str) -> tuple[str, str] | None:
+    def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
         asked.append(app)
+        if kinds is not None:
+            kinds.append(prerelease)
         return None
 
     original = (stack.REPO_ROOT, stack._latest_published)
@@ -2535,7 +2538,11 @@ def _published_engine():
     from _oci import FakeRegistry
 
     registry = FakeRegistry(page_size=2)
-    for tag, digest in (("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b")):
+    published = (
+        ("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b"),
+        ("v1.11.0-rc.2", "e"),
+    )
+    for tag, digest in published:
         registry.add("hyperi-io/dfe-engine", tag, "sha256:" + digest * 64)
     registry.add("hyperi-io/dfe-engine", "sha-1a2b3c4", "sha256:" + "d" * 64)
     return registry
@@ -2545,10 +2552,48 @@ def test_cut_takes_the_highest_release_and_its_own_digest() -> None:
     registry = _published_engine()
     with registry.serving():
         found = stack._latest_published("hyperi-io", "dfe-engine")
-    expect("v1.10.0 outranks v1.9.9 and the build tags", found == ("v1.10.0", "sha256:" + "b" * 64),
+    expect("v1.10.0 outranks v1.9.9, the build tags and an rc", found == ("v1.10.0", "sha256:" + "b" * 64),
            f"{found}")
     expect("no token request carried a credential",
            all(r.authorization == "" for r in registry.token_requests()), "a token was sent")
+
+
+def test_an_rc_cut_takes_the_newest_rc_or_release_and_a_release_cut_releases_only() -> None:
+    """An app untouched since its last release has no rc, so an rc stack pins that release."""
+    from _oci import FakeRegistry
+
+    cases = (
+        ("an untouched app keeps its release", True, ("v1.15.64",), "v1.15.64"),
+        ("a changed app takes its newest rc", True,
+         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0-rc.10", "v1.17.0-beta.1"), "v1.16.0-rc.10"),
+        ("a release published above its rcs wins", True,
+         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0"), "v1.16.0"),
+        ("a release cut never takes an rc", False,
+         ("v1.15.64", "v1.16.0-rc.2"), "v1.15.64"),
+    )
+    for label, prerelease, tags, want in cases:
+        registry = FakeRegistry(page_size=2)
+        for index, tag in enumerate(tags):
+            registry.add("hyperi-io/dfe-engine", tag, f"sha256:{index:064d}")
+        with registry.serving():
+            found = stack._latest_published("hyperi-io", "dfe-engine", prerelease=prerelease)
+        expect(label, found is not None and found[0] == want, f"{found}")
+
+
+def test_the_new_stack_maturity_picks_rc_or_release_app_tags() -> None:
+    """An rc stack pins app rcs. Only a release stack pins promoted vX.Y.Z builds."""
+    import tempfile
+
+    for maturity, want in ((None, True), ("beta", True), ("release", False)):
+        kinds: list[bool] = []
+        with tempfile.TemporaryDirectory() as td:
+            _withdrawn_cut(Path(td), "9.9.1-rc.3", "9.9.1-rc.2", maturity=maturity, kinds=kinds)
+        label = f"--maturity {maturity}" if maturity else "an inherited rc maturity"
+        expect(
+            f"{label} asks the registry for {'rc' if want else 'release'} tags",
+            bool(kinds) and all(k is want for k in kinds),
+            f"got {kinds}",
+        )
 
 
 def test_cut_holds_an_app_that_never_shipped() -> None:
