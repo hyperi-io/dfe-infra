@@ -16,9 +16,29 @@
 # anything to do with a username. This covers the other path, in the broker's own
 # namespace, which on a single-namespace install is where the apps run.
 #
+# The ESO webhook refuses an ExternalSecret with neither data nor dataFrom, and
+# this path has no store to read, so the two values come from a Fake generator:
+# ESO's static key/value source, which needs no provider or credential.
+#
 # creationPolicy: Merge adds keys to the Secret the User Operator owns rather
 # than competing for the name; ESO retries until that Secret exists, so the
 # KafkaUser reconciling later is a wait, not a failure.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Fake
+metadata:
+  name: {{ .Values.user.name }}-appkeys
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  data:
+    # The KafkaUser's name IS the SCRAM username, so it is templated rather
+    # than read from anywhere.
+    username: {{ .Values.user.name | quote }}
+    # Derived from the provider table, never hand-set (dfe-infra#10). The
+    # literal librdkafka spelling: dfe-receiver passes this value straight
+    # through and rejects the engine model's underscore form.
+    sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
+---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -30,14 +50,10 @@ spec:
   target:
     name: {{ .Values.user.name }}
     creationPolicy: Merge
-    template:
-      engineVersion: v2
-      data:
-        # The KafkaUser's name IS the SCRAM username, so it is templated rather
-        # than read from anywhere.
-        username: {{ .Values.user.name | quote }}
-        # Derived from the provider table, never hand-set (dfe-infra#10). The
-        # literal librdkafka spelling: dfe-receiver passes this value straight
-        # through and rejects the engine model's underscore form.
-        sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
+  dataFrom:
+    - sourceRef:
+        generatorRef:
+          apiVersion: generators.external-secrets.io/v1alpha1
+          kind: Fake
+          name: {{ .Values.user.name }}-appkeys
 {{- end }}

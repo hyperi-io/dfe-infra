@@ -262,6 +262,11 @@ def secret_key_refs(docs: list[dict], secret: str) -> set[str]:
 def written_keys(docs: list[dict], secret: str) -> set[str]:
     """Every key an ExternalSecret in these docs puts INTO `secret`."""
     keys: set[str] = set()
+    fakes = {
+        d["metadata"]["name"]: set(d["spec"].get("data", {}))
+        for d in docs
+        if d.get("kind") == "Fake"
+    }
     for doc in docs:
         if doc.get("kind") == "ExternalSecret":
             spec = doc["spec"]
@@ -273,6 +278,10 @@ def written_keys(docs: list[dict], secret: str) -> set[str]:
             continue
         keys |= set(spec.get("target", {}).get("template", {}).get("data", {}))
         keys |= {d["secretKey"] for d in spec.get("data", [])}
+        for source in spec.get("dataFrom", []):
+            ref = source.get("sourceRef", {}).get("generatorRef", {})
+            if ref.get("kind") == "Fake":
+                keys |= fakes.get(ref.get("name"), set())
     return keys
 
 
@@ -364,8 +373,15 @@ def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
             len(appkeys) == 1,
             f"got {len(appkeys)}",
         )
-        policy = appkeys[0]["spec"]["target"]["creationPolicy"] if appkeys else None
+        spec = appkeys[0]["spec"] if appkeys else {}
+        policy = spec.get("target", {}).get("creationPolicy")
         expect(f"{provider}: it merges into the operator's Secret", policy == "Merge", f"got {policy}")
+        # The ESO admission webhook refuses an ExternalSecret with neither.
+        expect(
+            f"{provider}: it has data or dataFrom",
+            bool(spec.get("data") or spec.get("dataFrom")),
+            f"got keys {sorted(spec)}",
+        )
 
 
 def test_the_single_tier_still_carries_the_same_shape() -> None:
