@@ -513,6 +513,8 @@ def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
 
     for label, content, service, want in (
         ("a hand-edited prerelease dfe-hyperdx", 'dfe-hyperdx: "v0.3.0-rc.1"', "26.3.17.56", 1),
+        ("a hand-edited prerelease dfe-toolbox",
+         'dfe-hyperdx: "v0.3.0-rc.1"\n    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"', "26.3.17.56", 1),
         ("a released dfe-hyperdx, a dfe-docker commit and a four-part upstream tag",
          'dfe-hyperdx: "v0.3.0"\n      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"', "26.3.17.56", 0),
     ):
@@ -527,6 +529,30 @@ def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
         expect(f"{label}: release-gate exits {want}", rc == want, f"exit {rc}\n{out}")
         if want:
             expect(f"{label}: and names it", "dfe-hyperdx v0.3.0-rc.1" in out, out)
+            if "toolbox" in content:
+                expect(f"{label}: and the toolbox pin", "toolbox.dfe-toolbox v1.0.7-rc.1" in out, out)
+
+
+def test_every_dfe_owned_versioned_pin_is_release_checked() -> None:
+    """A versions.yaml key suite.yaml names is either checked at release or exempt by name."""
+    import suite_graph
+
+    graph = suite_graph.load()
+    names = set(graph.get("nodes", {})) | set(graph.get("non_members") or {})
+    root = stack.load_root()
+    unchecked = set()
+    for v in root.get("stacks", {}).values():
+        checked = set(stack.dfe_owned_pins(v)) | set(stack.COMMIT_PINNED)
+        for section, body in v.items():
+            if section in stack.DIGEST_SECTIONS or not isinstance(body, dict):
+                continue
+            unchecked |= {f"{section}.{key}" for key in body if key in names} - checked
+    expect("no DFE-owned pin escapes the release check", not unchecked, f"{sorted(unchecked)}")
+    expect(
+        "and the toolbox family is among the checked",
+        "toolbox.dfe-toolbox" in stack.dfe_owned_pins(stack.stack_pins(root)[1]),
+        "dfe-toolbox is a suite non-member pinned under toolbox:",
+    )
 
 
 def test_release_gate_fails_closed_when_the_registry_cannot_be_read() -> None:
@@ -2688,12 +2714,16 @@ def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
     with_content = _RC_STACK_FIXTURE.replace(
         "    digests:\n",
         '    content:\n      dfe-hyperdx: "v0.3.0-rc.1"\n'
+        '    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"\n      kubectl: "v1.34.1-rc.0"\n'
         "    digests:\n",
     )
     refusal, _ = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"}, with_content)
     expect(
-        "a cloned prerelease content pin refuses the cut",
-        refusal is not None and "dfe-hyperdx v0.3.0-rc.1" in refusal,
+        "a cloned prerelease content or toolbox pin refuses the cut, an upstream toolbox tag does not",
+        refusal is not None
+        and "content.dfe-hyperdx v0.3.0-rc.1" in refusal
+        and "toolbox.dfe-toolbox v1.0.7-rc.1" in refusal
+        and "kubectl" not in refusal,
         f"{refusal}",
     )
 
