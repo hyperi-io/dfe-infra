@@ -432,7 +432,11 @@ def _no_repo_files(org: str, repo: str, ref: str, path: str) -> str:
 
 
 def _run_release_gate(
-    block: str, reader, repo_file=_no_repo_files, builders=_native_builders
+    block: str,
+    reader,
+    repo_file=_no_repo_files,
+    builders=_native_builders,
+    require_ga_gate: bool = False,
 ) -> tuple[int, str]:
     """release-gate over one throwaway stack block, its registry and repository reads answered here."""
     import argparse
@@ -447,7 +451,10 @@ def _run_release_gate(
         out = io.StringIO()
         try:
             stack.REPO_ROOT, stack.registry_pins.repo_file = Path(td), repo_file
-            args = argparse.Namespace(stack=None, registry="registry.example/org", org="hyperi-io")
+            args = argparse.Namespace(
+                stack=None, registry="registry.example/org", org="hyperi-io",
+                require_ga_gate=require_ga_gate,
+            )
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 rc = _with_platforms(reader, lambda: stack.cmd_release_gate(args), builders)
         finally:
@@ -1561,7 +1568,7 @@ def _cut_into(
             argparse.Namespace(
                 version="9.9.0-rc.3", from_stack=None, maturity=None,
                 apps=None, org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                replace_withdrawn=False,
+                replace_withdrawn=False, hotfix=None, reason=None,
             )
         )
     finally:
@@ -1901,7 +1908,7 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
                     org="test-org",
                     dry_run=False,
                     registry="ghcr.io/test-org",
-                    replace_withdrawn=False,
+                    replace_withdrawn=False, hotfix=None, reason=None,
                 )
             )
         except SystemExit as exc:
@@ -1966,7 +1973,7 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
                 argparse.Namespace(
                     version="9.9.0-rc.3", from_stack=None, maturity=None, apps=None,
                     org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                    replace_withdrawn=False,
+                    replace_withdrawn=False, hotfix=None, reason=None,
                 )
             )
         except SystemExit as exc:
@@ -2217,7 +2224,7 @@ def _withdrawn_cut(
                 argparse.Namespace(
                     version=version, from_stack=from_stack, maturity=maturity, apps=None,
                     org="test-org", dry_run=dry_run, registry="ghcr.io/test-org",
-                    replace_withdrawn=replace,
+                    replace_withdrawn=replace, hotfix=None, reason=None,
                 )
             )
     except SystemExit as exc:
@@ -2683,7 +2690,7 @@ def _release_cut_from_rc(
                 argparse.Namespace(
                     version="9.9.1", from_stack=None, maturity="release", apps=apps,
                     org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                    replace_withdrawn=False,
+                    replace_withdrawn=False, hotfix=None, reason=None,
                 )
             )
         except SystemExit as exc:
@@ -2997,6 +3004,220 @@ def test_resolve_reads_the_stack_the_pins_name() -> None:
     expect("the header names the pinned stack once", header.count(other) == 2, header)
     _rc, err_out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n', stack_name=root["current"])
     expect("an explicit --stack still wins", root["current"] in err_out.splitlines()[0], err_out.splitlines()[0])
+
+
+# --- hotfix stacks and recorded gates ------------------------------------------
+_BOTH_ARCHES = lambda ref: ({"linux/amd64", "linux/arm64"}, "")  # noqa: E731
+
+
+def _hotfix_block(gates: str = "", tag: str = "v1.0.1", reason: str = "CVE-2026-0001") -> str:
+    """A release stack whose an-app is the hotfix, with optional `gates:` entries."""
+    record = f'    hotfix:\n      an-app:\n        tag: "{tag}"\n'
+    if reason:
+        record += f'        reason: "{reason}"\n'
+    return (
+        "    maturity: release\n"
+        '    apps:\n      an-app: "v1.0.1"\n'
+        '    digests:\n      an-app: "sha256:new"\n'
+        + record + gates
+    )
+
+
+def _gate(entry: str, kind: str, result: str, digests: dict[str, str]) -> str:
+    """One `gates:` entry body, under an already-open `gates:` map."""
+    body = (
+        f'      {entry}:\n        kind: "{kind}"\n        result: "{result}"\n'
+        f'        run: "https://ci.example/run/1"\n        date: "2026-11-09"\n        digests:\n'
+    )
+    return body + "".join(f'          {name}: "{digest}"\n' for name, digest in digests.items())
+
+
+def test_release_gate_holds_a_hotfix_to_its_recorded_minimum_gate() -> None:
+    passed = _gate("hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:new"})
+    stale = _gate("hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:old"})
+    failed = _gate("hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"})
+    for label, block, want, says in (
+        ("no gate recorded", _hotfix_block(), 1, "no passing hotfix-minimum gate"),
+        ("a passing gate on the pinned digest", _hotfix_block("    gates:\n" + passed), 0, ""),
+        ("a gate on an older digest", _hotfix_block("    gates:\n" + stale), 1, "an-app@sha256:new"),
+        ("a failed gate", _hotfix_block("    gates:\n" + failed), 1, "no passing hotfix-minimum gate"),
+        ("a hotfix tag the stack does not pin", _hotfix_block("    gates:\n" + passed, tag="v1.0.2"), 1,
+         "is not the pinned an-app tag"),
+        ("a hotfix with no reason", _hotfix_block("    gates:\n" + passed, reason=""), 1, "records no reason"),
+    ):
+        rc, out = _run_release_gate(block, _BOTH_ARCHES)
+        expect(f"{label}: exits {want}", rc == want, f"exit {rc}\n{out}")
+        if says:
+            expect(f"{label}: says why", says in out, out)
+
+
+def test_the_ga_full_gate_is_required_only_behind_its_flag() -> None:
+    block = (
+        "    maturity: release\n"
+        '    apps:\n      an-app: "v1.0.0"\n'
+        '    content:\n      a-fork: "v0.2.7"\n'
+        '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
+    )
+    full = {"a-fork": "sha256:bbb", "an-app": "sha256:aaa"}
+    partial = _gate("ga-full-1", "ga-full", "pass", {"an-app": "sha256:aaa"})
+    for label, gates, flag, want in (
+        ("no ga-full gate, flag off", "", False, 0),
+        ("no ga-full gate, flag on", "", True, 1),
+        ("a ga-full gate missing the content image", partial, True, 1),
+        ("a ga-full gate over every pinned digest", _gate("ga-full-1", "ga-full", "pass", full), True, 0),
+    ):
+        text = block + ("    gates:\n" + gates if gates else "")
+        rc, out = _run_release_gate(text, _BOTH_ARCHES, require_ga_gate=flag)
+        expect(f"{label}: exits {want}", rc == want, f"exit {rc}\n{out}")
+
+
+def _record_gate(text: str, kind: str, result: str = "pass") -> tuple[str | None, str]:
+    """Run record-gate over a throwaway versions.yaml, and return the refusal and the file after."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "versions.yaml"
+        path.write_text(text, encoding="utf-8", newline="\n")
+        original = stack.REPO_ROOT
+        stack.REPO_ROOT = Path(td)
+        refusal = None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                stack.cmd_record_gate(
+                    argparse.Namespace(
+                        stack=None, kind=kind, run="https://ci.example/run/7", result=result, date="2026-11-09"
+                    )
+                )
+        except SystemExit as exc:
+            refusal = str(exc)
+        finally:
+            stack.REPO_ROOT = original
+        return refusal, path.read_text(encoding="utf-8")
+
+
+def test_record_gate_writes_an_entry_release_gate_then_accepts() -> None:
+    text = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n' + _hotfix_block() + "\n  9.9.8:\n    maturity: rc\n"
+    refusal, after = _record_gate(text, "hotfix-minimum")
+    expect("the gate is recorded", refusal is None, f"{refusal}")
+    entry = stack.parse_simple_yaml(after)["stacks"]["9.9.9"]["gates"]["hotfix-minimum-1"]
+    expect(
+        "naming the pinned hotfix digest and the run",
+        entry["digests"] == {"an-app": "sha256:new"} and entry["run"] == "https://ci.example/run/7",
+        f"{entry}",
+    )
+    expect("and the next stack is untouched", "gates" not in stack.parse_simple_yaml(after)["stacks"]["9.9.8"], after)
+    block = after.split("  9.9.9:\n", 1)[1].split("\n  9.9.8:", 1)[0]
+    rc, out = _run_release_gate(block, _BOTH_ARCHES)
+    expect("release-gate accepts the recorded gate", rc == 0, f"exit {rc}\n{out}")
+    refusal, again = _record_gate(after, "hotfix-minimum", result="fail")
+    gates = stack.parse_simple_yaml(again)["stacks"]["9.9.9"]["gates"]
+    expect(
+        "a second run gets its own entry",
+        refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"},
+        f"{refusal} {sorted(gates)}",
+    )
+    plain = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: release\n    apps:\n      an-app: "v1.0.0"\n'
+    refusal, _ = _record_gate(plain, "hotfix-minimum")
+    expect("a stack with no hotfix has no hotfix gate", refusal is not None and "no `hotfix:` block" in refusal,
+           f"{refusal}")
+
+
+_HOTFIX_FROM = """\
+schema: 2
+current: "9.9.1"
+
+stacks:
+
+  9.9.1:
+    maturity: release
+    support: standard
+    apps:
+      app-a: "v1.1.0"
+      app-b: "v2.0.0"
+    digests:
+      app-a: "sha256:aaa"
+      app-b: "sha256:bbb"
+    stack:
+      previous: "9.9.0"
+      upgrade-order: "app-a, app-b"
+    gates:
+      ga-full-1:
+        kind: "ga-full"
+        result: "pass"
+        run: "https://ci.example/run/1"
+        date: "2026-11-01"
+        digests:
+          app-a: "sha256:aaa"
+          app-b: "sha256:bbb"
+"""
+
+
+def _hotfix_cut(
+    hotfix: list[str], reason: str | None, apps: str | None = None, maturity: str | None = None
+) -> tuple[str | None, str]:
+    """Cut 9.9.2 from the release fixture with --hotfix, the registry answered here."""
+    import argparse
+    import contextlib
+    import io
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(_HOTFIX_FROM, encoding="utf-8", newline="\n")
+        original = (stack.REPO_ROOT, stack._published_tag, stack._latest_published)
+        stack.REPO_ROOT = tmp
+        stack._published_tag = lambda org, app, tag: (tag, f"sha256:{app}-{tag}")
+        stack._latest_published = lambda org, app, prerelease=False: ("v9.9.9", "sha256:never")
+        refusal = None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                stack.cmd_cut(
+                    argparse.Namespace(
+                        version="9.9.2", from_stack=None, maturity=maturity, apps=apps, org="test-org",
+                        dry_run=False, registry="ghcr.io/test-org", replace_withdrawn=False,
+                        hotfix=hotfix, reason=reason,
+                    )
+                )
+        except SystemExit as exc:
+            refusal = str(exc)
+        finally:
+            stack.REPO_ROOT, stack._published_tag, stack._latest_published = original
+        return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+
+def test_a_hotfix_cut_moves_only_the_hotfix_and_records_why() -> None:
+    refusal, text = _hotfix_cut(["app-a=v1.1.1"], "CVE-2026-0001")
+    expect("the hotfix cut writes", refusal is None, f"{refusal}")
+    cut = stack.parse_simple_yaml(text)["stacks"].get("9.9.2", {})
+    expect(
+        "app-a moves to the hotfix and its digest",
+        cut.get("apps", {}).get("app-a") == "v1.1.1" and cut.get("digests", {}).get("app-a") == "sha256:app-a-v1.1.1",
+        f"{cut}",
+    )
+    expect("app-b holds, never moved to its newest release", cut.get("apps", {}).get("app-b") == "v2.0.0", f"{cut}")
+    expect(
+        "the hotfix and its reason are recorded",
+        cut.get("hotfix") == {"app-a": {"tag": "v1.1.1", "reason": "CVE-2026-0001"}},
+        f"{cut.get('hotfix')}",
+    )
+    expect("the source stack's gate evidence is not cloned", "gates" not in cut, f"{cut}")
+
+
+def test_a_hotfix_cut_refuses_what_is_not_a_hotfix_release() -> None:
+    for label, hotfix, reason, apps, maturity, says in (
+        ("an rc tag", ["app-a=v1.1.1-rc.1"], "CVE-1", None, None, "plain vX.Y.Z release"),
+        ("no reason", ["app-a=v1.1.1"], None, None, None, "needs --reason"),
+        ("an app the stack does not pin", ["app-z=v1.0.0"], "CVE-1", None, None, "no apps.app-z pin"),
+        ("--apps beside it", ["app-a=v1.1.1"], "CVE-1", "app-b", None, "cannot take --apps"),
+        ("an rc maturity", ["app-a=v1.1.1"], "CVE-1", None, "rc", "maturity=rc"),
+        ("no --hotfix but a reason", [], "CVE-1", None, None, "--reason only goes with --hotfix"),
+    ):
+        refusal, text = _hotfix_cut(hotfix, reason, apps, maturity)
+        expect(f"{label}: refused", refusal is not None and says in refusal, f"{refusal}")
+        expect(f"{label}: and nothing written", "9.9.2:" not in text, text)
 
 
 def main() -> int:

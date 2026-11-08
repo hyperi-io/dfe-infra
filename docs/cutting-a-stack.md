@@ -38,6 +38,8 @@ Third-party pins carry over untouched. Those are Renovate's to move, and several
 | `--maturity` | alpha, beta, rc or release (default: inherit) |
 | `--apps` | move only these, the rest hold at their `--from` pins |
 | `--replace-withdrawn` | re-cut a withdrawn version under the same name (see below) |
+| `--hotfix app=vX.Y.Z` | cut a hotfix release that moves only this app (repeatable, see below) |
+| `--reason` | the CVE or incident id a `--hotfix` fixes |
 | `--dry-run` | print the plan, write nothing |
 
 Output names every app as MOVED or held, with the reason, so you review the cut as a diff instead of trusting it.
@@ -107,6 +109,37 @@ The architecture check reads each index from the registry by digest, through `do
     python3 scripts/dfe-stack platforms --stack 2.2.0-rc.14
 
 <!-- docs-gate: on process -->
+
+## Hotfix stacks and recorded gates
+
+A critical security or stability fix can skip the rc round. The app publishes a direct `vX.Y.Z` hotfix release, and a patch stack pins it beside every other app's current pin:
+
+<!-- docs-gate: off process -- the command names a stack tag -->
+
+    python3 scripts/dfe-stack cut 2.2.4 --from 2.2.3 --hotfix dfe-engine=v1.23.4 --reason CVE-2026-49272
+
+<!-- docs-gate: on process -->
+
+Only the hotfix apps move, and each one's tag and reason go into the stack's `hotfix:` block. The cut refuses an rc tag, a missing `--reason`, `--apps` alongside it, or a maturity below `release`.
+
+Before the stack can be tagged, the minimum gate runs against a deployment of it: bootstrap smoke, the core data path and self-monitoring. Record the run:
+
+<!-- docs-gate: off process -- the command names a stack tag -->
+
+    python3 scripts/dfe-stack record-gate --stack 2.2.4 --kind hotfix-minimum --run <run URL or cycle id> --result pass
+
+<!-- docs-gate: on process -->
+
+`release-gate` refuses a hotfix stack until a passing `hotfix-minimum` entry names exactly the pinned hotfix digests. A digest moved after the run makes that entry stale.
+
+`record-gate` writes one entry under the stack's `gates:` block. It holds the kind, the result, the run reference, the date, and the image digests the run checked, which it reads from the stack itself. A tagged stack is frozen, so the gate is recorded before the tag.
+
+| kind | covers | required by |
+|---|---|---|
+| `hotfix-minimum` | the hotfix apps | `release-gate`, on any stack with a `hotfix:` block |
+| `ga-full` | every pinned DFE image digest | `release-gate --require-ga-gate`, at `release` maturity |
+
+The release workflow passes `--require-ga-gate` once the repository variable `DFE_REQUIRE_GA_GATE` is `true`. A cut never carries `gates:` or `hotfix:` forward, because both describe the stack they were written for.
 
 ## How a cut reaches each target
 
