@@ -74,7 +74,10 @@ spec:
   {{- if not .Values.huntRunner.autoscaling.enabled }}
   replicas: 1
   {{- end }}
-  {{- include "dfe-common.rollout" . | nindent 2 }}
+  # Old and new runners must never overlap: a runner on another claim protocol
+  # can read a live lease as released (dfe-engine#1093).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: dfe-hunt-runner
