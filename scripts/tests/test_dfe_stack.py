@@ -3119,6 +3119,12 @@ def test_record_gate_writes_an_entry_release_gate_then_accepts() -> None:
         refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"},
         f"{refusal} {sorted(gates)}",
     )
+    commented = text.replace(_hotfix_block(), _hotfix_block("    gates:   # runs so far\n" + _gate(
+        "hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"})))
+    refusal, appended = _record_gate(commented, "hotfix-minimum")
+    gates = stack.parse_simple_yaml(appended)["stacks"]["9.9.9"]["gates"]
+    expect("a commented gates header still takes the next entry",
+           refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"}, f"{refusal} {sorted(gates)}")
     plain = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: release\n    apps:\n      an-app: "v1.0.0"\n'
     refusal, _ = _record_gate(plain, "hotfix-minimum")
     expect("a stack with no hotfix has no hotfix gate", refusal is not None and "no `hotfix:` block" in refusal,
@@ -3140,10 +3146,16 @@ stacks:
     digests:
       app-a: "sha256:aaa"
       app-b: "sha256:bbb"
+    content:
+      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"
     stack:
       previous: "9.9.0"
       upgrade-order: "app-a, app-b"
-    gates:
+    hotfix:   # the 9.9.1 fix
+      app-b:
+        tag: "v2.0.0"
+        reason: "CVE-2026-0000"
+    gates:    # evidence for 9.9.1 only
       ga-full-1:
         kind: "ga-full"
         result: "pass"
@@ -3167,10 +3179,11 @@ def _hotfix_cut(
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         (tmp / "versions.yaml").write_text(_HOTFIX_FROM, encoding="utf-8", newline="\n")
-        original = (stack.REPO_ROOT, stack._published_tag, stack._latest_published)
+        original = (stack.REPO_ROOT, stack._published_tag, stack._latest_published, stack.registry_pins.head_commit)
         stack.REPO_ROOT = tmp
         stack._published_tag = lambda org, app, tag: (tag, f"sha256:{app}-{tag}")
         stack._latest_published = lambda org, app, prerelease=False: ("v9.9.9", "sha256:never")
+        stack.registry_pins.head_commit = lambda org, repo, ref="main": "f" * 40
         refusal = None
         try:
             with contextlib.redirect_stdout(io.StringIO()):
@@ -3184,7 +3197,7 @@ def _hotfix_cut(
         except SystemExit as exc:
             refusal = str(exc)
         finally:
-            stack.REPO_ROOT, stack._published_tag, stack._latest_published = original
+            stack.REPO_ROOT, stack._published_tag, stack._latest_published, stack.registry_pins.head_commit = original
         return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8")
 
 
@@ -3203,7 +3216,13 @@ def test_a_hotfix_cut_moves_only_the_hotfix_and_records_why() -> None:
         cut.get("hotfix") == {"app-a": {"tag": "v1.1.1", "reason": "CVE-2026-0001"}},
         f"{cut.get('hotfix')}",
     )
-    expect("the source stack's gate evidence is not cloned", "gates" not in cut, f"{cut}")
+    expect("the source stack's commented gates and hotfix blocks are not cloned",
+           "gates" not in cut and set(cut.get("hotfix", {})) == {"app-a"}, f"{cut}")
+    expect(
+        "and the dfe-docker commit stays put, outside what the hotfix gate checks",
+        cut.get("content", {}).get("dfe-docker") == "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809",
+        f"{cut.get('content')}",
+    )
 
 
 def test_a_hotfix_cut_refuses_what_is_not_a_hotfix_release() -> None:
