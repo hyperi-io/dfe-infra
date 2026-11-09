@@ -27,8 +27,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
-
 from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1627,20 +1625,16 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("block", "expected"),
-    [
+def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:
+    cases = [
         ({"name": "Richie Benaud", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
         ({"name": "  Richie Benaud  "}, "DFE 2.2.2 Richie Benaud"),
         ({"maturity": "release"}, "DFE 2.2.2"),
         ({"name": ""}, "DFE 2.2.2"),
-    ],
-)
-def test_a_release_title_carries_the_stack_name_only_when_it_has_one(
-    block: dict, expected: str
-) -> None:
-    title = stack.release_title("2.2.2", block)
-    expect("the release title", title == expected, f"{title!r}")
+    ]
+    for block, expected in cases:
+        title = stack.release_title("2.2.2", block)
+        expect(f"the release title for {block}", title == expected, f"{title!r}")
 
 
 def test_a_cut_never_carries_the_source_stack_name_on() -> None:
