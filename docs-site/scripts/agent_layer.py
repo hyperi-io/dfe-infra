@@ -59,11 +59,13 @@ class Page:
         title: Its title.
         source: Its file, relative to docs-site/.
         permalink: Its route, base path included.
+        description: Its meta description.
     """
 
     title: str
     source: str
     permalink: str
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +143,7 @@ def load_pages(entry: Mapping[str, object], content: Path = CONTENT) -> list[Pag
             raise SystemExit(f"error: {raw['permalink']} comes from {source}, outside {tree}")
         if api and source.startswith(api):
             continue
-        pages.append(Page(raw["title"], source, raw["permalink"]))
+        pages.append(Page(raw["title"], source, raw["permalink"], raw.get("description") or ""))
     return sorted(pages, key=lambda page: page.permalink)
 
 

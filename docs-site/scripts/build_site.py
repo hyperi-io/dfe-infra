@@ -17,7 +17,9 @@ spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD na
 the build, into build/<its base path>, and finish its markdown side for agents
 (agent_layer.py). Then write build/_redirects so /, /latest/ and every
 dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
-against the Workers static-asset limits. A build with a member section whose root URL serves no page fails.
+against the Workers static-asset limits. Each build also gets structured data on its
+pages and a noindex 404 page, and the merged tree gets robots.txt and a root sitemap
+index (page_meta.py). A build with a member section whose root URL serves no page fails.
 
 Needs the site's npm dependencies installed (npm ci) and aggregate.py run first.
 """
@@ -31,6 +33,7 @@ import sys
 from pathlib import Path
 
 import agent_layer
+import page_meta
 
 SITE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT = SITE_ROOT / "content"
@@ -166,6 +169,9 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"error: {entry['name']}: no page at {', '.join(missing)}")
         copies = agent_layer.finish(entry, site, build_dir=BUILD)
         print(f"{entry['name']}: {copies} markdown copies linked for agents")
+        described = page_meta.add_structured_data(entry, site, build_dir=BUILD)
+        print(f"{entry['name']}: structured data on {described} pages")
+        page_meta.mark_not_found(out / "404.html")
         pages, files, largest = count(out)
         print(f"{entry['name']}: {pages} pages, {files} files, largest {largest} bytes")
 
@@ -175,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copyfile(newest_404, BUILD / "404.html")
         text = redirects(site["newest"], site.get("dropped", []))
         (BUILD / "_redirects").write_text(text, encoding="utf-8", newline="\n")
+    page_meta.write_root_files(site, BUILD)
 
     pages, files, largest = count(BUILD)
     print(f"build/: {pages} pages, {files} files, largest {largest} bytes")
