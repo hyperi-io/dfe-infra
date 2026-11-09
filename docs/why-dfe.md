@@ -46,6 +46,7 @@ DFE is cake and eat it too.
 | Making cloud and infra spend the deployer's problem | Efficiency on the hot path is core to every component, reducing your spend -- lean enough to run in the field or a theatre data centre, not only a cloud region |
 | Constant serde, re-processing and row processing burns CPU cycles for no value | serde is the enemy. What can be zero copy, batched, SIMD and collapsed into a single app or cycle is. | 
 | Wire in and babysit your own enrichment | GeoIP, ASN, IP reputation and risk, Community ID and user-agent parsing are built in, with the reference data kept current for you -- opt in per source, no fragile DIY feeds and cron jobs to maintain |
+| Dump everything into the engine and fix it there | Put the work close to what it's working on: filter and correct at the edge, receiver, transform and loader, so a bad record goes where it costs least and ClickHouse stores only what survives |
 
 The effect is to collapse three layers -- index, ETL and object-relational
 mapping -- into one native-Rust pass over the data, landed where you can JOIN it.
