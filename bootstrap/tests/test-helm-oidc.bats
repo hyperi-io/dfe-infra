@@ -92,13 +92,13 @@ engine_env() {
     run engine_env --set oidc.enabled=true
     [ "$status" -eq 0 ]
     [[ "$output" =~ "kind: ConfigMap" ]]
-    [[ ! "$output" =~ "DFE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
+    [[ ! "$output" =~ "DFE_ENGINE_AUTH_TRUST_PROXY_AUTH_HEADERS" ]]
 }
 
 @test "the engine trusts identity headers when the deployment says so" {
     run engine_env --set auth.trustProxyHeaders=true
     [ "$status" -eq 0 ]
-    [[ "$output" =~ 'DFE_AUTH_TRUST_PROXY_AUTH_HEADERS: "true"' ]]
+    [[ "$output" =~ 'DFE_ENGINE_AUTH_TRUST_PROXY_AUTH_HEADERS: "true"' ]]
 }
 
 @test "dfe-engine renders without OIDC (simple auth mode)" {

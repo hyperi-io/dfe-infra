@@ -101,17 +101,17 @@ spec:
           # Application on its current spec.
           targetRevision: |-
             {{- $pins := dict
-                "culvert" "sha256:723ea6a8a9a4748d2b9c8aae00a3ce92e471bca8a340c7cc37a3e4dcf6602743"
-                "dfe-archiver" "sha256:ae0c75b611f9f36ab777507a98529df7607e10daf598fd79564a17e7287ba800"
-                "dfe-engine" "sha256:9b3fb1f33b72dc61cfeab58073e2fe6fdaab39dd98ff8c85e2ca307ae77b271c"
-                "dfe-fetcher" "sha256:beb3b1ab1254b201b09677afb4973eaba2c3e272eaf316aa081a4aceba70385e"
-                "dfe-loader" "sha256:7bc497b51b96d302f34aa675450437d9860e57861c618859521b861fc8355de7"
-                "dfe-receiver" "sha256:06d76b49534c272ac05c0fda33e28795479c11f842df479310fa8f27f9b825ba"
-                "dfe-transform-elastic" "sha256:13b334b2ef5e6f4c05cf93171e8eaa4768f6904a3c1a278fc796dd16254265ca"
-                "dfe-transform-vector" "sha256:2709e612332c9b10759fc48347de187e63cae305292ded26af996dc4e7c1b871"
-                "dfe-transform-vrl" "sha256:e87483a808209d9aba83daa037408c23132ade0bd47781b1e8d3070e7ac173f9"
-                "dfe-ui" "sha256:e3591bbc71fea664cb5d262b8f79e4ccce7e24802403053016c3a58c3a917b7e"
-                "hyperdx" "sha256:a46cab8eb77d14b5524fc99c1b496fed7b4a660f04daaf718b01c37c1436bd02"
+                "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
+                "dfe-archiver" "sha256:1ddcfb5c167df1854b1e70a007b76c3142a29c5dff4d81f65f93eeec68b992df"
+                "dfe-engine" "sha256:7bab52066bc226c0d484217c988bfa14cf89a244de1f19346773e168e0ac16ba"
+                "dfe-fetcher" "sha256:bfb707c98b2bc3316db62182e53713fad1acf28bf00e1c4f3a79d80d8f0d7946"
+                "dfe-loader" "sha256:2cf1835fb4edffa4692e00e4e91c19577ec4156e26316f663db966848c7d9849"
+                "dfe-receiver" "sha256:3fca63ce66ba16a407d553d8b14100c5f3c90b3dd92794bbf76904bf93e240d0"
+                "dfe-transform-elastic" "sha256:085700e62308177aa3417a3dde518385e0caa4bd6dbb4b9c31c1b715ad251dd9"
+                "dfe-transform-vector" "sha256:f03d61eda4b4e00dffb21bf1f34bf771bd9da01be674c6b0f5721eacffb0c5f2"
+                "dfe-transform-vrl" "sha256:6cbc6106351e2879d22ed1176be362cf068155d93c8db76f0d5e93ffafe0464c"
+                "dfe-ui" "sha256:c398bdee9066a2303335efc666ee499c346712b158b56b1a3067f1967a40085b"
+                "hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}

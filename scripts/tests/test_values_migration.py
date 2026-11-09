@@ -58,6 +58,11 @@ APPS = (
     ("dfe-engine", "default", "local"),
 )
 APP_IDS = [service for service, _, _ in APPS]
+# The consumer-group name each transform reads now; 2.2.0 read DFE_TRANSFORM_SOURCE_GROUP_ID.
+GROUP_ID_ENV = {
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_SOURCE_GROUP_ID",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_SOURCE_GROUP_ID",
+}
 
 # Where the 2.2.0 vrl chart mounted the merakivrl tables, and where both charts do once carried.
 LEGACY_ENRICHMENT = "/etc/dfe-transform-vrl-merakivrl-enrichment"
@@ -197,7 +202,7 @@ def test_the_thin_chart_renders_the_220_identity_from_the_carried_overlay(
     old_env, new_env = env(before), env(after)
     for key, value in old_env.items():
         if key.endswith("GROUP_ID"):
-            assert new_env.get(key) == value, key
+            assert new_env.get(GROUP_ID_ENV.get(service, key)) == value, key
     if "otelServiceName" in values:
         assert new_env.get("OTEL_SERVICE_NAME") == values["otelServiceName"]
 
@@ -226,7 +231,7 @@ def test_a_transform_keeps_its_consumer_group_so_it_does_not_replay(service: str
     component = load(overlay(FIXTURES, service, instance))["component"]
     after = workload(render_thin(service, instance, "local", carried), f"dfe-{component}")
     assert after is not None
-    assert env(after)["DFE_TRANSFORM_SOURCE_GROUP_ID"] == f"dfe-{component}"
+    assert env(after)[GROUP_ID_ENV[service]] == f"dfe-{component}"
 
 
 def test_the_fetcher_keeps_its_cursor_claim_and_argo_never_prunes_it(carried: Path) -> None:

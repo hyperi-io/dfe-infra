@@ -90,31 +90,31 @@ def test_the_engine_ships_with_the_posture_off() -> None:
         deployment = next(
             d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
         )
-        assert env["DFE_ENV"] == deployment["metadata"]["labels"]["dfe.hyperi.io/env"], cell
-        assert "DFE_E2E_SERVER" not in env, cell
+        assert env["DFE_ENGINE_ENV"] == deployment["metadata"]["labels"]["dfe.hyperi.io/env"], cell
+        assert "DFE_ENGINE_E2E_SERVER" not in env, cell
     env = engine_env("local")
-    assert env["DFE_ENV"] == "local"
-    assert "DFE_E2E_SERVER" not in env
+    assert env["DFE_ENGINE_ENV"] == "local"
+    assert "DFE_ENGINE_E2E_SERVER" not in env
 
 
 def test_the_posture_runs_the_engine_as_test_with_the_routes_on() -> None:
     """The seeders accept no posture but test, so the engine pod is told test."""
     docs = render_app(ENGINE, "slim", "local", env="local", annotations={ANNOTATION: "true"})
     env = effective_env(docs, f"Deployment/{ENGINE}")
-    assert env["DFE_ENV"] == "test"
-    assert env["DFE_E2E_SERVER"] == "true"
+    assert env["DFE_ENGINE_ENV"] == "test"
+    assert env["DFE_ENGINE_E2E_SERVER"] == "true"
 
 
 def test_an_explicit_false_is_off() -> None:
     """A cluster secret always carries the key, false included."""
     env = engine_env("local", "false")
-    assert env["DFE_ENV"] == "local"
-    assert "DFE_E2E_SERVER" not in env
+    assert env["DFE_ENGINE_ENV"] == "local"
+    assert "DFE_ENGINE_E2E_SERVER" not in env
 
 
 def test_every_dev_posture_may_carry_it() -> None:
     for posture in DEV_POSTURES:
-        assert engine_env(posture, "true")["DFE_ENV"] == "test", posture
+        assert engine_env(posture, "true")["DFE_ENGINE_ENV"] == "test", posture
 
 
 @pytest.mark.parametrize("posture", ["production", "staging", "customer-acme"])
