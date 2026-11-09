@@ -37,6 +37,6 @@ Example: dfe-receiver #212. The RFC 3164 tag split takes non-tag text as the app
 
 Every job runs at the layer that does it cheapest, so nothing pays twice.
 
-Bad records go at the first layer that can catch them: Edge Stream Hub at the edge, then dfe-receiver, the transforms and dfe-loader. ClickHouse stores only what survives. The index-engine pattern dumps everything into one engine and fixes it there, which is the most expensive place to do it.
+Bad records go at the first layer that can catch them: Edge Stream Hub at the edge, then dfe-receiver, the transforms and dfe-loader. ClickHouse stores only what survives. Index engines and ELT are the worst offenders. They dump everything into the engine and fix it there, so every bad record, parse and transform lands on the most expensive part of the stack. ETL does better, working in stream on the way in, but it's still one general-purpose step for everything.
 
 dfe-receiver parses the transport, a syslog line in a microsecond (https://github.com/hyperi-io/dfe-receiver/blob/main/docs/performance.md). dfe-transform-elastic parses vendor bodies in compiled Rust, at up to 5x less CPU per record than Elasticsearch ingest ([ingest cost](../docs-site/content-root/ingest-cost.md)). dfe-loader reflects the destination schema from `system.columns` and coerces types against the real column, not a guess made upstream (https://github.com/hyperi-io/dfe-loader/blob/main/docs/README.md). Common remaps and renames run in the loader too, in bulk while the data loads, with no separate ETL hop.
