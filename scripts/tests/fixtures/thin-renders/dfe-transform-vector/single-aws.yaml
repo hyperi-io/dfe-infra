@@ -143,21 +143,21 @@ spec:
         - --config
         - /etc/dfe-transform-vector/config.yaml
         env:
-        - name: DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL
+        - name: DFE_TRANSFORM_VECTOR_KAFKA_SECURITY_PROTOCOL
           value: SASL_PLAINTEXT
-        - name: DFE_TRANSFORM_SINK_BROKERS
+        - name: DFE_TRANSFORM_VECTOR_SINK_BROKERS
           value: dfe-kafka.strimzi.svc.cluster.local:9092
-        - name: DFE_TRANSFORM_SINK_TOPIC
+        - name: DFE_TRANSFORM_VECTOR_SINK_TOPIC
           value: ''
-        - name: DFE_TRANSFORM_SOURCE_BROKERS
+        - name: DFE_TRANSFORM_VECTOR_SOURCE_BROKERS
           value: dfe-kafka.strimzi.svc.cluster.local:9092
-        - name: DFE_TRANSFORM_SOURCE_GROUP_ID
+        - name: DFE_TRANSFORM_VECTOR_SOURCE_GROUP_ID
           value: dfe-transform-vector
-        - name: DFE_TRANSFORM_SOURCE_TOPICS
+        - name: DFE_TRANSFORM_VECTOR_SOURCE_TOPICS
           value: ''
-        - name: DFE_TRANSFORM_TRANSFORMS_DIR
+        - name: DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR
           value: ''
-        - name: DFE_TRANSFORM_VECTOR_DATA_DIR
+        - name: DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR
           value: /var/lib/vector
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
@@ -167,27 +167,27 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-transform-vector
-        - name: DFE_TRANSFORM_SOURCE_SASL_USERNAME
+        - name: DFE_TRANSFORM_VECTOR_SOURCE_SASL_USERNAME
           valueFrom:
             secretKeyRef:
               key: username
               name: dfe-kafka-user
-        - name: DFE_TRANSFORM_SOURCE_SASL_PASSWORD
+        - name: DFE_TRANSFORM_VECTOR_SOURCE_SASL_PASSWORD
           valueFrom:
             secretKeyRef:
               key: password
               name: dfe-kafka-user
-        - name: DFE_TRANSFORM_SINK_SASL_USERNAME
+        - name: DFE_TRANSFORM_VECTOR_SINK_SASL_USERNAME
           valueFrom:
             secretKeyRef:
               key: username
               name: dfe-kafka-user
-        - name: DFE_TRANSFORM_SINK_SASL_PASSWORD
+        - name: DFE_TRANSFORM_VECTOR_SINK_SASL_PASSWORD
           valueFrom:
             secretKeyRef:
               key: password
               name: dfe-kafka-user
-        - name: DFE_TRANSFORM_KAFKA_SASL_MECHANISM
+        - name: DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM
           valueFrom:
             secretKeyRef:
               key: sasl.mechanism
@@ -242,6 +242,8 @@ spec:
           name: writable-data
         - mountPath: /var/run/vector
           name: writable-run
+        - mountPath: /var/spool/scalo/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /etc/dfe-transform-vector/data
@@ -292,6 +294,8 @@ spec:
         name: writable-data
       - emptyDir: {}
         name: writable-run
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - configMap:

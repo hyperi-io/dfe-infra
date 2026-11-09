@@ -210,6 +210,8 @@ spec:
         - mountPath: /etc/dfe
           name: config
           readOnly: true
+        - mountPath: /var/spool/dfe/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -286,6 +288,8 @@ spec:
       - configMap:
           name: dfe-loader-config
         name: config
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - name: serviceaccount-files

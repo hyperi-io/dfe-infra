@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # bootstrap/scripts/engine-clickhouse.sh, the one way the smoke tests reach ClickHouse
 # through dfe-engine's own container. ENGINE_CH_URL_SH resolves the URL as the engine's
-# settings do (settings.py reads DFE_CLICKHOUSE_SECURE as true, 1 or yes in any case,
+# settings do (settings.py reads DFE_ENGINE_CLICKHOUSE_SECURE as true, 1 or yes in any case,
 # and defaults.yaml makes an unset one secure), because HyperDX's proxy is handed the
 # URL the engine builds from them. The snippet runs under sh, as in the engine image.
 
@@ -21,7 +21,7 @@ printf "%s" "$ch_url"'
 
 @test "a secure flag the engine reads as true dials https on the engine's port" {
     for secure in true TRUE True 1 yes YES; do
-        url_under DFE_CLICKHOUSE_HOST=ch.example.com DFE_CLICKHOUSE_PORT=8443 DFE_CLICKHOUSE_SECURE="${secure}"
+        url_under DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com DFE_ENGINE_CLICKHOUSE_PORT=8443 DFE_ENGINE_CLICKHOUSE_SECURE="${secure}"
         [ "${status}" -eq 0 ]
         [ "${output}" = "https://ch.example.com:8443" ]
     done
@@ -29,25 +29,25 @@ printf "%s" "$ch_url"'
 
 @test "a secure flag the engine reads as false dials http" {
     for secure in false FALSE 0 no off; do
-        url_under DFE_CLICKHOUSE_HOST=ch.example.com DFE_CLICKHOUSE_PORT=8123 DFE_CLICKHOUSE_SECURE="${secure}"
+        url_under DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com DFE_ENGINE_CLICKHOUSE_PORT=8123 DFE_ENGINE_CLICKHOUSE_SECURE="${secure}"
         [ "${output}" = "http://ch.example.com:8123" ]
     done
 }
 
 @test "an unset or empty secure flag is https, the engine's own default" {
-    url_under DFE_CLICKHOUSE_HOST=ch.example.com DFE_CLICKHOUSE_PORT=8443
+    url_under DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com DFE_ENGINE_CLICKHOUSE_PORT=8443
     [ "${output}" = "https://ch.example.com:8443" ]
-    url_under DFE_CLICKHOUSE_HOST=ch.example.com DFE_CLICKHOUSE_PORT=8443 DFE_CLICKHOUSE_SECURE=
+    url_under DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com DFE_ENGINE_CLICKHOUSE_PORT=8443 DFE_ENGINE_CLICKHOUSE_SECURE=
     [ "${output}" = "https://ch.example.com:8443" ]
 }
 
 @test "an unset port is the engine's default HTTP port" {
-    url_under DFE_CLICKHOUSE_HOST=ch.example.com DFE_CLICKHOUSE_SECURE=false
+    url_under DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com DFE_ENGINE_CLICKHOUSE_SECURE=false
     [ "${output}" = "http://ch.example.com:8123" ]
 }
 
 @test "an engine with no host names no URL, so a probe cannot dial a guessed one" {
-    url_under DFE_CLICKHOUSE_PORT=8443 DFE_CLICKHOUSE_SECURE=true
+    url_under DFE_ENGINE_CLICKHOUSE_PORT=8443 DFE_ENGINE_CLICKHOUSE_SECURE=true
     [ "${status}" -eq 0 ]
     [ -z "${output}" ]
 }

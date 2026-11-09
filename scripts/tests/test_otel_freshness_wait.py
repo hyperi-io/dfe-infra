@@ -67,10 +67,11 @@ def test_the_wait_is_counted_in_elapsed_seconds_not_in_sleeps() -> None:
     The fake logs when each CORE 1 query started. The loop runs from the first query to the end
     of the one before the final check, so the reported wait has to match that span. The tolerance
     is the whole-second granularity of bash's SECONDS on both ends, which is the same on any
-    runner. A count of sleeps misses by the queries' own time, which is the point.
+    runner. A count of sleeps misses by the queries' own time, which is the point. The bound
+    leaves room for two queries after SECONDS rounds up, which a 3s bound did not.
     """
     query_seconds = 2
-    bound = 3
+    bound = 6
     tolerance = 3
     out, counts = run_smoke({"otel_zero_answers": 99, "otel_query_seconds": query_seconds}, DFE_OTEL_WAIT=str(bound))
     reported = re.search(rf"waited (\d+)s of {bound}s for a row", out.stdout)

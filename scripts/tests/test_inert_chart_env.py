@@ -132,8 +132,8 @@ def test_the_vector_chart_mounts_no_binary_cache() -> None:
         env = effective_env(docs, f"Deployment/{VECTOR}")
         expect(
             f"no cache dir is handed to the supervisor [{at}]",
-            "DFE_TRANSFORM_VECTOR_CACHE_DIR" not in env,
-            f"got {env.get('DFE_TRANSFORM_VECTOR_CACHE_DIR')!r}",
+            "DFE_TRANSFORM_VECTOR_VECTOR_CACHE_DIR" not in env,
+            f"got {env.get('DFE_TRANSFORM_VECTOR_VECTOR_CACHE_DIR')!r}",
         )
         volumes = {v["name"] for pod in pod_specs(docs) for v in pod.get("volumes", [])}
         expect(f"and no cache volume is created [{at}]", "vector-cache" not in volumes,
@@ -155,8 +155,8 @@ def test_the_data_dir_survived_the_removal() -> None:
         env = effective_env(docs, f"Deployment/{VECTOR}")
         expect(
             f"the data dir is still handed over [{at}]",
-            env.get("DFE_TRANSFORM_VECTOR_DATA_DIR") == VECTOR_DATA_DIR,
-            f"got {env.get('DFE_TRANSFORM_VECTOR_DATA_DIR')!r}",
+            env.get("DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR") == VECTOR_DATA_DIR,
+            f"got {env.get('DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR')!r}",
         )
         (pod,) = pod_specs(docs)
         mount = next(

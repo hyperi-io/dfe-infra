@@ -148,9 +148,9 @@ spec:
         - --config
         - /etc/dfe-transform-vector/config.yaml
         env:
-        - name: DFE_TRANSFORM_TRANSFORMS_DIR
+        - name: DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR
           value: ''
-        - name: DFE_TRANSFORM_VECTOR_DATA_DIR
+        - name: DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR
           value: /var/lib/vector
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
@@ -213,6 +213,8 @@ spec:
           name: writable-data
         - mountPath: /var/run/vector
           name: writable-run
+        - mountPath: /var/spool/scalo/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /etc/dfe-transform-vector/data
@@ -270,6 +272,8 @@ spec:
         name: writable-data
       - emptyDir: {}
         name: writable-run
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - configMap:
