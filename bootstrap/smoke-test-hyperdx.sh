@@ -132,8 +132,8 @@ import json, os, sys, urllib.request
 
 port = sys.argv[1]
 for account, user_env, pass_env, default in (
-    ("admin", "DFE_AUTH_LOCAL_ADMIN_USERNAME", "DFE_AUTH_LOCAL_ADMIN_PASSWORD", "admin"),
-    ("breakglass", "", "DFE_AUTH_BREAKGLASS_PASSWORD", "breakglass"),
+    ("admin", "DFE_ENGINE_AUTH_LOCAL_ADMIN_NAME", "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD", "admin"),
+    ("breakglass", "", "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD", "breakglass"),
 ):
     password = os.environ.get(pass_env, "")
     if not password:

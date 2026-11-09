@@ -11,9 +11,10 @@
 
 1. **Every pod running a DFE image sets `enableServiceLinks: false`.**
    Kubernetes injects a legacy Docker-link variable per Service in the
-   namespace, so `svc/dfe-keda-shim` becomes
-   `DFE_KEDA_SHIM_PORT="tcp://<ip>:8080"`. The engine reads that name as its own
-   setting and parses it as an int (`settings.py`), so the pod dies at startup.
+   namespace, `<SERVICE>_PORT="tcp://<ip>:<port>"` among them. The engine reads
+   `DFE_ENGINE_KEDA_SHIM_PORT` as an int (`settings.py`), and `svc/dfe-engine`'s
+   link variables land under that same `DFE_ENGINE_` prefix. On the old `DFE_`
+   prefix `svc/dfe-keda-shim` became exactly that setting, and the pod died at startup.
    It was live-proven across engine v1.10.4/5/6, and the first fix "claimed to
    kill the whole CLASS while being applied to one Deployment in a chart that
    ships three". A sixth pod was

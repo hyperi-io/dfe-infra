@@ -1,13 +1,13 @@
-# The bus: brokers, topics and group through the DFE_TRANSFORM_* flat env, which
+# The bus: brokers, topics and group through the DFE_TRANSFORM_VECTOR_* flat env, which
 # outranks the config file. The app reads an empty value as unset.
 extraEnv:
-  DFE_TRANSFORM_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
-  DFE_TRANSFORM_SINK_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
-  DFE_TRANSFORM_SOURCE_TOPICS: '{{ .Values.kafka.sourceTopic }}'
-  DFE_TRANSFORM_SINK_TOPIC: '{{ .Values.kafka.destTopic }}'
-  DFE_TRANSFORM_SOURCE_GROUP_ID: '{{ .Values.kafka.consumerGroup | default (.Values.fullnameOverride | default .Chart.Name) }}'
+  DFE_TRANSFORM_VECTOR_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_VECTOR_SINK_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_TRANSFORM_VECTOR_SOURCE_TOPICS: '{{ .Values.kafka.sourceTopic }}'
+  DFE_TRANSFORM_VECTOR_SINK_TOPIC: '{{ .Values.kafka.destTopic }}'
+  DFE_TRANSFORM_VECTOR_SOURCE_GROUP_ID: '{{ .Values.kafka.consumerGroup | default (.Values.fullnameOverride | default .Chart.Name) }}'
   # A protocol naming SSL turns TLS on for source and sink. Any other leaves the config's setting.
-  DFE_TRANSFORM_KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
+  DFE_TRANSFORM_VECTOR_KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
 
 # Which transport carries the records is this profile's, never the engine's.
 configOverrides:

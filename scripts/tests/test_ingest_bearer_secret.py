@@ -91,16 +91,16 @@ def test_the_binding_names_the_account_the_engine_pod_runs_as_with_its_token() -
 
 def test_the_engine_is_told_the_secret_it_writes() -> None:
     env = keyed(render_extras("dfe-engine", "scale", "local"))[("ConfigMap", "dfe-engine-env")]["data"]
-    assert env["DFE_INGEST_BEARER_SECRET"] == SECRET
-    assert env["DFE_SECRETS_PATH"] == "/config/.secrets"
+    assert env["DFE_ENGINE_INGEST_BEARER_SECRET"] == SECRET
+    assert env["DFE_ENGINE_SECRETS_PATH"] == "/config/.secrets"
 
 
 def test_on_a_secrets_manager_store_none_of_it_renders() -> None:
     docs = render_extras("dfe-engine", "scale", "aws", annotations=AWS_STORE)
     assert not [d for d in docs if SECRET in d["metadata"]["name"]]
     env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
-    assert "DFE_INGEST_BEARER_SECRET" not in env
-    assert env["DFE_SECRETS_PROVIDER"] == "aws"
+    assert "DFE_ENGINE_INGEST_BEARER_SECRET" not in env
+    assert env["DFE_ENGINE_SECRETS_PROVIDER"] == "aws"
 
 
 def test_expected_fail_an_empty_name_fails_the_render() -> None:

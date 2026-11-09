@@ -324,7 +324,7 @@ def test_a_resume_that_leaves_the_secret_group_off_is_caught() -> None:
     pause = action("hunts-pause", PAUSE_THE_RUNNER, PAUSE_THE_SECRET)
     resume = action("hunts-resume", RESUME_THE_RUNNER)
     problems = restore_problems(pause, resume, *SLIM)
-    assert any("DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" in found for found in problems), problems
+    assert any("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" in found for found in problems), problems
 
 
 def test_a_resume_that_turns_the_secret_group_on_too_restores_the_render() -> None:

@@ -1625,6 +1625,43 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
         )
 
 
+def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:
+    cases = [
+        ({"name": "Richie Benaud", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
+        ({"name": "  Richie Benaud  ", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
+        ({"name": "Richie Benaud", "maturity": "rc"}, "DFE 2.2.2"),
+        ({"name": "Richie Benaud"}, "DFE 2.2.2"),
+        ({"maturity": "release"}, "DFE 2.2.2"),
+        ({"name": "", "maturity": "release"}, "DFE 2.2.2"),
+    ]
+    for block, expected in cases:
+        title = stack.release_title("2.2.2", block)
+        expect(f"the release title for {block}", title == expected, f"{title!r}")
+
+
+def test_a_cut_keeps_the_name_within_its_version() -> None:
+    """9.9.0-rc.2 to 9.9.0-rc.3 is the same version, so the name stays."""
+    import tempfile
+
+    named = _CUT_FIXTURE.replace(
+        '  9.9.0-rc.2:\n    maturity: "rc"\n',
+        '  9.9.0-rc.2:\n    # The release name.\n    name: "Richie Benaud"\n'
+        '    maturity: "rc"\n',
+    )
+    expect("the fixture carries a name", named != _CUT_FIXTURE, "replace missed")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        rc = _cut_into(tmp, lambda org, repo, ref="main": _OLD_SHA, fixture=named)
+        expect("the cut writes the file", rc == 0, f"exit {rc}")
+        text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+        stacks = stack.parse_simple_yaml(text)["stacks"]
+        source, cut = stacks["9.9.0-rc.2"], stacks["9.9.0-rc.3"]
+        expect("the source keeps its name", source.get("name") == "Richie Benaud", "")
+        expect("an rc of the same version keeps it", cut.get("name") == "Richie Benaud", "")
+        title = stack.release_title("9.9.0-rc.3", cut)
+        expect("but an rc title stays plain", title == "DFE 9.9.0-rc.3", f"{title!r}")
+
+
 def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
     """An app publishing for the first time has an apps pin and no digests key.
 
