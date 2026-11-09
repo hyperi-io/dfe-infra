@@ -1,7 +1,7 @@
-# Compatibility constraints for DFE stack 2.2.2.
+# Compatibility constraints for DFE stack 2.2.2-rc.1.
 #
-# Referenced from versions.yaml stacks."2.2.2".constraints.
-# Validated by: python3 scripts/dfe-stack compat-check --stack 2.2.2
+# Referenced from versions.yaml stacks."2.2.2-rc.1".constraints.
+# Validated by: python3 scripts/dfe-stack compat-check --stack 2.2.2-rc.1
 #
 # The interdependency limitations we found live here MACHINE-READABLY (they were
 # prose comments before). Rules are keyed by ID (a MAP, not a list) so the
@@ -20,7 +20,7 @@
 # Copyright: (c) 2026 HYPERI PTY LIMITED
 
 schema: 1
-stack: "2.2.2"
+stack: "2.2.2-rc.1"
 
 rules:
 

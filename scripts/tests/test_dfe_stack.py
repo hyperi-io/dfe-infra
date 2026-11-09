@@ -1628,17 +1628,19 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
 def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:
     cases = [
         ({"name": "Richie Benaud", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
-        ({"name": "  Richie Benaud  "}, "DFE 2.2.2 Richie Benaud"),
+        ({"name": "  Richie Benaud  ", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
+        ({"name": "Richie Benaud", "maturity": "rc"}, "DFE 2.2.2"),
+        ({"name": "Richie Benaud"}, "DFE 2.2.2"),
         ({"maturity": "release"}, "DFE 2.2.2"),
-        ({"name": ""}, "DFE 2.2.2"),
+        ({"name": "", "maturity": "release"}, "DFE 2.2.2"),
     ]
     for block, expected in cases:
         title = stack.release_title("2.2.2", block)
         expect(f"the release title for {block}", title == expected, f"{title!r}")
 
 
-def test_a_cut_never_carries_the_source_stack_name_on() -> None:
-    """A release name belongs to one stack, so the next cut from it starts unnamed."""
+def test_a_cut_keeps_the_name_within_its_version() -> None:
+    """9.9.0-rc.2 to 9.9.0-rc.3 is the same version, so the name stays."""
     import tempfile
 
     named = _CUT_FIXTURE.replace(
@@ -1655,9 +1657,9 @@ def test_a_cut_never_carries_the_source_stack_name_on() -> None:
         stacks = stack.parse_simple_yaml(text)["stacks"]
         source, cut = stacks["9.9.0-rc.2"], stacks["9.9.0-rc.3"]
         expect("the source keeps its name", source.get("name") == "Richie Benaud", "")
-        expect("the new stack has none", "name" not in cut, f"{cut.get('name')!r}")
+        expect("an rc of the same version keeps it", cut.get("name") == "Richie Benaud", "")
         title = stack.release_title("9.9.0-rc.3", cut)
-        expect("its title is unnamed", title == "DFE 9.9.0-rc.3", f"{title!r}")
+        expect("but an rc title stays plain", title == "DFE 9.9.0-rc.3", f"{title!r}")
 
 
 def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:

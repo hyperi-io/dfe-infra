@@ -55,8 +55,8 @@
 # ---------------------------------------------------------------------------
 
 schema: 2
-current: "2.2.2"
-latest: "2.2.2"
+current: "2.2.2-rc.1"
+latest: "2.2.1"
 lts:
   # <stack version>: "<LTS expiry, ISO 8601>". Empty until the first LTS is
   # designated (needs a release first). Examples of the two supported
@@ -8234,12 +8234,12 @@ stacks:
       okta-okta: "~> 7.0"            # terraform/modules/tf-oidc-okta. 7.0.0, 2026-08-24.
       hashicorp-google: "~> 8.5"     # terraform/modules/tf-oidc-google. 8.5.0, 2026-09-29.
       hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
-  2.2.2:
-    # The release name. release.yml titles the GitHub release "DFE <version> <name>", and a cut never carries it on.
+  2.2.2-rc.1:
+    # The 2.2.2 release name. Only a release-maturity stack's GitHub title carries it, and a cut keeps it within 2.2.2.
     name: "Richie Benaud"
-    maturity: release
+    maturity: rc
     support: standard
-    constraints: "constraints/2.2.2.yaml"   # interdependency locks, checked by dfe-stack compat-check
+    constraints: "constraints/2.2.2-rc.1.yaml"   # interdependency locks, checked by dfe-stack compat-check
 
     # What the cluster must already be. Floors, because the operator owns the cluster and upgrades it.
     # Keep every leaf a string: check_versions_drift.py skips a nested map without saying so.

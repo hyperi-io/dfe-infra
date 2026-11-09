@@ -1226,9 +1226,14 @@ def cmd_maturity(args: argparse.Namespace) -> int:
 
 
 def release_title(version: str, block: dict) -> str:
-    """The GitHub release title: "DFE <version>", then the stack's `name:` when it has one."""
+    """The GitHub release title: "DFE <version>", then the stack's `name:` on a release.
+
+    An rc or beta of a named version keeps the plain title, so the name marks the GA.
+    """
     name = str(block.get("name") or "").strip()
-    return f"DFE {version} {name}" if name else f"DFE {version}"
+    if name and block.get("maturity") == "release":
+        return f"DFE {version} {name}"
+    return f"DFE {version}"
 
 
 def cmd_title(args: argparse.Namespace) -> int:
@@ -1790,8 +1795,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     block = lines[start:end]
 
     block[0] = f"  {new}:\n"
-    # A release name belongs to the stack it was given to, never to the next cut.
-    block = [ln for ln in block if not re.match(r"^    name:", ln)]
+    # A release name belongs to one version: rc.1 to its GA keeps it, 2.2.2 to 2.2.3 drops it.
+    if new.split("-", 1)[0] != from_name.split("-", 1)[0]:
+        block = [ln for ln in block if not re.match(r"^    name:", ln)]
     from_withdrawn = is_withdrawn(stacks[from_name])
     if args.maturity or from_withdrawn:
         _set_stack_field(block, "maturity", args.maturity, keep_note=not from_withdrawn)
