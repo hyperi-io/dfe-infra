@@ -14,7 +14,8 @@
 
 For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming
-the build, into build/<its base path>. Then write build/_redirects so / and every
+the build, into build/<its base path>, and finish its markdown side for agents
+(agent_layer.py). Then write build/_redirects so /, /latest/ and every
 dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
 against the Workers static-asset limits. A build with a member section whose root URL serves no page fails.
 
@@ -28,6 +29,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import agent_layer
 
 SITE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT = SITE_ROOT / "content"
@@ -71,7 +74,7 @@ def build_one(entry: dict) -> Path:
 
 
 def redirects(newest: str, dropped: list[str] | None = None) -> str:
-    """The Workers _redirects file: the site root and /v/ go to the newest release.
+    """The Workers _redirects file: the site root, /v/ and /latest/ go to the newest release.
 
     A dropped stack's pages go permanently to the same path under the newest release,
     where the version menu's own switch would have sent the reader.
@@ -84,7 +87,8 @@ def redirects(newest: str, dropped: list[str] | None = None) -> str:
         The file's text.
     """
     target = f"/v/{newest}/"
-    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/")]
+    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/", "/latest", "/latest/")]
+    lines.append(f"/latest/* {target}:splat 302")
     for stack in dropped or []:
         old = f"/v/{stack}"
         lines += [f"{old} {target} 301", f"{old}/ {target} 301", f"{old}/* {target}:splat 301"]
@@ -160,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         out = build_one(entry)
         if missing := missing_roots(entry, out):
             raise SystemExit(f"error: {entry['name']}: no page at {', '.join(missing)}")
+        copies = agent_layer.finish(entry, site, build_dir=BUILD)
+        print(f"{entry['name']}: {copies} markdown copies linked for agents")
         pages, files, largest = count(out)
         print(f"{entry['name']}: {pages} pages, {files} files, largest {largest} bytes")
 

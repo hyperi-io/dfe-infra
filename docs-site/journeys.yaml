@@ -38,6 +38,7 @@ sidebar:
     HTTP API: ""
     Query API: ""
     Schemas: ""
+    Using the docs with an AI agent: ""
     The event header: ""
     ClickHouse: ""
     Fetcher: ""
@@ -65,6 +66,7 @@ placement:
     operate/detections-and-hunts.md: "Operate / Detections and hunts"
     operate/monitoring.md: "Operate / Monitoring"
     operate/day-to-day.md: "Operate / Day to day and troubleshooting"
+    ai-agents.md: "Reference / Using the docs with an AI agent"
   culvert:
     default: "Deploy / Remote access (culvert, optional)"
   dfe-archiver:

@@ -33,7 +33,8 @@ Writes, under --out (default docs-site/content/):
     <build>/<member>/_category_.json  its sidebar label and lane position
     <build>/<parent>/<member>/...     a member publish.yaml mounts under another
     <build>/...                       docs-site/content-root/, the suite's own pages
-    _specs/<build>/dfe-engine.json    the engine's committed OpenAPI spec at its pin
+    _specs/<build>/dfe-engine.json    the engine's committed OpenAPI spec at its pin, MDX-safe
+    _specs/<build>/dfe-engine.raw.json  the same spec byte for byte, for download
     _reports/strays-<build>.md        every docs/ file outside the documentation standard
     site.json                         the builds, newest release first, for docusaurus.config.js
 
@@ -74,6 +75,8 @@ WHOLE_MEMBER = "all-pages"
 # Files in content-root/ for the people editing it, never copied into a build.
 EDITOR_ONLY = ("VOICE.md",)
 
+# Where the site is served. docusaurus.config.js and agent_layer.py read it from site.json.
+SITE_URL = "https://dfe.docs.hyperi.io"
 GITHUB = "https://github.com"
 RAW_GITHUB = "https://raw.githubusercontent.com"
 RELEASE = "release"
@@ -1132,6 +1135,9 @@ def _place_spec(
     placed = out / "_specs" / build.name / f"{SPEC_MEMBER}.json"
     document = json.loads(spec.read_text(encoding="utf-8"))
     write_json(placed, mdx_safe_spec(document))
+    # The spec as published, for download: the MDX-safe copy above escapes its descriptions.
+    raw = placed.with_suffix(".raw.json")
+    shutil.copyfile(spec, raw)
     slice_path = (api / "sidebar.ts").relative_to(out / build.name).as_posix()
     # The sidebar generator swaps this category's items for the slice gen-api-docs writes.
     write_json(
@@ -1142,6 +1148,7 @@ def _place_spec(
         "spec": placed.relative_to(out).as_posix(),
         "output": api.relative_to(out).as_posix(),
         "slice": slice_path,
+        "raw": raw.relative_to(out).as_posix(),
     }
 
 
@@ -1301,8 +1308,8 @@ def site_manifest(
         journeys: The sidebar journeys. None keeps one section per member.
 
     Returns:
-        The newest listed build's name (None without one), every build with its
-        page placements, the dropped stacks, and the journeys.
+        The site's URL, the newest listed build's name (None without one), every
+        build with its page placements, the dropped stacks, and the journeys.
     """
     builds = [
         {
@@ -1317,6 +1324,7 @@ def site_manifest(
     ]
     newest = next((build["name"] for build in builds if build["listed"]), None)
     return {
+        "url": SITE_URL,
         "newest": newest,
         "builds": builds,
         "dropped": sorted(dropped),

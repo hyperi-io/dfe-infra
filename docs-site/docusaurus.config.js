@@ -89,6 +89,71 @@ async function sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
   return journeySidebar(items, journeys, placements);
 }
 
+// Every doc's route, title, description and source file, for scripts/agent_layer.py.
+function pageManifestPlugin() {
+  return {
+    name: 'dfe-page-manifest',
+    async allContentLoaded({allContent}) {
+      const docs = allContent['docusaurus-plugin-content-docs'].default;
+      const pages = docs.loadedVersions.flatMap((version) =>
+        version.docs.map(({id, title, description, source, permalink}) => ({
+          id,
+          title,
+          description,
+          source: source.replace(/^@site\//, ''),
+          permalink,
+        })),
+      );
+      const out = path.join(CONTENT, '_manifests', `${build.name}.json`);
+      fs.mkdirSync(path.dirname(out), {recursive: true});
+      fs.writeFileSync(out, `${JSON.stringify(pages, null, 2)}\n`);
+    },
+  };
+}
+
+// The API pages are generated from the spec, which llms.txt links to whole instead.
+const apiPages = build.openapi
+  ? [`${path.posix.relative(build.name, build.openapi.output)}/**`]
+  : [];
+const memberRoots = [...new Set(build.members.map((member) => member.path.split('/')[0]))];
+const llmsPlugin = [
+  'docusaurus-plugin-llms',
+  {
+    docsDir: [{path: docsPath, routeBasePath: '/'}],
+    title: `DFE documentation ${versionLabel}`,
+    description:
+      'The Data Fusion Engine (DFE) is a product suite an organisation deploys to run its own ' +
+      'data pipeline: events in over HTTP, through Kafka or gRPC, into ClickHouse.',
+    rootContent:
+      `Release ${versionLabel}. Every prose page has a markdown copy at its URL with .md on the end, ` +
+      `and ${site.url}/latest/ always serves the newest release.` +
+      (build.openapi
+        ? ` ${site.url}${build.base_url}openapi/dfe-engine.json is the engine's HTTP API spec.`
+        : ''),
+    generateLLMsFullTxt: false,
+    generateMarkdownFiles: true,
+    excludeImports: true,
+    rewriteImageUrls: true,
+    ignoreFiles: apiPages,
+    customLLMFiles: [
+      {
+        filename: 'llms/overview.txt',
+        includePatterns: ['**'],
+        ignorePatterns: [...memberRoots.map((root) => `${root}/**`), ...apiPages],
+        fullContent: true,
+        title: 'DFE documentation: overview, quickstarts and operating',
+      },
+      ...memberRoots.map((root) => ({
+        filename: `llms/${root}.txt`,
+        includePatterns: [`${root}/**`],
+        ignorePatterns: apiPages,
+        fullContent: true,
+        title: `DFE documentation: ${root}`,
+      })),
+    ],
+  },
+];
+
 const openapiPlugins = build.openapi
   ? [
       [
@@ -115,7 +180,7 @@ module.exports = {
   // The brand tokens and @font-face rules, read anonymously like every other build input.
   stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
   customFields: {stack, versionLabel, newest: site.newest, releaseNotes, apiPath},
-  url: 'https://dfe.docs.hyperi.io',
+  url: site.url,
   baseUrl: build.base_url,
   trailingSlash: true,
   noIndex: !build.listed,
@@ -148,7 +213,7 @@ module.exports = {
       },
     ],
   ],
-  plugins: ['docusaurus-plugin-sass', ...openapiPlugins],
+  plugins: ['docusaurus-plugin-sass', pageManifestPlugin, llmsPlugin, ...openapiPlugins],
   themes: [
     '@docusaurus/theme-mermaid',
     'docusaurus-theme-openapi-docs',

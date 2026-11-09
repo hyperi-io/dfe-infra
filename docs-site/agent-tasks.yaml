@@ -1,0 +1,28 @@
+# docs-site/agent-tasks.yaml -- what an AI agent pointed at llms.txt must be able
+# to answer. scripts/agent_layer.py checks every built version: each task's page
+# is listed in that build's llms.txt, and its markdown copy (or the spec) holds
+# the expected text. Paths are relative to the build's base path. Nested maps and
+# quoted scalars only (scripts/yaml_subset.py).
+
+tasks:
+  Run DFE under Docker on one host:
+    page: "quickstart/docker.md"
+    expect: "make up"
+  Deploy DFE on Kubernetes on-premises:
+    page: "quickstart/kubernetes.md"
+    expect: "dfe-ops stack-deploy"
+  Size and deploy DFE on AWS:
+    page: "quickstart/aws.md"
+    expect: "resolve_sizing.py"
+  Add a data source from the catalogue:
+    page: "operate/sources.md"
+    expect: "Create from it"
+  Attach a transform to a source:
+    page: "operate/transforms.md"
+    expect: "Attach one to a source"
+  Connect an OIDC identity provider:
+    page: "operate/users-and-oidc.md"
+    expect: "Connect the IdP"
+  Create a source over the engine's HTTP API:
+    page: "openapi/dfe-engine.json"
+    expect: "/api/v1/sources/from-catalogue"
