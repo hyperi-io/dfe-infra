@@ -1,4 +1,4 @@
-{{- /* The engine's DFE_ADMIN_LINKS: every infra route that routeEnabled renders,
+{{- /* The engine's DFE_ENGINE_ADMIN_LINKS: every infra route that routeEnabled renders,
        and any other that carries an adminLink, placed in the engine's namespace
        because a configMapKeyRef reads no other. */}}
 {{- $links := list }}

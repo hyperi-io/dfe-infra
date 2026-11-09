@@ -10,7 +10,7 @@
     "metrics_path": "/metrics",
     "startup_budget_seconds": 120
   },
-  "env_prefix": "DFE_TRANSFORM",
+  "env_prefix": "DFE_TRANSFORM_VRL",
   "metric_prefix": "transform_vrl",
   "config_mount_path": "/etc/dfe-transform-vrl/config.yaml",
   "image_registry": "ghcr.io/hyperi-io",
@@ -40,27 +40,27 @@
       "group_name": "kafka",
       "env_vars": [
         {
-          "env_var": "DFE_TRANSFORM_SOURCE_SASL_USERNAME",
+          "env_var": "DFE_TRANSFORM_VRL_SOURCE_SASL_USERNAME",
           "key_name": "source-username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_TRANSFORM_SOURCE_SASL_PASSWORD",
+          "env_var": "DFE_TRANSFORM_VRL_SOURCE_SASL_PASSWORD",
           "key_name": "source-password",
           "secret_key": "password"
         },
         {
-          "env_var": "DFE_TRANSFORM_SINK_SASL_USERNAME",
+          "env_var": "DFE_TRANSFORM_VRL_SINK_SASL_USERNAME",
           "key_name": "sink-username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_TRANSFORM_SINK_SASL_PASSWORD",
+          "env_var": "DFE_TRANSFORM_VRL_SINK_SASL_PASSWORD",
           "key_name": "sink-password",
           "secret_key": "password"
         },
         {
-          "env_var": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+          "env_var": "DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM",
           "key_name": "mechanism",
           "secret_key": "sasl.mechanism"
         }
@@ -76,6 +76,12 @@
     "source": {
       "transport": "bus",
       "listen": "0.0.0.0:6000",
+      "tls": {
+        "enabled": false
+      },
+      "acknowledgements": {
+        "enabled": true
+      },
       "brokers": [
         "kafka:9092"
       ],
@@ -86,29 +92,23 @@
       "sasl": {
         "enabled": true,
         "mechanism": "scram_sha_512"
-      },
-      "tls": {
-        "enabled": false
-      },
-      "acknowledgements": {
-        "enabled": true
       }
     },
     "sink": {
       "transport": "bus",
       "endpoint": "http://dfe-loader:6000",
+      "key_field": "",
+      "compression": "zstd",
+      "tls": {
+        "enabled": false
+      },
       "brokers": [
         "kafka:9092"
       ],
       "topic": "enriched_events",
-      "key_field": ".org_id",
-      "compression": "zstd",
       "sasl": {
         "enabled": true,
         "mechanism": "scram_sha_512"
-      },
-      "tls": {
-        "enabled": false
       }
     },
     "transforms": {
@@ -137,21 +137,9 @@
   },
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
-    "apt_repos": [
-      {
-        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
-        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
-        "url": "https://packages.confluent.io/clients/deb",
-        "codename": "bookworm",
-        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
-        "packages": [
-          "librdkafka1"
-        ]
-      }
-    ],
+    "apt_repos": [],
     "apt_packages": [
-      "libssl3t64",
-      "zlib1g"
+      "curl"
     ],
     "distro": "trixie"
   },
@@ -167,7 +155,7 @@
   "config_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Config",
-    "description": "Main configuration.\n\n## This struct is the wrapper's half of the `--config` file\n\nIt owns `pipeline`, `source`, `sink`, `transforms` and `enrichment_tables`.\nscalo's own sections -- `metrics`, `logger`, `scaling`, `worker_pool`,\n`batch_processing`, `self_regulation`, `version_check`, `otel_tracing` --\nmay sit beside them: scalo's cascade reads the same file as its settings\nlayer, and its env layer outranks the file. [`SCALO_CASCADE_SECTIONS`] lists\nthem, and [`warn_unreachable_scalo_settings`] warns for one in a\nworking-directory `config.yaml` read without `--config`, which scalo never\nsees.\n\n## Requires pod restart (bound at startup)\n\n- `pipeline.name` — baked into Kafka `group_id`, metrics labels, tracing spans\n- `source.*` — rdkafka consumer: connection, subscription, auth, TLS, buffers\n- `sink.brokers` — rdkafka producer connection established at startup\n- `sink.topic` — output topic (changing mid-stream risks data loss)\n- `sink.compression` — rdkafka `compression.type` set at producer creation\n- `sink.sasl.*` / `sink.tls.*` — security protocol set at producer creation\n- `sink.max_buffer_bytes` — rdkafka `queue.buffering.max.kbytes` at creation\n- `sink.librdkafka_options` — passed to `ClientConfig` at creation\n- `transforms.*` — VRL programs compiled at startup, immutable for process lifetime\n\n## Accepted but not applied\n\n[`Config::inert_settings`] is the list, and the wrapper warns at startup for\neach one a deployment has actually set.",
+    "description": "Main configuration.\n\n## This struct is the wrapper's half of the `--config` file\n\nIt owns `pipeline`, `source`, `sink`, `transforms`, `enrichment_tables` and\n`dlq`.\nscalo's own sections -- `metrics`, `logger`, `scaling`, `worker_pool`,\n`batch_processing`, `self_regulation`, `version_check`, `otel_tracing` --\nmay sit beside them: scalo's cascade reads the same file as its settings\nlayer, and its env layer outranks the file. [`SCALO_CASCADE_SECTIONS`] lists\nthem, and [`warn_unreachable_scalo_settings`] warns for one in a\nworking-directory `config.yaml` read without `--config`, which scalo never\nsees.\n\n## Requires pod restart (bound at startup)\n\n- `pipeline.name` — baked into Kafka `group_id`, metrics labels, tracing spans\n- `source.*` — rdkafka consumer: connection, subscription, auth, TLS, buffers\n- `sink.brokers` — rdkafka producer connection established at startup\n- `sink.topic` — output topic (changing mid-stream risks data loss)\n- `sink.compression` — rdkafka `compression.type` set at producer creation\n- `sink.sasl.*` / `sink.tls.*` — security protocol set at producer creation\n- `sink.max_buffer_bytes` — rdkafka `queue.buffering.max.kbytes` at creation\n- `sink.librdkafka_options` — passed to `ClientConfig` at creation\n- `transforms.*` — VRL programs compiled at startup, immutable for process lifetime\n- `dlq.*` — the dead-letter queue is spawned at startup\n\n## Accepted but not applied\n\n[`Config::inert_settings`] is the list, and the wrapper warns at startup for\neach one a deployment has actually set.",
     "type": "object",
     "properties": {
       "pipeline": {
@@ -254,6 +242,25 @@
           "$ref": "#/$defs/EnrichmentTableConfig"
         },
         "default": []
+      },
+      "dlq": {
+        "description": "Where a record the sink refuses for good goes: one over the sink's\nsize ceiling, or matched by an outbound `dlq` filter. scalo's type\nverbatim. The default writes NDJSON files under `/var/spool/scalo/dlq`,\nwhich the deployment contract declares writable. With `enabled: false`\nsuch a record is dropped and counted on\n`pipeline_dead_letters_dropped_total`.",
+        "$ref": "#/$defs/DlqConfig",
+        "default": {
+          "enabled": true,
+          "mode": "cascade",
+          "queue_capacity": 10000,
+          "batch_size": 256,
+          "flush_interval_ms": 100,
+          "max_payload_bytes": 524288,
+          "file": {
+            "enabled": true,
+            "path": "/var/spool/scalo/dlq",
+            "rotation": "hourly",
+            "max_age_days": 30,
+            "compress_rotated": true
+          }
+        }
       }
     },
     "$defs": {
@@ -319,7 +326,7 @@
             "default": "dfe-transform-vrl"
           },
           "max_buffer_bytes": {
-            "description": "Maximum consumer buffer size in bytes.",
+            "description": "Bytes of fetched records librdkafka holds ahead of the pipeline, set\nas `queued.max.messages.kbytes`. One fetch can overshoot it by up to\n`max.partition.fetch.bytes`.",
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
@@ -360,7 +367,7 @@
             "default": 5000
           },
           "statistics_interval_ms": {
-            "description": "librdkafka statistics emission interval (ms). 0 = disabled.\nWhen enabled (and scalo supports `StatsContext` in `KafkaTransport`),\nrdkafka broker RTT, consumer lag, and queue depth metrics auto-emit\nto the Prometheus `/metrics` endpoint.",
+            "description": "librdkafka statistics emission interval (ms). 0 = disabled.\nThe statistics carry the broker RTT, consumer lag and queue depth\nmetrics on `/metrics`, and the lag `/scaling/pressure` reports, so 0\nleaves the KEDA lag signal at zero.",
             "type": "integer",
             "format": "uint32",
             "minimum": 0,
@@ -633,7 +640,7 @@
             "default": null
           },
           "max_bytes": {
-            "description": "Maximum materialised table size in bytes. Fail-fast at load if exceeded.\nWhen set, the loaded table's memory is also registered with `MemoryGuard`\nso enrichment memory counts against the pod memory budget.",
+            "description": "Maximum materialised table size in bytes. A load over it fails startup,\nand a refresh over it is refused and the table keeps the rows it has.",
             "type": [
               "integer",
               "null"
@@ -645,7 +652,7 @@
         }
       },
       "EnrichmentSourceConfig": {
-        "description": "Source definition for an enrichment table.",
+        "description": "Source definition for an enrichment table. A key the source type does not\nhave fails the load.",
         "oneOf": [
           {
             "type": "object",
@@ -669,6 +676,7 @@
                 "default": null
               }
             },
+            "additionalProperties": false,
             "required": [
               "type",
               "path"
@@ -685,12 +693,14 @@
                 "type": "string"
               }
             },
+            "additionalProperties": false,
             "required": [
               "type",
               "path"
             ]
           },
           {
+            "description": "A STIX 2.1 bundle on disk.",
             "type": "object",
             "properties": {
               "type": {
@@ -698,40 +708,13 @@
                 "const": "stix"
               },
               "path": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "default": null
-              },
-              "url": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "default": null
-              },
-              "collection": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "default": null
-              },
-              "auth": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/StixAuthConfig"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
+                "type": "string"
               }
             },
+            "additionalProperties": false,
             "required": [
-              "type"
+              "type",
+              "path"
             ]
           },
           {
@@ -748,6 +731,7 @@
                 "type": "string"
               }
             },
+            "additionalProperties": false,
             "required": [
               "type",
               "path",
@@ -766,40 +750,6 @@
           "auto"
         ]
       },
-      "StixAuthConfig": {
-        "description": "Authentication for STIX/TAXII sources.",
-        "type": "object",
-        "properties": {
-          "type": {
-            "description": "Auth type: `bearer`, `basic`, or `api_key`.",
-            "type": "string"
-          },
-          "token_env": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "username_env": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          },
-          "password_env": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
       "RefreshConfig": {
         "description": "Periodic refresh configuration.",
         "type": "object",
@@ -813,6 +763,137 @@
         },
         "required": [
           "interval_secs"
+        ]
+      },
+      "DlqConfig": {
+        "description": "Top-level DLQ configuration.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Whether DLQ is enabled.",
+            "type": "boolean",
+            "default": true
+          },
+          "mode": {
+            "description": "Backend routing mode.",
+            "$ref": "#/$defs/DlqMode",
+            "default": "cascade"
+          },
+          "queue_capacity": {
+            "description": "Bounded mpsc capacity. When the queue is full, `try_send` returns\n`QueueFull` (overflow=Drop). Sized for failure-burst tolerance.\nDefault 10_000.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 10000
+          },
+          "batch_size": {
+            "description": "Drain coalesces up to this many entries into one backend write.\nDefault 256.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "default": 256
+          },
+          "flush_interval_ms": {
+            "description": "Flush a partial batch after this duration, even if not full.\nDefault 100 ms.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 100
+          },
+          "max_payload_bytes": {
+            "description": "Payload bytes an entry keeps: a longer payload is cut to this and the\nentry marked `truncated` with its original length, so it lands where\nthe whole record could not. `None` keeps every payload whole. Default\n[`DEFAULT_MAX_PAYLOAD_BYTES`].",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "default": 524288
+          },
+          "file": {
+            "description": "File backend configuration.",
+            "$ref": "#/$defs/FileDlqConfig",
+            "default": {
+              "enabled": true,
+              "path": "/var/spool/scalo/dlq",
+              "rotation": "hourly",
+              "max_age_days": 30,
+              "compress_rotated": true
+            }
+          }
+        }
+      },
+      "DlqMode": {
+        "description": "How backends are used when multiple are enabled.",
+        "oneOf": [
+          {
+            "description": "Try backends in order; stop on first success.\nDefault order: Kafka first, file fallback.",
+            "type": "string",
+            "const": "cascade"
+          },
+          {
+            "description": "Write every batch to all enabled backends. The write succeeds when at\nleast one backend takes the whole batch, and fails only when none does.",
+            "type": "string",
+            "const": "fan_out"
+          },
+          {
+            "description": "File backend only (no Kafka dependency).",
+            "type": "string",
+            "const": "file_only"
+          },
+          {
+            "description": "Kafka backend only (matches a typical consumer's current behaviour).",
+            "type": "string",
+            "const": "kafka_only"
+          }
+        ]
+      },
+      "FileDlqConfig": {
+        "description": "File-based DLQ configuration.\n\nWrites NDJSON files with automatic rotation and cleanup.",
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "description": "Enable the file backend.",
+            "type": "boolean",
+            "default": true
+          },
+          "path": {
+            "description": "Base directory for DLQ files.\nService name is appended as a subdirectory. Default `/var/spool/scalo/dlq`.",
+            "type": "string",
+            "default": "/var/spool/scalo/dlq"
+          },
+          "rotation": {
+            "description": "File rotation period.",
+            "$ref": "#/$defs/RotationPeriod",
+            "default": "hourly"
+          },
+          "max_age_days": {
+            "description": "Auto-cleanup files older than this many days.",
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 30
+          },
+          "compress_rotated": {
+            "description": "Compress rotated files with flate2/gzip.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RotationPeriod": {
+        "description": "File rotation period.",
+        "oneOf": [
+          {
+            "description": "Rotate files every hour.",
+            "type": "string",
+            "const": "hourly"
+          },
+          {
+            "description": "Rotate files every day.",
+            "type": "string",
+            "const": "daily"
+          }
         ]
       }
     }
@@ -885,31 +966,13 @@
         {
           "kind": "service",
           "name": "stix",
-          "description": "STIX/TAXII threat-intel indicators (file or TAXII URL).",
+          "description": "STIX 2.1 threat-intel indicators from a bundle file.",
           "fields": [
             {
               "name": "path",
               "type": "string",
-              "required": false,
-              "description": "Local STIX bundle path."
-            },
-            {
-              "name": "url",
-              "type": "string",
-              "required": false,
-              "description": "TAXII collection URL."
-            },
-            {
-              "name": "collection",
-              "type": "string",
-              "required": false,
-              "description": "TAXII collection id."
-            },
-            {
-              "name": "auth",
-              "type": "string",
-              "required": false,
-              "description": "Auth spec (type + env-var refs for bearer/basic/api_key)."
+              "required": true,
+              "description": "Path to the STIX bundle."
             }
           ]
         },
@@ -933,6 +996,13 @@
           ]
         }
       ]
+    }
+  ],
+  "writable_paths": [
+    {
+      "name": "dlq",
+      "path": "/var/spool/scalo/dlq",
+      "size": "1Gi"
     }
   ],
   "termination_grace_seconds": 45,

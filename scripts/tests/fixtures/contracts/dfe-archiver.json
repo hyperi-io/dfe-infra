@@ -10,7 +10,7 @@
     "metrics_path": "/metrics",
     "startup_budget_seconds": 120
   },
-  "env_prefix": "ARCHIVER",
+  "env_prefix": "DFE_ARCHIVER",
   "metric_prefix": "archiver",
   "config_mount_path": "/etc/dfe/archiver.yaml",
   "image_registry": "ghcr.io/hyperi-io",
@@ -37,17 +37,17 @@
       "group_name": "kafka",
       "env_vars": [
         {
-          "env_var": "KAFKA_SASL_USER",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_USER",
           "key_name": "username",
           "secret_key": "username"
         },
         {
-          "env_var": "KAFKA_SASL_PASSWORD",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         },
         {
-          "env_var": "KAFKA_SASL_MECHANISM",
+          "env_var": "DFE_ARCHIVER_KAFKA_SASL_MECHANISM",
           "key_name": "mechanism",
           "secret_key": "sasl.mechanism"
         }
@@ -57,12 +57,12 @@
       "group_name": "s3",
       "env_vars": [
         {
-          "env_var": "S3_ACCESS_KEY_ID",
+          "env_var": "DFE_ARCHIVER_S3_ACCESS_KEY_ID",
           "key_name": "access_key_id",
           "secret_key": "access_key_id"
         },
         {
-          "env_var": "S3_SECRET_ACCESS_KEY",
+          "env_var": "DFE_ARCHIVER_S3_SECRET_ACCESS_KEY",
           "key_name": "secret_access_key",
           "secret_key": "secret_access_key"
         }
@@ -144,6 +144,7 @@
       "queue_capacity": 10000,
       "batch_size": 256,
       "flush_interval_ms": 100,
+      "max_payload_bytes": null,
       "file": {
         "enabled": true,
         "path": "/var/spool/dfe/dlq",
@@ -182,22 +183,9 @@
   },
   "base_image": "debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad",
   "native_deps": {
-    "apt_repos": [
-      {
-        "key_url": "https://packages.confluent.io/clients/deb/archive.key",
-        "keyring": "/usr/share/keyrings/confluent-clients.gpg",
-        "url": "https://packages.confluent.io/clients/deb",
-        "codename": "bookworm",
-        "key_fingerprint": "CBBB821E8FAF364F79835C438B1DA6120C2BF624",
-        "packages": [
-          "librdkafka1"
-        ]
-      }
-    ],
+    "apt_repos": [],
     "apt_packages": [
-      "libssl3t64",
-      "zlib1g",
-      "libzstd1"
+      "curl"
     ],
     "distro": "trixie"
   },
@@ -213,7 +201,7 @@
   "config_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Config",
-    "description": "Root configuration for dfe-archiver.\n\nCovers the archiver's own sections only. The memory guard, the metrics\nlistener and the scaling-pressure engine are scalo's, built by\n`ServiceRuntime` before the archiver exists, and are configured through the\ncascade (`ARCHIVER_MEMORY_*` for the guard, `--metrics-addr` /\n`METRICS_ADDR` / `ARCHIVER_METRICS__ADDRESS` for the listener,\n`ARCHIVER_SCALING__*` for the engine). A parallel `memory:` / `metrics:` /\n`scaling:` block here parsed, validated and reached nothing.\n\n## Hot-reload behavior\n\n**Hot-reloaded**, because the pipeline re-reads it from the shared config:\n- `kafka.batch_size` -- once per receive\n\n**Requires pod restart** -- everything else. `Archiver` snapshots the config\nat construction into `startup_config`, so a reload of `transport`,\n`kafka.*`, `grpc.*`, `archive.*`, `buffer.*`, `routing.*`, `compression.*`\nor `dlq.*` is accepted and validated but does not reach the running\npipeline. `restart_required_changes` names those sections, and\nthe reloader warns instead of reporting a reload.",
+    "description": "Root configuration for dfe-archiver.\n\nCovers the archiver's own sections only. The memory guard, the metrics\nlistener and the scaling-pressure engine are scalo's, built by\n`ServiceRuntime` before the archiver exists, and are configured through the\ncascade (`DFE_ARCHIVER_MEMORY_*` for the guard, `--metrics-addr` /\n`METRICS_ADDR` / `DFE_ARCHIVER_METRICS__ADDRESS` for the listener,\n`DFE_ARCHIVER_SCALING__*` for the engine). A parallel `memory:` / `metrics:` /\n`scaling:` block here parsed, validated and reached nothing.\n\n## Hot-reload behavior\n\n**Hot-reloaded**, because the pipeline re-reads it from the shared config:\n- `kafka.batch_size` -- once per receive\n\n**Requires pod restart** -- everything else. `Archiver` snapshots the config\nat construction into `startup_config`, so a reload of `transport`,\n`kafka.*`, `grpc.*`, `archive.*`, `buffer.*`, `routing.*`, `compression.*`\nor `dlq.*` is accepted and validated but does not reach the running\npipeline. `restart_required_changes` names those sections, and\nthe reloader warns instead of reporting a reload.",
     "type": "object",
     "properties": {
       "transport": {
@@ -312,7 +300,7 @@
         }
       },
       "dlq": {
-        "description": "Dead letter queue configuration",
+        "description": "Dead letter queue configuration. A field a `dlq:` block leaves out\nkeeps the archiver's default.",
         "$ref": "#/$defs/DlqConfig",
         "default": {
           "enabled": true,
@@ -320,6 +308,7 @@
           "queue_capacity": 10000,
           "batch_size": 256,
           "flush_interval_ms": 100,
+          "max_payload_bytes": null,
           "file": {
             "enabled": true,
             "path": "/var/spool/dfe/dlq",
@@ -575,7 +564,7 @@
             "default": 8388608
           },
           "max_writers": {
-            "description": "Maximum number of concurrent archive writers (one per unique routing\ndestination). When the cap is reached, the least-recently-used writer\nis evicted and closed asynchronously. Caps file-handle use and bounds\nthe `dfe_archiver_unique_destinations` metric for expression-routed\npods on high-cardinality keys (e.g. per-org-id routing).",
+            "description": "Maximum number of archive writers open at once, one per routing\ndestination, evicted ones still closing included. At the cap the\nleast recently used writer is evicted and closed in the background,\nand a write for a new destination waits for that close. Caps file\nhandles and bounds `dfe_archiver_unique_destinations` on\nhigh-cardinality keys such as per-org routing.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
@@ -632,26 +621,29 @@
         }
       },
       "S3Config": {
-        "description": "S3 configuration",
+        "description": "S3 configuration. A section with no `bucket` takes the destination URL's.",
         "type": "object",
         "properties": {
           "region": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "endpoint": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "access_key_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "secret_access_key": {
             "type": [
@@ -659,30 +651,30 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "bucket": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "allow_http": {
             "description": "Allow plaintext HTTP (for local/dev endpoints only). Defaults to false (HTTPS required).",
             "type": "boolean",
             "default": false
           }
-        },
-        "required": [
-          "bucket"
-        ]
+        }
       },
       "GcsConfig": {
-        "description": "GCS configuration",
+        "description": "GCS configuration. A section with no `bucket` takes the destination URL's.",
         "type": "object",
         "properties": {
           "project_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "service_account_key": {
             "type": [
@@ -690,28 +682,29 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "credentials_path": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           },
           "bucket": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           }
-        },
-        "required": [
-          "bucket"
-        ]
+        }
       },
       "AzureConfig": {
-        "description": "Azure Blob configuration",
+        "description": "Azure Blob configuration. A section with no `container` takes the\ndestination URL's.",
         "type": "object",
         "properties": {
           "account_name": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "account_key": {
             "type": [
@@ -719,7 +712,8 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "sas_token": {
             "type": [
@@ -727,26 +721,25 @@
               "null"
             ],
             "x-scalo-secret": true,
-            "writeOnly": true
+            "writeOnly": true,
+            "default": null
           },
           "container": {
-            "type": "string"
+            "type": "string",
+            "default": ""
           },
           "use_emulator": {
-            "type": "boolean"
+            "type": "boolean",
+            "default": false
           },
           "endpoint": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "default": null
           }
-        },
-        "required": [
-          "account_name",
-          "container",
-          "use_emulator"
-        ]
+        }
       },
       "MinioConfig": {
         "description": "`MinIO` configuration (S3-compatible)",
@@ -900,6 +893,16 @@
             "format": "uint64",
             "minimum": 0,
             "default": 100
+          },
+          "max_payload_bytes": {
+            "description": "Payload bytes an entry keeps: a longer payload is cut to this and the\nentry marked `truncated` with its original length, so it lands where\nthe whole record could not. `None` keeps every payload whole. Default\n[`DEFAULT_MAX_PAYLOAD_BYTES`].",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0,
+            "default": 524288
           },
           "file": {
             "description": "File backend configuration.",
@@ -1118,6 +1121,11 @@
       "name": "spool",
       "path": "/var/spool/dfe/archiver",
       "size_limit": "10Gi",
+      "size": "1Gi"
+    },
+    {
+      "name": "dlq",
+      "path": "/var/spool/dfe/dlq",
       "size": "1Gi"
     }
   ],

@@ -138,13 +138,13 @@ def test_the_cluster_secret_carries_both() -> None:
 
 def test_the_engine_writes_secrets_manager_under_its_prefix_region_key_and_tags() -> None:
     env = engine_env(render_extras("dfe-engine", "scale", "aws", annotations=AWS_FACTS))
-    assert {k: v for k, v in env.items() if k.startswith("DFE_SECRETS_")} == {
-        "DFE_SECRETS_PROVIDER": "aws",
-        "DFE_SECRETS_REGION": "us-west-2",
-        "DFE_SECRETS_NAME_PREFIX": PREFIX,
-        "DFE_SECRETS_KMS_KEY_ID": KEY,
-        "DFE_SECRETS_RECOVERY_WINDOW_DAYS": "0",
-        "DFE_SECRETS_TAGS": TAGS,
+    assert {k: v for k, v in env.items() if k.startswith("DFE_ENGINE_SECRETS_")} == {
+        "DFE_ENGINE_SECRETS_PROVIDER": "aws",
+        "DFE_ENGINE_SECRETS_REGION": "us-west-2",
+        "DFE_ENGINE_SECRETS_NAME_PREFIX": PREFIX,
+        "DFE_ENGINE_SECRETS_KMS_KEY_ID": KEY,
+        "DFE_ENGINE_SECRETS_RECOVERY_WINDOW_DAYS": "0",
+        "DFE_ENGINE_SECRETS_TAGS": TAGS,
     }
 
 
@@ -176,7 +176,7 @@ def test_a_cycles_run_tags_reach_every_secret_the_engine_creates() -> None:
     run = cloud_run.run_tags("r20261008t000000z-0a1b2c", 1791460800)
     resource_tags = json.dumps({"service-name": "dfe", **run}, separators=(",", ":"))
     facts = {**AWS_FACTS, "dfe.hyperi.io/resource_tags": _resource_tags_annotation(resource_tags)}
-    tags = json.loads(engine_env(render_extras("dfe-engine", "scale", "aws", annotations=facts))["DFE_SECRETS_TAGS"])
+    tags = json.loads(engine_env(render_extras("dfe-engine", "scale", "aws", annotations=facts))["DFE_ENGINE_SECRETS_TAGS"])
     assert tags["dfe-e2e"] == "r20261008t000000z-0a1b2c"
     assert tags["expires-at"] == "2026-10-08T12:00:00Z"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", tags["expires-at"])
@@ -190,8 +190,8 @@ def test_expected_fail_a_store_without_the_deployment_key_fails_the_render() -> 
 
 def test_without_the_prefix_the_engine_keeps_its_files() -> None:
     env = engine_env(render_extras("dfe-engine", "scale", "aws", annotations=NO_STORE))
-    assert env["DFE_SECRETS_PATH"] == "/config/.secrets"
-    assert "DFE_SECRETS_PROVIDER" not in env
+    assert env["DFE_ENGINE_SECRETS_PATH"] == "/config/.secrets"
+    assert "DFE_ENGINE_SECRETS_PROVIDER" not in env
 
 
 @pytest.mark.parametrize("service", ["dfe-loader", "hyperdx", "dfe-ui"])
@@ -240,7 +240,7 @@ def test_the_thin_chart_never_sees_the_store() -> None:
     without = render_app("dfe-engine", "scale", "aws", annotations=NO_STORE)
     deployment = ("Deployment", "dfe-engine")
     assert keyed(with_store)[deployment]["spec"] == keyed(without)[deployment]["spec"]
-    assert engine_env(with_store)["DFE_SECRETS_PROVIDER"] == "aws"
+    assert engine_env(with_store)["DFE_ENGINE_SECRETS_PROVIDER"] == "aws"
 
 
 # ---------------------------------------------------------------- the sidecars
@@ -261,7 +261,7 @@ def test_on_aws_the_runner_and_the_shim_run_as_accounts_of_their_own() -> None:
 def test_the_runner_still_reads_the_shared_signing_key() -> None:
     docs = render_extras("dfe-engine", "scale", "aws", annotations=AWS_FACTS)
     container = keyed(docs)[("Deployment", "dfe-hunt-runner")]["spec"]["template"]["spec"]["containers"][0]
-    jwt = next(e for e in container["env"] if e["name"] == "DFE_API_JWT_SECRET")
+    jwt = next(e for e in container["env"] if e["name"] == "DFE_ENGINE_API_JWT_SECRET")
     assert jwt["valueFrom"]["secretKeyRef"]["name"] == "dfe-engine-jwt"
 
 

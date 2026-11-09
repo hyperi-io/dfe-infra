@@ -229,8 +229,8 @@ def run_smoke(
                 pod["engine_account"] = engine_account
             if engine_ch is not None:
                 engine_env = {
-                    "DFE_CLICKHOUSE_HOST": "127.0.0.1",
-                    "DFE_CLICKHOUSE_PORT": base.rsplit(":", 1)[1],
+                    "DFE_ENGINE_CLICKHOUSE_HOST": "127.0.0.1",
+                    "DFE_ENGINE_CLICKHOUSE_PORT": base.rsplit(":", 1)[1],
                     **engine_ch,
                 }
                 pod["engine_env"] = {k: v for k, v in engine_env.items() if v is not None}
@@ -358,7 +358,7 @@ def test_rejected_clickhouse_credentials_fail_the_table_check() -> None:
 
 
 def test_the_engine_issued_token_is_presented_as_a_bearer() -> None:
-    out, seen = run_smoke(engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"})
+    out, seen = run_smoke(engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"})
 
     expect("the round trip passes", verdict(out, "PASS", BEARER), out.stdout)
     expect("the server saw the bearer", f"Bearer {TOKEN}" in seen["bearers"])
@@ -368,14 +368,14 @@ def test_the_engine_issued_token_is_presented_as_a_bearer() -> None:
 
 
 def test_the_account_that_signed_in_is_named() -> None:
-    out, _ = run_smoke(engine_token=TOKEN, engine_account="breakglass", engine_ch={"DFE_CLICKHOUSE_SECURE": "false"})
+    out, _ = run_smoke(engine_token=TOKEN, engine_account="breakglass", engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"})
 
     expect("break-glass is named", "signed in to dfe-engine as breakglass" in out.stdout, out.stdout)
 
 
 def test_a_hyperdx_that_rejects_the_engines_token_fails_the_round_trip() -> None:
     out, _ = run_smoke(
-        serve={"reject_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}
+        serve={"reject_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}
     )
 
     expect("the round trip fails", verdict(out, "FAIL", BEARER), out.stdout)
@@ -383,7 +383,7 @@ def test_a_hyperdx_that_rejects_the_engines_token_fails_the_round_trip() -> None
 
 def test_a_hyperdx_that_accepts_any_bearer_fails_the_refusal_check() -> None:
     out, _ = run_smoke(
-        serve={"accept_any_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}
+        serve={"accept_any_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}
     )
 
     expect("the acceptance passes", verdict(out, "PASS", BEARER), out.stdout)
@@ -391,7 +391,7 @@ def test_a_hyperdx_that_accepts_any_bearer_fails_the_refusal_check() -> None:
 
 
 def test_an_engine_that_gives_no_token_fails_rather_than_skips() -> None:
-    out, seen = run_smoke(engine_ch={"DFE_CLICKHOUSE_SECURE": "false"}, engine_token=None)
+    out, seen = run_smoke(engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}, engine_token=None)
 
     expect("the round trip is a failure", "[FAIL] engine-issued-token round trip" in out.stdout, out.stdout)
     expect("it is not a skip", "[SKIP] engine-issued-token" not in out.stdout, out.stdout)
@@ -406,7 +406,7 @@ def test_the_probe_dials_the_url_the_engine_hands_hyperdx() -> None:
     """The engine serves HyperDX's proxy its ClickHouse URL. CLICKHOUSE_HOST only keys
     HyperDX's webhook refusal, and the chart writes it http:// whatever the server speaks."""
     out, seen = run_smoke(
-        engine_ch={"DFE_CLICKHOUSE_SECURE": "false"},
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"},
         pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
     )
 
@@ -429,7 +429,7 @@ def test_an_engine_on_tls_is_dialled_over_https_on_its_port() -> None:
     """The engine's own default is secure, so an unset flag is https too."""
     for secure in ("true", None):
         out, _ = run_smoke(
-            engine_ch={"DFE_CLICKHOUSE_SECURE": secure},
+            engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": secure},
             pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
         )
         line = next((ln for ln in out.stdout.splitlines() if PING in ln), "")
@@ -443,7 +443,7 @@ def test_an_engine_on_tls_is_dialled_over_https_on_its_port() -> None:
 def test_an_engine_that_names_no_clickhouse_fails_the_probe_saying_so() -> None:
     """An empty URL must never fall back to a guessed host and pass."""
     out, _ = run_smoke(
-        engine_ch={"DFE_CLICKHOUSE_HOST": None},
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_HOST": None},
         pod_env={"CLICKHOUSE_HOST": DEAD_CLICKHOUSE_HOST},
     )
 

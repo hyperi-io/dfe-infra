@@ -3,18 +3,18 @@
 # library reads. What depends on the transport sits in the
 # profile files beside this one.
 
-# The app spools under ARCHIVER_SPOOL_DIR. An image that spools to a path relative
+# The app spools under DFE_ARCHIVER_SPOOL_DIR. An image that spools to a path relative
 # to the working directory still finds a writable one here.
 workingDir: /tmp
 
 extraEnv:
   # The contract's writable path `spool` mounts here.
-  ARCHIVER_SPOOL_DIR: /var/spool/dfe/archiver
+  DFE_ARCHIVER_SPOOL_DIR: /var/spool/dfe/archiver
   # Env beats the config file. The app reads an empty value as unset, so the
   # engine's destination stands unless the deployment names one here.
-  ARCHIVER_DESTINATION: '{{ with (.Values.archive | default dict).localPath }}file://{{ . }}{{ end }}'
-  S3_ENDPOINT: '{{ .Values.s3.endpoint }}'
-  S3_BUCKET: '{{ .Values.s3.bucket }}'
+  DFE_ARCHIVER_DESTINATION: '{{ with (.Values.archive | default dict).localPath }}file://{{ . }}{{ end }}'
+  DFE_ARCHIVER_S3_ENDPOINT: '{{ .Values.s3.endpoint }}'
+  DFE_ARCHIVER_S3_BUCKET: '{{ .Values.s3.bucket }}'
 
 # The contract's secret groups, on the Secrets these values name.
 secrets:

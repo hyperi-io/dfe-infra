@@ -23,9 +23,9 @@ Eight things are checked:
 2. The FIRST sync is bounded. The sidecar retries forever, which on its own
    reproduces #212: a bad credential leaves the link absent and the runner
    Running with zero hunts, so an init container has to fail the pod instead.
-3. The runner's DFE_HUNTS_DIR and DFE_HUNTS_RULES_DIR resolve THROUGH git-sync's
+3. The runner's DFE_ENGINE_HUNTS_DIR and DFE_ENGINE_HUNTS_RULES_DIR resolve THROUGH git-sync's
    link into the synced subtree, on a volume both containers mount.
-4. The runner leaves DFE_SCHEMAS_DIR to the image, since nothing seeds one here.
+4. The runner leaves DFE_ENGINE_SCHEMAS_DIR to the image, since nothing seeds one here.
 5. The sidecar is hardened like the runner: non-root pod context, read-only
    rootfs, all capabilities dropped, and its own HOME rather than the runner's.
 6. Disabled, the pod is a single container again and nothing references the
@@ -168,21 +168,21 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
 
     expect(
         "--repo is the repo the engine writes",
-        flag(sidecar, "repo") == engine.get("DFE_GITOPS_REPO_URL"),
-        f"{flag(sidecar, 'repo')} vs {engine.get('DFE_GITOPS_REPO_URL')}",
+        flag(sidecar, "repo") == engine.get("DFE_ENGINE_GITOPS_REPO_URL"),
+        f"{flag(sidecar, 'repo')} vs {engine.get('DFE_ENGINE_GITOPS_REPO_URL')}",
     )
     expect(
         "--ref is the branch the engine writes",
-        flag(sidecar, "ref") == engine.get("DFE_GITOPS_BRANCH"),
-        f"{flag(sidecar, 'ref')} vs {engine.get('DFE_GITOPS_BRANCH')}",
+        flag(sidecar, "ref") == engine.get("DFE_ENGINE_GITOPS_BRANCH"),
+        f"{flag(sidecar, 'ref')} vs {engine.get('DFE_ENGINE_GITOPS_BRANCH')}",
     )
     refs = secret_refs(sidecar)
     expect(
         "it reuses the engine's deploy-repo credential, both keys",
-        refs.get("GITSYNC_USERNAME") == secret_ref(engine.get("DFE_GITOPS_USERNAME"))
-        and refs.get("GITSYNC_PASSWORD") == secret_ref(engine.get("DFE_GITOPS_TOKEN"))
+        refs.get("GITSYNC_USERNAME") == secret_ref(engine.get("DFE_ENGINE_GITOPS_USERNAME"))
+        and refs.get("GITSYNC_PASSWORD") == secret_ref(engine.get("DFE_ENGINE_GITOPS_TOKEN"))
         and refs.get("GITSYNC_USERNAME") is not None,
-        f"{refs} vs {engine.get('DFE_GITOPS_USERNAME')} {engine.get('DFE_GITOPS_TOKEN')}",
+        f"{refs} vs {engine.get('DFE_ENGINE_GITOPS_USERNAME')} {engine.get('DFE_ENGINE_GITOPS_TOKEN')}",
     )
     expect(
         "a fetch failure retries instead of killing the pod",
@@ -200,11 +200,11 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
     literal = engine_env_data(moved)
     expect(
         "a deployment's own deploy repo moves the sidecar and the engine together",
-        flag(moved_sidecar, "repo") == literal.get("DFE_GITOPS_REPO_URL")
+        flag(moved_sidecar, "repo") == literal.get("DFE_ENGINE_GITOPS_REPO_URL")
         == DEPLOY_REPO["dfe.hyperi.io/config_repo_url"]
-        and flag(moved_sidecar, "ref") == literal.get("DFE_GITOPS_BRANCH")
+        and flag(moved_sidecar, "ref") == literal.get("DFE_ENGINE_GITOPS_BRANCH")
         == DEPLOY_REPO["dfe.hyperi.io/config_repo_revision"],
-        f"{moved_sidecar.get('args')} vs {literal.get('DFE_GITOPS_REPO_URL')}",
+        f"{moved_sidecar.get('args')} vs {literal.get('DFE_ENGINE_GITOPS_REPO_URL')}",
     )
 
 
@@ -274,14 +274,14 @@ def test_the_runner_reads_hunts_through_the_synced_link() -> None:
     root = f"{gs['mountPath']}/repo"
     link = f"{root}/{gs['link']}"
     expect(
-        "DFE_HUNTS_DIR resolves through the link into the deploy repo",
-        env.get("DFE_HUNTS_DIR") == f"{link}/{gs['huntsPath']}",
-        f"{env.get('DFE_HUNTS_DIR')}",
+        "DFE_ENGINE_HUNTS_DIR resolves through the link into the deploy repo",
+        env.get("DFE_ENGINE_HUNTS_DIR") == f"{link}/{gs['huntsPath']}",
+        f"{env.get('DFE_ENGINE_HUNTS_DIR')}",
     )
     expect(
-        "DFE_HUNTS_RULES_DIR does too",
-        env.get("DFE_HUNTS_RULES_DIR") == f"{link}/{gs['rulesPath']}",
-        f"{env.get('DFE_HUNTS_RULES_DIR')}",
+        "DFE_ENGINE_HUNTS_RULES_DIR does too",
+        env.get("DFE_ENGINE_HUNTS_RULES_DIR") == f"{link}/{gs['rulesPath']}",
+        f"{env.get('DFE_ENGINE_HUNTS_RULES_DIR')}",
     )
     expect(
         "git-sync's root is a subdirectory, not the volume root",
@@ -320,9 +320,9 @@ def test_the_runner_leaves_the_schemas_dir_to_the_image() -> None:
     """
     env = env_of(container(runner(deployed()), "hunt-runner"))
     expect(
-        "DFE_SCHEMAS_DIR is not set on the runner",
-        "DFE_SCHEMAS_DIR" not in env,
-        f"{env.get('DFE_SCHEMAS_DIR')}",
+        "DFE_ENGINE_SCHEMAS_DIR is not set on the runner",
+        "DFE_ENGINE_SCHEMAS_DIR" not in env,
+        f"{env.get('DFE_ENGINE_SCHEMAS_DIR')}",
     )
 
 
@@ -385,9 +385,9 @@ def test_disabled_restores_the_single_container_pod() -> None:
     mount = config_mount()
     expect(
         "the hunt directories fall back to the config mount",
-        env.get("DFE_HUNTS_DIR") == f"{mount}/hunts"
-        and env.get("DFE_HUNTS_RULES_DIR") == f"{mount}/rules",
-        f"{env.get('DFE_HUNTS_DIR')} {env.get('DFE_HUNTS_RULES_DIR')}",
+        env.get("DFE_ENGINE_HUNTS_DIR") == f"{mount}/hunts"
+        and env.get("DFE_ENGINE_HUNTS_RULES_DIR") == f"{mount}/rules",
+        f"{env.get('DFE_ENGINE_HUNTS_DIR')} {env.get('DFE_ENGINE_HUNTS_RULES_DIR')}",
     )
 
 
@@ -462,9 +462,9 @@ def test_the_runner_reads_the_destinations_the_api_writes() -> None:
     engine = engine_env_data(deployed())
     expect(
         "the runner reads the directory the engine writes",
-        env_of(main).get("DFE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts
-        and engine.get("DFE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts,
-        f"{env_of(main).get('DFE_HUNTS_ALERT_DESTINATIONS_DIR')} vs {engine.get('DFE_HUNTS_ALERT_DESTINATIONS_DIR')}",
+        env_of(main).get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts
+        and engine.get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts,
+        f"{env_of(main).get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR')} vs {engine.get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR')}",
     )
     mount = mount_of(main, "alert-destinations")
     expect(
@@ -505,7 +505,7 @@ def test_the_runner_reads_the_destinations_the_api_writes() -> None:
         expect(
             f"{label}, no mount, volume, env or affinity",
             not mount_of(container(bare, "hunt-runner"), "alert-destinations")
-            and "DFE_HUNTS_ALERT_DESTINATIONS_DIR" not in env_of(container(bare, "hunt-runner"))
+            and "DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR" not in env_of(container(bare, "hunt-runner"))
             and not [v for v in pod(bare)["volumes"] if v["name"] == "alert-destinations"]
             and "affinity" not in pod(bare),
             f"{label}",
