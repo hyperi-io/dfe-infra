@@ -50,14 +50,14 @@ secrets:
 extraEnv:
   # Rendered by the gateway chart beside the engine, and optional, so an engine
   # with no gateway starts with no admin links rather than not at all.
-  DFE_ADMIN_LINKS:
+  DFE_ENGINE_ADMIN_LINKS:
     valueFrom:
       configMapKeyRef:
         name: dfe-admin-links
         key: admin_links.json
         optional: true
   # The engine composes the login page's credential-fetch command from it.
-  DFE_DEPLOYMENT_NAMESPACE:
+  DFE_ENGINE_DEPLOYMENT_NAMESPACE:
     valueFrom:
       fieldRef:
         fieldPath: metadata.namespace
@@ -341,7 +341,7 @@ extraVolumes:
   - name: deploy-repo
     emptyDir: {}
   # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # DFE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. tpl
+  # DFE_ENGINE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. tpl
   # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
   # from a ConfigMap.
   - name: clickhouse-ca
@@ -386,37 +386,37 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.58@sha256:44a5874e7db073dd6c273fce20e6d61cc7cd0654a757b934099f2c5343a63369"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.65@sha256:3567586e5cc37694ef60b3264bb47ca47efaa8f9608d332d59b55d2440e6b56f"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.58@sha256:4f35277451d5c9e42560515bff58ab5c40cdde3f350a2ec69e9fd3539668ac21"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.67@sha256:4c11c44d6b7e2deb408fbd8b342a39a55f6654da0ab5c6c9c9a0f203c731e0b4"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.39@sha256:08ce1f184c20b202aea45c853b9545cfb473c44e2c161869a810618ff6fc91e2"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.47@sha256:2032188a5285f89f13115ea90508313ae3deda9890e0eb41eb201c046c49c5f6"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.43@sha256:e7b3e550a49ccaf42b8290ddf6d20036476d23900a976df061735d6e02981e5e"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.49@sha256:654e2d5dafbbb056481a346e70e07d60d61507290d4804cb1434e13752811c74"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.38@sha256:d22603d34e48ae7d6c71239b6eecd7160ca30d805f26f9bd6ff54ff39e973429"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.45@sha256:906d2b69480d521ecc45a4f3e710fc0fcda3a7d805fe2169ad7df580e32de074"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.55@sha256:2457922b8bd88b7660db0627f3ce4ca75881fed3e4df84a43cc95706f4179ce1"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.62@sha256:798dcb690e30bf7c46c5d0c262b62ee451e2bbed66c368d00d0ad2e89d74ee70"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.20@sha256:8988e29a3348482ffe1b0ba6b52f22eea9fe6bbad1ae7212e12ce4ee46434a50"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.28@sha256:fe855751df2cd35bfd95a5bae14f6106935cf5248a67ad54660961b90c42e8d1"
 # The env names this mount; the contract's writable path `config` mounts at /config.
 config:
   mountPath: /config

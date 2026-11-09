@@ -12,23 +12,23 @@
 The engine is the config authority: it publishes each app's settings as the
 per-instance Argo `$values` overlay, and the thin chart writes that blob verbatim
 to the file the app reads. Some apps resolve a flat env var ABOVE that file --
-dfe-archiver applies `S3_BUCKET` / `S3_ENDPOINT` after loading the YAML
-(crates/core/src/config.rs `apply_archive_env`, called from `load_config`) -- so
+dfe-archiver applies `DFE_ARCHIVER_S3_BUCKET` / `DFE_ARCHIVER_S3_ENDPOINT` after loading the YAML
+(crates/core/src/config.rs `apply_flat_env`, called from `load_config`) -- so
 any value the deployment puts in those env vars silently beats the overlay.
 `s3.bucket: dfe-archive` was such a default, and every deployment archived to
 that bucket whatever the operator set through the API.
 
 The rule this pins: where the deployment renders an env the app ranks above its
 config file, it ships NO value for it. The app reads the names through scalo's
-flat env, which takes an empty value as unset (crates/core/src/config.rs:690 and
-:706), so the names may render empty. The `s3.*` keys stay in
+flat env, which takes an empty value as unset (crates/core/src/config.rs:790 and
+:806), so the names may render empty. The `s3.*` keys stay in
 argocd/values/apps/dfe-archiver/values.yaml so a deployment that owns its own
 destination can still set one, and setting it is then a deliberate override
 rather than a shipped surprise.
 
 Asserted from the goldens under fixtures/thin-renders and from live renders:
 
-  every default render  -> no S3_ENDPOINT, no S3_BUCKET value at all
+  every default render  -> no DFE_ARCHIVER_S3_ENDPOINT, no DFE_ARCHIVER_S3_BUCKET value at all
   overlay authors it    -> the value reaches archiver.yaml, with no env to shadow it
   deployment authors it -> the env renders, and the deployment wins
 
@@ -51,13 +51,13 @@ DIAL_CELL = ("single", "local")
 # The archiver env vars that outrank the mounted config file, and the overlay
 # key each one shadows.
 SHADOWING_ENV = {
-    "S3_BUCKET": "bucket",
-    "S3_ENDPOINT": "endpoint",
+    "DFE_ARCHIVER_S3_BUCKET": "bucket",
+    "DFE_ARCHIVER_S3_ENDPOINT": "endpoint",
 }
 
 ARCHIVER_S3_REFS = {
-    "S3_ACCESS_KEY_ID": "access_key_id",
-    "S3_SECRET_ACCESS_KEY": "secret_access_key",
+    "DFE_ARCHIVER_S3_ACCESS_KEY_ID": "access_key_id",
+    "DFE_ARCHIVER_S3_SECRET_ACCESS_KEY": "secret_access_key",
 }
 
 

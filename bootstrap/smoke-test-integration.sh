@@ -189,15 +189,15 @@ try:
     from confluent_kafka import ConsumerGroupTopicPartitions
     from confluent_kafka.admin import AdminClient
 
-    conf = {"bootstrap.servers": env("DFE_KAFKA_BOOTSTRAP_SERVERS", "")}
-    protocol = env("DFE_KAFKA_SECURITY_PROTOCOL", "")
+    conf = {"bootstrap.servers": env("DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS", "")}
+    protocol = env("DFE_ENGINE_KAFKA_SECURITY_PROTOCOL", "")
     if protocol and protocol.upper() != "PLAINTEXT":
         conf["security.protocol"] = protocol
-    mechanism = env("DFE_KAFKA_SASL_MECHANISM", "")
+    mechanism = env("DFE_ENGINE_KAFKA_SASL_MECHANISM", "")
     if mechanism:
         conf["sasl.mechanisms"] = mechanism
-        conf["sasl.username"] = env("DFE_KAFKA_SASL_USERNAME", "")
-        conf["sasl.password"] = env("DFE_KAFKA_SASL_PASSWORD", "")
+        conf["sasl.username"] = env("DFE_ENGINE_KAFKA_SASL_USERNAME", "")
+        conf["sasl.password"] = env("DFE_ENGINE_KAFKA_SASL_PASSWORD", "")
     request = [ConsumerGroupTopicPartitions(group)]
     future = AdminClient(conf).list_consumer_group_offsets(request, request_timeout=20)[group]
     partitions = future.result(timeout=30).topic_partitions or []

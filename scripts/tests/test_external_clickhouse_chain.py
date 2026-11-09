@@ -315,19 +315,19 @@ def test_both_app_sources_read_the_same_facts() -> None:
 
 def test_the_engine_dials_the_external_server_over_verified_tls() -> None:
     env = _engine_env(EXTERNAL)
-    assert env["DFE_CLICKHOUSE_HOST"] == HOST
-    assert env["DFE_CLICKHOUSE_PORT"] == "8443"
-    assert env["DFE_CLICKHOUSE_SECURE"] == "true"
-    assert env["DFE_CLICKHOUSE_VERIFY"] == "true"
-    assert env["DFE_CLICKHOUSE_USERNAME"] == "default"
+    assert env["DFE_ENGINE_CLICKHOUSE_HOST"] == HOST
+    assert env["DFE_ENGINE_CLICKHOUSE_PORT"] == "8443"
+    assert env["DFE_ENGINE_CLICKHOUSE_SECURE"] == "true"
+    assert env["DFE_ENGINE_CLICKHOUSE_VERIFY"] == "true"
+    assert env["DFE_ENGINE_CLICKHOUSE_USERNAME"] == "default"
     # ClickHouse Cloud's certificate chains to a public root, so no CA is mounted.
-    assert "DFE_CLICKHOUSE_CA_CERT" not in env
+    assert "DFE_ENGINE_CLICKHOUSE_CA_CERT" not in env
 
 
 def test_the_engine_dials_a_plaintext_server_in_plaintext() -> None:
     env = _engine_env(PLAINTEXT)
-    assert (env["DFE_CLICKHOUSE_PORT"], env["DFE_CLICKHOUSE_SECURE"]) == ("8123", "false")
-    assert env["DFE_CLICKHOUSE_USERNAME"] == "dfe_writer"
+    assert (env["DFE_ENGINE_CLICKHOUSE_PORT"], env["DFE_ENGINE_CLICKHOUSE_SECURE"]) == ("8123", "false")
+    assert env["DFE_ENGINE_CLICKHOUSE_USERNAME"] == "dfe_writer"
 
 
 @functools.cache

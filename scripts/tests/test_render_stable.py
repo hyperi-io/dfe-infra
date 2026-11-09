@@ -183,18 +183,18 @@ def test_the_engine_reads_the_minted_secret() -> None:
             for d in docs
             if d.get("kind") == "ExternalSecret"
         }
-        ref = secret_ref(env.get("DFE_AUTH_LOCAL_ADMIN_PASSWORD"))
+        ref = secret_ref(env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"))
         expect(f"{where}: the admin password comes from the minted Secret",
                ref == ("dfe-engine-admin", "admin-password") and ref[1] in minted.get(ref[0], {}),
                f"got {ref}, minted {sorted(minted)}")
         expect(f"{where}: the Secret is named for the login page's fetch command",
-               env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
-               f"got {env.get('DFE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
-        namespace = (env.get("DFE_DEPLOYMENT_NAMESPACE") or {}).get("valueFrom") or {}
+               env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
+               f"got {env.get('DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
+        namespace = (env.get("DFE_ENGINE_DEPLOYMENT_NAMESPACE") or {}).get("valueFrom") or {}
         expect(f"{where}: the namespace comes off the pod, so the command is complete",
                namespace.get("fieldRef", {}).get("fieldPath") == "metadata.namespace",
-               f"got {env.get('DFE_DEPLOYMENT_NAMESPACE')}")
-        bg = secret_ref(env.get("DFE_AUTH_BREAKGLASS_PASSWORD"))
+               f"got {env.get('DFE_ENGINE_DEPLOYMENT_NAMESPACE')}")
+        bg = secret_ref(env.get("DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"))
         expect(f"{where}: the break-glass password comes from its own minted Secret",
                bg == ("dfe-engine-breakglass", "breakglass-password")
                and bg[1] in minted.get(bg[0], {}),

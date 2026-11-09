@@ -11,7 +11,7 @@
 """Rendered assertions for the admin-links ConfigMap.
 
 The gateway chart decides which admin UIs a deployment serves, and the engine
-lists them from DFE_ADMIN_LINKS. The list is built from routeEnabled, the same
+lists them from DFE_ENGINE_ADMIN_LINKS. The list is built from routeEnabled, the same
 call each HTTPRoute makes, so the proof that the two cannot disagree is that the
 list equals the rendered infra HTTPRoutes on every cloud, profile, edge login and
 deploy-repo shape layer2-edge.yaml can produce. The engine's side is read off its
@@ -228,7 +228,7 @@ def test_the_engine_reads_the_list_optionally_from_that_configmap(profile: str, 
     (key,) = configmap["data"]
     env = effective_env(golden("dfe-engine", profile, cloud), "Deployment/dfe-engine")
     ref = {"name": configmap["metadata"]["name"], "key": key, "optional": True}
-    assert env["DFE_ADMIN_LINKS"] == {"valueFrom": {"configMapKeyRef": ref}}
+    assert env["DFE_ENGINE_ADMIN_LINKS"] == {"valueFrom": {"configMapKeyRef": ref}}
 
 
 def appsets(filename: str) -> list[dict]:

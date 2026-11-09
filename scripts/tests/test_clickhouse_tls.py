@@ -192,7 +192,7 @@ def client_scheme(chart: str, docs: tuple[dict, ...]) -> str:
     """"https" or "http", as the client's deployed render dials ClickHouse."""
     env = workload_env(docs, CLIENT_WORKLOADS[chart])
     if chart == "dfe-engine":
-        return "https" if env.get("DFE_CLICKHOUSE_SECURE") == "true" else "http"
+        return "https" if env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true" else "http"
     if chart == "dfe-loader":
         hosts = str(env.get("DFE_LOADER_CLICKHOUSE_HOSTS", ""))
         return "https" if hosts.endswith(":8443") else "http"
@@ -375,13 +375,13 @@ def test_every_engine_pod_dials_tls_and_verifies_with_the_ca() -> None:
                 container = pod["containers"][0]
                 env = workload_env(docs, name)
                 expect(f"{where} {name} dials HTTPS on the TLS port",
-                       env.get("DFE_CLICKHOUSE_SECURE") == "true"
-                       and env.get("DFE_CLICKHOUSE_PORT") == str(TLS["port"]),
-                       f"got {env.get('DFE_CLICKHOUSE_SECURE')!r} "
-                       f"{env.get('DFE_CLICKHOUSE_PORT')!r}")
-                expect(f"{where} {name} verifies", env.get("DFE_CLICKHOUSE_VERIFY") == "true",
-                       f"got {env.get('DFE_CLICKHOUSE_VERIFY')!r}")
-                ca = str(env.get("DFE_CLICKHOUSE_CA_CERT", ""))
+                       env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true"
+                       and env.get("DFE_ENGINE_CLICKHOUSE_PORT") == str(TLS["port"]),
+                       f"got {env.get('DFE_ENGINE_CLICKHOUSE_SECURE')!r} "
+                       f"{env.get('DFE_ENGINE_CLICKHOUSE_PORT')!r}")
+                expect(f"{where} {name} verifies", env.get("DFE_ENGINE_CLICKHOUSE_VERIFY") == "true",
+                       f"got {env.get('DFE_ENGINE_CLICKHOUSE_VERIFY')!r}")
+                ca = str(env.get("DFE_ENGINE_CLICKHOUSE_CA_CERT", ""))
                 expect(f"{where} {name} names a CA file the ClickHouse CA Secret supplies",
                        ca.endswith("/" + TLS["ca"]["dataKey"]) and ca_volume_holds(
                            mounted_file(pod, container, ca)), f"got {ca!r}")
@@ -658,8 +658,8 @@ def test_an_external_server_brings_its_own_certificate() -> None:
     for shape in ("external", "external-edge-off"):
         engine = workload_env(client("dfe-engine", "scale", shape), "dfe-engine")
         expect(f"the engine dials it over TLS ({shape})",
-               engine.get("DFE_CLICKHOUSE_SECURE") == "true", f"{engine}")
-        expect(f"against system roots ({shape})", "DFE_CLICKHOUSE_CA_CERT" not in engine,
+               engine.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true", f"{engine}")
+        expect(f"against system roots ({shape})", "DFE_ENGINE_CLICKHOUSE_CA_CERT" not in engine,
                f"{engine}")
         loader_docs = client("dfe-loader", "scale", shape)
         literal = one(loader_docs, "ConfigMap", "dfe-loader-env")["data"]
