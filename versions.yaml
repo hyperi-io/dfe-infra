@@ -8235,6 +8235,8 @@ stacks:
       hashicorp-google: "~> 8.5"     # terraform/modules/tf-oidc-google. 8.5.0, 2026-09-29.
       hashicorp-azuread: "~> 3.0"    # terraform/modules/tf-oidc-entra
   2.2.2:
+    # The release name. release.yml titles the GitHub release "DFE <version> <name>", and a cut never carries it on.
+    name: "Richie Benaud"
     maturity: release
     support: standard
     constraints: "constraints/2.2.2.yaml"   # interdependency locks, checked by dfe-stack compat-check

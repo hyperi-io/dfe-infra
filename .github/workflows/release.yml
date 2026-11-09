@@ -151,7 +151,11 @@ jobs:
           # Only a release-maturity tag may become GitHub's "Latest"; an rc or beta publishes as a prerelease.
           KIND=(--prerelease --latest=false)
           if [ "$MATURITY" = "release" ]; then KIND=(--latest); fi
-          gh release create "$TAG" --verify-tag --title "DFE $TAG" --generate-notes "${KIND[@]}" || true
+          # "DFE <tag>", with the stack's release name after it when versions.yaml gives one.
+          TITLE=$(python3 scripts/dfe-stack title --stack "$TAG")
+          NOTES=()
+          if [ "$TITLE" != "DFE $TAG" ]; then NOTES=(--notes "This is ${TITLE}."); fi
+          gh release create "$TAG" --verify-tag --title "$TITLE" "${NOTES[@]}" --generate-notes "${KIND[@]}" || true
           gh release upload "$TAG" --clobber $FILES SHA256SUMS
 
       - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2

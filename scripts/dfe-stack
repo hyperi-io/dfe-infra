@@ -1225,6 +1225,18 @@ def cmd_maturity(args: argparse.Namespace) -> int:
     return 0
 
 
+def release_title(version: str, block: dict) -> str:
+    """The GitHub release title: "DFE <version>", then the stack's `name:` when it has one."""
+    name = str(block.get("name") or "").strip()
+    return f"DFE {version} {name}" if name else f"DFE {version}"
+
+
+def cmd_title(args: argparse.Namespace) -> int:
+    version, v = stack_pins(load_root(), args.stack)
+    print(release_title(version, v))
+    return 0
+
+
 def cmd_set_latest(args: argparse.Namespace) -> int:
     """Rewrite the top-level `latest:` scalar (release-advance on a release tag)."""
     path = REPO_ROOT / "versions.yaml"
@@ -1778,6 +1790,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     block = lines[start:end]
 
     block[0] = f"  {new}:\n"
+    # A release name belongs to the stack it was given to, never to the next cut.
+    block = [ln for ln in block if not re.match(r"^    name:", ln)]
     from_withdrawn = is_withdrawn(stacks[from_name])
     if args.maturity or from_withdrawn:
         _set_stack_field(block, "maturity", args.maturity, keep_note=not from_withdrawn)
@@ -1965,6 +1979,10 @@ def main() -> int:
     p = sub.add_parser("maturity", help="print a stack's maturity (alpha|beta|rc|release)")
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_maturity)
+
+    p = sub.add_parser("title", help="print a stack's GitHub release title")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.set_defaults(func=cmd_title)
 
     p = sub.add_parser("set-latest", help="set the top-level `latest:` pointer to a version")
     p.add_argument("version")
