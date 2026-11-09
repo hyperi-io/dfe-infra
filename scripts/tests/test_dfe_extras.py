@@ -245,7 +245,7 @@ SCENARIOS = [
     pytest.param(
         "dfe-engine", "slim", "local",
         {"gitops": {"enabled": False}},
-        {"present": [("Deployment", "dfe-hunt-runner")], "unset": ["DFE_GITOPS_ENABLED"]},
+        {"present": [("Deployment", "dfe-hunt-runner")], "unset": ["DFE_ENGINE_GITOPS_ENABLED"]},
         id="engine-without-gitops",
     ),
     pytest.param(
@@ -265,10 +265,10 @@ SCENARIOS = [
         },
         {
             "env": {
-                "DFE_CLICKHOUSE_CA_CERT": "/etc/dfe/clickhouse-ca/ca.crt",
-                "DFE_API_MAX_SESSION_MINUTES": "30",
+                "DFE_ENGINE_CLICKHOUSE_CA_CERT": "/etc/dfe/clickhouse-ca/ca.crt",
+                "DFE_ENGINE_API_MAX_SESSION_MINUTES": "30",
                 "SSL_CERT_FILE": "/config/auth/ca-bundle.pem",
-                "VERSION_CHECK__ENABLED": "false",
+                "DFE_ENGINE_API_VERSION_CHECK__ENABLED": "false",
             }
         },
         id="engine-tls-and-dials",
@@ -502,7 +502,7 @@ def test_the_e2e_posture_reaches_the_engine_env() -> None:
     """The appset's e2eServer parameter beats every values file, so the posture is a cluster fact."""
     docs = render("dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"})
     env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
-    assert (env["DFE_ENV"], env["DFE_E2E_SERVER"]) == ("test", "true")
+    assert (env["DFE_ENGINE_ENV"], env["DFE_ENGINE_E2E_SERVER"]) == ("test", "true")
 
 
 def test_a_managed_broker_on_a_bus_profile_renders() -> None:
@@ -511,8 +511,8 @@ def test_a_managed_broker_on_a_bus_profile_renders() -> None:
     infra = {"kafka": {**broker, "messageMaxBytes": 2000000}}
     docs = render("dfe-engine", "scale", "aws", infra=infra)
     env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
-    assert env["DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"] == "2000000"
-    assert env["DFE_TRANSPORT_DEFAULT"] == "bus"
+    assert env["DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"] == "2000000"
+    assert env["DFE_ENGINE_TRANSPORT_DEFAULT"] == "bus"
 
 
 # ---------------------------------------------------------------- expected fails

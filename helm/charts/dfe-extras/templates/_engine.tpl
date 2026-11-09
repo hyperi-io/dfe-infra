@@ -12,14 +12,14 @@ Usage:
 */}}
 {{- define "dfe-engine.clickhouseAuthEnv" -}}
 {{- with .Values.clickhouse.user }}
-{{- /* DFE_CLICKHOUSE_USERNAME, not _USER: the settings field is `username`
+{{- /* DFE_ENGINE_CLICKHOUSE_USERNAME, not _USER: the settings field is `username`
        (ClickHouseSettings) and the loader takes the field name verbatim, so
        _USER is accepted silently and leaves the client on `default`. */}}
-- name: DFE_CLICKHOUSE_USERNAME
+- name: DFE_ENGINE_CLICKHOUSE_USERNAME
   value: {{ . | quote }}
 {{- end }}
 {{- with .Values.clickhouse.passwordSecretName }}
-- name: DFE_CLICKHOUSE_PASSWORD
+- name: DFE_ENGINE_CLICKHOUSE_PASSWORD
   valueFrom:
     secretKeyRef:
       name: {{ . }}
@@ -37,9 +37,9 @@ Usage:
     {{- include "dfe-engine.serviceClickhouseAuthEnv" .Values.huntRunner.clickhouse | nindent 12 }}
 */}}
 {{- define "dfe-engine.serviceClickhouseAuthEnv" -}}
-- name: DFE_CLICKHOUSE_USERNAME
+- name: DFE_ENGINE_CLICKHOUSE_USERNAME
   value: {{ .user | quote }}
-- name: DFE_CLICKHOUSE_PASSWORD
+- name: DFE_ENGINE_CLICKHOUSE_PASSWORD
   valueFrom:
     secretKeyRef:
       name: {{ .passwordSecretName }}
@@ -326,20 +326,20 @@ clickhouseAuthEnv gives.
 {{- define "dfe-engine.clickhouseEnv" -}}
 {{- $ch := .Values.clickhouse -}}
 {{- $tls := include "dfe-engine.clickhouseTls" . -}}
-- name: DFE_CLICKHOUSE_HOST
+- name: DFE_ENGINE_CLICKHOUSE_HOST
   value: {{ $ch.host | quote }}
-- name: DFE_CLICKHOUSE_PORT
+- name: DFE_ENGINE_CLICKHOUSE_PORT
   value: {{ ternary $ch.tls.port $ch.port (eq $tls "true") | quote }}
-- name: DFE_CLICKHOUSE_DATA_DATABASE
+- name: DFE_ENGINE_CLICKHOUSE_DATA_DATABASE
   value: {{ $ch.database | quote }}
 {{- /* The engine's own default is secure, so plaintext is stated, not omitted. */}}
-- name: DFE_CLICKHOUSE_SECURE
+- name: DFE_ENGINE_CLICKHOUSE_SECURE
   value: {{ ternary "true" "false" (eq $tls "true") | quote }}
 {{- if $tls }}
-- name: DFE_CLICKHOUSE_VERIFY
+- name: DFE_ENGINE_CLICKHOUSE_VERIFY
   value: {{ ternary "false" "true" (eq (toString $ch.tls.verify) "false") | quote }}
 {{- with (include "dfe-engine.clickhouseCaDir" .) }}
-- name: DFE_CLICKHOUSE_CA_CERT
+- name: DFE_ENGINE_CLICKHOUSE_CA_CERT
   value: {{ printf "%s/%s" . ($ch.tls.ca.dataKey | default "ca.crt") | quote }}
 {{- end }}
 {{- end }}
@@ -348,7 +348,7 @@ clickhouseAuthEnv gives.
 {{/*
 dfe-engine.clickhouseCaVolume / clickhouseCaMount -- the CA's volume and its
 mount, both empty when no CA is mounted. A directory mount, so a rotated CA
-reaches the file DFE_CLICKHOUSE_CA_CERT names.
+reaches the file DFE_ENGINE_CLICKHOUSE_CA_CERT names.
 */}}
 {{- define "dfe-engine.clickhouseCaVolume" -}}
 {{- if include "dfe-engine.clickhouseCaDir" . -}}
