@@ -32,9 +32,9 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-keda-shim") }}
-      # svc/dfe-keda-shim makes the kubelet inject DFE_KEDA_SHIM_PORT="tcp://IP:8080",
-      # which this pod reads as its own int setting; the env below sets it too, and
-      # which of the two wins is not proven.
+      # This pod reads DFE_ENGINE_KEDA_SHIM_PORT, set below, as an int. Service links add a
+      # "tcp://IP:PORT" value per Service, and svc/dfe-engine's land under that same
+      # DFE_ENGINE_ prefix.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       # The engine creates the query reader at startup, so until it is Ready this user cannot log in.
@@ -55,7 +55,7 @@ spec:
           env:
             # Same shared signing key as the engine and the hunt runner -- this
             # pod cannot read the engine's store either.
-            - name: DFE_API_JWT_SECRET
+            - name: DFE_ENGINE_API_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
@@ -69,7 +69,7 @@ spec:
             {{- fail "clickhouse.serviceUsers.queryReader needs a user and a passwordSecretName: the keda shim connects as its own user, never the admin account" }}
             {{- end }}
             {{- include "dfe-engine.serviceClickhouseAuthEnv" $reader | nindent 12 }}
-            - name: DFE_KEDA_SHIM_PORT
+            - name: DFE_ENGINE_KEDA_SHIM_PORT
               value: {{ .Values.kedaShim.port | quote }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}

@@ -128,8 +128,8 @@ def test_the_profile_reaches_the_engine() -> None:
         env = engine_env(golden(ENGINE, profile, cloud))
         expect(
             f"{profile}/{cloud} is passed to the engine",
-            env.get("DFE_PROFILE") == profile,
-            f"got {env.get('DFE_PROFILE')!r}",
+            env.get("DFE_ENGINE_PROFILE") == profile,
+            f"got {env.get('DFE_ENGINE_PROFILE')!r}",
         )
 
 
@@ -137,8 +137,8 @@ def test_an_unset_profile_renders_no_variable() -> None:
     """Absent beats empty: the engine's default already means unknown."""
     env = engine_env(render_app(ENGINE, "", "local"))
     expect(
-        "a cluster secret naming no profile renders no DFE_PROFILE",
-        "DFE_PROFILE" not in env,
+        "a cluster secret naming no profile renders no DFE_ENGINE_PROFILE",
+        "DFE_ENGINE_PROFILE" not in env,
         "the variable was rendered with nothing in it",
     )
 
@@ -173,15 +173,15 @@ def test_the_ui_pin_reaches_the_engine() -> None:
         env = engine_env(golden(ENGINE, profile, cloud))
         expect(
             f"{profile}/{cloud}: the engine is told the ui version",
-            bool(env.get("DFE_UI_VERSION")),
-            f"got {env.get('DFE_UI_VERSION')!r}",
+            bool(env.get("DFE_ENGINE_UI_VERSION")),
+            f"got {env.get('DFE_ENGINE_UI_VERSION')!r}",
         )
 
 
 def test_the_ui_pin_is_the_one_the_ui_chart_deploys() -> None:
     """A stale mirror would have the console report a version nobody is running."""
     deployed, _ = weave().pinned_image(REPO_ROOT, "dfe-ui")
-    told = literal_env().get("DFE_UI_VERSION")
+    told = literal_env().get("DFE_ENGINE_UI_VERSION")
     expect(
         "the engine reports the tag the dfe-ui thin chart runs",
         told == deployed,
@@ -215,8 +215,8 @@ def test_the_manifest_reaches_the_engine() -> None:
             )
         expect(
             f"{profile} points the engine at the mounted file",
-            engine_env(docs).get("DFE_APP_CATALOGUE_FILE") == CATALOGUE_FILE,
-            f"got {engine_env(docs).get('DFE_APP_CATALOGUE_FILE')!r}",
+            engine_env(docs).get("DFE_ENGINE_APP_CATALOGUE_FILE") == CATALOGUE_FILE,
+            f"got {engine_env(docs).get('DFE_ENGINE_APP_CATALOGUE_FILE')!r}",
         )
 
 
@@ -353,17 +353,17 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
     env = engine_env(golden(ENGINE, "slim", "local", "clickhouse-plaintext"))
     expect(
         "a deployment with TLS off is plaintext",
-        env.get("DFE_CLICKHOUSE_SECURE") == "false",
-        f"got {env.get('DFE_CLICKHOUSE_SECURE')!r}",
+        env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "false",
+        f"got {env.get('DFE_ENGINE_CLICKHOUSE_SECURE')!r}",
     )
     expect(
         "on the plaintext port",
-        env.get("DFE_CLICKHOUSE_PORT") == "8123",
-        f"got {env.get('DFE_CLICKHOUSE_PORT')!r}",
+        env.get("DFE_ENGINE_CLICKHOUSE_PORT") == "8123",
+        f"got {env.get('DFE_ENGINE_CLICKHOUSE_PORT')!r}",
     )
     expect(
         "and a plaintext connection renders no verify dial",
-        "DFE_CLICKHOUSE_VERIFY" not in env,
+        "DFE_ENGINE_CLICKHOUSE_VERIFY" not in env,
         "there is no certificate to verify on 8123",
     )
     external = {
@@ -376,43 +376,43 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
     tls = literal_env("scale", infra=external)
     expect(
         "a TLS ClickHouse renders secure",
-        tls.get("DFE_CLICKHOUSE_SECURE") == "true",
-        f"got {tls.get('DFE_CLICKHOUSE_SECURE')!r}",
+        tls.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true",
+        f"got {tls.get('DFE_ENGINE_CLICKHOUSE_SECURE')!r}",
     )
     expect(
         "on the TLS port",
-        tls.get("DFE_CLICKHOUSE_PORT") == "8443",
-        f"got {tls.get('DFE_CLICKHOUSE_PORT')!r}",
+        tls.get("DFE_ENGINE_CLICKHOUSE_PORT") == "8443",
+        f"got {tls.get('DFE_ENGINE_CLICKHOUSE_PORT')!r}",
     )
     expect(
         "and a self-signed one renders verify false rather than dropping it",
-        tls.get("DFE_CLICKHOUSE_VERIFY") == "false",
-        f"got {tls.get('DFE_CLICKHOUSE_VERIFY')!r}",
+        tls.get("DFE_ENGINE_CLICKHOUSE_VERIFY") == "false",
+        f"got {tls.get('DFE_ENGINE_CLICKHOUSE_VERIFY')!r}",
     )
 
 
 def test_the_token_lifetime_is_a_dial() -> None:
     expect(
         "unset leaves the engine's own default",
-        "DFE_API_JWT_EXPIRE_MINUTES" not in engine_env(golden(ENGINE, "slim", "local")),
+        "DFE_ENGINE_API_JWT_EXPIRE_MINUTES" not in engine_env(golden(ENGINE, "slim", "local")),
         "the variable was rendered with nothing behind it",
     )
     shortened = literal_env(overlay=nested({"api.jwtExpireMinutes": 15}))
-    got = shortened.get("DFE_API_JWT_EXPIRE_MINUTES")
+    got = shortened.get("DFE_ENGINE_API_JWT_EXPIRE_MINUTES")
     expect("and a deployment can shorten it", got == "15", f"got {got!r}")
 
 
 # The engine's optional auth and session settings (dfe-infra#475): each values key
 # and the variable the engine reads it from.
 AUTH_DIALS = {
-    "api.maxSessionMinutes": "DFE_API_MAX_SESSION_MINUTES",
-    "api.docsEnabled": "DFE_API_DOCS_ENABLED",
-    "auth.proxyProvider": "DFE_AUTH_PROXY_PROVIDER",
-    "auth.apiKeyDefaultTtlDays": "DFE_AUTH_API_KEY_DEFAULT_TTL_DAYS",
-    "auth.loginThrottle.enabled": "DFE_AUTH_LOGIN_THROTTLE_ENABLED",
-    "auth.loginThrottle.usernameFailures": "DFE_AUTH_LOGIN_THROTTLE_USERNAME_FAILURES",
-    "auth.loginThrottle.clientFailures": "DFE_AUTH_LOGIN_THROTTLE_CLIENT_FAILURES",
-    "auth.loginThrottle.maxDelaySeconds": "DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS",
+    "api.maxSessionMinutes": "DFE_ENGINE_API_MAX_SESSION_MINUTES",
+    "api.docsEnabled": "DFE_ENGINE_API_DOCS_ENABLED",
+    "auth.proxyProvider": "DFE_ENGINE_AUTH_PROXY_PROVIDER",
+    "auth.apiKeyDefaultTtlDays": "DFE_ENGINE_AUTH_API_KEY_DEFAULT_TTL_DAYS",
+    "auth.loginThrottle.enabled": "DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED",
+    "auth.loginThrottle.usernameFailures": "DFE_ENGINE_AUTH_LOGIN_THROTTLE_USERNAME_FAILURES",
+    "auth.loginThrottle.clientFailures": "DFE_ENGINE_AUTH_LOGIN_THROTTLE_CLIENT_FAILURES",
+    "auth.loginThrottle.maxDelaySeconds": "DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS",
 }
 
 
@@ -459,13 +459,13 @@ def test_a_count_from_a_values_file_renders_whole() -> None:
     }
     env = literal_env(overlay=nested(dials))
     expect("maxSessionMinutes renders as whole minutes",
-           env.get("DFE_API_MAX_SESSION_MINUTES") == "1000000",
-           f"got {env.get('DFE_API_MAX_SESSION_MINUTES')!r}")
+           env.get("DFE_ENGINE_API_MAX_SESSION_MINUTES") == "1000000",
+           f"got {env.get('DFE_ENGINE_API_MAX_SESSION_MINUTES')!r}")
     expect("maxDelaySeconds renders as whole seconds",
-           env.get("DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS") == "900",
-           f"got {env.get('DFE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS')!r}")
-    expect("a bare true renders true", env.get("DFE_AUTH_LOGIN_THROTTLE_ENABLED") == "true",
-           f"got {env.get('DFE_AUTH_LOGIN_THROTTLE_ENABLED')!r}")
+           env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS") == "900",
+           f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS')!r}")
+    expect("a bare true renders true", env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED") == "true",
+           f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED')!r}")
 
 
 def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
@@ -487,7 +487,7 @@ def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
         expect(f"{key}={value!r} is refused naming {key}", key in err, f"refusal={err[-300:]!r}")
 
 
-FORWARDED_ENV = "DFE_API_FORWARDED_ALLOW_IPS"
+FORWARDED_ENV = "DFE_ENGINE_API_FORWARDED_ALLOW_IPS"
 
 
 def test_the_proxy_hops_default_to_the_deployments_pod_range() -> None:
@@ -518,7 +518,7 @@ def test_a_render_with_no_pod_range_keeps_the_engines_default() -> None:
     expect("no pod range renders no hop list", got is None, f"got {got!r}")
 
 
-TOPIC_SIZE_ENV = "DFE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"
+TOPIC_SIZE_ENV = "DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES"
 TOPIC_SIZE_ANNOTATION = "dfe.hyperi.io/kafka_message_max_bytes"
 
 
@@ -552,7 +552,7 @@ def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     )
 
 
-TOPIC_RETENTION_ENV = "DFE_KAFKA_TOPIC_RETENTION_MS"
+TOPIC_RETENTION_ENV = "DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS"
 TOPIC_RETENTION_ANNOTATION = "dfe.hyperi.io/kafka_retention_ms"
 
 
@@ -584,7 +584,7 @@ def test_a_topic_retention_that_is_not_milliseconds_fails_the_render() -> None:
     )
 
 
-TOPIC_RF_ENV = "DFE_KAFKA_TOPIC_REPLICATION_FACTOR"
+TOPIC_RF_ENV = "DFE_ENGINE_KAFKA_TOPIC_REPLICATION_FACTOR"
 KAFKA_CHART_VALUES = REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml"
 
 
@@ -630,7 +630,7 @@ def test_a_replication_factor_the_engine_cannot_take_fails_the_render() -> None:
                "kafka.topicReplicationFactor" in err, f"refusal={err[-300:]!r}")
 
 
-ENSURE_TOPICS_ENV = "DFE_KAFKA_ENSURE_TOPICS"
+ENSURE_TOPICS_ENV = "DFE_ENGINE_KAFKA_ENSURE_TOPICS"
 
 
 def test_the_boot_topic_pass_is_turned_on_only_on_the_bus() -> None:
@@ -650,12 +650,12 @@ def test_each_profile_sets_the_boot_topic_pass_by_its_transport() -> None:
     transports = set()
     for profile, cloud in CELLS:
         env = engine_env(golden(ENGINE, profile, cloud))
-        transports.add(env.get("DFE_TRANSPORT_DEFAULT"))
-        expected = "true" if env.get("DFE_TRANSPORT_DEFAULT") == "bus" else None
+        transports.add(env.get("DFE_ENGINE_TRANSPORT_DEFAULT"))
+        expected = "true" if env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == "bus" else None
         expect(
             f"{profile}/{cloud} sets the boot topic pass only when it carries a bus",
             env.get(ENSURE_TOPICS_ENV) == expected,
-            f"transport={env.get('DFE_TRANSPORT_DEFAULT')!r} dial={env.get(ENSURE_TOPICS_ENV)!r}",
+            f"transport={env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r} dial={env.get(ENSURE_TOPICS_ENV)!r}",
         )
     expect(
         "the profiles cover both a bus and a brokerless transport",
@@ -669,13 +669,13 @@ def test_every_profile_still_renders_with_the_real_overlays() -> None:
         env = engine_env(golden(ENGINE, profile, cloud))
         expect(
             f"{profile}/{cloud} renders the engine with its tier",
-            env.get("DFE_PROFILE") == profile,
-            f"got {env.get('DFE_PROFILE')!r}",
+            env.get("DFE_ENGINE_PROFILE") == profile,
+            f"got {env.get('DFE_ENGINE_PROFILE')!r}",
         )
         expect(
             f"{profile}/{cloud} still carries the transport facts",
-            env.get("DFE_TRANSPORT_DEFAULT") in ("bus", "direct"),
-            f"got {env.get('DFE_TRANSPORT_DEFAULT')!r}",
+            env.get("DFE_ENGINE_TRANSPORT_DEFAULT") in ("bus", "direct"),
+            f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}",
         )
 
 

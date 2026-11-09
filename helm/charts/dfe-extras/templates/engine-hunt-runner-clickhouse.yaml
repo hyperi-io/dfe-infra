@@ -5,7 +5,7 @@ runner read.
 
 The engine creates dfe_hunt_runner, but a password it mints lands in its own
 secrets store on its own volume, which the runner's pod cannot see. So the
-password comes from here: the engine adopts it (DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD)
+password comes from here: the engine adopts it (DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD)
 and re-asserts it on the user every reconcile, and the runner connects with it.
 
 Rendered while either pod reads it: the runner while huntRunner.enabled, the

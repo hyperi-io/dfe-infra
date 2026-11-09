@@ -95,7 +95,7 @@ def engine_docs_env(env: str, setting: str) -> str | None:
     literal = next(
         d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )["data"]
-    return literal.get("DFE_API_DOCS_ENABLED")
+    return literal.get("DFE_ENGINE_API_DOCS_ENABLED")
 
 
 def engine_refusal(env: str, setting: str, **options: object) -> str:
@@ -140,7 +140,7 @@ def test_the_engine_chart_passes_the_setting_through_and_nothing_when_unset() ->
     for setting in SETTINGS:
         got = engine_docs_env("production", setting)
         want = setting or None
-        expect(f"api.docsEnabled={setting!r} renders DFE_API_DOCS_ENABLED={want!r}",
+        expect(f"api.docsEnabled={setting!r} renders DFE_ENGINE_API_DOCS_ENABLED={want!r}",
                got == want, f"got {got!r}")
 
 

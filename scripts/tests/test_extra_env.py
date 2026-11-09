@@ -55,11 +55,11 @@ DIAL_CELL = ("single", "local")
 CUSTOM = {"extraEnv": {"DFE_HOUSE_KEY": "kept", "DFE_HOUSE_PORT": 8123}}
 
 # A name the library derives for dfe-transform-vrl from its contract's kafka group.
-DERIVED = "DFE_TRANSFORM_SOURCE_SASL_PASSWORD"
+DERIVED = "DFE_TRANSFORM_VRL_SOURCE_SASL_PASSWORD"
 COLLIDING = {"extraEnv": {DERIVED: "custom"}}
 
 # A name argocd/values/apps/dfe-transform-vrl derives into the same map.
-INTEGRATION = "DFE_TRANSFORM_SOURCE_BROKERS"
+INTEGRATION = "DFE_TRANSFORM_VRL_SOURCE_BROKERS"
 
 
 def deployment(docs: list[dict], app: str) -> dict:

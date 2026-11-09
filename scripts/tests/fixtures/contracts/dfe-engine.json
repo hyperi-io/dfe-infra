@@ -10,7 +10,7 @@
     "metrics_path": "/metrics",
     "startup_budget_seconds": 300
   },
-  "env_prefix": "DFE",
+  "env_prefix": "DFE_ENGINE",
   "metric_prefix": "dfe",
   "config_mount_path": "",
   "image_registry": "ghcr.io/hyperi-io",
@@ -29,7 +29,7 @@
       "group_name": "clickhouse",
       "env_vars": [
         {
-          "env_var": "DFE_CLICKHOUSE_PASSWORD",
+          "env_var": "DFE_ENGINE_CLICKHOUSE_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -39,7 +39,7 @@
       "group_name": "jwt",
       "env_vars": [
         {
-          "env_var": "DFE_API_JWT_SECRET",
+          "env_var": "DFE_ENGINE_API_JWT_SECRET",
           "key_name": "secret",
           "secret_key": "jwt-secret"
         }
@@ -49,7 +49,7 @@
       "group_name": "admin",
       "env_vars": [
         {
-          "env_var": "DFE_AUTH_LOCAL_ADMIN_PASSWORD",
+          "env_var": "DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD",
           "key_name": "password",
           "secret_key": "admin-password"
         }
@@ -59,7 +59,7 @@
       "group_name": "breakglass",
       "env_vars": [
         {
-          "env_var": "DFE_AUTH_BREAKGLASS_PASSWORD",
+          "env_var": "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
           "key_name": "password",
           "secret_key": "breakglass-password"
         }
@@ -69,7 +69,7 @@
       "group_name": "hunt-runner",
       "env_vars": [
         {
-          "env_var": "DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD",
+          "env_var": "DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -79,7 +79,7 @@
       "group_name": "loader",
       "env_vars": [
         {
-          "env_var": "DFE_CLICKHOUSE_LOADER_PASSWORD",
+          "env_var": "DFE_ENGINE_CLICKHOUSE_LOADER_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -89,7 +89,7 @@
       "group_name": "query-reader",
       "env_vars": [
         {
-          "env_var": "DFE_CLICKHOUSE_QUERY_READER_PASSWORD",
+          "env_var": "DFE_ENGINE_CLICKHOUSE_QUERY_READER_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -99,7 +99,7 @@
       "group_name": "otel-writer",
       "env_vars": [
         {
-          "env_var": "DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD",
+          "env_var": "DFE_ENGINE_CLICKHOUSE_OTEL_WRITER_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -109,17 +109,17 @@
       "group_name": "kafka",
       "env_vars": [
         {
-          "env_var": "DFE_KAFKA_SASL_MECHANISM",
+          "env_var": "DFE_ENGINE_KAFKA_SASL_MECHANISM",
           "key_name": "mechanism",
           "secret_key": "sasl.mechanism"
         },
         {
-          "env_var": "DFE_KAFKA_SASL_USERNAME",
+          "env_var": "DFE_ENGINE_KAFKA_SASL_USERNAME",
           "key_name": "username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_KAFKA_SASL_PASSWORD",
+          "env_var": "DFE_ENGINE_KAFKA_SASL_PASSWORD",
           "key_name": "password",
           "secret_key": "password"
         }
@@ -129,12 +129,12 @@
       "group_name": "gitops",
       "env_vars": [
         {
-          "env_var": "DFE_GITOPS_USERNAME",
+          "env_var": "DFE_ENGINE_GITOPS_USERNAME",
           "key_name": "username",
           "secret_key": "username"
         },
         {
-          "env_var": "DFE_GITOPS_TOKEN",
+          "env_var": "DFE_ENGINE_GITOPS_TOKEN",
           "key_name": "token",
           "secret_key": "password"
         }
@@ -144,7 +144,7 @@
       "group_name": "seed-accounts",
       "env_vars": [
         {
-          "env_var": "DFE_AUTH_LOCAL_SEED_ACCOUNTS",
+          "env_var": "DFE_ENGINE_AUTH_LOCAL_SEED_ACCOUNTS",
           "key_name": "accounts",
           "secret_key": "seed-accounts"
         }

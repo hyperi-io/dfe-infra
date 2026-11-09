@@ -104,7 +104,7 @@ metadata:
     # Deploy-specific gitops repo -- the SINGLE source for the deploy repo coords.
     # Argo reads it here (layer2-apps source 2 + the git generator), and the appset
     # injects the same value into the dfe-engine chart (gitops.repoUrl/branch), so
-    # the engine WRITES the repo it reads -- no separate DFE_GITOPS_REPO_URL to keep
+    # the engine WRITES the repo it reads -- no separate DFE_ENGINE_GITOPS_REPO_URL to keep
     # in sync. Unset DFE_CONFIG_REPO_URL -> the in-cluster Forgejo fallback; set it
     # to an external GitHub/GitLab/self-hosted repo for the primary path.
     dfe.hyperi.io/config_repo_url: "${DFE_CONFIG_REPO_URL}"

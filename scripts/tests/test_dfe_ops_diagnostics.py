@@ -288,6 +288,11 @@ def _index(out: Path) -> str:
     return (out / fe.INDEX).read_text(encoding="utf-8")
 
 
+def _kafka_calls(calls: list[list[str]]) -> list[list[str]]:
+    """The calls that drive the Kafka client pod, less the in-pod metrics and ClickHouse reads."""
+    return [call for call in calls if not {"curl", "clickhouse-client"} & set(call)]
+
+
 # --- what it chooses to read -----------------------------------------------------
 
 
@@ -422,6 +427,7 @@ def test_the_kafka_reads_run_in_order_and_the_pod_is_deleted_last(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, _out = _run(monkeypatch, tmp_path)
+    calls = _kafka_calls(calls)
     verbs = [
         next((word for word in ("apply", "wait", "exec", "delete") if word in call), "")
         for call in calls
@@ -437,6 +443,7 @@ def test_the_stepwise_reads_name_the_loader_group_one_call_each(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, _out = _run(monkeypatch, tmp_path)
+    calls = _kafka_calls(calls)
     # The tool line of each client script, less the bootstrap address and client config.
     tool = re.compile(rf'{dg.KAFKA_BIN}/(\S+) --bootstrap-server \S+ --command-config "\$P" ?(.*)')
     tools = [" ".join(tool.search(call[-1]).groups()).strip() for call in calls if "exec" in call]
@@ -501,7 +508,7 @@ def test_a_client_pod_that_never_becomes_ready_is_named_and_still_deleted(
         return _answer(args)
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
-    assert not any("exec" in call for call in calls)
+    assert not any("exec" in call for call in _kafka_calls(calls))
     assert "delete" in calls[-1]
     assert "the client pod never became Ready" in _index(out)
 
@@ -629,7 +636,7 @@ def test_no_call_reads_a_secret_or_a_workloads_environment(
     facts = next(call for call in calls if dg.ENGINE in call and "deploy" in call)
     template = facts[-1]
     assert template.count('@.name=="') == 3
-    assert "DFE_KAFKA_SASL_PASSWORD" not in template
+    assert "DFE_ENGINE_KAFKA_SASL_PASSWORD" not in template
     configmap = next(call for call in calls if "configmap" in call)
     assert configmap[-1].count(".data.") == 2
 
@@ -724,7 +731,7 @@ def test_a_brokerless_deployment_skips_the_kafka_reads(
         return _answer(args)
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
-    assert not any({"apply", "exec", "delete"} & set(call) for call in calls)
+    assert not any({"apply", "exec", "delete"} & set(call) for call in _kafka_calls(calls))
     assert "dfe-engine dials no Kafka bus" in _index(out)
 
 
@@ -1497,3 +1504,39 @@ def test_a_capture_that_fails_is_a_skipped_row(prefix: list[str], detail: str) -
     assert (row.slug, row.status) == ("diagnostics", "skipped")
     assert detail in row.detail
     assert wizard.exit_code([row]) == 0
+
+
+def test_the_receiver_and_loader_metrics_and_each_clickhouse_servers_logs_are_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    server = _pod("clickhouse", "dfe-clickhouse-clickhouse-0-0", "0", ("clickhouse-server",),
+                  owner_kind="StatefulSet")
+    server["metadata"]["labels"][dg.CLICKHOUSE_ROLE[0]] = dg.CLICKHOUSE_ROLE[1]
+
+    def answer(args: list[str]) -> fe.Outcome:
+        if " ".join(args) == "get pods -A -o json":
+            return _items([*PODS, server])
+        if "curl" in args:
+            return _text("receiver_requests_total 3\n")
+        if "clickhouse-client" in args:
+            return _text("event_time\trows\n")
+        return _answer(args)
+
+    calls, out = _run(monkeypatch, tmp_path, answer=answer)
+    assert sorted(path.name for path in (out / "metrics" / "dfe").iterdir()) == [
+        "dfe-loader-b2.txt", "dfe-receiver-a1.txt",
+    ]
+    assert sorted(path.name for path in (out / "clickhouse").iterdir()) == [
+        "clickhouse.pods.txt",
+        "dfe-clickhouse-clickhouse-0-0-0.inserts.tsv",
+        "dfe-clickhouse-clickhouse-0-0-0.part_log.tsv",
+    ]
+    curls = sorted(call[3:6] for call in calls if "curl" in call)
+    assert curls == [["dfe-loader-b2", "-c", "dfe-loader"], ["dfe-receiver-a1", "-c", "dfe-receiver"]]
+
+
+def test_no_in_cluster_clickhouse_is_named_not_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _calls, out = _run(monkeypatch, tmp_path)
+    assert "no in-cluster ClickHouse server pod, nothing read" in _index(out)
