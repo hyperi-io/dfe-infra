@@ -526,6 +526,9 @@ class WalkConcurrencyTests(unittest.TestCase):
         code, _ = self._run(0, walk_one)
         assert code == 0
 
+    def test_the_default_caps_concurrent_rebuilds(self) -> None:
+        assert ds.build_parser().parse_args(["walk", "p", "1.0.0"]).jobs == ds.WALK_JOBS
+
     def test_a_failure_stops_new_rebuilds_and_names_them(self) -> None:
         started: list[str] = []
 

@@ -178,6 +178,10 @@ DISPATCH_RULE = (
 
 NOT_ON_DISK = "not on disk"
 
+# A Rust rebuild peaks at about 6 CI jobs, and the org shares 60 concurrent
+# GitHub-hosted jobs, so 6 consumers leave room for the producer's and the PR runs.
+WALK_JOBS = 6
+
 
 def cmd_release(args: argparse.Namespace) -> int:
     """Ship one library node."""
@@ -281,10 +285,10 @@ def _rebuild_for(action: str) -> Callable[..., int]:
 def cmd_walk(args: argparse.Namespace) -> int:
     """Walk one producer's out-edges and ACT: rebuild each consumer that moved.
 
-    Consumers run concurrently, up to --jobs at once, and a consumer with
-    several edges is rebuilt once. Local builds take turns on one lock, while
-    the PR checks and release runs overlap on the CI runners. What the rebuild
-    does NOT re-do is reported under "after the rebuild, confirm:" and counted,
+    Consumers run concurrently, up to --jobs at once (WALK_JOBS by default),
+    and a consumer with several edges is rebuilt once. Local builds take turns
+    on one lock, while the PR checks and release runs overlap on the CI
+    runners. What the rebuild does NOT re-do is reported under "after the rebuild, confirm:" and counted,
     so a lockstep edge cannot be swallowed by a sibling edge that happened to
     dispatch a rebuild first.
 
@@ -834,8 +838,11 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument(
         "--jobs",
         type=int,
-        default=0,
-        help="consumers rebuilt at once (default all of them; 1 walks them one at a time)",
+        default=WALK_JOBS,
+        help=(
+            f"consumers rebuilt at once (default {WALK_JOBS}, 0 for all of them,"
+            " 1 for one at a time)"
+        ),
     )
     walk.add_argument("--subject", default="", help="commit subject for each rebuild")
     walk.add_argument(
