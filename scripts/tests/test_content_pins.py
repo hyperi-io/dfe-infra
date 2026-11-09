@@ -24,7 +24,7 @@ Eight things are checked, beside those two:
    app image, and a moved pin moves its container.
 2. That volume is a pod-local emptyDir, mounted writable by the init containers
    and READ-ONLY by the engine.
-3. DFE_LIBRARY_SEED_DIR and DFE_APP_CONTRACT_DIR are set whether or not an entry
+3. DFE_ENGINE_LIBRARY_SEED_DIR and DFE_ENGINE_APP_CONTRACT_DIR are set whether or not an entry
    exists, so adding one later needs no env change.
 4. Every content init container in a deployed render runs an image its entry pins.
 5. Content is not profile-dependent -- every tier renders the same init containers.
@@ -213,14 +213,14 @@ def test_the_seed_and_contract_dirs_are_set_with_or_without_an_entry() -> None:
     )
     for label, env in cases:
         expect(
-            f"DFE_LIBRARY_SEED_DIR points at the library root ({label})",
-            env.get("DFE_LIBRARY_SEED_DIR") == f"{mount}/library",
-            f"{env.get('DFE_LIBRARY_SEED_DIR')}",
+            f"DFE_ENGINE_LIBRARY_SEED_DIR points at the library root ({label})",
+            env.get("DFE_ENGINE_LIBRARY_SEED_DIR") == f"{mount}/library",
+            f"{env.get('DFE_ENGINE_LIBRARY_SEED_DIR')}",
         )
         expect(
-            f"DFE_APP_CONTRACT_DIR points at the contract root ({label})",
-            env.get("DFE_APP_CONTRACT_DIR") == f"{mount}/contract",
-            f"{env.get('DFE_APP_CONTRACT_DIR')}",
+            f"DFE_ENGINE_APP_CONTRACT_DIR points at the contract root ({label})",
+            env.get("DFE_ENGINE_APP_CONTRACT_DIR") == f"{mount}/contract",
+            f"{env.get('DFE_ENGINE_APP_CONTRACT_DIR')}",
         )
 
 
@@ -246,7 +246,7 @@ def test_content_is_not_profile_dependent() -> None:
     console's copy-paste view depend on the deployment's size.
     """
     fields = ("name", "image", "command", "volumeMounts")
-    keys = ("DFE_LIBRARY_SEED_DIR", "DFE_APP_CONTRACT_DIR")
+    keys = ("DFE_ENGINE_LIBRARY_SEED_DIR", "DFE_ENGINE_APP_CONTRACT_DIR")
 
     def shape(profile: str) -> tuple[list[dict], dict]:
         docs = golden(ENGINE, profile, "local")

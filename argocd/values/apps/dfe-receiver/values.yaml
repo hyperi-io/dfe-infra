@@ -119,6 +119,13 @@ configOverrides:
     enabled: true
     bind_address: "0.0.0.0:6000"
 
+# Syslog binds 514 once an operator switches it on. The pod runs as uid 1000 with
+# every capability dropped, so this sysctl is what lets it bind a port below 1024.
+podSecurityContext:
+  sysctls:
+    - name: net.ipv4.ip_unprivileged_port_start
+      value: "0"
+
 keda:
   cpu:
     targetUtilization: 70

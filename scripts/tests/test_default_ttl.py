@@ -40,6 +40,7 @@ DIAL_EXAMPLE = REPO_ROOT / "deployment.example.yaml"
 APPSETS = REPO_ROOT / "argocd" / "appsets"
 
 ENV_KEY = "DFE_CLICKHOUSE_DEFAULT_TTL_DAYS"
+ENGINE_ENV_KEY = "DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS"
 ANNOTATION = "dfe.hyperi.io/clickhouse_default_ttl_days"
 PARAM = "retention.defaultTtlDays"
 
@@ -60,17 +61,17 @@ def test_the_engine_ships_90_days() -> None:
     """A cluster secret carrying no retention leaves every deployed cell at 90."""
     for cell in (c for c in CELLS if c[0] == ENGINE):
         env = effective_env(golden(*cell), f"Deployment/{ENGINE}")
-        expect(f"{cell}: the engine Deployment carries the TTL env", ENV_KEY in env,
+        expect(f"{cell}: the engine Deployment carries the TTL env", ENGINE_ENV_KEY in env,
                f"{sorted(env)}")
-        expect(f"{cell}: and it defaults to 90", env.get(ENV_KEY) == "90", f"{env.get(ENV_KEY)}")
+        expect(f"{cell}: and it defaults to 90", env.get(ENGINE_ENV_KEY) == "90", f"{env.get(ENGINE_ENV_KEY)}")
 
 
 def test_the_engine_takes_the_value_it_is_given() -> None:
     env = literal_env({ANNOTATION: "30"})
-    expect("a cluster secret's value renders", env.get(ENV_KEY) == "30", f"{env.get(ENV_KEY)}")
+    expect("a cluster secret's value renders", env.get(ENGINE_ENV_KEY) == "30", f"{env.get(ENGINE_ENV_KEY)}")
     env = literal_env({ANNOTATION: "0"})
-    expect("zero renders as zero, not as the default", env.get(ENV_KEY) == "0",
-           f"{env.get(ENV_KEY)}")
+    expect("zero renders as zero, not as the default", env.get(ENGINE_ENV_KEY) == "0",
+           f"{env.get(ENGINE_ENV_KEY)}")
 
 
 def test_the_engine_ships_the_documented_default() -> None:

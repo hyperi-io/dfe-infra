@@ -51,8 +51,10 @@ APPS = {
 }
 
 ENGINE = "dfe-engine"
-# dfe-extras renders these beside the engine; they hold no claim, so they surge.
-ENGINE_SIDE_WORKLOADS = ("dfe-hunt-runner", "dfe-keda-shim")
+# dfe-extras renders these beside the engine. The shim holds no claim, so it surges.
+ENGINE_SIDE_WORKLOADS = ("dfe-keda-shim",)
+# Old and new hunt runners must never overlap, or one reads the other's lease as released.
+HUNT_RUNNER = "dfe-hunt-runner"
 
 # A bus profile and a direct one, for the transport switch.
 BUS, DIRECT = "single", "slim"
@@ -134,6 +136,12 @@ def test_the_engine_chart_replaces_in_place_where_it_must() -> None:
                 name in rendered and rendered[name]["spec"].get("strategy") == EXPECTED,
                 f"got {rendered.get(name, {}).get('spec', {}).get('strategy')!r}",
             )
+        expect(
+            f"{HUNT_RUNNER} on {label(where)} replaces in place",
+            HUNT_RUNNER in rendered
+            and rendered[HUNT_RUNNER]["spec"].get("strategy") == RECREATE,
+            f"got {rendered.get(HUNT_RUNNER, {}).get('spec', {}).get('strategy')!r}",
+        )
 
 
 def test_a_claim_is_what_makes_a_workload_replace_in_place() -> None:

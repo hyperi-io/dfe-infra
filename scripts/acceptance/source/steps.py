@@ -61,7 +61,7 @@ WORK_DEADLINE = 180.0
 WORK_POLL_SECONDS = 15.0
 # Source names this suite mints, so a sweep can tell its own strays from a
 # deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "el", "vc", "onboard")
+RUN_PREFIXES = ("fb", "cw", "el", "vc", "sy", "onboard")
 # The whole minted shape rather than the prefix alone, because a sweep removes
 # sources and a deployment may own one called `elastic` or `fbprod`.
 RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
@@ -878,7 +878,7 @@ def archive_directory(prefixes: list[list[str]]) -> tuple[str, str]:
     second copy of a path the chart owns.
     """
     for prefix in prefixes:
-        code, out = in_archiver(prefix, "printenv ARCHIVER_DESTINATION")
+        code, out = in_archiver(prefix, "printenv DFE_ARCHIVER_DESTINATION")
         if code != 0 or not out:
             continue
         if not out.startswith("file://"):

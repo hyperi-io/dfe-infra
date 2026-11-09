@@ -1,9 +1,9 @@
 # The bus: the archiver's own flat env contract, bare KAFKA_* and DLQ_*.
 extraEnv:
-  KAFKA_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
-  KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
-  DLQ_TOPIC: '{{ .Values.dlq.topic }}'
-  DLQ_MODE: '{{ .Values.dlq.mode }}'
+  DFE_ARCHIVER_KAFKA_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
+  DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
+  DFE_ARCHIVER_DLQ_TOPIC: '{{ .Values.dlq.topic }}'
+  DFE_ARCHIVER_DLQ_MODE: '{{ .Values.dlq.mode }}'
 
 keda:
   extraTriggers:

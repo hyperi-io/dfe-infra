@@ -225,7 +225,7 @@ def kafbat_infra(profile: str, cloud: str) -> dict:
 def bootstrap_servers(profile: str, cloud: str) -> str:
     """The broker address the tier hands its apps, read off the archiver's render."""
     env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
-    return str(env.get("KAFKA_BROKERS"))
+    return str(env.get("DFE_ARCHIVER_KAFKA_BROKERS"))
 
 
 def app_side(profile: str, cloud: str) -> list[dict]:
@@ -262,6 +262,11 @@ def secret_key_refs(docs: list[dict], secret: str) -> set[str]:
 def written_keys(docs: list[dict], secret: str) -> set[str]:
     """Every key an ExternalSecret in these docs puts INTO `secret`."""
     keys: set[str] = set()
+    fakes = {
+        d["metadata"]["name"]: set(d["spec"].get("data", {}))
+        for d in docs
+        if d.get("kind") == "Fake"
+    }
     for doc in docs:
         if doc.get("kind") == "ExternalSecret":
             spec = doc["spec"]
@@ -273,6 +278,10 @@ def written_keys(docs: list[dict], secret: str) -> set[str]:
             continue
         keys |= set(spec.get("target", {}).get("template", {}).get("data", {}))
         keys |= {d["secretKey"] for d in spec.get("data", [])}
+        for source in spec.get("dataFrom", []):
+            ref = source.get("sourceRef", {}).get("generatorRef", {})
+            if ref.get("kind") == "Fake":
+                keys |= fakes.get(ref.get("name"), set())
     return keys
 
 
@@ -364,8 +373,15 @@ def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
             len(appkeys) == 1,
             f"got {len(appkeys)}",
         )
-        policy = appkeys[0]["spec"]["target"]["creationPolicy"] if appkeys else None
+        spec = appkeys[0]["spec"] if appkeys else {}
+        policy = spec.get("target", {}).get("creationPolicy")
         expect(f"{provider}: it merges into the operator's Secret", policy == "Merge", f"got {policy}")
+        # The ESO admission webhook refuses an ExternalSecret with neither.
+        expect(
+            f"{provider}: it has data or dataFrom",
+            bool(spec.get("data") or spec.get("dataFrom")),
+            f"got keys {sorted(spec)}",
+        )
 
 
 def test_the_single_tier_still_carries_the_same_shape() -> None:
@@ -463,7 +479,7 @@ def test_kafbat_matches_the_broker_in_its_own_render() -> None:
                 f"got {cluster['properties']['sasl.mechanism']}",
             )
             env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
-            protocol = env.get("KAFKA_SECURITY_PROTOCOL")
+            protocol = env.get("DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL")
             expect(
                 f"{at}: the same protocol the tier's apps dial",
                 cluster["properties"]["security.protocol"] == protocol,
@@ -941,14 +957,14 @@ def test_the_redpanda_user_takes_the_password_its_clients_are_given() -> None:
 
 # The env name each client reads its mechanism from, in librdkafka's spelling.
 MECHANISM_ENV = {
-    "dfe-archiver": "KAFKA_SASL_MECHANISM",
-    "dfe-engine": "DFE_KAFKA_SASL_MECHANISM",
+    "dfe-archiver": "DFE_ARCHIVER_KAFKA_SASL_MECHANISM",
+    "dfe-engine": "DFE_ENGINE_KAFKA_SASL_MECHANISM",
     "dfe-fetcher": "DFE_FETCHER_KAFKA_SASL_MECHANISM",
     "dfe-loader": "DFE_LOADER_KAFKA_SASL_MECHANISM",
     "dfe-receiver": "DFE_RECEIVER_KAFKA_SASL_MECHANISM",
     "dfe-transform-elastic": "KAFKA_SASL_MECHANISM",
-    "dfe-transform-vector": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
-    "dfe-transform-vrl": "DFE_TRANSFORM_KAFKA_SASL_MECHANISM",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_KAFKA_SASL_MECHANISM",
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_KAFKA_SASL_MECHANISM",
 }
 
 BUS_CELLS = [(profile, cloud) for profile in ("single", "scale") for cloud in CLOUDS]

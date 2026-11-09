@@ -139,10 +139,10 @@ def test_a_chart_with_no_kafka_values_still_renders() -> None:
     there rather than handing the engine the bus.
     """
     env = engine_env(render_extras(ENGINE, "single", "local", overlay={"kafka": {"mode": None}}))
-    expect("the engine is told the transport", env.get("DFE_TRANSPORT_DEFAULT") == "bus",
-           f"got {env.get('DFE_TRANSPORT_DEFAULT')!r}")
-    expect("and whether a bus is present", env.get("DFE_TRANSPORT_BUS_PRESENT") == "true",
-           f"got {env.get('DFE_TRANSPORT_BUS_PRESENT')!r}")
+    expect("the engine is told the transport", env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == "bus",
+           f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}")
+    expect("and whether a bus is present", env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT") == "true",
+           f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}")
     try:
         render_extras(ENGINE, "slim", "local", overlay={"kafka": {"mode": None}})
     except weave().WeaveError as refused:
@@ -157,11 +157,11 @@ def test_the_engine_follows_the_profile() -> None:
         for cloud in CLOUDS:
             env = engine_env(golden(ENGINE, profile, cloud))
             at = f"{profile}/{cloud}"
-            expect(f"{at} tells the engine {want}", env.get("DFE_TRANSPORT_DEFAULT") == want,
-                   f"got {env.get('DFE_TRANSPORT_DEFAULT')!r}")
+            expect(f"{at} tells the engine {want}", env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == want,
+                   f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}")
             expect(f"{at} bus_present agrees",
-                   env.get("DFE_TRANSPORT_BUS_PRESENT") == str(want == "bus").lower(),
-                   f"got {env.get('DFE_TRANSPORT_BUS_PRESENT')!r}")
+                   env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT") == str(want == "bus").lower(),
+                   f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}")
 
 
 def service_ports(docs_: list[dict], stage: str) -> list[tuple[str, int]]:

@@ -77,8 +77,10 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     steps.record_ceiling(
         run.driver, run.store, run.receiver_url, run.verify, run.run_id, run.args.receiver_door_bytes
     )
-    steps.record_archive(run.driver, archive_exec, case.name)
-    steps.record_observe(run.driver, case.name)
+    if case.archives:
+        steps.record_archive(run.driver, archive_exec, case.name)
+    if case.observes:
+        steps.record_observe(run.driver, case.name)
 
 
 def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
@@ -266,9 +268,13 @@ def run(args: argparse.Namespace) -> int:
             receiver_url=os.environ.get("DFE_E2E_RECEIVER_URL", ""), verify=verify,
         )
         def prepare() -> None:
-            steps.open_console_settled(
-                driver, engine, admin_user, password, args.org, args.first_user, new_password
-            )
+            if case.console:
+                steps.open_console_settled(
+                    driver, engine, admin_user, password, args.org, args.first_user, new_password
+                )
+            else:
+                engine.login()
+                driver.record("login", "done", f"signed in to the engine API as {admin_user}, no console needed")
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
 
         try:
@@ -347,8 +353,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="filebeat pushes real lines at the receiver through the bundled VRL; "
                              "vector pushes the same lines through the same program run by a "
                              "supervised Vector; elastic pushes cisco_ios lines at a transform "
-                             "compiled into its app; cloudwatch authors a meta schema and lets a "
-                             "fetcher pull an AWS upstream")
+                             "compiled into its app; syslog sends the demo's cisco-asa and fortinet "
+                             "lines to the receiver's syslog listeners; cloudwatch authors a meta "
+                             "schema and lets a fetcher pull an AWS upstream")
     parser.add_argument("--aws-service", default="cloudwatch_logs", choices=tuple(sorted(fetcher.AWS_CASES)),
                         help="the AWS service the cloudwatch case's fetcher polls")
     parser.add_argument("--aws-region", default=os.environ.get("DFE_E2E_AWS_REGION", ""),
@@ -378,6 +385,25 @@ def build_parser() -> argparse.ArgumentParser:
                         metavar="HOST:PORT",
                         help="the receiver's lumberjack listener as seen from that network, which "
                              "--via beats ships to")
+    parser.add_argument("--syslog-host", default="dfe-receiver", metavar="HOST",
+                        help="the receiver as the syslog sender reaches it; the syslog case sends here")
+    parser.add_argument("--syslog-port", type=int, default=514,
+                        help="the receiver's TCP syslog port")
+    parser.add_argument("--syslog-udp-port", type=int, default=514,
+                        help="the receiver's UDP syslog port")
+    parser.add_argument("--syslog-exec", default="", metavar="PREFIX",
+                        help="command prefix that runs bash where the receiver's syslog ports are "
+                             "reachable, as the syslog case's sender (k8s: kubectl -n <ns> exec -i "
+                             "<pod> --; docker: docker exec -i <container>). Empty sends from this machine")
+    parser.add_argument("--syslog-lines", type=int, default=20,
+                        help="lines per vendor each transport sends, from the vendored demo corpus")
+    parser.add_argument("--receiver-metrics-url", default=os.environ.get("DFE_E2E_RECEIVER_METRICS_URL", ""),
+                        metavar="URL", help="the receiver's /metrics, whose syslog counters the syslog case "
+                                            "asserts (default: DFE_E2E_RECEIVER_METRICS_URL)")
+    parser.add_argument("--receiver-metrics-selector", default="", metavar="SELECTOR",
+                        help="label selector of the receiver's pods. With --kubectl, the syslog case "
+                             "sums the counters of every running pod in --namespace instead of "
+                             "reading --receiver-metrics-url")
     parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
     parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
     parser.add_argument("--headed", action="store_true", help="show the browser")
