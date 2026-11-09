@@ -5,9 +5,9 @@ cloud: local
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: "0.163.2"  # Released 2026-10-21. Pinned explicitly, not via appVersion.
+  tag: "0.164.0"  # Released 2026-10-21. Pinned explicitly, not via appVersion.
   # == versions.yaml services-digests.otel-collector (drift-checked).
-  digest: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
+  digest: "sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b"
   pullPolicy: IfNotPresent
 
 # The GATEWAY's pod securityContext. The contrib image ships USER 10001
@@ -120,7 +120,7 @@ waitForEngine:
     repository: public.ecr.aws/docker/library/busybox
     tag: "1.38.0"  # == versions.yaml services.busybox (drift-checked).
     # == versions.yaml services-digests.busybox (drift-checked).
-    digest: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+    digest: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
     pullPolicy: IfNotPresent
   resources:
     requests:

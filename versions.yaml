@@ -8404,12 +8404,12 @@ stacks:
       kafka-version: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"       # apache/kafka:4.3.1
       redpanda-version: "sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce"    # docker.redpanda.com/redpandadata/redpanda:v26.2.6
       kafbat: "sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"              # ghcr.io/kafbat/kafka-ui:v1.5.0
-      envoy-proxy: "sha256:713bb146f1a7c97ebc70e13d259f77ff36f2c5d00f3145677816af5af9bd1530"         # envoyproxy/envoy:v1.40.1
-      documentdb-local: "sha256:03aef53ed72cd3007236f8ce1b4ef7a0c958dbbce1519074b85d8a3e10be89a5"   # ghcr.io/documentdb/documentdb/documentdb-local:pg18-1.0.0
+      envoy-proxy: "sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb"         # envoyproxy/envoy:v1.40.1
+      documentdb-local: "sha256:225e291902001334f7f8414613136f06c9fd154b8e8474bd3f44927c207a0f2d"   # ghcr.io/documentdb/documentdb/documentdb-local:pg18-1.0.0
       nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"   # nginxinc/nginx-unprivileged:1.31.7-trixie
-      otel-collector: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"       # otel/opentelemetry-collector-contrib:0.163.2
+      otel-collector: "sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b"       # otel/opentelemetry-collector-contrib:0.163.2
       git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"            # registry.k8s.io/git-sync/git-sync:v4.8.0
-      busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
+      busybox: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"             # docker.io/library/busybox:1.38.0
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
       local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"  # docker.io/rancher/local-path-provisioner:v0.0.37
@@ -8422,7 +8422,7 @@ stacks:
       cloudnative-pg: "sha256:cc0594bd9fd8cdd654dfbd91e4cf2c8fc1bfc4e3a09c4a90a2ab4ffc524f1db5"
       documentdb: "sha256:6b2b014a754ca96ab0f028a1015bd735caa8eda0ec153e3e64dc5dab3ee83bf9"
       documentdb-gateway: "sha256:63e89a22501ac35927137759f2da32e28d80ced626f555c62c4a17c4cc7bfb27"
-      documentdb-postgres: "sha256:64abc98a4387361afd6821a3a99f975763bbd87bbdde9449e75ad6002528a318"
+      documentdb-postgres: "sha256:ec2ed3404e89fff99643901b58a2a34c46a46345fe69a3d96500b82f995c327b"
 
     # Content repos, tagged with this stack.
     content:
