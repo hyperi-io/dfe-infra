@@ -238,11 +238,11 @@ def test_a_group_with_no_offset_on_the_topic_does_not_count() -> None:
 
 # The engine's own bus settings and credential, as dfe-engine-env and dfe-kafka-user set them.
 ENGINE_ENV = {
-    "DFE_KAFKA_BOOTSTRAP_SERVERS": "b-1.kafka.example.com:9096",
-    "DFE_KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
-    "DFE_KAFKA_SASL_MECHANISM": "SCRAM-SHA-512",
-    "DFE_KAFKA_SASL_USERNAME": "dfe-kafka-user",
-    "DFE_KAFKA_SASL_PASSWORD": "engine-held-pw",
+    "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "b-1.kafka.example.com:9096",
+    "DFE_ENGINE_KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
+    "DFE_ENGINE_KAFKA_SASL_MECHANISM": "SCRAM-SHA-512",
+    "DFE_ENGINE_KAFKA_SASL_USERNAME": "dfe-kafka-user",
+    "DFE_ENGINE_KAFKA_SASL_PASSWORD": "engine-held-pw",
 }
 
 
@@ -311,8 +311,8 @@ def test_a_fallback_that_errors_stays_a_fail() -> None:
 
 def test_a_plaintext_engine_dials_with_no_sasl() -> None:
     plaintext = {
-        "DFE_KAFKA_BOOTSTRAP_SERVERS": "dfe-kafka:9092",
-        "DFE_KAFKA_SECURITY_PROTOCOL": "PLAINTEXT",
+        "DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS": "dfe-kafka:9092",
+        "DFE_ENGINE_KAFKA_SECURITY_PROTOCOL": "PLAINTEXT",
     }
     _, counts = smoke(
         SCALE_NAMESPACE, group_output=MSK_GROUPS_ERROR,

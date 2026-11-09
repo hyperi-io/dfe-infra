@@ -32,7 +32,7 @@
 #   rpk-describe-error   `rpk group describe` prints this to stderr and exits 1
 # Each rpk call the broker pod runs is logged, less `rpk`, to rpk.log.
 # An engine exec of `python3 -` runs pod-bin/python3 under engine-env, which logs its
-# argv to python.log, the DFE_KAFKA_SASL_PASSWORD it was handed to python-env.log and
+# argv to python.log, the DFE_ENGINE_KAFKA_SASL_PASSWORD it was handed to python-env.log and
 # the script it read to python-script.py.
 # An exec into dfe-clickhouse-0 runs its command on this host as the pod would,
 # with ch-bin/clickhouse-client logging its argv to clickhouse-client.log and its
@@ -140,7 +140,7 @@ STUB
     cat > "${STUB_DIR}/pod-bin/python3" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_DIR}/python.log"
-printf '%s\n' "${DFE_KAFKA_SASL_PASSWORD-(unset)}" >> "${STUB_DIR}/python-env.log"
+printf '%s\n' "${DFE_ENGINE_KAFKA_SASL_PASSWORD-(unset)}" >> "${STUB_DIR}/python-env.log"
 cat > "${STUB_DIR}/python-script.py"
 if [[ -f "${STUB_DIR}/engine-offsets" ]]; then
     cat "${STUB_DIR}/engine-offsets"
@@ -261,12 +261,12 @@ STUB
 external_clickhouse() {
     echo external > "${STUB_DIR}/annotation-clickhouse_mode"
     printf '%s\n' \
-        DFE_CLICKHOUSE_HOST=ch.example.com \
-        DFE_CLICKHOUSE_PORT="${1:-8443}" \
-        DFE_CLICKHOUSE_SECURE="${2:-true}" \
-        DFE_CLICKHOUSE_VERIFY=true \
-        DFE_CLICKHOUSE_USERNAME=default \
-        DFE_CLICKHOUSE_PASSWORD="${3:-pw-held-by-the-engine}" > "${STUB_DIR}/engine-env"
+        DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com \
+        DFE_ENGINE_CLICKHOUSE_PORT="${1:-8443}" \
+        DFE_ENGINE_CLICKHOUSE_SECURE="${2:-true}" \
+        DFE_ENGINE_CLICKHOUSE_VERIFY=true \
+        DFE_ENGINE_CLICKHOUSE_USERNAME=default \
+        DFE_ENGINE_CLICKHOUSE_PASSWORD="${3:-pw-held-by-the-engine}" > "${STUB_DIR}/engine-env"
 }
 
 # How many lines of log ${1} match the fixed string ${2}.
@@ -501,7 +501,7 @@ GROUP_CHECK="consumer group dfe-loader is committed on main_land (loader CONSUME
     managed_kafka
     msk_groups_error
     printf 'committed 3 over 3 partition(s) of main_land\n' > "${STUB_DIR}/engine-offsets"
-    printf '%s\n' DFE_KAFKA_SASL_PASSWORD=engine-kafka-pw > "${STUB_DIR}/engine-env"
+    printf '%s\n' DFE_ENGINE_KAFKA_SASL_PASSWORD=engine-kafka-pw > "${STUB_DIR}/engine-env"
     run bash "${SMOKE}"
     [[ "${output}" == *"[PASS] ${GROUP_CHECK}: offset 3, read by librdkafka OffsetFetch from dfe-engine"$'\n'"    kafka-consumer-groups.sh failed first: Error: Executing consumer group command failed due to "* ]]
     [[ "${output}" == *"Vertical integration verified."* ]]

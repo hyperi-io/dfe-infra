@@ -79,12 +79,12 @@ STUB
 external_clickhouse() {
     printf external > "${STUB_DIR}/annotation-clickhouse_mode"
     printf '%s\n' \
-        DFE_CLICKHOUSE_HOST=ch.example.com \
-        DFE_CLICKHOUSE_PORT=8443 \
-        DFE_CLICKHOUSE_SECURE=true \
-        DFE_CLICKHOUSE_VERIFY=true \
-        DFE_CLICKHOUSE_USERNAME=default \
-        DFE_CLICKHOUSE_PASSWORD=pw-held-by-the-engine > "${STUB_DIR}/engine-env"
+        DFE_ENGINE_CLICKHOUSE_HOST=ch.example.com \
+        DFE_ENGINE_CLICKHOUSE_PORT=8443 \
+        DFE_ENGINE_CLICKHOUSE_SECURE=true \
+        DFE_ENGINE_CLICKHOUSE_VERIFY=true \
+        DFE_ENGINE_CLICKHOUSE_USERNAME=default \
+        DFE_ENGINE_CLICKHOUSE_PASSWORD=pw-held-by-the-engine > "${STUB_DIR}/engine-env"
 }
 
 @test "an external ClickHouse is asked a query from the engine over https, never looked for as pods" {

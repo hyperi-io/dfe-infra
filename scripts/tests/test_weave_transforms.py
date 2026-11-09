@@ -64,11 +64,11 @@ def test_the_archiver_contract_declares_its_secrets() -> None:
         "s3": True,
     }
     env = _env(golden("dfe-archiver", "scale", "aws"))
-    assert env["KAFKA_SASL_MECHANISM"]["valueFrom"]["secretKeyRef"] == {
+    assert env["DFE_ARCHIVER_KAFKA_SASL_MECHANISM"]["valueFrom"]["secretKeyRef"] == {
         "name": "dfe-kafka-user",
         "key": "sasl.mechanism",
     }
-    assert env["S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"] is True
+    assert env["DFE_ARCHIVER_S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"] is True
 
 
 @pytest.mark.parametrize("service", SERVICES)
@@ -82,6 +82,12 @@ def test_the_direct_profiles_carry_no_kafka_credentials(service: str, profile: s
     assert "dfe-kafka-user" not in refs
 
 
+TRANSFORMS_DIR_ENV = {
+    "dfe-transform-vrl": "DFE_TRANSFORM_VRL_TRANSFORMS_DIR",
+    "dfe-transform-vector": "DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR",
+}
+
+
 @pytest.mark.parametrize("service", ["dfe-transform-vrl", "dfe-transform-vector"])
 def test_transform_files_reach_the_pod(service: str) -> None:
     files = [{"name": "10-route.vrl", "content": "  .x = 1\n.y = 2\n"}]
@@ -91,10 +97,10 @@ def test_transform_files_reach_the_pod(service: str) -> None:
     directory = f"/etc/{service}-transforms"
     mounts = {m["mountPath"]: m for m in _pod(docs)["containers"][0]["volumeMounts"]}
     assert mounts[directory]["readOnly"] is True
-    assert _env(docs)["DFE_TRANSFORM_TRANSFORMS_DIR"]["value"] == directory
+    assert _env(docs)[TRANSFORMS_DIR_ENV[service]]["value"] == directory
 
 
 def test_without_files_the_app_is_not_pointed_at_the_empty_mount() -> None:
     """An empty value is unset to the app, so its own config names the programs."""
     env = _env(golden("dfe-transform-vrl", "single", "local"))
-    assert env["DFE_TRANSFORM_TRANSFORMS_DIR"]["value"] == ""
+    assert env["DFE_TRANSFORM_VRL_TRANSFORMS_DIR"]["value"] == ""

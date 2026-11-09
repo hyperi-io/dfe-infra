@@ -148,7 +148,7 @@ spec:
         - --config
         - /etc/dfe-transform-vrl/config.yaml
         env:
-        - name: DFE_TRANSFORM_TRANSFORMS_DIR
+        - name: DFE_TRANSFORM_VRL_TRANSFORMS_DIR
           value: ''
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
@@ -206,6 +206,8 @@ spec:
         - mountPath: /etc/dfe-transform-vrl
           name: config
           readOnly: true
+        - mountPath: /var/spool/scalo/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /etc/dfe-transform-vrl-enrichment
@@ -252,6 +254,8 @@ spec:
       - configMap:
           name: dfe-transform-vrl-config
         name: config
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - configMap:

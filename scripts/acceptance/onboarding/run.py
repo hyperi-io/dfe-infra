@@ -70,10 +70,12 @@ SHARED_TABLE = "Shared table"
 CHANGE_PASSWORD_PATH = "/change-password"
 
 STEP_TIMEOUT_MS = 30_000
+# The organisation screen submits with "Save" on the 2.2.1 console and "Save and continue" on the 2.2.2 one.
+SAVE_BUTTON = re.compile(r"^Save( and continue)?$")
 # Any wizard screen: /setup itself redirects straight on to one.
 SETUP_SCREEN = re.compile(r"/setup/\w+")
 # The screens the console can open the wizard on, and the run can carry on from.
-LANDINGS = (wizard.WELCOME, wizard.ORGANISATION, wizard.LOGIN)
+LANDINGS = (wizard.WELCOME, wizard.ORGANISATION, wizard.SOURCE, wizard.LOGIN)
 # How long the run keeps checking that the source it made has gone.
 TEARDOWN_DEADLINE = 120.0
 
@@ -232,7 +234,7 @@ def walk_organisation(driver: Driver, org: str) -> None:
     if name.count():
         name.fill(org)
         driver.textbox("Display Name").fill(org.replace("-", " ").title())
-        driver.button("Save").click(timeout=STEP_TIMEOUT_MS)
+        driver.button(SAVE_BUTTON).click(timeout=STEP_TIMEOUT_MS)
         driver.record(wizard.ORGANISATION, "done", f"created the organisation {org}")
         return
     # A deployment that already has one shows the screen with no form on it, and
@@ -278,10 +280,13 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
         driver.seen.append(wizard.WELCOME)
         driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
         driver.record(wizard.WELCOME, "done", "the wizard opened on welcome and moved on")
-        driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
-        landed = wizard.ORGANISATION
+        # Welcome's Next goes to the first pending screen, past an organisation that exists.
+        driver.page.wait_for_url(
+            lambda url: f"/setup/{wizard.WELCOME}" not in url, timeout=STEP_TIMEOUT_MS
+        )
+        landed = driver.current_slug()
 
-    if landed == wizard.LOGIN:
+    if landed in (wizard.SOURCE, wizard.LOGIN):
         driver.record(
             wizard.ORGANISATION,
             "absent-as-expected",
@@ -300,6 +305,13 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
             "the first user already existed, so the wizard ended at the organisation",
         )
         return admin_password
+
+    if landed != wizard.LOGIN:
+        driver.page.wait_for_url(f"**/setup/{wizard.SOURCE}", timeout=STEP_TIMEOUT_MS)
+        driver.seen.append(wizard.SOURCE)
+        # The source suite makes and tears down its own source, so none is left behind here.
+        driver.button("Skip for now").click(timeout=STEP_TIMEOUT_MS)
+        driver.record(wizard.SOURCE, "done", "left source creation to the source suite")
 
     driver.page.wait_for_url(f"**/setup/{wizard.LOGIN}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.LOGIN)

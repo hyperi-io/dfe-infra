@@ -79,8 +79,8 @@ def findings(node: object, where: str = "") -> Iterator[str]:
             upper = name.upper()
             if upper.endswith(E2E_ENV_SUFFIXES) and _truthy(node["value"]):
                 yield f"{where}: env {name}={node['value']}"
-            if upper == "DFE_ENV" and str(node["value"]).strip().lower() == "test":
-                yield f"{where}: env DFE_ENV=test (the e2e posture)"
+            if upper == "DFE_ENGINE_ENV" and str(node["value"]).strip().lower() == "test":
+                yield f"{where}: env DFE_ENGINE_ENV=test (the e2e posture)"
         for key, value in node.items():
             leaf = str(key).lower().rsplit(".", 1)[-1]
             if leaf in UNAUTHENTICATED_KEYS and _truthy(value):
@@ -146,9 +146,9 @@ def test_the_values_a_deploy_layers_carry_no_test_only_keys(path: Path) -> None:
         ({"config": {"lumberjack": {"accept_unauthenticated": True}}}, "accept_unauthenticated"),
         ({"config.lumberjack.accept_unauthenticated": "true"}, "unauthenticated listener"),
         ({"e2eServer": True}, "e2eServer"),
-        ({"env": [{"name": "DFE_E2E_SERVER", "value": "true"}]}, "DFE_E2E_SERVER"),
+        ({"env": [{"name": "DFE_ENGINE_E2E_SERVER", "value": "true"}]}, "DFE_ENGINE_E2E_SERVER"),
         ({"env": [{"name": "DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED", "value": "true"}]}, "ACCEPT_UNAUTHENTICATED"),
-        ({"env": [{"name": "DFE_ENV", "value": "test"}]}, "DFE_ENV=test"),
+        ({"env": [{"name": "DFE_ENGINE_ENV", "value": "test"}]}, "DFE_ENGINE_ENV=test"),
         ({"paths": ["/api/e2e/seed"]}, "seed route"),
         ({"topics": ["dfe.fb1a2b3c4d"]}, "harness name"),
         ({"source": "e2e"}, "harness name"),
@@ -165,7 +165,7 @@ def test_expected_fail_each_test_only_key_is_found(node: object, needle: str) ->
     [
         {"e2eServer": False},
         {"accept_unauthenticated": "false"},
-        {"env": [{"name": "DFE_ENV", "value": "dev"}]},
+        {"env": [{"name": "DFE_ENGINE_ENV", "value": "dev"}]},
         {"checksum": "1d0dae2ec7f24825128c3a83bf29294e420daf9e9d8fc1aad15e3f2d35912822"},
         {"source": "elastic", "topic": "dfe.land", "name": "fbprod"},
     ],

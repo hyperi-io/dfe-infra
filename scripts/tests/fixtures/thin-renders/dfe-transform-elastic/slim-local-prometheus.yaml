@@ -173,6 +173,8 @@ spec:
           readOnly: true
         - mountPath: /var/lib/dfe/geoip
           name: writable-geoip
+        - mountPath: /var/spool/scalo/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -223,6 +225,9 @@ spec:
       - emptyDir:
           sizeLimit: 512Mi
         name: writable-geoip
+      - emptyDir:
+          sizeLimit: 1Gi
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - name: serviceaccount-files

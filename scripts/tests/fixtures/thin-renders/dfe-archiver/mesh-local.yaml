@@ -137,35 +137,35 @@ spec:
         - --config
         - /etc/dfe/archiver.yaml
         env:
-        - name: ARCHIVER_DESTINATION
+        - name: DFE_ARCHIVER_DESTINATION
           value: ''
-        - name: ARCHIVER_GRPC_LISTEN
-          value: 0.0.0.0:6000
-        - name: ARCHIVER_SPOOL_DIR
-          value: /var/spool/dfe/archiver
-        - name: ARCHIVER_TRANSPORT
-          value: grpc
-        - name: DLQ_ENABLED
+        - name: DFE_ARCHIVER_DLQ_ENABLED
           value: 'false'
+        - name: DFE_ARCHIVER_GRPC_LISTEN
+          value: 0.0.0.0:6000
+        - name: DFE_ARCHIVER_S3_BUCKET
+          value: ''
+        - name: DFE_ARCHIVER_S3_ENDPOINT
+          value: ''
+        - name: DFE_ARCHIVER_SPOOL_DIR
+          value: /var/spool/dfe/archiver
+        - name: DFE_ARCHIVER_TRANSPORT
+          value: grpc
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://dfe-otel-collector-gateway.otel.svc.cluster.local:4317
-        - name: S3_BUCKET
-          value: ''
-        - name: S3_ENDPOINT
-          value: ''
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-archiver
-        - name: S3_ACCESS_KEY_ID
+        - name: DFE_ARCHIVER_S3_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
               key: access_key_id
               name: dfe-archiver-s3
               optional: true
-        - name: S3_SECRET_ACCESS_KEY
+        - name: DFE_ARCHIVER_S3_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               key: secret_access_key
@@ -221,6 +221,8 @@ spec:
           readOnly: true
         - mountPath: /var/spool/dfe/archiver
           name: writable-spool
+        - mountPath: /var/spool/dfe/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -274,6 +276,8 @@ spec:
       - emptyDir:
           sizeLimit: 10Gi
         name: writable-spool
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - name: serviceaccount-files
