@@ -101,6 +101,7 @@ def remotes(tmp_path: Path) -> tuple[Path, str]:
             "docs/README.md": "# App docs\n",
             "docs/guide.md": "# Guide\n\n[readme](../README.md)\n",
             "openapi-spec/openapi.json": "{}\n",
+            "openapi/openapi.json": "{}\n",
             "src/main.py": "print('not docs')\n",
         },
         "v1.0.0",
@@ -806,6 +807,7 @@ def test_a_tag_fetch_checks_out_docs_and_the_spec_at_the_tagged_commit(
         "docs/README.md",
         "docs/guide.md",
         "openapi-spec/openapi.json",
+        "openapi/openapi.json",
     ]
 
 
@@ -867,14 +869,17 @@ def test_a_global_git_config_cannot_redirect_the_fetch(
 # --- one build, end to end ----------------------------------------------------------
 
 
-def test_assemble_lays_out_a_build(remotes: tuple[Path, str], tmp_path: Path) -> None:
+@pytest.mark.parametrize("spec_path", aggregate.SPEC_FILES)
+def test_assemble_lays_out_a_build(
+    remotes: tuple[Path, str], tmp_path: Path, spec_path: str
+) -> None:
     root, _ = remotes
     make_repo(
         root,
         "o/dfe-engine",
         {
             "docs/architecture.md": "# Arch\n\n[root](../README.md)\n",
-            "openapi-spec/openapi.json": json.dumps(
+            spec_path: json.dumps(
                 {"openapi": "3.1.0", "info": {"description": "Poll GET /tasks/{id}."}}
             ),
         },

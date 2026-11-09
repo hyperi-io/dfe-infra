@@ -88,10 +88,11 @@ WORKING_DIRS = frozenset({"plans", "superpowers"})
 # The documentation standard binds the repos we control upstream. A fork follows its upstream.
 UPSTREAM_LED = frozenset({"fork"})
 SPEC_MEMBER = "dfe-engine"
-SPEC_FILE = "openapi-spec/openapi.json"
+# Where the engine commits its spec: openapi/ from v1.22.83, openapi-spec/ before it.
+SPEC_FILES = ("openapi/openapi.json", "openapi-spec/openapi.json")
 API_DIR = "api"
 API_LABEL = "HTTP API reference"
-SPARSE_PATTERNS = ("/docs/", f"/{SPEC_FILE}")
+SPARSE_PATTERNS = ("/docs/", *(f"/{path}" for path in SPEC_FILES))
 # The root pages hold the sidebar positions below this one, and members follow in lane order.
 FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
@@ -1119,9 +1120,11 @@ def _place_spec(
     checkout: Checkout, build: Build, dest: Path, out: Path, findings: list[Finding]
 ) -> dict[str, str] | None:
     """Copy the engine's spec beside the builds and mark the directory its pages go in."""
-    spec = checkout.path / SPEC_FILE
-    if not spec.is_file():
-        findings.append(Finding(SPEC_MEMBER, SPEC_FILE, Rule.NO_SPEC))
+    spec = next(
+        (checkout.path / path for path in SPEC_FILES if (checkout.path / path).is_file()), None
+    )
+    if spec is None:
+        findings.append(Finding(SPEC_MEMBER, " or ".join(SPEC_FILES), Rule.NO_SPEC))
         return None
     api = dest / API_DIR
     if api.exists():
