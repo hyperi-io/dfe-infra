@@ -121,14 +121,14 @@ module.exports = {
   noIndex: !build.listed,
   organizationName: 'hyperi-io',
   projectName: 'dfe-infra',
-  onBrokenLinks: 'warn',
-  onBrokenAnchors: 'warn',
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
   markdown: {
     // .md parses as CommonMark and .mdx as MDX, so plain repo docs need no MDX escaping.
     format: 'detect',
     mermaid: true,
-    hooks: {onBrokenMarkdownLinks: 'warn', onBrokenMarkdownImages: 'warn'},
+    hooks: {onBrokenMarkdownLinks: 'throw', onBrokenMarkdownImages: 'warn'},
   },
   clientModules: [require.resolve('./src/version-switch.js')],
   presets: [

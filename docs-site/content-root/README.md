@@ -4,7 +4,7 @@ sidebar_label: Overview
 slug: /overview
 ---
 
-# DFE documentation
+# Data Fusion Engine overview
 
 The Data Fusion Engine (DFE) is a product suite an organisation deploys to run its own data pipeline. Events arrive over HTTP or HTTPS, travel through Kafka or a direct gRPC hop, and land in ClickHouse, where HyperDX searches them. DFE deploys onto any Kubernetes cluster, on-premises or in a cloud, or under Docker Compose on a single host.
 
