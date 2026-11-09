@@ -102,15 +102,15 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
-                "dfe-archiver" "sha256:7bab5157d6aaf92f7805b9bf62d84c72e60e45c51f546c1f5078c22e5ae526c2"
-                "dfe-engine" "sha256:7cedb2838b9c571f34c2061051784315285a962057496158244e96014770c0de"
-                "dfe-fetcher" "sha256:0a8f8408b33e5873c26a26000f9b33d2da2e82e09ef479e1f8ba8a74b010f064"
-                "dfe-loader" "sha256:c9e2e27d7c541ddf8619715cf620946b5446fe31d44b0a58f181219132cacd4d"
-                "dfe-receiver" "sha256:43d68add4949d393425f98e8ebf5cec0ae12cb2a47f744d84a78c25d44288942"
-                "dfe-transform-elastic" "sha256:ca444d2b4ea292a923c8fe7b98e275917a62ee85d3fb9cbcbf3037749c778b54"
-                "dfe-transform-vector" "sha256:d20ffc236b1f93487015315204cc0ed0fee05bbf89c36373f9b9de4fd8fef042"
-                "dfe-transform-vrl" "sha256:a2ca316d4db6a67ecd1b318edf75a1f8301e1b5f7092213549e8206dc5ab20c1"
-                "dfe-ui" "sha256:22f215625ba9443a2a06d1045ffbea974a66f328f733cecb6dfb26d758a6a154"
+                "dfe-archiver" "sha256:1ddcfb5c167df1854b1e70a007b76c3142a29c5dff4d81f65f93eeec68b992df"
+                "dfe-engine" "sha256:7bab52066bc226c0d484217c988bfa14cf89a244de1f19346773e168e0ac16ba"
+                "dfe-fetcher" "sha256:bfb707c98b2bc3316db62182e53713fad1acf28bf00e1c4f3a79d80d8f0d7946"
+                "dfe-loader" "sha256:2cf1835fb4edffa4692e00e4e91c19577ec4156e26316f663db966848c7d9849"
+                "dfe-receiver" "sha256:3fca63ce66ba16a407d553d8b14100c5f3c90b3dd92794bbf76904bf93e240d0"
+                "dfe-transform-elastic" "sha256:085700e62308177aa3417a3dde518385e0caa4bd6dbb4b9c31c1b715ad251dd9"
+                "dfe-transform-vector" "sha256:f03d61eda4b4e00dffb21bf1f34bf771bd9da01be674c6b0f5721eacffb0c5f2"
+                "dfe-transform-vrl" "sha256:6cbc6106351e2879d22ed1176be362cf068155d93c8db76f0d5e93ffafe0464c"
+                "dfe-ui" "sha256:c398bdee9066a2303335efc666ee499c346712b158b56b1a3067f1967a40085b"
                 "hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
