@@ -183,7 +183,7 @@ sys.exit(1)
 SETTLED: list[str] = []
 SCALED = ["2", "1"]
 # What an HPA that the pressure drove reads at scale-out.
-DRIVEN = {"value": "100", "cpu": "4", "cpu_target": "70"}
+DRIVEN = {"value": "100", "cpu": "4", "cpu_target": "70", "desired": "3"}
 SHIM = "http://dfe-keda-shim.dfe.svc.cluster.local:8080/keda/pressure?service="
 
 
@@ -397,7 +397,7 @@ def test_scale_out_logs_each_hpa_reading_and_what_the_hpa_scaled_on() -> None:
 
 def test_a_scale_out_with_the_pressure_under_target_is_a_failure() -> None:
     """Replicas that rose while the pressure read under target were raised by something else."""
-    hpa = {"value": "20", "cpu": "95", "cpu_target": "70"}
+    hpa = {"value": "20", "cpu": "95", "cpu_target": "70", "desired": "2"}
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
     expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
@@ -410,7 +410,7 @@ def test_a_scale_out_with_the_pressure_under_target_is_a_failure() -> None:
 
 def test_a_scale_out_with_no_pressure_reading_is_a_failure() -> None:
     """An HPA that carries no reading for the pressure trigger cannot have scaled on it."""
-    hpa = {"cpu": "95", "cpu_target": "70"}
+    hpa = {"cpu": "95", "cpu_target": "70", "desired": "2"}
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
     expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
@@ -419,7 +419,7 @@ def test_a_scale_out_with_no_pressure_reading_is_a_failure() -> None:
 
 def test_cpu_over_its_own_target_at_scale_out_is_said() -> None:
     """Both triggers over target is still a pass, but the log must not read as pressure alone."""
-    hpa = {"value": "100", "cpu": "90", "cpu_target": "70"}
+    hpa = {"value": "100", "cpu": "90", "cpu_target": "70", "desired": "2"}
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
     expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
@@ -502,6 +502,24 @@ def test_phase_two_finds_every_pressure_app_and_proves_them_together() -> None:
         "HPA metric s1-*" in out.stdout,
         out.stdout,
     )
+
+
+def test_the_hpa_asking_ends_the_hold_before_a_slow_pod_is_ready() -> None:
+    """A hold kept until Ready feeds the next HPA sync a second 100 and scales past floor+1."""
+    apps = [pressure_app("dfe-archiver")]
+    ready = {"dfe-archiver": ["2", "2", "2", "3", "2"]}
+    out = run_proof(phase_two(apps, ready))
+
+    expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    phase = out.stdout[out.stdout.index("Phase 2"):]
+    expect(
+        "the zeros start before the new pod is Ready",
+        "holding zeros" in phase and "PASS: dfe-archiver scaled out" in phase
+        and phase.index("holding zeros") < phase.index("PASS: dfe-archiver scaled out"),
+        out.stdout,
+    )
+    expect("the pressure is read while still held", "at scale-out: pressure 100" in phase, out.stdout)
+    expect("the line names when the HPA asked", "(HPA asked at 0s)" in phase, out.stdout)
 
 
 def test_an_app_scaled_on_cpu_alone_is_a_reported_skip() -> None:

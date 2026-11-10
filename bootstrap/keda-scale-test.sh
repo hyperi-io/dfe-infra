@@ -93,6 +93,8 @@ SET_POLL=()
 SET_INDEX=()
 SET_TARGET=()
 SET_WAITED=()
+# Seconds until each app's HPA asked for more than its floor, empty for one that never asked.
+SET_ASKED=()
 # UNPROVEN when phase 2 found a pressure-driven app it could not start from its floor.
 DISCOVERY_VERDICT=0
 
@@ -139,14 +141,14 @@ ch_query() {
 }
 
 reset_set() {
-    SET_SO=(); SET_DEP=(); SET_SERVICE=(); SET_MIN=(); SET_POLL=(); SET_INDEX=(); SET_TARGET=(); SET_WAITED=()
+    SET_SO=(); SET_DEP=(); SET_SERVICE=(); SET_MIN=(); SET_POLL=(); SET_INDEX=(); SET_TARGET=(); SET_WAITED=(); SET_ASKED=()
 }
 
 add_to_set() {
     # ScaledObject, Deployment, shim ServiceName, floor, pollingInterval, pressure trigger index, target.
     local n="${#SET_DEP[@]}"
     SET_SO[n]="$1"; SET_DEP[n]="$2"; SET_SERVICE[n]="$3"; SET_MIN[n]="$4"
-    SET_POLL[n]="$5"; SET_INDEX[n]="$6"; SET_TARGET[n]="$7"; SET_WAITED[n]=""
+    SET_POLL[n]="$5"; SET_INDEX[n]="$6"; SET_TARGET[n]="$7"; SET_WAITED[n]=""; SET_ASKED[n]=""
 }
 
 set_services() {
@@ -218,6 +220,32 @@ wait_for_set() {
                 if [[ "${mode}" == out ]] && (( have > SET_MIN[i] )); then reached=yes; fi
                 if [[ "${mode}" == in ]] && (( have <= SET_MIN[i] )); then reached=yes; fi
                 if [[ "${reached}" == yes ]]; then SET_WAITED[i]="${waited}"; else pending=$((pending + 1)); fi
+            fi
+            i=$((i + 1))
+        done
+        if (( pending == 0 )); then return 0; fi
+        if (( waited >= timeout )); then return 1; fi
+        sleep "${WAIT_INTERVAL}"; waited=$((waited + WAIT_INTERVAL))
+    done
+}
+
+wait_for_ask() {
+    # BOUNDED poll of every app's HPA for desiredReplicas above its floor, for at most ${1}s.
+    # Each app's elapsed seconds land in SET_ASKED, empty for one whose HPA never asked.
+    local timeout="$1" waited=0 i pending desired
+    i=0
+    while (( i < ${#SET_DEP[@]} )); do SET_ASKED[i]=""; i=$((i + 1)); done
+    while :; do
+        pending=0
+        i=0
+        while (( i < ${#SET_DEP[@]} )); do
+            if [[ -z "${SET_ASKED[i]}" ]]; then
+                desired="$(hpa_field "${SET_SO[i]}" '{.status.desiredReplicas}')"
+                if [[ -n "${desired}" ]] && (( desired > SET_MIN[i] )) 2>/dev/null; then
+                    SET_ASKED[i]="${waited}"
+                else
+                    pending=$((pending + 1))
+                fi
             fi
             i=$((i + 1))
         done
@@ -377,31 +405,45 @@ prove_set() {
     # Held past the bound, so a verdict read after it still sees the pressure.
     hold_set 100 $(( bound + ZERO_HOLD )) &
     HOLD_PID=$!
-    wait_for_set out "${bound}" || true
+    # The HPA's ask ends the hold, not the new pod's Ready: a pod start longer than one
+    # HPA sync would otherwise feed a second read at 100 and scale past floor+1.
+    wait_for_ask "${bound}" || true
     i=0
     while (( i < ${#SET_DEP[@]} )); do
-        if [[ -n "${SET_WAITED[i]}" ]]; then
-            log "PASS: ${SET_DEP[i]} scaled out to $(( SET_MIN[i] + 1 )) in ${SET_WAITED[i]}s"
-            code=0
+        code=0
+        if [[ -n "${SET_ASKED[i]}" ]]; then
             scale_out_reading "${i}" || code=$?
-            verdict="$(worse "${verdict}" "${code}")"
-            if [[ "${own_check}" == yes ]]; then
-                code=0
-                own_pressure_check "${i}" || code=$?
-                verdict="$(worse "${verdict}" "${code}")"
-            fi
         else
-            code=0
             scale_out_verdict "${SET_SO[i]}" "${SET_DEP[i]}" "$(( SET_MIN[i] + 1 ))" "${SET_SERVICE[i]}" "${bound}" "${SET_TARGET[i]}" || code=$?
-            verdict="$(worse "${verdict}" "${code}")"
         fi
+        verdict="$(worse "${verdict}" "${code}")"
         i=$((i + 1))
     done
     stop_hold
     if (( verdict != 0 )); then return "${verdict}"; fi
 
     log "holding zeros for ${ZERO_HOLD}s to drag each average back under target"
-    hold_set 0 "${ZERO_HOLD}"
+    hold_set 0 "${ZERO_HOLD}" &
+    HOLD_PID=$!
+    wait_for_set out "${bound}" || true
+    i=0
+    while (( i < ${#SET_DEP[@]} )); do
+        code=0
+        if [[ -n "${SET_WAITED[i]}" ]]; then
+            log "PASS: ${SET_DEP[i]} scaled out to $(( SET_MIN[i] + 1 )) in $(( SET_ASKED[i] + SET_WAITED[i] ))s (HPA asked at ${SET_ASKED[i]}s)"
+            if [[ "${own_check}" == yes ]]; then
+                own_pressure_check "${i}" || code=$?
+            fi
+        else
+            scale_out_verdict "${SET_SO[i]}" "${SET_DEP[i]}" "$(( SET_MIN[i] + 1 ))" "${SET_SERVICE[i]}" "${bound}" "${SET_TARGET[i]}" || code=$?
+        fi
+        verdict="$(worse "${verdict}" "${code}")"
+        i=$((i + 1))
+    done
+    if [[ -n "${HOLD_PID}" ]]; then wait "${HOLD_PID}" 2>/dev/null || true; fi
+    HOLD_PID=""
+    if (( verdict != 0 )); then return "${verdict}"; fi
+
     log "asserting SCALE-IN to each floor (bounded ${SCALE_IN_TIMEOUT}s)..."
     wait_for_set in "${SCALE_IN_TIMEOUT}" || true
     i=0
