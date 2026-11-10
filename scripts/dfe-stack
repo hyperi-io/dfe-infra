@@ -1396,6 +1396,15 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
 DEPLOY_REPO = "dfe-deploy"
 
 
+def deploy_step(name: str) -> str:
+    """The two steps that point the deploy-repo template at stack `name`."""
+    return (
+        f"set {DEPLOY_REPO} pins.yaml `base.dfe-infra` to \"{name}\" (and `channel` to the "
+        f"stack's maturity) and merge it, which tags a release; then set "
+        f"content.{DEPLOY_REPO} in stack {name} to that tag"
+    )
+
+
 def deploy_pin_finding(name: str, v: dict, org: str) -> tuple[str, str]:
     """(status, detail) tying content.dfe-deploy to the stack its pins.yaml selects.
 
@@ -1417,8 +1426,7 @@ def deploy_pin_finding(name: str, v: dict, org: str) -> tuple[str, str]:
         return "ok", f"content.{DEPLOY_REPO} {pinned} pins.yaml names stack {name}"
     return "FAIL", (
         f"content.{DEPLOY_REPO} {pinned} seeds a pins.yaml whose base.dfe-infra is "
-        f"{named or '(unset)'}, not {name}: tag a {DEPLOY_REPO} whose template names {name}, "
-        f"then set content.{DEPLOY_REPO}"
+        f"{named or '(unset)'}, not {name}: {deploy_step(name)}"
     )
 
 
@@ -1883,6 +1891,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
         print(f"  constraints -> {carried} (cloned from {from_name}; review the rules)")
 
     print(f"  current -> {new}")
+    print(f"  next: {deploy_step(new)}")
     print("  next: dfe-stack compat-check; check_versions_drift.py --fix; dfe-stack release-gate")
     return 0
 
