@@ -153,6 +153,38 @@ run "the_public_zone_carries_the_name_it_was_given_and_a_delegation" {
     condition     = output.public_zone_id == aws_route53_zone.public[0].zone_id
     error_message = "the zone id output must name the zone this module creates"
   }
+
+  assert {
+    condition     = length(aws_route53_record.delegation) == 0
+    error_message = "with no parent zone id the delegation is the deployer's, so no NS record may be written"
+  }
+}
+
+run "a_parent_zone_gets_the_public_zone_s_ns_record" {
+  command = plan
+
+  variables {
+    dns = { public_zone = "run1.contract.example.com", parent_zone_id = "MOCKPARENT" }
+  }
+
+  assert {
+    condition     = length(aws_route53_record.delegation) == 1
+    error_message = "a parent zone id must render exactly one delegation record"
+  }
+
+  assert {
+    condition = (
+      aws_route53_record.delegation[0].zone_id == "MOCKPARENT"
+      && aws_route53_record.delegation[0].name == "run1.contract.example.com"
+      && aws_route53_record.delegation[0].type == "NS"
+    )
+    error_message = "the delegation must be an NS record for the public zone, written in the parent zone"
+  }
+
+  assert {
+    condition     = toset(aws_route53_record.delegation[0].records) == toset(aws_route53_zone.public[0].name_servers)
+    error_message = "the delegation must point at the name servers of the zone this run created"
+  }
 }
 
 // external-dns is ONE controller writing both zones, so its grant has to reach
@@ -223,12 +255,17 @@ run "no_public_zone_leaves_the_controller_and_removes_the_public_half" {
   command = plan
 
   variables {
-    dns = { public_zone = "" }
+    dns = { public_zone = "", parent_zone_id = "MOCKPARENT" }
   }
 
   assert {
     condition     = length(aws_route53_zone.public) == 0
     error_message = "no public hosted zone may be created when dns.public_zone is empty"
+  }
+
+  assert {
+    condition     = length(aws_route53_record.delegation) == 0
+    error_message = "a parent zone id alone must not write a delegation when there is no public zone"
   }
 
   assert {

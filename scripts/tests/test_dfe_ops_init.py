@@ -160,7 +160,7 @@ def test_the_wizard_writes_the_ingest_door_its_target_defaults_to(answers: dict,
 
 
 def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_path: Path) -> None:
-    io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS))
+    io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS, parent_zone_id="Z0PARENT"))
     answers = wiz.run_wizard(io)
     text = wiz.build_dial_text(answers)
 
@@ -189,6 +189,8 @@ def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_p
     assert tfvars["kafka"]["provider"] == "msk"
     assert tfvars["kafka"]["msk"]["broker_count"] == 3
     assert tfvars["network"]["az_count"] == 3
+    assert tfvars["dns"]["public_zone"] == "dfe.example.com"
+    assert tfvars["dns"]["parent_zone_id"] == "Z0PARENT"
 
 
 # ---------------------------------------------------------------------------
