@@ -58,34 +58,12 @@ export function IconIngest(props) {
   );
 }
 
-export function IconRouting(props) {
-  return (
-    <Icon {...props}>
-      <circle cx="6" cy="5" r="2" />
-      <path d="M6 7v13" />
-      <path d="M6 11a4 4 0 0 0 4 4h8" />
-      <path d="M15 12l3 3-3 3" />
-    </Icon>
-  );
-}
-
 export function IconStorage(props) {
   return (
     <Icon {...props}>
       <ellipse cx="12" cy="5" rx="7" ry="3" />
       <path d="M5 5v14c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
       <path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3" />
-    </Icon>
-  );
-}
-
-export function IconHunting(props) {
-  return (
-    <Icon {...props}>
-      <circle cx="11" cy="11" r="6" />
-      <path d="M20 20l-4.5-4.5" />
-      <path d="M11 8.5v5" />
-      <path d="M8.5 11h5" />
     </Icon>
   );
 }
@@ -98,29 +76,3 @@ export function IconObservability(props) {
   );
 }
 
-export function IconHost(props) {
-  return (
-    <Icon {...props}>
-      <rect x="3" y="4" width="18" height="12" rx="2" />
-      <path d="M8 20h8" />
-      <path d="M12 16v4" />
-    </Icon>
-  );
-}
-
-export function IconCluster(props) {
-  return (
-    <Icon {...props}>
-      <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" />
-      <circle cx="12" cy="12" r="2.5" />
-    </Icon>
-  );
-}
-
-export function IconCloud(props) {
-  return (
-    <Icon {...props}>
-      <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.6 4.2 4.2 0 0 0 7 18z" />
-    </Icon>
-  );
-}
