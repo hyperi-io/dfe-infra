@@ -1012,7 +1012,7 @@ def test_assemble_lays_out_a_build(
     assert [entry["path"] for entry in result.members] == ["app", "dfe-engine", "fork", "own"]
     assert (tree / "own" / "index.md").read_text() == "# Own landing\n"
     assert (tree / "dfe-engine" / "index.md").read_text() == (
-        "# dfe-engine\n\nEvery page in the dfe-engine section.\n\n- [Arch](architecture.md)\n"
+        f"{aggregate.SECTION_INDEX_MARK}\n# dfe-engine\n\nEvery page in the dfe-engine section.\n\n- [Arch](architecture.md)\n"
     )
     assert not (tree / "app" / "index.md").exists()
     assert {(f.member, f.path, f.rule) for f in result.findings} == {
@@ -1161,7 +1161,9 @@ def test_a_section_index_lists_every_page_by_title_nested_by_directory(tmp_path:
         },
     )
     aggregate.write_section_index(tmp_path, "svc")
-    assert (tmp_path / "index.md").read_text().splitlines()[4:] == [
+    lines = (tmp_path / "index.md").read_text().splitlines()
+    assert lines[0] == aggregate.SECTION_INDEX_MARK
+    assert lines[5:] == [
         "- [A \\[guide\\]](guide.md)",
         "- [Operations](ops/README.md)",
         "  - [scale](ops/scale.md)",

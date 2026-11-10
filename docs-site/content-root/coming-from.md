@@ -23,7 +23,7 @@ Nothing that already works breaks while you tune.
 
 ## The original bytes are off by default
 
-Splunk keeps `_raw` for every event, and most pipelines carry the original line beside the parsed fields all the way to storage. DFE parses at the edge and drops the original. It keeps `_raw` only for the sources you turn it on for, such as a tool downstream that parses the native format itself, or evidence that must be byte-exact ([per-format list](dfe-infra/design-principles.md)).
+Splunk keeps `_raw` for every event, and most pipelines carry the original line beside the parsed fields all the way to storage. DFE parses at the edge and drops the original. It keeps `_raw` only for the sources you turn it on for, such as a tool downstream that parses the native format itself, or evidence that must be byte-exact ([per-format list](https://github.com/hyperi-io/dfe-infra/blob/main/docs/design-principles.md#json-out-raw-only-where-its-worth-it)).
 
 That's one of the biggest efficiency gains in DFE. A second copy of every record doubles what every stage writes and reads: Kafka, the loader, ClickHouse and the archive all move it, and storage keeps it. Leave it off and each of them handles the record once.
 
