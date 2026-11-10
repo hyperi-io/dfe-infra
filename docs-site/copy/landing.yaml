@@ -128,7 +128,7 @@ closing:
 # content-root/quickstart/.
 quickstart:
   eyebrow: Quickstart
-  title: Stand DFE up
+  title: Run DFE locally
   tabs:
     - value: demo
       label: Demo
