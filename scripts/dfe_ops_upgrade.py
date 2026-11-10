@@ -212,6 +212,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import argocd_release  # noqa: E402
 import helm_releases  # noqa: E402
+import schema_lock_remedy  # noqa: E402
 import values_migration  # noqa: E402
 import yaml_subset  # noqa: E402
 from deploy_repo_session import BundledRepo, SessionError  # noqa: E402
@@ -1097,7 +1098,7 @@ def check_schema_lock_wedge(
             continue
         wedged.append(database)
     if wedged:
-        drops = "; ".join(f"DROP TABLE {db}.schema_lock SYNC" for db in wedged)
+        drops = "; ".join(schema_lock_remedy.schema_lock_drop(db) for db in wedged)
         return False, (
             f"schema_lock's quorum names a part no replica holds ({', '.join(wedged)}), so no engine can "
             f"take the schema lease. With no engine holding it, run once on one replica: {drops} "

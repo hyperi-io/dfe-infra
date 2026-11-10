@@ -847,7 +847,7 @@ LOCK_QUORUM = _proc(0, stdout="version: 2\nparts count: 1\nall\tall_77_77_1\n")
             [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n")],
             False,
             "schema_lock's quorum names a part no replica holds (dfe), so no engine can take the schema lease. "
-            "With no engine holding it, run once on one replica: DROP TABLE dfe.schema_lock SYNC "
+            f"With no engine holding it, run once on one replica: {u.schema_lock_remedy.schema_lock_drop('dfe')} "
             "-- the engine recreates the table at boot (docs/deployment/upgrades.md)",
         ),
         (
