@@ -1001,7 +1001,9 @@ def test_assemble_lays_out_a_build(
         "spec": "_specs/9.9.9/dfe-engine.json",
         "output": "9.9.9/dfe-engine/api",
         "slice": "dfe-engine/api/sidebar.ts",
+        "raw": "_specs/9.9.9/dfe-engine.raw.json",
     }
+    assert "{id}" in (out / "_specs" / "9.9.9" / "dfe-engine.raw.json").read_text()
     link = "(https://github.com/o/dfe-engine/blob/v2.0.0/README.md)"
     assert link in (tree / "dfe-engine" / "architecture.md").read_text()
     assert (tree / "README.md").is_file()
@@ -1227,12 +1229,17 @@ def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
     dropped: list[str], expected: list[str]
 ) -> None:
     lines = load_build_site().redirects("2.2.1", dropped, ["quickstart"]).splitlines()
-    assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
-    assert lines[3:5] == [
+    assert lines[:8] == [
+        "/ /v/2.2.1/ 302",
+        "/v /v/2.2.1/ 302",
+        "/v/ /v/2.2.1/ 302",
+        "/latest /v/2.2.1/ 302",
+        "/latest/ /v/2.2.1/ 302",
+        "/latest/* /v/2.2.1/:splat 302",
         "/quickstart /v/2.2.1/quickstart/ 302",
         "/quickstart/* /v/2.2.1/quickstart/:splat 302",
     ]
-    assert lines[5:] == expected
+    assert lines[8:] == expected
 
 
 # --- the docs gate -------------------------------------------------------------------
