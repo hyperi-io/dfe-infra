@@ -133,56 +133,30 @@ quickstart:
     - value: demo
       label: Demo
       blocks:
-        - text: "Needs Docker with Compose v2, Python 3, git and make."
-        # dfe-docker Makefile targets up and demo. PROFILE= names come from its service_profiles.yaml.
+        - text: "See DFE working on your laptop, with sample firewall logs already flowing in. Needs Docker, git, make and Python 3."
+        # dfe-docker Makefile target demo.
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
             make demo{version_arg}
-        - text: "Then open the console. `make demo-stop` ends it."
+        - text: "Then point your browser to http://localhost:3000, log in with the details it printed, and search the firewall logs as they land."
       guide: {label: The demo, to: /quickstart/demo/}
     - value: docker
       label: Docker
       blocks:
-        - text: "Needs Docker with Compose v2, Python 3, git and make."
+        - text: "The whole DFE stack on one machine, ready for your own data. Needs Docker, git, make and Python 3."
+        # dfe-docker Makefile target up: single-kafka on the newest stack.
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
             make up{version_arg}
-        - text: "That runs `single-kafka`. `make up PROFILE=<name>` picks `slim-grpc`, `slim-kafka` or `single-grpc` instead, and refuses any other name with the valid list. Then send it an event:"
-        # dfe-docker docs/evaluating.md, "Seeing your own data go through".
-        - code: |-
-            curl -X POST http://localhost:8080/ingest \
-              -H 'Content-Type: application/json' \
-              -d '{"_source":"main","message":"hello dfe"}'
+        - text: "Then point your browser to http://localhost:3000 and log in with the details it printed."
       guide: {label: Docker quickstart, to: /quickstart/docker/}
     - value: kubernetes
       label: Kubernetes
       blocks:
-        - text: "Needs Kubernetes 1.35+ and `kubectl`. Set `DFE_DOMAIN` and `DFE_REPO_URL` in the env file first."
-        # bootstrap/local.env.example and scripts/dfe-ops preflight, stack-deploy.
-        - code: |-
-            git clone --branch {stack} https://github.com/hyperi-io/dfe-infra && cd dfe-infra
-            (umask 077 && cp bootstrap/local.env.example bootstrap/local.env)
-            python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env
-            python3 scripts/dfe-ops stack-deploy --stack {stack} --mode single \
-              --target-revision {stack} --env-file bootstrap/local.env
-        - text: "It ends by checking an event reaches ClickHouse."
-      guide: {label: Kubernetes on-premises quickstart, to: /quickstart/kubernetes/}
+        - text: "Run DFE on your own Kubernetes cluster, on-premises or managed, with every change going through Git."
+      guide: {label: Kubernetes quickstart, to: /quickstart/kubernetes/}
     - value: aws
       label: AWS
       blocks:
-        - text: "Needs AWS credentials, OpenTofu and `kubectl`. Answer the wizard: aws, `scale`, and your Kafka."
-        # dfe-infra docs/deployment/wizard.md, then docs/deployment/aws.md "Resolving sizing artefacts".
-        - code: |-
-            python3 scripts/dfe-ops init
-            python3 scripts/resolve_sizing.py --dial deployment.yaml --live \
-              --out terraform/environments/aws
-            python3 scripts/render_dial.py --tofu
-        - text: "Then build and deploy:"
-        # dfe-infra docs/deployment/aws.md, "Applying the plan".
-        - code: |-
-            (cd terraform/environments/aws && tofu init \
-              && tofu plan -out=deployment.tfplan && tofu apply deployment.tfplan)
-            eval "$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)"
-            python3 scripts/dfe-ops stack-deploy --stack {stack} --mode scale \
-              --from-terraform terraform/environments/aws
+        - text: "Build a DFE stack in your own AWS account, sized to your data."
       guide: {label: AWS quickstart, to: /quickstart/aws/}
