@@ -37,8 +37,8 @@ readable with no hyperi-ai installed.
 ``check`` is the DRY-RUN half. It reads each out-edge, runs the check for that
 edge's kind, and prints what moved and what the next step is. It changes
 nothing. ``walk`` runs the same checks and then rebuilds each consumer whose
-check said so -- serially, one PR per consumer, stopping on the first failed
-rebuild. Every edge the rebuild does not answer is reported and counted,
+check said so -- concurrently, one PR per consumer. A failed rebuild stops
+new rebuilds from starting, and the ones already running finish and report. Every edge the rebuild does not answer is reported and counted,
 whether or not a rebuild ran for that consumer, and the list of what is left
 for a person is printed before the walk returns however it ends.
 
@@ -66,7 +66,10 @@ import io
 import json
 import os
 import subprocess
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
 
 import check_member_pins
 from dfe_suite.graph import in_edges, load_graph, load_producer, out_edges
@@ -79,7 +82,7 @@ from dfe_suite.kinds import (
     CheckResult,
     check_edge,
 )
-from dfe_suite.proc import DEFAULT_ORG, FleetError, say, set_tag
+from dfe_suite.proc import DEFAULT_ORG, FleetError, labelled, say, set_tag
 from dfe_suite.rebuild import rebuild_python, rebuild_rust
 from dfe_suite.repos import find_repo
 from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
@@ -174,6 +177,10 @@ DISPATCH_RULE = (
 )
 
 NOT_ON_DISK = "not on disk"
+
+# A Rust rebuild peaks at about 6 CI jobs, and the org shares 60 concurrent
+# GitHub-hosted jobs, so 6 consumers leave room for the producer's and the PR runs.
+WALK_JOBS = 6
 
 
 def cmd_release(args: argparse.Namespace) -> int:
@@ -278,14 +285,17 @@ def _rebuild_for(action: str) -> Callable[..., int]:
 def cmd_walk(args: argparse.Namespace) -> int:
     """Walk one producer's out-edges and ACT: rebuild each consumer that moved.
 
-    Serial, one consumer at a time, and a consumer with several edges is
-    rebuilt once. What the rebuild does NOT re-do is reported under "after the
-    rebuild, confirm:" and counted, so a lockstep edge cannot be swallowed by
-    a sibling edge that happened to dispatch a rebuild first.
+    Consumers run concurrently, up to --jobs at once (WALK_JOBS by default),
+    and a consumer with several edges is rebuilt once. Local builds take turns
+    on one lock, while the PR checks and release runs overlap on the CI
+    runners. What the rebuild does NOT re-do is reported under "after the rebuild, confirm:" and counted,
+    so a lockstep edge cannot be swallowed by a sibling edge that happened to
+    dispatch a rebuild first.
 
     A rebuild only runs for a producer whose package the rebuild knows how to
-    bump; any other producer's rebuild action is left for a person. A failed
-    rebuild stops the walk, and the person-list is printed either way.
+    bump. Any other producer's rebuild action is left for a person. A failed
+    rebuild stops consumers that have not started, the ones in flight finish
+    and report, and the person-list is printed either way.
     """
     dfe_infra = Path(args.dfe_infra).expanduser() if args.dfe_infra else None
     payload = load_producer(args.producer, dfe_infra=dfe_infra)
@@ -302,7 +312,7 @@ def cmd_walk(args: argparse.Namespace) -> int:
     )
     include = _included(args)
     left_for_a_person: list[tuple[str, str, str]] = []
-    failed = 0
+    queued: dict[str, list[dict]] = {}
     for consumer, group in by_consumer.items():
         node = nodes.get(consumer) if isinstance(nodes.get(consumer), dict) else {}
         if node.get("default_in_pass") is False and consumer not in include:
@@ -311,11 +321,34 @@ def cmd_walk(args: argparse.Namespace) -> int:
                 f", name it with --include {consumer}"
             )
             continue
-        failed = _walk_consumer(
-            consumer, group, args, package=package, left=left_for_a_person
-        )
-        if failed:
-            break
+        queued[consumer] = group
+    stop = threading.Event()
+    gate_lock = threading.Lock()
+    not_started: list[str] = []
+
+    def walk_one(consumer: str) -> int:
+        if stop.is_set():
+            not_started.append(consumer)
+            return 0
+        with labelled(consumer):
+            rc = _walk_consumer(
+                consumer,
+                queued[consumer],
+                args,
+                package=package,
+                left=left_for_a_person,
+                gate_lock=gate_lock,
+            )
+        if rc:
+            stop.set()
+        return rc
+
+    jobs = args.jobs or max(len(queued), 1)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        codes = list(pool.map(walk_one, queued))
+    failed = next((code for code in codes if code), 0)
+    if not_started:
+        say(f"not started after a failed rebuild: {', '.join(not_started)}")
     if left_for_a_person:
         say(f"{len(left_for_a_person)} edge(s) need a person or another tool:")
         for consumer, action, detail in left_for_a_person:
@@ -332,6 +365,7 @@ def _walk_consumer(
     *,
     package: str | None,
     left: list[tuple[str, str, str]],
+    gate_lock: AbstractContextManager[object] | None = None,
 ) -> int:
     """Check one consumer's edges and rebuild it if the graph says so.
 
@@ -407,6 +441,7 @@ def _walk_consumer(
         "subject": args.subject,
         "dry_run": args.dry_run,
         "org": args.org,
+        "gate_lock": gate_lock,
     }
     if rebuild is rebuild_rust:
         kwargs["run_tests"] = not _flag_applies(args.no_tests, consumer)
@@ -417,7 +452,7 @@ def _walk_consumer(
         left.append((consumer, rebuild_action, str(exc)))
         return 1
     if rc != 0:
-        say(f"{consumer}: rebuild returned {rc} -- the walk stops here")
+        say(f"{consumer}: rebuild returned {rc} -- no further rebuilds start")
     return rc
 
 
@@ -800,6 +835,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared(walk)
     walk.add_argument("producer", help="the node that released, e.g. scalo-rs")
     walk.add_argument("version", help="the version it released")
+    walk.add_argument(
+        "--jobs",
+        type=int,
+        default=WALK_JOBS,
+        help=(
+            f"consumers rebuilt at once (default {WALK_JOBS}, 0 for all of them,"
+            " 1 for one at a time)"
+        ),
+    )
     walk.add_argument("--subject", default="", help="commit subject for each rebuild")
     walk.add_argument(
         "--no-tests",

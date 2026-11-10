@@ -236,14 +236,19 @@ def test_a_single_manifest_image_reads_its_config_platform() -> None:
     expect("after the raw read came back with no index", len(calls) == 2, f"{calls}")
 
 
-def _with_platforms(reader, fn):
-    """Run fn with registry_pins.ref_platforms replaced by reader."""
-    original = stack.registry_pins.ref_platforms
+def _native_builders(ref: str) -> tuple[dict[str, str], str]:
+    return {"linux/amd64": "linux/amd64", "linux/arm64": "linux/arm64"}, ""
+
+
+def _with_platforms(reader, fn, builders=_native_builders):
+    """Run fn with the platform read answered by reader and the provenance read by builders."""
+    original = stack.registry_pins.ref_platforms, stack.registry_pins.ref_builder_platforms
     stack.registry_pins.ref_platforms = reader
+    stack.registry_pins.ref_builder_platforms = builders
     try:
         return fn()
     finally:
-        stack.registry_pins.ref_platforms = original
+        stack.registry_pins.ref_platforms, stack.registry_pins.ref_builder_platforms = original
 
 
 def _multi_arch_except(single: str):
@@ -286,6 +291,130 @@ def test_platforms_read_the_pinned_digest_not_the_tag() -> None:
     expect("every read is by digest", by_digest, f"{asked}")
 
 
+# What `imagetools inspect --format '{{json .Provenance}}'` printed for dfe-toolbox-base
+# v1.0.6, cut to the field read: its arm64 half was built on an amd64 builder.
+_QEMU_PROVENANCE = {
+    "linux/amd64": {
+        "SLSA": {"buildDefinition": {"internalParameters": {"builderPlatform": "linux/amd64"}}}
+    },
+    "linux/arm64": {
+        "SLSA": {"buildDefinition": {"internalParameters": {"builderPlatform": "linux/amd64"}}}
+    },
+}
+
+
+def test_the_provenance_parser_reads_each_platforms_builder() -> None:
+    import copy
+
+    native = copy.deepcopy(_QEMU_PROVENANCE)
+    native["linux/arm64"]["SLSA"]["buildDefinition"]["internalParameters"]["builderPlatform"] = (
+        "linux/arm64"
+    )
+    no_builder = {"linux/arm64": {"SLSA": {"buildDefinition": {}}}}
+    cases = {
+        "an emulated arm64 build names the amd64 builder": (
+            _QEMU_PROVENANCE,
+            {"linux/amd64": "linux/amd64", "linux/arm64": "linux/amd64"},
+        ),
+        "a native arm64 build names the arm64 builder": (
+            native,
+            {"linux/amd64": "linux/amd64", "linux/arm64": "linux/arm64"},
+        ),
+        "an image with no provenance lists no platform": ({}, {}),
+        "a provenance naming no builder reads as an empty builder": (
+            no_builder,
+            {"linux/arm64": ""},
+        ),
+        "a document that is not a map is unreadable": ([], None),
+    }
+    for name, (doc, want) in sorted(cases.items()):
+        got = stack.registry_pins.provenance_builders(doc)
+        expect(name, got == want, f"{got}")
+
+
+def _provenance_from(answer: tuple[str | None, str]) -> tuple[dict[str, str] | None, str]:
+    """ref_builder_platforms over an imagetools read that answered with answer."""
+
+    def _imagetools(ref: str, *flags: str, budget: object = None) -> tuple[str | None, str]:
+        return answer
+
+    original = stack.registry_pins._imagetools
+    stack.registry_pins._imagetools = _imagetools
+    try:
+        return stack.registry_pins.ref_builder_platforms("registry.example/org/x@sha256:aaa")
+    finally:
+        stack.registry_pins._imagetools = original
+
+
+def test_an_unreadable_provenance_read_is_an_error() -> None:
+    cases = {
+        "a registry that refused the read": ((None, "403 Forbidden"), "403 Forbidden"),
+        "output that is not JSON": (("not json", ""), "unreadable provenance"),
+        "JSON that is not a per-platform map": (("[]", ""), "not a per-platform map"),
+    }
+    for name, (answer, said) in sorted(cases.items()):
+        found, err = _provenance_from(answer)
+        expect(f"{name} returns no builders", found is None, f"{found}")
+        expect(f"{name} says why", said in err, err)
+
+
+def test_platforms_fail_an_arm64_half_not_built_natively() -> None:
+    """An arm64 half fails unless its provenance shows an arm64 builder."""
+    readers = {
+        "a native arm64 build passes": (_native_builders, "ok", "built natively"),
+        "an arm64 half built on an amd64 builder fails": (
+            lambda ref: (stack.registry_pins.provenance_builders(_QEMU_PROVENANCE), ""),
+            "FAIL",
+            "linux/arm64 built on linux/amd64, not natively",
+        ),
+        "an image with no provenance fails": (
+            lambda ref: ({}, ""),
+            "FAIL",
+            "no linux/arm64 provenance",
+        ),
+        "a provenance naming no builder fails": (
+            lambda ref: ({"linux/arm64": ""}, ""),
+            "FAIL",
+            "built on a builder its provenance does not name",
+        ),
+        "an unreadable provenance is an error": (
+            lambda ref: (None, "403 Forbidden"),
+            "ERROR",
+            "provenance unreadable: 403 Forbidden",
+        ),
+    }
+    for name, (builders, status, said) in sorted(readers.items()):
+        findings = _with_platforms(
+            _both_platforms,
+            lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"),
+            builders,
+        )
+        expect(
+            f"{name}, for every image",
+            bool(findings) and all(s == status and said in d for s, _, d in findings),
+            f"{findings}",
+        )
+
+
+def test_the_provenance_is_read_at_the_pinned_digest() -> None:
+    asked: list[str] = []
+
+    def builders(ref: str) -> tuple[dict[str, str], str]:
+        asked.append(ref)
+        return _native_builders(ref)
+
+    _with_platforms(
+        _both_platforms,
+        lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"),
+        builders,
+    )
+    expect(
+        "every provenance read is by digest",
+        bool(asked) and all("@sha256:" in r for r in asked),
+        f"{asked}",
+    )
+
+
 def test_an_unreadable_registry_is_an_error_not_a_pass() -> None:
     findings = _with_platforms(
         lambda ref: (None, "403 Forbidden"),
@@ -302,7 +431,9 @@ def _no_repo_files(org: str, repo: str, ref: str, path: str) -> str:
     raise stack.registry_pins.RegistryError(f"unexpected read of {org}/{repo}@{ref}:{path}")
 
 
-def _run_release_gate(block: str, reader, repo_file=_no_repo_files) -> tuple[int, str]:
+def _run_release_gate(
+    block: str, reader, repo_file=_no_repo_files, builders=_native_builders
+) -> tuple[int, str]:
     """release-gate over one throwaway stack block, its registry and repository reads answered here."""
     import argparse
     import contextlib
@@ -318,13 +449,13 @@ def _run_release_gate(block: str, reader, repo_file=_no_repo_files) -> tuple[int
             stack.REPO_ROOT, stack.registry_pins.repo_file = Path(td), repo_file
             args = argparse.Namespace(stack=None, registry="registry.example/org", org="hyperi-io")
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                rc = _with_platforms(reader, lambda: stack.cmd_release_gate(args))
+                rc = _with_platforms(reader, lambda: stack.cmd_release_gate(args), builders)
         finally:
             stack.REPO_ROOT, stack.registry_pins.repo_file = original
     return rc, out.getvalue()
 
 
-def _release_gate_over(maturity: str, reader) -> tuple[int, str]:
+def _release_gate_over(maturity: str, reader, builders=_native_builders) -> tuple[int, str]:
     """release-gate over a throwaway stack of _IMAGES_PINS's published images."""
     block = (
         f"    maturity: {maturity}\n"
@@ -332,17 +463,31 @@ def _release_gate_over(maturity: str, reader) -> tuple[int, str]:
         '    content:\n      a-fork: "v0.2.7"\n'
         '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
     )
-    return _run_release_gate(block, reader)
+    return _run_release_gate(block, reader, builders=builders)
 
 
-def test_release_gate_fails_a_release_with_a_single_arch_image() -> None:
-    rc, out = _release_gate_over("release", _multi_arch_except("a-fork"))
-    expect("the gate exits non-zero", rc == 1, f"exit {rc}\n{out}")
-    expect(
-        "and names the image and the missing architecture",
-        "a-fork:v0.2.7" in out and "missing linux/arm64" in out,
-        out,
-    )
+def test_release_gate_fails_a_release_with_a_single_arch_or_emulated_image() -> None:
+    def emulated_fork(ref: str) -> tuple[dict[str, str], str]:
+        if "/a-fork:" in ref:
+            return stack.registry_pins.provenance_builders(_QEMU_PROVENANCE), ""
+        return _native_builders(ref)
+
+    cases = {
+        "a single-arch image": (
+            _multi_arch_except("a-fork"),
+            _native_builders,
+            "missing linux/arm64",
+        ),
+        "an arm64 half built under emulation": (
+            _both_platforms,
+            emulated_fork,
+            "built on linux/amd64",
+        ),
+    }
+    for name, (reader, builders, said) in sorted(cases.items()):
+        rc, out = _release_gate_over("release", reader, builders)
+        expect(f"{name} exits the gate non-zero", rc == 1, f"exit {rc}\n{out}")
+        expect(f"{name} is named with what it lacks", "a-fork:v0.2.7" in out and said in out, out)
 
 
 def test_release_gate_passes_a_release_that_carries_both() -> None:
@@ -454,13 +599,19 @@ def _template(base: str) -> str:
     return f'# pins.yaml\n\nbase:\n  dfe-infra: "{base}"      # charts, appsets, defaults.\n  #  continued.\nchannel: "rc"\n'
 
 
+def test_the_deploy_step_names_the_stack_the_pin_and_the_content_entry() -> None:
+    step = stack.deploy_step("2.2.2-rc.1")
+    expect("names pins.yaml base.dfe-infra", 'base.dfe-infra` to "2.2.2-rc.1"' in step, step)
+    expect("names the content pin to move", "content.dfe-deploy in stack 2.2.2-rc.1" in step, step)
+
+
 def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None:
     for maturity in ("rc", "release"):
         rc, out, asked = _deploy_gate(_template("9.9.8"), maturity)
         expect(f"{maturity}: a template naming 9.9.8 fails stack 9.9.9", rc == 1, f"exit {rc}\n{out}")
         expect(
             f"{maturity}: the error names the pin, both stacks and the fix",
-            "dfe-deploy v1.0.8" in out and "9.9.8" in out and "tag a dfe-deploy whose template names 9.9.9" in out,
+            "dfe-deploy v1.0.8" in out and "9.9.8" in out and stack.deploy_step("9.9.9") in out,
             out,
         )
         expect(
@@ -806,7 +957,7 @@ def test_verify_covers_every_image_toolbox_build_publishes() -> None:
     """An image the workflow pushes and verify never reads could ship unpublished."""
     workflow = REPO_ROOT / ".github" / "workflows" / "toolbox-build.yml"
     text = workflow.read_text(encoding="utf-8")
-    built = set(re.findall(r"^\s+IMAGE: (\S+)$", text, re.MULTILINE))
+    built = set(re.findall(r'--ref "\$\{IMAGE_PREFIX\}/(dfe-toolbox-[a-z]+):', text))
     covered = set(stack._FAMILY_TAGS) | set(stack._FAMILY_UNPINNED)
     expect("the workflow names its images", len(built) == 4, f"{sorted(built)}")
     detail = f"built {sorted(built)}, covered {sorted(covered)}"

@@ -12,80 +12,53 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS MSK
 
-Operations (bootstrap Job, autoscaling, telemetry):
-[aws-msk-operations.md](aws-msk-operations.md).
+Operations (bootstrap Job, autoscaling, telemetry) are in [aws-msk-operations.md](aws-msk-operations.md).
 
-The aws root builds MSK Provisioned itself under `kafka.provider: msk`
-(`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up
-yourself, then point DFE at with `kafka.mode=external`. MSK comes in two shapes
-DFE supports as distinct providers:
+The aws root builds MSK Provisioned itself under `kafka.provider: msk` (`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up yourself and then point DFE at with `kafka.mode=external`. DFE supports two MSK shapes, as distinct providers:
 
-- **MSK Provisioned** -- fixed broker-hour capacity, KRaft, full
-  `server.properties` control. DFE provider `msk`, auth **SASL/SCRAM-SHA-512**
-  (Secrets Manager). This is the closest managed cluster to DFE's own
-  self-hosted brokers.
-- **MSK Serverless** -- elastic, IAM-only. DFE provider `msk_iam`, auth
-  **IAM / SASL_SSL OAUTHBEARER** (port 9098). No static secret; almost no broker
-  config.
+- MSK Provisioned has fixed broker-hour capacity, KRaft and full `server.properties` control. It's DFE provider `msk`, with SASL/SCRAM-SHA-512 auth (Secrets Manager). It's the closest managed cluster to DFE's own self-hosted brokers.
+- MSK Serverless is elastic and IAM-only. It's DFE provider `msk_iam`, with IAM / SASL_SSL OAUTHBEARER auth (port 9098). There's no static secret and almost no broker config.
 
-Read the opinionated baseline in [README.md](README.md) first -- this guide only
-covers what MSK lets you apply and how.
+Read the baseline in [README.md](README.md) first. This guide only covers what MSK lets you apply and how.
 
-MSK Provisioned is the slowest backend to create and delete, and a cluster can't be paused, so it bills for every hour it exists. Plan any test environment around that. DFE was tested on MSK once, with 2.2.1, and is not re-tested there without explicit approval: only where a change needs a real MSK cluster to prove, or alongside AWS if they want to be involved ([testing-cycle.md](../../testing-cycle.md#msk-runs-last-and-rarely)).
+MSK Provisioned is the slowest backend to create and delete, and you can't pause a cluster, so it bills for every hour it exists. Plan any test environment around that. DFE was tested on MSK once, with 2.2.1. We don't re-test there without explicit approval, which means only where a change needs a real MSK cluster to prove, or alongside AWS if they want to be involved ([cloud-cycle.md](../../cloud-cycle.md#msk-runs-last-and-rarely)).
 
 ## What MSK lets you set vs locks down
 
 ### MSK Provisioned
 
-MSK Provisioned gives you a real `server.properties` via an
-`aws_msk_configuration` attached to the cluster, so the broker-level DFE defaults
-apply directly.
+MSK Provisioned gives you a real `server.properties` through an `aws_msk_configuration` attached to the cluster, so the broker-level DFE defaults apply directly.
 
 | DFE default | On MSK Provisioned |
 |---|---|
-| KRaft (no ZooKeeper) | Yes -- MSK is KRaft-managed; nothing to set. |
-| `default.replication.factor=3` | Settable, and MSK FORCES topic RF to 3 anyway (a create with RF != 3 is coerced to 3). Aligned with DFE. |
-| `min.insync.replicas=2` | Settable at the broker level (`server_properties`). NOTE: the topic-level override is PROTECTED -- you cannot weaken it per topic. |
+| KRaft (no ZooKeeper) | Yes. MSK manages KRaft and there's nothing to set. |
+| `default.replication.factor=3` | Settable, and MSK FORCES topic RF to 3 anyway (a create with RF != 3 is coerced to 3). That matches DFE. |
+| `min.insync.replicas=2` | Settable at the broker level (`server_properties`). The topic-level override is PROTECTED, so you can't weaken it per topic. |
 | `unclean.leader.election.enable=false` | Settable at the broker level. Topic-level override PROTECTED. |
 | `num.partitions=12` | Settable at the broker level (applies to auto-created topics). |
 | `compression.type=producer` | Settable. |
 | `log.retention.hours=72` | Settable. |
 | `log.retention.bytes` (unset) | Settable (leave off / -1). |
 | `log.segment.bytes=512 MiB` | Settable. |
-| `message.max.bytes` (default) | Settable; keep aligned with `replica.fetch.max.bytes`. |
+| `message.max.bytes` (default) | Settable. Keep it in step with `replica.fetch.max.bytes`. |
 
-Locked: the topic-level overrides of `min.insync.replicas`,
-`unclean.leader.election.enable`, and the replication factor are protected by
-MSK. This is FINE for DFE -- the DFE defaults are exactly what MSK enforces, so
-the protection works in your favour.
+Locked: MSK protects the topic-level overrides of `min.insync.replicas`, `unclean.leader.election.enable` and the replication factor. The DFE defaults for those three (2, false and 3) are the values you set at broker level, so nothing needs a topic-level override.
 
 ### MSK Serverless
 
-MSK Serverless hides the broker entirely. There is **no `aws_msk_configuration`**
--- you cannot set `num.partitions`, `default.replication.factor`,
-`unclean.leader.election.enable`, `log.segment.bytes`, or any other broker
-default. AWS manages durability (each partition gets replicas AWS does not
-count against your quota).
+MSK Serverless hides the broker entirely. There's no `aws_msk_configuration`, so you can't set `num.partitions`, `default.replication.factor`, `unclean.leader.election.enable`, `log.segment.bytes` or any other broker default. AWS manages durability, and each partition gets replicas AWS doesn't count against your quota.
 
 | DFE default | On MSK Serverless |
 |---|---|
-| KRaft / replication / ISR / unclean election | Locked -- AWS-managed, not exposed. Durability is handled by AWS; you cannot set RF/ISR. |
-| `num.partitions=12` | Not a broker default -- set partition count PER TOPIC at create time. Cluster quota: 2400 leader partitions (raise via AWS Support). |
-| `compression.type`, `retention.ms`, `retention.bytes`, `max.message.bytes`, `cleanup.policy` | Settable PER TOPIC only (these five are the honoured topic configs). |
-| `log.segment.bytes` | Locked -- managed. |
-| Per-partition storage | Hard cap 250 GB/partition -- add partitions for more storage, not longer single-partition retention. |
-
-Because Serverless exposes so little, the DFE opinion collapses to: RF/ISR/unclean
-are AWS-managed (already durable), and you express retention + compression +
-partitions per topic.
+| KRaft / replication / ISR / unclean election | Locked. AWS manages them and doesn't expose them. AWS handles durability, so you can't set RF/ISR. |
+| `num.partitions=12` | Not a broker default, so set partition count PER TOPIC at create time. Cluster quota is 2400 leader partitions (raise it through AWS Support). |
+| `compression.type`, `retention.ms`, `retention.bytes`, `max.message.bytes`, `cleanup.policy` | Settable PER TOPIC only. These five are the topic configs MSK honours. |
+| `log.segment.bytes` | Locked and managed. |
+| Per-partition storage | Hard cap of 250 GB/partition. Add partitions for more storage, and don't lengthen single-partition retention. |
 
 ## Terraform / OpenTofu -- MSK Provisioned (SASL/SCRAM-512)
 
-This is the DFE `msk` provider path: a provisioned cluster with a custom
-configuration carrying the DFE broker defaults, SASL/SCRAM auth backed by Secrets
-Manager, and the SCRAM secret associated to the cluster. The Kafka version,
-broker count, broker type and volume size are variables your tfvars set, never
-literals in the `.tf`.
+This is the DFE `msk` provider path. It's a provisioned cluster with a custom configuration carrying the DFE broker defaults, SASL/SCRAM auth backed by Secrets Manager, and the SCRAM secret associated to the cluster. Your tfvars set the Kafka version, broker count, broker type and volume size. They're never literals in the `.tf`.
 
 ```hcl
 terraform {
@@ -175,14 +148,11 @@ output "bootstrap_brokers_sasl_scram" {
 }
 ```
 
-Point DFE at the `bootstrap_brokers_sasl_scram` endpoint with provider `msk`
-(see "Wiring back to DFE" below).
+Point DFE at the `bootstrap_brokers_sasl_scram` endpoint with provider `msk` (see "Wiring back to DFE" below).
 
 ## Terraform / OpenTofu -- MSK Serverless (IAM)
 
-This is the DFE `msk_iam` provider path. Minimal cluster (AWS manages capacity);
-auth is IAM only, so there is NO Secrets Manager secret and NO
-`aws_msk_configuration`.
+This is the DFE `msk_iam` provider path. It's a minimal cluster, and AWS manages capacity. Auth is IAM only, so there's NO Secrets Manager secret and NO `aws_msk_configuration`.
 
 ```hcl
 resource "aws_msk_serverless_cluster" "dfe" {
@@ -225,50 +195,35 @@ output "bootstrap_brokers_sasl_iam" {
 
 ### Topics on either MSK (the AWS provider does not manage topics)
 
-Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics, and on
-a Provisioned cluster carrying the DFE configuration nothing else will either:
-`auto.create.topics.enable` is false, so that the partition count per source is an
-explicit number rather than a broker default. dfe-engine creates them at startup
-from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below
-writes. Leave them to it: a topic created any other way keeps its own
-partitions and configs, which the engine does not reshape.
+Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics, and on a Provisioned cluster carrying the DFE configuration nothing else will either. `auto.create.topics.enable` is false, so the partition count per source is an explicit number and not a broker default. dfe-engine creates the topics at startup from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below writes. Leave them to it. A topic created any other way keeps its own partitions and configs, and the engine doesn't reshape them.
 
-See [aws-msk-operations.md](aws-msk-operations.md) for the bootstrap Job
-that writes the ACLs (and what you set to drive it by hand),
-broker-count autoscaling, telemetry routing, and the broker security
-group's ports.
+[aws-msk-operations.md](aws-msk-operations.md) covers the bootstrap Job that writes the ACLs (and what you set to drive it by hand), broker-count autoscaling, telemetry routing and the broker security group's ports.
 
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap endpoint>`.
-- `kafka.securityProtocol=SASL_SSL`: the SCRAM listener on 9096 is TLS only, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand: `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
-- `kafka.external.provider`, the identity the chart derives the SASL mechanism from:
-  - Provisioned: `msk` -> `SASL_SSL` + `SCRAM-SHA-512`. Credentials via the Vault-backed external secret (`kafka.external.auth.type=scram`).
-  - Serverless: `msk_iam` -> `SASL_SSL` + `OAUTHBEARER`. Set `kafka.external.auth.type=msk_iam` -- NO static secret is rendered.
-- Client config: `dfe kafka client-config --provider msk` (or `msk_iam`) emits
-  the derived settings from the canonical provider table.
+- `kafka.securityProtocol=SASL_SSL`. The SCRAM listener on 9096 is TLS only, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand. `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
+- `kafka.external.provider` is the identity the chart derives the SASL mechanism from:
+  - Provisioned: `msk` gives `SASL_SSL` and `SCRAM-SHA-512`. Credentials come from the Vault-backed external secret (`kafka.external.auth.type=scram`).
+  - Serverless: `msk_iam` gives `SASL_SSL` and `OAUTHBEARER`. Set `kafka.external.auth.type=msk_iam`, and NO static secret is rendered.
+- Client config: `dfe kafka client-config --provider msk` (or `msk_iam`) prints the derived settings from the canonical provider table.
 
-## Verification -- what is and is not confirmed
+## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in README): MSK Provisioned exposes
-`server_properties` including all the DFE broker defaults; topic-level RF /
-`min.insync.replicas` / `unclean.leader.election.enable` are protected and RF is
-forced to 3. MSK Serverless is IAM-only on 9098, has no `aws_msk_configuration`,
-caps at 2400 leader partitions and 250 GB/partition, and honours only
-`cleanup.policy`, `compression.type`, `max.message.bytes`, `retention.bytes`,
-`retention.ms` per topic. The `aws_msk_configuration`,
-`aws_msk_scram_secret_association`, `aws_msk_serverless_cluster`, and IAM SASL
-resources are all current in the provider.
+Confirmed by 2026 research (sources in the README):
 
-The bootstrap Job's pinned jar is verified: `aws-msk-iam-auth` v2.3.8 was
-published 2026-09-05 and the sha256 in `values.yaml` matches both the release's
-own `.sha256` asset and a hand-computed sum of the downloaded jar.
+- MSK Provisioned exposes `server_properties`, including all the DFE broker defaults.
+- Topic-level RF, `min.insync.replicas` and `unclean.leader.election.enable` are protected, and RF is forced to 3.
+- MSK Serverless is IAM-only on 9098 and has no `aws_msk_configuration`.
+- Serverless caps at 2400 leader partitions and 250 GB/partition, and honours only `cleanup.policy`, `compression.type`, `max.message.bytes`, `retention.bytes` and `retention.ms` per topic.
+- The `aws_msk_configuration`, `aws_msk_scram_secret_association`, `aws_msk_serverless_cluster` and IAM SASL resources are all current in the provider.
 
-NOT verified: that the
-bootstrap Job authenticates end to end -- the Pod Identity credential reaching the
-IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, have not been
-run against a real cluster. Also the
-`broker_instance_type` / `broker_volume_gib` sizing for your throughput, and that every `server.properties` key above is permitted
-on the specific Kafka version you pick (the allowed set varies by version --
-check the AWS "Custom MSK configurations" page). Treat the snippets as templates
-to `tofu validate` and plan against your account before apply.
+The bootstrap Job's pinned jar is verified. `aws-msk-iam-auth` v2.3.8 was published 2026-09-05, and the sha256 in `values.yaml` matches both the release's own `.sha256` asset and a hand-computed sum of the downloaded jar.
+
+NOT verified:
+
+- That the bootstrap Job authenticates end to end. The Pod Identity credential reaching the IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, haven't been run against a real cluster.
+- The `broker_instance_type` and `broker_volume_gib` sizing for your throughput.
+- That every `server.properties` key above is permitted on the Kafka version you pick. The allowed set varies by version, so check the AWS "Custom MSK configurations" page.
+
+Treat the snippets as templates. Run `tofu validate` and plan against your account before you apply.
