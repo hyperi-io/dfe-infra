@@ -104,8 +104,8 @@ egress (DFE_EGRESS_CIDRS) and the endpoint CIDR to the ClickHouse Cloud service'
 IP access list, and the teardown removes them first (scripts/clickhouse_cloud_access.py).
 
 cloud-cycle also refuses, before the preflight and the apply, a cycle that runs the edge
-suite (--acceptance-suite edge) when DFE_RUN_INGEST_ALLOW_CIDR is unset or admits every
-address. It is read from the environment and the cycle's --env-file files, as dfe-ops
+suite (--acceptance-suite edge) when DFE_RUN_INGEST_ALLOW_CIDRS (or the one-network
+DFE_RUN_INGEST_ALLOW_CIDR) is unset or an entry admits every address. It is read from the environment and the cycle's --env-file files, as dfe-ops
 cycle reads it, which would otherwise refuse only after the apply had built the cluster.
 
 Every value is a flag or an environment variable: DFE_GUARD_ROLE,

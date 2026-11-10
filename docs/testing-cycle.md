@@ -129,7 +129,7 @@ The source and edge suites leave nothing behind. Each reads the deployment befor
 
 The stage writes the allow list to the deploy repo's overlay and puts it back afterwards (`--keep` leaves it). Only a cloud lane has a public load balancer to send to, so `all` never includes it. It reads two inputs:
 
-- `DFE_RUN_INGEST_ALLOW_CIDR` is the address the suite sends from, taken from the environment or an `--env-file`. It has to be one network and never `/0`, because a refusal cannot prove a list that admits everyone.
+- `DFE_RUN_INGEST_ALLOW_CIDRS` is the allow list, comma or space separated, taken from the environment or an `--env-file`. The suite's sender has to sit inside one entry, and the cluster's egress outside every entry. No entry may be `/0`, because a refusal cannot prove a list that admits everyone. `DFE_RUN_INGEST_ALLOW_CIDR`, one network, is read when the list is unset.
 - `DFE_EGRESS_CIDRS` is the cluster's NAT egress as /32s, taken from the cloud root's tofu output through `--from-terraform`.
 
 A missing or `/0` allow address is refused before it costs a cluster. `dfe-ops cloud-cycle` refuses it ahead of the preflight and the apply, and `dfe-ops cycle` refuses it ahead of the deploy.
