@@ -35,7 +35,8 @@ Subcommands:
                  Third-party chart images are NOT listed -- stated, not silent.
   platforms      Read each DFE image's pinned index from the registry and print
                  its platforms; exit 1 unless every one carries linux/amd64 and
-                 linux/arm64.
+                 linux/arm64, and its SLSA provenance says linux/arm64 was built
+                 on a linux/arm64 builder rather than emulated.
   graph          Derive the stack upgrade graph from the in-file stacks (JSON).
                  A `support: withdrawn` stack is a source, never a target.
   check-upgrade  Verdict on FROM -> TO: refuse a withdrawn TO, then honour its
@@ -48,7 +49,8 @@ Subcommands:
   release-gate   Fail any stack whose content.dfe-schemas is not the release its
                  dfe-engine's uv.lock locks, whose content.dfe-deploy template
                  names another stack, and a release-maturity stack with an
-                 unpublished app or a DFE image lacking linux/amd64 or linux/arm64.
+                 unpublished app or a DFE image lacking linux/amd64 or a native
+                 linux/arm64.
   suite          Read suite.yaml (membership + build-cycle edges): the whole
                  graph as JSON, the build-cycle table, a --producer,
                  --consumer or --lane slice, or (re)render the Mermaid blocks
@@ -299,6 +301,27 @@ def untagged_digests(v: dict) -> list[str]:
 # nodes), and an image missing either pulls fine and dies at exec on the other.
 REQUIRED_PLATFORMS = ("linux/amd64", "linux/arm64")
 
+# No image the stack pins may have its arm64 half built under QEMU emulation.
+NATIVE_PLATFORM = "linux/arm64"
+
+
+def native_finding(ref: str, label: str, have: str) -> tuple[str, str, str]:
+    """(status, image, detail) for whether ref's NATIVE_PLATFORM provenance names a native builder.
+
+    An image with no NATIVE_PLATFORM provenance FAILs, and one whose provenance
+    cannot be read is an ERROR: neither shows a native build.
+    """
+    builders, err = registry_pins.ref_builder_platforms(ref)
+    if builders is None:
+        return "ERROR", label, f"{have} -- provenance unreadable: {err}"
+    if NATIVE_PLATFORM not in builders:
+        return "FAIL", label, f"{have} -- no {NATIVE_PLATFORM} provenance to show a native build"
+    built_on = builders[NATIVE_PLATFORM]
+    if built_on != NATIVE_PLATFORM:
+        builder = built_on or "a builder its provenance does not name"
+        return "FAIL", label, f"{have} -- {NATIVE_PLATFORM} built on {builder}, not natively"
+    return "ok", label, f"{have} -- {NATIVE_PLATFORM} built natively"
+
 
 def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
     """(status, image, detail) per DFE image; status is ok, FAIL or ERROR.
@@ -319,7 +342,7 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
         if missing:
             findings.append(("FAIL", label, f"{have} -- missing {', '.join(missing)}"))
         else:
-            findings.append(("ok", label, have))
+            findings.append(native_finding(ref, label, have))
     for name in untagged_digests(v):
         findings.append(("ERROR", name, "digest pinned with no tag under apps:, content: or a family pin"))
     return findings
@@ -596,8 +619,8 @@ def cmd_platforms(args: argparse.Namespace) -> int:
         print(f"{status:<5} {image}  {detail}")
     bad = sum(1 for status, _, _ in findings if status != "ok")
     print(
-        f"\n{len(findings)} image(s), {bad} without {' and '.join(REQUIRED_PLATFORMS)} "
-        "or unreadable"
+        f"\n{len(findings)} image(s), {bad} without {' and '.join(REQUIRED_PLATFORMS)}, "
+        f"without a native {NATIVE_PLATFORM}, or unreadable"
     )
     return 1 if bad else 0
 
@@ -1483,7 +1506,8 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         return 1
     print(
         f"release-gate {name}: maturity=release, every app published, all "
-        f"{len(findings)} image(s) carry {' and '.join(REQUIRED_PLATFORMS)}"
+        f"{len(findings)} image(s) carry {' and '.join(REQUIRED_PLATFORMS)}, "
+        f"{NATIVE_PLATFORM} native"
     )
     return 0
 
@@ -1923,7 +1947,7 @@ def main() -> int:
 
     p = sub.add_parser(
         "platforms",
-        help="print each DFE image's platforms; exit 1 unless all carry amd64 and arm64",
+        help="print each DFE image's platforms; exit 1 unless all carry amd64 and a native arm64",
     )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.add_argument("--tag", help="git tag (git show versions.yaml@tag)")
