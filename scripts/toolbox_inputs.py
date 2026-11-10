@@ -23,19 +23,25 @@ images share the family tag, so a change to any one image's inputs needs the
 bump, and the bump publishes all four under the new tag. `:latest` is pushed
 beside every new family tag as a moving pointer; nothing pins it.
 
+Each platform is built on a runner of its own architecture and pushed by digest,
+then one index joins them under the tag and carries the annotation. verify reads
+that index back and fails unless it holds the hash and exactly the hashed platforms.
+
 The decision reads what is PUBLISHED, never a git diff. The workflow runs the
 plan on every pull request too, with no registry credential, so a change that
 needs the bump fails there rather than on main.
 
-    plan    hash the inputs, read the published index, emit build=true|false
-            plus the docker flags that carry the hash; exit 1 on a refusal
-    verify  read the pushed index back and fail unless it carries the hash
+    plan    hash the inputs, read the published index, emit build=true|false,
+            the build-arg flags and the index annotation that carries the hash;
+            exit 1 on a refusal
+    verify  read the pushed index back and fail unless it carries the hash and
+            the hashed platforms
 
 Usage:
     python3 scripts/toolbox_inputs.py plan --ref REF --context DIR --platform LIST
                                            [--build-arg NAME=VALUE ...] [--base-inputs HEX]
                                            [--github-output PATH]
-    python3 scripts/toolbox_inputs.py verify --ref REF --inputs HEX
+    python3 scripts/toolbox_inputs.py verify --ref REF --inputs HEX --platform LIST
 
 Requires `docker` with the buildx plugin on PATH. Stdlib only.
 """
@@ -191,15 +197,22 @@ def plan_outputs(reason: Reason, inputs: str, flags: list[str]) -> dict[str, str
     if reason in REFUSED:
         return None
     build = "false" if reason is Reason.MATCH else "true"
-    return {"inputs": inputs, "build": build, "flags": " ".join(flags)}
+    return {
+        "inputs": inputs,
+        "build": build,
+        "flags": " ".join(flags),
+        "annotation": index_annotation(inputs),
+    }
 
 
-def build_flags(build_args: list[str], platform_list: list[str], inputs: str) -> list[str]:
-    """The docker buildx flags that build exactly the inputs that were hashed."""
-    flags = [f"--platform={','.join(platform_list)}"]
-    flags += [f"--build-arg={arg}" for arg in build_args]
-    flags.append(f"--annotation=index:{INPUTS_ANNOTATION}={inputs}")
-    return flags
+def build_flags(build_args: list[str]) -> list[str]:
+    """The docker buildx flags that pass every hashed build arg to each platform's build."""
+    return [f"--build-arg={arg}" for arg in build_args]
+
+
+def index_annotation(inputs: str) -> str:
+    """The `docker buildx imagetools create --annotation` value that records the hash."""
+    return f"index:{INPUTS_ANNOTATION}={inputs}"
 
 
 def plan_line(ref: str, reason: Reason, published: Published | None) -> str:
@@ -227,6 +240,16 @@ def pushed_error(ref: str, published: Published | None, inputs: str) -> str | No
         return (
             f"{ref} ({published.digest}) carries inputs {published.inputs or '(none)'}, "
             f"expected {inputs} -- the index annotation did not reach the registry"
+        )
+    return None
+
+
+def platform_error(ref: str, found: set[str] | None, want: list[str]) -> str | None:
+    """Why a just-pushed index does not hold exactly the hashed platforms, or None."""
+    if found is None or found != set(want):
+        have = ", ".join(sorted(found or ())) or "no platforms"
+        return (
+            f"{ref} holds {have}, expected exactly {', '.join(want)} -- the merge lost or added one"
         )
     return None
 
@@ -282,7 +305,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     reason = decide(published, inputs)
     print(f"{args.ref}: inputs {inputs} over {len(files)} file(s), decision {reason}")
     print(plan_line(args.ref, reason, published))
-    outputs = plan_outputs(reason, inputs, build_flags(args.build_arg, args.platform, inputs))
+    outputs = plan_outputs(reason, inputs, build_flags(args.build_arg))
     if outputs is None:
         return 1
     write_outputs(outputs, args.github_output)
@@ -300,7 +323,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if error or published is None:
         print(f"::error::{error}")
         return 1
+    found, err = registry_pins.ref_platforms(f"{args.ref}@{published.digest}")
+    if found is None:
+        print(f"::error::{args.ref}@{published.digest}: {err}")
+        return 1
+    error = platform_error(args.ref, found, args.platform)
+    if error:
+        print(f"::error::{error}")
+        return 1
     print(f"{args.ref}: index {published.digest} carries {INPUTS_ANNOTATION}={published.inputs}")
+    print(f"{args.ref}: index {published.digest} holds {', '.join(args.platform)}")
     print(f"::notice::{args.ref} published at {published.digest}")
     return 0
 
@@ -337,6 +369,9 @@ def _parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help="check the pushed index carries the inputs hash")
     verify.add_argument("--ref", required=True, help="the tag just pushed, registry/name:tag")
     verify.add_argument("--inputs", required=True, type=sha256_hex, help="the hash plan emitted")
+    verify.add_argument(
+        "--platform", required=True, type=platforms, help="the os/arch list plan hashed"
+    )
     verify.set_defaults(func=cmd_verify)
     return parser
 

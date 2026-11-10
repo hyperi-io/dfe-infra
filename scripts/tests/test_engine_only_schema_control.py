@@ -79,6 +79,9 @@ TOPIC_CREATE = re.compile(
 ALLOWED_DDL = {
     "scripts/deploy_matrix.py",
     "scripts/tests/test_engine_only_schema_control.py",
+    # The text of the one DROP upgrade preflight prints for an operator to run; nothing executes it.
+    "scripts/schema_lock_remedy.py",
+    "scripts/tests/test_schema_lock_remedy.py",
 }
 ALLOWED_TOPIC_CREATE = {
     "scripts/deploy_matrix.py",

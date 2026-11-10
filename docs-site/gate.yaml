@@ -13,6 +13,8 @@ process:
   subagent: "describe the product, not how it was written"
   this session: "describe the product, not the session"
   TODO.md: "link the tracking issue, or leave it out"
+  auto-memory: "delete: a reader has no agent memory to look in"
+  deployment vehicle: "say what the repo deploys"
   not written yet: "write it, or remove the page"
   coming soon: "write it, or remove the page"
   to be written: "write it, or remove the page"

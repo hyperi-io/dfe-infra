@@ -4,9 +4,13 @@
 # the same nested-YAML reader scripts/check_versions_drift.py uses to check
 # them -- so this workflow can never push a version that pin does not say.
 #
-# The cloud images FROM the base image by tag, so `base` must be in the
-# registry before aws/gcp/azure can build -- hence the `needs:` chain rather
-# than one job building all four.
+# Each platform builds on a runner of its own architecture, never under QEMU,
+# and pushes by digest. A merge job then joins the digests under the family tag
+# with `docker buildx imagetools create`, which writes the inputs-hash annotation.
+#
+# The cloud images FROM the base image by tag, so base's merged index must be in
+# the registry before either platform of aws/gcp/azure builds -- hence
+# cloud-build waits on base-merge.
 #
 # A published family tag is immutable (scripts/toolbox_inputs.py): an absent tag
 # is built, a tag already carrying this build's inputs hash is skipped, and a tag
@@ -43,6 +47,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/hyperi-io
+  # Every image is hashed and verified for these, and both build matrices list one runner per entry.
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   resolve:
@@ -118,26 +124,42 @@ jobs:
         run: |
           echo "::notice::dfe-toolbox images not built -- versions.yaml's current stack block names no toolbox.* pins yet. They arrive with the rc.14 block (dfe-infra#315); this workflow builds on the next push once they land."
 
-  # Pull requests only: the four plans, read anonymously, so changed inputs
-  # under the published family tag fail here. No login, no build, no push.
-  inputs:
+
+  # Every plan, before any credential: a refusal fails here, so nothing builds.
+  # On a pull request this is the whole run -- read anonymously, nothing pushed.
+  plan:
     name: toolbox family tag covers its inputs
     needs: resolve
-    if: github.event_name == 'pull_request' && needs.resolve.outputs.pinned == 'true'
+    if: needs.resolve.outputs.pinned == 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
+    outputs:
+      base_inputs: ${{ steps.base.outputs.inputs }}
+      base_build: ${{ steps.base.outputs.build }}
+      base_flags: ${{ steps.base.outputs.flags }}
+      base_annotation: ${{ steps.base.outputs.annotation }}
+      aws_inputs: ${{ steps.aws.outputs.inputs }}
+      aws_flags: ${{ steps.aws.outputs.flags }}
+      aws_annotation: ${{ steps.aws.outputs.annotation }}
+      gcp_inputs: ${{ steps.gcp.outputs.inputs }}
+      gcp_flags: ${{ steps.gcp.outputs.flags }}
+      gcp_annotation: ${{ steps.gcp.outputs.annotation }}
+      azure_inputs: ${{ steps.azure.outputs.inputs }}
+      azure_flags: ${{ steps.azure.outputs.flags }}
+      azure_annotation: ${{ steps.azure.outputs.annotation }}
+      clouds: ${{ steps.clouds.outputs.clouds }}
     env:
       TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Plan dfe-toolbox-base
+      - name: Build, skip or refuse dfe-toolbox-base
         id: base
         run: |
           python3 scripts/toolbox_inputs.py plan \
             --ref "${IMAGE_PREFIX}/dfe-toolbox-base:${TAG}" \
             --context docker/dfe-toolbox/base \
-            --platform linux/amd64,linux/arm64 \
+            --platform "${PLATFORMS}" \
             --build-arg DEBIAN_TAG="${{ needs.resolve.outputs.debian }}" \
             --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
             --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
@@ -149,266 +171,83 @@ jobs:
             --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Plan dfe-toolbox-aws
+      # The cloud images build FROM base by tag, so base's inputs are part of theirs.
+      - name: Build, skip or refuse dfe-toolbox-aws
+        id: aws
         run: |
           python3 scripts/toolbox_inputs.py plan \
             --ref "${IMAGE_PREFIX}/dfe-toolbox-aws:${TAG}" \
             --context docker/dfe-toolbox/aws \
-            --platform linux/amd64,linux/arm64 \
+            --platform "${PLATFORMS}" \
             --base-inputs "${{ steps.base.outputs.inputs }}" \
-            --build-arg BASE_TAG="${TAG}" \
-            --build-arg AWS_CLI_VERSION="${{ needs.resolve.outputs.aws_cli }}" \
-            --build-arg AWS_SSM_PLUGIN_VERSION="${{ needs.resolve.outputs.aws_session_manager_plugin }}"
-
-      - name: Plan dfe-toolbox-gcp
-        run: |
-          python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/dfe-toolbox-gcp:${TAG}" \
-            --context docker/dfe-toolbox/gcp \
-            --platform linux/amd64,linux/arm64 \
-            --base-inputs "${{ steps.base.outputs.inputs }}" \
-            --build-arg BASE_TAG="${TAG}" \
-            --build-arg GCLOUD_VERSION="${{ needs.resolve.outputs.gcloud }}"
-
-      - name: Plan dfe-toolbox-azure
-        run: |
-          python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/dfe-toolbox-azure:${TAG}" \
-            --context docker/dfe-toolbox/azure \
-            --platform linux/amd64,linux/arm64 \
-            --base-inputs "${{ steps.base.outputs.inputs }}" \
-            --build-arg BASE_TAG="${TAG}" \
-            --build-arg AZ_CLI_VERSION="${{ needs.resolve.outputs.az_cli }}"
-
-  base:
-    name: Build + push dfe-toolbox-base
-    needs: resolve
-    # aws/gcp/azure need base, so gating here skips the whole family.
-    if: github.event_name != 'pull_request' && needs.resolve.outputs.pinned == 'true'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      # The cloud images build FROM base by tag, so its inputs are part of theirs.
-      inputs: ${{ steps.plan.outputs.inputs }}
-    env:
-      IMAGE: dfe-toolbox-base
-      CONTEXT: docker/dfe-toolbox/base
-      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Before any login: a refusal fails the job here. The build step takes only
-      # the flags this emits, so it builds nothing the hash did not see.
-      - name: Build, skip or refuse dfe-toolbox-base
-        id: plan
-        run: |
-          python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --context "${CONTEXT}" \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg DEBIAN_TAG="${{ needs.resolve.outputs.debian }}" \
-            --build-arg KUBECTL_VERSION="${{ needs.resolve.outputs.kubectl }}" \
-            --build-arg HELM_VERSION="${{ needs.resolve.outputs.helm }}" \
-            --build-arg ARGOCD_VERSION="${{ needs.resolve.outputs.argocd_cli }}" \
-            --build-arg ARGOCD_IMAGE="${{ needs.resolve.outputs.argocd_cli_image }}" \
-            --build-arg TOFU_VERSION="${{ needs.resolve.outputs.tofu }}" \
-            --build-arg YQ_VERSION="${{ needs.resolve.outputs.yq }}" \
-            --build-arg YQ_IMAGE="${{ needs.resolve.outputs.yq_image }}" \
-            --build-arg CLICKHOUSE_VERSION="${{ needs.resolve.outputs.clickhouse_version }}" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push dfe-toolbox-base
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        env:
-          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
-        run: |
-          read -ra flags <<< "${PLANNED_FLAGS}"
-          docker buildx build "${flags[@]}" \
-            --file "${CONTEXT}/Dockerfile" \
-            --provenance=true \
-            --sbom=true \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
-            --push \
-            "${CONTEXT}"
-
-      - name: Read the inputs hash back from the pushed index
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        run: |
-          python3 scripts/toolbox_inputs.py verify \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --inputs "${{ steps.plan.outputs.inputs }}"
-
-  aws:
-    name: Build + push dfe-toolbox-aws
-    needs: [resolve, base]
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: dfe-toolbox-aws
-      CONTEXT: docker/dfe-toolbox/aws
-      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Build, skip or refuse dfe-toolbox-aws
-        id: plan
-        run: |
-          python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --context "${CONTEXT}" \
-            --platform linux/amd64,linux/arm64 \
-            --base-inputs "${{ needs.base.outputs.inputs }}" \
             --build-arg BASE_TAG="${TAG}" \
             --build-arg AWS_CLI_VERSION="${{ needs.resolve.outputs.aws_cli }}" \
             --build-arg AWS_SSM_PLUGIN_VERSION="${{ needs.resolve.outputs.aws_session_manager_plugin }}" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push dfe-toolbox-aws
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        env:
-          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
-        run: |
-          read -ra flags <<< "${PLANNED_FLAGS}"
-          docker buildx build "${flags[@]}" \
-            --file "${CONTEXT}/Dockerfile" \
-            --provenance=true \
-            --sbom=true \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
-            --push \
-            "${CONTEXT}"
-
-      - name: Read the inputs hash back from the pushed index
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        run: |
-          python3 scripts/toolbox_inputs.py verify \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --inputs "${{ steps.plan.outputs.inputs }}"
-
-  gcp:
-    name: Build + push dfe-toolbox-gcp
-    needs: [resolve, base]
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: dfe-toolbox-gcp
-      CONTEXT: docker/dfe-toolbox/gcp
-      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Build, skip or refuse dfe-toolbox-gcp
-        id: plan
+        id: gcp
         run: |
           python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --context "${CONTEXT}" \
-            --platform linux/amd64,linux/arm64 \
-            --base-inputs "${{ needs.base.outputs.inputs }}" \
+            --ref "${IMAGE_PREFIX}/dfe-toolbox-gcp:${TAG}" \
+            --context docker/dfe-toolbox/gcp \
+            --platform "${PLATFORMS}" \
+            --base-inputs "${{ steps.base.outputs.inputs }}" \
             --build-arg BASE_TAG="${TAG}" \
             --build-arg GCLOUD_VERSION="${{ needs.resolve.outputs.gcloud }}" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push dfe-toolbox-gcp
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        env:
-          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
-        run: |
-          read -ra flags <<< "${PLANNED_FLAGS}"
-          docker buildx build "${flags[@]}" \
-            --file "${CONTEXT}/Dockerfile" \
-            --provenance=true \
-            --sbom=true \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
-            --push \
-            "${CONTEXT}"
-
-      - name: Read the inputs hash back from the pushed index
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        run: |
-          python3 scripts/toolbox_inputs.py verify \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --inputs "${{ steps.plan.outputs.inputs }}"
-
-  azure:
-    name: Build + push dfe-toolbox-azure
-    needs: [resolve, base]
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE: dfe-toolbox-azure
-      CONTEXT: docker/dfe-toolbox/azure
-      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Build, skip or refuse dfe-toolbox-azure
-        id: plan
+        id: azure
         run: |
           python3 scripts/toolbox_inputs.py plan \
-            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --context "${CONTEXT}" \
-            --platform linux/amd64,linux/arm64 \
-            --base-inputs "${{ needs.base.outputs.inputs }}" \
+            --ref "${IMAGE_PREFIX}/dfe-toolbox-azure:${TAG}" \
+            --context docker/dfe-toolbox/azure \
+            --platform "${PLATFORMS}" \
+            --base-inputs "${{ steps.base.outputs.inputs }}" \
             --build-arg BASE_TAG="${TAG}" \
             --build-arg AZ_CLI_VERSION="${{ needs.resolve.outputs.az_cli }}" \
             --github-output "$GITHUB_OUTPUT"
 
+      - name: List the cloud images to build
+        id: clouds
+        env:
+          AWS: ${{ steps.aws.outputs.build }}
+          GCP: ${{ steps.gcp.outputs.build }}
+          AZURE: ${{ steps.azure.outputs.build }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          clouds = [name for name in ("aws", "gcp", "azure") if os.environ[name.upper()] == "true"]
+          print(f"clouds={json.dumps(clouds)}")
+          PY
+
+  base-build:
+    name: Build dfe-toolbox-base for ${{ matrix.target.arch }}
+    needs: [resolve, plan]
+    if: github.event_name != 'pull_request' && needs.plan.outputs.base_build == 'true'
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        # One runner per PLATFORMS entry, of the architecture it builds.
+        target:
+          - { arch: amd64, runner: ubuntu-26.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    env:
+      IMAGE: dfe-toolbox-base
+      CONTEXT: docker/dfe-toolbox/base
+      ARCH: ${{ matrix.target.arch }}
+      PLANNED_FLAGS: ${{ needs.plan.outputs.base_flags }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -416,27 +255,222 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build and push dfe-toolbox-azure
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
-        env:
-          PLANNED_FLAGS: ${{ steps.plan.outputs.flags }}
+      - name: Build and push dfe-toolbox-base by digest
         run: |
+          runner_arch="$(docker version --format '{{.Server.Arch}}')"
+          if [[ "${runner_arch}" != "${ARCH}" ]]; then
+            echo "::error::an ${runner_arch} runner would build linux/${ARCH} under emulation"
+            exit 1
+          fi
           read -ra flags <<< "${PLANNED_FLAGS}"
           docker buildx build "${flags[@]}" \
+            --platform "linux/${ARCH}" \
             --file "${CONTEXT}/Dockerfile" \
             --provenance=true \
             --sbom=true \
+            --output "type=image,name=${IMAGE_PREFIX}/${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "${RUNNER_TEMP}/metadata.json" \
+            "${CONTEXT}"
+          mkdir -p "${RUNNER_TEMP}/digests"
+          python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
+            "${RUNNER_TEMP}/metadata.json" > "${RUNNER_TEMP}/digests/${ARCH}"
+
+      - name: Hand the digest to the merge
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ env.IMAGE }}-${{ matrix.target.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.target.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  base-merge:
+    name: Merge + push dfe-toolbox-base
+    needs: [resolve, plan, base-build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: dfe-toolbox-base
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
+      ANNOTATION: ${{ needs.plan.outputs.base_annotation }}
+      INPUTS: ${{ needs.plan.outputs.base_inputs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect the per-platform digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-${{ env.IMAGE }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag never moves once pushed, so a missing platform fails before it.
+      - name: Push the dfe-toolbox-base index
+        run: |
+          sources=()
+          for platform in ${PLATFORMS//,/ }; do
+            digest="$(cat "${RUNNER_TEMP}/digests/${platform#*/}" 2>/dev/null || true)"
+            if [[ "${digest}" != sha256:* ]]; then
+              echo "::error::no ${platform} digest for ${IMAGE}"
+              exit 1
+            fi
+            sources+=("${IMAGE_PREFIX}/${IMAGE}@${digest}")
+          done
+          docker buildx imagetools create \
+            --annotation "${ANNOTATION}" \
             --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
             --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
-            --push \
-            "${CONTEXT}"
+            "${sources[@]}"
 
       - name: Read the inputs hash back from the pushed index
-        if: github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'
         run: |
           python3 scripts/toolbox_inputs.py verify \
             --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
-            --inputs "${{ steps.plan.outputs.inputs }}"
+            --inputs "${INPUTS}" \
+            --platform "${PLATFORMS}"
+
+  cloud-build:
+    name: Build dfe-toolbox-${{ matrix.image }} for ${{ matrix.target.arch }}
+    needs: [resolve, plan, base-build, base-merge]
+    # Runs when base was just merged or was already published at this tag.
+    if: >-
+      !cancelled()
+      && github.event_name != 'pull_request'
+      && needs.plan.result == 'success'
+      && needs.plan.outputs.clouds != '[]'
+      && contains(fromJSON('["success", "skipped"]'), needs.base-build.result)
+      && contains(fromJSON('["success", "skipped"]'), needs.base-merge.result)
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.clouds) }}
+        # One runner per PLATFORMS entry, of the architecture it builds.
+        target:
+          - { arch: amd64, runner: ubuntu-26.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    env:
+      IMAGE: dfe-toolbox-${{ matrix.image }}
+      CONTEXT: docker/dfe-toolbox/${{ matrix.image }}
+      ARCH: ${{ matrix.target.arch }}
+      PLANNED_FLAGS: ${{ needs.plan.outputs[format('{0}_flags', matrix.image)] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build and push the cloud image by digest
+        run: |
+          runner_arch="$(docker version --format '{{.Server.Arch}}')"
+          if [[ "${runner_arch}" != "${ARCH}" ]]; then
+            echo "::error::an ${runner_arch} runner would build linux/${ARCH} under emulation"
+            exit 1
+          fi
+          read -ra flags <<< "${PLANNED_FLAGS}"
+          docker buildx build "${flags[@]}" \
+            --platform "linux/${ARCH}" \
+            --file "${CONTEXT}/Dockerfile" \
+            --provenance=true \
+            --sbom=true \
+            --output "type=image,name=${IMAGE_PREFIX}/${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+            --metadata-file "${RUNNER_TEMP}/metadata.json" \
+            "${CONTEXT}"
+          mkdir -p "${RUNNER_TEMP}/digests"
+          python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
+            "${RUNNER_TEMP}/metadata.json" > "${RUNNER_TEMP}/digests/${ARCH}"
+
+      - name: Hand the digest to the merge
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ env.IMAGE }}-${{ matrix.target.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.target.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  cloud-merge:
+    name: Merge + push dfe-toolbox-${{ matrix.image }}
+    needs: [resolve, plan, cloud-build]
+    # A skipped base upstream would otherwise skip this merge after the cloud builds succeed.
+    if: >-
+      !cancelled()
+      && github.event_name != 'pull_request'
+      && needs.plan.result == 'success'
+      && needs.plan.outputs.clouds != '[]'
+      && needs.cloud-build.result == 'success'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.clouds) }}
+    env:
+      IMAGE: dfe-toolbox-${{ matrix.image }}
+      TAG: ${{ needs.resolve.outputs.dfe_toolbox }}
+      ANNOTATION: ${{ needs.plan.outputs[format('{0}_annotation', matrix.image)] }}
+      INPUTS: ${{ needs.plan.outputs[format('{0}_inputs', matrix.image)] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect the per-platform digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-${{ env.IMAGE }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag never moves once pushed, so a missing platform fails before it.
+      - name: Push the cloud image index
+        run: |
+          sources=()
+          for platform in ${PLATFORMS//,/ }; do
+            digest="$(cat "${RUNNER_TEMP}/digests/${platform#*/}" 2>/dev/null || true)"
+            if [[ "${digest}" != sha256:* ]]; then
+              echo "::error::no ${platform} digest for ${IMAGE}"
+              exit 1
+            fi
+            sources+=("${IMAGE_PREFIX}/${IMAGE}@${digest}")
+          done
+          docker buildx imagetools create \
+            --annotation "${ANNOTATION}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --tag "${IMAGE_PREFIX}/${IMAGE}:latest" \
+            "${sources[@]}"
+
+      - name: Read the inputs hash back from the pushed index
+        run: |
+          python3 scripts/toolbox_inputs.py verify \
+            --ref "${IMAGE_PREFIX}/${IMAGE}:${TAG}" \
+            --inputs "${INPUTS}" \
+            --platform "${PLATFORMS}"

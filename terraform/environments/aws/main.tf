@@ -245,7 +245,7 @@ module "edge" {
   private_zone_arn               = module.cluster.private_zone_arn
   kms_key_arn                    = module.cluster.kms_key_arn
 
-  dns      = { public_zone = var.dns.public_zone }
+  dns      = { public_zone = var.dns.public_zone, parent_zone_id = var.dns.parent_zone_id }
   receiver = var.edge.receiver
 
   // The dial's tunnel, with the forwarder's type and root volume read off its resolved shape.

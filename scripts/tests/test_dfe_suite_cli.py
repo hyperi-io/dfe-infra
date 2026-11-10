@@ -17,9 +17,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -493,6 +495,69 @@ class WalkTests(unittest.TestCase):
         output = buffer.getvalue()
         assert code == 2, output
         assert "need a person" in output
+
+
+class WalkConcurrencyTests(unittest.TestCase):
+    """Consumers rebuild at once, and a failure stops only what has not started."""
+
+    CONSUMERS = ("c1", "c2", "c3")
+
+    def _run(self, jobs: int, walk_one: object) -> tuple[int, str]:
+        payload = {"nodes": {"p": {"package": "scalo"}}}
+        edges = [{"from": "p", "to": name, "kind": "cargo-dep"} for name in self.CONSUMERS]
+        buffer = io.StringIO()
+        with (
+            mock.patch.object(ds, "load_producer", return_value=payload),
+            mock.patch.object(ds, "out_edges", return_value=edges),
+            mock.patch.object(ds, "_walk_consumer", side_effect=walk_one),
+            contextlib.redirect_stdout(buffer),
+        ):
+            code = ds.main(["walk", "p", "1.0.0", "--jobs", str(jobs)])
+        return code, buffer.getvalue()
+
+    def test_every_consumer_is_in_flight_at_once(self) -> None:
+        barrier = threading.Barrier(len(self.CONSUMERS), timeout=10)
+
+        def walk_one(consumer: str, *_: object, **kwargs: object) -> int:
+            assert kwargs["gate_lock"] is not None
+            barrier.wait()
+            return 0
+
+        code, _ = self._run(0, walk_one)
+        assert code == 0
+
+    def test_the_default_caps_concurrent_rebuilds(self) -> None:
+        assert ds.build_parser().parse_args(["walk", "p", "1.0.0"]).jobs == ds.WALK_JOBS
+
+    def test_a_failure_stops_new_rebuilds_and_names_them(self) -> None:
+        started: list[str] = []
+
+        def walk_one(consumer: str, *_: object, **__: object) -> int:
+            started.append(consumer)
+            return 1 if consumer == "c1" else 0
+
+        code, output = self._run(1, walk_one)
+        assert code == 1
+        assert started == ["c1"]
+        assert "not started after a failed rebuild: c2, c3" in output
+
+    def test_an_in_flight_rebuild_finishes_after_another_fails(self) -> None:
+        started = threading.Barrier(len(self.CONSUMERS), timeout=10)
+        failed = threading.Event()
+        finished: list[str] = []
+
+        def walk_one(consumer: str, *_: object, **__: object) -> int:
+            started.wait()
+            if consumer == "c1":
+                failed.set()
+                return 1
+            assert failed.wait(10)
+            finished.append(consumer)
+            return 0
+
+        code, _ = self._run(3, walk_one)
+        assert code == 1
+        assert sorted(finished) == ["c2", "c3"]
 
 
 class WalkActsTests(unittest.TestCase):

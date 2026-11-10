@@ -172,6 +172,22 @@ def test_provision_carries_the_account_the_root_asserts() -> None:
     assert render()["provision"]["account"] == "000000000000"
 
 
+@pytest.mark.parametrize(
+    ("replace", "parent"),
+    [
+        (None, ""),
+        (("  public_zone: dfe.example.com", "  public_zone: dfe.example.com\n  parent_zone_id: Z0PARENT"), "Z0PARENT"),
+    ],
+    ids=["absent-is-empty", "carried"],
+)
+def test_the_parent_zone_id_reaches_the_root(replace: tuple[str, str] | None, parent: str) -> None:
+    assert render(replace=replace)["dns"] == {
+        "private_zone": "dfe-example.internal",
+        "public_zone": "dfe.example.com",
+        "parent_zone_id": parent,
+    }
+
+
 def test_comma_separated_scalars_become_lists() -> None:
     """The dial's YAML subset carries no list, so a scalar is split instead."""
     variables = render()

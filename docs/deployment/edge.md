@@ -1,49 +1,30 @@
 # The edge module
 
-The public gateway (`helm/edge/gateway`) and the fleet tunnel (culvert's
-published thin chart, beside `helm/charts/dfe-extras`) are one add-on, deployed by
-`argocd/appsets/layer2-edge.yaml`: everything that decides whether traffic from
-outside reaches a DFE workload.
+The edge module decides whether traffic from outside reaches a DFE workload. It's the public gateway (`helm/edge/gateway`) plus the fleet tunnel (culvert's published thin chart, beside `helm/charts/dfe-extras`), deployed as one add-on by `argocd/appsets/layer2-edge.yaml`.
 
-It is ON by default: a deployment with no door reaches nothing from outside.
-`edge.enabled: false` generates no Application, and the apps stay on ClusterIP
-behind whatever the deployer brings. Turning it off AFTER a load balancer exists
-ORPHANS it, so the off path is destroy, then disable.
+It's on by default. Without it a deployment reaches nothing from outside. `edge.enabled: false` generates no Application, and the apps stay on ClusterIP behind whatever you bring. Turn it off AFTER a load balancer exists and you ORPHAN that load balancer, so the way off is destroy first, then disable.
 
-It also takes external-dns's and the load balancer controller's IAM identities.
-Both keep running, start failing AccessDenied while reporting Ready, and the
-PRIVATE zone stops being published. Only the tunnel's PKI volume survives
-(`Prune=false,Delete=false`).
+Turning it off also takes external-dns's and the load balancer controller's IAM identities. Both keep running and report Ready, but they fail AccessDenied and the PRIVATE zone stops being published. Only the tunnel's PKI volume survives (`Prune=false,Delete=false`).
 
 The tier table is per flavour, in `argocd/values/edge-<flavour>.yaml`.
 
 ## The five groups
 
-Every surface falls into exactly one:
+Every surface falls into exactly one group:
 
-- **(a) dfe-ui and HyperDX** -- the product's own console and the search it
-  frames, public on a cloud deploy to the addresses `exposure.groups.console.allow`
-  names, and to none while it is empty.
-- **(b) the engine API** -- on dfe-ui's own hostname, because the browser calls
-  it at that origin. Its browser families follow the console group; its CLI
-  families, `/openapi.json` and SCIM are a second route in the api group, with
-  its own list.
-- **(c) the admin UIs** -- Argo CD, Kafbat, Forgejo, links, Cruise Control. Off
-  one at a time, behind a class-wide kill switch.
-- **(d) the ingest doors** -- the receiver and the OTLP route, plus the tunnel
-  that reaches the receiver without a public address.
-- **(e) everything else** -- Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao, the
-  Kubernetes API. Never exposed, on any flavour.
+- (a) dfe-ui and HyperDX. The product's own console and the search it frames. Public on a cloud deploy to the addresses `exposure.groups.console.allow` names, and to none while that list is empty.
+- (b) The engine API. It sits on dfe-ui's own hostname, because the browser calls it at that origin. Its browser families follow the console group. Its CLI families, `/openapi.json` and SCIM are a second route in the api group, with its own list.
+- (c) The admin UIs: Argo CD, Kafbat, Forgejo, links, Cruise Control. Off one at a time, behind a class-wide kill switch.
+- (d) The ingest doors: the receiver and the OTLP route, plus the tunnel that reaches the receiver without a public address.
+- (e) Everything else: Kafka, ClickHouse, Keeper, PostgreSQL, OpenBao, the Kubernetes API. Never exposed, on any flavour.
 
 ## The three tiers
 
-1. **On by default**, where a DDoS attempt cannot blow the budget.
-2. **Opt-in.** Most carry a spend line. The engine's two family switches and
-   OTLP ingress are opt-in for what they EXPOSE, and cost nothing.
-3. **Not offered.** No key here reaches one.
+1. On by default, where a DDoS attempt can't blow the budget.
+2. Opt-in. Most carry a spend line. The engine's two family switches and OTLP ingress are opt-in for what they EXPOSE, and cost nothing.
+3. Not offered. No key here reaches one.
 
-Buckets are [aws.md](aws.md#how-costs-are-described)'s: relative to the cluster's
-own compute, the pricing model named, never a rate.
+Buckets are [aws.md](aws.md#how-costs-are-described)'s: relative to the cluster's own compute, the pricing model named, never a rate.
 
 ## AWS
 
@@ -72,28 +53,21 @@ own compute, the pricing model named, never a rate.
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
 | Group (e) | e | 3 | absent | -- | -- |
 
-Public web access is default-deny on every cloud flavour ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so it takes the ingest group's list into its union while an ingest route renders. The aws root applies both dial keys: it adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own: the NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([edge-auth-cloud.md](../edge-auth-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
+Public web access is default-deny on every cloud flavour ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). The load-balancer half fences the WHOLE front door, so it takes the ingest group's list into its union while an ingest route renders. The aws root applies both dial keys. It adds every NAT gateway's address to the list, so the cluster's own callers on the public hostname still get in, and it passes `edge.product.trusted_proxy_cidrs` through as it stands. It trusts no subnet of its own. The NLB hands Envoy the client as the TCP peer, so no host in the VPC can name a client with a forged `X-Forwarded-For` ([edge-auth-cloud.md](../edge-auth-cloud.md#the-client-address-the-fence-judges)). A guarded test run replaces the list with its runner's /32.
 
 ### What the engine API's split gets wrong
 
-The families are chart data (`routes.dfeEngine`), not a dial list: they move with
-every router the engine adds. Five traps:
+The families are chart data (`routes.dfeEngine`), not a dial list, because they move with every router the engine adds. The five cases:
 
-- A `PathPrefix` matches whole path elements, so `/api/v1/auth` never matches
-  `/api/v1/authoring` and `/api/v1/sample` never matches `/api/v1/samples`.
-- `GET /api/v1/auth/oidc/{provider}/callback` is a top-level browser navigation,
-  so an edge login in front of it swallows the engine's own external-IdP login.
-  The two are ALTERNATIVES on a hostname.
-- The sampler is `POST /api/v1/sources/{source}/sample`, on the public `sources`
-  prefix -- opening the `sample` family is a different thing.
-- The HyperDX fork reaches `/api/v1/hyperdx` from in-cluster, so its engine
-  origin stays the internal hostname or the Service.
-- `/api/v1/tasks` carries the only SSE stream, and stays private until the
-  console wants it.
+- A `PathPrefix` matches whole path elements, so `/api/v1/auth` never matches `/api/v1/authoring` and `/api/v1/sample` never matches `/api/v1/samples`.
+- `GET /api/v1/auth/oidc/{provider}/callback` is a top-level browser navigation, so an edge login in front of it swallows the engine's own external-IdP login. The two are ALTERNATIVES on a hostname.
+- The sampler is `POST /api/v1/sources/{source}/sample`, on the public `sources` prefix. Opening the `sample` family is a different thing.
+- The HyperDX fork reaches `/api/v1/hyperdx` from in-cluster, so its engine origin stays the internal hostname or the Service.
+- `/api/v1/tasks` carries the only SSE stream, and stays private until the console wants it.
 
 ### Response hardening
 
-HTTPS routes send a one-year HSTS header: public listeners on `edge.product.tls.hsts`, the wildcard on the gateway chart's `tls.edge.hsts`. A browser holding it gets no click-through on a certificate it does not trust, so a root re-minted on every rebuild would lock the admin out of the console. `tls.edge.hsts` left empty follows the edge issuer:
+HTTPS routes send a one-year HSTS header: public listeners on `edge.product.tls.hsts`, the wildcard on the gateway chart's `tls.edge.hsts`. A browser holding it gets no click-through on a certificate it doesn't trust, so a root re-minted on every rebuild would lock the admin out of the console. Leave `tls.edge.hsts` empty and it follows the edge issuer:
 
 | Edge issuer | Wildcard HSTS |
 |---|---|
@@ -101,29 +75,26 @@ HTTPS routes send a one-year HSTS header: public listeners on `edge.product.tls.
 | the same, `tls.internalCA.persist` on | on |
 | Vault/OpenBao PKI, ACME, or any other issuer | on |
 
-An explicit `true` or `false` wins over the table. `edge.product.tls.hsts` does not follow it.
+An explicit `true` or `false` wins over the table. `edge.product.tls.hsts` doesn't follow it.
 
-`bootstrap.sh` sets `tls.internalCA.persist.enabled=true` only for its own pre-apply of the root restore; no appset sets it for Argo's gateway app. A deployment that persists its root (`DFE_CA_PERSIST=true`) must also set `tls.internalCA.persist.enabled: true`, and the store name, in its deploy repo's gateway overlay, or Argo renders the persist objects and the wildcard's HSTS off.
+`bootstrap.sh` sets `tls.internalCA.persist.enabled=true` only for its own pre-apply of the root restore, and no appset sets it for Argo's gateway app. If you persist the root (`DFE_CA_PERSIST=true`), set `tls.internalCA.persist.enabled: true` and the store name in your deploy repo's gateway overlay too. Without it Argo renders the persist objects and the wildcard's HSTS off.
 
-`routes.<key>.hiddenPaths` answers a path with a 404 from the proxy; dfe-ui hides its unauthenticated `/metrics`. `/docs` and `/redoc` follow `api.docsEnabled` in `infra/common.yaml`, read by the engine, the gateway and the links page alike.
+`routes.<key>.hiddenPaths` answers a path with a 404 from the proxy. dfe-ui uses it to hide its unauthenticated `/metrics`. `/docs` and `/redoc` follow `api.docsEnabled` in `infra/common.yaml`, which the engine, the gateway and the links page all read.
 
 ## GCP and Azure
 
-Every row above holds, with these differences. Neither has a tofu root yet, so
-both are values-only.
+Every row above holds, with these differences. Neither has a tofu root yet, so both are values-only.
 
 | Mechanism | Group | Tier | Default | Dial key | Cost |
 |---|---|---|---|---|---|
 | Tunnel on the chart's own LoadBalancer | d | 1 once on | off | `exposure.serviceType` | S, per GB |
 | An address in front of the tunnel | d | 2 | none built | -- | -- |
 
-A deployment that brings the tunnel pays that cloud's per-GB rate until the
-flavour file carries the AWS NodePort override.
+If you bring the tunnel, you pay that cloud's per-GB rate until the flavour file carries the AWS NodePort override.
 
 ## On-prem
 
-Every row holds except these. There is no cloud bill, so a tier-2 line here is
-about the node's NIC and disk.
+Every row holds except these. There's no cloud bill, so a tier-2 line here is about the node's NIC and disk.
 
 | Mechanism | Group | Tier | Default | Dial key | Cost |
 |---|---|---|---|---|---|
@@ -131,22 +102,15 @@ about the node's NIC and disk.
 | Receiver routed through the gateway | d | 1 | `gateway` | `exposure.groups.ingest.door` | none |
 | Admin reach-back | d | 3 | absent | -- | -- |
 
-The reach-back is cloud-only: on-prem the operator is already on the LAN.
+The reach-back is cloud-only. On-prem the operator is already on the LAN.
 
 ## OTLP ingress
 
-Telemetry from outside the cluster -- edge agents, other estates -- lands on
-`otel.<domain>`. It is OFF on every flavour. The stack's own senders reach the
-collector on its Service, on 4317/4318, and never need it.
+Telemetry from outside the cluster (edge agents, other estates) lands on `otel.<domain>`. It's OFF on every flavour. The stack's own senders reach the collector on its Service, on 4317/4318, and never need it.
 
-On, the gateway routes `otel.<domain>` to a second collector receiver on 4319
-that checks a bearer token before any pipeline sees the request. The token comes
-from the deployment's secret store through an ExternalSecret. There is no
-unauthenticated mode.
+Turn it on and the gateway routes `otel.<domain>` to a second collector receiver on 4319, which checks a bearer token before any pipeline sees the request. The token comes from your secret store through an ExternalSecret. There's no unauthenticated mode.
 
-The dial's `edge.ingest.otel` block is the `otel.ingress:` block of the deploy
-repo's `infra/common.yaml`, key for key. Paste it there, because the gateway and
-the collector are two Applications and that is the one file both read:
+The dial's `edge.ingest.otel` block is the `otel.ingress:` block of the deploy repo's `infra/common.yaml`, key for key. Paste it there. The gateway and the collector are two Applications, and that's the one file both read:
 
 ```yaml
 otel:
@@ -156,36 +120,17 @@ otel:
       remoteKey: <path of the token in the secret store>   # property: token
 ```
 
-On with `remoteKey` empty is refused by `render_dial.py`, the gateway chart and
-the collector chart alike. Senders POST to `/v1/traces`, `/v1/metrics` or
-`/v1/logs` with `Authorization: Bearer <token>`. `dfe-ops otel-ingress` says
-whether the door is exposed and where, and the readiness gate and the access
-summary print the same lines.
+On with `remoteKey` empty is refused by `render_dial.py`, the gateway chart and the collector chart alike. Senders POST to `/v1/traces`, `/v1/metrics` or `/v1/logs` with `Authorization: Bearer <token>`. `dfe-ops otel-ingress` says whether the door is exposed and where, and the readiness gate and the access summary print the same lines.
 
 ## The tunnel's inbound, and reaching one appliance
 
-Appliances DIAL IN and hold the tunnel open, so nothing on an appliance's own
-network is ever exposed. `exposure.loadBalancerSourceRanges` starts empty --
-every source address on earth, which is the normal case for a fleet. Per-client
-PKI, WireGuard peer keys and tls-crypt-v2 authenticate a client;
-`peers.classes.appliance.isolation` stops one compromised appliance reaching the
-fleet through the hub.
+Appliances DIAL IN and hold the tunnel open, so nothing on an appliance's own network is ever exposed. `exposure.loadBalancerSourceRanges` starts empty, which means every source address on earth. That's the normal case for a fleet. Per-client PKI, WireGuard peer keys and tls-crypt-v2 authenticate a client, and `peers.classes.appliance.isolation` stops one compromised appliance reaching the fleet through the hub.
 
-**Reaching one appliance is a ROUTE, not a dial-in.** culvert's client-to-client
-verdict drops an admin that dials in, so `dfe-ops bastion hub <peer>` programs
-the tunnel's client range at the culvert pod and opens the logged Session Manager
-shell; `down` removes the range. The appliance accepts ssh on 22 and https on 443
-on its tunnel interface. Run the isolation regression on every change to the
-class policy: one appliance peer still cannot reach another. None of it has been
-exercised against a cluster.
-[edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries the VPC
-routing, what bounds it, and the `hyperi-io/culvert#40` peer shape that replaces
-it.
+culvert's client-to-client verdict drops an admin that dials in, so you reach one appliance with a route. `dfe-ops bastion hub <peer>` programs the tunnel's client range at the culvert pod and opens the logged Session Manager shell. `down` removes the range. The appliance accepts ssh on 22 and https on 443 on its tunnel interface. Run the isolation regression on every change to the class policy, because one appliance peer must still not reach another. None of it has been exercised against a cluster. [edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries the VPC routing, what bounds it, and the `hyperi-io/culvert#40` peer shape that replaces it.
 
 ## Proving it
 
-`dfe-ops edge-probe` proves from outside what can be proven from outside; the
-render cases need no cluster.
+`dfe-ops edge-probe` runs against the deployment from outside. The render cases need no cluster.
 
 | Claim | Tier | Proof | Venue |
 |---|---|---|---|
@@ -197,7 +142,7 @@ render cases need no cluster.
 | A browser family answers and a private one 404s | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | Tier-3 keys are absent | 1 | render case | render |
 | TLS floor, HSTS, rate limit, CIDR filter | 1 | `dfe-ops edge-probe` | kind, on-prem |
-| HSTS on every HTTPS route, each listener on its own switch, the wildcard's default following the edge issuer; dfe-ui's `/metrics` a 404 on both faces | 1 | `scripts/tests/test_gateway_route_hardening.py` | render |
+| HSTS on every HTTPS route, each listener on its own switch, the wildcard's default following the edge issuer, dfe-ui's `/metrics` a 404 on both faces | 1 | `scripts/tests/test_gateway_route_hardening.py` | render |
 | `/docs` and `/redoc` routed and listed only where the engine serves them | 1 | `scripts/tests/test_engine_docs_surface.py` | render |
 | The receiver is private in `vpn` mode | 1 | `dfe-ops edge-probe` | kind, on-prem |
 | OTLP ingress renders no route while off, and refuses to render on with no token | 1 | `scripts/tests/test_otel_ingress.py`, `scripts/test-route-exposure.sh` | render |

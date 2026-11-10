@@ -271,6 +271,7 @@ class Answers:
     ui_allowed_cidrs: str = ""
     ui_trusted_proxy_cidrs: str = ""
     public_zone: str = ""
+    parent_zone_id: str = ""
     telemetry_sink: str = "otel"
     telemetry_reason: str = ""
     lifecycle: str = "ephemeral"
@@ -457,6 +458,12 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
             validate=validate_proxy_hops,
         )
     a.public_zone = ask(io, "public_zone", "Public DNS zone (blank = no public UI is reachable yet)", a.public_zone)
+    if a.public_zone and a.target == "aws":
+        a.parent_zone_id = ask(
+            io, "parent_zone_id",
+            "Route 53 zone ID in this account the public zone sits under (blank = you delegate it yourself)",
+            a.parent_zone_id,
+        )
 
 
 def step_telemetry(io: WizardIO, a: Answers) -> None:
@@ -843,7 +850,8 @@ def build_dial_text(a: Answers) -> str:
             '  allowed_cidrs: ""\n\n',
             "dns:\n",
             "  private_zone: dfe.internal\n",
-            f'  public_zone: "{a.public_zone}"\n\n',
+            f'  public_zone: "{a.public_zone}"\n',
+            f'  parent_zone_id: "{a.parent_zone_id}"\n\n',
             edge_block, "\n",
             toolbox_block, "\n",
             "node_pools:\n",
@@ -879,7 +887,7 @@ def build_dial_text(a: Answers) -> str:
             '  ddl: "true"\n',
             '  smoke: "true"\n\n',
             "secrets:\n",
-            "  backend: openbao\n",
+            f"  backend: {'aws-sm' if is_aws else 'openbao'}\n",
             '  ref: ""\n\n',
             'overlay: ""\n\n',
             "retention:\n",
