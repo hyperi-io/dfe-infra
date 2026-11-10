@@ -38,8 +38,8 @@
 #                            free-tier baseline) when the cluster does not
 #                            already have one by this name -- step [1b/7].
 #   DFE_NAMESPACE            K8s namespace for DFE apps (e.g. dfe-prod)
-#   DFE_CLICKHOUSE_HOST      ClickHouse service hostname, or the external
-#                            server's host when DFE_CLICKHOUSE_MODE is external
+#   DFE_CLICKHOUSE_HOST      The external server's host. Required when
+#                            DFE_CLICKHOUSE_MODE is external, unread in-cluster
 #   DFE_KAFKA_BOOTSTRAP      Kafka bootstrap servers
 #   DFE_KAFKA_PROVIDER       strimzi | redpanda | msk | confluent-cloud |
 #                            redpanda-cloud; gates the otel-collector chart's
@@ -79,7 +79,8 @@
 #                            true|false for TLS on both, and the account the
 #                            apps connect as. Required with external, empty
 #                            otherwise.
-#   DFE_OTEL_ENDPOINT        OTel Collector gRPC endpoint
+#   DFE_OTEL_ENDPOINT        Optional: recorded on the cluster secret, which no
+#                            chart reads (dfe-common.otelEndpoint derives it)
 #   DFE_VAULT_ADDR           OpenBao/Vault address (DFE_SECRETS_BACKEND=openbao)
 #   DFE_VAULT_ROLE_ID        ESO AppRole role_id  (DFE_SECRETS_BACKEND=openbao)
 #   DFE_WORKLOAD_IDENTITY_ANNOTATIONS  JSON map of service → cloud identity annotations
@@ -467,7 +468,6 @@ required_vars=(
   DFE_REGISTRY
   DFE_REPO_URL DFE_TARGET_REVISION
   DFE_STORAGE_CLASS DFE_NAMESPACE
-  DFE_CLICKHOUSE_HOST DFE_OTEL_ENDPOINT
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
 if [[ "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
@@ -543,6 +543,8 @@ export DFE_KAFKA_SECURITY_PROTOCOL
 # Wave 4 renders before the engine writes the deploy repo, so where ClickHouse runs
 # reaches the appsets on the cluster secret, empty from a root that emits none.
 export DFE_CLICKHOUSE_MODE="${DFE_CLICKHOUSE_MODE:-}"
+export DFE_CLICKHOUSE_HOST="${DFE_CLICKHOUSE_HOST:-}"
+export DFE_OTEL_ENDPOINT="${DFE_OTEL_ENDPOINT:-}"
 export DFE_CLICKHOUSE_PORT="${DFE_CLICKHOUSE_PORT:-}"
 export DFE_CLICKHOUSE_NATIVE_PORT="${DFE_CLICKHOUSE_NATIVE_PORT:-}"
 export DFE_CLICKHOUSE_SECURE="${DFE_CLICKHOUSE_SECURE:-}"
@@ -550,6 +552,10 @@ DFE_CLICKHOUSE_USER="${DFE_CLICKHOUSE_USER:-}"
 case "${DFE_CLICKHOUSE_MODE}" in
   ""|in_cluster) ;;
   external)
+    if [[ -z "${DFE_CLICKHOUSE_HOST}" ]]; then
+      echo "ERROR: DFE_CLICKHOUSE_MODE is external, so DFE_CLICKHOUSE_HOST must name the server the apps connect to" >&2
+      exit 1
+    fi
     for dfe_ch_port_var in DFE_CLICKHOUSE_PORT DFE_CLICKHOUSE_NATIVE_PORT; do
       dfe_ch_port="${!dfe_ch_port_var}"
       if [[ ! "${dfe_ch_port}" =~ ^[1-9][0-9]{0,4}$ ]] || (( dfe_ch_port > 65535 )); then
