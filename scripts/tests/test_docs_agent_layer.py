@@ -14,6 +14,8 @@ python3 -m pytest scripts/tests/test_docs_agent_layer.py -q
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -172,3 +174,129 @@ def test_the_real_task_file_parses() -> None:
     tasks = agent_layer.load_tasks()
     assert tasks
     assert all(task["page"] and task["expect"] for task in tasks.values())
+
+
+# --- search metadata -----------------------------------------------------------------
+
+meta_spec = importlib.util.spec_from_file_location("docs_page_meta", SCRIPTS / "page_meta.py")
+page_meta = importlib.util.module_from_spec(meta_spec)
+meta_spec.loader.exec_module(page_meta)
+LONG = "word " * 50
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            "# Title\n\nThe loader writes batches to ClickHouse.\n",
+            "The loader writes batches to ClickHouse.",
+        ),
+        (
+            "Status: Adopted\n\nThe receiver takes events in over HTTPS and gRPC.\n",
+            "The receiver takes events in over HTTPS and gRPC.",
+        ),
+        (
+            "Operations\n\nMarch 2026\n\nThis page covers the archiver and its buckets today.\n",
+            "This page covers the archiver and its buckets today.",
+        ),
+        (
+            "> A blockquote summary that\n> wraps over two lines here.\n",
+            "A blockquote summary that wraps over two lines here.",
+        ),
+        (
+            "```\nnot this code block at all here\n```\n\nSee the [guide](g.md) and `make up` now.\n",
+            "See the guide and make up now.",
+        ),
+        (
+            "<!-- a\ncomment -->\n- a list item first\n\n**Bold** words in a real paragraph here.\n",
+            "Bold words in a real paragraph here.",
+        ),
+        (
+            "A nested <scr<b>ipt> tag leaves no angle bracket in the text.\n",
+            "A nested tag leaves no angle bracket in the text.",
+        ),
+        ("# Only headings\n\n## And more\n", ""),
+        (LONG, ("word " * 31).strip() + "..."),
+    ],
+)
+def test_a_description_is_the_first_real_paragraph_cut_at_a_word(body: str, expected: str) -> None:
+    script = "process.stdout.write(require(process.argv[1]).describe(process.argv[2]))"
+    done = subprocess.run(
+        ["node", "-e", script, str(REPO_ROOT / "docs-site" / "description.js"), body],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+    )
+    assert done.stdout == expected
+    assert len(done.stdout) <= 160
+
+
+def test_every_page_gets_an_article_and_the_landing_the_product(tmp_path: Path) -> None:
+    content = _manifest(
+        tmp_path / "content",
+        [
+            {
+                "title": "Home",
+                "source": "content/9.9.9/README.md",
+                "permalink": "/v/9.9.9/overview",
+                "description": "DFE </script>",
+            },
+            {"title": "Ops", "source": "content/9.9.9/ops.md", "permalink": "/v/9.9.9/ops/"},
+        ],
+    )
+    build = tmp_path / "build"
+    for route in ("overview", "ops"):
+        (build / "v/9.9.9" / route).mkdir(parents=True)
+        (build / "v/9.9.9" / route / "index.html").write_text(
+            '<head><script type="application/ld+json">{"@type":"BreadcrumbList"}</script></head>',
+            encoding="utf-8",
+        )
+    entry = {"name": "9.9.9", "base_url": "/v/9.9.9/"}
+    site = {"url": "https://docs.example"}
+    assert page_meta.add_structured_data(entry, site, content=content, build_dir=build) == 2
+    assert page_meta.add_structured_data(entry, site, content=content, build_dir=build) == 0
+    home = (build / "v/9.9.9/overview/index.html").read_text(encoding="utf-8")
+    ops = (build / "v/9.9.9/ops/index.html").read_text(encoding="utf-8")
+    assert home.count("application/ld+json") == 3
+    assert page_meta.SOFTWARE in home
+    assert "<\\/script>" in home
+    assert ops.count("application/ld+json") == 2
+    assert '"url":"https://docs.example/v/9.9.9/ops/"' in ops
+    assert '"description"' not in ops
+
+
+def test_the_root_files_name_only_listed_builds_with_a_sitemap(tmp_path: Path) -> None:
+    for base in ("v/2.2.1", "v/2.2.0"):
+        (tmp_path / base).mkdir(parents=True)
+    (tmp_path / "v/2.2.1/sitemap.xml").write_text("", encoding="utf-8")
+    site = {
+        "url": "https://docs.example",
+        "builds": [
+            {"base_url": "/v/2.2.1/", "listed": True},
+            {"base_url": "/v/2.2.0/", "listed": True},
+            {"base_url": "/next/", "listed": False},
+        ],
+    }
+    page_meta.write_root_files(site, tmp_path)
+    index = (tmp_path / "sitemap.xml").read_text(encoding="utf-8")
+    assert index.count("<sitemap>") == 1
+    assert "https://docs.example/v/2.2.1/sitemap.xml" in index
+    robots = (tmp_path / "robots.txt").read_text(encoding="utf-8")
+    assert "Sitemap: https://docs.example/sitemap.xml" in robots
+    assert "Content-Signal: search=yes, ai-input=yes\n" in robots
+    assert "ai-train" not in robots
+
+
+def test_a_not_found_page_drops_its_canonical_and_asks_for_noindex(tmp_path: Path) -> None:
+    html = tmp_path / "404.html"
+    html.write_text(
+        '<head><link data-rh="true" rel="canonical" href="/x/404.html/"></head>', encoding="utf-8"
+    )
+    page_meta.mark_not_found(html)
+    page_meta.mark_not_found(html)
+    text = html.read_text(encoding="utf-8")
+    assert "canonical" not in text
+    assert text.count('name="robots" content="noindex"') == 1

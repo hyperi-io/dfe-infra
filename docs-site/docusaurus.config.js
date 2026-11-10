@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
 const {journeySidebar} = require('./sidebar-journeys.js');
+const {describe} = require('./description.js');
 
 const CONTENT = path.join(__dirname, 'content');
 const SITE_FILE = path.join(CONTENT, 'site.json');
@@ -308,6 +309,17 @@ module.exports = {
     // .md parses as CommonMark and .mdx as MDX, so plain repo docs need no MDX escaping.
     format: 'detect',
     mermaid: true,
+    // A page that sets no description gets its first real paragraph, not its first line.
+    parseFrontMatter: async (params) => {
+      const result = await params.defaultParseFrontMatter(params);
+      if (!result.frontMatter.description) {
+        const description = describe(result.content);
+        if (description) {
+          result.frontMatter.description = description;
+        }
+      }
+      return result;
+    },
     hooks: {onBrokenMarkdownLinks: 'throw', onBrokenMarkdownImages: 'warn'},
   },
   clientModules: [require.resolve('./src/version-switch.js')],
