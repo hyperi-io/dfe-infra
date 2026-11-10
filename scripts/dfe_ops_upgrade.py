@@ -1102,7 +1102,7 @@ def check_schema_lock_wedge(
         return False, (
             f"schema_lock's quorum names a part no replica holds ({', '.join(wedged)}), so no engine can "
             f"take the schema lease. With no engine holding it, run once on one replica: {drops} "
-            "-- the engine recreates the table at boot (docs/deployment/upgrades.md)"
+            "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)"
         )
     if unproven:
         return True, f"quorum part missing on every replica read, not all were: {', '.join(unproven)}"
