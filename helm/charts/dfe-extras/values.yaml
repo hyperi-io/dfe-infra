@@ -32,7 +32,7 @@ extras:
     dfe-transform-vector: "v1.0.63"
     dfe-transform-elastic: "v1.1.29"
     culvert: "v2.1.30"
-    dfe-hyperdx: "v0.3.21"
+    dfe-hyperdx: "v0.3.22"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
