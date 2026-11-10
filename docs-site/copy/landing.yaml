@@ -146,8 +146,8 @@ quickstart:
         - text: "Needs Docker with Compose v2, Python 3, git and make."
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-            make up PROFILE=slim-grpc{version_arg}
-        - text: "Then send it an event:"
+            make up{version_arg}
+        - text: "That runs `single-kafka`. `make up PROFILE=<name>` picks `slim-grpc`, `slim-kafka` or `single-grpc` instead, and refuses any other name with the valid list. Then send it an event:"
         # dfe-docker docs/evaluating.md, "Seeing your own data go through".
         - code: |-
             curl -X POST http://localhost:8080/ingest \

@@ -7,19 +7,23 @@ sidebar_label: Docker
 
 The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. It runs the same images as a Kubernetes deployment, just packaged differently.
 
-You need Docker with Compose v2, Python 3, git and make. Pick a profile first:
+You need Docker with Compose v2, Python 3, git and make.
+
+```bash
+git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
+make up     # pull, start, self test, print the console login
+```
+
+`make up` runs the newest DFE release with every image pinned, on the `single-kafka` profile. It ends with a self test that sends marked events through and prints `PASS` as each check lands. `VERSION=` pins another release.
+
+`make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
 
 | Profile | Transport | Runs |
 |---|---|---|
 | `slim-grpc` | gRPC, low latency | The core path alone: receiver, loader and ClickHouse, with the engine and the console. |
-| `single-kafka` | Kafka message bus | All of that, plus Kafka, the archiver, and the fetcher and transforms, one per source. The default. |
-
-```bash
-git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make up PROFILE=slim-grpc     # pull, start, self test, print the console login
-```
-
-`make up` runs the newest DFE release with every image pinned. `PROFILE=` picks from the table above and is checked against it, `single-kafka` when you leave it off. `VERSION=` pins another release. `make up` ends with a self test that sends marked events through and prints `PASS` as each check lands.
+| `slim-kafka` | Kafka message bus | The same core path over Kafka, plus a Kafka UI. |
+| `single-grpc` | gRPC, low latency | The core path plus the fetcher and the transforms. |
+| `single-kafka` | Kafka message bus | The core path over Kafka, plus the archiver, the fetcher and the transforms. The default. |
 
 Then send it an event of your own:
 
