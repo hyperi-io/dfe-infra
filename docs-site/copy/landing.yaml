@@ -133,8 +133,8 @@ quickstart:
     - value: demo
       label: Demo
       blocks:
-        - text: "Needs Docker, Python 3 and [uv](https://docs.astral.sh/uv/)."
-        # dfe-docker Makefile targets init, stack, up and demo. The profile names are service_profiles.yaml's.
+        - text: "Needs Docker with Compose v2, Python 3, git and make."
+        # dfe-docker Makefile targets up and demo. PROFILE= names come from its service_profiles.yaml.
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
             make demo{version_arg}
@@ -143,7 +143,7 @@ quickstart:
     - value: docker
       label: Docker
       blocks:
-        - text: "Needs Docker and Python 3."
+        - text: "Needs Docker with Compose v2, Python 3, git and make."
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
             make up PROFILE=slim-grpc{version_arg}

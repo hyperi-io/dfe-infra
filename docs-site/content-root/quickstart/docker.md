@@ -7,7 +7,7 @@ sidebar_label: Docker
 
 The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. It runs the same images as a Kubernetes deployment, just packaged differently.
 
-You need Docker with Compose v2 and Python 3. Pick a profile first:
+You need Docker with Compose v2, Python 3, git and make. Pick a profile first:
 
 | Profile | Transport | Runs |
 |---|---|---|

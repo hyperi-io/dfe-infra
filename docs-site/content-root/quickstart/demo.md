@@ -7,7 +7,7 @@ sidebar_label: The demo
 
 Raw firewall syslog in, one parsed ClickHouse table per vendor out, on one host.
 
-You need Docker with Compose v2 and Python 3, plus [uv](https://docs.astral.sh/uv/) for the demo stream. It runs the newest DFE release, and `VERSION=` on the make line pins another.
+You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
