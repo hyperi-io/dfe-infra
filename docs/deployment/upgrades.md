@@ -135,7 +135,7 @@ The bundled repo is private and its only credential is a cluster Secret, so `app
   - every Argo Application is Synced and Healthy
   - no KafkaRebalance is running
   - ClickHouse carries no merge past `--clickhouse-merge-threshold`
-  - no `schema_lock` table's quorum names a part every replica has lost. A wedged lock no engine can read, and the check prints the `DROP TABLE <db>.schema_lock SYNC` to run while no engine holds the lease, after which the engine recreates the table at boot
+  - no `schema_lock` table's quorum names a part every replica has lost. A wedged lock no engine can read, and the check prints the `DROP TABLE <db>.schema_lock SYNC` to run while no engine holds the lease. An engine at v1.22.85 or later recreates the table at boot, and an older one cannot
   - all ten Strimzi CRDs store `v1` only (checked only when the plan crosses the conversion, and a CRD kubectl can't read fails)
   - the on-prem node capacity holds the new sizing (`check_node_capacity.py`)
   - a backup marker exists at `--backup-marker` when the plan carries a one-way step
