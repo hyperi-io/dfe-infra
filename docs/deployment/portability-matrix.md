@@ -42,7 +42,7 @@ flowchart TB
 
 One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL
 L7 routing -- there are no per-app cloud LBs and no cloud L7 (ALB/App Gateway).
-dfe-engine (the identity authority), the Envoy edge, and HyperDX's DocumentDB store
+dfe-engine (the identity authority), the Envoy edge, and dfe-hyperdx's DocumentDB store
 are always in-cluster; Kafka, ClickHouse and object storage can be in-cluster or a
 managed endpoint.
 
@@ -88,7 +88,7 @@ managed endpoint.
 - **Data services are in-cluster OR managed, per deployment.** Kafka and ClickHouse
   default to in-cluster (Strimzi, CH operator) and swap to a managed endpoint by
   pointing the chart's `*.host` / `bootstrapServers` at it. The DocumentDB store's
-  PostgreSQL stays in-cluster (it is HyperDX's store, not a general PG).
+  PostgreSQL stays in-cluster (it is dfe-hyperdx's store, not a general PG).
 - **ClickHouse on cloud:** ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse
   in-k8s (the operator) is equally ACCEPTABLE on any cloud -- the `clickhouse.mode`
   seam supports both everywhere, so it is a per-deployment call, not a hard rule.

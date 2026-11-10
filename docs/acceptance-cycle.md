@@ -19,7 +19,7 @@ Two people, one screen each.
 - **The operator drives the UI.** Every step is done through dfe-ui as a real
   logged-in user, not through curl.
 - **The agent watches the layers underneath** -- engine, receiver, loader,
-  ClickHouse, HyperDX, ArgoCD -- and says what it sees.
+  ClickHouse, dfe-hyperdx, ArgoCD -- and says what it sees.
 - **Fix as you go.** A step that fails stops the cycle, the fault gets fixed at
   source, and the cycle restarts from that step. Reaching the end with a list of
   known-broken things is not a pass.
@@ -50,7 +50,7 @@ Done when the agent would bet on it working, rather than on it having deployed.
 ### 2. Admin login, both ways
 
 Operator logs into dfe-ui as an **admin** and exercises the app, including the
-HyperDX view.
+dfe-hyperdx view.
 
 Run it TWICE:
 
@@ -62,7 +62,7 @@ Run it TWICE:
 Both must give the same result. A difference between them is the finding.
 
 Agent watches: the token the engine mints and its claims, the audience check on
-each app, group-to-role resolution, and the HyperDX handoff -- team assignment
+each app, group-to-role resolution, and the dfe-hyperdx handoff -- team assignment
 and which connection it ends up using.
 
 ### 3. Data analyst login, both ways
@@ -101,7 +101,7 @@ The operator then logs in as an org-tied user and looks at the data.
 
 This is the step the whole cycle exists for. It passes when:
 
-- an org-tied user sees ONLY that org's rows, in the UI and in HyperDX
+- an org-tied user sees ONLY that org's rows, in the UI and in dfe-hyperdx
 - a user tied to two orgs sees exactly those two
 - a platform user sees across orgs but NOT the system databases
 - a user with no roles is refused everywhere
@@ -109,7 +109,7 @@ This is the step the whole cycle exists for. It passes when:
 
 Isolation must come from the identity the connection uses, never from a query
 predicate the UI adds. A filter that a user can edit is not isolation. If
-HyperDX can be made to return another org's rows by changing the query, the step
+dfe-hyperdx can be made to return another org's rows by changing the query, the step
 has failed however tidy the UI looks.
 
 ## Recording the result

@@ -64,7 +64,7 @@ Notes:
 - dfe-transform-elastic is PRE-GA/alpha and NOT published to GHCR (no digest).
   `dfe-stack` already excludes any app without a digest from rendered manifests -
   loudly. It stays excluded from a stack cut until it publishes. Do not render it.
-- dfe-hyperdx is the HyperDX fork. Its k8s thin chart pulls
+- dfe-hyperdx is our extended fork of upstream HyperDX. Its k8s thin chart pulls
   `<registry>/dfe-hyperdx` at `content.dfe-hyperdx`. docker pulls
   `ghcr.io/hyperi-io/hyperi-hyperdx` (NOTE: a DIFFERENT image name than k8s -
   `hyperi-hyperdx` vs `dfe-hyperdx`; reconcile the name, or the render must map
@@ -131,7 +131,7 @@ drift-check enforces where a hardcoded pin exists. Already works - leave as-is.
 - data: `otel-collector`, `forgejo` (bundled deploy-repo fallback, k8s-only).
   `postgresql` is no chart or image: it records the PostgreSQL major the AWS
   toolbox installs psql at.
-- the DocumentDB store, HyperDX's metadata on k8s (dfe-docker runs DocumentDB
+- the DocumentDB store, dfe-hyperdx's metadata on k8s (dfe-docker runs DocumentDB
   Local, `services.documentdb-local`, class E below):
   - the operator is the OCI chart `oci://ghcr.io/documentdb/documentdb-operator`
     1.0.0, by digest, in `argocd/appsets/layer1-addons.yaml`. Its chart bundles
@@ -155,7 +155,7 @@ image. One number, same image ref both sides.
 
 ## Class E - third-party plain image, docker-ONLY
 
-### DocumentDB Local (HyperDX's metadata, docker)
+### DocumentDB Local (dfe-hyperdx's metadata, docker)
 
 - SSoT: `services.documentdb-local` (pg18-1.0.0). docker: `HYPERDX_DOCUMENTDB_VERSION` -> `ghcr.io/documentdb/documentdb/documentdb-local`, the single-container DocumentDB build.
 - No k8s cascade: k8s runs the DocumentDB store (class C above).

@@ -1,10 +1,10 @@
-# Provider logs in HyperDX
+# Provider logs in dfe-hyperdx
 
-Self-monitoring has two feeds. The stack's own OTLP was always in HyperDX. The infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log) were not. Now they are.
+Self-monitoring has two feeds. The stack's own OTLP was always in dfe-hyperdx. The infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log) were not. Now they are.
 
-Receivers in the otel collector read the provider's cloud log service, or the Rancher audit file, and send the rows through the collector gateway to the otel database HyperDX reads. They bypass DFE ingest: no fetcher source, no customer table.
+Receivers in the otel collector read the provider's cloud log service, or the Rancher audit file, and send the rows through the collector gateway to the otel database dfe-hyperdx reads. They bypass DFE ingest: no fetcher source, no customer table.
 
-Every row carries `cloud.provider` and `dfe.provider_log.source`, so HyperDX can filter on them. The rows are generic OTel logs, not typed columns.
+Every row carries `cloud.provider` and `dfe.provider_log.source`, so dfe-hyperdx can filter on them. The rows are generic OTel logs, not typed columns.
 
 ## Flavours
 

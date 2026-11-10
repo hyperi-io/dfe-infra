@@ -1,6 +1,6 @@
 # Stack versioning
 
-DFE is made of independently released parts: the Rust data plane, dfe-engine, dfe-ui, the HyperDX fork, the schemas, the charts and operators, and the deploy-repo template. Nobody should have to reason about that matrix. "DFE X.Y.Z" names one certified set of component versions. A deployment pins one number and gets the whole set, and can move individual components off it, visibly and at its own risk.
+DFE is made of independently released parts: the Rust data plane, dfe-engine, dfe-ui, dfe-hyperdx, the schemas, the charts and operators, and the deploy-repo template. Nobody should have to reason about that matrix. "DFE X.Y.Z" names one certified set of component versions. A deployment pins one number and gets the whole set, and can move individual components off it, visibly and at its own risk.
 
 ## Where the set is defined
 

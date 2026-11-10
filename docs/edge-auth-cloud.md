@@ -13,7 +13,7 @@ and `edge-azure.yaml`, because each cloud makes a LoadBalancer public unless tol
 otherwise.
 
 **Public web access is default-deny, per exposure group.** A route's class puts
-it in a group: dfe-ui, HyperDX and the engine's browser families are `console`;
+it in a group: dfe-ui, dfe-hyperdx and the engine's browser families are `console`;
 the engine's CLI families, `/openapi.json` and SCIM are `api`; the admin UIs are
 `admin`. Every route of a group, on its internal name and its public one, is
 refused at Envoy unless the client address is on `exposure.groups.<group>.allow`,
@@ -50,7 +50,7 @@ runtime.
 `exposure.groups.admin.enabled` defaults off on the same three flavours, and
 `argocd/values/aws.yaml` sets `oidc.enabled: true` -- Argo CD, Kafbat, Forgejo,
 the links page and Cruise Control all stay off the public load balancer until an
-operator's overlay turns the group on. HyperDX is class product, beside the
+operator's overlay turns the group on. dfe-hyperdx is class product, beside the
 console that frames it, so the switch never reaches it. The chart's render guard
 (`envoy-gateway-config.validateUi`) refuses the admin group on an internet-facing
 Service with an empty `exposure.groups.admin.allow`, unless `allowPublic: true`,
@@ -97,7 +97,7 @@ dial's own spelling. `ui.rate_limit.per_client_requests` is the chart's alone.
 | `exposure.groups.<group>.allow`, `.deny` | `[]` (nobody, internet-facing) | Who may reach the group's routes, at Envoy AND, as a union, at the load balancer. |
 | `ui.trusted_proxy_cidrs` | `""` (no forwarded header believed) | A CDN or other L7 proxy in front of the public hostnames, whose `X-Forwarded-For` names the client. |
 | `ui.rate_limit` | on, 6000/Minute, `local` | Each public route's shared bucket, the wall a distributed credential-stuffing run meets before the login, per proxy replica. |
-| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | A bucket per client address, per route, per proxy replica, on every public route and on every internal-name web route of an internet-facing Service, so one caller's dashboard cannot empty HyperDX for the rest. |
+| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | A bucket per client address, per route, per proxy replica, on every public route and on every internal-name web route of an internet-facing Service, so one caller's dashboard cannot empty dfe-hyperdx for the rest. |
 | `envoyGateway.connectionLimit` | on, 10000 | Concurrent connections each listener takes per proxy replica. |
 | `ui.waf.mode` | `none` | Only `none` renders. |
 | `ui.tls` | `"1.2"`, HSTS on | The public TLS floor and `Strict-Transport-Security`. |
@@ -116,7 +116,7 @@ These fail the render rather than shipping a weaker edge:
 - **A public UI with no authentication.** Edge OIDC (`edgePolicy`, or
   `oidc.targetRoutes` naming the route, with a provider configured) counts,
   as do the three app-side schemes above -- dfe-ui's NextAuth, Kafbat's own
-  OIDC, HyperDX's `dfe_token` cookie. Nothing else does.
+  OIDC, dfe-hyperdx's `dfe_token` cookie. Nothing else does.
 - **The receiver route on an internet-facing Service with no caller auth.**
   The chart cannot read the receiver's `config.server.auth.mode`, so
   `routes.receiver.authMode` restates it, and only `header` or `bearer`

@@ -55,7 +55,7 @@ flowchart LR
     end
     subgraph appns["app namespace"]
         UI["dfe-ui<br/>THE landing page + local login"]
-        HX["hyperdx<br/>iframe inside dfe-ui"]
+        HX["dfe-hyperdx<br/>iframe inside dfe-ui"]
         ENG["dfe-engine<br/>API + identity authority"]
     end
     subgraph adminns["admin surfaces"]
@@ -81,8 +81,8 @@ flowchart LR
   without it, a `:80` request gets a 404 instead of a redirect to TLS. On an
   internet-facing Gateway that lets an admin UI's Host header reach the
   cluster in cleartext with no certificate warning.
-- **dfe-ui is always the landing page**, with HyperDX embedded as an iframe
-  inside it -- HyperDX is never presented as its own URL.
+- **dfe-ui is always the landing page**, with dfe-hyperdx embedded as an iframe
+  inside it -- dfe-hyperdx is never presented as its own URL.
 - The links page is a convenience launch pad for admins (see below), never
   a landing page.
 
@@ -143,7 +143,7 @@ decides what switch can turn it off.
 
 | Class | Exposure group | Routes | What can disable it |
 |---|---|---|---|
-| `product` | `console` | dfe-ui, dfe-engine (browser families), HyperDX | `exposure.groups.console.enabled: false`, then its own `enabled` |
+| `product` | `console` | dfe-ui, dfe-engine (browser families), dfe-hyperdx | `exposure.groups.console.enabled: false`, then its own `enabled` |
 | `api` | `api` | dfe-engine-cli (CLI families, `/openapi.json`, SCIM) | `exposure.groups.api.enabled: false`, then its own `enabled` |
 | `infra` | `admin` | Argo CD, Forgejo, Kafbat, links, Cruise Control | `exposure.groups.admin.enabled: false` first, then no login in front of it, then its backend not deployed, then its own `enabled` |
 | `ingest` | `ingest` | otel, receiver | its own `enabled`; no UI switch reaches it |
@@ -163,7 +163,7 @@ A public flag on a route with no login of its own (`exposure.groups.admin.tools.
 off the edge**, and it is ABSOLUTE for the class: a route's own
 `enabled: true` does not beat it, so a lock-down cannot be picked apart one
 route at a time, withdrawing their edge policies too. It never touches
-dfe-ui, the engine API or HyperDX. `exposure.groups.admin.tools` is the one
+dfe-ui, the engine API or dfe-hyperdx. `exposure.groups.admin.tools` is the one
 list of admin UIs, one key per class-infra route.
 
 On a cloud deploy with an internet-facing Gateway Service, this defaults
@@ -178,14 +178,14 @@ owns.
 
 | Surface | Hostname | Class | Exposed by default | Edge policy |
 |---|---|---|---|---|
-| dfe-ui (+ HyperDX iframe) | `dfe.{domain}` | product | yes | local login by default; OIDC when a provider is configured |
+| dfe-ui (+ dfe-hyperdx iframe) | `dfe.{domain}` | product | yes | local login by default; OIDC when a provider is configured |
 | dfe-engine browser paths | `dfe.{domain}/api` interactive | product | yes | OIDC when configured; machine paths API-key/JWT, never redirected |
 | Argo CD | `argocd.{domain}` | infra | yes | edge OIDC + group check; Argo signs in through the same provider, `dfe-admins` and `dfe-infra` -> admin, `dfe-infra-viewers` -> read-only ([gateway-oidc.md](deployment/gateway-oidc.md#argo-cds-own-login)) |
 | Links page | `links.{domain}` | infra | only behind edge OIDC | edge OIDC + group check; no auth of its own |
 | Cruise Control UI | `cruise-control.{domain}` | infra | only behind edge OIDC, Kafka cluster tier | edge OIDC + group check; no auth of its own |
 | Forgejo (bundled fallback) | `git.{domain}` | infra | only where bundled | edge OIDC + group check |
 | Kafbat | `kafbat.{domain}` | infra | yes | its own OIDC (integrated-app pattern) -- group check is app-side |
-| HyperDX | `hyperdx.{domain}` | product | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
+| dfe-hyperdx | `hyperdx.{domain}` | product | yes | its own PEP on the `dfe_token` cookie -- group check is app-side |
 | otel OTLP ingest | `otel.{domain}` | ingest | no (`otel.ingress.enabled`) | the ingest group's lists, then a bearer token checked by the collector |
 | dfe-receiver ingest | `receiver.{domain}` | ingest | on-prem only (`exposure.groups.ingest.door: gateway`) | the ingest group's lists, then the receiver's own `server.auth`, restated as `routes.receiver.authMode` (`header` or `bearer` when internet-facing) |
 
@@ -199,10 +199,10 @@ claim to carry one of `adminGroups` (`argocd/values/common.yaml`; names from dfe
 groups claim is refused rather than admitted. Per-route cookie names stop a
 session minted on one infra host being replayed on another.
 
-Kafbat and HyperDX are exempt from the EDGE gate and check groups app-side
-instead -- Kafbat runs its own OIDC against the same provider, and HyperDX
+Kafbat and dfe-hyperdx are exempt from the EDGE gate and check groups app-side
+instead -- Kafbat runs its own OIDC against the same provider, and dfe-hyperdx
 cannot complete an interactive redirect inside the dfe-ui iframe. Kafbat stays
-class `infra`, under the kill switch. HyperDX is class `product`, beside the
+class `infra`, under the kill switch. dfe-hyperdx is class `product`, beside the
 console that frames it.
 
 Gating Forgejo also closes git-over-HTTP from OUTSIDE the cluster. Nothing

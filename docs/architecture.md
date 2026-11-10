@@ -18,7 +18,7 @@ Applications, and this repo never reads or writes engine config. The
 whole-suite map lives in the dfe-engine repo (`docs/architecture.md`
 there) - this page covers only the infra side.
 
-One named exception to "this repo owns its charts": **dfe-engine controls the HyperDX integration**, because it integrates most closely. A change to the fork, its image or this repo's hyperdx chart starts as an issue on dfe-engine.
+One named exception to "this repo owns its charts": **dfe-engine controls the dfe-hyperdx integration**, because it integrates most closely. A change to the fork, its image or this repo's hyperdx chart starts as an issue on dfe-engine.
 
 ## What this repo owns
 

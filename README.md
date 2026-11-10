@@ -12,7 +12,7 @@ The deploy layer of DFE: the charts, Argo CD ApplicationSets, OpenTofu modules a
 - `scripts/dfe-stack`, which renders the stack manifest, lists the DFE-owned images to mirror for an air-gapped install (third-party chart images are mirrored separately), derives the upgrade graph from the stacks declared in `versions.yaml` and checks a customer's pins.
 - A signed stack manifest on each release: the manifest, image list and upgrade graph attached to the GitHub release and pushed as a cosign-signed OCI artifact.
 - One two-layer model on every cluster: a cloud-specific base laid by `bootstrap/` and OpenTofu, then the DFE platform, the same everywhere, managed by Argo CD.
-- ClickHouse, Kafka on Strimzi or Redpanda, HyperDX's DocumentDB on CloudNativePG, Envoy Gateway with OIDC, KEDA and External Secrets, deployed and wired for you.
+- ClickHouse, Kafka on Strimzi or Redpanda, dfe-hyperdx's DocumentDB on CloudNativePG, Envoy Gateway with OIDC, KEDA and External Secrets, deployed and wired for you.
 - `DFE_REGISTRY` to point a deployment at its own image mirror.
 - `scripts/dfe-ops` to deploy, verify, tear down and run the acceptance tests against a cluster, or a local kind one.
 
@@ -61,8 +61,8 @@ carries those inputs is specified in
 - Registry: released images on GHCR (`ghcr.io/hyperi-io`). `DFE_REGISTRY`
   points a deployment at its own mirror (Harbor, ECR, ACR, GAR).
 - Ingress and auth: Envoy Gateway + OIDC SecurityPolicy.
-- Data: ClickHouse, DocumentDB on CloudNativePG (HyperDX's state), Strimzi Kafka (KRaft,
-  SASL/SCRAM), OTel -> ClickHouse -> HyperDX.
+- Data: ClickHouse, DocumentDB on CloudNativePG (dfe-hyperdx's state), Strimzi Kafka (KRaft,
+  SASL/SCRAM), OTel -> ClickHouse -> dfe-hyperdx.
 - Secrets: ESO + OpenBao (on-prem) or cloud secret managers.
 - Autoscaling: KEDA from OTel metrics.
 

@@ -21,7 +21,7 @@ The tier table is per flavour, in `argocd/values/edge-<flavour>.yaml`.
 
 Every surface falls into exactly one:
 
-- **(a) dfe-ui and HyperDX** -- the product's own console and the search it
+- **(a) dfe-ui and dfe-hyperdx** -- the product's own console and the search it
   frames, public on a cloud deploy to the addresses `exposure.groups.console.allow`
   names, and to none while it is empty.
 - **(b) the engine API** -- on dfe-ui's own hostname, because the browser calls
@@ -86,7 +86,7 @@ every router the engine adds. Five traps:
   The two are ALTERNATIVES on a hostname.
 - The sampler is `POST /api/v1/sources/{source}/sample`, on the public `sources`
   prefix -- opening the `sample` family is a different thing.
-- The HyperDX fork reaches `/api/v1/hyperdx` from in-cluster, so its engine
+- dfe-hyperdx reaches `/api/v1/hyperdx` from in-cluster, so its engine
   origin stays the internal hostname or the Service.
 - `/api/v1/tasks` carries the only SSE stream, and stays private until the
   console wants it.

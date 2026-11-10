@@ -49,7 +49,7 @@ every reconcile. The app connects with the same value.
 |---|---|---|---|---|
 | hunt runner | `dfe_hunt_runner` | `DFE_CLICKHOUSE_HUNT_RUNNER_PASSWORD` | `hunt-runner-clickhouse` (`huntRunner.clickhouse`) | `DFE_HUNT_RUNNER_CLICKHOUSE_PASSWORD` |
 | dfe-loader | `dfe_loader` | `DFE_CLICKHOUSE_LOADER_PASSWORD` | `loader-clickhouse` | `DFE_LOADER_CLICKHOUSE_PASSWORD` |
-| keda shim, header-dev HyperDX | `dfe_query_reader` | `DFE_CLICKHOUSE_QUERY_READER_PASSWORD` | `query-reader-clickhouse` | `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` |
+| keda shim, header-dev dfe-hyperdx | `dfe_query_reader` | `DFE_CLICKHOUSE_QUERY_READER_PASSWORD` | `query-reader-clickhouse` | `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` |
 | OTel collector | `dfe_otel_writer` | `DFE_CLICKHOUSE_OTEL_WRITER_PASSWORD` | `otel-writer-clickhouse`, copied into the collector's namespace | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` |
 
 On k8s dfe-extras mints each Secret once beside the engine, with ESO's Password
@@ -57,7 +57,7 @@ generator, from `clickhouse.serviceUsers` in `argocd/values/common.yaml` (the
 hunt runner's from `huntRunner.clickhouse`). They render with the engine, a wave
 before every app that reads one. On docker `make init` mints each into `.env`.
 
-HyperDX never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s HyperDX is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` carries the query reader's password in every mode, and only `header-dev` reads it.
+dfe-hyperdx never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s dfe-hyperdx is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` carries the query reader's password in every mode, and only `header-dev` reads it.
 
 The hunt runner's worker runs `INSERT ... SELECT` built from rule text, so its
 user is the identity a crafted rule runs as: no `url()`, `s3()`, `remote()` or
@@ -78,7 +78,7 @@ Definitions: dfe-schemas `roles/clickhouse.yaml`.
 | identity | CH objects | used by | privilege |
 |---|---|---|---|
 | `dfe_loader` | user + `dfe_loader_role` + `dfe_loader_profile` | dfe-loader | `INSERT ON dfe.*`, `SELECT ON system.columns` and `system.tables`, async-insert settings |
-| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | the platform team's HyperDX connection, the engine's parameterised views, the keda shim | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
+| `dfe_query_reader` | user + `dfe_query_reader_role` + profile | the platform team's dfe-hyperdx connection, the engine's parameterised views, the keda shim | `SELECT ON dfe.*` plus `system` introspection, `readonly=2` |
 | `dfe_hunt_runner` | user + `dfe_hunt_runner_role` | hunt-runner | `SELECT`/`INSERT ON dfe.*` |
 | `dfe_otel_writer` | user + `dfe_otel_writer_role` | the OTel collector's gateway | `INSERT ON dfe.otel_*`, `SELECT ON dfe.otel_traces`, `SELECT ON system.metrics`, `system.events` and `system.parts`, `SHOW TABLES ON dfe.*` and `system.*` |
 | `dfe_otel_reader_role` | role only | admin + infra-admin group users | `SELECT ON dfe.*` |
@@ -90,7 +90,7 @@ through the scalo secrets seam unless the deploy layer supplies the password. Th
 rest are granted to an identity that already exists. The service users are
 reconciled whether or not tenant isolation is on.
 
-`readonly=2` on the reader is deliberate, not a slack setting: HyperDX sends
+`readonly=2` on the reader is deliberate, not a slack setting: dfe-hyperdx sends
 `date_time_output_format` with every query, and `readonly=1` rejects the whole
 request. `allow_ddl=0` still bars DDL.
 

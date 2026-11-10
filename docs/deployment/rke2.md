@@ -50,7 +50,7 @@ workloads on the RKE2 cluster:
 ```mermaid
 flowchart TB
   apps["DFE apps: engine / ui / receiver / loader / ..."]
-  data["data services: ClickHouse / Kafka / Postgres / HyperDX"]
+  data["data services: ClickHouse / Kafka / Postgres / dfe-hyperdx"]
   l1["DFE Layer 1: cert-manager / ESO / ArgoCD / Envoy Gateway"]
   rke2["RKE2 cluster: hardened + FIPS + CIS/STIG + self-hosted OIDC"]
   nodes["nodes: control plane (static pods + etcd) + workers"]

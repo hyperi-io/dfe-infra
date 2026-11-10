@@ -34,7 +34,7 @@ One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella li
 
 Archive stays off where the engine lists no `dfe-archiver` instance: on direct the receiver also sends an archived record to the archiver, and with none it answers 503.
 
-Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e`, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` (`dataset`), the run's corpus rows carry `source_ip`, a zstd file appears under `<name>_land` in the archiver, and the engine lists a HyperDX source for it.
+Proof: the transform instance reports, the receiver routes, every corpus record posted lands in `<name>` with none in `main` (`landed`, counted by `_e2e`, since the routing probes land in the same table), every row carries `data_stream.dataset` `cisco_ios.log` (`dataset`), the run's corpus rows carry `source_ip`, a zstd file appears under `<name>_land` in the archiver, and the engine lists a dfe-hyperdx source for it.
 
 `reporting` is not taken at face value. The engine answers it off the otel
 tables, and on Compose one container serves the app and every instance of it, so
@@ -45,8 +45,8 @@ where an idle app's telemetry cannot be told from a working instance's
 repeated under the table, so a long report cannot be read as green.
 
 Last, for every case, the `observe` step opens the console's Observe search,
-picks the source in the embedded HyperDX and reads a non-zero results line. The
-console iframes HyperDX from a second origin, so this is the step that meets
+picks the source in the embedded dfe-hyperdx and reads a non-zero results line. The
+console iframes dfe-hyperdx from a second origin, so this is the step that meets
 what a tester meets: the embed's frame-ancestors, the login shared across the
 two origins and the source's own view. A frame the browser refused fails the
 step with the console's own error line.

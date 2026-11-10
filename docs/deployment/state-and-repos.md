@@ -13,7 +13,7 @@ Two rules follow. Config-as-code lives in git, because detection rules trapped i
 | Which apps run, scaling, pod resources | deploy repo `values/` | operators, dfe-engine | yes |
 | Backing service settings | deploy repo `infra/` | operators | yes |
 | Sources, custom schemas, transforms, rules, hunts, alerts, OIDC | deploy repo `config/` | dfe-engine, analysts | yes |
-| Saved searches, dashboards, preferences | HyperDX's document store, no repo | end users | yes |
+| Saved searches, dashboards, preferences | dfe-hyperdx's document store, no repo | end users | yes |
 | Secrets | the secrets store, read through External Secrets | operators | yes |
 
 Mutability has three levels. Read-only core is replaced on update, such as the charts. Read-only core with a scoped read-write surface fixes the shape and lets a bounded set of fields change, such as the node count of a ClickHouse cluster. Read-write is created locally, such as a source definition.
@@ -35,7 +35,7 @@ flowchart TB
     ARGO["Argo CD"]
     APPS["dfe-* apps"]
     CH[("ClickHouse")]
-    DOCDB[("HyperDX document store")]
+    DOCDB[("dfe-hyperdx document store")]
 
     PINS -. "pinned reference" .-> INFRA
     ENGINE -->|"commits"| VALUES
@@ -65,6 +65,6 @@ State reaches a running component by exactly one of three routes.
 
 1. GitOps. `values/` goes through Argo to Kubernetes objects. It is low frequency and auditable, and if the engine is down Argo keeps reconciling the last commit.
 2. Hot read. `config/` is read directly by the apps and the engine, with no Argo round trip. The engine applies the ClickHouse objects and the bootstrap Kafka topics itself at startup, from the schema wheel in its image.
-3. Application database. Per-user state goes to HyperDX's own store and never to git.
+3. Application database. Per-user state goes to dfe-hyperdx's own store and never to git.
 
 The engine committing to git is sound because the commit becomes the new source of truth. Out-of-band live changes are the anti-pattern, since reconciliation reverts them. The deploy repo's layout, invariants and governed operations are in the dfe-deploy repository's `docs/architecture.md`.

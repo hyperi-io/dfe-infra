@@ -85,7 +85,7 @@ On `local-dfe` and `rancher`, 2.2.0 served two doors at once: the LoadBalancer, 
 
 ### Web plane
 
-Below 2.2.1-rc.6 the gateway fenced no web route by address. From 2.2.1-rc.6 an internet-facing gateway answers 403 on every web route whose allow list is empty: `ui.allowed_cidrs` at 2.2.1-rc.6, each group's `exposure.groups.<group>.allow` from 2.2.1-rc.7 ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). `argocd/values/edge-<cloud>.yaml` makes the gateway internet-facing on `aws`, `gcp` and `azure`, so a deploy repo there that set nothing loses dfe-ui, HyperDX and the engine API, the `console` and `api` groups, from the first sync. On-prem gateways are not internet-facing, and an empty list fences nothing.
+Below 2.2.1-rc.6 the gateway fenced no web route by address. From 2.2.1-rc.6 an internet-facing gateway answers 403 on every web route whose allow list is empty: `ui.allowed_cidrs` at 2.2.1-rc.6, each group's `exposure.groups.<group>.allow` from 2.2.1-rc.7 ([edge-auth-cloud.md](../edge-auth-cloud.md#internet-facing-defaults)). `argocd/values/edge-<cloud>.yaml` makes the gateway internet-facing on `aws`, `gcp` and `azure`, so a deploy repo there that set nothing loses dfe-ui, dfe-hyperdx and the engine API, the `console` and `api` groups, from the first sync. On-prem gateways are not internet-facing, and an empty list fences nothing.
 
 `plan` reports BLOCKED, and `preflight` and `apply` refuse, until `infra/common.yaml` or `infra/envoy-gateway-config.yaml` sets `enabled`, `allow` or `allowPublic` on both groups, `allow: []` included, or `ui.allowed_cidrs` for a move to 2.2.1-rc.6 itself. The cloud is `--cloud`, else the cluster secret's `dfe.hyperi.io/cloud`.
 
@@ -102,7 +102,7 @@ exposure:
 
 A `/0` admits every address, as 2.2.0 did, and the chart's NOTES warn.
 
-On `gcp` and `azure`, 2.2.0 also published the admin UIs with a login of their own: Argo CD, Kafbat, HyperDX, and Forgejo where bundled. From 2.2.1-rc.6 the admin group is off there, as it already was on `aws`, and nothing refuses. HyperDX moves to `console`. The rest stay off until `exposure.groups.admin.enabled: true` with an `allow` list, or `allowPublic: true` behind an edge OIDC provider.
+On `gcp` and `azure`, 2.2.0 also published the admin UIs with a login of their own: Argo CD, Kafbat, dfe-hyperdx, and Forgejo where bundled. From 2.2.1-rc.6 the admin group is off there, as it already was on `aws`, and nothing refuses. dfe-hyperdx moves to `console`. The rest stay off until `exposure.groups.admin.enabled: true` with an `allow` list, or `allowPublic: true` behind an edge OIDC provider.
 
 ### Values
 
@@ -118,7 +118,7 @@ Until the retarget the 2.2.0 engine writes only the old keys. So just before it,
 
 - `MIGRATE`, a key `apply` carries.
 - `REFUSED`, which blocks `plan`, `preflight` and `apply` until a person edits it: an `image.repository`, `image.tag` or `image.digest` in an overlay, which would keep the 2.2.0 image under the new chart (an `image.tag` and `image.digest` equal to the service's `overrides.apps` entry in `pins.yaml` are that override, and pass), or an `enrichment_tables` path under another instance's table mount.
-- `DROPPED`, a key the thin charts read nothing in place of. HyperDX's `defaultConnections` is config loss: the thin chart no longer hands HyperDX `DEFAULT_CONNECTIONS` from `defaultConnections.secretName`, so recreate those connections in HyperDX.
+- `DROPPED`, a key the thin charts read nothing in place of. dfe-hyperdx's `defaultConnections` is config loss: the thin chart no longer hands dfe-hyperdx `DEFAULT_CONNECTIONS` from `defaultConnections.secretName`, so recreate those connections in dfe-hyperdx.
 
 `dfe-ops upgrade migrate-values --deploy <dir>` writes the same keys on its own and commits nothing. `--check` writes nothing and exits 1 while a key is left to carry or needs an edit.
 
@@ -233,9 +233,9 @@ longer than the cutover overlap can cover. Expect a small performance loss
 against the fork in a couple of specific use cases, and measure it during the
 overlap against the deployment's own heaviest queries.
 
-## HyperDX's document store
+## dfe-hyperdx's document store
 
-From 2.2.1 HyperDX keeps its state in a DocumentDB cluster that the DocumentDB operator runs on CloudNativePG (`helm/charts/documentdb`), in place of FerretDB. The two keep documents in different PostgreSQL schemas, so nothing moves across in place. 2.2.1 is a fresh install: a deployment upgraded from an earlier stack starts HyperDX on an empty store, without the saved searches, alerts, users and unprovisioned dashboards it held. One that has to keep them copies them before HyperDX cuts over, with `mongodump` against the FerretDB endpoint and `mongorestore` into the gateway, the step upstream documents for moving data between DocumentDB clusters. The restore side needs TLS against the store's CA and SCRAM-SHA-256, the options hyperdx's own `mongodb.uri` carries.
+From 2.2.1 dfe-hyperdx keeps its state in a DocumentDB cluster that the DocumentDB operator runs on CloudNativePG (`helm/charts/documentdb`), in place of FerretDB. The two keep documents in different PostgreSQL schemas, so nothing moves across in place. 2.2.1 is a fresh install: a deployment upgraded from an earlier stack starts dfe-hyperdx on an empty store, without the saved searches, alerts, users and unprovisioned dashboards it held. One that has to keep them copies them before dfe-hyperdx cuts over, with `mongodump` against the FerretDB endpoint and `mongorestore` into the gateway, the step upstream documents for moving data between DocumentDB clusters. The restore side needs TLS against the store's CA and SCRAM-SHA-256, the options dfe-hyperdx's own `mongodb.uri` carries.
 
 Between DocumentDB releases the upgrade is in place and two-phase. The binary moves first, with `documentdb.version` and the extension and gateway images in the chart's values, and reverting them rolls it back. The schema moves only when `spec.schemaVersion` is set, which runs `ALTER EXTENSION documentdb UPDATE` and cannot be undone. The chart sets no `schemaVersion`, so an image bump never migrates the schema by itself. Upstream's runbook: https://github.com/documentdb/documentdb-kubernetes-operator/blob/1.0.0/docs/operator-public-documentation/preview/operations/upgrades.md
 
