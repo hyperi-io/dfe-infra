@@ -81,6 +81,11 @@ class Calls:
         self.listing = listing
         self.destroy = destroy
         self.seen: list[tuple[str, list[str]]] = []
+        #: (tf_dir, region, commands run before it) for each bucket-emptying call.
+        self.emptied: list[tuple[str, str, int]] = []
+
+    def empty(self, _tf_bin: str, tf_dir: str, region: str) -> None:
+        self.emptied.append((tf_dir, region, len(self.seen)))
 
     def stream(self, cmd: list[str], env: dict | None = None) -> int:
         self.seen.append(("run", cmd))
@@ -112,6 +117,7 @@ def _bridge(monkeypatch: pytest.MonkeyPatch, outputs: dict | Exception) -> None:
 def _teardown(monkeypatch: pytest.MonkeyPatch, calls: Calls, outputs: dict | Exception, *argv: str) -> int:
     _bridge(monkeypatch, outputs)
     monkeypatch.setattr(dfeops, "_run_streaming", calls.stream)
+    monkeypatch.setattr(dfeops, "_empty_buckets", calls.empty)
     monkeypatch.setattr(dfeops.cloud_sweep, "run_aws", calls.aws)
     args = ["teardown", "--with-terraform", "--tf-dir", TF_DIR, "--tf-bin", "tofu", *argv]
     return dfeops.cmd_teardown(dfeops.build_parser().parse_args(args))
@@ -137,6 +143,8 @@ def test_the_engine_prefix_is_cleared_once_tofu_destroy_succeeds(
     assert [kind for kind, _cmd in calls.seen] == ["run", "run", "aws", "aws", "aws"]
     assert calls.seen[0][1][-1] == "--force"
     assert calls.seen[1][1] == ["tofu", f"-chdir={TF_DIR}", "destroy", *destroy_flags]
+    # The buckets are emptied after destroy.sh and before tofu destroy.
+    assert calls.emptied == [(TF_DIR, "us-west-2", 1)]
     err = capsys.readouterr().err.splitlines()
     if kept:
         assert err[-len(kept):] == kept

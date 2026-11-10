@@ -91,7 +91,11 @@ it, so the teardown starts inside the credential with the margin still ahead
 of it. The workload teardown gets half the margin and is stopped there, so
 `tofu destroy` always runs. A tofu apply is never cut short, since a killed
 apply strands its state lock and resources its state never recorded: an
-apply that finishes past the run length skips the cycle instead.
+apply that finishes past the run length skips the cycle instead. Once the
+cycle's own destroy stage starts (it creates DFE_CYCLE_DESTROY_MARK), the
+cycle runs to the run's expiry, run length plus margin, so a slow destroy
+cannot fail a run that passed. A destroy still running then is stopped and
+the run ends red.
 
 cloud-preflight and cloud-cycle both refuse a dial whose clickhouse.mode is external
 unless DFE_CYCLE_CH_SERVICE_ID, DFE_CYCLE_CH_API_KEY_ID, DFE_CYCLE_CH_API_KEY_SECRET
@@ -155,6 +159,11 @@ CHILD_STOP_TIMEOUT = 60  # seconds a stopped child gets to exit before it is kil
 DEADLINE_STOP_TIMEOUT = 300
 WORKLOAD_TEARDOWN_SHARE = 0.5  # of the margin; tofu destroy keeps the rest
 DEADLINE_EXIT = 124  # what a run stopped at its run length returns, as timeout(1) does
+# The file dfe-ops cycle creates as its destroy stage starts. From then the cycle runs to
+# the run's expiry, not its run length, so a slow destroy cannot fail a run that passed.
+DESTROY_MARK_ENV = "DFE_CYCLE_DESTROY_MARK"
+DESTROY_MARK_NAME = "destroy-started"
+EXTEND_POLL = 5.0  # seconds between looks for the destroy mark
 TEARDOWN_SIGNALS = tuple(
     getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
 )
@@ -1287,6 +1296,7 @@ class Runner:
         new_session: bool = False,
         deadline: float | None = None,
         stop_timeout: float = CHILD_STOP_TIMEOUT,
+        extend: tuple[Path, float] | None = None,
     ) -> int:
         """Run `cmd` to its end, or stop it at `deadline`, a `time.monotonic()` reading.
 
@@ -1297,20 +1307,21 @@ class Runner:
                 never reaches it and a stop signals its whole tree.
             deadline: When to stop it; None waits for as long as it runs.
             stop_timeout: Seconds a child stopped at the deadline gets before it is killed.
+            extend: A file and a later deadline. Once the child creates the file, the
+                later deadline replaces `deadline`.
 
         Returns:
             The child's exit code.
 
         Raises:
-            DeadlineError: The child was still running at `deadline` and has been stopped.
+            DeadlineError: The child was still running at its deadline and has been stopped.
         """
         print(f"==> {' '.join(cmd)}", file=sys.stderr)
         proc = subprocess.Popen(cmd, env=None if env is None else dict(env), start_new_session=new_session)
         self.current = proc
         self.group = proc.pid if new_session and hasattr(os, "killpg") else None
-        wait_for = None if deadline is None else max(0.0, deadline - time.monotonic())
         try:
-            returncode = proc.wait(timeout=wait_for)
+            returncode = self._wait(proc, deadline, extend)
         except subprocess.TimeoutExpired:
             print(f"==> deadline reached, stopping: {' '.join(cmd)}", file=sys.stderr)
             self.stop_current(stop_timeout)
@@ -1319,6 +1330,27 @@ class Runner:
         self.current = None
         self.group = None
         return returncode
+
+    @staticmethod
+    def _wait(proc: subprocess.Popen, deadline: float | None, extend: tuple[Path, float] | None) -> int:
+        """`proc.wait` up to `deadline`, moved to `extend`'s later one once its file exists.
+
+        Raises:
+            subprocess.TimeoutExpired: The child was still running at the deadline in force.
+        """
+        if deadline is None or extend is None:
+            return proc.wait(timeout=None if deadline is None else max(0.0, deadline - time.monotonic()))
+        mark, later = extend
+        while True:
+            if mark.exists():
+                deadline = later
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise subprocess.TimeoutExpired(proc.args, 0)
+            try:
+                return proc.wait(timeout=min(left, EXTEND_POLL))
+            except subprocess.TimeoutExpired:
+                continue
 
     def stop_current(self, timeout: float = CHILD_STOP_TIMEOUT) -> None:
         """Stop the child in flight, and every process in its group when it leads one.
@@ -1689,6 +1721,9 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     expires_at = int(now) + config.window
     # Monotonic, so a clock step cannot move it, and net of the preflight already spent.
     deadline = time.monotonic() + config.run_length - (time.time() - now)
+    # The cycle's own destroy runs to the run's expiry: the teardown margin, not the run length.
+    destroy_deadline = deadline + config.teardown_margin
+    destroy_mark = RUNS_DIR / run_id / DESTROY_MARK_NAME
     overlay = build_overlay(config, run_id, expires_at)
     record = cloud_run.build_record(
         run_id=run_id,
@@ -1740,17 +1775,24 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
                         env={**child_env, CLICKHOUSE_ACCESS_CIDRS_ENV: ",".join(a for a in addresses if a)},
                     )
                 if returncode == 0:
+                    destroy_mark.parent.mkdir(parents=True, exist_ok=True)
+                    destroy_mark.unlink(missing_ok=True)
                     returncode = runner.run(
                         [sys.executable, str(DFE_OPS), "cycle", *cycle_argv],
-                        env=child_env,
+                        env={**child_env, DESTROY_MARK_ENV: str(destroy_mark)},
                         new_session=True,
                         deadline=deadline,
                         stop_timeout=DEADLINE_STOP_TIMEOUT,
+                        extend=(destroy_mark, destroy_deadline),
                     )
                     teardown.cycle_finished = True
     except DeadlineError as exc:
-        print(f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
-              file=sys.stderr)
+        if destroy_mark.exists():
+            print(f"run {run_id}'s own destroy ran past its {config.teardown_margin}s teardown margin: {exc}; "
+                  "torn down above", file=sys.stderr)
+        else:
+            print(f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
+                  file=sys.stderr)
         returncode = DEADLINE_EXIT
     except _Interrupted as exc:
         print(f"run {run_id} interrupted by {exc}; torn down above", file=sys.stderr)
