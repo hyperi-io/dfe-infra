@@ -139,3 +139,11 @@ Where it lives in dfe-transform-elastic:
 - `scripts/pattern_reach.py`: pattern reach across the generated tree.
 
 A new hot-path parser gets benchmarked against a regex baseline before it merges. A native parser that more than one app needs moves into scalo-rs.
+
+## Put the work close to what it's working on
+
+Every job runs at the layer that does it cheapest, so nothing pays twice.
+
+Bad records go at the first layer that can catch them: Edge Stream Hub at the edge, then dfe-receiver, the transforms and dfe-loader. ClickHouse stores only what survives. Index engines and ELT are the worst offenders. They dump everything into the engine and fix it there, so every bad record, parse and transform lands on the most expensive part of the stack. ETL does better, working in stream on the way in, but it's still one general-purpose step for everything.
+
+dfe-receiver takes a microsecond to parse a syslog line (https://github.com/hyperi-io/dfe-receiver/blob/main/docs/performance.md). dfe-transform-elastic parses vendor bodies in compiled Rust, with up to 5x less CPU than Elasticsearch ingest for the same ECS fields, same data, same enriched output ([ingest cost](../docs-site/content-root/ingest-cost.md)). dfe-loader reflects the destination schema from `system.columns` and coerces types against the real column, not a guess made upstream (https://github.com/hyperi-io/dfe-loader/blob/main/docs/README.md). Common remaps and renames run in the loader too, in bulk while the data loads, with no separate ETL hop.
