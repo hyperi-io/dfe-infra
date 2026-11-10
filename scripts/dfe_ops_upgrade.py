@@ -286,8 +286,6 @@ COMMON_OVERLAY = Path("infra") / "common.yaml"
 # Old deploy.service -> new, for each app a stack renamed. A stack whose chart-digests
 # carry the new name alone renders only it (docs/deployment/upgrades.md, "From 2.2.1").
 RENAMED_SERVICES = {"hyperdx": "dfe-hyperdx"}
-# The service: line of a values overlay's top-level deploy: block.
-_DEPLOY_SERVICE = re.compile(r"(?m)(^deploy:\n(?:[ \t]+.*\n|[ \t]*#.*\n)*?[ \t]+service:[ \t]*)\S+")
 # The first stack whose receiver door is exposure.groups.ingest; below it the door is exposure.mode.
 INGEST_GROUP_STACK = "2.2.1-rc.7"
 INGEST_GROUP_PATH = ("exposure", "groups", "ingest")
@@ -1830,8 +1828,26 @@ def _rename_services(deploy: Path, renames: list[tuple[Path, Path, str]]) -> tup
         if moved.returncode != 0:
             return False, f"git mv {path.name} failed: {_last_line(moved.stderr) or 'no detail'}"
         text = target.read_text(encoding="utf-8")
-        target.write_text(_DEPLOY_SERVICE.sub(rf"\g<1>{service}", text, count=1), encoding="utf-8", newline="\n")
+        target.write_text(_set_deploy_service(text, service), encoding="utf-8", newline="\n")
     return True, ", ".join(f"{path.name} -> {target.name}" for path, target, _ in renames)
+
+
+def _set_deploy_service(text: str, service: str) -> str:
+    """`text` with the service: line under its top-level deploy: block set to `service`."""
+    lines = text.splitlines(keepends=True)
+    in_deploy = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line[0].isspace():
+            in_deploy = stripped == "deploy:"
+            continue
+        if in_deploy and stripped.partition(":")[0] == "service":
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[index] = f"{indent}service: {service}\n"
+            break
+    return "".join(lines)
 
 
 def _recarry_values(deploy: Path, migration: values_migration.MigrationMap, to_name: str) -> tuple[bool, str]:

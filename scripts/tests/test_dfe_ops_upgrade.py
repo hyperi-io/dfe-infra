@@ -2765,6 +2765,26 @@ def test_a_rename_moves_the_overlay_and_sets_only_its_deploy_service(real_git_de
     assert u._git(real_git_deploy, "status", "--porcelain").stdout.startswith("R")
 
 
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        (HYPERDX_OVERLAY, HYPERDX_OVERLAY.replace("deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx")),
+        # A comment or blank line inside the block, and a later block's own service key.
+        (
+            "deploy:\n  # seeded\n\n  instance: a\n  service: hyperdx\nother:\n  service: hyperdx\n",
+            "deploy:\n  # seeded\n\n  instance: a\n  service: dfe-hyperdx\nother:\n  service: hyperdx\n",
+        ),
+        # No deploy block, or a service key only outside it: nothing moves.
+        ("other:\n  service: hyperdx\n", "other:\n  service: hyperdx\n"),
+        ("service: hyperdx\ndeploy:\n  instance: a\n", "service: hyperdx\ndeploy:\n  instance: a\n"),
+        # The input CodeQL timed the old regex on: many tab-only lines after deploy:.
+        ("deploy:\n" + "\t\t\n" * 5000, "deploy:\n" + "\t\t\n" * 5000),
+    ],
+)
+def test_set_deploy_service_touches_only_the_deploy_blocks_service(text: str, want: str) -> None:
+    assert u._set_deploy_service(text, "dfe-hyperdx") == want
+
+
 def test_apply_pushes_the_rename_with_the_chart_stage(
     monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
 ) -> None:
