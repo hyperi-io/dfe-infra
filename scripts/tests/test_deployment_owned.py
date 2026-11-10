@@ -40,7 +40,7 @@ import yaml
 from test_dfe_extras import ENV_CONFIGMAP
 
 from _gate import PROFILES
-from _weave import CONTRACTS, REPO_ROOT, chart_name, render_extras
+from _weave import CONTRACTS, REPO_ROOT, render_extras
 
 MANIFEST = REPO_ROOT / "apps.yaml"
 SHARED_VALUES = REPO_ROOT / "argocd" / "values"
@@ -174,7 +174,7 @@ def _secret_env(service: str, *, required_only: bool) -> set[str]:
 @functools.cache
 def _env_configmap(service: str) -> frozenset[str]:
     """Every name the service's dfe-extras <fullname>-env ConfigMap sets, any profile."""
-    if chart_name(service) not in ENV_CONFIGMAP:
+    if service not in ENV_CONFIGMAP:
         return frozenset()
     found: set[str] = set()
     for profile in PROFILES:

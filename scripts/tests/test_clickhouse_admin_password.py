@@ -51,7 +51,7 @@ APP_NS = "dfe"
 CLIENTS = (
     ("dfe-engine", "Deployment/dfe-engine", "DFE_ENGINE_CLICKHOUSE_PASSWORD", True),
     ("dfe-loader", "Deployment/dfe-loader", "DFE_LOADER__CLICKHOUSE__PASSWORD", False),
-    ("hyperdx", "Deployment/dfe-hyperdx", "CLICKHOUSE_PASSWORD", False),
+    ("dfe-hyperdx", "Deployment/dfe-hyperdx", "CLICKHOUSE_PASSWORD", False),
 )
 
 

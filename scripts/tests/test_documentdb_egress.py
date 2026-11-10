@@ -53,7 +53,7 @@ from _gate import CELLS, NAMESPACE, WORKLOAD_KINDS, golden, references
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
 COMMON = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
-HYPERDX = yaml.safe_load((VALUES / "apps" / "hyperdx" / "values.yaml").read_text(encoding="utf-8"))
+HYPERDX = yaml.safe_load((VALUES / "apps" / "dfe-hyperdx" / "values.yaml").read_text(encoding="utf-8"))
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 DOCUMENTDB_VALUES = yaml.safe_load(
     (chart_dir("documentdb") / "values.yaml").read_text(encoding="utf-8")

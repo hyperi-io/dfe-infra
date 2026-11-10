@@ -245,7 +245,7 @@ def test_assemble_refuses_to_overwrite_a_chart(tmp_path: Path) -> None:
 
 
 def test_the_committed_contracts_are_the_apps_own() -> None:
-    for service, app in (("dfe-ui", "dfe-ui"), ("hyperdx", "dfe-hyperdx")):
+    for service, app in (("dfe-ui", "dfe-ui"), ("dfe-hyperdx", "dfe-hyperdx")):
         contract = json.loads((CONTRACTS / f"{service}.json").read_text(encoding="utf-8"))
         assert (contract["schema_version"], contract["app_name"]) == (4, app)
 
@@ -380,7 +380,7 @@ def test_a_render_of_neither_source_is_refused() -> None:
 
 def test_the_dfe_extras_source_reads_the_chart_sources_layers_with_its_chart_name() -> None:
     """Both helm sources take the same value files and parameters, plus chartName."""
-    app = w.application(REPO_ROOT, appset(), _target(service="hyperdx"), None, helm())
+    app = w.application(REPO_ROOT, appset(), _target(service="dfe-hyperdx"), None, helm())
     chart, extras = (s for s in app["spec"]["sources"] if "helm" in s)
     params = {p["name"]: p["value"] for p in extras["helm"]["parameters"]}
     assert (extras["repoURL"], extras["path"]) == (w.INFRA_REPO_URL, w.EXTRAS_PATH)
@@ -549,7 +549,7 @@ def test_application_runs_from_the_command_line(capsys: pytest.CaptureFixture[st
         [
             "application",
             "--service",
-            "hyperdx",
+            "dfe-hyperdx",
             "--profile",
             "slim",
             "--cloud",
@@ -562,7 +562,7 @@ def test_application_runs_from_the_command_line(capsys: pytest.CaptureFixture[st
     )
     app = yaml.safe_load(capsys.readouterr().out)
     assert code == 0
-    assert app["metadata"]["name"] == "hyperdx-default-in-cluster"
+    assert app["metadata"]["name"] == "dfe-hyperdx-default-in-cluster"
     chart = app["spec"]["sources"][0]
     assert (chart["repoURL"].rsplit("/", 1)[-1], chart["path"]) == ("dfe-hyperdx", ".")
 
@@ -607,7 +607,7 @@ def test_a_render_with_no_thin_chart_input_cannot_run(capsys: pytest.CaptureFixt
 
 def test_assembling_the_committed_contracts_is_deterministic(tmp_path: Path) -> None:
     lib = library()
-    for service in ("dfe-ui", "hyperdx"):
+    for service in ("dfe-ui", "dfe-hyperdx"):
         raw = (CONTRACTS / f"{service}.json").read_bytes()
         charts = [
             w.assemble(

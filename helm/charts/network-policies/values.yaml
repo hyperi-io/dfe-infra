@@ -92,7 +92,7 @@ documentdbAccess:
   operatorPorts:
     - { port: 8000, protocol: TCP }
   apps:
-    - dfe-hyperdx   # mongodb.uri in argocd/values/apps/hyperdx/values.yaml
+    - dfe-hyperdx   # mongodb.uri in argocd/values/apps/dfe-hyperdx/values.yaml
 
 # Envoy Gateway namespace (source of ingress traffic)
 gatewayNamespace: envoy-gateway-system

@@ -123,6 +123,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-transform-elastic
+        - name: SCALO_WRITABLE_PATH_LIMITS
+          value: /var/lib/dfe/geoip=512Mi,/var/spool/scalo/dlq=1Gi
         image: registry.example.com/dfe/dfe-transform-elastic:<pin:apps.dfe-transform-elastic>@<pin:digests.dfe-transform-elastic>
         imagePullPolicy: IfNotPresent
         livenessProbe:

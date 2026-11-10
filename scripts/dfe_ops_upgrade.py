@@ -226,6 +226,8 @@ ARGOCD_LOGIN = REPO_ROOT / "bootstrap" / "argocd_login.py"
 
 # Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; a pin no step names moves unreported.
 UPGRADE_SECTIONS = ("bootstrap", "operators", "services", "apps", "content", "digests", "chart-digests")
+# Stacks published before 2.2.2-rc.2 key dfe-hyperdx's chart pin by its old app id.
+CHART_DIGEST_ALIASES = {"hyperdx": "dfe-hyperdx"}
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -585,6 +587,8 @@ def flatten_stack(stack: dict) -> dict[str, str]:
         if isinstance(body, dict):
             for name, value in body.items():
                 if isinstance(value, str):
+                    if section == "chart-digests":
+                        name = CHART_DIGEST_ALIASES.get(name, name)
                     flat[f"{section}.{name}"] = value
     return flat
 

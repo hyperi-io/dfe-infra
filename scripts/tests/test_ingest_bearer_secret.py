@@ -136,7 +136,7 @@ def test_a_sidecar_with_no_token_still_logs_its_namespace(sidecar: str) -> None:
     assert namespace["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.namespace"}}
 
 
-@pytest.mark.parametrize("service", ["dfe-loader", "dfe-receiver", "hyperdx", "dfe-ui"])
+@pytest.mark.parametrize("service", ["dfe-loader", "dfe-receiver", "dfe-hyperdx", "dfe-ui"])
 def test_no_other_app_renders_the_secret_or_its_grant(service: str) -> None:
     assert not [d for d in render_extras(service, "scale", "local") if SECRET in d["metadata"]["name"]]
 

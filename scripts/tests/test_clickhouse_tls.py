@@ -73,7 +73,7 @@ EXTERNAL = ("--set", "clickhouse.mode=external", "--set", "clickhouse.host=abc.c
 CLIENT_WORKLOADS = {
     "dfe-engine": "dfe-engine",
     "dfe-loader": "dfe-loader",
-    "hyperdx": "dfe-hyperdx",
+    "dfe-hyperdx": "dfe-hyperdx",
 }
 CLIENTS = tuple(CLIENT_WORKLOADS)
 
@@ -416,7 +416,7 @@ def test_the_loader_dials_8443_through_a_merged_trust_store() -> None:
 
 def test_hyperdx_adds_the_ca_to_node_and_rolls_on_a_new_one() -> None:
     for tier in TIERS:
-        docs = client("hyperdx", tier)
+        docs = client("dfe-hyperdx", tier)
         pod = pods(docs).get("dfe-hyperdx")
         if pod is None:
             expect(f"{tier} renders hyperdx", False, "")
@@ -444,7 +444,7 @@ def test_hyperdx_starts_node_only_once_the_ca_is_there() -> None:
     for tier in TIERS:
         for cloud in CLOUDS:
             where = f"{tier}/{cloud}"
-            docs = tuple(golden("hyperdx", tier, cloud))
+            docs = tuple(golden("dfe-hyperdx", tier, cloud))
             pod = pods(docs).get("dfe-hyperdx")
             if pod is None:
                 expect(f"{where} renders hyperdx", False, "")
@@ -498,7 +498,7 @@ def run_ca_gate(
 
 
 def test_the_hyperdx_ca_gate_passes_only_once_the_file_is_there() -> None:
-    gate = hyperdx_ca_gate(pods(tuple(golden("hyperdx", "scale", "aws")))["dfe-hyperdx"])
+    gate = hyperdx_ca_gate(pods(tuple(golden("dfe-hyperdx", "scale", "aws")))["dfe-hyperdx"])
     expect("scale/aws renders the hyperdx CA gate", gate is not None, "")
     if gate is None:
         return
@@ -537,7 +537,7 @@ def test_hyperdx_names_the_clickhouse_host_as_a_url() -> None:
     value parses as a URL. A bare host name registers no refusal at all."""
     port = COMMON["clickhouse"]["port"]
     for tier in TIERS:
-        docs = client("hyperdx", tier)
+        docs = client("dfe-hyperdx", tier)
         if pods(docs).get("dfe-hyperdx") is None:
             expect(f"{tier} renders hyperdx", False, "")
             continue

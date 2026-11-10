@@ -137,6 +137,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-archiver
+        - name: SCALO_WRITABLE_PATH_LIMITS
+          value: /var/spool/dfe/archiver=10Gi
         - name: DFE_ARCHIVER_S3_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:

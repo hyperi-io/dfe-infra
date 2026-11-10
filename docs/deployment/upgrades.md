@@ -115,6 +115,14 @@ dfe-extras fails the render of an overlay that carries a 2.2.0 key with no new k
 
 Each workload's main container is now named for its chart, such as `dfe-engine` (was `engine`) and `dfe-transform-vrl` (was `transform`). culvert's stays `culvert`. A `kubectl logs -c` or a log query naming the 2.2.0 container needs the new name.
 
+## From 2.2.1
+
+### The search component's app id
+
+From 2.2.2 the deploy repo names the search component `dfe-hyperdx`, as its chart and image already do. Before the new stack syncs, rename `values/hyperdx-<instance>-values.yaml` to `values/dfe-hyperdx-<instance>-values.yaml` in the deploy repo and set `deploy.service: dfe-hyperdx` in it.
+
+Argo CD then deletes the `hyperdx-<instance>-<cluster>` Application and builds `dfe-hyperdx-<instance>-<cluster>`, so search is down until the new pods are Ready. Saved searches, alerts and dashboards survive, because the document store is its own Application.
+
 ## dfe-ops upgrade
 
 `dfe-ops upgrade <verb> --deploy <dfe-deploy checkout> [--to <stack>]` drives a stack upgrade from a deployment repo's own `pins.yaml`, walking `upgrade-order.yaml` stage by stage. `--to` defaults to versions.yaml's `current` pointer. The FROM stack is read from the deploy's `pins.yaml` (`base.dfe-infra`).

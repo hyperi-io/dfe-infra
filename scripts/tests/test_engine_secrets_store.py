@@ -194,7 +194,7 @@ def test_without_the_prefix_the_engine_keeps_its_files() -> None:
     assert "DFE_ENGINE_SECRETS_PROVIDER" not in env
 
 
-@pytest.mark.parametrize("service", ["dfe-loader", "hyperdx", "dfe-ui"])
+@pytest.mark.parametrize("service", ["dfe-loader", "dfe-hyperdx", "dfe-ui"])
 def test_no_other_app_moves_with_the_engines_store(service: str) -> None:
     """layer2-apps hands the store to dfe-engine, and its region to dfe-receiver."""
     assert render_extras(service, "scale", "aws", annotations=AWS_FACTS) == render_extras(

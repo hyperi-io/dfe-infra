@@ -254,6 +254,19 @@ def test_flatten_stack_only_upgrade_sections(versions_path: Path) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("pins", "want"),
+    [
+        ({"chart-digests": {"hyperdx": "sha256:a"}}, {"chart-digests.dfe-hyperdx": "sha256:a"}),
+        ({"chart-digests": {"dfe-hyperdx": "sha256:b"}}, {"chart-digests.dfe-hyperdx": "sha256:b"}),
+        ({"services": {"hyperdx": "2.41.0"}}, {"services.hyperdx": "2.41.0"}),
+    ],
+)
+def test_a_published_stacks_old_chart_key_reads_as_the_new_one(pins: dict, want: dict) -> None:
+    """upgrade-order.yaml names chart-digests.dfe-hyperdx, which a stack before 2.2.2-rc.2 keys hyperdx."""
+    assert u.flatten_stack(pins) == want
+
+
 def test_read_deploy_pin(deploy: Path) -> None:
     assert u.read_deploy_pin(deploy) == "1.0.0"
 
@@ -379,7 +392,7 @@ stacks:
       dfe-hyperdx: "sha256:h1"
     chart-digests:
       dfe-engine: "sha256:ce1"
-      hyperdx: "sha256:ch1"
+      dfe-hyperdx: "sha256:ch1"
   2.0.0:
     apps:
       dfe-engine: "v1.0.0"
@@ -390,7 +403,7 @@ stacks:
       dfe-hyperdx: "sha256:h2"
     chart-digests:
       dfe-engine: "sha256:ce1"
-      hyperdx: "sha256:ch2"
+      dfe-hyperdx: "sha256:ch2"
 """
 
 # An operator shell image tagged by toolbox.dfe-toolbox, which no stage deploys.
@@ -416,7 +429,7 @@ def test_a_stack_moving_only_dfe_hyperdx_yields_a_plan_stage(
     assert "## stage 40-apps" in out
     assert "1. content.dfe-hyperdx: v0.3.2 -> v0.3.3" in out
     assert "   image:    digests.dfe-hyperdx: sha256:h1 -> sha256:h2" in out
-    assert "   chart:    chart-digests.hyperdx: sha256:ch1 -> sha256:ch2" in out
+    assert "   chart:    chart-digests.dfe-hyperdx: sha256:ch1 -> sha256:ch2" in out
     assert "2. " not in out
     assert "No pinned key moves" not in out
 
@@ -431,7 +444,7 @@ def test_apply_walks_a_dfe_hyperdx_move_as_a_stage(
     err = capsys.readouterr().err
     assert "=== stage 1/1: 40-apps ===" in err
     assert "  content.dfe-hyperdx: v0.3.2 -> v0.3.3" in err
-    assert "    chart chart-digests.hyperdx: sha256:ch1 -> sha256:ch2" in err
+    assert "    chart chart-digests.dfe-hyperdx: sha256:ch1 -> sha256:ch2" in err
     assert "chore(upgrade): 2.0.0 stage 1 -- content.dfe-hyperdx" in err
 
 
@@ -446,7 +459,7 @@ def test_a_digest_moving_under_an_unchanged_tag_still_moves_its_step(monkeypatch
     (move,) = u.plan_moves(u.load_steps(), u.flatten_stack(old), u.flatten_stack(new))
 
     assert (move.step.key, move.old, move.new) == ("content.dfe-hyperdx", "v0.3.2", "v0.3.2")
-    assert move.pins == (("chart", "chart-digests.hyperdx", "sha256:ch1", "sha256:ch2"),)
+    assert move.pins == (("chart", "chart-digests.dfe-hyperdx", "sha256:ch1", "sha256:ch2"),)
 
 
 def test_every_dfe_component_the_current_stack_pins_moves_with_a_step() -> None:

@@ -239,7 +239,6 @@ they are, which Argo CD 3.5.x does for any source that fails to render.
 {{- define "dfe-extras.valuesMigrationGuard" -}}
 {{- $map := .Files.Get "files/values-migrations.yaml" | fromYaml -}}
 {{- $service := toString .Values.chartName -}}
-{{- if eq $service "dfe-hyperdx" }}{{ $service = "hyperdx" }}{{ end -}}
 {{- range $id, $rule := $map.rules -}}
 {{- $guard := toString ($rule.guard | default "") -}}
 {{- $apps := list -}}

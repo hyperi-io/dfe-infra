@@ -154,6 +154,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-transform-elastic
+        - name: SCALO_WRITABLE_PATH_LIMITS
+          value: /var/lib/dfe/geoip=512Mi,/var/spool/scalo/dlq=1Gi
         - name: KAFKA_SASL_USERNAME
           valueFrom:
             secretKeyRef:

@@ -40,7 +40,6 @@ from _weave import (
     DIGEST_RE,
     REPO_ROOT,
     appset,
-    chart_name,
     drift,
     helm,
     weave,
@@ -54,13 +53,13 @@ COMPONENTS = (
     "dfe-archiver",
     "dfe-engine",
     "dfe-fetcher",
+    "dfe-hyperdx",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
     "dfe-transform-vector",
     "dfe-transform-vrl",
     "dfe-ui",
-    "hyperdx",
 )
 APPS = "layer2-apps.yaml"
 EDGE = "layer2-edge.yaml"
@@ -182,7 +181,7 @@ def test_every_component_gets_four_sources_in_order(service: str, appset_name: s
     sources = app["spec"]["sources"]
     assert len(sources) == 4, sources
     chart, extras, infra, values = sources
-    assert chart["repoURL"] == f"oci://registry.example.com/dfe/charts/{chart_name(service)}"
+    assert chart["repoURL"] == f"oci://registry.example.com/dfe/charts/{service}"
     assert chart["path"] == "."
     assert DIGEST_RE.fullmatch(chart["targetRevision"]), chart["targetRevision"]
     assert "ref" not in chart
@@ -232,7 +231,7 @@ def test_dfe_extras_reads_what_the_chart_reads_plus_its_chart_name(
     service: str, appset_name: str, facts: dict[str, str]
 ) -> None:
     chart, extras = helm_sources(application(service, appset_name, facts=facts))
-    assert params(extras) == {**params(chart), "chartName": chart_name(service)}
+    assert params(extras) == {**params(chart), "chartName": service}
     assert params(extras)["profile"] == "scale"
     assert yaml.safe_load(extras["helm"]["values"]) == yaml.safe_load(chart["helm"]["values"])
 
@@ -329,7 +328,7 @@ def test_a_service_with_no_digest_fails_the_render(
 
 
 @pytest.mark.parametrize("pin", ["unpublished", "sha256:abc", "1.2.3", "sha256:" + "AB" * 32])
-@pytest.mark.parametrize(("service", "appset_name"), [("hyperdx", APPS), ("culvert", EDGE)])
+@pytest.mark.parametrize(("service", "appset_name"), [("dfe-hyperdx", APPS), ("culvert", EDGE)])
 def test_a_placeholder_digest_fails_the_render(
     tmp_path: Path, service: str, appset_name: str, pin: str
 ) -> None:
@@ -396,7 +395,7 @@ def test_bootstrap_registers_a_pull_credential_for_every_chart() -> None:
     text = BOOTSTRAP.read_text(encoding="utf-8")
     listed = re.search(r'^DFE_THIN_CHARTS="([^"]*)"$', text, re.MULTILINE)
     assert listed is not None, "bootstrap.sh names no DFE_THIN_CHARTS"
-    assert sorted(listed.group(1).split()) == sorted(chart_name(s) for s in COMPONENTS)
+    assert sorted(listed.group(1).split()) == sorted(s for s in COMPONENTS)
     loop = text[listed.end() : text.index("done", listed.end())]
     assert "--from-literal=type=oci" in loop
     assert '--from-literal=url="oci://${DFE_REGISTRY}/charts/${chart}"' in loop

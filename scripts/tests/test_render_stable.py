@@ -311,14 +311,14 @@ def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
                    es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
                    == "keep", f"got {es[0]['metadata'].get('annotations')}")
         for profile, cloud in CELLS:
-            ref = secret_ref(hyperdx_env(golden("hyperdx", profile, cloud), env))
+            ref = secret_ref(hyperdx_env(golden("dfe-hyperdx", profile, cloud), env))
             expect(f"{profile}/{cloud}: hyperdx reads {env} from the minted Secret",
                    ref == (secret, key), f"got {ref}")
 
 
 def test_hyperdx_keys_can_come_from_the_deployment() -> None:
     for env, secret, _, _, block in HYPERDX_KEYS:
-        rendered = render_app("hyperdx", "slim", "local", overlay={block: {"create": False}})
+        rendered = render_app("dfe-hyperdx", "slim", "local", overlay={block: {"create": False}})
         objects = [f"{d['kind']}/{d['metadata']['name']}" for d in rendered]
         for kind in ("Password", "ExternalSecret", "Secret"):
             name = f"{secret}-gen" if kind == "Password" else secret

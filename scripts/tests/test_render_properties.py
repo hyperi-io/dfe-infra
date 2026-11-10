@@ -76,7 +76,7 @@ ELSEWHERE: dict[tuple[str, str], tuple[str, str | None]] = {
 # Each component's Services reachable from outside, per cloud: name -> type and ports.
 EXPOSURE: dict[str, dict[str, dict]] = {
     "dfe-ui": {"local": {}, "aws": {}},
-    "hyperdx": {"local": {}, "aws": {}},
+    "dfe-hyperdx": {"local": {}, "aws": {}},
     # local.yaml routes ingest through the cluster Gateway, aws.yaml through culvert.
     "dfe-receiver": {"local": {}, "aws": {}},
     "dfe-loader": {"local": {}, "aws": {}},
@@ -147,7 +147,7 @@ def test_no_object_renders_twice(service: str, profile: str, cloud: str, scenari
 
 
 def test_an_object_both_sources_render_is_caught() -> None:
-    docs = golden("hyperdx", "slim", "local")
+    docs = golden("dfe-hyperdx", "slim", "local")
     service = next(d for d in docs if d["kind"] == "Service")
     assert rendered_twice([*docs, service]) == ["Service/dfe-hyperdx"]
 
@@ -211,7 +211,7 @@ def test_each_stack_object_is_named_where_the_table_says(kind: str, name: str) -
 
 
 def test_a_reference_nothing_provides_fails() -> None:
-    docs = golden("hyperdx", "scale", "local")
+    docs = golden("dfe-hyperdx", "scale", "local")
     main = _main(docs)
     nowhere = {"secretKeyRef": {"name": "nowhere", "key": "k"}}
     main["env"].append({"name": "X", "valueFrom": nowhere})
@@ -223,7 +223,7 @@ def test_a_reference_nothing_provides_fails() -> None:
 
 
 def test_an_optional_reference_resolves() -> None:
-    docs = golden("hyperdx", "scale", "local")
+    docs = golden("dfe-hyperdx", "scale", "local")
     _main(docs)["env"].append(
         {
             "name": "X",
@@ -317,13 +317,13 @@ def test_every_var_reference_names_an_earlier_variable(
 
 
 def test_mongo_password_is_declared_before_the_uri_that_expands_it() -> None:
-    env = [e["name"] for e in _main(golden("hyperdx", "scale", "aws"))["env"]]
+    env = [e["name"] for e in _main(golden("dfe-hyperdx", "scale", "aws"))["env"]]
     assert env.index("MONGO_PASSWORD") < env.index("MONGO_URI")
 
 
 def test_a_reference_to_a_later_variable_fails() -> None:
     """A secret renamed to sort after the URI leaves $(...) unexpanded in it."""
-    docs = golden("hyperdx", "single", "aws")
+    docs = golden("dfe-hyperdx", "single", "aws")
     env = _main(docs)["env"]
     password = next(e for e in env if e["name"] == "MONGO_PASSWORD")
     env.remove(password)
@@ -504,11 +504,11 @@ def test_only_the_receiver_and_the_tunnel_are_exposed(service: str) -> None:
 
 def test_a_public_service_switched_on_is_caught() -> None:
     """dfe-hyperdx's contract marks 8080 public; one overlay line puts it on a load balancer."""
-    docs = render_app("hyperdx", "scale", "aws", overlay={"publicService": {"enabled": True}})
+    docs = render_app("dfe-hyperdx", "scale", "aws", overlay={"publicService": {"enabled": True}})
     assert exposed(docs) == {
         "Service/dfe-hyperdx-public": {"type": "LoadBalancer", "ports": ["8080/TCP"]}
     }
-    assert exposed(docs) != EXPOSURE["hyperdx"]["aws"]
+    assert exposed(docs) != EXPOSURE["dfe-hyperdx"]["aws"]
 
 
 # ------------------------------------------------------- the receiver's front door

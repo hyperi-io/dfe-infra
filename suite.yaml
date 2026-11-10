@@ -796,7 +796,7 @@ edges:
     to: dfe-infra
     kind: image-pin
     type: lockstep
-    evidence: "dfe-infra/argocd/values/apps/hyperdx/values.yaml:105"
+    evidence: "dfe-infra/argocd/values/apps/dfe-hyperdx/values.yaml:105"
     note: "A second copy of the engine tag: dfe-hyperdx's thin chart runs the engine image as the dashboards init container."
 
   # --- dfe-infra -----------------------------------------------------------
@@ -872,7 +872,7 @@ edges:
     kind: image-pin
     type: lockstep
     evidence: "dfe-infra/versions.yaml"
-    note: "Tagged under content: rather than apps:, in lockstep with the stack release; its thin chart is chart-digests.hyperdx."
+    note: "Tagged under content: rather than apps:, in lockstep with the stack release; its thin chart is chart-digests.dfe-hyperdx."
   - from: dfe-deploy
     to: dfe-infra
     kind: version-pin
