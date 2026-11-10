@@ -120,7 +120,7 @@ def test_decide_reads_what_the_published_tag_carries() -> None:
 
 
 def test_an_absent_tag_builds_and_a_match_skips() -> None:
-    flags = ti.build_flags(ARGS, PLATFORMS, HASH_A)
+    flags = ti.build_flags(ARGS)
     built = ti.plan_outputs(ti.Reason.ABSENT, HASH_A, flags)
     skipped = ti.plan_outputs(ti.Reason.MATCH, HASH_A, flags)
     expect("an absent tag builds", built is not None and built["build"] == "true", f"{built}")
@@ -130,11 +130,16 @@ def test_an_absent_tag_builds_and_a_match_skips() -> None:
         built is not None and built["flags"] == " ".join(flags),
         f"{built}",
     )
+    expect(
+        "and the merge the annotation carrying the hash",
+        built is not None and built["annotation"] == ti.index_annotation(HASH_A),
+        f"{built}",
+    )
 
 
 def test_a_published_tag_with_changed_inputs_fails_the_plan() -> None:
     """Building would move a published family tag, which never moves."""
-    flags = ti.build_flags(ARGS, PLATFORMS, HASH_A)
+    flags = ti.build_flags(ARGS)
     for reason in (ti.Reason.CHANGED, ti.Reason.UNANNOTATED):
         expect(f"{reason} is a refusal", reason in ti.REFUSED)
         expect(
@@ -184,16 +189,18 @@ def test_only_the_index_annotation_counts() -> None:
     expect("an unreadable manifest raises rather than reading as unannotated", raised)
 
 
-def test_the_build_flags_carry_the_hash_as_an_index_annotation() -> None:
-    flags = ti.build_flags(ARGS, PLATFORMS, HASH_A)
+def test_the_build_flags_carry_the_build_args_and_the_merge_carries_the_hash() -> None:
+    """Each platform builds from the same args, and only the merged index holds the hash."""
+    flags = ti.build_flags(ARGS)
+    expect(
+        "every hashed build arg is passed", flags == [f"--build-arg={a}" for a in ARGS], f"{flags}"
+    )
+    expect("no flag holds whitespace", all(" " not in flag for flag in flags), f"{flags}")
     expect(
         "the annotation is index-level",
-        f"--annotation=index:{ti.INPUTS_ANNOTATION}={HASH_A}" in flags,
-        f"{flags}",
+        ti.index_annotation(HASH_A) == f"index:{ti.INPUTS_ANNOTATION}={HASH_A}",
+        ti.index_annotation(HASH_A),
     )
-    expect("every hashed build arg is passed", all(f"--build-arg={a}" in flags for a in ARGS))
-    expect("the hashed platforms are passed", "--platform=linux/amd64,linux/arm64" in flags)
-    expect("no flag holds whitespace", all(" " not in flag for flag in flags), f"{flags}")
 
 
 def _refused(check: Callable[[str], object], text: str) -> bool:
@@ -236,82 +243,171 @@ def test_verify_fails_unless_the_pushed_index_carries_the_hash() -> None:
     for name, (published, fails) in sorted(cases.items()):
         error = ti.pushed_error("r:t", published, HASH_A)
         expect(name, (error is not None) is fails, f"{error}")
+    platform_cases = {
+        "an index holding exactly the hashed platforms passes": ({*PLATFORMS}, False),
+        "an index the merge lost arm64 from fails": ({"linux/amd64"}, True),
+        "an index holding a platform nobody hashed fails": ({*PLATFORMS, "linux/s390x"}, True),
+        "an index whose platforms could not be read fails": (None, True),
+    }
+    for name, (found, fails) in sorted(platform_cases.items()):
+        error = ti.platform_error("r:t", found, PLATFORMS)
+        expect(name, (error is not None) is fails, f"{error}")
 
 
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
-def _image_jobs() -> dict[str, dict]:
-    return {
-        name: job for name, job in _workflow()["jobs"].items() if name not in ("resolve", "inputs")
-    }
+BUILD_JOBS = ("base-build", "cloud-build")
+MERGE_JOBS = ("base-merge", "cloud-merge")
+
+
+def _publishing_jobs() -> dict[str, dict]:
+    jobs = _workflow()["jobs"]
+    return {name: jobs[name] for name in (*BUILD_JOBS, *MERGE_JOBS)}
 
 
 def _step(job: dict, step_id: str) -> dict:
     return next((s for s in job["steps"] if s.get("id") == step_id), {})
 
 
-# Every step that logs in, sets up buildx, builds or reads back carries this gate.
-GATE = "github.event_name != 'pull_request' && steps.plan.outputs.build == 'true'"
+def _runs(job: dict, text: str) -> list[dict]:
+    return [s for s in job["steps"] if text in s.get("run", "")]
 
 
 def test_every_image_job_builds_only_what_it_hashed() -> None:
     """A build arg added to the build step alone would never move the hash."""
-    jobs = _image_jobs()
-    expect("four images are built", sorted(jobs) == ["aws", "azure", "base", "gcp"], f"{jobs}")
-    gate = GATE
-    for name, job in sorted(jobs.items()):
-        plan = _step(job, "plan").get("run", "")
-        expect(f"{name} plans with toolbox_inputs.py", "toolbox_inputs.py plan" in plan, plan)
-        builds = [s for s in job["steps"] if "docker buildx build" in s.get("run", "")]
+    jobs = _workflow()["jobs"]
+    expect(
+        "the jobs are resolve, plan, then a build and a merge for base and the clouds",
+        sorted(jobs) == sorted(["resolve", "plan", *BUILD_JOBS, *MERGE_JOBS]),
+        f"{sorted(jobs)}",
+    )
+    planned = {
+        "base-build": "${{ needs.plan.outputs.base_flags }}",
+        "cloud-build": "${{ needs.plan.outputs[format('{0}_flags', matrix.image)] }}",
+    }
+    for name in BUILD_JOBS:
+        job = jobs[name]
+        expect(f"{name} takes the planned flags", job["env"].get("PLANNED_FLAGS") == planned[name])
+        builds = _runs(job, "docker buildx build")
         expect(f"{name} has one build step", len(builds) == 1, f"{len(builds)}")
         for build in builds:
             run = build["run"]
-            expect(f"{name} builds only when the plan says so", build.get("if") == gate)
             expect(f"{name} builds with the planned flags", '"${flags[@]}"' in run, run)
-            for flag in ("--build-arg", "--platform", "--annotation"):
+            for flag in ("--build-arg", "--annotation"):
                 expect(f"{name}'s build step sets no {flag} of its own", flag not in run, run)
-        reads = [s for s in job["steps"] if "toolbox_inputs.py verify" in s.get("run", "")]
+            expect(f"{name} builds the matrix platform alone", '--platform "linux/${ARCH}"' in run)
+            expect(f"{name} records provenance", "--provenance=true" in run, run)
+            expect(f"{name} records an SBOM", "--sbom=true" in run, run)
+            expect(f"{name} pushes by digest, never a tag", "push-by-digest=true" in run, run)
+            expect(f"{name} tags nothing", "--tag" not in run, run)
+
+
+def test_each_platform_builds_on_a_runner_of_its_own_architecture() -> None:
+    """arm64 under QEMU on an amd64 runner is what the provenance guard rejects."""
+    workflow = _workflow()
+    hashed = workflow["env"]["PLATFORMS"].split(",")
+    want = [
+        {"arch": "amd64", "runner": "ubuntu-26.04"},
+        {"arch": "arm64", "runner": "ubuntu-24.04-arm"},
+    ]
+    for name in BUILD_JOBS:
+        job = workflow["jobs"][name]
+        targets = job["strategy"]["matrix"]["target"]
+        expect(f"{name} builds on one native runner per arch", targets == want, f"{targets}")
+        archs = sorted(f"linux/{target['arch']}" for target in targets)
+        expect(f"{name} builds every hashed platform", archs == sorted(hashed), f"{archs}")
+        expect(f"{name} runs on the matrix runner", job["runs-on"] == "${{ matrix.target.runner }}")
+        build = _runs(job, "docker buildx build")[0]["run"]
+        guard = build.index("{{.Server.Arch}}") < build.index("docker buildx build")
+        expect(f"{name} refuses a runner of another arch before it builds", guard, build)
+    text = WORKFLOW.read_text(encoding="utf-8")
+    expect("nothing sets up QEMU", "setup-qemu-action" not in text and "binfmt" not in text)
+
+
+def test_the_merge_joins_the_digests_under_the_tag_with_the_hash() -> None:
+    jobs = _workflow()["jobs"]
+    builds = {"base-merge": "base-build", "cloud-merge": "cloud-build"}
+    for name in MERGE_JOBS:
+        job = jobs[name]
+        expect(f"{name} waits on its builds", builds[name] in job["needs"], f"{job['needs']}")
+        creates = _runs(job, "docker buildx imagetools create")
+        expect(f"{name} joins the digests once", len(creates) == 1, f"{len(creates)}")
+        run = creates[0]["run"] if creates else ""
         expect(
-            f"{name} reads the hash back after every build",
-            len(reads) == 1 and reads[0].get("if") == gate,
-            f"{reads}",
+            f"{name} annotates the index with the planned hash",
+            '--annotation "${ANNOTATION}"' in run,
         )
+        expect(f"{name} pushes the family tag", '"${IMAGE_PREFIX}/${IMAGE}:${TAG}"' in run, run)
+        expect(f"{name} moves latest beside it", '"${IMAGE_PREFIX}/${IMAGE}:latest"' in run, run)
+        expect(f"{name} refuses a platform with no digest", "sha256:*" in run and "exit 1" in run)
+        expect(
+            f"{name} takes the annotation the plan emitted",
+            "annotation" in job["env"].get("ANNOTATION", ""),
+            f"{job['env']}",
+        )
+        steps = job["steps"]
+        create = next(i for i, s in enumerate(steps) if "imagetools create" in s.get("run", ""))
+        reads = [i for i, s in enumerate(steps) if "toolbox_inputs.py verify" in s.get("run", "")]
+        expect(f"{name} reads the index back after the push", len(reads) == 1 and reads[0] > create)
+        verify = steps[reads[0]]["run"] if reads else ""
+        expect(f"{name} checks the hashed platforms", '--platform "${PLATFORMS}"' in verify, verify)
+        expect(f"{name} checks the planned hash", '--inputs "${INPUTS}"' in verify, verify)
 
 
 def test_the_cloud_images_hash_the_base_image_inputs() -> None:
-    jobs = _image_jobs()
-    expect(
-        "base publishes its inputs hash",
-        jobs["base"].get("outputs", {}).get("inputs") == "${{ steps.plan.outputs.inputs }}",
-    )
+    jobs = _workflow()["jobs"]
+    plan = jobs["plan"]
     for name in ("aws", "gcp", "azure"):
-        plan = _step(jobs[name], "plan").get("run", "")
+        run = _step(plan, name).get("run", "")
         expect(
             f"{name} hashes base's inputs",
-            '--base-inputs "${{ needs.base.outputs.inputs }}"' in plan,
-            plan,
+            '--base-inputs "${{ steps.base.outputs.inputs }}"' in run,
+            run,
         )
-        expect(f"{name} still waits on base", "base" in jobs[name]["needs"])
+    cloud = jobs["cloud-build"]
+    expect("the cloud images wait on base's merged index", "base-merge" in cloud["needs"])
+    expect(
+        "and build only after it merged or was already published",
+        all(
+            f'contains(fromJSON(\'["success", "skipped"]\'), needs.{job}.result)' in cloud["if"]
+            for job in ("base-build", "base-merge")
+        ),
+        cloud["if"],
+    )
+    merge = jobs["cloud-merge"]["if"]
+    expect(
+        "the cloud merge still runs when base was already published",
+        "!cancelled()" in merge and "needs.cloud-build.result == 'success'" in merge,
+        merge,
+    )
 
 
 def test_a_refusal_fails_the_job_before_any_login() -> None:
     """The plan exits 1 on a refusal, so it has to run before the credential does."""
-    for name, job in sorted(_image_jobs().items()):
-        steps = job["steps"]
-        plan = next(i for i, s in enumerate(steps) if s.get("id") == "plan")
-        logins = [i for i, s in enumerate(steps) if "docker/login-action" in s.get("uses", "")]
+    jobs = _workflow()["jobs"]
+    plan = jobs["plan"]
+    uses = [s.get("uses", "") for s in plan["steps"]]
+    expect("the plan never logs in", not any("login-action" in u for u in uses), f"{uses}")
+    expect("the plan asks for no package scope", "permissions" not in plan)
+    for name, job in sorted(_publishing_jobs().items()):
+        expect(f"{name} runs after the plan", "plan" in job["needs"], f"{job['needs']}")
+        logins = [s for s in job["steps"] if "docker/login-action" in s.get("uses", "")]
         expect(f"{name} logs in once", len(logins) == 1, f"{logins}")
-        expect(f"{name} plans before it logs in", all(plan < i for i in logins), f"{plan} {logins}")
-        for i in logins:
-            expect(f"{name} logs in only to build", steps[i].get("if") == GATE, f"{steps[i]}")
-        setups = [s for s in steps if "setup-buildx-action" in s.get("uses", "")]
-        expect(
-            f"{name} sets up buildx only to build",
-            len(setups) == 1 and setups[0].get("if") == GATE,
-            f"{setups}",
-        )
+    for name in BUILD_JOBS:
+        setups = [s for s in jobs[name]["steps"] if "setup-buildx-action" in s.get("uses", "")]
+        expect(f"{name} sets up buildx once", len(setups) == 1, f"{setups}")
+    expect(
+        "base builds only when its plan says so",
+        "needs.plan.outputs.base_build == 'true'" in jobs["base-build"]["if"],
+        jobs["base-build"]["if"],
+    )
+    expect(
+        "the clouds build only those their plans said to",
+        jobs["cloud-build"]["strategy"]["matrix"]["image"]
+        == "${{ fromJSON(needs.plan.outputs.clouds) }}",
+    )
 
 
 def test_no_published_tag_is_overwritten_with_a_warning() -> None:
@@ -337,32 +433,27 @@ def test_a_pull_request_plans_every_image_and_pushes_nothing() -> None:
         workflow["permissions"] == {"contents": "read"},
         f"{workflow['permissions']}",
     )
-    job = workflow["jobs"]["inputs"]
-    expect("the check runs on pull requests only", "github.event_name == 'pull_request'" in job["if"])
+    job = workflow["jobs"]["plan"]
+    expect("the plan runs on pull requests too", "github.event_name" not in job["if"], job["if"])
     runs = [s.get("run", "") for s in job["steps"]]
     plans = [r for r in runs if "toolbox_inputs.py plan" in r]
     expect("it plans all four images", len(plans) == 4, f"{len(plans)}")
     for image in ("base", "aws", "gcp", "azure"):
         expect(f"including dfe-toolbox-{image}", any(f"dfe-toolbox-{image}:" in r for r in plans))
-    expect(
-        "each cloud plan hashes the base plan's inputs",
-        sum('--base-inputs "${{ steps.base.outputs.inputs }}"' in r for r in plans) == 3,
-    )
+    expect("each over the hashed platforms", all('--platform "${PLATFORMS}"' in r for r in plans))
     uses = [s.get("uses", "") for s in job["steps"]]
-    expect("it never logs in", not any("login-action" in u for u in uses), f"{uses}")
     expect("it never sets up buildx", not any("setup-buildx" in u for u in uses), f"{uses}")
     expect("it never builds or pushes", not any("buildx build" in r or "--push" in r for r in runs))
-    expect("it asks for no package scope", "permissions" not in job, f"{job.get('permissions')}")
-    for name, build_job in sorted(_image_jobs().items()):
+    for name, publishing in sorted(_publishing_jobs().items()):
         expect(
             f"{name} cannot run on a pull request",
-            "github.event_name != 'pull_request'" in build_job.get("if", ""),
-            f"{build_job.get('if')}",
+            "github.event_name != 'pull_request'" in publishing.get("if", ""),
+            f"{publishing.get('if')}",
         )
         expect(
             f"{name} alone carries packages: write",
-            build_job.get("permissions", {}).get("packages") == "write",
-            f"{build_job.get('permissions')}",
+            publishing.get("permissions", {}).get("packages") == "write",
+            f"{publishing.get('permissions')}",
         )
 
 
