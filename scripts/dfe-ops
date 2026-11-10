@@ -1860,6 +1860,20 @@ BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE, EDGE_SUITE)
 # shape and removes it again, so it proves a fresh deploy. A suite that reads a
 # source the deployment must already carry is run through the pytest passthrough.
 SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, EDGE_SUITE, "all")
+# The receiver's ingest port, which the acceptance forward and the alert sink both dial.
+RECEIVER_INGEST_PORT = 8080
+# The receiver URL the hunt runner POSTs the alert-delivery flow's alert to.
+ALERT_SINK_VAR = "DFE_E2E_ALERT_SINK_URL"
+
+
+def alert_sink_url(target: str, namespace: str) -> str:
+    """The receiver's ingest URL as a pod in `namespace` reaches it, or "" when `target` is not a Service."""
+    kind, _, name = target.partition("/")
+    if kind not in ("svc", "service") or not name:
+        return ""
+    return f"http://{name}.{namespace}.svc.cluster.local:{RECEIVER_INGEST_PORT}/ingest"
+
+
 # The networks the edge suite admits to the ingest door, comma or whitespace separated. Its sender sits in one.
 INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDRS"
 # The one-network spelling, read when INGEST_ALLOW_VAR is unset.
@@ -2274,7 +2288,7 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
     stop = threading.Event()
     ch_target = args.ch_target or _profile_clickhouse_target(args.mode)
     forwards = [
-        ("receiver", namespace, args.receiver_target, args.receiver_port, 8080),
+        ("receiver", namespace, args.receiver_target, args.receiver_port, RECEIVER_INGEST_PORT),
         ("datastore", ch_namespace, ch_target, args.ch_port, 8123),
         ("engine", namespace, args.engine_target, args.engine_port, 8000),
     ]
@@ -2382,6 +2396,11 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
         "DFE_E2E_CH_DB": args.ch_database,
         "DFE_E2E_TRANSPORT": transport,
     })
+    # The hunt runner POSTs alerts from inside the cluster, where the receiver's
+    # localhost forward does not exist. A caller's own value wins.
+    sink = alert_sink_url(args.receiver_target, namespace)
+    if sink and not env.get(ALERT_SINK_VAR):
+        env[ALERT_SINK_VAR] = sink
     if engine_up:
         env["DFE_E2E_ENGINE_URL"] = f"http://localhost:{args.engine_port}"
         # Both suites authenticate as the deploy's own minted admin: the flow

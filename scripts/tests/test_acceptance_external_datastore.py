@@ -157,6 +157,7 @@ def _acceptance(
     *argv: str,
     answering: bool = True,
     expect: int = 0,
+    environ: dict[str, str] | None = None,
 ) -> dict:
     """Run cmd_acceptance --suite source against a dfe-cluster secret carrying *annotations*.
 
@@ -173,6 +174,7 @@ def _acceptance(
     def fake_run(cmd, *, env=None, **_kwargs):
         if "run.py" in str(cmd[1]):
             did["ch"] = {k: v for k, v in (env or {}).items() if k.startswith("DFE_E2E_CH_")}
+            did["sink"] = (env or {}).get(dfeops.ALERT_SINK_VAR)
         return Done()
 
     def kubectl_json(base: list[str], *argv: str, **_kwargs: object) -> tuple[int, dict, str]:
@@ -200,7 +202,7 @@ def _acceptance(
     monkeypatch.setattr(dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted"))
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     # The run copies the whole environment into the runner's, so it starts from one holding nothing.
-    monkeypatch.setattr(dfeops.os, "environ", {"DFE_NAMESPACE": APP_NAMESPACE, "PATH": "/usr/bin:/bin"})
+    monkeypatch.setattr(dfeops.os, "environ", {"DFE_NAMESPACE": APP_NAMESPACE, "PATH": "/usr/bin:/bin", **(environ or {})})
     args = dfeops.build_parser().parse_args([
         "acceptance", "--repo", "/nonexistent/dfe-engine", "--suite", "source",
         "--ui-url", "https://dfe.example", "--shots-dir", str(tmp_path / "shots"), *argv,
@@ -286,3 +288,33 @@ def test_the_readiness_probe_names_no_address(capsys: pytest.CaptureFixture) -> 
     err = capsys.readouterr().err
     assert "127.0.0.1" not in err
     assert "datastore" in err
+
+
+@pytest.mark.parametrize(
+    ("target", "url"),
+    [
+        ("svc/dfe-receiver", "http://dfe-receiver.dfe.svc.cluster.local:8080/ingest"),
+        ("service/edge-receiver", "http://edge-receiver.dfe.svc.cluster.local:8080/ingest"),
+        ("pod/dfe-receiver-0", ""),
+        ("deploy/dfe-receiver", ""),
+        ("svc/", ""),
+    ],
+)
+def test_the_alert_sink_is_the_receiver_service_as_a_pod_reaches_it(target: str, url: str) -> None:
+    assert dfeops.alert_sink_url(target, "dfe") == url
+
+
+@pytest.mark.parametrize(
+    ("environ", "sink"),
+    [
+        ({}, f"http://dfe-receiver.{APP_NAMESPACE}.svc.cluster.local:8080/ingest"),
+        ({"DFE_E2E_ALERT_SINK_URL": "https://ingest.example/ingest"}, "https://ingest.example/ingest"),
+    ],
+    ids=["in-cluster-default", "callers-own-wins"],
+)
+def test_the_runner_env_carries_the_alert_sink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, environ: dict[str, str], sink: str
+) -> None:
+    did = _acceptance(monkeypatch, tmp_path, IN_CLUSTER, environ=environ)
+    # The hunt runner dials it from inside the cluster, never the localhost forward.
+    assert did["sink"] == sink
