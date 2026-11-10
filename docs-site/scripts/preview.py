@@ -43,12 +43,15 @@ HEAP_MB = 8192
 POLL_SECONDS = 1.0
 
 
-def sync(build_root: Path, seen: dict[str, float]) -> dict[str, float]:
+def sync(
+    build_root: Path, seen: dict[str, float], quickstart: dict | None = None
+) -> dict[str, float]:
     """Copy each content-root/ page saved since `seen` into the build, and remove deleted ones.
 
     Args:
         build_root: The build's content directory, such as docs-site/content/2.2.1.
         seen: Each page's modification time at the last sync.
+        quickstart: The build's dfe-docker quickstart.json, as aggregate.py saved it.
 
     Returns:
         Each page's modification time now.
@@ -59,7 +62,13 @@ def sync(build_root: Path, seen: dict[str, float]) -> dict[str, float]:
         if seen.get(relative) != mtime:
             target = build_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(pages[relative].read_bytes())
+            if relative.lower().endswith(aggregate.MARKDOWN):
+                text = aggregate.fill_quickstart(
+                    pages[relative].read_text(encoding="utf-8"), quickstart
+                )
+                target.write_text(text, encoding="utf-8", newline="\n")
+            else:
+                target.write_bytes(pages[relative].read_bytes())
             print(f"preview: copied {relative}", flush=True)
     for relative in seen.keys() - now.keys():
         (build_root / relative).unlink(missing_ok=True)
@@ -123,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     run(str(DOCUSAURUS), "gen-api-docs", "all", env=env)
 
     build_root = aggregate.DEFAULT_OUT / name
-    seen = sync(build_root, {})
+    saved = aggregate.DEFAULT_OUT / aggregate.QUICKSTART_DIR / f"{name}.json"
+    quickstart = json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else None
+    seen = sync(build_root, {}, quickstart)
     server = subprocess.Popen(
         [str(DOCUSAURUS), "start", "--port", args.port, "--no-open"],
         cwd=aggregate.SITE_ROOT,
@@ -134,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         while server.poll() is None:
             time.sleep(POLL_SECONDS)
-            seen = sync(build_root, seen)
+            seen = sync(build_root, seen, quickstart)
     except KeyboardInterrupt:
         server.terminate()
     return server.wait()

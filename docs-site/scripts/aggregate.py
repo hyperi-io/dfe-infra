@@ -51,6 +51,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -1062,6 +1063,7 @@ def assemble(
     out: Path,
     policy: Policy | None = None,
     journeys: Journeys | None = None,
+    newest: str | None = None,
 ) -> BuildResult:
     """Assemble one build's content tree under `out`.
 
@@ -1147,7 +1149,10 @@ def assemble(
             if ref != released_ref:
                 spec_checkout = fetcher.fetch(member.repo, released_ref)
             result.openapi = _place_spec(spec_checkout, build, dest, out, result.findings)
-    copy_root(root, {member.name for member in members})
+    quickstart = docker_quickstart(build, newest)
+    if quickstart is not None:
+        write_json(out / QUICKSTART_DIR / f"{build.name}.json", quickstart)
+    copy_root(root, {member.name for member in members}, quickstart)
     if journeys:
         result.placements |= journeys.keys_for(ROOT_PAGES, "")
     return result
@@ -1258,12 +1263,103 @@ def root_pages() -> dict[str, Path]:
     }
 
 
-def copy_root(root: Path, member_names: set[str]) -> None:
+DOCKER_MEMBER = "dfe-docker"
+DOCKER_RELEASES = "https://github.com/hyperi-io/dfe-docker/releases"
+# Each dfe-docker release from v1.0.3 attaches the Docker-only install commands here.
+DOCKER_QUICKSTART = "quickstart.json"
+# Where a build's copy of that file is kept beside the builds, for preview.py.
+QUICKSTART_DIR = "_quickstart"
+_RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
+_QUICKSTART_REGION = re.compile(
+    r"<!-- docker-quickstart: (up|demo) -->\n.*?<!-- /docker-quickstart -->\n", re.DOTALL
+)
+
+
+def docker_quickstart(build: Build, newest: str | None) -> dict | None:
+    """The quickstart.json of the dfe-docker release a build pins, with the form its pages show.
+
+    The newest release and /next/ show the latest form, any other build the form
+    pinned to its own release. A build whose stack pins dfe-docker by commit gets
+    None and keeps the commands its pages carry.
+
+    Args:
+        build: The build.
+        newest: The newest released stack.
+
+    Returns:
+        The file's object with a "form" key added, or None.
+
+    Raises:
+        FetchError: The release has no quickstart.json of schema 1.
+    """
+    if build.name == NEXT:
+        url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
+    else:
+        ref = build.refs.get(DOCKER_MEMBER, "")
+        if not _RELEASE_TAG.fullmatch(ref):
+            return None
+        url = f"{DOCKER_RELEASES}/download/{ref}/{DOCKER_QUICKSTART}"
+        form = "latest" if build.name == newest else "pinned"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            data = json.load(response)
+    except (OSError, ValueError) as exc:
+        raise FetchError(f"{url}: {exc}") from exc
+    commands = [(data.get(kind) or {}).get(form) for kind in ("up", "demo")]
+    if data.get("schema") != 1 or not all(isinstance(lines, list) for lines in commands):
+        raise FetchError(f"{url}: not a schema 1 quickstart.json with up and demo commands")
+    return {**data, "form": form}
+
+
+def fill_quickstart(text: str, quickstart: dict | None) -> str:
+    """Rewrite each docker-quickstart region of a page from a release's quickstart.json.
+
+    Args:
+        text: The page's markdown.
+        quickstart: docker_quickstart's result. None leaves the page as written.
+
+    Returns:
+        The page.
+    """
+    if quickstart is None:
+        return text
+    default = next((p["name"] for p in quickstart.get("profiles", []) if p.get("default")), "")
+    console, login = quickstart["console_url"], quickstart["login"]
+
+    def region(match: re.Match[str]) -> str:
+        kind = match.group(1)
+        commands = "\n".join(quickstart[kind][quickstart["form"]])
+        after = {
+            "up": (
+                f"`init` writes the stack's compose file and settings into this directory, on the "
+                f"`{default}` profile, and `docker compose up -d` starts it. The console is at "
+                f"{console}, and `{login}` prints its login.\n\n"
+                "`init --profile <name>` picks another profile from this table."
+            ),
+            "demo": (
+                "The last command replays Cisco ASA and FortiGate logs as raw syslog, and "
+                "dfe-transform-elastic lands each line in `dfe.cisco-asa` or `dfe.fortinet`. Watch "
+                f"it in the console at {console}. `{login}` prints its login.\n\n"
+                "`docker compose down` stops the stack and keeps the data."
+            ),
+        }[kind]
+        return (
+            f"<!-- docker-quickstart: {kind} -->\n"
+            f"You need Docker with Compose {quickstart['min_compose']} or later.\n\n"
+            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{after}\n"
+            "<!-- /docker-quickstart -->\n"
+        )
+
+    return _QUICKSTART_REGION.sub(region, text)
+
+
+def copy_root(root: Path, member_names: set[str], quickstart: dict | None = None) -> None:
     """Copy the suite's own pages to the top of a build, refusing to overwrite a member.
 
     Args:
         root: The build's directory.
         member_names: Every member's name, none of which a root entry may take.
+        quickstart: The build's dfe-docker quickstart.json, which fills the pages' install regions.
 
     Raises:
         SystemExit: content-root/ is missing, or one of its entries takes a member's name.
@@ -1279,7 +1375,7 @@ def copy_root(root: Path, member_names: set[str]) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         if relative.lower().endswith(MARKDOWN):
             text = match_case(path.read_text(encoding="utf-8"), page=relative, root=root)
-            target.write_text(text, encoding="utf-8", newline="\n")
+            target.write_text(fill_quickstart(text, quickstart), encoding="utf-8", newline="\n")
         else:
             shutil.copyfile(path, target)
 
@@ -1568,6 +1664,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
     builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
+    newest = next(iter(released_stacks(tree)), None)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)
@@ -1575,7 +1672,8 @@ def main(argv: list[str] | None = None) -> int:
         fetcher = Fetcher(work, args.git_base, parse_local(args.local, members))
         try:
             results = [
-                assemble(build, members, fetcher, args.out, policy, journeys) for build in builds
+                assemble(build, members, fetcher, args.out, policy, journeys, newest)
+                for build in builds
             ]
         except FetchError as exc:
             print(f"error: {exc}", file=sys.stderr)

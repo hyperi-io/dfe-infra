@@ -1385,3 +1385,52 @@ def test_a_bad_local_value_is_refused(tmp_path: Path, value: str) -> None:
     members = [aggregate.Member("dfe-infra", "o/dfe-infra", "toolchain", 10)]
     with pytest.raises(SystemExit):
         aggregate.parse_local([value.format(missing=tmp_path / "none")], members)
+
+
+QUICKSTART = {
+    "schema": 1,
+    "min_compose": "2.26.0",
+    "console_url": "http://localhost:3000",
+    "login": "docker run --rm img login",
+    "profiles": [{"name": "single-kafka", "default": True}],
+    "up": {
+        "latest": ["docker run img:latest init", "docker compose up -d"],
+        "pinned": ["docker run img:1.0.3 init", "docker compose up -d"],
+    },
+    "demo": {
+        "latest": ["docker run img:latest init", "x demo"],
+        "pinned": ["docker run img:1.0.3 init", "y demo"],
+    },
+}
+QUICKSTART_PAGE = (
+    "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
+    "<!-- /docker-quickstart -->\n\nAfter.\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("form", "first"),
+    [("latest", "docker run img:latest init"), ("pinned", "docker run img:1.0.3 init")],
+)
+def test_a_release_quickstart_replaces_the_pages_make_region(form: str, first: str) -> None:
+    text = aggregate.fill_quickstart(QUICKSTART_PAGE, {**QUICKSTART, "form": form})
+    assert "make up" not in text
+    assert "You need make" not in text
+    assert f"<!-- landing -->\n```bash\n{first}\ndocker compose up -d\n```" in text
+    assert "You need Docker with Compose 2.26.0 or later." in text
+    assert "`single-kafka`" in text
+    assert "http://localhost:3000" in text
+    assert text.startswith("Intro.\n")
+    assert text.endswith("After.\n")
+
+
+def test_a_build_without_a_release_keeps_the_page_as_written() -> None:
+    assert aggregate.fill_quickstart(QUICKSTART_PAGE, None) == QUICKSTART_PAGE
+
+
+@pytest.mark.parametrize("ref", ["bbf19bf1251aab1062276d2683baefdd894e4d7e", "main", ""])
+def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
+    build = aggregate.Build(
+        name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
+    )
+    assert aggregate.docker_quickstart(build, "2.2.1") is None

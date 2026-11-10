@@ -7,6 +7,7 @@ sidebar_label: Docker
 
 The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. It runs the same images as a Kubernetes deployment, just packaged differently.
 
+<!-- docker-quickstart: up -->
 You need Docker with Compose v2, Python 3, git and make.
 
 <!-- landing -->
@@ -18,6 +19,7 @@ make up     # pull, start, self test, print the console login
 `make up` runs the newest DFE release with every image pinned, on the `single-kafka` profile. It ends with a self test that sends marked events through and prints `PASS` as each check lands. `VERSION=` pins another release.
 
 `make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
+<!-- /docker-quickstart -->
 
 | Profile | Transport | Runs |
 |---|---|---|
