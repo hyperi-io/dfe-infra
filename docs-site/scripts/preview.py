@@ -61,7 +61,14 @@ def sync(build_root: Path, seen: dict[str, float]) -> dict[str, float]:
         if seen.get(relative) != mtime:
             target = build_root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(pages[relative].read_bytes())
+            if relative.lower().endswith(aggregate.MARKDOWN):
+                # The same link respelling the full build applies, or a renamed member page breaks the preview.
+                text = aggregate.match_case(
+                    pages[relative].read_text(encoding="utf-8"), page=relative, root=build_root
+                )
+                target.write_text(text, encoding="utf-8", newline="\n")
+            else:
+                target.write_bytes(pages[relative].read_bytes())
             print(f"preview: copied {relative}", flush=True)
     for relative in seen.keys() - now.keys():
         (build_root / relative).unlink(missing_ok=True)
