@@ -91,10 +91,11 @@ WORKING_DIRS = frozenset({"plans", "superpowers"})
 # The documentation standard binds the repos we control upstream. A fork follows its upstream.
 UPSTREAM_LED = frozenset({"fork"})
 SPEC_MEMBER = "dfe-engine"
-SPEC_FILE = "openapi-spec/openapi.json"
+# Where the engine commits its spec: openapi/ from v1.22.83, openapi-spec/ before it.
+SPEC_FILES = ("openapi/openapi.json", "openapi-spec/openapi.json")
 API_DIR = "api"
 API_LABEL = "HTTP API reference"
-SPARSE_PATTERNS = ("/docs/", f"/{SPEC_FILE}")
+SPARSE_PATTERNS = ("/docs/", *(f"/{path}" for path in SPEC_FILES))
 # The root pages hold the sidebar positions below this one, and members follow in lane order.
 FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
@@ -122,6 +123,12 @@ _MDX_SPECIAL = re.compile(r"(?<!\\)([{}]|<(?=[A-Za-z/!]))")
 _MDX_REFERENCE = {"{": "&#123;", "}": "&#125;", "<": "&lt;"}
 _FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n", re.DOTALL)
 _LEADING_COMMENT = re.compile(r"\A\s*<!--.*?-->[ \t]*(?:\r?\n)*", re.DOTALL)
+_TITLE_FIELD = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_H1 = re.compile(r"^#[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+# The page aggregate.py writes where a section's docs/ has no landing of its own.
+SECTION_INDEX = "index.md"
+# The first line of that page, which docs-site/scripts/gate.py skips: its titles are checked on their own pages.
+SECTION_INDEX_MARK = "<!-- aggregate.py: section index -->"
 
 
 class Rule(StrEnum):
@@ -1119,10 +1126,18 @@ def assemble(
         if not (dest / LANDING).is_file():
             found = next((name for name in ARCHITECTURE if (dest / name).is_file()), None)
             opening = (dest / found).relative_to(root).with_suffix("").as_posix() if found else None
+            if not any(path.name.lower() in _LANDINGS for path in dest.iterdir()):
+                write_section_index(dest, member.name)
         write_json(dest / CATEGORY_FILE, category(member, ref=link_ref, opening=opening))
         included.add(member.name)
         result.members.append(
-            {"name": member.name, "repo": member.repo, "ref": link_ref, "commit": checkout.commit}
+            {
+                "name": member.name,
+                "repo": member.repo,
+                "ref": link_ref,
+                "commit": checkout.commit,
+                "path": dest.relative_to(root).as_posix(),
+            }
         )
         if member.name == SPEC_MEMBER:
             spec_checkout = checkout
@@ -1135,13 +1150,74 @@ def assemble(
     return result
 
 
+def page_title(text: str, fallback: str) -> str:
+    """A page's title as Docusaurus shows it: front-matter title, else the first H1.
+
+    Args:
+        text: The page's markdown.
+        fallback: The title when the page sets neither, such as its file stem.
+
+    Returns:
+        The title.
+    """
+    front = _FRONT_MATTER.match(text)
+    if front and (field := _TITLE_FIELD.search(front.group(0))):
+        return field.group(1).strip("'\"")
+    fence = ""
+    for line in text[front.end() if front else 0 :].splitlines():
+        opener = _FENCE.match(line)
+        if opener and (not fence or opener.group(1)[0] == fence[0]):
+            fence = "" if fence else opener.group(1)
+        elif not fence and (heading := _H1.match(line)):
+            return heading.group(1)
+    return fallback
+
+
+def write_section_index(dest: Path, name: str) -> None:
+    """Give a section with no README.md a page at its root that lists its pages.
+
+    Without one, the section's own URL is a 404.
+
+    Args:
+        dest: The section's directory in the build.
+        name: The section's sidebar label, which titles the page.
+    """
+    pages = sorted(
+        (
+            path
+            for path in dest.rglob("*")
+            if path.is_file()
+            and path.name.lower().endswith(MARKDOWN)
+            and path != dest / SECTION_INDEX
+        ),
+        # A directory's pages follow its landing, before any directory below it.
+        key=lambda path: (
+            path.relative_to(dest).parent.parts,
+            path.name.lower() not in _LANDINGS,
+            path.name.lower(),
+        ),
+    )
+    lines = [SECTION_INDEX_MARK, f"# {name}", "", f"Every page in the {name} section.", ""]
+    for path in pages:
+        relative = path.relative_to(dest)
+        depth = len(relative.parts) - 1
+        if path.name.lower() in _LANDINGS:
+            depth = max(depth - 1, 0)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        title = page_title(text, path.stem).replace("[", "\\[").replace("]", "\\]")
+        lines.append(f"{'  ' * depth}- [{title}]({relative.as_posix()})")
+    (dest / SECTION_INDEX).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def _place_spec(
     checkout: Checkout, build: Build, dest: Path, out: Path, findings: list[Finding]
 ) -> dict[str, str] | None:
     """Copy the engine's spec beside the builds and mark the directory its pages go in."""
-    spec = checkout.path / SPEC_FILE
-    if not spec.is_file():
-        findings.append(Finding(SPEC_MEMBER, SPEC_FILE, Rule.NO_SPEC))
+    spec = next(
+        (checkout.path / path for path in SPEC_FILES if (checkout.path / path).is_file()), None
+    )
+    if spec is None:
+        findings.append(Finding(SPEC_MEMBER, " or ".join(SPEC_FILES), Rule.NO_SPEC))
         return None
     api = dest / API_DIR
     if api.exists():

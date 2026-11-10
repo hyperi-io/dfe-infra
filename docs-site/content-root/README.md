@@ -4,7 +4,7 @@ sidebar_label: Overview
 slug: /overview
 ---
 
-# DFE documentation
+# Data Fusion Engine overview
 
 Land it. Use it. Scale it. The Data Fusion Engine (DFE) does what you used Splunk, Elastic and a lakehouse for, without the limitations. Every source in, the whole picture out, from gigabytes to petabytes, in your own environment.
 

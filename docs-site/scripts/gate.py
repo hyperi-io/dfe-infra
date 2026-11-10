@@ -307,7 +307,8 @@ def pages_in(content: Path) -> Iterator[tuple[str, str, Path]]:
         content: A tree aggregate.py wrote, holding site.json.
 
     Yields:
-        (build, page path in the build, file). The generated API pages are skipped.
+        (build, page path in the build, file). The generated API pages and section
+        indexes are skipped.
     """
     site = json.loads((content / aggregate.SITE_FILE).read_text(encoding="utf-8"))
     for build in site["builds"]:
@@ -318,6 +319,10 @@ def pages_in(content: Path) -> Iterator[tuple[str, str, Path]]:
             if not path.is_file() or not path.name.lower().endswith(aggregate.MARKDOWN):
                 continue
             if skip and skip in path.parents:
+                continue
+            if path.name == aggregate.SECTION_INDEX and path.read_text(
+                encoding="utf-8", errors="replace"
+            ).startswith(aggregate.SECTION_INDEX_MARK):
                 continue
             yield build["name"], path.relative_to(root).as_posix(), path
 

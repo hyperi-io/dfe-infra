@@ -16,7 +16,7 @@ For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming
 the build, into build/<its base path>. Then write build/_redirects so / and every
 dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
-against the Workers static-asset limits.
+against the Workers static-asset limits. A build with a member section whose root URL serves no page fails.
 
 Needs the site's npm dependencies installed (npm ci) and aggregate.py run first.
 """
@@ -103,6 +103,23 @@ def redirects(
     return "".join(f"{line}\n" for line in lines)
 
 
+def missing_roots(entry: dict, out: Path) -> list[str]:
+    """The member sections in one build whose own URL serves no page.
+
+    Args:
+        entry: The build's site.json entry.
+        out: The build's output directory.
+
+    Returns:
+        Each section path, such as ``dfe-engine``, with no index.html at its root.
+    """
+    return [
+        member["path"]
+        for member in entry.get("members", [])
+        if not (out / member["path"] / "index.html").is_file()
+    ]
+
+
 def count(tree: Path) -> tuple[int, int, int]:
     """Count the pages, the files and the largest file's bytes under `tree`.
 
@@ -153,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
 
     for entry in entries:
         out = build_one(entry)
+        if missing := missing_roots(entry, out):
+            raise SystemExit(f"error: {entry['name']}: no page at {', '.join(missing)}")
         pages, files, largest = count(out)
         print(f"{entry['name']}: {pages} pages, {files} files, largest {largest} bytes")
 
