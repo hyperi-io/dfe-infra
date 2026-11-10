@@ -102,15 +102,15 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
-                "dfe-archiver" "sha256:1ddcfb5c167df1854b1e70a007b76c3142a29c5dff4d81f65f93eeec68b992df"
+                "dfe-archiver" "sha256:937006a9083805035788a13d97b2ac92391318de23d7e5171e6ec70965e94481"
                 "dfe-engine" "sha256:b3ffd8c2b3434563c76e806053e3d7c92117639e8a3c9dbf0f2f5d67ee69a9dc"
-                "dfe-fetcher" "sha256:bfb707c98b2bc3316db62182e53713fad1acf28bf00e1c4f3a79d80d8f0d7946"
+                "dfe-fetcher" "sha256:7b9e2f1add2873b8dea16d3d753d81da77da3c356bf98b1f44a29c4bf199d66c"
                 "dfe-hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
-                "dfe-loader" "sha256:2cf1835fb4edffa4692e00e4e91c19577ec4156e26316f663db966848c7d9849"
-                "dfe-receiver" "sha256:3fca63ce66ba16a407d553d8b14100c5f3c90b3dd92794bbf76904bf93e240d0"
-                "dfe-transform-elastic" "sha256:085700e62308177aa3417a3dde518385e0caa4bd6dbb4b9c31c1b715ad251dd9"
-                "dfe-transform-vector" "sha256:f03d61eda4b4e00dffb21bf1f34bf771bd9da01be674c6b0f5721eacffb0c5f2"
-                "dfe-transform-vrl" "sha256:6cbc6106351e2879d22ed1176be362cf068155d93c8db76f0d5e93ffafe0464c"
+                "dfe-loader" "sha256:8cae1a9e3ec8f9438a502e3b0fce2641f72290ae9aa3c18db77c2a1df4e21cd3"
+                "dfe-receiver" "sha256:d70a0ad9681ff5ae2d704de1f4723f451273cf7184b9e16ae7a98b2b3a6ad63f"
+                "dfe-transform-elastic" "sha256:3815aaf34ef1f69f89c427e5f5649fff941e43f7f55facee304ec658e81e8aa7"
+                "dfe-transform-vector" "sha256:d6360506a3fdc2e6bc863259e8e97aba5955c5c64bd71f67edee0cc3fe077753"
+                "dfe-transform-vrl" "sha256:19684ecd5058348625507f9d749ca6ab4532a17a61ea3c63351868c9dbcdda61"
                 "dfe-ui" "sha256:2ec731a63a036de44df910e3b3752c086d8596476e2e5fb0baa28386636ab82e"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
