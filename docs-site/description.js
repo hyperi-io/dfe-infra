@@ -22,6 +22,8 @@ function plain(text) {
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/<[^>]+>/g, '')
+    // A tag split around another (<scr<b>ipt>) leaves a bracket after one pass.
+    .replace(/[<>]/g, '')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/(\*\*|__)(.*?)\1/g, '$2')
     .replace(/(^|\W)[*_]([^*_]+)[*_](?=\W|$)/g, '$1$2')

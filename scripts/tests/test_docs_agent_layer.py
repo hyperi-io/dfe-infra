@@ -212,6 +212,10 @@ LONG = "word " * 50
             "<!-- a\ncomment -->\n- a list item first\n\n**Bold** words in a real paragraph here.\n",
             "Bold words in a real paragraph here.",
         ),
+        (
+            "A nested <scr<b>ipt> tag leaves no angle bracket in the text.\n",
+            "A nested ipt tag leaves no angle bracket in the text.",
+        ),
         ("# Only headings\n\n## And more\n", ""),
         (LONG, ("word " * 31).strip() + "..."),
     ],
