@@ -123,11 +123,27 @@ function Hero({hero, quickstart}) {
 export default function Home() {
   const {siteConfig} = useDocusaurusContext();
   const {landing} = siteConfig.customFields;
-  const {differences, whats_new: news, capabilities, deploy, closing} = landing;
+  const {figures, differences, whats_new: news, capabilities, deploy, closing} = landing;
   return (
     <Layout description={landing.description}>
       <main>
         <Hero hero={landing.hero} quickstart={landing.quickstart} />
+        {figures && (
+          <section className={styles.section} aria-label="Figures">
+            <div className={styles.container}>
+              <ul className={styles.gridThree}>
+                {figures.map((figure) => (
+                  <li key={figure.value}>
+                    <Link className={`${styles.card} ${styles.linkCard}`} to={figure.to}>
+                      <h3 className={styles.cardTitle}>{figure.value}</h3>
+                      <p className={styles.cardText}>{figure.text}</p>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </section>
+        )}
         <section className={`${styles.section} ${styles.sectionRaised}`} aria-labelledby="differences">
           <div className={styles.container}>
             <SectionHeader
@@ -158,37 +174,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={styles.section} aria-labelledby="whats-new">
-          <div className={styles.container}>
-            <SectionHeader
-              id="whats-new"
-              eyebrow={news.eyebrow}
-              title={news.title}
-              link={
-                <a className={styles.textLink} href={news.link.href}>
-                  {news.link.label}
-                  <IconExternal />
-                </a>
-              }
-            />
-            <ul className={styles.gridThree}>
-              {news.cards.map((card) => (
-                <li key={card.title}>
-                  <CardLink className={`${styles.card} ${styles.linkCard}`} to={card.to} href={card.href}>
-                    <p className={styles.eyebrow}>{card.eyebrow}</p>
-                    <h3 className={styles.cardTitle}>{card.title}</h3>
-                    <p className={styles.cardText}>{card.text}</p>
-                    <span className={styles.cardAction}>
-                      {card.action}
-                      {card.href ? <IconExternal /> : <IconArrow />}
-                    </span>
-                  </CardLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
+        {capabilities && (
         <section className={`${styles.section} ${styles.sectionRaised}`} aria-labelledby="capabilities">
           <div className={styles.container}>
             <SectionHeader id="capabilities" eyebrow={capabilities.eyebrow} title={capabilities.title} />
@@ -218,6 +204,7 @@ export default function Home() {
             </ul>
           </div>
         </section>
+        )}
 
         <section className={styles.section} aria-labelledby="deploy-paths">
           <div className={styles.container}>
@@ -242,6 +229,37 @@ export default function Home() {
                   </li>
                 );
               })}
+            </ul>
+          </div>
+        </section>
+
+        <section className={`${styles.section} ${styles.sectionRaised}`} aria-labelledby="whats-new">
+          <div className={styles.container}>
+            <SectionHeader
+              id="whats-new"
+              eyebrow={news.eyebrow}
+              title={news.title}
+              link={
+                <a className={styles.textLink} href={news.link.href}>
+                  {news.link.label}
+                  <IconExternal />
+                </a>
+              }
+            />
+            <ul className={styles.gridThree}>
+              {news.cards.map((card) => (
+                <li key={card.title}>
+                  <CardLink className={`${styles.card} ${styles.linkCard}`} to={card.to} href={card.href}>
+                    <p className={styles.eyebrow}>{card.eyebrow}</p>
+                    <h3 className={styles.cardTitle}>{card.title}</h3>
+                    <p className={styles.cardText}>{card.text}</p>
+                    <span className={styles.cardAction}>
+                      {card.action}
+                      {card.href ? <IconExternal /> : <IconArrow />}
+                    </span>
+                  </CardLink>
+                </li>
+              ))}
             </ul>
           </div>
         </section>
