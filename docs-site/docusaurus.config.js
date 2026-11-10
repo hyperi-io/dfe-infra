@@ -27,8 +27,8 @@ if (!build) {
   throw new Error(`content/site.json lists no build named ${buildName}`);
 }
 const docsPath = `content/${build.name}`;
-// The stack a reader installs from this build: its own release, or the newest one for /next/.
-const stack = build.listed ? build.name : site.newest || build.name;
+// The stack a reader installs from this build: its own stack, or the newest release for /next/.
+const stack = build.name === 'next' ? site.newest || build.name : build.name;
 const versionLabel = build.listed ? build.name : `${build.name} (unreleased)`;
 // release.yml cuts each stack as a dfe-infra tag, with its notes on the GitHub release.
 const releaseNotes = site.newest
