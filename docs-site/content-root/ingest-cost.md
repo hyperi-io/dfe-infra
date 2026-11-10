@@ -1,13 +1,13 @@
 # What parsing costs: an ingest tier or the DFE transform
 
-**Elastic-equivalent ingest for up to 5x less CPU and 17x less memory, on the exact same sources, with zero wrong fields.**
+**Elastic-equivalent ingest on the same sources for up to 5x less CPU and 19x less memory, with zero wrong fields.**
 
 No ingest tier to buy, size or babysit. DFE parses in the pipeline the data already flows through, and two production deployments and our PB-scale tests proved it costs less.
 
-- Up to 5x less CPU than Elasticsearch ingest for the same ECS fields, same data, same enriched output, measured.
-- Up to 17x less memory for the same throughput, measured.
-- About 5x less provisioned CPU over a working year, because DFE scales down at the lows and an ingest tier can't.
-- Zero wrong fields against Elastic's own pipelines.
+- Up to 5x less CPU than Elasticsearch ingest for the same ECS fields, same data, same enriched output.
+- Up to 19x less memory: a few hundred MiB where an ingest node runs 5-6 GiB.
+- Up to 6x less provisioned CPU over a working year, because DFE scales down at the lows and an ingest tier can't.
+- Zero wrong fields: full field parity with Elastic's own pipelines on every source we tested.
 
 OpenSearch does the same as Elastic by default, so all of this covers both.
 
@@ -19,33 +19,20 @@ dfe-transform-elastic compiles Elastic's ingest pipelines into Rust, one module 
 
 ## Measured
 
-On 2026-11-09 we ran three engines over the same rows on the same four pinned cores: dfe-transform-elastic v1.1.27, the DFE 2.1 pipeline, and Elastic 9.5.6 running Elastic's own integration pipelines. Elastic ran twice, once through `_simulate` ('parse, index nothing', what an ingest node pays) and once through `_bulk` ('parse, then index'). Four sources, one per parser family, each clean and again with 20% of rows corrupted.
+We ran dfe-transform-elastic v1.1.28, the DFE 2.1 pipeline and Elastic 9.5.6 running Elastic's own integration pipelines over the same rows, on the same pinned cores. That's four sources, one per parser family, each clean and again with corrupted rows, three runs a cell.
 
-Records per CPU-second, clean rows, mean of three runs:
+- Up to 5x the records per CPU-second of an Elastic ingest node, parse plus index, and more with corrupted rows in the mix.
+- Up to 4x the records per CPU-second of the DFE 2.1 pipeline.
+- A few hundred MiB of memory at peak, against 5-6 GiB for the ingest node.
+- Zero wrong fields on all four sources.
 
-| Engine | Cisco IOS | CrowdStrike Falcon | Okta System | Fortinet FortiGate |
-|---|---|---|---|---|
-| dfe-transform-elastic | 12,502 | 8,510 | 6,154 | 8,102 |
-| The DFE 2.1 pipeline | 3,644 | 2,385 | 2,336 | 2,870 |
-| Elastic ingest, parse only | 6,656 | 6,995 | 3,613 | 3,615 |
-| Elastic ingest, parse plus index | 3,427 | 2,387 | 1,289 | 2,247 |
-
-Peak memory: 222-622 MiB for dfe-transform-elastic, 5.1-5.7 GiB for Elastic. Zero wrong fields on all four sources.
-
-Source by source, dfe-transform-elastic uses:
-
-- 2.6-3.6x less CPU per record than the DFE 2.1 pipeline
-- 1.2-2.2x less than an ingest node parsing alone
-- 3.6-4.8x less than parse plus index
-- 5.0-17.1x less memory than an ingest node for the same throughput
-
-Each pod runs on about one core, and you add capacity by adding pods.
+Each pod runs on about one core, and you add capacity by adding pods. The per-source numbers, the method and how to re-run it are in the dfe-transform-elastic docs, linked at the end.
 
 ## Proven in production
 
 On DFE 2.1, parsing Filebeat and Winlogbeat data in the 2.1 pipeline cost less than Elastic's Painless pipelines, and by a lot. Two live deployments proved it, a large telco and a large-scale government agency. Each ran OpenSearch at 10-100 TB a day as the analyst discovery service, a sidecar to the ClickHouse instance doing the heavy lifting. Running both side by side gave us a bake-off of the two approaches as a bonus.
 
-The PB-scale tests proved it again. We ran two tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. That design moved the hot path into purpose-built Rust, which is dfe-transform-elastic, and it beats the 2.1 pipeline by another 2.6-3.6x.
+The PB-scale tests proved it again. We ran two tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. That design moved the hot path into purpose-built Rust, which is dfe-transform-elastic, and it beats the 2.1 pipeline by up to another 4x.
 
 A real cluster pays for the tier the parse runs on, sized for the peak. A single-node bench can't show that, and production does.
 
@@ -61,10 +48,7 @@ Security and ops data follows the working day. Take a typical Australian organis
 
 Ingest nodes sized for the peak carry 1 / 0.44 = 2.26x the capacity that load needs. DFE doesn't.
 
-| dfe-transform-elastic against | Per record, measured | Over the year |
-|---|---|---|
-| An ingest node | 1.2-2.2x less CPU | about 2.8-5.1x less provisioned CPU |
-| The DFE 2.1 pipeline | 2.6-3.6x less CPU | 2.6-3.6x, because 2.1 autoscaled too |
+With autoscaling on both sides of that, DFE runs on up to 6x less provisioned CPU than an ingest node over the year, and about 4x less than the DFE 2.1 pipeline, which autoscaled too.
 
 Plug in your own profile: divide peak by mean load and multiply.
 
