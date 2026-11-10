@@ -12,7 +12,7 @@ The tier table is per flavour, in `argocd/values/edge-<flavour>.yaml`.
 
 Every surface falls into exactly one group:
 
-- (a) dfe-ui and HyperDX. The product's own console and the search it frames. Public on a cloud deploy to the addresses `exposure.groups.console.allow` names, and to none while that list is empty.
+- (a) dfe-ui and dfe-hyperdx. The product's own console and the search it frames. Public on a cloud deploy to the addresses `exposure.groups.console.allow` names, and to none while that list is empty.
 - (b) The engine API. It sits on dfe-ui's own hostname, because the browser calls it at that origin. Its browser families follow the console group. Its CLI families, `/openapi.json` and SCIM are a second route in the api group, with its own list.
 - (c) The admin UIs: Argo CD, Kafbat, Forgejo, links, Cruise Control. Off one at a time, behind a class-wide kill switch.
 - (d) The ingest doors: the receiver and the OTLP route, plus the tunnel that reaches the receiver without a public address.
@@ -62,7 +62,7 @@ The families are chart data (`routes.dfeEngine`), not a dial list, because they 
 - A `PathPrefix` matches whole path elements, so `/api/v1/auth` never matches `/api/v1/authoring` and `/api/v1/sample` never matches `/api/v1/samples`.
 - `GET /api/v1/auth/oidc/{provider}/callback` is a top-level browser navigation, so an edge login in front of it swallows the engine's own external-IdP login. The two are ALTERNATIVES on a hostname.
 - The sampler is `POST /api/v1/sources/{source}/sample`, on the public `sources` prefix. Opening the `sample` family is a different thing.
-- The HyperDX fork reaches `/api/v1/hyperdx` from in-cluster, so its engine origin stays the internal hostname or the Service.
+- dfe-hyperdx reaches `/api/v1/hyperdx` from in-cluster, so its engine origin stays the internal hostname or the Service.
 - `/api/v1/tasks` carries the only SSE stream, and stays private until the console wants it.
 
 ### Response hardening

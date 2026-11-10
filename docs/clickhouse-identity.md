@@ -44,7 +44,7 @@ Each app runs in a pod of its own and can't read the engine's secrets store, so 
 
 On k8s dfe-extras mints each Secret once beside the engine, with ESO's Password generator, from `clickhouse.serviceUsers` in `argocd/values/common.yaml` (the hunt runner's from `huntRunner.clickhouse`). They render with the engine, a wave before every app that reads one. On docker `make init` mints each into `.env`.
 
-dfe-hyperdx never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s HyperDX is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` carries the query reader's password in every mode, and only `header-dev` reads it.
+dfe-hyperdx never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s dfe-hyperdx is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` carries the query reader's password in every mode, and only `header-dev` reads it.
 
 The hunt runner's worker runs `INSERT ... SELECT` built from rule text, so its user is the identity a crafted rule runs as: no `url()`, `s3()`, `remote()` or `file()`, and no DDL.
 
@@ -68,7 +68,7 @@ dfe-engine seeds these on every deployment. Seeding is non-destructive and opera
 
 A role with `mint_user` set also gets a user, with a secret the engine mints through the scalo secrets backend unless the deploy layer supplies the password. The rest are granted to an identity that already exists. The service users are reconciled whether or not tenant isolation is on.
 
-`readonly=2` on the reader is deliberate, not a slack setting. HyperDX sends `date_time_output_format` with every query, and `readonly=1` rejects the whole request. `allow_ddl=0` still bars DDL.
+`readonly=2` on the reader is deliberate, not a slack setting. dfe-hyperdx sends `date_time_output_format` with every query, and `readonly=1` rejects the whole request. `allow_ddl=0` still bars DDL.
 
 The writer's `SELECT ON dfe.otel_traces` is there because ClickHouse runs a materialised view's query as the user whose insert fired it, and `otel_traces_trace_id_ts_mv` reads `otel_traces`. Without it every traces batch fails with code 497. Its `SHOW TABLES` reads no rows. `system.parts` lists only the tables a user can see, and the collector reports every table's size.
 

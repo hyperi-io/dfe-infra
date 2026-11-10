@@ -52,7 +52,7 @@ Notes:
 
 - dfe-transform-splack and dfe-transform-wasm are COMING, not members. They're alpha and unpublished, so their `apps:` pins are commented out and they have no chart. Every line to uncomment when they ship carries the word `coming` beside one of the two names, so grep that.
 - dfe-transform-elastic is published and pinned by digest from 2.2.1 (v1.1.20). Older 2.2.0 release-candidate blocks in `versions.yaml` predate its first image and keep their "not yet published" comments as a record of that cut.
-- dfe-hyperdx is the HyperDX fork. Its k8s thin chart pulls `<registry>/dfe-hyperdx` at `content.dfe-hyperdx`. docker pulls `ghcr.io/hyperi-io/hyperi-hyperdx`. That's a DIFFERENT image name from k8s (`hyperi-hyperdx` vs `dfe-hyperdx`), so reconcile the name or the render must map the two. Its SSoT lives in `content.dfe-hyperdx`, not `apps:`, pinned by digest from 2.2.1 (v0.3.17).
+- dfe-hyperdx is our extended fork of upstream HyperDX. Its k8s thin chart pulls `<registry>/dfe-hyperdx` at `content.dfe-hyperdx`. docker pulls `ghcr.io/hyperi-io/hyperi-hyperdx`. That's a DIFFERENT image name from k8s (`hyperi-hyperdx` vs `dfe-hyperdx`), so reconcile the name or the render must map the two. Its SSoT lives in `content.dfe-hyperdx`, not `apps:`, pinned by digest from 2.2.1 (v0.3.17).
 
 ## Class B - third-party via an operator + a CR we author
 

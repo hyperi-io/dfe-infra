@@ -105,7 +105,7 @@ spatial sum across brokers that `SEARCH` discovers, not a sum over time.
 
 ## Telemetry
 
-DFE's monitoring goes to its own OTel feed and HyperDX, never CloudWatch --
+DFE's monitoring goes to its own OTel feed and dfe-hyperdx, never CloudWatch --
 the deployment dial's `telemetry.aws.sink` decides which of MSK's forced
 CloudWatch touchpoints get a workaround and which stay on AWS's own path.
 `otel` is the default; `cloudwatch` is the opt-in AWS-native path for a
