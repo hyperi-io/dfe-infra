@@ -454,13 +454,19 @@ def _template(base: str) -> str:
     return f'# pins.yaml\n\nbase:\n  dfe-infra: "{base}"      # charts, appsets, defaults.\n  #  continued.\nchannel: "rc"\n'
 
 
+def test_the_deploy_step_names_the_stack_the_pin_and_the_content_entry() -> None:
+    step = stack.deploy_step("2.2.2-rc.1")
+    expect("names pins.yaml base.dfe-infra", 'base.dfe-infra` to "2.2.2-rc.1"' in step, step)
+    expect("names the content pin to move", "content.dfe-deploy in stack 2.2.2-rc.1" in step, step)
+
+
 def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None:
     for maturity in ("rc", "release"):
         rc, out, asked = _deploy_gate(_template("9.9.8"), maturity)
         expect(f"{maturity}: a template naming 9.9.8 fails stack 9.9.9", rc == 1, f"exit {rc}\n{out}")
         expect(
             f"{maturity}: the error names the pin, both stacks and the fix",
-            "dfe-deploy v1.0.8" in out and "9.9.8" in out and "tag a dfe-deploy whose template names 9.9.9" in out,
+            "dfe-deploy v1.0.8" in out and "9.9.8" in out and stack.deploy_step("9.9.9") in out,
             out,
         )
         expect(
