@@ -1528,9 +1528,18 @@ def test_the_receiver_and_loader_metrics_and_each_clickhouse_servers_logs_are_re
     ]
     assert sorted(path.name for path in (out / "clickhouse").iterdir()) == [
         "clickhouse.pods.txt",
+        "clickhouse.replica_lag.tsv",
         "dfe-clickhouse-clickhouse-0-0-0.inserts.tsv",
         "dfe-clickhouse-clickhouse-0-0-0.part_log.tsv",
+        "dfe-clickhouse-clickhouse-0-0-0.parts.tsv",
+        "dfe-clickhouse-clickhouse-0-0-0.replicas.tsv",
+        "dfe-clickhouse-clickhouse-0-0-0.replication_queue.tsv",
     ]
+    queries = [call[-1] for call in calls if "clickhouse-client" in call]
+    lag = next(query for query in queries if "ASOF JOIN" in query)
+    assert "'DownloadPart' AND event_time > now() - INTERVAL 30 MINUTE" in lag
+    assert "'NewPart' AND event_time > now() - INTERVAL 60 MINUTE" in lag
+    assert sum("clusterAllReplicas" in query for query in queries) == 1
     curls = sorted(call[3:6] for call in calls if "curl" in call)
     assert curls == [["dfe-loader-b2", "-c", "dfe-loader"], ["dfe-receiver-a1", "-c", "dfe-receiver"]]
 

@@ -14,11 +14,13 @@ flowchart LR
   A -.->|a rule can read it| R
 ```
 
-The `alerts` table is itself a source. It has the same schema management, retention and query surface as any other, and a rule written against it is how you express correlation. [Detections on a source](../dfe-engine/data-plane/source-detections.md) has the rule file, the hunt, which organisations a hunt reads, and the lookup databases a rule condition may read.
+The `alerts` table is itself a source. It has the same schema management, retention and query surface as any other, and a rule written against it is how you express correlation.
+
+> **Coming from Splunk?** Rules are ClickHouse SQL, so there's no separate correlation language to learn. A rule can join `alerts` or any source against another table, such as an asset inventory. [Detections on a source](../dfe-engine/data-plane/source-detections.md) has the rule file, the hunt, which organisations a hunt reads, and the lookup databases a rule condition may read.
 
 ## In the console
 
-Rules and Hunts sit under Detect. Matches are under Observe, in Hunt Results. A search in HyperDX can start a rule: the Create Rule trigger sends the search's SQL to the rule editor. [Creating a rule from a search](../dfe-ui/hyperdx-rule-create.md) walks it.
+Rules and Hunts sit under Detect. Matches are under Observe, in Hunt Results. A search in the console can start a rule: the Create Rule trigger sends the search's SQL to the rule editor. [Creating a rule from a search](../dfe-ui/hyperdx-rule-create.md) walks it.
 
 ## Sigma
 
@@ -26,8 +28,8 @@ Sigma is off in 2.2.1. Every path under `/api/v1/sigma` answers 404 until the en
 
 ## Running the hunts
 
-The hunt runner is one pod by default. Autoscaling is beta and opt-in, through `huntRunner.autoscaling.enabled`. [Hunt-runner scaling](../dfe-engine/data-plane/hunt-runner-scaling.md) says how the due backlog is computed and what the runner does with no engine.
+The hunt runner is one pod by default. Autoscaling is opt-in, through `huntRunner.autoscaling.enabled`. [Hunt-runner scaling](../dfe-engine/data-plane/hunt-runner-scaling.md) says how the due backlog is computed and what the runner does with no engine.
 
 ## Conditions
 
-Match conditions use CEL. [The expression language](../dfe-engine/data-plane/expressions-cel.md) is the decision behind it.
+Match conditions use CEL. [The expression language](../dfe-engine/data-plane/expressions-cel.md) says why we chose CEL.

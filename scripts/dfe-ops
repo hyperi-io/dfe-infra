@@ -328,6 +328,7 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #                   same table through a generated shell fragment.
 #   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
 #                   path (dfe-infra#116).
+#   s3_empty     -- teardown empties force_destroy buckets in parallel before tofu destroy.
 #   tester_idp   -- `idp`, whose render functions are unit-testable cluster-free.
 #   yaml_subset  -- the one reader every ops script parses a YAML SSoT with.
 sys.path.insert(0, str(SCRIPTS))
@@ -339,9 +340,10 @@ import dfe_ops_pod_logs as pod_logs  # noqa: E402
 import envfile  # noqa: E402
 import private_file  # noqa: E402
 import profiles  # noqa: E402
+import s3_empty  # noqa: E402
 import yaml_subset  # noqa: E402
 from dfe_ops_bastion import add_bastion_subparser  # noqa: E402
-from dfe_ops_cloud_guard import add_cloud_guard_subparsers  # noqa: E402
+from dfe_ops_cloud_guard import DESTROY_MARK_ENV, add_cloud_guard_subparsers  # noqa: E402
 from dfe_ops_diagnostics import BUDGET as DIAGNOSTICS_BUDGET  # noqa: E402
 from dfe_ops_diagnostics import LOG_MINUTES as DIAGNOSTICS_LOG_MINUTES  # noqa: E402
 from dfe_ops_diagnostics import add_diagnostics_subparser  # noqa: E402
@@ -376,10 +378,10 @@ BOOTSTRAP_REQUIRED = (
     "DFE_TARGET_REVISION",
     "DFE_STORAGE_CLASS",
     "DFE_NAMESPACE",
-    "DFE_CLICKHOUSE_HOST",
-    "DFE_OTEL_ENDPOINT",
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
+# Read only on an external server: an in-cluster ClickHouse is the charts' own service.
+BOOTSTRAP_REQUIRED_EXTERNAL_CLICKHOUSE = ("DFE_CLICKHOUSE_HOST",)
 
 # The two that depend on which secrets backend the deployment declared, the same
 # split bootstrap.sh and bridge.py already make. DFE_VAULT_ADDR and
@@ -415,12 +417,15 @@ def _bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
     -- a plain ``get(..., default)`` would read a present-but-empty value as
     none of the three and drop every store check.
     """
+    required = BOOTSTRAP_REQUIRED
+    if env.get("DFE_CLICKHOUSE_MODE") == "external":
+        required += BOOTSTRAP_REQUIRED_EXTERNAL_CLICKHOUSE
     backend = env.get("DFE_SECRETS_BACKEND") or _default_store_backend(env)
     if backend == "openbao":
-        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_OPENBAO
+        return required + BOOTSTRAP_REQUIRED_OPENBAO
     if backend == "aws-sm":
-        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_AWS_SM
-    return BOOTSTRAP_REQUIRED
+        return required + BOOTSTRAP_REQUIRED_AWS_SM
+    return required
 
 # A representative set of apps whose dfe-extras objects are rendered alongside the
 # mode's backing-service charts, so an app-side profile break is caught before deploy.
@@ -883,6 +888,42 @@ def _report_engine_store_kept(prefix: str, region: str, tf_dir: str) -> None:
     )
 
 
+def _empty_buckets(tf_bin: str, tf_dir: str, region: str) -> None:
+    """Empty every force_destroy bucket in the root's state, in parallel, before tofu destroy deletes it.
+
+    A failure is a warning, since tofu's own force_destroy still empties what is left.
+    """
+    try:
+        shown = subprocess.run([tf_bin, f"-chdir={tf_dir}", "show", "-json"], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", check=False)
+    except OSError as exc:
+        print(f"  WARN: could not run {tf_bin} show ({exc}), so tofu destroy empties the buckets itself",
+              file=sys.stderr)
+        return
+    if shown.returncode != 0:
+        print(f"  WARN: could not read the state of {tf_dir}, so tofu destroy empties its buckets itself: "
+              f"{shown.stderr.strip()[:300]}", file=sys.stderr)
+        return
+    try:
+        buckets = s3_empty.force_destroy_buckets(json.loads(shown.stdout or "{}"))
+    except json.JSONDecodeError as exc:
+        print(f"  WARN: the state of {tf_dir} is not JSON ({exc}), so tofu destroy empties its buckets itself",
+              file=sys.stderr)
+        return
+    if buckets and not region:
+        print("  WARN: no region for the buckets, so tofu destroy empties them itself", file=sys.stderr)
+        return
+    for bucket in buckets:
+        started = time.monotonic()
+        try:
+            deleted = s3_empty.empty_bucket(bucket, region)
+        except (s3_empty.EmptyError, OSError, subprocess.TimeoutExpired) as exc:
+            print(f"  WARN: s3://{bucket} not emptied ({exc}); tofu destroy empties the rest", file=sys.stderr)
+            continue
+        print(f"  emptied s3://{bucket}: {deleted} object version(s) and marker(s) in "
+              f"{time.monotonic() - started:.0f}s", file=sys.stderr)
+
+
 def cmd_teardown(args: argparse.Namespace) -> int:
     script = _require_script("destroy.sh")
     if script is None:
@@ -914,6 +955,7 @@ def cmd_teardown(args: argparse.Namespace) -> int:
             print(f"[dry-run] would then force-delete every secret under DFE_ENGINE_SECRETS_PREFIX in {region}",
                   file=sys.stderr)
         return rc
+    _empty_buckets(args.tf_bin, tf_dir, region or env.get("AWS_REGION", ""))
     destroyed = _run_streaming(tf_cmd, env=env)
     # A refused or failed destroy leaves the deployment up, and its engine needs these secrets.
     if destroyed != 0:
@@ -4964,6 +5006,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
             print("\n--keep: leaving the deployment up (destroy it yourself: dfe-ops teardown).", file=sys.stderr)
         else:
             print("\n=== cycle stage: destroy ===", file=sys.stderr)
+            # A guarded cloud run gives the destroy its teardown margin once this file exists.
+            if mark := os.environ.get(DESTROY_MARK_ENV):
+                Path(mark).touch()
             teardown_cmd = [*self_cmd, "teardown", "--force"]
             if args.from_terraform:
                 teardown_cmd += [

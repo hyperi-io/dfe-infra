@@ -8428,7 +8428,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.23"             # 2026-11-04. The engine applies it at startup and reads its source catalogue. Grants hunt_runner system.replicas. dfe-engine v1.22.81 requires >=0.2.23 and locks 0.2.23.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.12"              # 2026-11-02. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
+      dfe-deploy: "v1.0.13"              # 2026-11-10. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2-rc.1 on the rc channel, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
       # A commit, not a version: dfe-docker cuts no per-stack tag. bbf19bf1 (2026-11-09) carries the engine's DFE_ENGINE_ env (#343), the demo pack (#345), the installer (#346, #347), the engine's page tokens and problem errors (#349) and a 120 s envoy budget on /api/v1 for the engine's inline retention reconcile (#350).
       dfe-docker: "bbf19bf1251aab1062276d2683baefdd894e4d7e"
       dfe-hyperdx: "v0.3.21"             # 2026-11-01, amd64 and arm64. Upstream HyperDX 2.43.0. Fixes a SQL injection (#189) and pins follow-redirects 1.16.2 (#188).
