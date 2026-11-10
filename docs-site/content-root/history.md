@@ -22,4 +22,4 @@ Here's the timeline, newest first.
 - DFE starts at 2.2 in public because XDR 1.x and 2.x, then DFE 2.1, shipped to customers privately.
 - Every DFE app carries its own version. Apps that have been around a while are past 1.0.
 - Newer apps are below 1.0, but they aren't alpha or beta. We keep work private until it's mature.
-- A DFE release such as 2.2.2 pins one tested version of every app. [Stack versioning](/dfe-infra/deployment/stack-versioning/) has the detail.
+- A DFE release such as 2.2.2 pins one tested version of every app. [Stack versioning](dfe-infra/deployment/stack-versioning.md) has the detail.
