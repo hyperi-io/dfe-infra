@@ -25,7 +25,7 @@
 | 2 | cert-manager, ESO, Envoy Gateway | | |
 | 3 | KEDA, operators (DocumentDB and its CloudNativePG included) | | |
 | 4 | Kafka, ClickHouse, DocumentDB, OTel | | |
-| 5 | DFE services, HyperDX | | |
+| 5 | DFE services, dfe-hyperdx | | |
 
 ## Smoke Tests
 

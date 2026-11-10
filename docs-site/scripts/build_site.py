@@ -36,6 +36,8 @@ DOCUSAURUS = SITE_ROOT / "node_modules" / ".bin" / "docusaurus"
 # Workers static assets on the Free plan: files per deployed version, and bytes per file.
 FILE_LIMIT = 20_000
 FILE_SIZE_LIMIT = 25 * 1024 * 1024
+# Build output directories that hold assets, not pages, so they get no unversioned alias.
+STATIC_DIRS = frozenset({"assets", "img"})
 
 
 def docusaurus(*args: str, build: str) -> None:
@@ -70,21 +72,31 @@ def build_one(entry: dict) -> Path:
     return out
 
 
-def redirects(newest: str, dropped: list[str] | None = None) -> str:
+def redirects(
+    newest: str, dropped: list[str] | None = None, sections: list[str] | None = None
+) -> str:
     """The Workers _redirects file: the site root and /v/ go to the newest release.
 
-    A dropped stack's pages go permanently to the same path under the newest release,
-    where the version menu's own switch would have sent the reader.
+    Each top-level section also answers unversioned (/quickstart/docker/), so other
+    sites can link to the current release without naming it. A dropped stack's pages go
+    permanently to the same path under the newest release, where the version menu's own
+    switch would have sent the reader.
 
     Args:
         newest: The newest listed build.
         dropped: Stacks publish.yaml drops.
+        sections: The newest build's top-level page directories.
 
     Returns:
         The file's text.
     """
     target = f"/v/{newest}/"
     lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/")]
+    for section in sections or []:
+        lines += [
+            f"/{section} {target}{section}/ 302",
+            f"/{section}/* {target}{section}/:splat 302",
+        ]
     for stack in dropped or []:
         old = f"/v/{stack}"
         lines += [f"{old} {target} 301", f"{old}/ {target} 301", f"{old}/* {target}:splat 301"]
@@ -148,7 +160,16 @@ def main(argv: list[str] | None = None) -> int:
         newest_404 = BUILD / "v" / site["newest"] / "404.html"
         if newest_404.is_file():
             shutil.copyfile(newest_404, BUILD / "404.html")
-        text = redirects(site["newest"], site.get("dropped", []))
+        newest_quickstart = BUILD / "v" / site["newest"] / "quickstart.json"
+        if newest_quickstart.is_file():
+            shutil.copyfile(newest_quickstart, BUILD / "quickstart.json")
+        newest_tree = BUILD / "v" / site["newest"]
+        sections = sorted(
+            path.name
+            for path in newest_tree.iterdir()
+            if path.is_dir() and path.name not in STATIC_DIRS
+        )
+        text = redirects(site["newest"], site.get("dropped", []), sections)
         (BUILD / "_redirects").write_text(text, encoding="utf-8", newline="\n")
 
     pages, files, largest = count(BUILD)
