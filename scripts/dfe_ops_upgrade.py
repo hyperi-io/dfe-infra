@@ -823,8 +823,12 @@ def check_argo_apps(
     *,
     stale_revision: str = "",
     reconciled_after: datetime | None = None,
+    start_stalled_syncs: bool = False,
 ) -> tuple[bool, str]:
     """Every Argo Application in `namespace` is Synced and Healthy.
+
+    With `start_stalled_syncs` and `reconciled_after`, an Application auto-sync
+    compared since then and left OutOfSync gets one sync started first.
 
     Reads kubectl directly (`applications.argoproj.io`), the same path
     dfe-ops refresh/cycle already use -- no second CLI (argocd) dependency.
@@ -842,6 +846,9 @@ def check_argo_apps(
     if rc != 0:
         return False, f"cannot list Argo Applications in {namespace}: {err}"
     items = doc.get("items") or []
+    if start_stalled_syncs and reconciled_after is not None:
+        for name in request_stalled_syncs(kubeconfig, namespace, items, reconciled_after):
+            print(f"  argo: {name} compared OutOfSync and auto-sync skipped it; started a sync")
     if not items:
         return False, f"no Argo Applications found in {namespace}"
     bad = []
@@ -2432,6 +2439,48 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
     return True, f"{len(items)} rollout(s) finished"
 
 
+def _stalled_autosync(app: dict, after: datetime) -> bool:
+    """Whether Argo compared this auto-synced Application since `after`, found it OutOfSync, and did not sync it.
+
+    Auto-sync skips a revision it already synced, so a spec change with no
+    revision change (namespace metadata beside a pinned chart) never applies.
+    """
+    spec = app.get("spec") or {}
+    status = app.get("status") or {}
+    if not (spec.get("syncPolicy") or {}).get("automated") or app.get("operation"):
+        return False
+    if ((status.get("sync") or {}).get("status")) != "OutOfSync":
+        return False
+    reconciled = _argo_time(status.get("reconciledAt"))
+    if reconciled is None or reconciled < after:
+        return False
+    op = status.get("operationState") or {}
+    if op.get("phase") == "Running":
+        return False
+    started = _argo_time(op.get("startedAt"))
+    return started is None or started < after
+
+
+def request_stalled_syncs(
+    kubeconfig: str | None, namespace: str, items: list[dict], after: datetime
+) -> list[str]:
+    """Start one sync on each listed Application auto-sync left OutOfSync after `after`, and name them."""
+    started = []
+    for app in items:
+        if not _stalled_autosync(app, after):
+            continue
+        name = (app.get("metadata") or {}).get("name", "")
+        options = ((app.get("spec") or {}).get("syncPolicy") or {}).get("syncOptions") or []
+        patch = {"operation": {"initiatedBy": {"username": "dfe-ops"}, "sync": {"syncOptions": options}}}
+        result = _kubectl(
+            kubeconfig, "-n", namespace, "patch", "applications.argoproj.io", name,
+            "--type", "merge", "-p", json.dumps(patch),
+        )
+        if result.returncode == 0:
+            started.append(name)
+    return started
+
+
 def wait_for_argo(
     kubeconfig: str | None,
     *,
@@ -2447,15 +2496,17 @@ def wait_for_argo(
     Healthy (none on `stale_revision`, and each the change can move
     reconciled at or after `reconciled_after`), or `timeout` seconds pass.
 
+    With `reconciled_after`, an Application auto-sync compared since then and
+    left OutOfSync gets one sync started.
+
     With `rollout_namespace`, every rollout there must also have finished,
     inside the same `timeout`; the timeout detail names each Application not
     yet reconciled and each rollout that had not finished.
     """
-
     def settled() -> tuple[bool, str]:
         ok, detail = check_argo_apps(
             kubeconfig, argocd_namespace, stale_revision=stale_revision,
-            reconciled_after=reconciled_after,
+            reconciled_after=reconciled_after, start_stalled_syncs=True,
         )
         if not ok or not rollout_namespace:
             return ok, detail

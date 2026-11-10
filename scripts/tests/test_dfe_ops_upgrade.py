@@ -3545,6 +3545,66 @@ def test_wait_for_argo_times_out_naming_each_app_still_on_the_state_from_before_
     )
 
 
+def _autosync_app(
+    reconciled_at: str | None = "2026-10-11T03:00:07Z",
+    sync: str = "OutOfSync",
+    op_started: str | None = "2026-10-01T00:00:00Z",
+    op_phase: str = "Succeeded",
+    automated: bool = True,
+    pending: bool = False,
+) -> dict:
+    """keda after a namespace-metadata change: pinned chart, auto-sync on, compared OutOfSync."""
+    app = _reconciled_app("keda", reconciled_at, sync=sync)
+    app["spec"] = {"syncPolicy": {"automated": {"selfHeal": True}, "syncOptions": ["ServerSideApply=true"]}}
+    if not automated:
+        app["spec"]["syncPolicy"].pop("automated")
+    if op_started is not None:
+        app["status"]["operationState"] = {"phase": op_phase, "startedAt": op_started}
+    if pending:
+        app["operation"] = {"sync": {}}
+    return app
+
+
+@pytest.mark.parametrize(
+    ("app", "stalled"),
+    [
+        (_autosync_app(), True),
+        (_autosync_app(op_started=None), True),
+        (_autosync_app(sync="Synced"), False),
+        (_autosync_app(reconciled_at="2026-10-11T02:59:00Z"), False),
+        (_autosync_app(reconciled_at=None), False),
+        (_autosync_app(op_started="2026-10-11T03:00:05Z"), False),
+        (_autosync_app(op_phase="Running"), False),
+        (_autosync_app(automated=False), False),
+        (_autosync_app(pending=True), False),
+    ],
+    ids=[
+        "compared-since-and-skipped", "never-synced", "in-sync", "not-compared-since", "never-compared",
+        "synced-since", "sync-running", "manual-sync-app", "sync-already-requested",
+    ],
+)
+def test_only_an_app_auto_sync_compared_and_skipped_is_stalled(app: dict, stalled: bool) -> None:
+    assert u._stalled_autosync(app, CHANGE) is stalled
+
+
+def test_wait_for_argo_starts_one_sync_on_an_app_auto_sync_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    patched = _autosync_app()
+    patched["operation"] = {"sync": {}}
+    synced = _autosync_app(sync="Synced", op_started="2026-10-11T03:00:20Z")
+    calls = _mock_run(monkeypatch, _apps(_autosync_app()), _proc(0), _apps(patched), _apps(synced))
+    clock, _sleeps, fake_sleep = _clock()
+
+    ok, _detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=120, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is True
+    patches = [c for c in calls if "patch" in c]
+    assert len(patches) == 1
+    body = json.loads(patches[0][patches[0].index("-p") + 1])
+    assert body["operation"]["sync"]["syncOptions"] == ["ServerSideApply=true"]
+
+
 def _chart_app(name: str, reconciled_at: str, version: str, compared: str | None = None) -> dict:
     """A Helm-repo Application, as layer1-addons renders keda, with the chart version Argo last compared."""
     app = _reconciled_app(name, reconciled_at)
