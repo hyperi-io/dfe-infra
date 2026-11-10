@@ -212,6 +212,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import argocd_release  # noqa: E402
 import helm_releases  # noqa: E402
+import schema_lock_remedy  # noqa: E402
 import values_migration  # noqa: E402
 import yaml_subset  # noqa: E402
 from deploy_repo_session import BundledRepo, SessionError  # noqa: E402
@@ -823,8 +824,12 @@ def check_argo_apps(
     *,
     stale_revision: str = "",
     reconciled_after: datetime | None = None,
+    start_stalled_syncs: bool = False,
 ) -> tuple[bool, str]:
     """Every Argo Application in `namespace` is Synced and Healthy.
+
+    With `start_stalled_syncs` and `reconciled_after`, an Application auto-sync
+    compared since then and left OutOfSync gets one sync started first.
 
     Reads kubectl directly (`applications.argoproj.io`), the same path
     dfe-ops refresh/cycle already use -- no second CLI (argocd) dependency.
@@ -842,6 +847,9 @@ def check_argo_apps(
     if rc != 0:
         return False, f"cannot list Argo Applications in {namespace}: {err}"
     items = doc.get("items") or []
+    if start_stalled_syncs and reconciled_after is not None:
+        for name in request_stalled_syncs(kubeconfig, namespace, items, reconciled_after):
+            print(f"  argo: {name} compared OutOfSync and auto-sync skipped it; started a sync")
     if not items:
         return False, f"no Argo Applications found in {namespace}"
     bad = []
@@ -993,6 +1001,112 @@ def check_clickhouse_merges(
             f"{threshold_seconds:.0f}s: {', '.join(merging)}"
         )
     return True, f"no merge running longer than {threshold_seconds:.0f}s on {len(pods)} ClickHouse pod(s)"
+
+
+def _sql_text(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+_PART_NAME = re.compile(r"^(?P<partition>.+?)_(?P<min>\d+)_(?P<max>\d+)_\d+(?:_\d+)?$")
+
+
+def quorum_parts(last_part: str) -> list[tuple[str, int, int]]:
+    """(partition id, min block, max block) of each part a Keeper `<table>/quorum/last_part` value names.
+
+    The value is a header, then one `<partition>\\t<part name>` line per partition.
+    """
+    found = []
+    for line in last_part.splitlines():
+        match = _PART_NAME.match(line.rsplit("\t", 1)[-1]) if "\t" in line else None
+        if match:
+            found.append((match["partition"], int(match["min"]), int(match["max"])))
+    return found
+
+
+def check_schema_lock_wedge(
+    kubeconfig: str | None,
+    namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
+    selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
+    credentials: str = DEFAULT_CLICKHOUSE_CREDENTIALS,
+) -> tuple[bool, str]:
+    """No schema_lock table's quorum names a part that every replica has lost.
+
+    The engine reads the lock with select_sequential_consistency, so once the
+    quorum's last part is gone everywhere (a TTL emptied it) every read fails
+    with code 289 and no engine can start. A replica only lagging also answers
+    289, so the part must be missing on every replica before this fails.
+    """
+    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "pods", "-l", selector)
+    if rc != 0:
+        return False, f"cannot find a ClickHouse pod: {err}"
+    pods = [str((item.get("metadata") or {}).get("name", "")) for item in doc.get("items") or []]
+    if not pods:
+        return False, f"no pod matching {selector!r} in {namespace}"
+    try:
+        login = _clickhouse_login(kubeconfig, namespace, credentials, pods[0])
+    except UpgradeError as exc:
+        return False, str(exc)
+
+    def ask(pod: str, query: str) -> tuple[bool, str]:
+        result = _clickhouse_client(kubeconfig, namespace, pod, query, login)
+        if result.returncode != 0:
+            return False, f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}"
+        return True, result.stdout or ""
+
+    ok, out = ask(
+        pods[0],
+        "SELECT database, zookeeper_path, total_replicas FROM system.replicas "
+        "WHERE table = 'schema_lock' FORMAT TSV",
+    )
+    if not ok:
+        return False, out
+    tables = [line.split("\t") for line in out.splitlines() if line.count("\t") == 2]
+    if not tables:
+        return True, "no replicated schema_lock table"
+    wedged: list[str] = []
+    unproven: list[str] = []
+    for database, zk_path, total in tables:
+        ok, out = ask(
+            pods[0],
+            f"SELECT value FROM system.zookeeper WHERE path = {_sql_text(zk_path + '/quorum')} "
+            "AND name = 'last_part' FORMAT TSVRaw",
+        )
+        if not ok:
+            return False, out
+        parts = quorum_parts(out)
+        if not parts:
+            continue
+        # A merge replaces the quorum's part with one covering its blocks, so cover counts as held.
+        covering = " OR ".join(
+            f"(partition_id = {_sql_text(pid)} AND min_block_number <= {lo} AND max_block_number >= {hi})"
+            for pid, lo, hi in parts
+        )
+        present = 0
+        for pod in pods:
+            ok, out = ask(
+                pod,
+                f"SELECT count() FROM system.parts WHERE database = {_sql_text(database)} "
+                f"AND table = 'schema_lock' AND active AND ({covering})",
+            )
+            if not ok:
+                return False, out
+            present += int(out.strip() or "0") > 0
+        if present:
+            continue
+        if total.isdigit() and len(pods) < int(total):
+            unproven.append(f"{database} ({len(pods)} of {total} replicas read)")
+            continue
+        wedged.append(database)
+    if wedged:
+        drops = "; ".join(schema_lock_remedy.schema_lock_drop(db) for db in wedged)
+        return False, (
+            f"schema_lock's quorum names a part no replica holds ({', '.join(wedged)}), so no engine can "
+            f"take the schema lease. With no engine holding it, run once on one replica: {drops} "
+            "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)"
+        )
+    if unproven:
+        return True, f"quorum part missing on every replica read, not all were: {', '.join(unproven)}"
+    return True, f"every schema_lock quorum part is held by a replica ({len(tables)} table(s), {len(pods)} pod(s))"
 
 
 def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
@@ -1782,6 +1896,10 @@ def run_preflight(
             kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold, clickhouse_credentials
         ),
     ))
+    checks.append((
+        "schema lock not wedged",
+        *check_schema_lock_wedge(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_credentials),
+    ))
     conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
     if conversion is not None:
         checks.append(("strimzi stored-version conversion", *check_strimzi_conversion_before(kubeconfig, conversion)))
@@ -2432,6 +2550,48 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
     return True, f"{len(items)} rollout(s) finished"
 
 
+def _stalled_autosync(app: dict, after: datetime) -> bool:
+    """Whether Argo compared this auto-synced Application since `after`, found it OutOfSync, and did not sync it.
+
+    Auto-sync skips a revision it already synced, so a spec change with no
+    revision change (namespace metadata beside a pinned chart) never applies.
+    """
+    spec = app.get("spec") or {}
+    status = app.get("status") or {}
+    if not (spec.get("syncPolicy") or {}).get("automated") or app.get("operation"):
+        return False
+    if ((status.get("sync") or {}).get("status")) != "OutOfSync":
+        return False
+    reconciled = _argo_time(status.get("reconciledAt"))
+    if reconciled is None or reconciled < after:
+        return False
+    op = status.get("operationState") or {}
+    if op.get("phase") == "Running":
+        return False
+    started = _argo_time(op.get("startedAt"))
+    return started is None or started < after
+
+
+def request_stalled_syncs(
+    kubeconfig: str | None, namespace: str, items: list[dict], after: datetime
+) -> list[str]:
+    """Start one sync on each listed Application auto-sync left OutOfSync after `after`, and name them."""
+    started = []
+    for app in items:
+        if not _stalled_autosync(app, after):
+            continue
+        name = (app.get("metadata") or {}).get("name", "")
+        options = ((app.get("spec") or {}).get("syncPolicy") or {}).get("syncOptions") or []
+        patch = {"operation": {"initiatedBy": {"username": "dfe-ops"}, "sync": {"syncOptions": options}}}
+        result = _kubectl(
+            kubeconfig, "-n", namespace, "patch", "applications.argoproj.io", name,
+            "--type", "merge", "-p", json.dumps(patch),
+        )
+        if result.returncode == 0:
+            started.append(name)
+    return started
+
+
 def wait_for_argo(
     kubeconfig: str | None,
     *,
@@ -2447,15 +2607,17 @@ def wait_for_argo(
     Healthy (none on `stale_revision`, and each the change can move
     reconciled at or after `reconciled_after`), or `timeout` seconds pass.
 
+    With `reconciled_after`, an Application auto-sync compared since then and
+    left OutOfSync gets one sync started.
+
     With `rollout_namespace`, every rollout there must also have finished,
     inside the same `timeout`; the timeout detail names each Application not
     yet reconciled and each rollout that had not finished.
     """
-
     def settled() -> tuple[bool, str]:
         ok, detail = check_argo_apps(
             kubeconfig, argocd_namespace, stale_revision=stale_revision,
-            reconciled_after=reconciled_after,
+            reconciled_after=reconciled_after, start_stalled_syncs=True,
         )
         if not ok or not rollout_namespace:
             return ok, detail

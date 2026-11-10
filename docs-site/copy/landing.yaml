@@ -1,0 +1,156 @@
+# The landing page's words. src/pages/index.js and src/components/landing/ lay them out.
+# {name} is filled per build: stack, version, newest, release_notes, api_path. A card whose
+# link fills to nothing is left out. In prose, `code` and [text](link) are rendered.
+# Every claim is checkable on the page its card links to.
+
+description: "How to run the Data Fusion Engine: quickstarts, deployment guides and the reference for every part of the suite."
+
+hero:
+  eyebrow: "Data Fusion Engine {version}"
+  title: Data Fusion
+  accent: Engine
+  tagline: Land it. Use it. Scale it.
+  lead: "What you used Splunk, Elastic and a lakehouse for, without the limitations. Gigabytes to petabytes. Your environment, your control."
+  actions:
+    - {label: Get started, to: /quickstart/, primary: true}
+    - {label: "What's different", to: /coming-from/}
+    - {label: Install, to: /dfe-infra/deployment/}
+  badges:
+    - {label: Useful from day one, to: "/coming-from/#nothing-breaks-when-a-source-changes"}
+    - {label: Gigabytes to petabytes, to: "/coming-from/#it-runs-on-your-infrastructure"}
+    - {label: "Your environment, your control", to: "/coming-from/#it-runs-on-your-infrastructure"}
+    - {label: GitOps from the start, to: "/coming-from/#gitops-by-design-from-the-ground-up"}
+    - {label: Open source, href: "https://github.com/hyperi-io"}
+
+# The three figures hyperi-website publishes, worded as it words them.
+figures:
+  - value: Petabyte scale
+    text: Designed and tested at petabyte scale, then brought down to a single box.
+    to: /coming-from/#it-runs-on-your-infrastructure
+  - value: A microsecond
+    text: To parse a syslog line, in a receiver built for the transports you already use.
+    to: /coming-from/#parsed-once-at-the-edge
+  - value: Up to 5x less CPU
+    text: Than Elasticsearch ingest, for the same ECS fields, same data, same enriched output.
+    to: /dfe-transform-elastic/
+
+# hyperi-website's eight principles, worded as it words them.
+differences:
+  eyebrow: Why DFE
+  title: Eight principles, one platform
+  lead: They run through everything we build.
+  link: {label: Coming from Splunk or Elastic, to: /coming-from/}
+  cards:
+    - eyebrow: Day one
+      title: Useful from day one
+      text: Schemas, pipelines and dashboards come ready. Your data works when it arrives, and you tune from there.
+      to: /coming-from/#nothing-breaks-when-a-source-changes
+    - eyebrow: Context
+      title: Fused with context
+      text: "Every event is joined to what surrounds it: the user, the device, the place, what changed. You get the whole story, not another bucket of logs to dig through."
+      to: /coming-from/#sources-join
+    - eyebrow: Edge
+      title: Do the work at the edge
+      text: Filter, shape and enrich data where it is born, so you move and store only what is worth it.
+      to: /coming-from/#parsed-once-at-the-edge
+    - eyebrow: Efficiency
+      title: Efficiency, efficiency, efficiency
+      text: More data on less hardware, kept for longer. The answer from six months ago is still there, and you can afford to find it.
+      to: /coming-from/#stored-as-clickhouse-columns
+    - eyebrow: Scale
+      title: Built for petabytes, made small
+      text: Designed and tested at petabyte scale, then brought down to a single box. Growing is what it was made for.
+      to: /coming-from/#it-runs-on-your-infrastructure
+    - eyebrow: Integration
+      title: Plays nicely, or replaces
+      text: Filebeat, Logstash, Vector, Fluent Bit and OpenTelemetry send straight in. Run it beside your current tools, or move across completely.
+      to: /coming-from/#open-at-every-joint
+    - eyebrow: Sovereignty
+      title: Sovereign or secure enclave by design
+      text: Runs in your data centre, your own cloud account, or a network with no outside connection. No HyperI cloud sits in the path.
+      to: /coming-from/#it-runs-on-your-infrastructure
+    - eyebrow: GitOps
+      title: GitOps from the start
+      text: Every change is a commit to your own deploy repo, with history, and peer review through pull requests in production.
+      to: /coming-from/#gitops-by-design-from-the-ground-up
+
+whats_new:
+  eyebrow: Updates
+  title: "What's new"
+  link: {label: All releases, href: "https://github.com/hyperi-io/dfe-infra/releases"}
+  cards:
+    - eyebrow: Latest release
+      title: "DFE {newest}"
+      text: What changed in this release, from the dfe-infra release notes.
+      action: Release notes
+      href: "{release_notes}"
+    - eyebrow: Deploy
+      title: DFE on AWS
+      text: Your own AWS account, on Graviton, from one short wizard.
+      action: Read the guide
+      to: /dfe-infra/deployment/aws/
+    - eyebrow: Reference
+      title: HTTP API reference
+      text: Every dfe-engine endpoint, generated from the OpenAPI spec this release ships.
+      action: Browse the API
+      to: "{api_path}"
+
+deploy:
+  eyebrow: Deploy
+  title: Where it runs
+  lead: One box to a cluster, with the same images and config all the way.
+  action: Quickstart
+  cards:
+    - icon: host
+      eyebrow: Docker
+      title: Docker Compose
+      text: One host. A laptop, a demo box or a proof of concept in minutes.
+      to: /quickstart/docker/
+    - icon: cluster
+      eyebrow: Kubernetes
+      title: Kubernetes on-premises
+      text: Your own cluster, in your data centre or a network with no outside connection.
+      to: /quickstart/kubernetes/
+    - icon: cloud
+      eyebrow: AWS
+      title: Amazon EKS
+      text: Your own AWS account, built for you on Graviton.
+      to: /quickstart/aws/
+
+closing:
+  title: Start with the demo
+  lead: One host with Docker. Live firewall syslog comes in, and each vendor's lines land parsed in their own ClickHouse table.
+  actions:
+    - {label: Run the demo, to: /quickstart/demo/, primary: true}
+    - {label: Source on GitHub, href: "https://github.com/hyperi-io"}
+
+# Each command must match the source named beside it, and the matching page under
+# content-root/quickstart/.
+quickstart:
+  eyebrow: Quickstart
+  title: Run DFE locally
+  tabs:
+    - value: demo
+      label: Demo
+      blocks:
+        - text: "See DFE working on your laptop, with sample firewall logs already flowing in. Needs Docker, git, make and Python 3."
+        - code_from: quickstart/demo.md
+        - text: "Then point your browser to http://localhost:3000, log in with the details it printed, and search the firewall logs as they land."
+      guide: {label: The demo, to: /quickstart/demo/}
+    - value: docker
+      label: Docker
+      blocks:
+        - text: "The whole DFE stack on one machine, ready for your own data. Needs Docker, git, make and Python 3."
+        - code_from: quickstart/docker.md
+        - text: "Then point your browser to http://localhost:3000 and log in with the details it printed."
+      guide: {label: Docker quickstart, to: /quickstart/docker/}
+    - value: kubernetes
+      label: Kubernetes
+      blocks:
+        - text: "Run DFE on your own Kubernetes cluster, on-premises or managed, with every change going through Git."
+      guide: {label: Kubernetes quickstart, to: /quickstart/kubernetes/}
+    - value: aws
+      label: AWS
+      blocks:
+        - text: "Build a DFE stack in your own AWS account, sized to your data."
+      guide: {label: AWS quickstart, to: /quickstart/aws/}

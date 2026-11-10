@@ -141,10 +141,11 @@ variable "endpoint" {
 }
 
 variable "dns" {
-  description = "private_zone resolves inside the VPC and carries everything internal. public_zone is the delegated zone the exposed UIs answer on; empty means no public names. The private half goes to the cluster module and the public half to the edge module, which is what owns every resource that exists because something crosses the VPC boundary."
+  description = "private_zone resolves inside the VPC and carries everything internal. public_zone is the delegated zone the exposed UIs answer on; empty means no public names. parent_zone_id, when set, is the Route 53 zone in this account public_zone sits under, and the apply writes its NS delegation there. The private half goes to the cluster module and the public half to the edge module, which is what owns every resource that exists because something crosses the VPC boundary."
   type = object({
-    private_zone = string
-    public_zone  = string
+    private_zone   = string
+    public_zone    = string
+    parent_zone_id = optional(string, "")
   })
 }
 

@@ -149,14 +149,17 @@ class FakeRunner:
         self.envs: list[dict | None] = []
         self.sessions: list[bool] = []
         self.deadlines: list[float | None] = []
+        self.extends: list[tuple[Path, float] | None] = []
         self.codes = codes or {}
         self.on_run = on_run or {}
         self.stalls = stalls or set()
         self.current = None
 
     def run(self, cmd: list[str], *, env: dict | None = None, new_session: bool = False,
-            deadline: float | None = None, stop_timeout: float = 0) -> int:
+            deadline: float | None = None, stop_timeout: float = 0,
+            extend: tuple[Path, float] | None = None) -> int:
         self.commands.append(cmd)
+        self.extends.append(None if extend is None else (extend[0], extend[1] - guard_mod.time.monotonic()))
         self.envs.append(env)
         self.sessions.append(new_session)
         self.deadlines.append(None if deadline is None else deadline - guard_mod.time.monotonic())
@@ -1555,6 +1558,32 @@ def test_an_apply_that_ends_past_the_run_length_skips_the_cycle(
     assert runner.words() == ["init", "apply", "teardown", "destroy"]
 
 
+def test_the_cycles_own_destroy_runs_to_the_runs_expiry_once_it_marks_its_start(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = FakeRunner()
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == 0
+    cycle = runner.words().index("cycle")
+    mark, later = runner.extends[cycle]
+    assert runner.envs[cycle][guard_mod.DESTROY_MARK_ENV] == str(mark)
+    assert mark.name == guard_mod.DESTROY_MARK_NAME
+    assert (2 * 3600 + 30 * 60) - 60 < later <= 2 * 3600 + 30 * 60
+
+
+def test_expected_fail_a_destroy_past_the_teardown_margin_ends_the_run_red(
+    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    runner = FakeRunner(stalls={"cycle"})
+
+    def destroy_started() -> None:
+        Path(runner.envs[-1][guard_mod.DESTROY_MARK_ENV]).touch()
+
+    runner.on_run = {"cycle": destroy_started}
+    assert _cycle(root, monkeypatch, FakeGuard(), runner) == guard_mod.DEADLINE_EXIT
+    assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
+    assert "own destroy ran past its 1800s teardown margin" in capsys.readouterr().err
+
+
 def test_a_failed_destroy_after_the_deadline_still_reports_the_destroy(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2373,6 +2402,35 @@ def test_the_guard_itself_outlives_a_sigterm_while_the_teardown_runs() -> None:
         pass
     assert Signalled.survived
     assert signal.getsignal(signal.SIGTERM) is not guard_mod._hold_through_teardown
+
+
+MARK_THEN_SLEEP = "import pathlib, sys, time; time.sleep(0.3); pathlib.Path(sys.argv[1]).touch(); time.sleep(float(sys.argv[2]))"
+
+
+@pytest.mark.parametrize(("marks", "sleeps", "later", "stopped"), [
+    pytest.param(True, 2.0, 15, False, id="passed-run-slow-destroy-inside-the-margin-ends-green"),
+    pytest.param(True, 30.0, 3, True, id="destroy-past-the-margin-is-stopped-red"),
+    pytest.param(False, 30.0, 15, True, id="no-mark-keeps-the-run-length"),
+])
+def test_the_destroy_mark_moves_the_deadline_to_the_margin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marks: bool, sleeps: float, later: float, stopped: bool
+) -> None:
+    monkeypatch.setattr(guard_mod, "EXTEND_POLL", 0.1)
+    mark = tmp_path / guard_mod.DESTROY_MARK_NAME
+    target = str(mark if marks else tmp_path / "elsewhere")
+    runner = guard_mod.Runner()
+    started = time.monotonic()
+    cmd = [sys.executable, "-c", MARK_THEN_SLEEP, target, str(sleeps)]
+    if stopped:
+        with pytest.raises(guard_mod.DeadlineError):
+            runner.run(cmd, new_session=True, deadline=started + 1, stop_timeout=5,
+                       extend=(mark, started + later))
+        assert time.monotonic() - started < later + 5
+    else:
+        assert runner.run(cmd, new_session=True, deadline=started + 1, stop_timeout=5,
+                          extend=(mark, started + later)) == 0
+        assert time.monotonic() - started > 1
+    assert (runner.current, runner.group) == (None, None)
 
 
 def test_a_child_that_ends_before_its_deadline_returns_its_own_code() -> None:

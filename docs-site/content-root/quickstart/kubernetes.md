@@ -5,9 +5,9 @@ sidebar_label: Kubernetes on-premises
 
 # Quickstart: Kubernetes on-premises
 
-DFE on a Kubernetes cluster you run. RKE2 is the reference distribution, and the charts need no particular one.
+DFE on a Kubernetes cluster you run. We test on RKE2, but the charts don't need any particular distribution.
 
-You need Kubernetes 1.35 or later, `kubectl` pointed at the cluster, and `helm`, `openssl` and Python 3. `<version>` is the DFE release you are installing, the one in the version menu at the top of this page.
+You need Kubernetes 1.35 or later, `kubectl` pointed at the cluster, and `helm`, `openssl` and Python 3. `<version>` is the DFE release you're installing, the one in the version menu at the top of this page.
 
 ```bash
 git clone --branch <version> https://github.com/hyperi-io/dfe-infra && cd dfe-infra
@@ -21,13 +21,15 @@ Before the preflight, set two things in `bootstrap/local.env`. `DFE_DOMAIN` is t
 
 The preflight is read-only. It checks the cluster is fit for the tier before anything changes. `stack-deploy` installs cert-manager, External Secrets and Argo CD, or adopts healthy ones already there. Argo CD then syncs the backing services and the DFE apps at the versions `<version>` pins. It finishes by sending an event through to ClickHouse and checking the stack's own telemetry landed, then writes your logins to a file only you can read.
 
+> **Coming from Splunk or Elastic?** After this, every change you make, from the console or the API, is a git commit in your deploy repo, and Argo CD applies it. You can review it before it lands and revert it after. More in [what's different](../coming-from.md#gitops-by-design-from-the-ground-up).
+
 `--mode` picks the tier:
 
 | Tier | Transport | Shape |
 |---|---|---|
-| `slim` | gRPC | One replica of each stage, no broker. |
-| `single` | Kafka | One replica of each, with a single Kafka broker in the cluster. |
-| `scale` | Kafka | Replicas, a ClickHouse cluster and Strimzi Kafka. Reads its broker credential from a secrets store, OpenBao or AWS Secrets Manager. |
+| `slim` | gRPC, low latency | One replica of each stage, no broker. |
+| `single` | Kafka message bus | One replica of each, with a single Kafka broker in the cluster. |
+| `scale` | Kafka message bus | Replicas, a ClickHouse cluster and Strimzi Kafka. Reads its broker credential from a secrets store, OpenBao or AWS Secrets Manager. |
 
 Next:
 

@@ -141,6 +141,17 @@ def test_expected_fail_bootstrap_refuses_a_fact_no_chart_could_dial(env: dict[st
     assert message in done.stderr
 
 
+@pytest.mark.parametrize(("mode", "rc"), [("external", 1), ("in_cluster", 0), ("", 0)])
+def test_only_an_external_server_needs_a_host(mode: str, rc: int) -> None:
+    """The wizard's dial leaves endpoints.clickhouse_host blank for an in-cluster server."""
+    external = {"DFE_CLICKHOUSE_PORT": "8443", "DFE_CLICKHOUSE_NATIVE_PORT": "9440",
+                "DFE_CLICKHOUSE_SECURE": "true", "DFE_CLICKHOUSE_USER": "default"}
+    done = _run_block(DFE_CLICKHOUSE_MODE=mode, **(external if mode == "external" else {}))
+    assert done.returncode == rc, done.stderr
+    if rc:
+        assert "DFE_CLICKHOUSE_HOST" in done.stderr
+
+
 def test_the_cluster_secret_carries_every_fact() -> None:
     template = CLUSTER_SECRET.read_text(encoding="utf-8")
     env = {"PATH": "/usr/bin:/bin", **{name: EXTERNAL[annotation] for name, annotation in FACTS.items()}}

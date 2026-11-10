@@ -1,7 +1,6 @@
 # Autoscaling: the two layers and the per-target fork
 
-Two independent layers scale a DFE deployment. Conflating them is the classic
-mistake, so the split comes first:
+Two independent layers scale a DFE deployment. Keep them apart:
 
 ```mermaid
 flowchart LR
@@ -17,54 +16,34 @@ flowchart LR
     KEDA -->|"pods go Pending"| nodes
 ```
 
-- Pod scaling is KEDA, on every target. The charts ship the ScaledObjects
-  (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim); nothing about
-  KEDA changes between on-prem and cloud.
-- Two triggers render and the HPA takes the higher. The app charts ship both
-  `keda.cpu` (native scaler, nothing of ours in the path) and a `metrics-api` entry in
-  `keda.extraTriggers` (`argocd/values/apps/_fragments/pressure-trigger.yaml`) -- the
-  scalo ScalingPressure composite through the fail-safe dfe-keda-shim. A tier or an
-  instance drops it by setting `keda.extraTriggers: []`. The shim matches the bare `scaling_pressure` gauge and
-  any `<prefix>_scaling_pressure` for that ServiceName (dfe-engine#379), so the four
-  wire names the Rust apps use today all resolve without an app release. The shim
-  address is derived from the release namespace, so a
-  deployment in any namespace resolves it without a values override;
-  `keda.pressure.shimAddress` is for a shim outside the release namespace only.
-  dfe-transform-vector carries no pressure trigger: it sets no `scaling_pressure` gauge, so cpu is its only live trigger.
-  `bootstrap/keda-scale-test.sh` proves the path on each deploy. It injects pressure for a throwaway Deployment, then for every app whose ScaledObject carries the shim trigger at once, and each goes from its floor to one above and back. Its scale-out bound is the HPA sync period twice over plus a pod-start allowance, because above a floor of zero the HPA reads the metric itself and KEDA's pollingInterval does not govern scaling. At scale-out it logs each HPA reading and fails when the pressure reading is under target, so a cpu-driven scale cannot pass for a pressure one. It also fails an app that wrote no `scaling_pressure` rows of its own, because the shim reads no rows as 0 and that app scales on cpu alone. UNPROVEN (exit 3: the HPA read the pressure over target and left the replicas alone, or an app was off its floor before the run) fails the smoke run like a FAIL does.
-- Node scaling forks by target. KEDA makes pods Pending, and what turns Pending
-  pods into new nodes depends entirely on where the cluster runs. That fork is a
-  DECLARED decision, recorded here -- never an assumption baked into a chart.
+- Pod scaling is KEDA, on every target. The charts ship the ScaledObjects (receiver, loader, hunt-runner via the fail-safe dfe-keda-shim). Nothing about KEDA changes between on-prem and cloud.
+- Two triggers render and the HPA takes the higher. The app charts ship both `keda.cpu` (native scaler, nothing of ours in the path) and a `metrics-api` entry in `keda.extraTriggers` (`argocd/values/apps/_fragments/pressure-trigger.yaml`), which is the scalo ScalingPressure composite through the fail-safe dfe-keda-shim. A tier or an instance drops it by setting `keda.extraTriggers: []`.
+  - The shim matches the bare `scaling_pressure` gauge and any `<prefix>_scaling_pressure` for that ServiceName (dfe-engine#379), so the four wire names the Rust apps use today all resolve without an app release.
+  - The shim address is derived from the release namespace, so a deployment in any namespace resolves it without a values override. `keda.pressure.shimAddress` is for a shim outside the release namespace only.
+  - dfe-transform-vector carries no pressure trigger. It sets no `scaling_pressure` gauge, so cpu is its only live trigger.
+  - `bootstrap/keda-scale-test.sh` proves the path on each deploy. It injects pressure for a throwaway Deployment, then for every app whose ScaledObject carries the shim trigger at once, and each goes from its floor to one above and back. Its scale-out bound is the HPA sync period twice over plus a pod-start allowance, because above a floor of zero the HPA reads the metric itself and KEDA's pollingInterval doesn't govern scaling. At scale-out it logs each HPA reading and fails when the pressure reading is under target, so a cpu-driven scale can't pass for a pressure one. It also fails an app that wrote no `scaling_pressure` rows of its own, because the shim reads no rows as 0 and that app scales on cpu alone. UNPROVEN (exit 3: the HPA read the pressure over target and left the replicas alone, or an app was off its floor before the run) fails the smoke run like a FAIL does.
+- Node scaling forks by target. KEDA makes pods Pending, and what turns Pending pods into new nodes depends entirely on where the cluster runs. That fork is a DECLARED decision, recorded here, never an assumption baked into a chart.
 
 ## Which trigger each tier gets
 
-CPU at 70% is the baseline everywhere and never comes out: it is native KEDA with
-nothing of ours in the path, so a component outage cannot take scaling with it. The
-question each tier answers is whether the composite renders beside it.
+> **Coming from Splunk or Elastic?** DFE scales pods on a composite pressure signal beside the CPU trigger (queue depth, `scaling_pressure`, hunt backlog). The composite gates to 0 when the downstream sink's circuit is open and forces 100 over the memory threshold, which CPU alone can't see.
+
+CPU at 70% is the baseline everywhere and never comes out. It's native KEDA with nothing of ours in the path, so a component outage can't take scaling with it. Each tier decides whether the composite renders beside it.
 
 | Tier | Pressure | Ceiling | Why |
 | ---- | -------- | ------- | --- |
-| slim | off | 2 | No broker and a 2-replica ceiling. CPU is the whole signal worth having, and the shim is not worth putting in the path for it. |
-| single | on | 3 | Carries a broker, so `kafka_lag` measures the backlog an I/O-bound loader's CPU hides. Ceiling = `defaultTopic.partitions` (3); a 4th consumer joins the group and gets nothing. |
-| mesh | on | 10 | No broker, but every stage holds what the next has not taken, so `buffer_depth` and `memory` carry what `kafka_lag` carries elsewhere. Replicas share load through the Service, so no partition count bounds the ceiling. |
-| scale | on | 12 | Carries a broker. The ceiling is a DIVISOR of `defaultTopic.partitions` (12) so every reachable replica count holds the same number of partitions -- at 10, two consumers hold 2 and eight hold 1, and the busy pair sets the group's lag. |
+| slim | off | 2 | No broker and a 2-replica ceiling. CPU is the whole signal worth having, and the shim isn't worth putting in the path for it. |
+| single | on | 3 | Carries a broker, so `kafka_lag` measures the backlog an I/O-bound loader's CPU hides. Ceiling = `defaultTopic.partitions` (3), because a 4th consumer joins the group and gets nothing. |
+| mesh | on | 10 | No broker, but every stage holds what the next hasn't taken, so `buffer_depth` and `memory` carry what `kafka_lag` carries elsewhere. Replicas share load through the Service, so no partition count bounds the ceiling. |
+| scale | on | 12 | Carries a broker. The ceiling is a DIVISOR of `defaultTopic.partitions` (12) so every reachable replica count holds the same number of partitions. At 10, two consumers hold 2 and eight hold 1, and the busy pair sets the group's lag. |
 
-**Composite pressure, not the native KEDA `kafka` scaler.** The native scaler reads
-consumer-group lag from the broker and needs no shim. It is also blind to the two
-things that decide whether another pod helps: the composite gates to 0 when the
-downstream sink's circuit is open (more loaders cannot relieve a dead ClickHouse)
-and forces 100 over the memory threshold (scale before the OOM). Lag alone would
-scale the loader out against a sink already refusing writes, and the composite
-carries the lag term too. A deployment that wants the native scaler can have it --
-`keda.triggers` takes a verbatim scaler list the chart passes straight through.
+Why the composite pressure and not KEDA's native `kafka` scaler? The native scaler reads consumer-group lag from the broker and needs no shim. It's also blind to the two things that decide whether another pod helps. The composite gates to 0 when the downstream sink's circuit is open (more loaders can't relieve a dead ClickHouse) and forces 100 over the memory threshold (scale before the OOM). Lag alone would scale the loader out against a sink already refusing writes, and the composite carries the lag term too. A deployment that wants the native scaler can have it: `keda.triggers` takes a verbatim scaler list the chart passes straight through.
 
-**The thresholds are inherited, not measured.** 70 on both the CPU trigger and the
-0-100 composite came across from the fleet default and has no load run behind it.
-Sizing them needs a run with more source topics or more partitions on `default_land`
-than a single-source rig has, because replicas 4-12 would otherwise idle -- that
-work is dfe-infra#146 and is not closed by the trigger choice above.
+The thresholds are inherited, not measured. 70 on both the CPU trigger and the 0-100 composite came across from the fleet default and has no load run behind it. Sizing them needs a run with more source topics or more partitions on `default_land` than a single-source rig has, because replicas 4-12 would otherwise idle. That work is dfe-infra#146, and the trigger choice above doesn't close it.
 
 ## The fork decision for DFE deployments
+
+> **Coming from Splunk or Elastic?** Node scaling isn't one mechanism here. KEDA scales the pods on every target, and the node autoscaler is chosen per target, with a static node pool on-prem because Karpenter needs a cloud provisioning API.
 
 | Target | Node autoscaler | Notes |
 | ------ | --------------- | ----- |
@@ -72,12 +51,12 @@ work is dfe-infra#146 and is not closed by the trigger choice above.
 | AWS EKS | **Karpenter**, the node-pools chart's `karpenter-aws` renderer | The one renderer built today. |
 | Azure AKS | **Node Auto Provisioning** (managed Karpenter) | A planned renderer, dfe-infra#806. |
 | GCP GKE | **ComputeClass plus OpenTofu node pools** | A planned renderer, dfe-infra#806. GCP has no supported Karpenter. |
-| Multi-cloud / mixed | **cluster-autoscaler** | The portable fallback; runs everywhere. |
+| Multi-cloud / mixed | **cluster-autoscaler** | The portable fallback. Runs everywhere. |
 
-The table follows one rule, which covers every component whose best implementation differs by target (node autoscaler, gateway controller, secret store, load balancer, storage class): state the choice per target, keep the chart neutral with the choice in values or the target overlay, and name the portable fallback -- here cluster-autoscaler -- so no target is stranded.
+One rule covers every component whose best implementation differs by target (node autoscaler, gateway controller, secret store, load balancer, storage class): state the choice per target, keep the chart neutral with the choice in values or the target overlay, and name the portable fallback (here cluster-autoscaler) so no target is stranded.
 
 ## Where the choice lives
 
 Node scaling is a pools interface. The resolver writes one pool class per workload, in fields every node autoscaler shares, and `helm/charts/node-pools` hands the classes to the renderer `pools.renderer` names. Karpenter on AWS (`karpenter-aws`) is the one renderer today. The AKS and GKE renderers are planned in dfe-infra#806.
 
-`argocd/appsets/layer2-platform.yaml` deploys the pools chart only to a cluster whose secret declares a cloud with a renderer, AWS today, so the on-prem baseline gets no pool object at all. Every other chart places a pod by the pool's `dfe.hyperi.io/workload` label and the cloud-neutral node labels, never by Karpenter's or a cloud's own (`scripts/tests/test_charts_select_only_the_pool_label.py`).
+`argocd/appsets/layer2-platform.yaml` deploys the pools chart only to a cluster whose secret declares a cloud with a renderer (AWS today), so the on-prem baseline gets no pool object at all. Every other chart places a pod by the pool's `dfe.hyperi.io/workload` label and the cloud-neutral node labels, never by Karpenter's or a cloud's own (`scripts/tests/test_charts_select_only_the_pool_label.py`).

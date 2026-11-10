@@ -1936,6 +1936,7 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "dns": {
             "private_zone": _required(dial, ("dns", "private_zone")),
             "public_zone": _text(dial, ("dns", "public_zone")),
+            "parent_zone_id": _text(dial, ("dns", "parent_zone_id")),
         },
         "telemetry": _telemetry(dial, cloud),
         "storage_class": _required(dial, ("k8s", "storage_class")),

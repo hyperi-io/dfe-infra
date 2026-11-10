@@ -8,6 +8,11 @@
 dropped_versions:
   2.2.0: "superseded by 2.2.1"
 
+# A docs fix for a released version, with no DFE release: stack -> member -> the
+# tag or commit its docs/ is read at. A member with no entry reads docs/ at the
+# ref the stack pins, and the engine's API reference always does.
+docs_refs:
+
 # A member whose docs mount inside another member's section rather than at the
 # top of the sidebar: member -> the member it mounts under. The parent mounts at
 # the top level itself, and a member its parent does not reach falls back to the
@@ -63,10 +68,13 @@ internal:
   dfe-infra:
     acceptance-cycle.md: "the attended sign-off pass"
     auth-testing.md: "test identities for the end-to-end suite"
+    cloud-cycle.md: "the cloud validation cycle"
     ci-maintenance-design.md: "the repository's CI bots and gates"
     cutting-a-stack.md: "cutting a stack release"
     deploy-helpers.md: "release helpers for unattended runs"
     deployment/deployment-logs/: "a blank test log template"
+    failure-evidence.md: "the validation cycle's readiness gate and failure evidence"
+    release-rounds.md: "how a release candidate is proven"
     source-suite.md: "the post-deploy source tests"
     stack-components.md: "the render and drift-check class map"
     suite-graph.md: "suite membership and release edges"
