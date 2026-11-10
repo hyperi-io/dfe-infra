@@ -23,7 +23,8 @@ member the stack does not pin, or one an anonymous fetch refuses, is reported an
 left out.
 
 publish.yaml also names the pages each member keeps internal, which are not
-copied, and the members whose docs mount inside another member's section.
+copied, the members whose docs mount inside another member's section, and docs
+pins: a ref a released stack reads one member's docs/ at in place of its pin.
 journeys.yaml places every published page in a journey section, and site.json
 carries those placements to docusaurus.config.js, which builds the sidebar.
 
@@ -33,7 +34,8 @@ Writes, under --out (default docs-site/content/):
     <build>/<member>/_category_.json  its sidebar label and lane position
     <build>/<parent>/<member>/...     a member publish.yaml mounts under another
     <build>/...                       docs-site/content-root/, the suite's own pages
-    _specs/<build>/dfe-engine.json    the engine's committed OpenAPI spec at its pin
+    _specs/<build>/dfe-engine.json    the engine's committed OpenAPI spec at its pin, MDX-safe
+    _specs/<build>/dfe-engine.raw.json  the same spec byte for byte, for download
     _reports/strays-<build>.md        every docs/ file outside the documentation standard
     site.json                         the builds, newest release first, for docusaurus.config.js
 
@@ -68,12 +70,16 @@ PUBLISH_FILE = SITE_ROOT / "publish.yaml"
 JOURNEYS_FILE = SITE_ROOT / "journeys.yaml"
 # journeys.yaml's name for the suite's own pages, and for a member's catch-all rule.
 ROOT_PAGES = "content-root"
+# Where the site's own pages sit in STACK_REPO_MEMBER, so its docs/ can link to them.
+ROOT_PAGES_IN_REPO = f"{SITE_ROOT.relative_to(REPO_ROOT).as_posix()}/{ROOT_PAGES}/"
 DEFAULT_PLACE = "default"
 # The publish.yaml internal path that keeps a member's whole docs/ off the site.
 WHOLE_MEMBER = "all-pages"
 # Files in content-root/ for the people editing it, never copied into a build.
 EDITOR_ONLY = ("VOICE.md",)
 
+# Where the site is served. docusaurus.config.js and agent_layer.py read it from site.json.
+SITE_URL = "https://dfe.docs.hyperi.io"
 GITHUB = "https://github.com"
 RAW_GITHUB = "https://raw.githubusercontent.com"
 RELEASE = "release"
@@ -88,10 +94,11 @@ WORKING_DIRS = frozenset({"plans", "superpowers"})
 # The documentation standard binds the repos we control upstream. A fork follows its upstream.
 UPSTREAM_LED = frozenset({"fork"})
 SPEC_MEMBER = "dfe-engine"
-SPEC_FILE = "openapi-spec/openapi.json"
+# Where the engine commits its spec: openapi/ from v1.22.83, openapi-spec/ before it.
+SPEC_FILES = ("openapi/openapi.json", "openapi-spec/openapi.json")
 API_DIR = "api"
 API_LABEL = "HTTP API reference"
-SPARSE_PATTERNS = ("/docs/", f"/{SPEC_FILE}")
+SPARSE_PATTERNS = ("/docs/", *(f"/{path}" for path in SPEC_FILES))
 # The root pages hold the sidebar positions below this one, and members follow in lane order.
 FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
@@ -119,6 +126,12 @@ _MDX_SPECIAL = re.compile(r"(?<!\\)([{}]|<(?=[A-Za-z/!]))")
 _MDX_REFERENCE = {"{": "&#123;", "}": "&#125;", "<": "&lt;"}
 _FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---[ \t]*\r?\n", re.DOTALL)
 _LEADING_COMMENT = re.compile(r"\A\s*<!--.*?-->[ \t]*(?:\r?\n)*", re.DOTALL)
+_TITLE_FIELD = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+_H1 = re.compile(r"^#[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
+# The page aggregate.py writes where a section's docs/ has no landing of its own.
+SECTION_INDEX = "index.md"
+# The first line of that page, which docs-site/scripts/gate.py skips: its titles are checked on their own pages.
+SECTION_INDEX_MARK = "<!-- aggregate.py: section index -->"
 
 
 class Rule(StrEnum):
@@ -179,12 +192,15 @@ class Build:
         base_url: Where the build is served.
         listed: Whether the version dropdown shows it.
         refs: The ref each member is fetched at. A member absent here has no pin.
+        docs_refs: The ref a member's docs/ is read at instead, from publish.yaml.
+            The engine's OpenAPI spec stays at its `refs` pin.
     """
 
     name: str
     base_url: str
     listed: bool
     refs: Mapping[str, str]
+    docs_refs: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,11 +242,13 @@ class Policy:
         mounts: member -> the member whose section it mounts inside.
         internal: member -> repo paths it keeps off the site. A path ending in /
             covers a directory.
+        docs_refs: stack -> member -> the ref its docs/ is read at for that stack.
     """
 
     dropped: frozenset[str] = frozenset()
     mounts: Mapping[str, str] = field(default_factory=dict)
     internal: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    docs_refs: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def internal_to(self, member: str) -> frozenset[str]:
         """The repo paths one member keeps off the site.
@@ -339,17 +357,22 @@ def anonymous_git_env() -> dict[str, str]:
 class Fetcher:
     """Anonymous, shallow, sparse checkouts of member repositories, one per repo and ref."""
 
-    def __init__(self, work: Path, git_base: str = GITHUB) -> None:
+    def __init__(
+        self, work: Path, git_base: str = GITHUB, local: Mapping[str, Path] | None = None
+    ) -> None:
         """Fetch into `work`, from repositories under `git_base`.
 
         Args:
             work: The directory the checkouts are made in. A checkout already there,
                 at a ref other than HEAD, is reused.
             git_base: The URL the owner/name repo paths are appended to.
+            local: owner/name -> a working tree served as that repo at every ref, so
+                uncommitted docs/ edits can be previewed.
         """
         self._work = work
         self._base = git_base.rstrip("/")
         self._env = anonymous_git_env()
+        self._local = dict(local) if local is not None else {}
         self._done: dict[tuple[str, str], Checkout] = {}
 
     def fetch(self, repo: str, ref: str) -> Checkout:
@@ -366,6 +389,8 @@ class Fetcher:
             RefusedError: The anonymous fetch was refused.
             FetchError: Any other git failure, a missing ref among them.
         """
+        if repo in self._local:
+            return local_checkout(self._local[repo])
         key = (repo, ref)
         if key in self._done:
             return self._done[key]
@@ -462,7 +487,8 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
             docs/.
     """
     known = set(members)
-    sections = {key: tree.get(key) or {} for key in ("dropped_versions", "mount_under", "internal")}
+    keys = ("dropped_versions", "mount_under", "internal", "docs_refs")
+    sections = {key: tree.get(key) or {} for key in keys}
     problems = [
         f"`{key}` is not a map" for key, value in sections.items() if not isinstance(value, dict)
     ]
@@ -486,9 +512,19 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
         internal[member] = frozenset(
             "docs/" if path == WHOLE_MEMBER else f"docs/{path}" for path in paths
         )
+    docs_refs: dict[str, dict[str, str]] = {}
+    for stack, pins in sections["docs_refs"].items():
+        if not isinstance(pins, dict):
+            problems.append(f"docs_refs {stack}: not a map of member -> ref")
+            continue
+        for member, ref in pins.items():
+            if member not in known or not isinstance(ref, str) or not ref:
+                problems.append(f"docs_refs {stack} {member}: not a member with a ref")
+                continue
+            docs_refs.setdefault(str(stack), {})[member] = ref
     if problems:
         raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
-    return Policy(frozenset(sections["dropped_versions"]), mounts, internal)
+    return Policy(frozenset(sections["dropped_versions"]), mounts, internal, docs_refs)
 
 
 def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journeys:
@@ -535,6 +571,52 @@ def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journey
     if problems:
         raise SystemExit(f"error: {JOURNEYS_FILE.name}: {'; '.join(problems)}")
     return Journeys(order, rules)
+
+
+def local_checkout(path: Path) -> Checkout:
+    """Return a working tree as a checkout, at its HEAD commit, or "local" outside git.
+
+    Args:
+        path: The working tree's root.
+
+    Returns:
+        The checkout.
+    """
+    done = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return Checkout(path, done.stdout.strip() if done.returncode == 0 else "local")
+
+
+def parse_local(values: Iterable[str], members: Iterable[Member]) -> dict[str, Path]:
+    """Read --local MEMBER=PATH values into owner/name -> working tree.
+
+    Args:
+        values: The values as given.
+        members: The suite members, which name the repos.
+
+    Returns:
+        owner/name -> the working tree's root.
+
+    Raises:
+        SystemExit: A value is not MEMBER=PATH, names no member, or has no docs/.
+    """
+    repos = {member.name: member.repo for member in members}
+    local: dict[str, Path] = {}
+    for value in values:
+        name, eq, path = value.partition("=")
+        if not eq or name not in repos:
+            raise SystemExit(f"error: --local {value}: want MEMBER=PATH for a suite member")
+        root = Path(path).expanduser().resolve()
+        if not (root / "docs").is_dir():
+            raise SystemExit(f"error: --local {value}: {root} has no docs/")
+        local[repos[name]] = root
+    return local
 
 
 def is_internal(repo_path: str, internal: frozenset[str]) -> bool:
@@ -615,6 +697,7 @@ def relink(
     repo: str,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> tuple[str, bool]:
     """Point one link target that leaves the published docs at the file on GitHub, at `ref`.
 
@@ -625,6 +708,8 @@ def relink(
         ref: The tag or commit the file was fetched at.
         internal: The member's internal paths, which are linked on GitHub like any
             file outside docs/.
+        mount: Where the member's docs/ lands in the build, set for STACK_REPO_MEMBER
+            only. A link into the site's own pages then stays on the site.
 
     Returns:
         The target to write, and whether it escaped the repository (left unchanged).
@@ -643,6 +728,10 @@ def relink(
     if resolved == ".." or resolved.startswith("../"):
         return target, True
     suffix = f"{query_mark}{query}{hash_mark}{fragment}"
+    if mount and resolved.startswith(ROOT_PAGES_IN_REPO):
+        here = posixpath.normpath(posixpath.join(mount, posixpath.relpath(doc_dir, "docs")))
+        new = posixpath.relpath(resolved[len(ROOT_PAGES_IN_REPO) :], here) + suffix
+        return (f"<{new}>" if bracketed else new), False
     parts = resolved.split("/")
     # A directory link lands on its README.md, so an internal landing unpublishes the link.
     landing = f"{resolved}/{LANDING}" if path.endswith("/") else resolved
@@ -674,6 +763,7 @@ def rewrite_links(
     repo: str,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> tuple[str, list[str]]:
     """Rewrite every link in a markdown file that leaves the published docs, outside code.
 
@@ -686,6 +776,7 @@ def rewrite_links(
         repo: The member's owner/name.
         ref: The tag or commit the file was fetched at.
         internal: The member's internal paths.
+        mount: Where the member's docs/ lands in the build, as `relink` takes it.
 
     Returns:
         The rewritten markdown, and each target that escaped the repository.
@@ -695,7 +786,7 @@ def rewrite_links(
 
     def fix(match: re.Match[str]) -> str:
         new, escapes = relink(
-            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal
+            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal, mount=mount
         )
         if escapes:
             escaped.append(match.group(2))
@@ -854,6 +945,7 @@ def copy_docs(
     member: Member,
     ref: str,
     internal: frozenset[str] = frozenset(),
+    mount: str = "",
 ) -> list[Finding]:
     """Copy one member's docs/ into the build, rewriting links in its markdown.
 
@@ -866,6 +958,7 @@ def copy_docs(
         member: The member.
         ref: The tag or commit the docs were fetched at, for the GitHub links.
         internal: The member's internal paths.
+        mount: Where `dest` sits in the build, as `relink` takes it.
 
     Returns:
         A LINK finding for each link that escaped the repository.
@@ -887,7 +980,7 @@ def copy_docs(
             continue
         text = drop_leading_comments(path.read_text(encoding="utf-8", errors="replace"))
         rewritten, escaped = rewrite_links(
-            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal
+            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal, mount=mount
         )
         target.write_text(rewritten, encoding="utf-8", newline="\n")
         findings += [Finding(member.name, repo_path, Rule.LINK, link) for link in escaped]
@@ -1001,6 +1094,8 @@ def assemble(
         if ref is None:
             result.findings.append(Finding(member.name, "", Rule.NO_PIN))
             continue
+        released_ref = ref
+        ref = build.docs_refs.get(member.name, ref)
         try:
             checkout = fetcher.fetch(member.repo, ref)
         except RefusedError:
@@ -1021,7 +1116,10 @@ def assemble(
         if member.classification not in UPSTREAM_LED:
             result.findings += find_strays(docs, member.name)
         internal = policy.internal_to(member.name)
-        result.findings += copy_docs(docs, dest, member=member, ref=link_ref, internal=internal)
+        mount = dest.relative_to(root).as_posix() if member.name == STACK_REPO_MEMBER else ""
+        result.findings += copy_docs(
+            docs, dest, member=member, ref=link_ref, internal=internal, mount=mount
+        )
         if not dest.is_dir():
             result.findings.append(Finding(member.name, "docs/", Rule.ALL_INTERNAL))
             continue
@@ -1031,26 +1129,98 @@ def assemble(
         if not (dest / LANDING).is_file():
             found = next((name for name in ARCHITECTURE if (dest / name).is_file()), None)
             opening = (dest / found).relative_to(root).with_suffix("").as_posix() if found else None
+            if not any(path.name.lower() in _LANDINGS for path in dest.iterdir()):
+                write_section_index(dest, member.name)
         write_json(dest / CATEGORY_FILE, category(member, ref=link_ref, opening=opening))
         included.add(member.name)
         result.members.append(
-            {"name": member.name, "repo": member.repo, "ref": link_ref, "commit": checkout.commit}
+            {
+                "name": member.name,
+                "repo": member.repo,
+                "ref": link_ref,
+                "commit": checkout.commit,
+                "path": dest.relative_to(root).as_posix(),
+            }
         )
         if member.name == SPEC_MEMBER:
-            result.openapi = _place_spec(checkout, build, dest, out, result.findings)
+            spec_checkout = checkout
+            if ref != released_ref:
+                spec_checkout = fetcher.fetch(member.repo, released_ref)
+            result.openapi = _place_spec(spec_checkout, build, dest, out, result.findings)
     copy_root(root, {member.name for member in members})
     if journeys:
         result.placements |= journeys.keys_for(ROOT_PAGES, "")
     return result
 
 
+def page_title(text: str, fallback: str) -> str:
+    """A page's title as Docusaurus shows it: front-matter title, else the first H1.
+
+    Args:
+        text: The page's markdown.
+        fallback: The title when the page sets neither, such as its file stem.
+
+    Returns:
+        The title.
+    """
+    front = _FRONT_MATTER.match(text)
+    if front and (field := _TITLE_FIELD.search(front.group(0))):
+        return field.group(1).strip("'\"")
+    fence = ""
+    for line in text[front.end() if front else 0 :].splitlines():
+        opener = _FENCE.match(line)
+        if opener and (not fence or opener.group(1)[0] == fence[0]):
+            fence = "" if fence else opener.group(1)
+        elif not fence and (heading := _H1.match(line)):
+            return heading.group(1)
+    return fallback
+
+
+def write_section_index(dest: Path, name: str) -> None:
+    """Give a section with no README.md a page at its root that lists its pages.
+
+    Without one, the section's own URL is a 404.
+
+    Args:
+        dest: The section's directory in the build.
+        name: The section's sidebar label, which titles the page.
+    """
+    pages = sorted(
+        (
+            path
+            for path in dest.rglob("*")
+            if path.is_file()
+            and path.name.lower().endswith(MARKDOWN)
+            and path != dest / SECTION_INDEX
+        ),
+        # A directory's pages follow its landing, before any directory below it.
+        key=lambda path: (
+            path.relative_to(dest).parent.parts,
+            path.name.lower() not in _LANDINGS,
+            path.name.lower(),
+        ),
+    )
+    lines = [SECTION_INDEX_MARK, f"# {name}", "", f"Every page in the {name} section.", ""]
+    for path in pages:
+        relative = path.relative_to(dest)
+        depth = len(relative.parts) - 1
+        if path.name.lower() in _LANDINGS:
+            depth = max(depth - 1, 0)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        title = page_title(text, path.stem).replace("[", "\\[").replace("]", "\\]")
+        lines.append(f"{'  ' * depth}- [{title}]({relative.as_posix()})")
+    (dest / SECTION_INDEX).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def _place_spec(
     checkout: Checkout, build: Build, dest: Path, out: Path, findings: list[Finding]
 ) -> dict[str, str] | None:
     """Copy the engine's spec beside the builds and mark the directory its pages go in."""
-    spec = checkout.path / SPEC_FILE
-    if not spec.is_file():
-        findings.append(Finding(SPEC_MEMBER, SPEC_FILE, Rule.NO_SPEC))
+    spec = next(
+        (checkout.path / path for path in SPEC_FILES if (checkout.path / path).is_file()), None
+    )
+    if spec is None:
+        findings.append(Finding(SPEC_MEMBER, " or ".join(SPEC_FILES), Rule.NO_SPEC))
         return None
     api = dest / API_DIR
     if api.exists():
@@ -1058,6 +1228,9 @@ def _place_spec(
     placed = out / "_specs" / build.name / f"{SPEC_MEMBER}.json"
     document = json.loads(spec.read_text(encoding="utf-8"))
     write_json(placed, mdx_safe_spec(document))
+    # The spec as published, for download: the MDX-safe copy above escapes its descriptions.
+    raw = placed.with_suffix(".raw.json")
+    shutil.copyfile(spec, raw)
     slice_path = (api / "sidebar.ts").relative_to(out / build.name).as_posix()
     # The sidebar generator swaps this category's items for the slice gen-api-docs writes.
     write_json(
@@ -1068,6 +1241,7 @@ def _place_spec(
         "spec": placed.relative_to(out).as_posix(),
         "output": api.relative_to(out).as_posix(),
         "slice": slice_path,
+        "raw": raw.relative_to(out).as_posix(),
     }
 
 
@@ -1227,8 +1401,8 @@ def site_manifest(
         journeys: The sidebar journeys. None keeps one section per member.
 
     Returns:
-        The newest listed build's name (None without one), every build with its
-        page placements, the dropped stacks, and the journeys.
+        The site's URL, the newest listed build's name (None without one), every
+        build with its page placements, the dropped stacks, and the journeys.
     """
     builds = [
         {
@@ -1243,6 +1417,7 @@ def site_manifest(
     ]
     newest = next((build["name"] for build in builds if build["listed"]), None)
     return {
+        "url": SITE_URL,
         "newest": newest,
         "builds": builds,
         "dropped": sorted(dropped),
@@ -1272,6 +1447,7 @@ def plan_builds(
     stacks: list[str],
     with_next: bool,
     dropped: frozenset[str] = frozenset(),
+    docs_refs: Mapping[str, Mapping[str, str]] | None = None,
 ) -> list[Build]:
     """The builds to assemble: the chosen released stacks newest first, then /next/.
 
@@ -1281,18 +1457,24 @@ def plan_builds(
         stacks: Released stacks to build. Empty means every one.
         with_next: Whether to add the unlisted preview from each default branch.
         dropped: Released stacks the site does not build.
+        docs_refs: stack -> member -> the ref its docs/ is read at, from publish.yaml.
 
     Returns:
         The builds.
 
     Raises:
-        SystemExit: A named stack is not a released one or is dropped, or there is
-            nothing to build.
+        SystemExit: A named stack is not a released one or is dropped, a docs pin
+            names a stack the site does not build, or there is nothing to build.
     """
+    docs_refs = docs_refs or {}
     refused = sorted(set(stacks) & dropped)
     if refused:
         raise SystemExit(f"error: {PUBLISH_FILE.name} drops {', '.join(refused)}")
     released = [name for name in released_stacks(tree) if name not in dropped]
+    stray_pins = sorted(set(docs_refs) - set(released))
+    if stray_pins:
+        names = ", ".join(stray_pins)
+        raise SystemExit(f"error: {PUBLISH_FILE.name} docs_refs names no built stack: {names}")
     unknown = sorted(set(stacks) - set(released))
     if unknown:
         have = ", ".join(released) or "none"
@@ -1300,7 +1482,14 @@ def plan_builds(
     chosen = [name for name in released if not stacks or name in stacks]
     blocks = tree["stacks"]
     builds = [
-        Build(name, f"/v/{name}/", True, stack_refs(name, blocks[name], members)) for name in chosen
+        Build(
+            name,
+            f"/v/{name}/",
+            True,
+            stack_refs(name, blocks[name], members),
+            dict(docs_refs.get(name, {})),
+        )
+        for name in chosen
     ]
     if with_next:
         heads = {member.name: HEAD for member in members}
@@ -1360,6 +1549,13 @@ def main(argv: list[str] | None = None) -> int:
         default=GITHUB,
         help="the URL member repos are fetched under, such as a mirror",
     )
+    parser.add_argument(
+        "--local",
+        action="append",
+        default=[],
+        metavar="MEMBER=PATH",
+        help="read a member's docs/ from a working tree, uncommitted edits included (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     text = VERSIONS_FILE.read_text(encoding="utf-8")
@@ -1371,12 +1567,12 @@ def main(argv: list[str] | None = None) -> int:
         JOURNEYS_FILE.read_text(encoding="utf-8"), source=str(JOURNEYS_FILE)
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
-    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped)
+    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)
         work.mkdir(parents=True, exist_ok=True)
-        fetcher = Fetcher(work, args.git_base)
+        fetcher = Fetcher(work, args.git_base, parse_local(args.local, members))
         try:
             results = [
                 assemble(build, members, fetcher, args.out, policy, journeys) for build in builds

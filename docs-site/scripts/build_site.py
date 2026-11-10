@@ -14,9 +14,10 @@
 
 For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming
-the build, into build/<its base path>. Then write build/_redirects so / and every
+the build, into build/<its base path>, and finish its markdown side for agents
+(agent_layer.py). Then write build/_redirects so /, /latest/ and every
 dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
-against the Workers static-asset limits.
+against the Workers static-asset limits. A build with a member section whose root URL serves no page fails.
 
 Needs the site's npm dependencies installed (npm ci) and aggregate.py run first.
 """
@@ -29,6 +30,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import agent_layer
+
 SITE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT = SITE_ROOT / "content"
 BUILD = SITE_ROOT / "build"
@@ -36,6 +39,8 @@ DOCUSAURUS = SITE_ROOT / "node_modules" / ".bin" / "docusaurus"
 # Workers static assets on the Free plan: files per deployed version, and bytes per file.
 FILE_LIMIT = 20_000
 FILE_SIZE_LIMIT = 25 * 1024 * 1024
+# Build output directories that hold assets, not pages, so they get no unversioned alias.
+STATIC_DIRS = frozenset({"assets", "img"})
 
 
 def docusaurus(*args: str, build: str) -> None:
@@ -70,25 +75,53 @@ def build_one(entry: dict) -> Path:
     return out
 
 
-def redirects(newest: str, dropped: list[str] | None = None) -> str:
-    """The Workers _redirects file: the site root and /v/ go to the newest release.
+def redirects(
+    newest: str, dropped: list[str] | None = None, sections: list[str] | None = None
+) -> str:
+    """The Workers _redirects file: the site root, /v/ and /latest/ go to the newest release.
 
-    A dropped stack's pages go permanently to the same path under the newest release,
-    where the version menu's own switch would have sent the reader.
+    Each top-level section also answers unversioned (/quickstart/docker/), so other
+    sites can link to the current release without naming it. A dropped stack's pages go
+    permanently to the same path under the newest release, where the version menu's own
+    switch would have sent the reader.
 
     Args:
         newest: The newest listed build.
         dropped: Stacks publish.yaml drops.
+        sections: The newest build's top-level page directories.
 
     Returns:
         The file's text.
     """
     target = f"/v/{newest}/"
-    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/")]
+    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/", "/latest", "/latest/")]
+    lines.append(f"/latest/* {target}:splat 302")
+    for section in sections or []:
+        lines += [
+            f"/{section} {target}{section}/ 302",
+            f"/{section}/* {target}{section}/:splat 302",
+        ]
     for stack in dropped or []:
         old = f"/v/{stack}"
         lines += [f"{old} {target} 301", f"{old}/ {target} 301", f"{old}/* {target}:splat 301"]
     return "".join(f"{line}\n" for line in lines)
+
+
+def missing_roots(entry: dict, out: Path) -> list[str]:
+    """The member sections in one build whose own URL serves no page.
+
+    Args:
+        entry: The build's site.json entry.
+        out: The build's output directory.
+
+    Returns:
+        Each section path, such as ``dfe-engine``, with no index.html at its root.
+    """
+    return [
+        member["path"]
+        for member in entry.get("members", [])
+        if not (out / member["path"] / "index.html").is_file()
+    ]
 
 
 def count(tree: Path) -> tuple[int, int, int]:
@@ -141,6 +174,10 @@ def main(argv: list[str] | None = None) -> int:
 
     for entry in entries:
         out = build_one(entry)
+        if missing := missing_roots(entry, out):
+            raise SystemExit(f"error: {entry['name']}: no page at {', '.join(missing)}")
+        copies = agent_layer.finish(entry, site, build_dir=BUILD)
+        print(f"{entry['name']}: {copies} markdown copies linked for agents")
         pages, files, largest = count(out)
         print(f"{entry['name']}: {pages} pages, {files} files, largest {largest} bytes")
 
@@ -148,7 +185,16 @@ def main(argv: list[str] | None = None) -> int:
         newest_404 = BUILD / "v" / site["newest"] / "404.html"
         if newest_404.is_file():
             shutil.copyfile(newest_404, BUILD / "404.html")
-        text = redirects(site["newest"], site.get("dropped", []))
+        newest_quickstart = BUILD / "v" / site["newest"] / "quickstart.json"
+        if newest_quickstart.is_file():
+            shutil.copyfile(newest_quickstart, BUILD / "quickstart.json")
+        newest_tree = BUILD / "v" / site["newest"]
+        sections = sorted(
+            path.name
+            for path in newest_tree.iterdir()
+            if path.is_dir() and path.name not in STATIC_DIRS
+        )
+        text = redirects(site["newest"], site.get("dropped", []), sections)
         (BUILD / "_redirects").write_text(text, encoding="utf-8", newline="\n")
 
     pages, files, largest = count(BUILD)

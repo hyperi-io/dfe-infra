@@ -280,14 +280,25 @@ html[data-theme='dark'] {
   font-weight: 600;
 }
 
-/* The hound sits before the product name, set in the HyperI wordmark face. */
+/* The hound sits before the product name, set in the HyperI wordmark face,
+   its feet on the name's baseline. */
 .navbar__brand {
   gap: var(--dfe-space-3);
+  align-items: baseline;
 }
 
 .navbar__logo {
   height: var(--dfe-space-8);
   margin-right: 0;
+}
+
+.navbar__logo img {
+  display: block;
+}
+
+/* The menu links share that baseline, so they line up with the product name. */
+.navbar__items:not(.navbar__items--right) {
+  align-items: baseline;
 }
 
 .navbar__title {

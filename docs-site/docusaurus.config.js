@@ -11,6 +11,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const yaml = require('js-yaml');
 const {journeySidebar} = require('./sidebar-journeys.js');
 
 const CONTENT = path.join(__dirname, 'content');
@@ -26,8 +27,8 @@ if (!build) {
   throw new Error(`content/site.json lists no build named ${buildName}`);
 }
 const docsPath = `content/${build.name}`;
-// The stack a reader installs from this build: its own release, or the newest one for /next/.
-const stack = build.listed ? build.name : site.newest || build.name;
+// The stack a reader installs from this build: its own stack, or the newest release for /next/.
+const stack = build.name === 'next' ? site.newest || build.name : build.name;
 const versionLabel = build.listed ? build.name : `${build.name} (unreleased)`;
 // release.yml cuts each stack as a dfe-infra tag, with its notes on the GitHub release.
 const releaseNotes = site.newest
@@ -48,6 +49,120 @@ function apiIntroPath(openapi) {
   return `/${path.posix.dirname(openapi.slice)}/${slug}/`;
 }
 const apiPath = apiIntroPath(build.openapi);
+
+// Empty on the newest release, whose stack make up and make demo pick by default.
+const versionArg = stack === site.newest ? '' : ` VERSION=${stack}`;
+const COPY_VARS = {
+  stack,
+  version_arg: versionArg,
+  version: versionLabel,
+  newest: site.newest,
+  release_notes: releaseNotes,
+  api_path: apiPath,
+  year: String(new Date().getFullYear()),
+};
+
+// Fills {name} from COPY_VARS. A name with no value drops the map holding it, so an item linking to a page this build lacks disappears.
+function fillCopy(node) {
+  if (typeof node === 'string') {
+    let missing = false;
+    const text = node.replace(/\{(\w+)\}/g, (_, name) => {
+      if (!(name in COPY_VARS)) {
+        throw new Error(`copy/: {${name}} is not one of ${Object.keys(COPY_VARS).join(', ')}`);
+      }
+      missing = missing || COPY_VARS[name] == null;
+      return COPY_VARS[name] ?? '';
+    });
+    return missing ? undefined : text;
+  }
+  if (Array.isArray(node)) {
+    return node.map(fillCopy).filter((item) => item !== undefined);
+  }
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(node)) {
+      const filled = fillCopy(value);
+      if (filled === undefined) {
+        return undefined;
+      }
+      out[key] = filled;
+    }
+    return out;
+  }
+  return node;
+}
+
+function loadCopy(name) {
+  return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
+}
+
+// The fenced block after a page's <!-- landing --> marker, from this build's copy of the page, so the landing never restates it.
+// Inline # notes stay on the page, and a make line pins this build's stack when it is not the newest.
+function landingCode(page) {
+  const file = path.join(CONTENT, build.name, page);
+  const text = fs.readFileSync(file, 'utf8');
+  const match = text.match(/<!-- landing -->\s*```[^\n]*\n([\s\S]*?)\n```/);
+  if (!match) {
+    throw new Error(`copy/landing.yaml: ${file} has no <!-- landing --> marker before a code block`);
+  }
+  return match[1]
+    .split('\n')
+    .map((line) => line.replace(/\s+#.*$/, ''))
+    .map((line) => (line.startsWith('make ') ? `${line}${versionArg}` : line))
+    .join('\n');
+}
+
+const siteCopy = loadCopy('site');
+const landingCopy = loadCopy('landing');
+for (const tab of landingCopy.quickstart.tabs) {
+  tab.blocks = tab.blocks.map((block) =>
+    block.code_from === undefined ? block : {code: landingCode(block.code_from)},
+  );
+}
+
+// Markdown links and backticks as the plain text another site can show.
+function plainText(text) {
+  return text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '');
+}
+
+// The hero's quickstart tabs as /quickstart.json, so other sites show the same commands.
+// A note between two code blocks rides into the next command as a shell comment.
+function quickstartJson(siteUrl, baseUrl) {
+  const tabs = landingCopy.quickstart.tabs.map((tab) => {
+    const texts = [];
+    const commands = [];
+    let pending = null;
+    for (const block of tab.blocks) {
+      if (block.code !== undefined) {
+        commands.push(pending ? `# ${pending}\n${block.code}` : block.code);
+        pending = null;
+      } else if (commands.length === 0) {
+        texts.push(plainText(block.text));
+      } else {
+        pending = plainText(block.text);
+      }
+    }
+    return {
+      id: tab.value,
+      label: tab.label,
+      needs: texts.join(' ') || null,
+      commands,
+      then: pending,
+      guide: tab.guide ? `${siteUrl}${baseUrl}${tab.guide.to.replace(/^\//, '')}` : null,
+    };
+  });
+  return {stack, tabs};
+}
+
+function quickstartJsonPlugin(context) {
+  return {
+    name: 'quickstart-json',
+    async postBuild({outDir}) {
+      const body = quickstartJson(context.siteConfig.url, context.siteConfig.baseUrl);
+      fs.writeFileSync(path.join(outDir, 'quickstart.json'), `${JSON.stringify(body, null, 2)}\n`);
+    },
+  };
+}
 
 // Every listed build, as a full-page load without this build's own baseUrl in front.
 const versionItems = site.builds
@@ -89,6 +204,71 @@ async function sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
   return journeySidebar(items, journeys, placements);
 }
 
+// Every doc's route, title, description and source file, for scripts/agent_layer.py.
+function pageManifestPlugin() {
+  return {
+    name: 'dfe-page-manifest',
+    async allContentLoaded({allContent}) {
+      const docs = allContent['docusaurus-plugin-content-docs'].default;
+      const pages = docs.loadedVersions.flatMap((version) =>
+        version.docs.map(({id, title, description, source, permalink}) => ({
+          id,
+          title,
+          description,
+          source: source.replace(/^@site\//, ''),
+          permalink,
+        })),
+      );
+      const out = path.join(CONTENT, '_manifests', `${build.name}.json`);
+      fs.mkdirSync(path.dirname(out), {recursive: true});
+      fs.writeFileSync(out, `${JSON.stringify(pages, null, 2)}\n`);
+    },
+  };
+}
+
+// The API pages are generated from the spec, which llms.txt links to whole instead.
+const apiPages = build.openapi
+  ? [`${path.posix.relative(build.name, build.openapi.output)}/**`]
+  : [];
+const memberRoots = [...new Set(build.members.map((member) => member.path.split('/')[0]))];
+const llmsPlugin = [
+  'docusaurus-plugin-llms',
+  {
+    docsDir: [{path: docsPath, routeBasePath: '/'}],
+    title: `DFE documentation ${versionLabel}`,
+    description:
+      'The Data Fusion Engine (DFE) is a product suite an organisation deploys to run its own ' +
+      'data pipeline: events in over HTTP, through Kafka or gRPC, into ClickHouse.',
+    rootContent:
+      `Release ${versionLabel}. Every prose page has a markdown copy at its URL with .md on the end, ` +
+      `and ${site.url}/latest/ always serves the newest release.` +
+      (build.openapi
+        ? ` ${site.url}${build.base_url}openapi/dfe-engine.json is the engine's HTTP API spec.`
+        : ''),
+    generateLLMsFullTxt: false,
+    generateMarkdownFiles: true,
+    excludeImports: true,
+    rewriteImageUrls: true,
+    ignoreFiles: apiPages,
+    customLLMFiles: [
+      {
+        filename: 'llms/overview.txt',
+        includePatterns: ['**'],
+        ignorePatterns: [...memberRoots.map((root) => `${root}/**`), ...apiPages],
+        fullContent: true,
+        title: 'DFE documentation: overview, quickstarts and operating',
+      },
+      ...memberRoots.map((root) => ({
+        filename: `llms/${root}.txt`,
+        includePatterns: [`${root}/**`],
+        ignorePatterns: apiPages,
+        fullContent: true,
+        title: `DFE documentation: ${root}`,
+      })),
+    ],
+  },
+];
+
 const openapiPlugins = build.openapi
   ? [
       [
@@ -109,26 +289,26 @@ const openapiPlugins = build.openapi
   : [];
 
 module.exports = {
-  title: 'DFE documentation',
-  tagline: 'The Data Fusion Engine suite',
+  title: siteCopy.title,
+  tagline: siteCopy.tagline,
   favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
   // The brand tokens and @font-face rules, read anonymously like every other build input.
   stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
-  customFields: {stack, versionLabel, newest: site.newest, releaseNotes, apiPath},
-  url: 'https://dfe.docs.hyperi.io',
+  customFields: {landing: landingCopy},
+  url: site.url,
   baseUrl: build.base_url,
   trailingSlash: true,
   noIndex: !build.listed,
   organizationName: 'hyperi-io',
   projectName: 'dfe-infra',
-  onBrokenLinks: 'warn',
-  onBrokenAnchors: 'warn',
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
   i18n: {defaultLocale: 'en', locales: ['en']},
   markdown: {
     // .md parses as CommonMark and .mdx as MDX, so plain repo docs need no MDX escaping.
     format: 'detect',
     mermaid: true,
-    hooks: {onBrokenMarkdownLinks: 'warn', onBrokenMarkdownImages: 'warn'},
+    hooks: {onBrokenMarkdownLinks: 'throw', onBrokenMarkdownImages: 'warn'},
   },
   clientModules: [require.resolve('./src/version-switch.js')],
   presets: [
@@ -148,7 +328,7 @@ module.exports = {
       },
     ],
   ],
-  plugins: ['docusaurus-plugin-sass', ...openapiPlugins],
+  plugins: ['docusaurus-plugin-sass', quickstartJsonPlugin, pageManifestPlugin, llmsPlugin, ...openapiPlugins],
   themes: [
     '@docusaurus/theme-mermaid',
     'docusaurus-theme-openapi-docs',
@@ -168,71 +348,47 @@ module.exports = {
   themeConfig: {
     // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
     colorMode: {defaultMode: 'light', disableSwitch: false, respectPrefersColorScheme: true},
-    announcementBar: releaseNotes
+    announcementBar: siteCopy.announcement && releaseNotes
       ? {
           // Keyed on the release, so a reader who closed one sees the next.
           id: `release-${site.newest}`,
           content:
-            `<span class="announcement-tag">Latest</span>DFE ${site.newest} is the current release. ` +
-            `<a href="${releaseNotes}">Release notes${ARROW_SVG}</a>`,
+            `<span class="announcement-tag">${siteCopy.announcement.tag}</span>${siteCopy.announcement.text} ` +
+            `<a href="${releaseNotes}">${siteCopy.announcement.link}${ARROW_SVG}</a>`,
           backgroundColor: 'var(--dfe-accent)',
           textColor: 'var(--dfe-navy)',
           isCloseable: true,
         }
       : undefined,
     navbar: {
-      title: 'Data Fusion Engine',
+      title: siteCopy.navbar.title,
       // hyperi-graphics public/hyperi-hound/tertiary: the one hound colour that reads on both modes.
       logo: {
-        alt: 'HyperI',
+        alt: siteCopy.navbar.logo_alt,
         src: 'img/hyperi-hound.svg',
         width: 47,
         height: 32,
       },
       items: [
-        {to: '/overview/', label: 'Docs', position: 'left'},
-        {to: '/quickstart/', label: 'Quickstart', position: 'left'},
-        ...(apiPath ? [{to: apiPath, label: 'API', position: 'left'}] : []),
+        ...siteCopy.navbar.items.map((item) => ({...item, position: 'left'})),
         {
           type: 'dropdown',
           label: versionLabel,
           position: 'right',
           items: versionItems,
         },
-        {href: 'https://github.com/hyperi-io', label: 'GitHub', position: 'right'},
+        {...siteCopy.navbar.github, position: 'right'},
       ],
     },
     footer: {
       style: 'dark',
       logo: {
-        alt: 'HyperI',
+        alt: siteCopy.navbar.logo_alt,
         src: `${GRAPHICS}/hyperi-horizontal/dark/hyperi-horizontal_bare.svg`,
         href: 'https://hyperi.io',
       },
-      links: [
-        {
-          title: 'Docs',
-          items: [
-            {label: 'Overview', to: '/overview/'},
-            {label: 'Quickstarts', to: '/quickstart/'},
-            ...(apiPath ? [{label: 'HTTP API reference', to: apiPath}] : []),
-            ...(releaseNotes ? [{label: 'Release notes', href: releaseNotes}] : []),
-          ],
-        },
-        {
-          title: 'Source',
-          items: [
-            {label: 'GitHub', href: 'https://github.com/hyperi-io'},
-            {label: 'dfe-infra', href: 'https://github.com/hyperi-io/dfe-infra'},
-            {label: 'dfe-docker', href: 'https://github.com/hyperi-io/dfe-docker'},
-          ],
-        },
-        {
-          title: 'HyperI',
-          items: [{label: 'hyperi.io', href: 'https://hyperi.io'}],
-        },
-      ],
-      copyright: `Copyright (c) ${new Date().getFullYear()} HYPERI PTY LIMITED`,
+      links: siteCopy.footer.columns,
+      copyright: siteCopy.footer.copyright,
     },
     mermaid: {theme: {light: 'neutral', dark: 'dark'}},
     prism: {

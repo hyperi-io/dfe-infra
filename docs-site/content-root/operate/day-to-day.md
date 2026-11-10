@@ -19,7 +19,7 @@ The ingest edge returns 2xx once it has accepted an event, which says nothing ab
 
 ## Where the logs are
 
-On Compose with self-monitoring on, `docker compose logs dfe-loader` fails with "configured logging driver does not support reading logs". The lines are in ClickHouse. Search the `otel_logs` source in HyperDX, or query `dfe.otel_logs` by `ServiceName`. Kubernetes ships stdout to the same table through the collector's daemonset.
+On Compose with self-monitoring on, `docker compose logs dfe-loader` fails with "configured logging driver does not support reading logs". The lines are in ClickHouse. Search the `otel_logs` source in the console, or query `dfe.otel_logs` by `ServiceName`. Kubernetes ships stdout to the same table through the collector's daemonset.
 
 ## Passwords
 
