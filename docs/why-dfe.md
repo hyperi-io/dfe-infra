@@ -24,7 +24,7 @@ DFE is cake and eat it too. Here's what most people do, and what we do instead.
 | Bolt on a separate ETL tier | `dfe-loader` routes, parses and enriches in flight, then writes RowBinary so the store skips re-parsing. That's the common 80/20 of ETL on a batch-optimised hot path. Reflecting the destination schema automates the routine ETL-for-the-engine work, so you don't need it. Only the bespoke 20% goes to the optional `dfe-transform-*` apps. Pick your engine: VRL, Vector or Elastic. |
 | Model first, query later | A versioned meta-schema (`dfe-schemas`) compiles to table DDL. Change the meta-schema, not a chain of pipelines. You work with high-level primitives and use cases instead of engine DDL, so your data SMEs don't need to be tool and DB-engine experts. |
 | Rip and replace to migrate | Keep your sources. Existing Elastic ingest pipelines compile to native transforms (`dfe-transform-elastic`). |
-| Generic, sub-optimised everything | Heavily optimised, opinionated bookends in `dfe-receiver`, `dfe-fetcher` and `dfe-loader` instead of poor-performing generics. Generics stay where they're *required and beneficial*. |
+| Generic, sub-optimised everything | Heavily optimised, opinionated bookends in `dfe-receiver`, `dfe-fetcher` and `dfe-loader` instead of poor-performing generics. Generics stay where they're *required and beneficial*. See [purpose-built bookends](#purpose-built-bookends). |
 | An all-in walled garden | Components that each do one thing *completely*, and mix and match with other technology without friction. |
 | Medium scale, then try to scale up | Designed and proven at PB scale *first*, then *scaled down* for medium and small workloads. That's usually the secret sauce a SaaS provider keeps to itself. |
 | GitOps wedging square apps into round pods | Built for Kubernetes autoscaling from the ground up, with self-regulating vertically scaling pods. |
@@ -42,6 +42,22 @@ Schema mapping by reflection, Elastic compatibility, OpenTelemetry observability
 Efficiency is a design goal from day one, and it shows up on the bill and in how much you can keep queryable. Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to prove its schema models and ingest scale, with a fully tuned OpenSearch cluster running alongside. At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
 
 Those tests drove a good part of the DFE 2.2 redesign over 2.1. Much of it came straight out of what they showed about where the spend is and where the cycles get consumed.
+
+## Purpose-built bookends
+
+Every event lands through the loader, and most enter through the receiver or fetcher. Nearly every event pays for every cycle spent there, so they're purpose-built Rust. A general-purpose transform engine comes in only where the job needs one, in the optional `dfe-transform-*` apps. Only `dfe-transform-vrl` depends on the `vrl` crate.
+
+Why not one generic engine throughout? Because it interprets your program. VRL compiles it at startup into an expression tree, then walks that tree for every event. The Rust compiler optimises the interpreter when it builds the binary, but your program doesn't exist yet.
+
+Profile-guided optimisation widens the gap. We build the bookends with PGO and BOLT, which means 'run it under real load, record what's hot, rebuild around it'.
+
+A bookend's hot path is the same work in every deployment, so a profile trained on it carries over. An interpreter's profile only matches the programs it was trained on, and code it never saw is laid out cold.
+
+Parsing is where it pays most, because grok and regex over a vendor message body are some of the most expensive per-event work in a pipeline. `dfe-transform-elastic` has no interpreter. Elastic ingest processors compile to Rust, one module per source, and Painless scripts run as Rust too: hand-transcribed per source, or matched to a known pattern. A script it doesn't recognise is counted and skipped.
+
+Zero-copy `dfe-parse` parsers replace two whole-pattern grok forms, and the rest fall back to compiled regex. The compiler sees that code, and so does the profile.
+
+Hence purpose-built for the known path, and generics for the bespoke 20%.
 
 ## Fusion in practice
 
