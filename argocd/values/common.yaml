@@ -189,6 +189,13 @@ api:
 ingestBearer:
   secretName: dfe-ingest-bearer-tokens
 
+# The Secret dfe-engine mirrors each hunt alert destination into, one key per name,
+# while the engine keeps its secrets on its own volume. dfe-extras renders it empty
+# with a Role granting the engine get and update on it alone, and dfe-hunt-runner
+# mounts it read-only where its file provider reads.
+alertDestinations:
+  secretName: dfe-alert-destinations
+
 # Consumer-facing Kafka endpoint. Default = the single tier's own broker Service,
 # matching the clickhouse block below. The cluster tier's broker is operator-owned
 # and named differently, so profile-scale.yaml overrides this.

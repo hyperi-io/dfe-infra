@@ -268,12 +268,7 @@ thin chart's env.
             # Secrets the engine MINTS (JWT signing key, ClickHouse passwords,
             # OIDC client secrets) go to Secrets Manager under the prefix the
             # aws root fenced its role to, through EKS Pod Identity.
-            - name: DFE_ENGINE_SECRETS_PROVIDER
-              value: "aws"
-            - name: DFE_ENGINE_SECRETS_REGION
-              value: {{ required "secrets.region is empty: with secrets.provider aws the engine refuses to start without the store's region" $store.region | quote }}
-            - name: DFE_ENGINE_SECRETS_NAME_PREFIX
-              value: {{ required "secrets.namePrefix is empty: with secrets.provider aws the engine refuses to start without the prefix its role writes under" $store.namePrefix | quote }}
+            {{- include "dfe-engine.secretsStoreEnv" . | nindent 12 }}
             # Empty would fall back to the account's aws/secretsmanager key, outside the deployment's.
             - name: DFE_ENGINE_SECRETS_KMS_KEY_ID
               value: {{ required "secrets.kmsKeyId is empty: with secrets.provider aws the engine needs the deployment's key, the cluster secret's dfe.hyperi.io/kms_key_arn annotation" $store.kmsKeyId | quote }}
@@ -282,17 +277,16 @@ thin chart's env.
             - name: DFE_ENGINE_SECRETS_TAGS
               value: {{ $store.tags | default dict | toJson | quote }}
             {{- else }}
-            # Secrets the engine MINTS (JWT signing key, per-group CH pw) go under
-            # the WRITABLE config mount. The default ./.secrets resolves to
-            # /app/.secrets on the root-owned WORKDIR (non-writable) -> the engine
-            # crashes minting the JWT signing key at startup. (Same fix as dfe-docker.)
-            - name: DFE_ENGINE_SECRETS_PATH
-              value: {{ .Values.config.mountPath }}/.secrets
-            # No receiver pod can mount that volume, so the engine also writes
-            # dfe-receiver's bearer tokens into this Secret, which the receiver
-            # mounts (engine-ingest-bearer-secret.yaml).
+            # Secrets the engine MINTS (JWT signing key, per-group CH pw).
+            {{- include "dfe-engine.secretsStoreEnv" . | nindent 12 }}
+            # No receiver or runner pod can mount that volume, so the engine also
+            # writes dfe-receiver's bearer tokens and the hunt runner's alert
+            # destinations into Secrets they mount (engine-ingest-bearer-secret.yaml,
+            # engine-alert-destinations-secret.yaml).
             - name: DFE_ENGINE_INGEST_BEARER_SECRET
               value: {{ .Values.ingestBearer.secretName | quote }}
+            - name: DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_SECRET
+              value: {{ .Values.alertDestinations.secretName | quote }}
             {{- end }}
             # Auth stores (accounts/groups/api-keys, + oidc-providers) -- same
             # trap as DFE_ENGINE_SECRETS_PATH: without this the auth bootstrap falls

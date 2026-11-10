@@ -488,6 +488,20 @@ metadata:
     app.kubernetes.io/version: <pin:apps.dfe-engine>
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
+  name: dfe-alert-destinations
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
   name: dfe-ingest-bearer-tokens
 type: Opaque
 ---
@@ -531,6 +545,7 @@ data:
   DFE_ENGINE_GITOPS_LOCAL_PATH: /var/run/dfe/deploy-repo
   DFE_ENGINE_GITOPS_REPO_URL: https://git.example.com/dfe-deploy.git
   DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR: /config/alerts
+  DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_SECRET: dfe-alert-destinations
   DFE_ENGINE_HUNTS_DIR: /config/hunts
   DFE_ENGINE_HUNTS_RULES_DIR: /config/rules
   DFE_ENGINE_HYPERDX_BASE_URL: http://dfe-hyperdx.dfe.svc.cluster.local:8000
@@ -558,6 +573,29 @@ metadata:
     dfe.hyperi.io/cloud: local
     dfe.hyperi.io/env: dev
   name: dfe-engine-env
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
+  name: dfe-alert-destinations-writer
+rules:
+- apiGroups:
+  - ''
+  resourceNames:
+  - dfe-alert-destinations
+  resources:
+  - secrets
+  verbs:
+  - get
+  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -626,6 +664,27 @@ rules:
   - secrets
   verbs:
   - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/instance: dfe-engine-default-in-cluster
+    app.kubernetes.io/managed-by: helm
+    app.kubernetes.io/name: dfe-engine
+    app.kubernetes.io/part-of: dfe
+    app.kubernetes.io/version: <pin:apps.dfe-engine>
+    dfe.hyperi.io/cloud: local
+    dfe.hyperi.io/env: dev
+  name: dfe-alert-destinations-writer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dfe-alert-destinations-writer
+subjects:
+- kind: ServiceAccount
+  name: dfe-engine
+  namespace: dfe
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -734,13 +793,6 @@ spec:
     metadata:
       labels: *id001
     spec:
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: dfe-engine
-            topologyKey: kubernetes.io/hostname
       containers:
       - args:
         - run
@@ -779,8 +831,8 @@ spec:
           value: /deploy-repo/repo/current/config/hunts
         - name: DFE_ENGINE_HUNTS_RULES_DIR
           value: /deploy-repo/repo/current/config/rules
-        - name: DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR
-          value: /config/alerts
+        - name: DFE_ENGINE_SECRETS_PATH
+          value: /config/.secrets
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
@@ -808,10 +860,9 @@ spec:
           name: config
         - mountPath: /tmp
           name: tmp
-        - mountPath: /config/alerts
+        - mountPath: /config/.secrets/alert-destinations
           name: alert-destinations
           readOnly: true
-          subPath: alerts
         - mountPath: /deploy-repo
           name: deploy-repo
           readOnly: true
@@ -947,9 +998,9 @@ spec:
       - emptyDir: {}
         name: tmp
       - name: alert-destinations
-        persistentVolumeClaim:
-          claimName: dfe-engine-config
-          readOnly: true
+        secret:
+          optional: true
+          secretName: dfe-alert-destinations
       - emptyDir: {}
         name: deploy-repo
       - emptyDir: {}

@@ -376,8 +376,10 @@ run "the_eso_role_carries_the_permissions_boundary" {
   }
 
   assert {
-    condition     = aws_iam_role.receiver.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && aws_iam_role.receiver.path == "/dfe-e2e/"
-    error_message = "the dfe-receiver aws_iam_role must carry var.permissions_boundary and sit under var.iam_path"
+    condition = alltrue([
+      for r in aws_iam_role.reader : r.permissions_boundary == "arn:aws:iam::000000000000:policy/contract-boundary" && r.path == "/dfe-e2e/"
+    ])
+    error_message = "the dfe-receiver and dfe-hunt-runner aws_iam_roles must carry var.permissions_boundary and sit under var.iam_path"
   }
 }
 
@@ -522,9 +524,10 @@ run "eso_is_denied_the_engine_prefix" {
   }
 }
 
-// dfe-receiver reads the <id>:<token> secret the engine writes per listener, by
-// name, and no other secret the engine mints.
-run "the_receiver_reads_the_bearer_tokens_and_nothing_else" {
+// dfe-receiver reads the <id>:<token> secret the engine writes per listener, and
+// dfe-hunt-runner the {url, enabled} secret per alert destination. Each reads by
+// name, under its own prefix, and no other secret the engine mints.
+run "each_reader_reads_its_own_prefix_and_nothing_else" {
   command = plan
 
   module {
@@ -532,47 +535,59 @@ run "the_receiver_reads_the_bearer_tokens_and_nothing_else" {
   }
 
   assert {
-    condition = anytrue([
-      for s in data.aws_iam_policy_document.receiver.statement :
-      s.effect == "Allow"
-      && s.actions == toset(["secretsmanager:GetSecretValue"])
-      && s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*"])
+    condition = keys(data.aws_iam_policy_document.reader) == ["hunt-runner", "receiver"] && alltrue([
+      for name, prefix in {
+        receiver    = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*"
+        hunt-runner = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/alert-destinations/*"
+        } : anytrue([
+          for s in data.aws_iam_policy_document.reader[name].statement :
+          s.effect == "Allow"
+          && s.actions == toset(["secretsmanager:GetSecretValue"])
+          && s.resources == toset([prefix])
+      ])
     ])
-    error_message = "the receiver role must read <path>/engine/ingest/bearer-tokens/ and nothing wider"
+    error_message = "the receiver must read <path>/engine/ingest/bearer-tokens/ and the hunt runner <path>/engine/alert-destinations/, and nothing wider"
   }
 
   assert {
-    condition = length(data.aws_iam_policy_document.receiver.statement) == 2 && alltrue([
-      for s in data.aws_iam_policy_document.receiver.statement :
-      s.effect == "Allow"
-      && length(setintersection(s.actions, ["secretsmanager:CreateSecret", "secretsmanager:UpdateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DeleteSecret", "secretsmanager:ListSecrets", "kms:GenerateDataKey"])) == 0
-      && alltrue([for a in s.actions : !strcontains(a, "*")])
-      && !contains(s.resources, "*")
+    condition = alltrue([
+      for doc in data.aws_iam_policy_document.reader : length(doc.statement) == 2 && alltrue([
+        for s in doc.statement :
+        s.effect == "Allow"
+        && length(setintersection(s.actions, ["secretsmanager:CreateSecret", "secretsmanager:UpdateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DeleteSecret", "secretsmanager:ListSecrets", "kms:GenerateDataKey"])) == 0
+        && alltrue([for a in s.actions : !strcontains(a, "*")])
+        && !contains(s.resources, "*")
+      ])
     ])
-    error_message = "the receiver role holds two statements, read and decrypt, and writes, lists or encrypts nothing"
+    error_message = "each reader role holds two statements, read and decrypt, and writes, lists or encrypts nothing"
   }
 
   assert {
-    condition = anytrue([
-      for s in data.aws_iam_policy_document.receiver.statement :
-      s.actions == toset(["kms:Decrypt"])
-      && s.resources == toset(["arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"])
-      && anytrue([
-        for c in s.condition :
-        c.test == "StringEquals" && c.variable == "kms:ViaService"
-        && length(c.values) == 1 && contains(c.values, "secretsmanager.us-west-2.amazonaws.com")
-      ])
-      && anytrue([
-        for c in s.condition :
-        c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN"
-        && length(c.values) == 1 && contains(c.values, "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*")
+    condition = alltrue([
+      for name, prefix in {
+        receiver    = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/ingest/bearer-tokens/*"
+        hunt-runner = "arn:aws:secretsmanager:us-west-2:000000000000:secret:dfe/test/engine/alert-destinations/*"
+        } : anytrue([
+          for s in data.aws_iam_policy_document.reader[name].statement :
+          s.actions == toset(["kms:Decrypt"])
+          && s.resources == toset(["arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"])
+          && anytrue([
+            for c in s.condition :
+            c.test == "StringEquals" && c.variable == "kms:ViaService"
+            && length(c.values) == 1 && contains(c.values, "secretsmanager.us-west-2.amazonaws.com")
+          ])
+          && anytrue([
+            for c in s.condition :
+            c.test == "StringLike" && c.variable == "kms:EncryptionContext:SecretARN"
+            && length(c.values) == 1 && contains(c.values, prefix)
+          ])
       ])
     ])
-    error_message = "the receiver's KMS grant must be Decrypt alone, through secretsmanager.<region>, for the bearer-token secrets alone"
+    error_message = "each reader's KMS grant must be Decrypt alone, through secretsmanager.<region>, for its own secrets alone"
   }
 }
 
-run "the_receiver_grant_follows_the_store_prefix" {
+run "the_reader_grants_follow_the_store_prefix" {
   command = plan
 
   module {
@@ -584,15 +599,19 @@ run "the_receiver_grant_follows_the_store_prefix" {
   }
 
   assert {
-    condition = anytrue([
-      for s in data.aws_iam_policy_document.receiver.statement :
-      s.resources == toset(["arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/engine/ingest/bearer-tokens/*"])
+    condition = alltrue([
+      for name, prefix in {
+        receiver    = "arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/engine/ingest/bearer-tokens/*"
+        hunt-runner = "arn:aws:secretsmanager:us-west-2:000000000000:secret:org-secrets/dfe/test/engine/alert-destinations/*"
+        } : anytrue([
+          for s in data.aws_iam_policy_document.reader[name].statement : s.resources == toset([prefix])
+      ])
     ])
-    error_message = "the receiver's read grant must carry the store prefix, as the engine's names do"
+    error_message = "each reader's grant must carry the store prefix, as the engine's names do"
   }
 }
 
-run "the_receiver_role_binds_its_own_service_account" {
+run "each_reader_role_binds_its_own_service_account" {
   command = plan
 
   module {
@@ -600,13 +619,13 @@ run "the_receiver_role_binds_its_own_service_account" {
   }
 
   assert {
-    condition     = aws_eks_pod_identity_association.receiver.namespace == "dfe-test" && aws_eks_pod_identity_association.receiver.service_account == "dfe-receiver"
-    error_message = "the receiver role must be associated with the dfe-receiver service account in engine_namespace"
-  }
-
-  assert {
-    condition     = aws_eks_pod_identity_association.receiver.cluster_name == "dfe-contract"
-    error_message = "the receiver association must name the deployment's own cluster"
+    condition = {
+      for name, a in aws_eks_pod_identity_association.reader : name => [a.cluster_name, a.namespace, a.service_account]
+      } == {
+      receiver    = ["dfe-contract", "dfe-test", "dfe-receiver"]
+      hunt-runner = ["dfe-contract", "dfe-test", "dfe-hunt-runner"]
+    }
+    error_message = "the receiver and hunt-runner roles must be associated with their own service accounts in engine_namespace, on the deployment's own cluster"
   }
 }
 

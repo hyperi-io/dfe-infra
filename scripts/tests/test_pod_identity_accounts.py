@@ -77,24 +77,45 @@ def local_value(tf_file: Path, name: str) -> str:
     return match.group(1)
 
 
-def test_the_receiver_role_binds_the_account_its_thin_chart_runs_as() -> None:
-    """dfe-receiver reads its ingest bearer tokens through this association, so an
-    account its pods do not run as leaves every bearer listener with no tokens."""
+def reader_accounts(tf_file: Path) -> dict[str, str]:
+    """Reader key -> the service account aws-sm's readers map binds it to."""
+    return dict(re.findall(r'^\s*([\w-]+)\s*=\s*\{\s*\n(?:\s*//.*\n)*\s*service_account\s*=\s*"([^"]+)"',
+                           tf_file.read_text(encoding="utf-8"), re.MULTILINE))
+
+
+def runs_as(golden: Path, deployment: str) -> set[str]:
+    """The serviceAccountName each Deployment called `deployment` in a golden runs as."""
+    return {
+        doc["spec"]["template"]["spec"].get("serviceAccountName")
+        for doc in yaml.safe_load_all(golden.read_text(encoding="utf-8"))
+        if doc and doc.get("kind") == "Deployment" and doc["metadata"]["name"] == deployment
+    }
+
+
+def test_each_reader_role_binds_the_account_its_pods_run_as() -> None:
+    """dfe-receiver reads its ingest bearer tokens and dfe-hunt-runner its alert
+    destinations through these associations, so an account the pods do not run as
+    leaves the receiver with no tokens and the runner with no destinations."""
     main_tf = SECRETS_AWS / "main.tf"
     body = main_tf.read_text(encoding="utf-8")
-    start = body.index('resource "aws_eks_pod_identity_association" "receiver"')
+    start = body.index('resource "aws_eks_pod_identity_association" "reader"')
     block = body[start : body.index("\n}\n", start)]
-    expect("the association binds the receiver's service account local",
-           re.search(r"^\s*service_account\s*=\s*local\.receiver_service_account$", block, re.MULTILINE)
+    expect("the association binds each reader's service account",
+           re.search(r"^\s*service_account\s*=\s*each\.value\.service_account$", block, re.MULTILINE)
            is not None, block)
-    account = local_value(main_tf, "receiver_service_account")
+    accounts = reader_accounts(main_tf)
+    expect("the readers map names the receiver and the hunt runner",
+           set(accounts) == {"receiver", "hunt-runner"}, f"{accounts}")
 
-    renders = sorted((GOLDENS / "dfe-receiver").glob("*-aws.yaml"))
-    expect("the receiver has aws goldens to read", bool(renders), str(GOLDENS))
-    for golden in renders:
-        found = set(re.findall(r"^\s*serviceAccountName: (\S+)$", golden.read_text(encoding="utf-8"), re.MULTILINE))
-        expect(f"{golden.name} runs the receiver as the account the association binds",
-               found == {account}, f"golden {sorted(found)!r} vs tofu {account!r}")
+    # reader key -> (golden directory, Deployment name)
+    pods = {"receiver": ("dfe-receiver", "dfe-receiver"), "hunt-runner": ("dfe-engine", "dfe-hunt-runner")}
+    for key, (component, deployment) in pods.items():
+        renders = sorted((GOLDENS / component).glob("*-aws*.yaml"))
+        expect(f"{component} has aws goldens to read", bool(renders), str(GOLDENS))
+        for golden in renders:
+            found = runs_as(golden, deployment)
+            expect(f"{golden.name} runs {deployment} as the account the {key} association binds",
+                   found == {accounts.get(key)}, f"golden {sorted(found)!r} vs tofu {accounts.get(key)!r}")
 
 
 def test_external_dns_binds_the_account_the_appset_names() -> None:
@@ -167,7 +188,7 @@ def test_keeper_gets_its_own_account_and_no_association() -> None:
 
 def main() -> int:
     with standalone():
-        test_the_receiver_role_binds_the_account_its_thin_chart_runs_as()
+        test_each_reader_role_binds_the_account_its_pods_run_as()
         test_external_dns_binds_the_account_the_appset_names()
         test_clickhouse_object_store_binds_the_account_the_chart_creates()
         test_keeper_gets_its_own_account_and_no_association()
