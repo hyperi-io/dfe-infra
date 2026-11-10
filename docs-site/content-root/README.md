@@ -39,7 +39,7 @@ Release builds add profile-guided optimisation (PGO) and BOLT, which means 'run 
 
 Parsing is where this pays most, because grok and regex over a vendor message body are some of the most expensive per-event work in a pipeline. So dfe-transform-elastic doesn't interpret Elastic ingest pipelines. Their processors compile to Rust, one module per source, and their Painless scripts run as hand-transcribed or pattern-matched Rust. A script it doesn't recognise is counted and skipped.
 
-Zero-copy parsers replace grok for the patterns they cover. In an initial spike bench dfe-transform-elastic ran 5-10x faster than our previous VRL pipeline, and the range moves with data shape and error rate. Definitive benches are tracked in [dfe-transform-elastic#162](https://github.com/hyperi-io/dfe-transform-elastic/issues/162).
+Zero-copy parsers replace grok for the patterns they cover.
 
 ## Who does what
 

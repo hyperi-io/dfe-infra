@@ -48,17 +48,13 @@ Every event lands through the loader, and most enter through the receiver or fet
 
 Why not one generic engine throughout? Because it interprets your program. VRL compiles it at startup into an expression tree, then walks that tree for every event. The Rust compiler optimises the interpreter when it builds the binary, but your program doesn't exist yet.
 
-Profile-guided optimisation widens the gap. We build the bookends with PGO and BOLT, which means 'run it under real load, record what's hot, rebuild around it'. In an initial manual spike, PGO and BOLT took a dfe-receiver build to roughly 30-50% more throughput than a system-allocator, thin-LTO build.
+Profile-guided optimisation widens the gap. We build the bookends with PGO and BOLT, which means 'run it under real load, record what's hot, rebuild around it'.
 
 A bookend's hot path is the same work in every deployment, so a profile trained on it carries over. An interpreter's profile only matches the programs it was trained on, and code it never saw is laid out cold.
 
 Parsing is where it pays most, because grok and regex over a vendor message body are some of the most expensive per-event work in a pipeline. `dfe-transform-elastic` has no interpreter. Elastic ingest processors compile to Rust, one module per source, and Painless scripts run as Rust too: hand-transcribed per source, or matched to a known pattern. A script it doesn't recognise is counted and skipped.
 
 Zero-copy `dfe-parse` parsers replace two whole-pattern grok forms, and the rest fall back to compiled regex. The compiler sees that code, and so does the profile.
-
-In an initial spike bench, `dfe-transform-elastic` ran 5-10x faster than our previous VRL pipeline. That's rough, and it moves with data shape and error rate.
-
-Definitive benches are tracked in [dfe-transform-elastic#162](https://github.com/hyperi-io/dfe-transform-elastic/issues/162).
 
 Hence purpose-built for the known path, and generics for the bespoke 20%.
 
