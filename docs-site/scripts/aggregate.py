@@ -1272,6 +1272,7 @@ def plan_builds(
     stacks: list[str],
     with_next: bool,
     dropped: frozenset[str] = frozenset(),
+    unreleased: bool = False,
 ) -> list[Build]:
     """The builds to assemble: the chosen released stacks newest first, then /next/.
 
@@ -1281,6 +1282,8 @@ def plan_builds(
         stacks: Released stacks to build. Empty means every one.
         with_next: Whether to add the unlisted preview from each default branch.
         dropped: Released stacks the site does not build.
+        unreleased: Whether a named stack may be one not yet released, such as an rc,
+            built unlisted for a local preview.
 
     Returns:
         The builds.
@@ -1293,14 +1296,21 @@ def plan_builds(
     if refused:
         raise SystemExit(f"error: {PUBLISH_FILE.name} drops {', '.join(refused)}")
     released = [name for name in released_stacks(tree) if name not in dropped]
-    unknown = sorted(set(stacks) - set(released))
+    blocks = tree.get("stacks") if isinstance(tree.get("stacks"), dict) else {}
+    known = set(blocks) if unreleased else set(released)
+    unknown = sorted(set(stacks) - known)
     if unknown:
         have = ", ".join(released) or "none"
         raise SystemExit(f"error: not a released stack: {', '.join(unknown)} (released: {have})")
     chosen = [name for name in released if not stacks or name in stacks]
-    blocks = tree["stacks"]
     builds = [
         Build(name, f"/v/{name}/", True, stack_refs(name, blocks[name], members)) for name in chosen
+    ]
+    # A preview of an unreleased stack is unlisted, so it never becomes the site's newest release.
+    builds += [
+        Build(name, f"/v/{name}/", False, stack_refs(name, blocks[name], members))
+        for name in stacks
+        if name not in released
     ]
     if with_next:
         heads = {member.name: HEAD for member in members}
@@ -1350,6 +1360,11 @@ def main(argv: list[str] | None = None) -> int:
         help="also build the unlisted /next/ preview from each default branch",
     )
     parser.add_argument(
+        "--unreleased",
+        action="store_true",
+        help="let --stack name a stack not yet released, such as an rc, built unlisted (local preview)",
+    )
+    parser.add_argument(
         "--out", type=Path, default=DEFAULT_OUT, help="the content root (default docs-site/content)"
     )
     parser.add_argument(
@@ -1371,7 +1386,7 @@ def main(argv: list[str] | None = None) -> int:
         JOURNEYS_FILE.read_text(encoding="utf-8"), source=str(JOURNEYS_FILE)
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
-    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped)
+    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, args.unreleased)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:
         work = args.work_dir or Path(scratch)

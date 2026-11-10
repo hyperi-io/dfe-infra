@@ -213,6 +213,10 @@ def test_plan_builds_refuses_an_unreleased_stack_and_an_empty_plan() -> None:
         aggregate.plan_builds(tree, members, ["2.3.0-rc.1"], False)
     with pytest.raises(SystemExit, match="no released stack"):
         aggregate.plan_builds(tree, members, [], False)
+    builds = aggregate.plan_builds(tree, members, ["2.3.0-rc.1"], False, unreleased=True)
+    assert [(b.name, b.base_url, b.listed) for b in builds] == [("2.3.0-rc.1", "/v/2.3.0-rc.1/", False)]
+    with pytest.raises(SystemExit, match=r"not a released stack: 9\.9\.9"):
+        aggregate.plan_builds(tree, members, ["9.9.9"], False, unreleased=True)
 
 
 @pytest.mark.parametrize(
