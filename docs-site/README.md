@@ -36,7 +36,7 @@ Then:
 npm run preview
 ```
 
-That assembles the newest release (about a minute while it fetches each repository), then serves it at http://localhost:3000/v/2.2.1/. Save a page under `content-root/` and the browser reloads it in a few seconds. `python3 scripts/preview.py --help` lists the options: `--work-dir` keeps the checkouts so the next start skips the fetch, and `--no-aggregate` serves what is already assembled.
+That assembles the newest release (about a minute while it fetches each repository), then serves it at http://localhost:3000/v/2.2.1/. Save a page under `content-root/` and the browser reloads it in a few seconds. `python3 scripts/preview.py --help` lists the options: `--work-dir` keeps the checkouts so the next start skips the fetch, and `--no-aggregate` serves what is already assembled. `--next` serves `/next/` from each repository's default branch instead, and `--stack <version>` serves one stack, an rc included, at `/v/<version>/`.
 
 Edits to a repository's `docs/` do not show in the preview, because the build fetches each repository at the tag its stack pins. The full build, every version as CI deploys it:
 

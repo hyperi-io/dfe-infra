@@ -10,16 +10,19 @@
 """preview -- the docs site on localhost, reloading as content-root/ pages are saved.
 
     python3 docs-site/scripts/preview.py                      # the newest release
+    python3 docs-site/scripts/preview.py --next               # /next/, each default branch
+    python3 docs-site/scripts/preview.py --stack 2.2.2-rc.1   # one stack, an rc included
     python3 docs-site/scripts/preview.py --port 3001
     python3 docs-site/scripts/preview.py --work-dir .tmp/docs-clones   # reuse the clones
     python3 docs-site/scripts/preview.py --no-aggregate       # reuse docs-site/content/
 
-Runs aggregate.py for the newest release, generates its API pages, then
+Runs aggregate.py for the build it serves, generates its API pages, then
 `docusaurus start`. The build reads a copy of content-root/, so every second this
 copies a saved, added or deleted page across and Docusaurus reloads it.
 
-Member pages come from each repository at the tag the release pins, so an edit
-to a member's docs/ does not show here.
+Member pages come from each repository at the tag the stack pins, or its default
+branch under --next, so an edit to a member's docs/ in a local checkout does not
+show here.
 
 Needs the site's npm dependencies installed (npm ci). Ctrl-C stops it.
 """
@@ -94,6 +97,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--port", default="3000", help="the dev server's port (default 3000)")
     parser.add_argument("--work-dir", type=Path, help="keep the member checkouts here")
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument(
+        "--next", action="store_true", help="serve /next/, built from each default branch"
+    )
+    which.add_argument(
+        "--stack", help="serve this versions.yaml stack, released or not (an rc included)"
+    )
     parser.add_argument(
         "--no-aggregate", action="store_true", help="serve docs-site/content/ as it stands"
     )
@@ -101,13 +111,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if not DOCUSAURUS.is_file():
         raise SystemExit(f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first")
+    if args.stack:
+        chosen = ["--stack", args.stack, "--unreleased"]
+    elif args.next:
+        chosen = ["--next"]
+    else:
+        chosen = []
     if not args.no_aggregate:
         work = ["--work-dir", str(args.work_dir)] if args.work_dir else []
-        run(sys.executable, str(Path(aggregate.__file__)), *work)
+        run(sys.executable, str(Path(aggregate.__file__)), *chosen, *work)
     site = json.loads((aggregate.DEFAULT_OUT / aggregate.SITE_FILE).read_text(encoding="utf-8"))
-    name = site["newest"]
+    name = args.stack or (aggregate.NEXT if args.next else site["newest"])
     if not name:
         raise SystemExit("error: content/site.json names no release to preview")
+    if not (aggregate.DEFAULT_OUT / name).is_dir():
+        raise SystemExit(
+            f"error: {aggregate.DEFAULT_OUT / name} is not assembled: run without --no-aggregate"
+        )
     env = {**os.environ, "DFE_DOCS_BUILD": name}
     heap = f"--max-old-space-size={HEAP_MB}"
     env["NODE_OPTIONS"] = f"{env.get('NODE_OPTIONS', '')} {heap}".strip()
