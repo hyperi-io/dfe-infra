@@ -887,7 +887,7 @@ def build_dial_text(a: Answers) -> str:
             '  ddl: "true"\n',
             '  smoke: "true"\n\n',
             "secrets:\n",
-            "  backend: openbao\n",
+            f"  backend: {'aws-sm' if is_aws else 'openbao'}\n",
             '  ref: ""\n\n',
             'overlay: ""\n\n',
             "retention:\n",
