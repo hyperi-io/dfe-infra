@@ -11,5 +11,5 @@
 
 
 def schema_lock_drop(database: str) -> str:
-    """The statement to run once while no engine holds the lease. The engine recreates the table at boot."""
+    """The statement to run once while no engine holds the lease. An engine at v1.22.85 or later recreates the table at boot."""
     return f"DROP TABLE {database}.schema_lock SYNC"
