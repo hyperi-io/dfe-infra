@@ -17,13 +17,21 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const FIELD_LINE = /^\**(status|owner|owners|date|updated|last updated|author|authors|audience|scope)\**\s*:/i;
 const SKIPPED = [/^#/, /^:::/, /^\|/, /^[-*+] /, /^\d+[.)] /, /^<!--/, /^</, /^!\[/];
 
+// Innermost tags first, until none is left, so a tag split around another (<scr<b>ipt>) goes too.
+function stripTags(text) {
+  let out = text;
+  let previous;
+  do {
+    previous = out;
+    out = out.replace(/<[^<>]*>/g, '');
+  } while (out !== previous);
+  return out.replace(/[<>]/g, '');
+}
+
 function plain(text) {
-  return text
+  return stripTags(text)
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<[^>]+>/g, '')
-    // A tag split around another (<scr<b>ipt>) leaves a bracket after one pass.
-    .replace(/[<>]/g, '')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/(\*\*|__)(.*?)\1/g, '$2')
     .replace(/(^|\W)[*_]([^*_]+)[*_](?=\W|$)/g, '$1$2')

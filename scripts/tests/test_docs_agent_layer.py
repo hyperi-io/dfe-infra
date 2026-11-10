@@ -214,7 +214,7 @@ LONG = "word " * 50
         ),
         (
             "A nested <scr<b>ipt> tag leaves no angle bracket in the text.\n",
-            "A nested ipt tag leaves no angle bracket in the text.",
+            "A nested tag leaves no angle bracket in the text.",
         ),
         ("# Only headings\n\n## And more\n", ""),
         (LONG, ("word " * 31).strip() + "..."),
