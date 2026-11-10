@@ -46,6 +46,10 @@
     },
     "miniflare": {
       "undici": "7.30.1"
+    },
+    "docusaurus-plugin-llms": {
+      "minimatch": "11.0.4",
+      "yaml": "2.8.3"
     }
   },
   "browserslist": {
