@@ -187,6 +187,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-receiver
+        - name: SCALO_WRITABLE_PATH_LIMITS
+          value: /var/spool/dfe/dlq=1Gi
         envFrom:
         - configMapRef:
             name: dfe-receiver-env
