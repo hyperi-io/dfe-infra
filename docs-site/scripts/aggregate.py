@@ -127,6 +127,8 @@ _TITLE_FIELD = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _H1 = re.compile(r"^#[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 # The page aggregate.py writes where a section's docs/ has no landing of its own.
 SECTION_INDEX = "index.md"
+# The first line of that page, which docs-site/scripts/gate.py skips: its titles are checked on their own pages.
+SECTION_INDEX_MARK = "<!-- aggregate.py: section index -->"
 
 
 class Rule(StrEnum):
@@ -1195,7 +1197,7 @@ def write_section_index(dest: Path, name: str) -> None:
             path.name.lower(),
         ),
     )
-    lines = [f"# {name}", "", f"Every page in the {name} section.", ""]
+    lines = [SECTION_INDEX_MARK, f"# {name}", "", f"Every page in the {name} section.", ""]
     for path in pages:
         relative = path.relative_to(dest)
         depth = len(relative.parts) - 1

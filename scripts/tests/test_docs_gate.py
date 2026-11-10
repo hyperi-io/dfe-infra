@@ -78,3 +78,22 @@ def test_the_gate_reads_a_copy_file(tmp_path: Path, yaml_text: str, rules: set[s
 def test_the_gate_flags_only_the_misspelt_product_name(line: str, flagged: bool) -> None:
     rules = {rule for rule, _, _ in gate.check_line(line, {})}
     assert ("elasticsearch" in rules) is flagged
+
+
+def test_the_gate_skips_generated_section_indexes_and_api_pages(tmp_path: Path) -> None:
+    """Their text repeats titles the gate already reads on each page they list."""
+    import json
+
+    build = tmp_path / "2.2.1"
+    for relative, text in {
+        "svc/index.md": f"{gate.aggregate.SECTION_INDEX_MARK}\n# svc\n",
+        "own/index.md": "# Own landing\n",
+        "own/page.md": "# Page\n",
+        "api/op.md": "# Generated\n",
+    }.items():
+        path = build / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    site = {"builds": [{"name": "2.2.1", "openapi": {"output": "2.2.1/api"}}]}
+    (tmp_path / gate.aggregate.SITE_FILE).write_text(json.dumps(site), encoding="utf-8")
+    assert [page for _, page, _ in gate.pages_in(tmp_path)] == ["own/index.md", "own/page.md"]
