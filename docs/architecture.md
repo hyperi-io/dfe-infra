@@ -1,10 +1,6 @@
 # dfe-infra architecture
 
-dfe-infra is the DEPLOYMENT VEHICLE of the DFE product suite: the Helm
-charts, Argo CD ApplicationSets, and bootstrap that put DFE onto a bare
-Kubernetes cluster. It is the pinned base every deployment starts from. It
-never writes config - the engine writes overlays and DDL into the deploy
-repo, and this repo's appsets reconcile them; never the reverse.
+dfe-infra deploys DFE onto a Kubernetes cluster: the Helm charts, the Argo CD ApplicationSets, and the bootstrap that prepares a bare cluster. Every deployment starts from the version it pins. It never writes configuration. The engine writes overlays and DDL into the deploy repo, and this repo's ApplicationSets apply them.
 
 ## Where this repo sits in the suite
 
@@ -18,17 +14,11 @@ flowchart LR
 
 The hard boundary (suite invariant): **dfe-infra deploys, dfe-engine
 configures.** The engine never installs backing services or authors Argo
-Applications; this repo never reads or writes engine config. The
+Applications, and this repo never reads or writes engine config. The
 whole-suite map lives in the dfe-engine repo (`docs/architecture.md`
 there) - this page covers only the infra side.
 
-One named exception to "this repo owns its charts": **HyperDX is
-controlled by the dfe-engine repo** (SSoT - it integrates most closely).
-Anything HyperDX needs doing - the fork, the image, this repo's hyperdx
-chart - goes through a GitHub issue on dfe-engine first. If it is
-time-critical, security-urgent, or a small change that clearly cannot
-impact dfe-engine, make it here directly and raise a dfe-engine issue
-noting it was done, for politeness.
+One named exception to "this repo owns its charts": **dfe-engine controls the HyperDX integration**, because it integrates most closely. A change to the fork, its image or this repo's hyperdx chart starts as an issue on dfe-engine.
 
 ## What this repo owns
 
@@ -44,17 +34,13 @@ noting it was done, for politeness.
 
 ## Swappable components (the modularity contract)
 
-The initial build is native-k8s-only, but every major component sits behind
-a config-driven seam so a deployment swaps it without redesign. RKE2 is the
-standard cluster for all deployments (on-prem and cloud) unless a deployment
-has a strong reason otherwise. The seam is always an existing k8s
-abstraction or a chart mode -- never a fork of the charts.
+Every major component sits behind a config-driven boundary, so a deployment swaps it without a redesign. RKE2 is the distribution DFE provisions when there is no cluster, and managed Kubernetes (EKS, AKS, GKE Standard) is a cluster DFE deploys onto. The boundary is always an existing Kubernetes abstraction or a chart mode, never a fork of the charts.
 
-| Component | Seam | Dial | Swap targets |
+| Component | Boundary | Dial | Swap targets |
 |---|---|---|---|
-| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 standard; EKS-class only with cause |
-| DNS | external-dns / estate-managed | provider config; or the deployment's own DNS | CoreDNS record (on-prem), Route53, ... |
-| Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI; cloud CA issuer later |
+| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 where DFE provisions the cluster, EKS, AKS, GKE Standard |
+| DNS | external-dns / estate-managed | provider config, or the deployment's own DNS | CoreDNS record (on-prem), Route53, ... |
+| Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI |
 | Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+IRSA), ... |
 | Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
 | ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
@@ -62,10 +48,10 @@ abstraction or a chart mode -- never a fork of the charts.
 | Edge / LB | Gateway API + EnvoyProxy CR | `envoyGateway.service.*` (type, class, annotations, externalIPs) | MetalLB, cloud NLB, NodePort behind HW LB, externalIPs with no LB controller |
 | Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
 
-A new architectural dependency must name its seam in this table before it
-lands; a component reachable only through one provider is a bug.
+A new architectural dependency names its boundary in this table before it
+lands. A component reachable only through one provider is a bug.
 
-Two files anchor the seams (the hyperi-ci versions.yaml pattern):
+Two files hold the shared facts (the hyperi-ci versions.yaml pattern):
 `versions.yaml` holds every pin, and `argocd/values/common.yaml` holds every
 shared deploy-config fact -- including the canonical `hostnames:` map
 (role-named service subdomains: `dfe`, `hyperdx`, `auth` for the issuer,
@@ -110,7 +96,7 @@ is `GET /api/v1/system/schema` on the engine.
 Every k8s-deployed app dead-letters to a Kafka topic dfe-engine creates:
 `dfe_receiver_dlq`, `dfe_loader_dlq`, `dfe_archiver_dlq`,
 `dfe_fetcher_dlq`, and one shared `dfe_transform_dlq` for the transforms
-(a transform overrides only when it genuinely needs its own). Kafka is
+(a transform overrides only when it needs its own). Kafka is
 the DEFAULT DLQ target -- the file fallback cannot work under the charts'
 read-only rootfs and silently drops. dfe-docker: DLQs are opt-IN per
 component, EXCEPT the single-node full deploy, which carries the same
@@ -125,13 +111,20 @@ retention against the 72h data-topic default: a poisoned message is
 exactly the record an operator must still find days later, and once its
 source offset commits it exists nowhere else. The four fleet apps are
 pointed at their topic by chart env (the fleet-uniform `DLQ_TOPIC` /
-`DLQ_MODE` contract, each in the app's own env regime); the transforms
-cannot consume `dfe_transform_dlq` yet (dfe-transform-vrl#30,
-dfe-transform-vector#46 own that wiring).
+`DLQ_MODE` contract, each in the app's own env regime). The transforms are
+not pointed at `dfe_transform_dlq` by chart env: dfe-transform-vrl#30 and
+dfe-transform-vector#46 track that wiring.
 
-## The overlay seam (how engine dials land here)
+## Overlays: how engine dials land here
 
-One mechanism: layer2-apps generates one Argo Application per `values/<service>-<instance>-values.yaml` in the deploy repo, from four sources: the component's thin chart over OCI, pinned by digest (`chart-digests` in `versions.yaml`); `helm/charts/dfe-extras`, its DFE-only objects; this repo as ref `infra`, for the value files; and the deploy repo as ref `values`, whose overlay file is layered last. Adding/removing a values file adds/removes the app; the engine turns dials, this repo defines what dials exist (every dial must be a chart value).
+One mechanism: layer2-apps generates one Argo Application per `values/<service>-<instance>-values.yaml` in the deploy repo, from four sources:
+
+- the component's thin chart over OCI, pinned by digest (`chart-digests` in `versions.yaml`)
+- `helm/charts/dfe-extras`, its DFE-only objects
+- this repo as ref `infra`, for the value files
+- the deploy repo as ref `values`, whose overlay file is layered last
+
+Adding or removing a values file adds or removes the app. The engine turns dials, and this repo defines which dials exist: every dial is a chart value.
 
 The overlay entry is `$values/{{ .path.path }}/{{ .path.filename }}` (`argocd/appsets/layer2-apps.yaml`), the directory and name of the file the generator matched, so each Application layers its own file and no other.
 
@@ -145,7 +138,7 @@ Each Application is named `<service>-<instance>-<cluster>`, and that name is its
 | [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
 | [deployment/on-prem.md](deployment/on-prem.md) | build, deploy, test and tear down on an on-prem cluster (the `local` target) |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
-| [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud; private-cloud swap; Altinity untested) |
+| [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (the official operator, ClickHouse Cloud, a private-cloud swap, Altinity untested) |
 | [deployment/deployment-logs/](deployment/deployment-logs/template.md) | per-deploy log template |
 | [testing-cycle.md](testing-cycle.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
 | [source-suite.md](source-suite.md) | the post-deploy source tests the cycle's `acceptance --suite source` runs: the two cases, what proves each, the reload-and-restart rule |
