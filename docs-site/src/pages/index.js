@@ -32,6 +32,25 @@ const BADGES = [
   {label: 'ClickHouse via Kafka or gRPC', to: '/overview/'},
 ];
 
+// The hyperi-website figures, worded as published there; each card links to the page that backs it.
+const FIGURES = [
+  {value: 'Petabyte scale', text: 'Designed and tested at petabyte scale, then brought down to a single box.', to: '/dfe-infra/autoscaling/'},
+  {value: 'A microsecond', text: 'to parse a syslog line, in a receiver built for the common transports.', to: '/dfe-receiver/architecture/'},
+  {value: 'Up to 5x less CPU', text: 'than Elasticsearch ingest, for the same ECS fields, same data, same enriched output.', to: '/dfe-transform-elastic/'},
+];
+
+// The hyperi-website's eight principles, each linked to the page that backs it.
+const PRINCIPLES = [
+  {title: 'Useful from day one', text: 'Schemas, pipelines and dashboards come ready. Your data works when it arrives, and you tune from there.', to: '/quickstart/'},
+  {title: 'Fused with context', text: 'Every event is joined to what surrounds it: the user, the device, the place, what changed.', to: '/dfe-fetcher/'},
+  {title: 'Do the work at the edge', text: 'Filter, shape and enrich data where it is born, so you move and store only what is worth it.', to: '/dfe-infra/design-principles/'},
+  {title: 'Efficiency, efficiency, efficiency', text: 'More data on less hardware, kept for longer. The answer from six months ago is still there.', to: '/dfe-transform-elastic/'},
+  {title: 'Built for petabytes, made small', text: 'Designed and tested at petabyte scale, then brought down to a single box.', to: '/dfe-infra/autoscaling/'},
+  {title: 'Plays nicely, or replaces', text: 'Filebeat, Logstash, Vector, Fluent Bit and OpenTelemetry send straight in. Run it beside your tools, or move across.', to: '/dfe-receiver/architecture/'},
+  {title: 'Sovereign or secure enclave by design', text: 'Your data centre, your own cloud account, or a network with no outside connection. No HyperI cloud in the path.', to: '/dfe-infra/deployment/on-prem/'},
+  {title: 'GitOps from the start', text: 'Every change is a commit to your own deploy repo, with history and pull-request review.', to: '/dfe-infra/deployment/state-and-repos/'},
+];
+
 // Three claims, each with a mechanism or a number the linked page backs.
 const VALUES = [
   {
@@ -127,11 +146,11 @@ function Hero({versionLabel}) {
         <div className={styles.heroCopy}>
           <p className={styles.eyebrow}>Data Fusion Engine {versionLabel}</p>
           <h1 id="hero-title" className={styles.heroTitle}>
-            Every agent in. <span className={styles.heroAccent}>ClickHouse out.</span>
+            Land it. Use it. <span className={styles.heroAccent}>Scale it.</span>
           </h1>
           <p className={styles.tagline}>
-            A data pipeline you run yourself. It takes logs and events from your agents, routes them by source, lands
-            them in ClickHouse and runs your SQL detections on a schedule.
+            What you used Splunk, Elastic and a lakehouse for, without the limitations. Gigabytes to petabytes. Your
+            environment, your control.
           </p>
           <div className={styles.actions}>
             <Link className={`${styles.button} ${styles.buttonPrimary}`} to="/quickstart/docker/">
@@ -166,9 +185,45 @@ export default function Home() {
       <main>
         <Hero versionLabel={versionLabel} />
 
+        <section className={styles.section} aria-label="Figures">
+          <div className={styles.container}>
+            <ul className={styles.gridThree}>
+              {FIGURES.map(({value, text, to}) => (
+                <li key={value}>
+                  <Link className={`${styles.card} ${styles.linkCard}`} to={to}>
+                    <h3 className={styles.cardTitle}>{value}</h3>
+                    <p className={styles.cardText}>{text}</p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section className={`${styles.section} ${styles.sectionRaised}`} aria-labelledby="principles">
+          <div className={styles.container}>
+            <SectionHeader
+              id="principles"
+              eyebrow="Why DFE"
+              title="Eight principles, one platform"
+              lead="They run through everything we build."
+            />
+            <ul className={styles.gridThree}>
+              {PRINCIPLES.map(({title, text, to}) => (
+                <li key={title}>
+                  <Link className={`${styles.card} ${styles.linkCard}`} to={to}>
+                    <h3 className={styles.cardTitle}>{title}</h3>
+                    <p className={styles.cardText}>{text}</p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
         <section className={styles.section} aria-labelledby="values">
           <div className={styles.container}>
-            <SectionHeader id="values" eyebrow="Why DFE" title="One pipeline, agent to table" />
+            <SectionHeader id="values" eyebrow="What it does" title="One pipeline, agent to table" />
             <ul className={styles.gridThree}>
               {VALUES.map(({key, Icon, title, text, chips, to}) => (
                 <li key={key}>
