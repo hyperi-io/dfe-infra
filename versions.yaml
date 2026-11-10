@@ -8661,13 +8661,13 @@ stacks:
       dfe-archiver: "sha256:1ddcfb5c167df1854b1e70a007b76c3142a29c5dff4d81f65f93eeec68b992df"           # 1.7.47
       dfe-engine: "sha256:b3ffd8c2b3434563c76e806053e3d7c92117639e8a3c9dbf0f2f5d67ee69a9dc"             # 1.22.86
       dfe-fetcher: "sha256:bfb707c98b2bc3316db62182e53713fad1acf28bf00e1c4f3a79d80d8f0d7946"            # 1.4.49
+      dfe-hyperdx: "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"            # 0.3.21
       dfe-loader: "sha256:2cf1835fb4edffa4692e00e4e91c19577ec4156e26316f663db966848c7d9849"             # 1.18.67
       dfe-receiver: "sha256:3fca63ce66ba16a407d553d8b14100c5f3c90b3dd92794bbf76904bf93e240d0"           # 1.15.65
       dfe-transform-elastic: "sha256:085700e62308177aa3417a3dde518385e0caa4bd6dbb4b9c31c1b715ad251dd9"  # 1.1.28
       dfe-transform-vector: "sha256:f03d61eda4b4e00dffb21bf1f34bf771bd9da01be674c6b0f5721eacffb0c5f2"   # 1.0.62
       dfe-transform-vrl: "sha256:6cbc6106351e2879d22ed1176be362cf068155d93c8db76f0d5e93ffafe0464c"      # 1.1.45
       dfe-ui: "sha256:2ec731a63a036de44df910e3b3752c086d8596476e2e5fb0baa28386636ab82e"                # 1.7.39
-      hyperdx: "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"                # 0.3.21
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.

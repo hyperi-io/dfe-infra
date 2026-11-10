@@ -251,16 +251,16 @@ rules:
     why: "the tunnel's host settings are the contract's"
   "91-dropped-hyperdx-dashboards":
     kind: report-dropped
-    apps: hyperdx
+    apps: "hyperdx, dfe-hyperdx"
     from: dashboards.resources
     why: "the dashboard loader runs at fixed resources"
   "92-dropped-hyperdx-connections":
     kind: report-dropped
-    apps: hyperdx
+    apps: "hyperdx, dfe-hyperdx"
     from: defaultConnections
     why: "CONFIG LOSS -- the thin chart no longer hands HyperDX DEFAULT_CONNECTIONS from defaultConnections.secretName, so recreate those connections in HyperDX"
   "93-dropped-hyperdx-otlp":
     kind: report-dropped
-    apps: hyperdx
+    apps: "hyperdx, dfe-hyperdx"
     from: otlp
     why: "HyperDX takes no OTLP of its own, and telemetry goes to the collector"

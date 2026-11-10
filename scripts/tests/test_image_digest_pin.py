@@ -188,7 +188,7 @@ def test_the_hyperdx_dashboards_init_container_carries_the_digest() -> None:
     branch covers it -- this is the only thing that reads the rendered result.
     """
     want = engine_pin()
-    rendered = images(cell("hyperdx", "slim", "local"), want_container="dashboards")
+    rendered = images(cell("dfe-hyperdx", "slim", "local"), want_container="dashboards")
     expect(
         "the hyperdx dashboards init container renders the pinned engine digest",
         rendered and all(i == want for i in rendered),

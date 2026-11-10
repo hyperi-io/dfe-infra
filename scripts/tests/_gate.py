@@ -49,7 +49,7 @@ from _weave import REPO_ROOT, TESTS, deploy_repo, published_chart, render_app
 # The deploy.service of each component the matrix covers.
 COMPONENTS = (
     "dfe-ui",
-    "hyperdx",
+    "dfe-hyperdx",
     "dfe-receiver",
     "dfe-loader",
     "dfe-archiver",

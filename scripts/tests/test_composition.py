@@ -34,7 +34,7 @@ import profiles  # noqa: E402
 # The core data path: every profile stands these up with no further
 # configuration, so a fresh deploy ingests, loads, and serves the control plane
 # and the console.
-CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "hyperdx"})
+CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "dfe-hyperdx"})
 
 # The leanest Compose tier runs the core data path alone.
 ARCHIVERLESS = "docker-slim"

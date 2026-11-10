@@ -294,10 +294,6 @@ def check_locks(graph: dict, clones: Clones) -> tuple[list[str], list[str]]:
     return fails, warns
 
 
-# A thin chart's name is its deploy.service, except where the appset maps one.
-_THIN_CHART_NAMES = {"hyperdx": "dfe-hyperdx"}
-
-
 def read_stack() -> tuple[list[str], dict[str, set[str]]]:
     """The current stack's section keys -- apps, content, digests, chart-digests.
 
@@ -331,7 +327,7 @@ def check_charts(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], se
     """
     declared = graph.get("non_members") or {}
     charts = {p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")}
-    charts |= {_THIN_CHART_NAMES.get(s, s) for s in stack.get("chart-digests", set())}
+    charts |= stack.get("chart-digests", set())
     warns = [
         f"chart {chart} has no member in suite.yaml"
         for chart in sorted(charts)

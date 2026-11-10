@@ -61,7 +61,7 @@ DIGEST = "sha256:" + "ab" * 32
 ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
 PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
 # The apps that export over OTLP/HTTP, and the protocol their integration values name.
-OTLP_HTTP: dict[str, list[str]] = {"dfe-ui": ["http/protobuf"], "hyperdx": []}
+OTLP_HTTP: dict[str, list[str]] = {"dfe-ui": ["http/protobuf"], "dfe-hyperdx": []}
 
 
 def _for(service: str, endpoint: str) -> str:
@@ -160,11 +160,6 @@ def deploy_for(tmp_path_factory: pytest.TempPathFactory) -> Callable[[dict], Pat
     return make
 
 
-def _chart_name(service: str) -> str:
-    """The thin chart the appset pulls for a deploy.service, which its contract names."""
-    return "dfe-hyperdx" if service == "hyperdx" else service
-
-
 @pytest.fixture(scope="module")
 def stand_in(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Charts that render each extraEnv entry through tpl on the root context, as the library does.
@@ -173,7 +168,7 @@ def stand_in(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """
     root = tmp_path_factory.mktemp("stand-in")
     for service in SERVICES:
-        chart = root / _chart_name(service)
+        chart = root / service
         (chart / "templates").mkdir(parents=True)
         (chart / "Chart.yaml").write_text(
             f"apiVersion: v2\nname: {chart.name}\nversion: 0.0.0\ntype: application\n",
@@ -233,7 +228,7 @@ def _render(
 def _stand_in_env(
     stand_ins: Path, deploy: Path, service: str, namespace: str = "dfe"
 ) -> dict[str, str]:
-    docs = _render(stand_ins / _chart_name(service), deploy, service, namespace=namespace)
+    docs = _render(stand_ins / service, deploy, service, namespace=namespace)
     return next(d for d in docs if d["kind"] == "ConfigMap")["data"]
 
 
@@ -439,11 +434,11 @@ def test_every_instance_carries_the_label_its_apps_policies_select(
     service: str, thin_charts: dict[str, Path], deploy_for: Callable[[dict], Path]
 ) -> None:
     """A per-config instance is named <app>-<source>, and the app label still names the app."""
-    renamed = {**_overlay("hyperdx", False), "fullnameOverride": f"{_chart_name(service)}-flowx"}
+    renamed = {**_overlay("hyperdx", False), "fullnameOverride": f"{service}-flowx"}
     docs = _render(thin_charts[service], deploy_for(renamed), service)
     pod_labels = _deployment(docs)["spec"]["template"]["metadata"]["labels"]
-    assert pod_labels["app.kubernetes.io/name"] == f"{_chart_name(service)}-flowx"
-    assert pod_labels[APP_LABEL] == _chart_name(service)
+    assert pod_labels["app.kubernetes.io/name"] == f"{service}-flowx"
+    assert pod_labels[APP_LABEL] == service
 
 
 @pytest.mark.parametrize("cloud", ["aws", "local"])

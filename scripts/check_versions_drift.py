@@ -793,13 +793,13 @@ CHECKS += [
     Check(
         "hyperdx thin-chart dashboards init-container engine tag",
         "apps.dfe-engine",
-        Path("argocd/values/apps/hyperdx/values.yaml"),
+        Path("argocd/values/apps/dfe-hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"([^"]+)"',
     ),
     Check(
         "hyperdx thin-chart dashboards init-container engine digest",
         "digests.dfe-engine",
-        Path("argocd/values/apps/hyperdx/values.yaml"),
+        Path("argocd/values/apps/dfe-hyperdx/values.yaml"),
         r'repository:\s*""[^\n]*\n\s*tag:\s*"[^"]+"[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
     # bootstrap.sh writes this helperPod.yaml over upstream's, whose busybox has no tag.

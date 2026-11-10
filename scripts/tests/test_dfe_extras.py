@@ -42,7 +42,7 @@ import pytest
 import yaml
 
 from _gate import APPSETS, CLOUDS, INSTANCE, PROFILES, golden, object_id, render_differences
-from _weave import REPO_ROOT, chart_name, helm, render_app, render_extras, weave
+from _weave import REPO_ROOT, helm, render_app, render_extras, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
 EXTRAS = REPO_ROOT / EXTRAS_PATH
@@ -59,7 +59,7 @@ COMPONENTS = (
     "dfe-transform-elastic",
     "culvert",
     "dfe-ui",
-    "hyperdx",
+    "dfe-hyperdx",
     "dfe-engine",
 )
 
@@ -67,7 +67,7 @@ COMPONENTS = (
 ENV_CONFIGMAP = ("dfe-engine", "dfe-hyperdx", "dfe-receiver", "dfe-loader", "culvert")
 
 # Each component's object name prefix where it is not its deploy.service.
-FULLNAMES = {"culvert": "dfe-culvert", "hyperdx": "dfe-hyperdx"}
+FULLNAMES = {"culvert": "dfe-culvert"}
 
 # What the scalo-service library names objects, per kind, after <fullname>: its
 # README's "What the library renders" table, with the fileSets and writable paths
@@ -292,13 +292,13 @@ SCENARIOS = [
         id="ui-no-nextauth-secret",
     ),
     pytest.param(
-        "hyperdx", "scale", "aws",
+        "dfe-hyperdx", "scale", "aws",
         {"sessionSecret": {"create": False}, "tokenEncryption": {"create": False}},
         {"absent": [("ExternalSecret", "dfe-hyperdx-session"), ("Password", "dfe-hyperdx-token-encryption-gen")]},
         id="hyperdx-keys-supplied",
     ),
     pytest.param(
-        "hyperdx", "slim", "local",
+        "dfe-hyperdx", "slim", "local",
         {
             "dfeAuth": {"mode": "header-dev"},
             "localAuthPages": {"enabled": True},
@@ -841,7 +841,7 @@ def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collec
 # ------------------------------------------------------------ the chart itself
 
 
-@pytest.mark.parametrize("name", ["", *sorted({chart_name(s) for s in COMPONENTS})])
+@pytest.mark.parametrize("name", ["", *sorted({s for s in COMPONENTS})])
 def test_helm_lint_strict_is_clean(name: str) -> None:
     out = subprocess.run(
         [helm(), "lint", "--strict", str(EXTRAS), "--set", f"chartName={name}"],
@@ -886,7 +886,7 @@ def test_the_app_catalogue_is_the_manifest_at_the_repo_root() -> None:
 
 
 @pytest.mark.parametrize(
-    "service", ["dfe-ui", "hyperdx", "dfe-receiver", "dfe-loader", "dfe-engine"]
+    "service", ["dfe-ui", "dfe-hyperdx", "dfe-receiver", "dfe-loader", "dfe-engine"]
 )
 @pytest.mark.parametrize("profile", PROFILES)
 def test_no_object_is_rendered_by_both_charts(service: str, profile: str) -> None:

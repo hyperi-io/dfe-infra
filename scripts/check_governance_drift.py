@@ -127,8 +127,7 @@ def _thin_layers(service: str) -> list[dict]:
     layers = [doc for f in files if f.is_file() and isinstance(doc := _load_yaml(f), dict)]
     extras = _load_yaml(EXTRAS_VALUES) if EXTRAS_VALUES.is_file() else None
     defaults = ((extras or {}).get("extras") or {}).get("defaults") or {}
-    chart = "dfe-hyperdx" if service == "hyperdx" else service
-    return [*layers, defaults.get(chart) or {}]
+    return [*layers, defaults.get(service) or {}]
 
 
 def _contract_groups(service: str) -> set[str]:

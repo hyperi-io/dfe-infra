@@ -355,13 +355,13 @@ def test_the_loader_inserts_into_the_external_server_with_the_system_roots() -> 
 
 
 def test_hyperdx_refuses_webhooks_at_the_external_server() -> None:
-    docs = list(_app("hyperdx", tuple(sorted(EXTERNAL.items()))))
+    docs = list(_app("dfe-hyperdx", tuple(sorted(EXTERNAL.items()))))
     env = effective_env(docs, "Deployment/dfe-hyperdx")
     assert env["CLICKHOUSE_HOST"] == f"http://{HOST}:8443"
     assert "NODE_EXTRA_CA_CERTS" not in env
 
 
-@pytest.mark.parametrize("service", ["dfe-engine", "dfe-loader", "hyperdx"])
+@pytest.mark.parametrize("service", ["dfe-engine", "dfe-loader", "dfe-hyperdx"])
 def test_no_app_reads_the_in_cluster_ca_an_external_server_never_writes(service: str) -> None:
     """The volume falls back to an optional ConfigMap, so only a Secret named for
     the in-cluster CA would point a client at a certificate that is not there."""
@@ -372,7 +372,7 @@ def test_no_app_reads_the_in_cluster_ca_an_external_server_never_writes(service:
     assert (("Secret", "clickhouse-admin-password") in named) is (service == "dfe-engine")
 
 
-@pytest.mark.parametrize("service", ["dfe-engine", "dfe-loader", "hyperdx"])
+@pytest.mark.parametrize("service", ["dfe-engine", "dfe-loader", "dfe-hyperdx"])
 def test_an_in_cluster_server_moves_no_app(service: str) -> None:
     docs = list(_app(service, tuple(sorted(IN_CLUSTER.items()))))
     assert render_differences(golden(service, *CELL), docs) == []

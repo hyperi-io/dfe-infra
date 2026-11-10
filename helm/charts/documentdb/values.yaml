@@ -74,7 +74,7 @@ documentdb:
     gatewaySecretName: dfe-documentdb-gateway-tls
     # ca.crt alone, the only Secret the app-namespace copy may read.
     caOnlySecretName: dfe-documentdb-ca-cert
-    # Name of the CA copy in appNamespace, which argocd/values/apps/hyperdx mounts.
+    # Name of the CA copy in appNamespace, which argocd/values/apps/dfe-hyperdx mounts.
     appCaSecretName: dfe-documentdb-ca
     # The CA's own lifetime. Its key never rotates, so a client still holding the
     # previous CA copy verifies a gateway certificate the renewed CA signs. The

@@ -448,7 +448,7 @@ DOCKER_PROFILES = {
 DOCKER_FOOTPRINT_KEYS = {
     "dfe-engine": "core",
     "dfe-ui": "core",
-    "hyperdx": "hyperdx",
+    "dfe-hyperdx": "hyperdx",
 }
 
 
@@ -816,7 +816,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
-# The thin chart each chart-digests key names, as argocd/appsets/layer2-apps.yaml maps it.
+# Stacks published before 2.2.2-rc.2 key dfe-hyperdx's chart pin by its old app id.
 _CHART_NAMES = {"hyperdx": "dfe-hyperdx"}
 
 # The chart-digests value of a chart not published yet, which the appsets refuse to render.

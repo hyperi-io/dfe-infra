@@ -9,7 +9,7 @@
 
 # DFE service deployments -- minimum viable + a little safety headroom.
 # Requests are the tier's real cost (scheduling); limits are only a runaway
-# cap. The 1Gi memory limit exists for hyperdx (multi-process Node: app + api
+# cap. The 1Gi memory limit exists for dfe-hyperdx (multi-process Node: app + api
 # + alert-task + provisioner OOMs at 384Mi); the Rust apps never approach it.
 replicaCount: 1
 resources:
@@ -73,8 +73,8 @@ deployRepo:
   seedApps:
     - dfe-archiver
     - dfe-engine
+    - dfe-hyperdx
     - dfe-loader
     - dfe-receiver
     - dfe-ui
-    - hyperdx
 # END seeded apps

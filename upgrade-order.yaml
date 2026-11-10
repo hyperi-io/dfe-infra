@@ -81,7 +81,7 @@ stages:
     "15-dfe-hyperdx":
       key: content.dfe-hyperdx
       image: digests.dfe-hyperdx
-      chart: chart-digests.hyperdx
+      chart: chart-digests.dfe-hyperdx
       rollback: "a retarget: dfe-ops upgrade rollback moves the pin and target_revision back"
     "20-dfe-receiver":
       key: apps.dfe-receiver

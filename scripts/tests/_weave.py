@@ -24,7 +24,7 @@ infra/common.yaml as ``infra``:
         ...
 
 Contracts are read from fixtures/contracts/<service>.json, keyed by the
-``deploy.service`` the appset generates from (``hyperdx``, not ``dfe-hyperdx``).
+``deploy.service`` the appset generates from.
 The thin chart needs the scalo-service library: DFE_WEAVE_LIBRARY names a chart
 directory, and without it the pinned release is pulled anonymously from GHCR by
 its manifest digest, once per run. Each component's thin chart is assembled once
@@ -174,11 +174,6 @@ def contract(service: str) -> Path:
     return CONTRACTS / f"{service}.json"
 
 
-def chart_name(service: str) -> str:
-    """The thin chart's name, which its contract's app_name sets."""
-    return "dfe-hyperdx" if service == "hyperdx" else service
-
-
 @functools.cache
 def _assembled(service: str, library_dir: Path) -> tuple[tempfile.TemporaryDirectory, Path]:
     """One component's thin chart, assembled and built once per run.
@@ -216,7 +211,7 @@ def _pulled_chart(
     Cached with the directory object, as _pulled_library is, so every cell of a
     component renders the one pull and a failed pull is reported once.
     """
-    name = chart_name(service)
+    name = service
     scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-{name}-")
     reference = f"{CHART_REGISTRY}/{name}@{digest}"
     failed = _pull(reference, scratch.name)
@@ -240,7 +235,7 @@ def published_chart(service: str) -> Path:
         pytest.skip(f"chart-digests.{service} is {digest!r}, not a published digest")
     _, found = _pulled_chart(service, digest)
     if isinstance(found, str):
-        pytest.fail(f"cannot pull {CHART_REGISTRY}/{chart_name(service)}@{digest}: {found}")
+        pytest.fail(f"cannot pull {CHART_REGISTRY}/{service}@{digest}: {found}")
     return found
 
 

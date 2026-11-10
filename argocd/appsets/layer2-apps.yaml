@@ -87,12 +87,12 @@ spec:
       sources:
         # The thin chart, under the same registry annotation global.registry
         # reads, so a mirrored deployment moves its charts with its images. Its
-        # name is the service, except hyperdx, whose contract names dfe-hyperdx.
+        # name is the service.
         # Helm refuses a release name past 53 characters, so both helm sources set
         # releaseName only for an Application name longer than that: its first 44
         # characters and the first 8 of its sha256. Empty leaves Argo's default, the
         # Application name, and app.kubernetes.io/instance is whichever was installed.
-        - repoURL: 'oci://{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}/charts/{{ if eq .deploy.service "hyperdx" }}dfe-hyperdx{{ else }}{{ .deploy.service }}{{ end }}'
+        - repoURL: 'oci://{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}/charts/{{ .deploy.service }}'
           path: "."
           # A literal map, because an appset cannot read versions.yaml:
           # scripts/check_versions_drift.py holds each entry to chart-digests
@@ -105,13 +105,13 @@ spec:
                 "dfe-archiver" "sha256:1ddcfb5c167df1854b1e70a007b76c3142a29c5dff4d81f65f93eeec68b992df"
                 "dfe-engine" "sha256:b3ffd8c2b3434563c76e806053e3d7c92117639e8a3c9dbf0f2f5d67ee69a9dc"
                 "dfe-fetcher" "sha256:bfb707c98b2bc3316db62182e53713fad1acf28bf00e1c4f3a79d80d8f0d7946"
+                "dfe-hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
                 "dfe-loader" "sha256:2cf1835fb4edffa4692e00e4e91c19577ec4156e26316f663db966848c7d9849"
                 "dfe-receiver" "sha256:3fca63ce66ba16a407d553d8b14100c5f3c90b3dd92794bbf76904bf93e240d0"
                 "dfe-transform-elastic" "sha256:085700e62308177aa3417a3dde518385e0caa4bd6dbb4b9c31c1b715ad251dd9"
                 "dfe-transform-vector" "sha256:f03d61eda4b4e00dffb21bf1f34bf771bd9da01be674c6b0f5721eacffb0c5f2"
                 "dfe-transform-vrl" "sha256:6cbc6106351e2879d22ed1176be362cf068155d93c8db76f0d5e93ffafe0464c"
                 "dfe-ui" "sha256:2ec731a63a036de44df910e3b3752c086d8596476e2e5fb0baa28386636ab82e"
-                "hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}
@@ -339,7 +339,7 @@ spec:
               - '$values/{{ .path.path }}/{{ .path.filename }}'
             parameters:
               - name: chartName
-                value: '{{ if eq .deploy.service "hyperdx" }}dfe-hyperdx{{ else }}{{ .deploy.service }}{{ end }}'
+                value: '{{ .deploy.service }}'
               - name: global.registry
                 value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
               - name: gitops.repoUrl

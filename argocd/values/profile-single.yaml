@@ -69,10 +69,10 @@ deployRepo:
   seedApps:
     - dfe-archiver
     - dfe-engine
+    - dfe-hyperdx
     - dfe-loader
     - dfe-receiver
     - dfe-transform-elastic
     - dfe-transform-vrl
     - dfe-ui
-    - hyperdx
 # END seeded apps

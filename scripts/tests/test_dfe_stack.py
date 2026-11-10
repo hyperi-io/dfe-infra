@@ -967,11 +967,12 @@ def test_verify_covers_every_image_toolbox_build_publishes() -> None:
 def test_the_chart_name_map_matches_the_appset() -> None:
     """verify and the appset must name the same chart, or verify reads a chart Argo never pulls."""
     text = (REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml").read_text(encoding="utf-8")
+    # The appset names every chart by its service, so no alias is live there. The aliases
+    # only read the chart-digests of stacks published before the app id became the chart name.
     for service, chart in stack._CHART_NAMES.items():
         expect(
-            f"layer2-apps.yaml maps {service} to {chart}",
-            f'eq .deploy.service "{service}" }}}}{chart}{{{{ else }}}}{{{{ .deploy.service }}}}'
-            in text,
+            f"layer2-apps.yaml does not alias {service} to {chart}",
+            f'eq .deploy.service "{service}" }}}}{chart}{{{{ else }}}}' not in text,
             service,
         )
 
