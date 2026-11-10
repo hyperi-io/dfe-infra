@@ -9,6 +9,7 @@ The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a 
 
 You need Docker with Compose v2, Python 3, git and make.
 
+<!-- landing -->
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
 make up     # pull, start, self test, print the console login

@@ -134,20 +134,14 @@ quickstart:
       label: Demo
       blocks:
         - text: "See DFE working on your laptop, with sample firewall logs already flowing in. Needs Docker, git, make and Python 3."
-        # dfe-docker Makefile target demo.
-        - code: |-
-            git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-            make demo{version_arg}
+        - code_from: quickstart/demo.md
         - text: "Then point your browser to http://localhost:3000, log in with the details it printed, and search the firewall logs as they land."
       guide: {label: The demo, to: /quickstart/demo/}
     - value: docker
       label: Docker
       blocks:
         - text: "The whole DFE stack on one machine, ready for your own data. Needs Docker, git, make and Python 3."
-        # dfe-docker Makefile target up: single-kafka on the newest stack.
-        - code: |-
-            git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-            make up{version_arg}
+        - code_from: quickstart/docker.md
         - text: "Then point your browser to http://localhost:3000 and log in with the details it printed."
       guide: {label: Docker quickstart, to: /quickstart/docker/}
     - value: kubernetes

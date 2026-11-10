@@ -96,8 +96,29 @@ function loadCopy(name) {
   return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
 }
 
+// The fenced block after a page's <!-- landing --> marker, from this build's copy of the page, so the landing never restates it.
+// Inline # notes stay on the page, and a make line pins this build's stack when it is not the newest.
+function landingCode(page) {
+  const file = path.join(CONTENT, build.name, page);
+  const text = fs.readFileSync(file, 'utf8');
+  const match = text.match(/<!-- landing -->\s*```[^\n]*\n([\s\S]*?)\n```/);
+  if (!match) {
+    throw new Error(`copy/landing.yaml: ${file} has no <!-- landing --> marker before a code block`);
+  }
+  return match[1]
+    .split('\n')
+    .map((line) => line.replace(/\s+#.*$/, ''))
+    .map((line) => (line.startsWith('make ') ? `${line}${versionArg}` : line))
+    .join('\n');
+}
+
 const siteCopy = loadCopy('site');
 const landingCopy = loadCopy('landing');
+for (const tab of landingCopy.quickstart.tabs) {
+  tab.blocks = tab.blocks.map((block) =>
+    block.code_from === undefined ? block : {code: landingCode(block.code_from)},
+  );
+}
 
 // Markdown links and backticks as the plain text another site can show.
 function plainText(text) {
