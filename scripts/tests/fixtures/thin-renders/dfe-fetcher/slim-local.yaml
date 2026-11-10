@@ -172,6 +172,8 @@ spec:
           readOnly: true
         - mountPath: /var/lib/dfe-fetcher
           name: writable-cursor
+        - mountPath: /var/spool/dfe/dlq
+          name: writable-dlq
         - mountPath: /tmp
           name: writable-tmp
         - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
@@ -221,6 +223,8 @@ spec:
         name: config
       - emptyDir: {}
         name: writable-cursor
+      - emptyDir: {}
+        name: writable-dlq
       - emptyDir: {}
         name: writable-tmp
       - name: serviceaccount-files

@@ -1804,6 +1804,7 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 # created through the console and proven at every hop. Not part of `all`: it
 # runs after POST on the deployments that showcase the data path.
 SOURCE_SUITE = "source"
+SOURCE_CASES = ("filebeat", "cloudwatch", "elastic", "vector", "syslog")
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
 # A send from an allow-listed address outside the cloud to the receiver's public
 # door, found in main, the console and HyperDX, and refused from the cluster's own
@@ -2260,6 +2261,7 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
     # The edge suite writes the ingest allow list through the deploy repo's own API.
     if EDGE_SUITE in steps:
         forwards.append(("git", args.git_namespace, args.git_target, args.git_port, 3000))
+    syslog_case = SOURCE_SUITE in steps and args.source_case == "syslog"
     if _refuse_taken_ports(local for _label, _ns, _target, local, _remote in forwards):
         return 1
     # An external ClickHouse is dialled with no forward, and read only now so a taken port is refused before any cluster call.
@@ -2408,6 +2410,7 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
                 "--aws-service", args.aws_service,
                 "--kubectl", shlex.join(kube),
                 "--namespace", namespace,
+                "--receiver-metrics-selector", args.receiver_selector,
             ]
             # The upstream a fetched case polls is a property of the DEPLOYMENT,
             # so it comes from the env files rather than from this script.
@@ -2430,8 +2433,14 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
             # The whole way in, not its parts: the docker lane passes its own.
             # One per replica, because the consumer group splits the topic's
             # partitions and each replica archives only what it was assigned.
-            for pod in _pods_of(kube, namespace, args.archive_selector):
+            archiver_pods = _pods_of(kube, namespace, args.archive_selector)
+            for pod in archiver_pods:
                 runner += ["--archive-exec", shlex.join([*kube, "-n", namespace, "exec", pod, "--"])]
+            # A port-forward carries TCP only, so the syslog case sends from inside the
+            # cluster: bash in an app pod opens /dev/tcp and /dev/udp to the receiver's Service.
+            if syslog_case and archiver_pods:
+                pod = archiver_pods[0]
+                runner += ["--syslog-exec", shlex.join([*kube, "-n", namespace, "exec", "-i", pod, "--"])]
             if args.insecure:
                 runner.append("--insecure")
             if args.keep:
@@ -2516,16 +2525,16 @@ def engine_secret_names(
     def ref(name: str) -> dict:
         return ((env.get(name) or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
 
-    admin_ref = ref("DFE_AUTH_LOCAL_ADMIN_PASSWORD")
+    admin_ref = ref("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD")
     admin = (
-        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
+        (env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME") or {}).get("value")
         or admin_ref.get("name")
         or _ENGINE_ADMIN[0],
-        (env.get("DFE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
+        (env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_KEY") or {}).get("value")
         or admin_ref.get("key")
         or _ENGINE_ADMIN[1],
     )
-    breakglass_ref = ref("DFE_AUTH_BREAKGLASS_PASSWORD")
+    breakglass_ref = ref("DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD")
     breakglass = (
         breakglass_ref.get("name") or _ENGINE_BREAKGLASS[0],
         breakglass_ref.get("key") or _ENGINE_BREAKGLASS[1],
@@ -4479,8 +4488,8 @@ def _offline_preflight(args: argparse.Namespace) -> int:
             for what, marker in (
                 ("the manifest", composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ") + "\n"),
                 (
-                    "DFE_APP_CATALOGUE_FILE",
-                    "  DFE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n",
+                    "DFE_ENGINE_APP_CATALOGUE_FILE",
+                    "  DFE_ENGINE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n",
                 ),
             )
             if marker not in out
@@ -4652,7 +4661,7 @@ def cmd_stack_deploy(args: argparse.Namespace) -> int:
     print(f"  E2E tests:  {'SKIPPED' if args.skip_e2e else 'ON (data path + self-monitoring)'}", file=sys.stderr)
     print(
         "  E2E posture: "
-        + ("ON (engine DFE_ENV=test, /api/e2e seed routes mounted)" if args.e2e else "off"),
+        + ("ON (engine DFE_ENGINE_ENV=test, /api/e2e seed routes mounted)" if args.e2e else "off"),
         file=sys.stderr,
     )
     print(f"  Dry run:    {'yes (no cluster changes)' if args.dry_run else 'no'}", file=sys.stderr)
@@ -4820,8 +4829,9 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         engine_repo = _sibling_repo("dfe-engine", "DFE_ENGINE_REPO")
         if _engine_checkout_gate(str(engine_repo), args.stack, args.dev) != 0:
             return 2
-        if _companion_checkouts_gate(args.acceptance_suite, "filebeat", args.stack, args.dev) != 0:
-            return 2
+        for case in args.acceptance_source_case or ["filebeat"]:
+            if _companion_checkouts_gate(args.acceptance_suite, case, args.stack, args.dev) != 0:
+                return 2
     if args.ui_repo and _checkout_gate(args.ui_repo, "dfe-ui", args.stack, args.dev, "the ui stage runs") != 0:
         return 2
     self_cmd = [sys.executable, str(Path(__file__).resolve())]
@@ -4899,7 +4909,15 @@ def cmd_cycle(args: argparse.Namespace) -> int:
         # source, which takes that source's transform pods with it.
         if args.diagnostics_dir:
             acceptance_cmd += ["--diagnostics-dir", args.diagnostics_dir]
-        stages.append(("acceptance", acceptance_cmd))
+        cases = args.acceptance_source_case or []
+        if not cases:
+            stages.append(("acceptance", acceptance_cmd))
+        # One stage per case, in order, each with its own shots dir: a case run after
+        # another starts on topics the earlier one deleted at teardown.
+        for n, case in enumerate(cases, 1):
+            cmd = [*acceptance_cmd, "--source-case", case]
+            cmd[cmd.index("--shots-dir") + 1] = str(Path(args.acceptance_shots_dir) / f"{n}-{case}")
+            stages.append((f"acceptance {n}/{len(cases)} {case}", cmd))
     # The UI stage is opt-in: it needs a dfe-ui checkout and node, which not
     # every cycle runner has, and a cycle that starts failing for want of a
     # browser would be worse than one that says the stage did not run.
@@ -5097,7 +5115,7 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--strict-compat", action="store_true", help="fail if compat-check reports an error-severity violation")
     sd.add_argument("--skip-e2e", action="store_true", help="skip the two default E2E tests (NOT recommended)")
     sd.add_argument("--e2e", action="store_true",
-                    help="the e2e posture the dfe-ui suite needs: the engine runs as DFE_ENV=test with "
+                    help="the e2e posture the dfe-ui suite needs: the engine runs as DFE_ENGINE_ENV=test with "
                          "unauthenticated seed routes that wipe every account. Refused outside a dev "
                          "posture; for a throwaway deployment under test only")
     sd.add_argument("--check-only", action="store_true", help="run only the offline pre-flight, then stop (no cluster changes)")
@@ -5156,6 +5174,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run `acceptance --suite <name>` as a stage after smoke (needs the engine "
                          "checkout acceptance --repo finds, and a browser for onboarding, source and "
                          f"edge; edge also needs {INGEST_ALLOW_VAR}, refused before the deploy without it)")
+    cy.add_argument("--acceptance-source-case", action="append", default=None, metavar="CASE",
+                    choices=SOURCE_CASES,
+                    help="with --acceptance-suite source, run this case (`acceptance --source-case`); "
+                         "repeatable, one acceptance stage per case in the order given, so "
+                         "`syslog` twice runs the second on topics the first deleted (default: filebeat once)")
     cy.add_argument("--dev", action="store_true",
                     help="let the acceptance and ui stages run from checkouts (engine, transform, dfe-ui) that are not the stack's pinned releases, with a WARNING naming both versions")
     cy.add_argument("--acceptance-shots-dir", default=str(ACCEPTANCE_SHOTS),
@@ -5323,6 +5346,9 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--git-namespace", default="forgejo", help="namespace the bundled deploy repo runs in")
     ac.add_argument("--git-port", type=int, default=13000,
                     help="local port for the deploy repo, the one deploy-values defaults to")
+    ac.add_argument("--receiver-selector", default="app.kubernetes.io/name=dfe-receiver",
+                    help="label selector for the receiver's pods, whose syslog counters the syslog "
+                         "case sums")
     ac.add_argument("--archive-selector", default="app.kubernetes.io/name=dfe-archiver",
                     help="label selector for the pods the source suite runs its archive assertion inside")
     ac.add_argument("--receiver-port", type=int, default=18080, help="local port for ingest")
@@ -5365,8 +5391,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the source suite leaves the source it made deployed, and the edge suite the "
                          "ingest allow list it wrote, for a look")
     ac.add_argument("--source-case", default="filebeat",
-                    choices=("filebeat", "cloudwatch", "elastic", "vector"),
-                    help="which source the source suite creates: filebeat pushed at the receiver "
+                    choices=SOURCE_CASES,
+                    help="which source the source suite creates: syslog sent raw to the receiver's "
+                         "syslog listeners over TCP and UDP, filebeat pushed at the receiver "
                          "through the bundled VRL, vector pushed through the same program run by a "
                          "supervised Vector, elastic pushed at a compiled-in transform, or an "
                          "AWS upstream a fetcher polls")

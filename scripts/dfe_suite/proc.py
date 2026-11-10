@@ -18,13 +18,16 @@ registry wait all measure themselves against the same set.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 
 USER_AGENT = "scalo-fleet/2.0 (+https://github.com/hyperi-io/hyperi-ai)"
@@ -49,6 +52,8 @@ RUN_TIMEOUT_RUST = 7200
 RUN_TIMEOUT_PYTHON = 3600
 
 _TAG = "scalo-fleet"
+# The consumer a worker thread is rebuilding, named in each line it prints.
+_LABEL = threading.local()
 
 
 class FleetError(RuntimeError):
@@ -75,14 +80,30 @@ def tag() -> str:
     return _TAG
 
 
+@contextlib.contextmanager
+def labelled(name: str) -> Iterator[None]:
+    """Prefix every line this thread prints through say and warn with `name`."""
+    previous = getattr(_LABEL, "name", "")
+    _LABEL.name = name
+    try:
+        yield
+    finally:
+        _LABEL.name = previous
+
+
+def _prefix() -> str:
+    name = getattr(_LABEL, "name", "")
+    return f"[{_TAG}] {name}: " if name else f"[{_TAG}] "
+
+
 def say(message: str) -> None:
     """Print a progress line for the operator."""
-    print(f"[{_TAG}] {message}", flush=True)
+    print(f"{_prefix()}{message}", flush=True)
 
 
 def warn(message: str) -> None:
     """Print a non-fatal warning to stderr."""
-    print(f"[{_TAG}] WARNING: {message}", file=sys.stderr, flush=True)
+    print(f"{_prefix()}WARNING: {message}", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------

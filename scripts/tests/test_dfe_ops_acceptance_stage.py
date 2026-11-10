@@ -250,6 +250,44 @@ def test_the_acceptance_stage_gets_the_deploys_target_mode_and_a_shots_dir(
     assert (parsed.suite, parsed.from_terraform, parsed.insecure) == ("source", "tf", True)
 
 
+@pytest.mark.parametrize(
+    ("cases", "expected"),
+    [
+        pytest.param([], ["filebeat"], id="default"),
+        pytest.param(["syslog"], ["syslog"], id="one"),
+        pytest.param(["syslog", "syslog"], ["syslog", "syslog"], id="repeat"),
+        pytest.param(["filebeat", "syslog"], ["filebeat", "syslog"], id="in-order"),
+    ],
+)
+def test_each_source_case_is_its_own_acceptance_stage_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cases: list[str], expected: list[str]
+) -> None:
+    gated: list[str] = []
+    monkeypatch.setattr(dfeops, "_companion_checkouts_gate", lambda _suite, case, *_: gated.append(case) or 0)
+    argv = [arg for case in cases for arg in ("--acceptance-source-case", case)]
+    ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--acceptance-shots-dir", str(tmp_path), *argv)
+    stages = [cmd for word, cmd in ran if word == "acceptance"]
+    # The suite's own parser has to accept what each stage hands it.
+    parsed = [dfeops.build_parser().parse_args(cmd[2:]) for cmd in stages]
+    assert [p.source_case for p in parsed] == expected
+    assert gated == expected
+    assert len({p.shots_dir for p in parsed}) == len(parsed)
+    assert ran[-1][0] == "teardown"
+
+
+def test_a_failed_source_case_skips_the_cases_after_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(dfeops, "_companion_checkouts_gate", lambda *_: 0)
+    ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--acceptance-shots-dir", str(tmp_path),
+                 "--acceptance-source-case", "syslog", "--acceptance-source-case", "syslog",
+                 fail="acceptance")
+    assert [word for word, _ in ran] == ["stack-deploy", "verify", "acceptance", "failure-evidence", "teardown"]
+
+
+def test_an_unknown_source_case_is_refused() -> None:
+    with pytest.raises(SystemExit):
+        dfeops.build_parser().parse_args(["cycle", "--acceptance-source-case", "mongo"])
+
+
 def test_the_shots_dir_defaults_under_this_repos_tmp() -> None:
     args = dfeops.build_parser().parse_args(["cycle"])
     assert Path(args.acceptance_shots_dir) == REPO_ROOT / ".tmp" / "acceptance"

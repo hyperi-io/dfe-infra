@@ -836,6 +836,79 @@ def test_check_clickhouse_merges_queries_every_server_pod_with_the_resolved_cred
     assert CH_PASSWORD not in captured.out + captured.err
 
 
+LOCK_TABLE = _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t3\n")
+LOCK_QUORUM = _proc(0, stdout="version: 2\nparts count: 1\nall\tall_77_77_1\n")
+
+
+@pytest.mark.parametrize(
+    ("replies", "ok", "detail"),
+    [
+        (
+            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n")],
+            False,
+            "schema_lock's quorum names a part no replica holds (dfe), so no engine can take the schema lease. "
+            f"With no engine holding it, run once on one replica: {u.schema_lock_remedy.schema_lock_drop('dfe')} "
+            "-- the engine recreates the table at boot (docs/deployment/upgrades.md)",
+        ),
+        (
+            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(0, stdout="1\n"), _proc(0, stdout="0\n")],
+            True,
+            "every schema_lock quorum part is held by a replica (1 table(s), 3 pod(s))",
+        ),
+        ([_proc(0, stdout="")], True, "no replicated schema_lock table"),
+        (
+            [LOCK_TABLE, _proc(0, stdout="")],
+            True,
+            "every schema_lock quorum part is held by a replica (1 table(s), 3 pod(s))",
+        ),
+        (
+            [_proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t4\n"), LOCK_QUORUM,
+             _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n")],
+            True,
+            "quorum part missing on every replica read, not all were: dfe (3 of 4 replicas read)",
+        ),
+        (
+            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(1, stderr="Code: 210. Connection refused")],
+            False,
+            "ch-0-1: Code: 210. Connection refused",
+        ),
+    ],
+    ids=["wedged", "one-replica-lagging", "no-lock-table", "no-quorum-state", "not-every-replica-read", "pod-error"],
+)
+def test_check_schema_lock_wedge_fails_only_when_every_replica_lost_the_quorum_part(
+    monkeypatch: pytest.MonkeyPatch, replies: list, ok: bool, detail: str
+) -> None:
+    calls = _mock_run(
+        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"), *replies
+    )
+    assert u.check_schema_lock_wedge("kc") == (ok, detail)
+    assert _no_argv_carries(calls, CH_PASSWORD)
+
+
+def test_a_merged_quorum_part_still_counts_as_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _mock_run(
+        monkeypatch, _ch_pods("ch-0-0"), _ch_password(), _proc(0, stdout="1\n"),
+        _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t1\n"), LOCK_QUORUM, _proc(0, stdout="1\n"),
+    )
+    assert u.check_schema_lock_wedge("kc")[0] is True
+    query = calls[-1][calls[-1].index("-q") + 1]
+    assert "partition_id = 'all' AND min_block_number <= 77 AND max_block_number >= 77" in query
+
+
+@pytest.mark.parametrize(
+    ("value", "parts"),
+    [
+        ("version: 2\nparts count: 1\nall\tall_77_77_1\n", [("all", 77, 77)]),
+        ("version: 2\nparts count: 2\n202611\t202611_3_9_2_14\nx_y\tx_y_5_5_0\n", [("202611", 3, 9), ("x_y", 5, 5)]),
+        ("version: 2\nparts count: 0\n", []),
+        ("", []),
+    ],
+    ids=["one", "mutated-and-underscored", "none", "empty"],
+)
+def test_quorum_parts_reads_each_part_s_block_range(value: str, parts: list) -> None:
+    assert u.quorum_parts(value) == parts
+
+
 def test_preflight_and_apply_take_the_clickhouse_credentials_flag() -> None:
     parser = argparse.ArgumentParser()
     u.add_upgrade_subparser(parser.add_subparsers())
@@ -3184,7 +3257,7 @@ def test_preflight_runs_the_conversion_check_with_the_operator_move(monkeypatch:
         return False, "1 CRD(s) still store a pre-v1 version"
 
     for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
-                 "check_clickhouse_merges", "check_node_capacity"):
+                 "check_clickhouse_merges", "check_schema_lock_wedge", "check_node_capacity"):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "check_strimzi_conversion_before", fake_before)
     step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="x stored-version conversion y")
@@ -3543,6 +3616,66 @@ def test_wait_for_argo_times_out_naming_each_app_still_on_the_state_from_before_
         "still not converged after 15s -- 1 app(s) not Synced/Healthy: "
         "kafka-dfe (last reconciled 2026-10-11T02:50:00Z, before this change)"
     )
+
+
+def _autosync_app(
+    reconciled_at: str | None = "2026-10-11T03:00:07Z",
+    sync: str = "OutOfSync",
+    op_started: str | None = "2026-10-01T00:00:00Z",
+    op_phase: str = "Succeeded",
+    automated: bool = True,
+    pending: bool = False,
+) -> dict:
+    """keda after a namespace-metadata change: pinned chart, auto-sync on, compared OutOfSync."""
+    app = _reconciled_app("keda", reconciled_at, sync=sync)
+    app["spec"] = {"syncPolicy": {"automated": {"selfHeal": True}, "syncOptions": ["ServerSideApply=true"]}}
+    if not automated:
+        app["spec"]["syncPolicy"].pop("automated")
+    if op_started is not None:
+        app["status"]["operationState"] = {"phase": op_phase, "startedAt": op_started}
+    if pending:
+        app["operation"] = {"sync": {}}
+    return app
+
+
+@pytest.mark.parametrize(
+    ("app", "stalled"),
+    [
+        (_autosync_app(), True),
+        (_autosync_app(op_started=None), True),
+        (_autosync_app(sync="Synced"), False),
+        (_autosync_app(reconciled_at="2026-10-11T02:59:00Z"), False),
+        (_autosync_app(reconciled_at=None), False),
+        (_autosync_app(op_started="2026-10-11T03:00:05Z"), False),
+        (_autosync_app(op_phase="Running"), False),
+        (_autosync_app(automated=False), False),
+        (_autosync_app(pending=True), False),
+    ],
+    ids=[
+        "compared-since-and-skipped", "never-synced", "in-sync", "not-compared-since", "never-compared",
+        "synced-since", "sync-running", "manual-sync-app", "sync-already-requested",
+    ],
+)
+def test_only_an_app_auto_sync_compared_and_skipped_is_stalled(app: dict, stalled: bool) -> None:
+    assert u._stalled_autosync(app, CHANGE) is stalled
+
+
+def test_wait_for_argo_starts_one_sync_on_an_app_auto_sync_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    patched = _autosync_app()
+    patched["operation"] = {"sync": {}}
+    synced = _autosync_app(sync="Synced", op_started="2026-10-11T03:00:20Z")
+    calls = _mock_run(monkeypatch, _apps(_autosync_app()), _proc(0), _apps(patched), _apps(synced))
+    clock, _sleeps, fake_sleep = _clock()
+
+    ok, _detail = u.wait_for_argo(
+        "kc", argocd_namespace="argocd", timeout=120, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+    )
+
+    assert ok is True
+    patches = [c for c in calls if "patch" in c]
+    assert len(patches) == 1
+    body = json.loads(patches[0][patches[0].index("-p") + 1])
+    assert body["operation"]["sync"]["syncOptions"] == ["ServerSideApply=true"]
 
 
 def _chart_app(name: str, reconciled_at: str, version: str, compared: str | None = None) -> dict:
@@ -4053,7 +4186,7 @@ def _ingest_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Pat
     monkeypatch.setattr(u, "VERSIONS_FILE", versions)
     (deploy / "pins.yaml").write_text(PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8")
     for name in ("check_deploy_clean", "check_web_plane", "check_cluster_reachable", "check_argo_apps",
-                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_node_capacity", "check_backup_marker"):
+                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_schema_lock_wedge", "check_node_capacity", "check_backup_marker"):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
 
 

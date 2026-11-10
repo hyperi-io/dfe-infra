@@ -1,0 +1,1 @@
+cisco-asa.log and fortinet.log: the first 20 lines of resources/demo/events/<vendor>/demo.log at dfe-docker commit 9e06976b, unchanged. The syslog case wraps each in a header carrying the run id before it sends.

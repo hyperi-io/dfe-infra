@@ -45,6 +45,11 @@ COVERED_TEMPLATES = {
     REPO_ROOT / "helm/charts/kafbat/templates/externalsecret.yaml",
     REPO_ROOT / "helm/charts/kafka/templates/kafka-single-user.yaml",
 }
+# Templates whose only generator is a Fake: constants, so a re-run writes the same values
+# and there is nothing to pin. Making the target immutable would lock the operator's Secret.
+STATIC_TEMPLATES = {
+    REPO_ROOT / "helm/charts/kafka/templates/kafka-user-appkeys.yaml",
+}
 # SHORTCUT: the dfe-extras generators are not asserted here, upgrade trigger: the change
 # that makes them immutable lands, then this exclusion goes and its templates join the set.
 NOT_SWEPT_YET = REPO_ROOT / "helm/charts/dfe-extras"
@@ -73,6 +78,16 @@ KEEPER_IDENTITY = Case(
     "clickhouse-cluster",
     ("clickhouse.mode=single", "appNamespace=dfe"),
     "dfe-clickhouse-keeper-identity",
+)
+APPKEYS = Case(
+    "kafka cluster-tier app keys",
+    "kafka",
+    (
+        "kafka.mode=cluster",
+        "kafka.provider=strimzi",
+        "user.password.fromSecretsStore=false",
+    ),
+    "dfe-kafka-user",
 )
 
 
@@ -154,12 +169,25 @@ def test_every_generator_backed_template_is_covered_by_a_test() -> None:
             for line in path.read_text(encoding="utf-8").splitlines()
         )
     }
+    known = COVERED_TEMPLATES | STATIC_TEMPLATES
     expect(
         "the covered set is exactly every generator-backed template outside dfe-extras",
-        found == COVERED_TEMPLATES,
-        f"not covered: {sorted(found - COVERED_TEMPLATES)}, "
-        f"no longer generator-backed: {sorted(COVERED_TEMPLATES - found)}",
+        found == known,
+        f"not covered: {sorted(found - known)}, "
+        f"no longer generator-backed: {sorted(known - found)}",
     )
+
+
+def test_the_static_app_keys_come_only_from_a_fake_generator() -> None:
+    """A minting generator here would need the once-and-immutable pin instead."""
+    refs = [
+        entry["sourceRef"]["generatorRef"]
+        for d in render(APPKEYS)
+        if d.get("kind") == "ExternalSecret" and is_generated(d)
+        for entry in d["spec"]["dataFrom"]
+    ]
+    kinds = sorted({ref.get("kind") for ref in refs})
+    expect(f"{APPKEYS.label}: every generator is a Fake", kinds == ["Fake"], f"got {kinds}")
 
 
 def main() -> int:

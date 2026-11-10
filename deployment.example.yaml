@@ -108,9 +108,12 @@ endpoint:
 
 ## DNS. private_zone resolves inside the VPC and carries everything internal;
 ## public_zone is the delegated zone the exposed UIs answer on, empty for none.
+## parent_zone_id (AWS) is a Route 53 zone in the same account that public_zone
+## sits under. Set, the apply writes the delegation. Empty, you delegate by hand.
 dns:
   private_zone: dfe.internal
   public_zone: ""
+  parent_zone_id: ""
 
 ## THE EDGE MODULE -- every door this deployment opens, in one block. The module
 ## is the two charts under helm/edge: the public gateway and the fleet tunnel.
@@ -754,7 +757,7 @@ registry: ghcr.io/hyperi-io
 ## expands into the per-component version set. track-latest is the opt-in daemon
 ## roll to the newest certified stack tag.
 version:
-  pin: 2.2.1
+  pin: 2.2.2-rc.1
   # track: latest
   # allow_prerelease: "false"
 

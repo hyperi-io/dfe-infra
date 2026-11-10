@@ -380,6 +380,46 @@ def ref_platforms(ref: str, budget: RetryBudget | None = None) -> tuple[set[str]
     return {single}, ""
 
 
+def provenance_builders(doc: object) -> dict[str, str] | None:
+    """`os/arch` -> the builder platform its SLSA provenance records, or None when doc is not a map.
+
+    The doc is what `imagetools inspect --format '{{json .Provenance}}'` prints for an
+    index: one entry per platform. A platform with no provenance is absent, and one
+    whose provenance names no builder maps to "".
+    """
+    if not isinstance(doc, dict):
+        return None
+    found: dict[str, str] = {}
+    for platform, entry in doc.items():
+        slsa = entry.get("SLSA") if isinstance(entry, dict) else None
+        if not isinstance(slsa, dict):
+            continue
+        definition = slsa.get("buildDefinition")
+        internal = definition.get("internalParameters") if isinstance(definition, dict) else None
+        builder = internal.get("builderPlatform") if isinstance(internal, dict) else None
+        found[platform] = builder if isinstance(builder, str) else ""
+    return found
+
+
+def ref_builder_platforms(
+    ref: str, budget: RetryBudget | None = None
+) -> tuple[dict[str, str] | None, str]:
+    """(os/arch -> builder platform, error) for a full image ref, from its SLSA provenance.
+
+    Read with `docker buildx imagetools`, the same path and credentials as ref_platforms.
+    """
+    out, err = _imagetools(ref, "--format", "{{json .Provenance}}", budget=budget)
+    if out is None:
+        return None, err
+    try:
+        found = provenance_builders(json.loads(out))
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable provenance: {exc}"
+    if found is None:
+        return None, "provenance is not a per-platform map"
+    return found, ""
+
+
 def tag_digest(org: str, app: str, tag: str, registry: str = GHCR) -> str | None:
     """The digest (org, app, tag) resolves to right now, or None if the tag is absent.
 

@@ -24,9 +24,9 @@ Every dial field, sizing lock and backend detail is in [aws-configuration.md](aw
 You need:
 
 - OpenTofu 1.12 or later, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3.
-- A shell signed in to the target account. `aws sts get-caller-identity` must print the account the dial names, and the plan refuses if it does not.
+- A shell signed in to the target account. The plan refuses unless `aws sts get-caller-identity` prints the account the dial names.
 - The state bucket, once per account. In `terraform/environments/aws-state`, copy `example.tfvars.json` to `state.auto.tfvars.json`, set the account, region, name, env, `bucket_prefix`, tags, `noncurrent_version_days` and `incomplete_upload_days`, then `tofu init && tofu apply`. Its `state_bucket` output goes in the dial's `state.bucket`, beside a `state.key` no other deployment shares.
-- A public DNS zone you control, if you want public hostnames. The apply creates the Route 53 zone, and delegating to it from the parent is yours to do.
+- A public DNS zone, for public hostnames. The apply creates it in Route 53. When `dns.parent_zone_id` names a same-account Route 53 parent, it writes the delegation too.
 
 `<version>` is the DFE release you are installing.
 
@@ -95,7 +95,7 @@ Run it where the `aws` CLI is installed, because `tofu destroy` calls it. It run
 |---|---|
 | The plan refuses the account | Your shell is signed in to another account. Check `aws sts get-caller-identity`. |
 | The plan refuses a public API endpoint | `endpoint.public: true` needs `endpoint.allowed_cidrs`. |
-| Public names do not resolve, cert-manager's DNS-01 challenges fail | The parent zone does not delegate yet. Point it at the NS set `tofu output public_zone_name_servers` prints. |
+| Public names do not resolve, cert-manager's DNS-01 challenges fail | The parent zone does not delegate yet. Set `dns.parent_zone_id` when the parent is Route 53 in the same account, or point the parent at the NS set `tofu output public_zone_name_servers` prints. |
 | Every Layer 2 Application `Unknown`, "authentication required" | Your copy of the chart repo (`k8s.repo_url`) is private. Export `DFE_REPO_TOKEN`, an HTTPS token with read access. |
 | `stack-deploy` refuses `openbao` | AWS keeps every secret in Secrets Manager. Unset `DFE_SECRETS_BACKEND`, or set it to `aws-sm`. |
 | Bootstrap refuses with no `<tier>.pools.json` | The resolve wrote somewhere else. Set `DFE_SIZING_DIR` to its `sizing/` directory. |

@@ -91,7 +91,7 @@ The freeze test allows that `stack.previous` rewrite in a tagged block and no ot
 
 - `compat-check` validates the interdependency locks in `constraints/<version>.yaml`. `cut` clones that file from the source stack, so it exists already. Review the rules rather than recreating them, because a lock is a property of the components and only a component move invalidates one. An existing file is never overwritten.
 - `check_versions_drift.py --fix` propagates the SSoT into the pin mirrors that Renovate can't reach (appset pins, `Chart.yaml` appVersions).
-- `release-gate` fails a release-maturity stack that still has unpublished apps, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other.
+- `release-gate` fails a release-maturity stack that still has unpublished apps, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other. It also fails an image whose `linux/arm64` SLSA provenance names a builder other than `linux/arm64`, because that half was built under QEMU emulation, and one with no provenance to show either way.
 
 At every maturity `release-gate` also fails when `content.dfe-schemas` differs from the dfe-schemas the pinned dfe-engine's `uv.lock` locks. Move `content.dfe-schemas` to that locked version.
 
