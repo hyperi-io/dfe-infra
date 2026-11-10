@@ -2101,12 +2101,14 @@ def test_the_acceptance_stage_flag_passes_the_cycles_own_parser(
 
 # --- the edge suite needs the address it sends from before anything is created -----------------
 
+# The one-network spelling, which the cloud workflow still sets.
 INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDR"
 # A documentation range only: this repository is public.
 INGEST_SENDER = "203.0.113.7/32"
 
 
 def _ingest_allow(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    monkeypatch.delenv("DFE_RUN_INGEST_ALLOW_CIDRS", raising=False)
     if value is None:
         monkeypatch.delenv(INGEST_ALLOW_VAR, raising=False)
     else:

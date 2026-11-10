@@ -297,7 +297,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -1860,8 +1860,10 @@ BROWSER_SUITES = (ONBOARDING_SUITE, SOURCE_SUITE, EDGE_SUITE)
 # shape and removes it again, so it proves a fresh deploy. A suite that reads a
 # source the deployment must already carry is run through the pytest passthrough.
 SUITES = (ONBOARDING_SUITE, "flows", SOURCE_SUITE, EDGE_SUITE, "all")
-# The address the edge suite sends from, and the one network it admits to the ingest door.
-INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDR"
+# The networks the edge suite admits to the ingest door, comma or whitespace separated. Its sender sits in one.
+INGEST_ALLOW_VAR = "DFE_RUN_INGEST_ALLOW_CIDRS"
+# The one-network spelling, read when INGEST_ALLOW_VAR is unset.
+INGEST_ALLOW_ONE_VAR = "DFE_RUN_INGEST_ALLOW_CIDR"
 # The cluster's NAT egress as /32s (the cloud root's output), which a send from inside it arrives from.
 EGRESS_CIDRS_VAR = "DFE_EGRESS_CIDRS"
 # The deploy-repo overlay whose exposure.groups.ingest.allow renders the receiver's load balancer.
@@ -1891,33 +1893,38 @@ class EdgeSuiteError(RuntimeError):
     """The edge suite cannot run as asked; the message says why."""
 
 
-def ingest_allow_cidr(settings: Mapping[str, str]) -> str:
-    """The one network the edge suite sends from and admits to the ingest door.
+def ingest_allow_cidrs(settings: Mapping[str, str]) -> list[str]:
+    """The networks the edge suite admits to the ingest door, the sender's among them.
 
     Args:
         settings: The run's environment, env files and terraform outputs merged.
 
     Returns:
-        The network, normalised; a bare address is its own /32 or /128.
+        Each network once, normalised, in the order given. A bare address is its own /32 or /128.
 
     Raises:
-        EdgeSuiteError: It is unset, is not one network, or admits every address.
+        EdgeSuiteError: Both variables are unset, an entry is not a network, or one admits every address.
     """
-    raw = (settings.get(INGEST_ALLOW_VAR) or "").strip()
-    if not raw:
+    var = INGEST_ALLOW_VAR if (settings.get(INGEST_ALLOW_VAR) or "").strip() else INGEST_ALLOW_ONE_VAR
+    entries = (settings.get(var) or "").replace(",", " ").split()
+    if not entries:
         raise EdgeSuiteError(
-            f"{INGEST_ALLOW_VAR} is unset: the edge suite sends from that address and admits it "
-            "alone, so it never runs without it"
+            f"{INGEST_ALLOW_VAR} (or {INGEST_ALLOW_ONE_VAR}) is unset: the edge suite sends from one of "
+            "those networks and admits only them, so it never runs without it"
         )
-    try:
-        network = ipaddress.ip_network(raw, strict=False)
-    except ValueError as exc:
-        raise EdgeSuiteError(f"{INGEST_ALLOW_VAR}={raw!r} is not a network: {exc}") from exc
-    if network.prefixlen == 0:
-        raise EdgeSuiteError(
-            f"{INGEST_ALLOW_VAR}={raw} admits every address, so a refused send could never prove the list"
-        )
-    return str(network)
+    cidrs: list[str] = []
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError as exc:
+            raise EdgeSuiteError(f"{var} carries {entry!r}, which is not a network: {exc}") from exc
+        if network.prefixlen == 0:
+            raise EdgeSuiteError(
+                f"{var} carries {entry}, which admits every address, so a refused send could never prove the list"
+            )
+        if str(network) not in cidrs:
+            cidrs.append(str(network))
+    return cidrs
 
 
 def egress_cidrs(settings: Mapping[str, str]) -> list[str]:
@@ -1950,20 +1957,20 @@ def edge_inputs_problem(env_files: Iterable[str], env: Mapping[str, str]) -> str
     try:
         for env_file in env_files:
             settings.update(envfile.parse_env_file(Path(env_file)))
-        ingest_allow_cidr(settings)
+        ingest_allow_cidrs(settings)
     except (OSError, EdgeSuiteError) as exc:
         return str(exc)
     return ""
 
 
-def ingest_allow_document(original: str | None, cidr: str) -> tuple[str, list[str]]:
-    """The deploy repo's overlay with *cidr* added to exposure.groups.ingest.allow.
+def ingest_allow_document(original: str | None, cidrs: Sequence[str]) -> tuple[str, list[str]]:
+    """The deploy repo's overlay with *cidrs* added to exposure.groups.ingest.allow.
 
     Round-trip, so the deployer's comments, key order and earlier senders survive.
 
     Args:
         original: The overlay as the deploy repo holds it; None when it holds none.
-        cidr: The network to admit.
+        cidrs: The networks to admit.
 
     Returns:
         The overlay to write, and the allow list it now carries.
@@ -2001,9 +2008,10 @@ def ingest_allow_document(original: str | None, cidr: str) -> tuple[str, list[st
             "not a list, so it is left as it is"
         )
     allow = [str(entry) for entry in listed]
-    if cidr not in allow:
-        listed.append(cidr)
-        allow.append(cidr)
+    for cidr in cidrs:
+        if cidr not in allow:
+            listed.append(cidr)
+            allow.append(cidr)
     buffer = io.StringIO()
     yaml.dump(doc, buffer)
     return buffer.getvalue(), allow
@@ -2030,12 +2038,12 @@ def _put_ingest_file(deploy_values: list[str], text: str, message: str, env: dic
     return "" if rc == 0 else (_last_line(err or out) or f"exit {rc}")
 
 
-def open_ingest(deploy_values: list[str], cidr: str, env: dict | None) -> tuple[list[str], str | None]:
-    """Admit *cidr* on the receiver's ingest door through the deploy repo.
+def open_ingest(deploy_values: list[str], cidrs: Sequence[str], env: dict | None) -> tuple[list[str], str | None]:
+    """Admit *cidrs* on the receiver's ingest door through the deploy repo.
 
     Args:
         deploy_values: The `dfe-ops deploy-values` argv, up to the action.
-        cidr: The network to admit.
+        cidrs: The networks to admit.
         env: The environment deploy-values runs in.
 
     Returns:
@@ -2056,8 +2064,8 @@ def open_ingest(deploy_values: list[str], cidr: str, env: dict | None) -> tuple[
         raise EdgeSuiteError(
             f"could not read the deploy repo's {INGEST_ALLOW_FILE}: {_last_line(err or out) or f'exit {rc}'}"
         )
-    text, allow = ingest_allow_document(original, cidr)
-    refused = _put_ingest_file(deploy_values, text, f"acceptance: admit {cidr} on the ingest door", env)
+    text, allow = ingest_allow_document(original, cidrs)
+    refused = _put_ingest_file(deploy_values, text, f"acceptance: admit {', '.join(cidrs)} on the ingest door", env)
     if refused:
         raise EdgeSuiteError(f"could not write the deploy repo's {INGEST_ALLOW_FILE}: {refused}")
     return allow, original
@@ -2115,15 +2123,15 @@ def _hyperdx_url(kube: list[str], console: str) -> str:
 
 
 def _run_edge_suite(args: argparse.Namespace, kube: list[str], namespace: str, ui_url: str,
-                    resolve: list[str], allow_cidr: str, egress: list[str],
+                    resolve: list[str], allow_cidrs: Sequence[str], egress: list[str],
                     deploy_values: list[str], env: dict) -> int:
-    """Open the ingest door to *allow_cidr*, run the edge runner, and close the door after it.
+    """Open the ingest door to *allow_cidrs*, run the edge runner, and close the door after it.
 
     The door is restored whatever the runner does, and a restore that fails
     fails the stage: the receiver would stay open to the run's sender.
     """
     try:
-        allow, original = open_ingest(deploy_values, allow_cidr, env)
+        allow, original = open_ingest(deploy_values, allow_cidrs, env)
     except EdgeSuiteError as exc:
         print(f"acceptance: edge: {exc}", file=sys.stderr)
         return 1
@@ -2153,7 +2161,7 @@ def _run_edge_suite(args: argparse.Namespace, kube: list[str], namespace: str, u
         rc = subprocess.run(runner, env=env).returncode
     finally:
         if args.keep:
-            print(f"  --keep: the deploy repo's {INGEST_ALLOW_FILE} still admits {allow_cidr}",
+            print(f"  --keep: the deploy repo's {INGEST_ALLOW_FILE} still admits {', '.join(allow_cidrs)}",
                   file=sys.stderr)
         else:
             restored, line = restore_ingest(deploy_values, original, env)
@@ -2254,10 +2262,11 @@ def _acceptance(args: argparse.Namespace, followers: list[pod_logs.Owned]) -> in
 
     steps = suite_steps(args.suite)
     # Before anything touches the cluster, and never a skip: a run without these proves nothing.
-    edge_allow, edge_egress = "", []
+    edge_allow: list[str] = []
+    edge_egress: list[str] = []
     if EDGE_SUITE in steps:
         try:
-            edge_allow = ingest_allow_cidr(settings)
+            edge_allow = ingest_allow_cidrs(settings)
             edge_egress = egress_cidrs(settings)
         except EdgeSuiteError as exc:
             print(f"acceptance: the edge suite cannot run: {exc}", file=sys.stderr)
@@ -5416,7 +5425,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="which data path the flow suite must prove; both refuses to report green with either path skipped (default: derived from --mode, else both)")
     ac.add_argument("--suite", default="all", choices=SUITES,
                     help="onboarding drives the wizard and the console in a browser; flows creates every source shape and removes it again; "
-                         f"edge admits {INGEST_ALLOW_VAR} on the receiver's public door, sends from it, finds the row in main, the console "
+                         f"edge admits {INGEST_ALLOW_VAR} on the receiver's public door, sends from one of them, finds the row in main, the console "
                          f"and HyperDX, and proves a send from the cluster's own egress ({EGRESS_CIDRS_VAR}) refused; all runs onboarding then flows")
     ac.add_argument("--engine-user", default="",
                     help="engine login the suites authenticate as (default: the deploy's own minted admin)")

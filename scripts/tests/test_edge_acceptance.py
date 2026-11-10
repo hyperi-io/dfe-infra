@@ -101,6 +101,7 @@ def test_expected_fail_a_cycle_asking_for_edge_without_the_send_address_refuses_
 ) -> None:
     """Finding the address missing after the deploy costs the deploy, and a skip would read as green."""
     monkeypatch.delenv(dfeops.INGEST_ALLOW_VAR, raising=False)
+    monkeypatch.delenv(dfeops.INGEST_ALLOW_ONE_VAR, raising=False)
     rc, ran = _cycle(monkeypatch, "--acceptance-suite", "edge")
     assert rc == 2
     assert ran == []
@@ -120,6 +121,7 @@ def test_a_cycle_reads_the_send_address_from_its_env_file_and_runs_the_edge_stag
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv(dfeops.INGEST_ALLOW_VAR, raising=False)
+    monkeypatch.delenv(dfeops.INGEST_ALLOW_ONE_VAR, raising=False)
     env_file = tmp_path / "run.env"
     env_file.write_text(f"{dfeops.INGEST_ALLOW_VAR}={SENDER}\n", encoding="utf-8")
     rc, ran = _cycle(monkeypatch, "--acceptance-suite", "edge", "--env-file", str(env_file))
@@ -130,6 +132,7 @@ def test_a_cycle_reads_the_send_address_from_its_env_file_and_runs_the_edge_stag
 
 def test_a_cycle_on_another_suite_never_asks_for_the_send_address(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(dfeops.INGEST_ALLOW_VAR, raising=False)
+    monkeypatch.delenv(dfeops.INGEST_ALLOW_ONE_VAR, raising=False)
     rc, ran = _cycle(monkeypatch, "--acceptance-suite", "source")
     assert rc == 0
     assert [cmd[2] for cmd in ran] == ["stack-deploy", "verify", "acceptance", "teardown"]
@@ -138,27 +141,33 @@ def test_a_cycle_on_another_suite_never_asks_for_the_send_address(monkeypatch: p
 # --- the send address and the cluster's egress ------------------------------------------
 
 
-@pytest.mark.parametrize(("raw", "want"), [
-    ("203.0.113.7", "203.0.113.7/32"),
-    ("203.0.113.7/32", "203.0.113.7/32"),
-    (" 198.51.100.0/24 ", "198.51.100.0/24"),
-    ("198.51.100.9/24", "198.51.100.0/24"),
-    ("2001:db8::7", "2001:db8::7/128"),
+@pytest.mark.parametrize(("settings", "want"), [
+    ({dfeops.INGEST_ALLOW_VAR: "203.0.113.7"}, ["203.0.113.7/32"]),
+    ({dfeops.INGEST_ALLOW_VAR: " 198.51.100.9/24 "}, ["198.51.100.0/24"]),
+    ({dfeops.INGEST_ALLOW_VAR: "2001:db8::7"}, ["2001:db8::7/128"]),
+    ({dfeops.INGEST_ALLOW_VAR: f"{SENDER}, 198.51.100.0/24"}, [SENDER, "198.51.100.0/24"]),
+    ({dfeops.INGEST_ALLOW_VAR: f"{SENDER}\n198.51.100.4 203.0.113.7"}, [SENDER, "198.51.100.4/32"]),
+    ({dfeops.INGEST_ALLOW_ONE_VAR: "203.0.113.7"}, [SENDER]),
+    ({dfeops.INGEST_ALLOW_VAR: "198.51.100.4", dfeops.INGEST_ALLOW_ONE_VAR: SENDER}, ["198.51.100.4/32"]),
+    ({dfeops.INGEST_ALLOW_VAR: " ", dfeops.INGEST_ALLOW_ONE_VAR: SENDER}, [SENDER]),
 ])
-def test_the_send_address_is_one_network(raw: str, want: str) -> None:
-    assert dfeops.ingest_allow_cidr({dfeops.INGEST_ALLOW_VAR: raw}) == want
+def test_the_allow_list_is_each_network_once_the_list_variable_first(
+    settings: dict[str, str], want: list[str]
+) -> None:
+    assert dfeops.ingest_allow_cidrs(settings) == want
 
 
 @pytest.mark.parametrize(("raw", "said"), [
     ("", "unset"),
+    (" , ", "unset"),
     ("not-an-address", "not a network"),
+    (f"{SENDER},nope", "'nope', which is not a network"),
     ("0.0.0.0/0", "every address"),
-    ("::/0", "every address"),
-    (f"{SENDER},198.51.100.4/32", "not a network"),
+    (f"{SENDER},::/0", "every address"),
 ])
-def test_expected_fail_a_send_address_that_cannot_prove_the_list_is_refused(raw: str, said: str) -> None:
+def test_expected_fail_an_allow_list_that_cannot_prove_itself_is_refused(raw: str, said: str) -> None:
     with pytest.raises(dfeops.EdgeSuiteError) as refused:
-        dfeops.ingest_allow_cidr({dfeops.INGEST_ALLOW_VAR: raw})
+        dfeops.ingest_allow_cidrs({dfeops.INGEST_ALLOW_VAR: raw})
     assert said in str(refused.value)
     assert dfeops.INGEST_ALLOW_VAR in str(refused.value)
 
@@ -191,13 +200,13 @@ exposure:
 
 
 def test_an_absent_overlay_becomes_one_naming_the_sender_alone() -> None:
-    text, allow = dfeops.ingest_allow_document(None, SENDER)
+    text, allow = dfeops.ingest_allow_document(None, [SENDER])
     assert allow == [SENDER]
     assert _yaml(text) == {"exposure": {"groups": {"ingest": {"allow": [SENDER]}}}}
 
 
 def test_the_deployers_own_overlay_keeps_its_comments_keys_and_senders() -> None:
-    text, allow = dfeops.ingest_allow_document(DEPLOYED, SENDER)
+    text, allow = dfeops.ingest_allow_document(DEPLOYED, [SENDER])
     assert allow == ["192.0.2.0/24", SENDER]
     doc = _yaml(text)
     assert doc["clickhouse"] == {"mode": "cluster"}
@@ -207,15 +216,15 @@ def test_the_deployers_own_overlay_keeps_its_comments_keys_and_senders() -> None
 
 
 def test_writing_the_sender_twice_names_it_once() -> None:
-    once, _ = dfeops.ingest_allow_document(DEPLOYED, SENDER)
-    twice, allow = dfeops.ingest_allow_document(once, SENDER)
+    once, _ = dfeops.ingest_allow_document(DEPLOYED, [SENDER])
+    twice, allow = dfeops.ingest_allow_document(once, [SENDER])
     assert allow == ["192.0.2.0/24", SENDER]
     assert twice == once
 
 
 @pytest.mark.parametrize("text", ["exposure:\n", "exposure:\n  groups:\n", "{}\n", "\n"])
 def test_an_empty_branch_is_filled_rather_than_refused(text: str) -> None:
-    rendered, allow = dfeops.ingest_allow_document(text, SENDER)
+    rendered, allow = dfeops.ingest_allow_document(text, [SENDER])
     assert allow == [SENDER]
     assert _yaml(rendered)["exposure"]["groups"]["ingest"]["allow"] == [SENDER]
 
@@ -223,7 +232,7 @@ def test_an_empty_branch_is_filled_rather_than_refused(text: str) -> None:
 @pytest.mark.parametrize("text", ["- a\n- b\n", "exposure: open\n", "exposure:\n  groups:\n    ingest:\n      allow: everyone\n"])
 def test_expected_fail_an_overlay_of_another_shape_is_refused_not_overwritten(text: str) -> None:
     with pytest.raises(dfeops.EdgeSuiteError) as refused:
-        dfeops.ingest_allow_document(text, SENDER)
+        dfeops.ingest_allow_document(text, [SENDER])
     assert dfeops.INGEST_ALLOW_FILE in str(refused.value)
 
 
@@ -266,7 +275,7 @@ DEPLOY_VALUES = ["python3", "dfe-ops", "deploy-values", "--url", "http://localho
 def test_an_absent_overlay_is_written_and_restored_by_deleting_it(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = DeployRepo(None)
     monkeypatch.setattr(dfeops, "_run_text", repo)
-    allow, original = dfeops.open_ingest(DEPLOY_VALUES, SENDER, {})
+    allow, original = dfeops.open_ingest(DEPLOY_VALUES, [SENDER], {})
     assert (allow, original) == ([SENDER], None)
     assert _yaml(repo.content)["exposure"]["groups"]["ingest"]["allow"] == [SENDER]
     assert all(cmd[: len(DEPLOY_VALUES)] == DEPLOY_VALUES for cmd in repo.calls)
@@ -280,7 +289,7 @@ def test_an_absent_overlay_is_written_and_restored_by_deleting_it(monkeypatch: p
 def test_an_existing_overlay_is_merged_and_restored_byte_for_byte(monkeypatch: pytest.MonkeyPatch) -> None:
     repo = DeployRepo(DEPLOYED)
     monkeypatch.setattr(dfeops, "_run_text", repo)
-    allow, original = dfeops.open_ingest(DEPLOY_VALUES, SENDER, {})
+    allow, original = dfeops.open_ingest(DEPLOY_VALUES, [SENDER], {})
     assert original == DEPLOYED
     assert allow == ["192.0.2.0/24", SENDER]
     assert SENDER in repo.content
@@ -299,7 +308,7 @@ def test_expected_fail_a_deploy_repo_that_refuses_stops_the_suite(
 ) -> None:
     monkeypatch.setattr(dfeops, "_run_text", repo)
     with pytest.raises(dfeops.EdgeSuiteError) as refused:
-        dfeops.open_ingest(DEPLOY_VALUES, SENDER, {})
+        dfeops.open_ingest(DEPLOY_VALUES, [SENDER], {})
     assert said in str(refused.value)
     assert dfeops.INGEST_ALLOW_FILE in str(refused.value)
 
@@ -389,7 +398,7 @@ def _acceptance(
     monkeypatch.setattr(dfeops, "_run_text", repo)
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     for name in (dfeops.NEW_ADMIN_PASSWORD_VAR, "DFE_NAMESPACE", dfeops.EDGE_FENCE_VAR,
-                 dfeops.INGEST_ALLOW_VAR, dfeops.EGRESS_CIDRS_VAR, "KUBECONFIG", "DFE_KUBE_CONTEXT",
+                 dfeops.INGEST_ALLOW_VAR, dfeops.INGEST_ALLOW_ONE_VAR, dfeops.EGRESS_CIDRS_VAR, "KUBECONFIG", "DFE_KUBE_CONTEXT",
                  "DFE_KUBE_SERVER"):
         monkeypatch.delenv(name, raising=False)
     for name, value in (settings if settings is not None else
