@@ -29,7 +29,6 @@ Needs `helm` on PATH.
 
 import sys
 
-import pytest
 import yaml
 
 from _expect import expect, standalone, summary
@@ -83,10 +82,6 @@ def test_the_overlay_keeps_its_other_source_keys() -> None:
     expect("beside the default", source.get("auto_offset_reset") == EARLIEST, f"got {source!r}")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a null config.source.auto_offset_reset renders null into the file, not no key",
-)
 def test_empty_leaves_the_app_default() -> None:
     source = overlay_source({"auto_offset_reset": None})
     expect("a cleared offset reset renders no key", "auto_offset_reset" not in source,
