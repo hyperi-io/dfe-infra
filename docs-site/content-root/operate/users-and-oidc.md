@@ -34,7 +34,7 @@ The deploy mints both passwords. Outside a dev setup the engine refuses to start
 | Docker | `make up` prints the access summary and `make creds` prints it again. A pipe or a log gets the `.env` key name in place of the password |
 | Kubernetes | `dfe-ops stack-deploy` writes `.tmp/<stack>-<mode>/access-summary.md` in your dfe-infra checkout, readable by you only. `dfe-ops creds` prints the command that fetches each login |
 
-Sign in as `admin`. The engine forces a password change at the first login. The console then walks a setup wizard: an organisation, a sign-in step for your IdP that you can skip for now, and your own account. The `admin` account stays after that as your local way in, and you reset its password under Settings.
+Sign in as `admin`. The engine forces a password change at the first login. The console then takes you through a setup wizard: an organisation, a sign-in step for your IdP that you can skip for now, and your own account. The `admin` account stays after that as your local way in, and you reset its password under Settings.
 
 `breakglass` is the recovery admin for when the IdP, the secret store or the engine's own state is gone. Its bcrypt hash is committed to your deploy repo at `governance/settings/auth.yaml`, so it survives a rebuild. Keep its password somewhere safe. With gitops off there is nowhere durable for the hash, and no `breakglass` account. Once your IdP sign-in works, `enabled: false` in that file switches it off, and a login attempt then says why it was refused.
 
@@ -46,7 +46,7 @@ Then check it before anyone tries to sign in. `GET /api/v1/auth/oidc-providers/<
 
 ## 4. Map groups to roles
 
-This is the step that bites. A group's name links nothing. An IdP group called `dfe-admins` gets no roles until an admin links it, because directory display names are not unique, and where users can create groups anyone can pick one.
+This is the step that bites. A group's name links nothing. An IdP group called `dfe-admins` gets no roles until an admin links it, because directory display names aren't unique, and where users can create groups anyone can pick one.
 
 A link takes two fields on the DFE group, set together:
 

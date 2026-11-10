@@ -37,11 +37,18 @@ which takes that source's own transform with it. Each run writes DIR/<UTC time>-
   metrics/<namespace>/<pod>.txt
                              each running dfe-receiver and dfe-loader pod's /metrics, read
                              with curl inside the pod
-  clickhouse/<pod>.part_log.tsv, clickhouse/<pod>.inserts.tsv
-                             each in-cluster ClickHouse server's system.part_log and the
-                             INSERT rows of system.query_log for database dfe, over the
-                             --log-minutes window, and clickhouse/<namespace>.pods.txt, each
-                             server container's restarts and last termination reason
+  clickhouse/<pod>.<read>.tsv
+                             each in-cluster ClickHouse server's view of database dfe:
+                             part_log (part writes, fetches and merges of 1 s or more, or
+                             failed, with S3 request counts), replication_queue, replicas,
+                             parts (active parts per table with file counts) and inserts
+                             (the INSERT rows of system.query_log), over the --log-minutes
+                             window
+  clickhouse/<namespace>.replica_lag.tsv
+                             per table, the time from a part's NewPart to each other
+                             replica's DownloadPart, read once across every replica
+  clickhouse/<namespace>.pods.txt
+                             each server container's restarts and last termination reason
   kafka/engine.txt           the bootstrap address, security protocol and SASL Secret name
                              dfe-engine's Deployment sets, and the ConfigMaps it loads
   kafka/configmap-<name>.txt the bootstrap address and security protocol each of those
@@ -146,12 +153,33 @@ CLICKHOUSE_STATE = (
     " last={.status.containerStatuses[*].lastState.terminated.reason}"
     " at={.status.containerStatuses[*].lastState.terminated.finishedAt}{\"\\n\"}{end}"
 )
-# Each server's own record of the parts written and the INSERTs run into the dfe database.
+# Each server's own view of the dfe database: its slow or failed part writes, fetches and
+# merges, its replication queue and replica state, its active parts, and the INSERTs it ran.
 CLICKHOUSE_READS = {
     "part_log": (
-        "SELECT event_time, event_type, table, part_name, rows, error, exception "
+        "SELECT event_time, event_type, table, part_name, rows, duration_ms, size_in_bytes, "
+        "part_type, disk_name, ProfileEvents['S3ReadRequestsCount'] AS s3_reads, "
+        "ProfileEvents['S3WriteRequestsCount'] AS s3_writes, error, exception "
         "FROM system.part_log WHERE database = 'dfe' "
-        "AND event_time > now() - INTERVAL {minutes} MINUTE ORDER BY event_time"
+        "AND event_time > now() - INTERVAL {minutes} MINUTE "
+        "AND (duration_ms >= 1000 OR error != 0) ORDER BY event_time LIMIT 2000"
+    ),
+    "replication_queue": (
+        "SELECT table, type, new_part_name, create_time, num_tries, num_postponed, "
+        "postpone_reason, last_attempt_time, last_exception "
+        "FROM system.replication_queue WHERE database = 'dfe' ORDER BY create_time"
+    ),
+    "replicas": (
+        "SELECT table, is_readonly, is_session_expired, queue_size, inserts_in_queue, "
+        "merges_in_queue, absolute_delay, last_queue_update, active_replicas, total_replicas, "
+        "zookeeper_exception, last_queue_update_exception "
+        "FROM system.replicas WHERE database = 'dfe' ORDER BY absolute_delay DESC"
+    ),
+    "parts": (
+        "SELECT table, part_type, disk_name, count() AS parts, sum(rows) AS rows, "
+        "round(avg(files)) AS files_avg, max(files) AS files_max, sum(bytes_on_disk) AS bytes "
+        "FROM system.parts WHERE database = 'dfe' AND active "
+        "GROUP BY table, part_type, disk_name ORDER BY files_max DESC"
     ),
     "inserts": (
         "SELECT event_time, type, tables, written_rows, exception_code, "
@@ -160,6 +188,31 @@ CLICKHOUSE_READS = {
         "AND event_time > now() - INTERVAL {minutes} MINUTE ORDER BY event_time"
     ),
 }
+# Per table, how long after its NewPart each other replica finished fetching a part, read once
+# per namespace across every replica. wait_median_s is the lag less the fetch itself.
+CLICKHOUSE_LAG = (
+    "SELECT table, count() AS fetches, round(min(lag_s), 1) AS lag_min, "
+    "round(quantile(0.5)(lag_s), 1) AS lag_median, round(quantile(0.95)(lag_s), 1) AS lag_p95, "
+    "round(max(lag_s), 1) AS lag_max, countIf(lag_s >= 30) AS over_30s, "
+    "round(quantile(0.5)(fetch_ms)) AS fetch_ms_median, max(fetch_ms) AS fetch_ms_max, "
+    "round(quantile(0.5)(lag_s - fetch_ms / 1000), 1) AS wait_median_s, "
+    "round(avg(s3_requests)) AS s3_requests_avg, topK(1)(part_type)[1] AS part_type, "
+    "topK(1)(disk_name)[1] AS disk FROM ("
+    "SELECT d.table AS table, d.duration_ms AS fetch_ms, d.s3_requests AS s3_requests, "
+    "d.part_type AS part_type, d.disk_name AS disk_name, "
+    "dateDiff('millisecond', n.event_time_microseconds, d.event_time_microseconds) / 1000 AS lag_s "
+    "FROM (SELECT table, part_name, event_time_microseconds, duration_ms, "
+    "toString(part_type) AS part_type, disk_name, "
+    "ProfileEvents['S3ReadRequestsCount'] + ProfileEvents['S3WriteRequestsCount'] AS s3_requests "
+    "FROM clusterAllReplicas(getMacro('cluster'), system.part_log) WHERE database = 'dfe' "
+    "AND event_type = 'DownloadPart' AND event_time > now() - INTERVAL {minutes} MINUTE) AS d "
+    "ASOF JOIN (SELECT table, part_name, event_time_microseconds "
+    "FROM clusterAllReplicas(getMacro('cluster'), system.part_log) WHERE database = 'dfe' "
+    "AND event_type = 'NewPart' AND event_time > now() - INTERVAL {window} MINUTE) AS n "
+    "ON d.table = n.table AND d.part_name = n.part_name "
+    "AND d.event_time_microseconds >= n.event_time_microseconds"
+    ") GROUP BY table ORDER BY lag_max DESC"
+)
 ENGINE = "dfe-engine"
 ARGOCD = "argocd"
 APPLICATIONS = "applications.argoproj.io"
@@ -1002,21 +1055,33 @@ def capture_metrics(bundle: Bundle, pods: list[dict]) -> None:
         bundle.capture(f"metrics/{fe.safe_name(namespace)}/{fe.safe_name(name)}.txt", args)
 
 
+def _clickhouse_query(namespace: str, name: str, query: str) -> list[str]:
+    """The kubectl argv that runs `query` on one ClickHouse server pod, TSV with names."""
+    return ["-n", namespace, "exec", name, "-c", CLICKHOUSE_CONTAINER, "--",
+            "clickhouse-client", "--format", "TSVWithNames", "-q", query]
+
+
 def capture_clickhouse(bundle: Bundle, pods: list[dict], *, minutes: int) -> None:
-    """Each ClickHouse server's part_log and INSERTs into dfe over the last `minutes`."""
+    """Each ClickHouse server's view of dfe over the last `minutes`, and the replica lag."""
     servers = clickhouse_servers(pods)
     if not servers:
         bundle.note("clickhouse/", "no in-cluster ClickHouse server pod, nothing read")
     selector = "=".join(CLICKHOUSE_ROLE)
-    for namespace in sorted({namespace for namespace, _name in servers}):
+    first: dict[str, str] = {}
+    for namespace, name in servers:
+        first.setdefault(namespace, name)
+    for namespace, name in sorted(first.items()):
         args = ["-n", namespace, "get", "pods", "-l", selector, "-o", CLICKHOUSE_STATE]
         bundle.capture(f"clickhouse/{fe.safe_name(namespace)}.pods.txt", args)
+        # A part written just before the window still has its fetches inside it.
+        lag = CLICKHOUSE_LAG.format(minutes=minutes, window=2 * minutes)
+        bundle.capture(f"clickhouse/{fe.safe_name(namespace)}.replica_lag.tsv",
+                       _clickhouse_query(namespace, name, lag))
     for namespace, name in servers:
         for read, sql in CLICKHOUSE_READS.items():
             query = sql.format(minutes=minutes)
-            args = ["-n", namespace, "exec", name, "-c", CLICKHOUSE_CONTAINER, "--",
-                    "clickhouse-client", "--format", "TSVWithNames", "-q", query]
-            bundle.capture(f"clickhouse/{fe.safe_name(name)}.{read}.tsv", args)
+            bundle.capture(f"clickhouse/{fe.safe_name(name)}.{read}.tsv",
+                           _clickhouse_query(namespace, name, query))
 
 
 def _collect_cluster(

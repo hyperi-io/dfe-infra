@@ -101,14 +101,15 @@ def _required_vars(env_vars: dict[str, str]) -> set[str]:
         "DFE_TARGET_REVISION",
         "DFE_STORAGE_CLASS",
         "DFE_NAMESPACE",
-        "DFE_CLICKHOUSE_HOST",
         # Every root emits this one, empty on a brokerless (slim/mesh) profile,
         # which is why its PRESENCE is required here where bootstrap.sh leaves
         # its VALUE optional.
         "DFE_KAFKA_BOOTSTRAP",
-        "DFE_OTEL_ENDPOINT",
         "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
     }
+    # Read only on an external server: an in-cluster ClickHouse is the charts' own service.
+    if env_vars.get("DFE_CLICKHOUSE_MODE") == "external":
+        required.add("DFE_CLICKHOUSE_HOST")
     # An empty value takes bootstrap.sh's own default: Secrets Manager on aws and
     # openbao elsewhere. `.get(..., default)` alone would read a present-but-empty
     # output as none of the three and drop every check.

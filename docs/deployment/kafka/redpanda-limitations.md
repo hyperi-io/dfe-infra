@@ -1,88 +1,49 @@
 # Redpanda as a DFE Kafka provider -- limitations and when to use it
 
-DFE deploys two Kafka providers itself, in-cluster: **Strimzi** (default) and
-**Redpanda** (opt-in). Three more are managed clouds it does not deploy --
-`msk`, `confluent-cloud`, `redpanda-cloud` -- covered in the neighbouring
-guides in this directory. This page is Redpanda-the-in-cluster-operator only.
-Redpanda is a Kafka-API-compatible broker with a much
-smaller footprint (no JVM, no ZooKeeper/KRaft sidecar, built-in schema registry).
-It is a strong choice for `single`/small/test and a lean option at scale -- but it
-carries constraints that must be a conscious decision. Redpanda is **off unless**
-`kafka.redpanda.acceptLicense=true` is set (the chart fails otherwise).
+DFE deploys two Kafka providers itself, in-cluster: Strimzi (the default) and Redpanda (opt-in). Three more are managed clouds it doesn't deploy, `msk`, `confluent-cloud` and `redpanda-cloud`, and the neighbouring guides in this directory cover them. This page is only about Redpanda as the in-cluster operator.
 
-## 1. Licensing (the gating constraint)
+Redpanda is a Kafka-API-compatible broker with no JVM, no ZooKeeper/KRaft sidecar and a built-in schema registry. Its licence (BSL) limits how you can host it, and a few Kafka features differ (sections 1 and 2). Redpanda is off unless `kafka.redpanda.acceptLicense=true` is set, and the chart fails otherwise.
 
-Redpanda Community Edition is licensed under the **Business Source License
-(BSL)** -- source-available, **not** open source. Sources: Redpanda licensing
-docs and the BSL announcement.
+In short:
 
-- **Core restriction:** you may not offer Redpanda as a **"Streaming or Queuing
-  Service"** to third parties (a commercial service where third parties cause
-  topic creation). The BSL code converts to Apache-2.0 four years after each
-  merge.
-- **Internal / self-hosted production use is permitted.**
+- Default to Strimzi (Apache-2.0, CNCF).
+- Choose Redpanda for self-hosted single, small and test deployments where you want no JVM, with `acceptLicense=true`, once you've read the BSL constraint below.
+- Don't bundle Redpanda into a HyperI-hosted multi-tenant SaaS without legal sign-off.
 
-**What this means for DFE:**
+## 1. Licensing
 
-- A **customer self-hosting DFE** with bundled Redpanda -- **fine** (internal use).
-- A **HyperI-hosted, multi-tenant DFE SaaS** that bundles Redpanda and lets
-  tenants create topics -- **likely breaches the BSL clause.** Use **Strimzi**
-  (Apache-2.0) for the hosted offering, or obtain a Redpanda Enterprise licence /
-  legal sign-off.
-- Enterprise-only features (Tiered Storage, remote read replicas, continuous
-  data balancing, Console SSO) require a paid licence (RCL). **DFE uses none of
-  these** -- it does its own S3 archival via `dfe-archiver`.
+Redpanda Community Edition is licensed under the Business Source License (BSL). That's source-available, not open source. Sources: Redpanda licensing docs and the BSL announcement.
 
-## 2. Kafka-API compatibility caveats (vs DFE's usage)
+- The core restriction is that you may not offer Redpanda as a "Streaming or Queuing Service" to third parties, meaning a commercial service where third parties cause topic creation. The BSL code converts to Apache-2.0 four years after each merge.
+- Internal, self-hosted production use is permitted.
 
-Redpanda implements the Kafka wire protocol (clients >= 0.11), so DFE's
-produce/consume/consumer-group usage works without code changes. Known gaps:
+What that means for DFE:
+
+- A customer self-hosting DFE with bundled Redpanda is fine, because that's internal use.
+- A HyperI-hosted, multi-tenant DFE SaaS that bundles Redpanda and lets tenants create topics likely breaches the BSL clause. Use Strimzi (Apache-2.0) for the hosted offering, or get a Redpanda Enterprise licence or legal sign-off.
+- Enterprise-only features (Tiered Storage, remote read replicas, continuous data balancing, Console SSO) need a paid licence (RCL). DFE uses none of them. It does its own S3 archival through `dfe-archiver`.
+
+## 2. Kafka-API compatibility caveats
+
+Redpanda implements the Kafka wire protocol (clients 0.11 and later), so DFE's produce, consume and consumer-group usage works without code changes. These are the known gaps:
 
 | Caveat | Relevant to DFE? |
 |--------|------------------|
-| **Kafka Streams unsupported** | No -- DFE uses its own Rust transforms, not Kafka Streams |
-| Transactions: server-side KIP-890 absent (4.x clients fall back to old protocol) | Only if DFE relies on exactly-once Kafka transactions; confirm in the loader (DFE is at-least-once) |
-| **One SASL/SCRAM mechanism per user** (no simultaneous 256+512) | No -- DFE uses SCRAM-SHA-512 only |
-| HTTP Proxy cannot do topic/ACL admin CRUD | No -- DFE creates topics via the admin API, not pandaproxy |
-| No live KRaft<->Redpanda metadata migration | No -- greenfield |
+| Kafka Streams unsupported | No. DFE uses its own Rust transforms, not Kafka Streams |
+| Transactions: server-side KIP-890 absent (4.x clients fall back to the old protocol) | Only if DFE relies on exactly-once Kafka transactions. Confirm in the loader (DFE is at-least-once) |
+| One SASL/SCRAM mechanism per user (no simultaneous 256 and 512) | No. DFE uses SCRAM-SHA-512 only |
+| HTTP Proxy can't do topic/ACL admin CRUD | No. DFE creates topics through the admin API, not pandaproxy |
+| No live KRaft to Redpanda metadata migration | No. It's greenfield |
 | May lag newest Kafka KIPs by months | Low risk for basic produce/consume |
 
-**Upside:** built-in Schema Registry + HTTP proxy per node, no JVM/ZK -- smaller
-and simpler than Strimzi for single/small deployments.
+Each node has a built-in Schema Registry and HTTP proxy, with no JVM or ZooKeeper.
 
 ## 3. Deployment status in DFE charts
 
-Redpanda is deployed via the **Redpanda operator** (`Redpanda` + `User` CRDs,
-`cluster.redpanda.com/v1alpha2`) -- the same operator+thin-CR model DFE uses for
-Strimzi. The operator is installed only on an explicit opt-in: the
-`dfe-redpanda-operator` ApplicationSet keys on the cluster label
-`dfe.hyperi.io/kafka-provider: redpanda` (BSL stays off any cluster that has not
-chosen it). Pinned in `versions.yaml` (`redpanda-operator` 26.2.3, broker
-`redpanda-version` v26.2.2).
+The Redpanda operator (`Redpanda` and `User` CRDs, `cluster.redpanda.com/v1alpha2`) deploys Redpanda. It's the same operator-plus-thin-CR model DFE uses for Strimzi. The operator installs only on an explicit opt-in. The `dfe-redpanda-operator` ApplicationSet keys on the cluster label `dfe.hyperi.io/kafka-provider: redpanda`, so the BSL stays off any cluster that hasn't chosen it. The pins are in `versions.yaml`: `redpanda-operator` 26.2.3 and broker `redpanda-version` v26.2.2.
 
-- **Auth: SASL/SCRAM-SHA-512, on from first boot** (the DFE kafka standard), TLS off on the internal listener -- matching Strimzi's plain SCRAM listener -- with the Kafka API on **9093**. The operator generates and manages the bootstrap superuser, and the `dfe-kafka-user` `User` CR reads its password from the store-backed `dfe-kafka-user-store` Secret the Strimzi `KafkaUser` reads. That Secret carries `password` alone, so the chart writes `username`, `password` and `sasl.mechanism` into `dfe-kafka-user` in the app namespaces, as it does for Strimzi. With `user.password.fromSecretsStore=false` the operator generates the password into a broker-namespace Secret named after the user, and the chart merges the other two keys into it.
-- **single** (small/test): one-broker `Redpanda` CR. Live-validated end to end
-  on the on-prem reference cluster (SCRAM produce->consume via the matrix
-  harness).
-- **cluster**: multi-broker `Redpanda` CR (`statefulset.replicas`); the operator
-  owns Raft/seed bootstrap (no hand-rolled `seed_servers`). Validate at the target
-  scale before relying on it. The secrets config must set `kafka_provider=redpanda`,
-  or the store path `kafka/redpanda` is never seeded and `dfe-kafka-user-store`
-  never syncs. `bootstrapServers` in `profile-scale.yaml` names Strimzi's Service,
-  so override it with the Redpanda cluster's in your own values.
-- **Known operator bug (workaround in place):** the `User` controller's
-  `clusterRef` SRV discovery fails when SASL is enabled (redpanda-operator #1130,
-  "Operator fails to load credentials from clusterRef when SASL is enabled"). The
-  `User` CR therefore uses `spec.cluster.staticConfiguration` (explicit kafka +
-  admin endpoints, authenticating as the bootstrap superuser) instead of
-  `clusterRef`. Revert to `clusterRef` once the upstream bug is fixed.
-- **MSK / external**: not applicable to Redpanda -- use `kafka.mode=external` with
-  a Redpanda Cloud endpoint, or MSK with the Strimzi/external path.
-
-## 4. Decision summary
-
-- Default to **Strimzi** (Apache-2.0, CNCF, mature, fully cluster-validated here).
-- Choose **Redpanda** for footprint-sensitive **self-hosted** single/small/test,
-  with `acceptLicense=true`, having read the BSL constraint above.
-- **Do not bundle Redpanda into a HyperI-hosted multi-tenant SaaS** without legal
-  sign-off.
+- Auth is SASL/SCRAM-SHA-512, on from first boot (the DFE Kafka standard). TLS is off on the internal listener, matching Strimzi's plain SCRAM listener, and the Kafka API is on 9093. The operator generates and manages the bootstrap superuser. The `dfe-kafka-user` `User` CR reads its password from the store-backed `dfe-kafka-user-store` Secret that the Strimzi `KafkaUser` also reads. That Secret carries `password` alone, so the chart writes `username`, `password` and `sasl.mechanism` into `dfe-kafka-user` in the app namespaces, as it does for Strimzi. With `user.password.fromSecretsStore=false` the operator generates the password into a broker-namespace Secret named after the user, and the chart merges the other two keys into it.
+- `single` (small/test) is a one-broker `Redpanda` CR. It's live-validated end to end on the on-prem reference cluster (SCRAM produce to consume through the matrix harness).
+- `cluster` is a multi-broker `Redpanda` CR (`statefulset.replicas`). The operator owns Raft and seed bootstrap, so there's no hand-rolled `seed_servers`. Validate at the target scale before you rely on it. The secrets config must set `kafka_provider=redpanda`, or the store path `kafka/redpanda` is never seeded and `dfe-kafka-user-store` never syncs. `bootstrapServers` in `profile-scale.yaml` names Strimzi's Service, so override it with the Redpanda cluster's in your own values.
+- Known operator bug, with a workaround in place: the `User` controller's `clusterRef` SRV discovery fails when SASL is enabled (redpanda-operator #1130, "Operator fails to load credentials from clusterRef when SASL is enabled"). So the `User` CR uses `spec.cluster.staticConfiguration` instead of `clusterRef`. That gives explicit kafka and admin endpoints and authenticates as the bootstrap superuser. Revert to `clusterRef` once the upstream bug is fixed.
+- MSK and external don't apply to Redpanda. Use `kafka.mode=external` with a Redpanda Cloud endpoint, or MSK with the Strimzi/external path.

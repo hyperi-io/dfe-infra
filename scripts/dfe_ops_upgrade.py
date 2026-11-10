@@ -212,6 +212,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(1, str(REPO_ROOT / "bootstrap"))
 import argocd_release  # noqa: E402
 import helm_releases  # noqa: E402
+import schema_lock_remedy  # noqa: E402
 import values_migration  # noqa: E402
 import yaml_subset  # noqa: E402
 from deploy_repo_session import BundledRepo, SessionError  # noqa: E402
@@ -1002,6 +1003,112 @@ def check_clickhouse_merges(
     return True, f"no merge running longer than {threshold_seconds:.0f}s on {len(pods)} ClickHouse pod(s)"
 
 
+def _sql_text(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+_PART_NAME = re.compile(r"^(?P<partition>.+?)_(?P<min>\d+)_(?P<max>\d+)_\d+(?:_\d+)?$")
+
+
+def quorum_parts(last_part: str) -> list[tuple[str, int, int]]:
+    """(partition id, min block, max block) of each part a Keeper `<table>/quorum/last_part` value names.
+
+    The value is a header, then one `<partition>\\t<part name>` line per partition.
+    """
+    found = []
+    for line in last_part.splitlines():
+        match = _PART_NAME.match(line.rsplit("\t", 1)[-1]) if "\t" in line else None
+        if match:
+            found.append((match["partition"], int(match["min"]), int(match["max"])))
+    return found
+
+
+def check_schema_lock_wedge(
+    kubeconfig: str | None,
+    namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
+    selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
+    credentials: str = DEFAULT_CLICKHOUSE_CREDENTIALS,
+) -> tuple[bool, str]:
+    """No schema_lock table's quorum names a part that every replica has lost.
+
+    The engine reads the lock with select_sequential_consistency, so once the
+    quorum's last part is gone everywhere (a TTL emptied it) every read fails
+    with code 289 and no engine can start. A replica only lagging also answers
+    289, so the part must be missing on every replica before this fails.
+    """
+    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "pods", "-l", selector)
+    if rc != 0:
+        return False, f"cannot find a ClickHouse pod: {err}"
+    pods = [str((item.get("metadata") or {}).get("name", "")) for item in doc.get("items") or []]
+    if not pods:
+        return False, f"no pod matching {selector!r} in {namespace}"
+    try:
+        login = _clickhouse_login(kubeconfig, namespace, credentials, pods[0])
+    except UpgradeError as exc:
+        return False, str(exc)
+
+    def ask(pod: str, query: str) -> tuple[bool, str]:
+        result = _clickhouse_client(kubeconfig, namespace, pod, query, login)
+        if result.returncode != 0:
+            return False, f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}"
+        return True, result.stdout or ""
+
+    ok, out = ask(
+        pods[0],
+        "SELECT database, zookeeper_path, total_replicas FROM system.replicas "
+        "WHERE table = 'schema_lock' FORMAT TSV",
+    )
+    if not ok:
+        return False, out
+    tables = [line.split("\t") for line in out.splitlines() if line.count("\t") == 2]
+    if not tables:
+        return True, "no replicated schema_lock table"
+    wedged: list[str] = []
+    unproven: list[str] = []
+    for database, zk_path, total in tables:
+        ok, out = ask(
+            pods[0],
+            f"SELECT value FROM system.zookeeper WHERE path = {_sql_text(zk_path + '/quorum')} "
+            "AND name = 'last_part' FORMAT TSVRaw",
+        )
+        if not ok:
+            return False, out
+        parts = quorum_parts(out)
+        if not parts:
+            continue
+        # A merge replaces the quorum's part with one covering its blocks, so cover counts as held.
+        covering = " OR ".join(
+            f"(partition_id = {_sql_text(pid)} AND min_block_number <= {lo} AND max_block_number >= {hi})"
+            for pid, lo, hi in parts
+        )
+        present = 0
+        for pod in pods:
+            ok, out = ask(
+                pod,
+                f"SELECT count() FROM system.parts WHERE database = {_sql_text(database)} "
+                f"AND table = 'schema_lock' AND active AND ({covering})",
+            )
+            if not ok:
+                return False, out
+            present += int(out.strip() or "0") > 0
+        if present:
+            continue
+        if total.isdigit() and len(pods) < int(total):
+            unproven.append(f"{database} ({len(pods)} of {total} replicas read)")
+            continue
+        wedged.append(database)
+    if wedged:
+        drops = "; ".join(schema_lock_remedy.schema_lock_drop(db) for db in wedged)
+        return False, (
+            f"schema_lock's quorum names a part no replica holds ({', '.join(wedged)}), so no engine can "
+            f"take the schema lease. With no engine holding it, run once on one replica: {drops} "
+            "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)"
+        )
+    if unproven:
+        return True, f"quorum part missing on every replica read, not all were: {', '.join(unproven)}"
+    return True, f"every schema_lock quorum part is held by a replica ({len(tables)} table(s), {len(pods)} pod(s))"
+
+
 def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
     """Each CRD in `installed` (name -> CRD object) whose status.storedVersions
     holds anything but v1, mapped to `<name> (stored: <versions>)`, in input order.
@@ -1788,6 +1895,10 @@ def run_preflight(
         *check_clickhouse_merges(
             kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold, clickhouse_credentials
         ),
+    ))
+    checks.append((
+        "schema lock not wedged",
+        *check_schema_lock_wedge(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_credentials),
     ))
     conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
     if conversion is not None:
