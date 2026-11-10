@@ -107,6 +107,7 @@ def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(tmp_path: Pat
     io = wiz.WizardIO(answers=dict(ONPREM_ANSWERS))
     answers = wiz.run_wizard(io)
     text = wiz.build_dial_text(answers)
+    assert "\nsecrets:\n  backend: openbao\n" in text
 
     dial_path = tmp_path / "deployment.yaml"
     dial_path.write_text(text, encoding="utf-8")
@@ -189,6 +190,8 @@ def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_p
     assert tfvars["kafka"]["provider"] == "msk"
     assert tfvars["kafka"]["msk"]["broker_count"] == 3
     assert tfvars["network"]["az_count"] == 3
+    # The AWS root accepts only aws-sm (terraform/environments/aws/variables.tf, var.secrets).
+    assert tfvars["secrets"]["backend"] == "aws-sm"
     assert tfvars["dns"]["public_zone"] == "dfe.example.com"
     assert tfvars["dns"]["parent_zone_id"] == "Z0PARENT"
 
