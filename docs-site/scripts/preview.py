@@ -138,7 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     env = {**os.environ, "DFE_DOCS_BUILD": name}
     heap = f"--max-old-space-size={HEAP_MB}"
     env["NODE_OPTIONS"] = f"{env.get('NODE_OPTIONS', '')} {heap}".strip()
-    run(str(DOCUSAURUS), "gen-api-docs", "all", env=env)
+    # The openapi plugin loads only for a build carrying a spec, so gen-api-docs exists only then.
+    if next((b.get("openapi") for b in site.get("builds", []) if b.get("name") == name), None):
+        run(str(DOCUSAURUS), "gen-api-docs", "all", env=env)
 
     build_root = aggregate.DEFAULT_OUT / name
     seen = sync(build_root, {})
