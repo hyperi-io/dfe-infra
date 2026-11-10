@@ -2675,6 +2675,122 @@ def test_apply_pushes_a_commit_an_earlier_run_left_and_waits_on_the_reconcile(
     assert f"kafka-dfe (last reconciled {OLD_RECONCILE}, before this change)" in err
 
 
+def test_a_bare_rerun_after_an_unpushed_stage_replays_from_the_upstream_pin(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Argo reads the remote, so a pin committed but never pushed has not moved the deployment."""
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
+    assert u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False)) == u.EXIT_OK
+    capsys.readouterr()
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+
+    out, err = capsys.readouterr()
+    assert rc == u.EXIT_OK, err
+    assert "already matches" not in out
+    assert "FROM is 1.0.0, the upstream pins.yaml: a local commit pins 2.0.0 and is not pushed yet" in err
+    assert seen["pushes"] == 2
+    assert not u._unpushed(pushed_real_git_deploy)
+
+
+def test_a_rejected_push_fails_the_stage_with_gits_reason(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The remote moved since the checkout last fetched, which the last line of git's output never says."""
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
+    remote = u._git(pushed_real_git_deploy, "remote", "get-url", "origin").stdout.strip()
+    elsewhere = tmp_path / "elsewhere"
+    assert u._run(["git", "clone", "-q", remote, str(elsewhere)]).returncode == 0
+    (elsewhere / "console-edit.yaml").write_text("x: 1\n", encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "console edit"], ["push", "-q"]):
+        assert u._git(elsewhere, *args).returncode == 0, args
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_BLOCKED, err
+    assert "FAILED at stage 1: git push failed: ! [rejected]" in err
+    assert "(fetch first)" in err
+
+
+DFE_HYPERDX_DIGEST = "sha256:" + "0" * 64
+HYPERDX_OVERLAY = "# Enables hyperdx.\ndeploy:\n  service: hyperdx\n  instance: default\nhyperdx:\n  service: kept\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "service", "charts", "renamed"),
+    [
+        ("hyperdx-default-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, True),
+        ("hyperdx-edge-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, True),
+        # TO still renders the old name, or predates the new one.
+        ("hyperdx-default-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST, "hyperdx": DFE_HYPERDX_DIGEST}, False),
+        ("hyperdx-default-values.yaml", "hyperdx", {"hyperdx": DFE_HYPERDX_DIGEST}, False),
+        ("hyperdx-default-values.yaml", "hyperdx", {}, False),
+        # The file names another service, or is already renamed.
+        ("hyperdx-default-values.yaml", "dfe-ui", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, False),
+        ("dfe-hyperdx-default-values.yaml", "dfe-hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, False),
+    ],
+)
+def test_pending_renames_names_only_an_overlay_the_to_stack_no_longer_renders(
+    deploy: Path, name: str, service: str, charts: dict[str, str], renamed: bool
+) -> None:
+    (deploy / "values").mkdir()
+    (deploy / "values" / name).write_text(HYPERDX_OVERLAY.replace("service: hyperdx", f"service: {service}"), encoding="utf-8")
+
+    found = u.pending_renames(deploy, {"chart-digests": charts})
+
+    if renamed:
+        new = "dfe-" + name
+        assert found == [(deploy / "values" / name, deploy / "values" / new, "dfe-hyperdx")]
+    else:
+        assert found == []
+
+
+def test_a_rename_moves_the_overlay_and_sets_only_its_deploy_service(real_git_deploy: Path) -> None:
+    values = real_git_deploy / "values"
+    values.mkdir()
+    (values / "hyperdx-default-values.yaml").write_text(HYPERDX_OVERLAY, encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "seed"]):
+        assert u._git(real_git_deploy, *args).returncode == 0, args
+
+    ok, detail = u._rename_services(real_git_deploy, u.pending_renames(real_git_deploy, {"chart-digests": {"dfe-hyperdx": DFE_HYPERDX_DIGEST}}))
+
+    assert ok, detail
+    assert detail == "hyperdx-default-values.yaml -> dfe-hyperdx-default-values.yaml"
+    assert not (values / "hyperdx-default-values.yaml").exists()
+    moved = (values / "dfe-hyperdx-default-values.yaml").read_text(encoding="utf-8")
+    assert moved == HYPERDX_OVERLAY.replace("deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx")
+    assert u._git(real_git_deploy, "status", "--porcelain").stdout.startswith("R")
+
+
+def test_apply_pushes_the_rename_with_the_chart_stage(
+    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The renamed overlay reaches the remote in the chart stage, before any retarget reads it."""
+    _two_stage(monkeypatch, pushed_real_git_deploy)
+    versions_path = pushed_real_git_deploy.parent / "versions.yaml"
+    versions_path.write_text(
+        TWO_STAGE_VERSIONS_YAML + f'    chart-digests:\n      dfe-hyperdx: "{DFE_HYPERDX_DIGEST}"\n', encoding="utf-8"
+    )
+    _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
+    values = pushed_real_git_deploy / "values"
+    values.mkdir()
+    (values / "hyperdx-default-values.yaml").write_text(HYPERDX_OVERLAY, encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "seed"], ["push", "-q"]):
+        assert u._git(pushed_real_git_deploy, *args).returncode == 0, args
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert "rename: hyperdx-default-values.yaml -> dfe-hyperdx-default-values.yaml -- committed and pushed" in err
+    pushed = u._git(pushed_real_git_deploy, "show", "@{upstream}:values/dfe-hyperdx-default-values.yaml")
+    assert pushed.returncode == 0, pushed.stderr
+    assert "deploy:\n  service: dfe-hyperdx\n" in pushed.stdout
+
+
 def test_a_pushing_dry_run_names_the_reconcile_each_wait_asks_for(
     monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

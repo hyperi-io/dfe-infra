@@ -283,6 +283,11 @@ HOLD_MARK = "# dfe-ops upgrade hold"
 
 # The deploy repo's shared values overlay, layered by every layer 2 appset.
 COMMON_OVERLAY = Path("infra") / "common.yaml"
+# Old deploy.service -> new, for each app a stack renamed. A stack whose chart-digests
+# carry the new name alone renders only it (docs/deployment/upgrades.md, "From 2.2.1").
+RENAMED_SERVICES = {"hyperdx": "dfe-hyperdx"}
+# The service: line of a values overlay's top-level deploy: block.
+_DEPLOY_SERVICE = re.compile(r"(?m)(^deploy:\n(?:[ \t]+.*\n|[ \t]*#.*\n)*?[ \t]+service:[ \t]*)\S+")
 # The first stack whose receiver door is exposure.groups.ingest; below it the door is exposure.mode.
 INGEST_GROUP_STACK = "2.2.1-rc.7"
 INGEST_GROUP_PATH = ("exposure", "groups", "ingest")
@@ -603,6 +608,17 @@ def read_deploy_pin(deploy: Path) -> str:
     if not pinned:
         raise UpgradeError(f"{pins_path}: no base.dfe-infra pin")
     return str(pinned)
+
+
+def read_upstream_pin(deploy: Path) -> str | None:
+    """pins.yaml's `base.dfe-infra` at the upstream branch, when local commits are not pushed yet."""
+    if not (deploy / ".git").exists() or not _unpushed(deploy):
+        return None
+    shown = _git(deploy, "show", "@{upstream}:pins.yaml")
+    if shown.returncode != 0:
+        return None
+    pinned = yaml_subset.at(yaml_subset.parse(shown.stdout, source="@{upstream}:pins.yaml"), ("base", "dfe-infra"))
+    return str(pinned) if pinned else None
 
 
 # --- the diff (plan_moves) -------------------------------------------------------
@@ -1775,9 +1791,47 @@ def _commit_and_push(deploy: Path, message: str, *, push: bool) -> tuple[str, st
     commit = _git(deploy, "commit", "-m", message)
     if commit.returncode != 0:
         return f"git commit failed: {_last_line(commit.stderr) or _last_line(commit.stdout)}", ""
-    if push and _git(deploy, "push").returncode != 0:
-        return "git push failed", ""
+    if push:
+        failure = _push(deploy)
+        if failure:
+            return failure, ""
     return "", "committed and pushed" if push else "committed"
+
+
+def _push(deploy: Path) -> str:
+    """Push the deploy repo. Why it failed, in git's words, or empty."""
+    push = _git(deploy, "push")
+    if push.returncode == 0:
+        return ""
+    lines = [line.strip() for line in push.stderr.splitlines() if line.strip()]
+    # git ends a rejection with hints, so the ref line or the error line says more than the last.
+    reason = next((line for line in lines if "rejected]" in line), None)
+    reason = reason or next((line for line in lines if line.startswith(("error:", "fatal:"))), None)
+    return f"git push failed: {reason or _last_line(push.stderr) or 'no detail'}"
+
+
+def pending_renames(deploy: Path, to_pins: dict) -> list[tuple[Path, Path, str]]:
+    """(overlay, its new path, new service) for each values overlay naming a service TO renamed."""
+    charts = to_pins.get("chart-digests") or {}
+    found: list[tuple[Path, Path, str]] = []
+    for old, new in RENAMED_SERVICES.items():
+        if new not in charts or old in charts:
+            continue
+        for path in sorted((deploy / "values").glob(f"{old}-*-values.yaml")):
+            if yaml_subset.value_at(path.read_text(encoding="utf-8"), ("deploy", "service")) == old:
+                found.append((path, path.with_name(new + path.name[len(old) :]), new))
+    return found
+
+
+def _rename_services(deploy: Path, renames: list[tuple[Path, Path, str]]) -> tuple[bool, str]:
+    """git mv each overlay to its new name and set its deploy.service. (False, why) on a git failure."""
+    for path, target, service in renames:
+        moved = _git(deploy, "mv", path.relative_to(deploy).as_posix(), target.relative_to(deploy).as_posix())
+        if moved.returncode != 0:
+            return False, f"git mv {path.name} failed: {_last_line(moved.stderr) or 'no detail'}"
+        text = target.read_text(encoding="utf-8")
+        target.write_text(_DEPLOY_SERVICE.sub(rf"\g<1>{service}", text, count=1), encoding="utf-8", newline="\n")
+    return True, ", ".join(f"{path.name} -> {target.name}" for path, target, _ in renames)
 
 
 def _recarry_values(deploy: Path, migration: values_migration.MigrationMap, to_name: str) -> tuple[bool, str]:
@@ -2668,7 +2722,16 @@ def read_from_stack(
     """
     if (deploy / "pins.yaml").is_file():
         pinned = read_deploy_pin(deploy)
-        return from_arg or pinned, ""
+        if from_arg:
+            return from_arg, ""
+        # Argo reads the remote, so a stage committed but never pushed has not moved the deployment.
+        upstream = read_upstream_pin(deploy)
+        if upstream and upstream != pinned:
+            return upstream, (
+                f"FROM is {upstream}, the upstream pins.yaml: a local commit pins {pinned} and is not "
+                "pushed yet, so apply replays from what Argo reads"
+            )
+        return pinned, ""
     if from_arg:
         return from_arg, ""
     stack = read_stack_version(kubeconfig, argocd_namespace)
@@ -2729,7 +2792,7 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     # A cluster is in play once one is named, or FROM came off its secret.
     exposure = exposure_checks(
         deploy, from_name, to_name, cloud=args.cloud, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace,
-        cluster=args.kubeconfig is not None or bool(from_note),
+        cluster=args.kubeconfig is not None or not (deploy / "pins.yaml").is_file(),
     )
     lines = "\n".join(_check_line(*check) for check in exposure)
     sections.append(f"## exposure checks\n\n{lines}\n")
@@ -3002,6 +3065,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     kafka_stage = kafka_move.step.stage if kafka_move else None
     migration = values_migration.load_map()
     values_move = values_cutover(from_name, to_name, migration.since)[0]
+    renames = pending_renames(deploy, to_pins)
 
     # Read before any stage moves, so a cluster in a state apply cannot move
     # refuses with nothing half done.
@@ -3196,9 +3260,9 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             emit(f"git -C {deploy} push")
             if not args.dry_run:
                 pushed_at = _push_moment(deploy)
-                push = _git(deploy, "push")
-                if push.returncode != 0:
-                    return _stage_failed(stage_index, "git push failed", stage_moves)
+                failure = _push(deploy)
+                if failure:
+                    return _stage_failed(stage_index, failure, stage_moves)
 
         emit(_wait_line(args, reconciled="any change it pushes" if args.push else ""))
         if not args.dry_run:
@@ -3221,6 +3285,18 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     f"git -C {deploy} pull --ff-only, carry the 2.2.0 value keys again from what the 2.2.0 engine "
                     "wrote since the push, then commit and push what changed"
                 )
+            if renames:
+                moved = ", ".join(f"values/{path.name} -> values/{target.name}" for path, target, _ in renames)
+                emit(f"git -C {deploy} mv {moved}, set each deploy.service, commit and push")
+            if not args.dry_run and renames:
+                # TO's appset renders only the new name, so the rename lands just before the retarget.
+                ok, detail = _rename_services(deploy, renames)
+                if not ok:
+                    return _stage_failed(stage_index, detail, stage_moves)
+                failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} rename {detail}", push=args.push)
+                if failure:
+                    return _stage_failed(stage_index, failure, stage_moves)
+                print(f"  rename: {detail} -- {done}", file=sys.stderr)
             emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
             emit(_wait_line(args, leaving=from_name, reconciled="the retarget"))
             if not args.dry_run and retarget:
