@@ -234,13 +234,87 @@ true
 {{- end -}}
 
 {{/*
+dfe-engine.secretsStoreEnv -- where the engine's secrets store is, for the engine
+and the hunt runner alike: the Secrets Manager region and name prefix on aws, the
+file provider's directory otherwise.
+*/}}
+{{- define "dfe-engine.secretsStoreEnv" -}}
+{{- if include "dfe-engine.secretsOnAws" . -}}
+{{- $store := .Values.secrets -}}
+- name: DFE_ENGINE_SECRETS_PROVIDER
+  value: "aws"
+- name: DFE_ENGINE_SECRETS_REGION
+  value: {{ required "secrets.region is empty: with secrets.provider aws the engine refuses to start without the store's region" $store.region | quote }}
+- name: DFE_ENGINE_SECRETS_NAME_PREFIX
+  value: {{ required "secrets.namePrefix is empty: with secrets.provider aws the engine refuses to start without the prefix its role writes under" $store.namePrefix | quote }}
+{{- else -}}
+# Under the writable config mount: the default ./.secrets is the root-owned
+# /app WORKDIR, where minting the JWT signing key crashes the engine.
+- name: DFE_ENGINE_SECRETS_PATH
+  value: {{ .Values.config.mountPath }}/.secrets
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.mirrorSecret -- an empty Opaque Secret the engine mirrors keys into,
+and the Role and RoleBinding granting the engine's account get and update on that
+one Secret. Takes (dict "ctx" . "name" <Secret name>).
+
+Rendered with no data: the engine owns every key, writing it through scalo's
+kubernetes provider with the resourceVersion it read. Argo applies it server-side
+naming no data, and layer2-apps.yaml ignores its /data, so a sync never takes a
+key back.
+*/}}
+{{- define "dfe-engine.mirrorSecret" -}}
+{{- $ctx := .ctx -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+type: Opaque
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}-writer
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+rules:
+  # resourceNames holds the engine to this one Secret: no list, watch or create,
+  # and no other Secret in the namespace.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .name | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}-writer
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" $ctx }}
+    namespace: {{ $ctx.Release.Namespace }}
+{{- end -}}
+
+{{/*
 dfe-engine.sidecarServiceAccount -- the account the hunt runner or keda shim runs
 as: one of its own, rendered by dfe-engine.sidecarServiceAccountObject, that
 carries nothing. Takes (dict "ctx" . "name" <workload name>).
 
 The engine's account carries its grants: Secrets Manager writes through EKS Pod
-Identity on aws, and get and update on the ingest bearer Secret elsewhere. Neither
-sidecar calls the Kubernetes API or a secrets store.
+Identity on aws, and get and update on its two Secrets elsewhere. The hunt
+runner reads alert destinations from Secrets Manager through a Pod Identity
+role of its own on aws, and from a mounted Secret elsewhere. Neither sidecar
+calls the Kubernetes API.
 */}}
 {{- define "dfe-engine.sidecarServiceAccount" -}}
 {{ .name }}

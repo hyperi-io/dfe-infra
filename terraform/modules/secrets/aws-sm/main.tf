@@ -3,7 +3,8 @@
 // store changes and the ClusterSecretStore's provider block changes, while
 // every ExternalSecret and every reader downstream is unchanged. dfe-engine has
 // a second identity, which writes the secrets it mints under engine/, and
-// dfe-receiver a third, which reads the ingest bearer tokens the engine writes there.
+// dfe-receiver and dfe-hunt-runner one each, which read the ingest bearer tokens and
+// hunt alert destinations the engine writes there.
 
 data "aws_region" "current" {}
 
@@ -56,11 +57,22 @@ locals {
   // The engine's thin chart names its service account after the component (scalo-service).
   engine_service_account = "dfe-engine"
 
-  // The engine writes one <id>:<token> secret per receiver listener under this, and the receiver reads them.
-  bearer_tokens_arn_prefix = "${local.engine_arn_prefix}/ingest/bearer-tokens"
-
-  // The receiver's thin chart names its service account after the component, as the engine's does.
-  receiver_service_account = "dfe-receiver"
+  // Who reads what the engine writes: the role name's middle, the service account
+  // it binds, and the prefix it reads under.
+  readers = {
+    // One <id>:<token> secret per receiver listener. The thin chart names the
+    // account after the component, as the engine's does.
+    receiver = {
+      service_account = "dfe-receiver"
+      arn_prefix      = "${local.engine_arn_prefix}/ingest/bearer-tokens"
+    }
+    // One {url, enabled} secret per hunt alert destination. dfe-extras names the
+    // runner's account after its Deployment.
+    hunt-runner = {
+      service_account = "dfe-hunt-runner"
+      arn_prefix      = "${local.engine_arn_prefix}/alert-destinations"
+    }
+  }
 }
 
 // A generated value NEVER leaves this module -- it goes into the store and into
@@ -254,25 +266,29 @@ resource "aws_eks_pod_identity_association" "engine" {
 }
 
 // ---------------------------------------------------------------------------
-// The identity dfe-receiver reads its ingest bearer tokens with
+// The identities that read what the engine writes, each by name under one prefix
 // ---------------------------------------------------------------------------
 
-resource "aws_iam_role" "receiver" {
-  name                 = "${var.cluster_name}-receiver-secrets"
+resource "aws_iam_role" "reader" {
+  for_each = local.readers
+
+  name                 = "${var.cluster_name}-${each.key}-secrets"
   path                 = var.iam_path
   assume_role_policy   = var.pod_identity_trust_policy_json
   permissions_boundary = var.permissions_boundary
 }
 
-data "aws_iam_policy_document" "receiver" {
-  // Each listener's secret_source names its secret, so the receiver reads by name and lists nothing.
+data "aws_iam_policy_document" "reader" {
+  for_each = local.readers
+
+  // Each secret is read by its name, so the reader lists nothing.
   statement {
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = ["${local.bearer_tokens_arn_prefix}/*"]
+    resources = ["${each.value.arn_prefix}/*"]
   }
 
-  // Decrypt only, through Secrets Manager, for the bearer-token secrets alone.
+  // Decrypt only, through Secrets Manager, for those secrets alone.
   statement {
     effect    = "Allow"
     actions   = ["kms:Decrypt"]
@@ -287,22 +303,41 @@ data "aws_iam_policy_document" "receiver" {
     condition {
       test     = "StringLike"
       variable = "kms:EncryptionContext:SecretARN"
-      values   = ["${local.bearer_tokens_arn_prefix}/*"]
+      values   = ["${each.value.arn_prefix}/*"]
     }
   }
 }
 
-resource "aws_iam_role_policy" "receiver" {
-  name   = "${var.cluster_name}-receiver-secrets"
-  role   = aws_iam_role.receiver.name
-  policy = data.aws_iam_policy_document.receiver.json
+resource "aws_iam_role_policy" "reader" {
+  for_each = local.readers
+
+  name   = "${var.cluster_name}-${each.key}-secrets"
+  role   = aws_iam_role.reader[each.key].name
+  policy = data.aws_iam_policy_document.reader[each.key].json
 }
 
-resource "aws_eks_pod_identity_association" "receiver" {
+resource "aws_eks_pod_identity_association" "reader" {
+  for_each = local.readers
+
   cluster_name = var.cluster_name
 
   namespace       = var.engine_namespace
-  service_account = local.receiver_service_account
+  service_account = each.value.service_account
 
-  role_arn = aws_iam_role.receiver.arn
+  role_arn = aws_iam_role.reader[each.key].arn
+}
+
+moved {
+  from = aws_iam_role.receiver
+  to   = aws_iam_role.reader["receiver"]
+}
+
+moved {
+  from = aws_iam_role_policy.receiver
+  to   = aws_iam_role_policy.reader["receiver"]
+}
+
+moved {
+  from = aws_eks_pod_identity_association.receiver
+  to   = aws_eks_pod_identity_association.reader["receiver"]
 }

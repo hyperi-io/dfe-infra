@@ -228,7 +228,7 @@ override_resource {
 }
 
 override_data {
-  target = module.secrets.data.aws_iam_policy_document.receiver
+  target = module.secrets.data.aws_iam_policy_document.reader
 
   values = {
     json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
@@ -236,7 +236,7 @@ override_data {
 }
 
 override_resource {
-  target = module.secrets.aws_iam_role.receiver
+  target = module.secrets.aws_iam_role.reader
 
   values = {
     arn = "arn:aws:iam::000000000000:role/dfe-example-receiver-secrets"
