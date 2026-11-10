@@ -7,22 +7,19 @@ sidebar_label: Docker
 
 The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. It runs the same images as a Kubernetes deployment, just packaged differently.
 
-You need Docker with Compose v2 and Python 3. `<version>` is the DFE release you're running, the one in the version menu at the top of this page. Pick a profile first:
+You need Docker with Compose v2 and Python 3. Pick a profile first:
 
 | Profile | Transport | Runs |
 |---|---|---|
-| `slim-grpc` | gRPC, low latency | The core path alone: receiver, loader and ClickHouse, with the engine and the console. The default. |
-| `single-kafka` | Kafka message bus | All of that, plus Kafka, the archiver, and the fetcher and transforms, one per source. |
+| `slim-grpc` | gRPC, low latency | The core path alone: receiver, loader and ClickHouse, with the engine and the console. |
+| `single-kafka` | Kafka message bus | All of that, plus Kafka, the archiver, and the fetcher and transforms, one per source. The default. |
 
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make init                                   # write .env and mint the logins
-make stack VERSION=<version>                # pin every image to that release
-echo 'DFE_PROFILE=slim-grpc' >> .env        # or single-kafka
-make up                                     # pull, start, self test, print the console login
+make up PROFILE=slim-grpc     # pull, start, self test, print the console login
 ```
 
-Don't skip `make stack`. The stack won't start on an unpinned image, so you always run the exact versions this release pins, never whatever `latest` is today. `make up` ends with a self test that sends marked events through and prints `PASS` as each check lands.
+`make up` runs the newest DFE release with every image pinned. `PROFILE=` picks from the table above and is checked against it, `single-kafka` when you leave it off. `VERSION=` pins another release. `make up` ends with a self test that sends marked events through and prints `PASS` as each check lands.
 
 Then send it an event of your own:
 

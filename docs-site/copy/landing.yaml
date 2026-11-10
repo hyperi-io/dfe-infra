@@ -137,11 +137,7 @@ quickstart:
         # dfe-docker Makefile targets init, stack, up and demo. The profile names are service_profiles.yaml's.
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-            make init
-            make stack VERSION={stack}
-            echo 'DFE_PROFILE=single-kafka' >> .env
-            make up
-            make demo
+            make demo{version_arg}
         - text: "Then open the console. `make demo-stop` ends it."
       guide: {label: The demo, to: /quickstart/demo/}
     - value: docker
@@ -150,10 +146,7 @@ quickstart:
         - text: "Needs Docker and Python 3."
         - code: |-
             git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-            make init
-            make stack VERSION={stack}
-            echo 'DFE_PROFILE=slim-grpc' >> .env
-            make up
+            make up PROFILE=slim-grpc{version_arg}
         - text: "Then send it an event:"
         # dfe-docker docs/evaluating.md, "Seeing your own data go through".
         - code: |-

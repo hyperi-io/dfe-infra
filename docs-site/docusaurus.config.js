@@ -50,8 +50,11 @@ function apiIntroPath(openapi) {
 }
 const apiPath = apiIntroPath(build.openapi);
 
+// Empty on the newest release, whose stack make up and make demo pick by default.
+const versionArg = stack === site.newest ? '' : ` VERSION=${stack}`;
 const COPY_VARS = {
   stack,
+  version_arg: versionArg,
   version: versionLabel,
   newest: site.newest,
   release_notes: releaseNotes,
