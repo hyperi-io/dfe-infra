@@ -86,7 +86,7 @@ whats_new:
       href: "{release_notes}"
     - eyebrow: Deploy
       title: DFE on AWS
-      text: OpenTofu builds EKS on Graviton, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud. From there it's the same bootstrap as any other cluster.
+      text: Your own AWS account, on Graviton, from one short wizard.
       action: Read the guide
       to: /dfe-infra/deployment/aws/
     - eyebrow: Reference
@@ -102,17 +102,17 @@ deploy:
   action: Quickstart
   cards:
     - icon: host
-      eyebrow: dfe-docker
+      eyebrow: Docker
       title: Docker Compose
       text: One host. A laptop, a demo box or a proof of concept in minutes.
       to: /quickstart/docker/
     - icon: cluster
-      eyebrow: dfe-infra
+      eyebrow: Kubernetes
       title: Kubernetes on-premises
       text: Your own cluster, in your data centre or a network with no outside connection.
       to: /quickstart/kubernetes/
     - icon: cloud
-      eyebrow: dfe-infra
+      eyebrow: AWS
       title: Amazon EKS
       text: Your own AWS account, built for you on Graviton.
       to: /quickstart/aws/
