@@ -55,6 +55,7 @@ placement:
   content-root:
     default: "Deploy / Choose a target"
     README.md: ""
+    history.md: "Evaluate / How DFE fits together"
     quickstart/demo.md: "Evaluate / Try the demo"
     quickstart/docker.md: "Evaluate / Try the demo"
     quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"

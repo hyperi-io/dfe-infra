@@ -5,9 +5,9 @@ sidebar_label: AWS
 
 # Quickstart: AWS
 
-OpenTofu builds Amazon EKS on Graviton, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud. Then the same bootstrap as every other cluster deploys DFE onto it.
+OpenTofu builds Amazon EKS on Graviton, with Kafka from Amazon MSK, Confluent Cloud or Redpanda Cloud. From there, the same bootstrap as any other cluster deploys DFE onto it.
 
-You need AWS credentials for the account, OpenTofu, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3. Apply `terraform/environments/aws-state` once per account first, for the state bucket. `<version>` is the DFE release you are installing, the one in the version menu at the top of this page.
+You need AWS credentials for the account, OpenTofu, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3. Apply `terraform/environments/aws-state` once per account first, for the state bucket. `<version>` is the DFE release you're installing, the one in the version menu at the top of this page.
 
 ```bash
 git clone --branch <version> https://github.com/hyperi-io/dfe-infra && cd dfe-infra

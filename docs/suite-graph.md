@@ -16,55 +16,28 @@ Three files at the root of this repo, one question each:
 
 - `versions.yaml` - which VERSION of each thing a stack pins.
 - `apps.yaml` - what KIND of app each deployed workload is.
-- `suite.yaml` - which REPOS are ours, what each one IS, and what MOVES when one
-  of them releases.
+- `suite.yaml` - which REPOS are ours, what each one IS, and what MOVES when one of them releases.
 
-`suite.yaml` carries no version literal, so it can never become a second place
-to look a pin up. Membership is declared there and nowhere else: a repo absent
-from the file is not a member, whatever its name. The test for membership is
-release authority - if we do not cut its releases, it is not in.
+`suite.yaml` carries no version literal, so it can never become a second place to look a pin up. Membership is declared there and nowhere else, so a repo absent from the file isn't a member, whatever its name. The test is release authority: if we don't cut its releases, it's not in.
 
-The diagrams on this page are generated from `suite.yaml` by
-`scripts/dfe-stack suite --render-docs` and compared against it by
-`scripts/check_suite_drift.py`. Edit the file, not the diagrams.
+The diagrams on this page are generated from `suite.yaml` by `scripts/dfe-stack suite --render-docs` and compared against it by `scripts/check_suite_drift.py`. Edit the file, not the diagrams.
 
-That drift check has two halves. The in-repo half - structure, the charts, the
-pins, these diagrams - is binding wherever it runs. The cross-repo half reads
-each member's own cited file and its `Cargo.lock` and `uv.lock`, so it is
-SKIPPED, and says so, on a bare checkout with no member clones beside it, which
-is what CI has. An operator running it on a box with the clones on disk gets
-that half checked, and `--strict` there turns a skip into a failure.
+That drift check has two halves. The in-repo half (structure, the charts, the pins, these diagrams) is binding wherever it runs. The cross-repo half reads each member's own cited file and its `Cargo.lock` and `uv.lock`. On a bare checkout with no member clones beside it, which is what CI has, that half is SKIPPED and says so. Run it on a box with the clones on disk and it gets checked, and `--strict` there turns a skip into a failure.
 
-The lock files are how an edge nobody drew gets found. A member whose lock
-resolves a producer's `package` with no edge from that producer fails the check.
-A node marked `unconsumed` warns when a lock resolves its package anyway, so the
-note cannot go on saying no member uses it.
+The lock files catch an edge nobody drew. A member whose lock resolves a producer's `package` with no edge from that producer fails the check. A node marked `unconsumed` warns when a lock resolves its package anyway, so its note stops claiming no member uses it.
 
 ## Reading a node
 
-One repo we own and release. Each declares what it is (`role`), who it is for
-(`audience`), what it ships (`artefacts`, each with its own `public` flag), and
-its licence and classification. `licence` is what the repo itself states, and
-`none-declared` there is a reading of the repo rather than an omission in the
-graph. `classification` always has an answer, and `classification_source` says
-which rung gave it: `in-repo` for a marker in the repo itself, `org-property`
-for the hyperi-io custom property that answers when the repo declares nothing.
+Each node is one repo we own and release. It declares what it is (`role`), who it's for (`audience`), what it ships (`artefacts`, each with its own `public` flag), and its licence and classification. `licence` is what the repo itself states, and `none-declared` there is a reading of the repo, not an omission in the graph. `classification` always has an answer, and `classification_source` says which rung gave it: `in-repo` for a marker in the repo itself, `org-property` for the hyperi-io custom property that answers when the repo declares nothing.
 
-`audience` is the tag written for the reader we will have at OSS GA:
+`audience` is the tag written for the reader we'll have at OSS GA:
 
-- `general` - stands alone. Someone with no DFE deployment can install it and
-  get value. scalo-rs, factbook-rs, scalo-py, logreducer, vector-vrl,
-  dfe-clickhouse-rs, and culvert, the optional VPN.
+- `general` - stands alone. Someone with no DFE deployment can install it and get value. scalo-rs, factbook-rs, scalo-py, logreducer, vector-vrl, dfe-clickhouse-rs, and culvert, the optional VPN.
 - `suite` - only makes sense inside a DFE deployment.
 
-It is kept separate from whether the artefact is public, because those come
-apart: dfe-schemas publishes to PyPI for anyone to install and is useless
-outside DFE.
+It's kept apart from whether the artefact is public, because those come apart: dfe-schemas publishes to PyPI for anyone to install and is useless outside DFE.
 
-A node is coloured by that same `audience` tag - green for `general`, blue for
-`suite`. Navy is the producer of the diagram you are reading, and there is one
-of those per picture. A faded fill is an optional member, and its label says
-`(optional)` as well, so the colour is never the only signal.
+The same `audience` tag colours a node: green for `general`, blue for `suite`. Navy is the producer of the diagram you're reading, and there's one per picture. A faded fill is an optional member, and its label says `(optional)` too, so colour is never the only signal.
 
 <!-- suite-graph:begin overview -->
 ```mermaid
@@ -113,43 +86,21 @@ flowchart TB
 
 ## Reading an edge
 
-An edge points PRODUCER -> CONSUMER and means: when the producer releases, the
-consumer is CHECKED. Not bumped - checked.
+An edge points PRODUCER -> CONSUMER and means: when the producer releases, the consumer is CHECKED. Checked, not bumped.
 
-- `potential` is the default. The consumer declares a range or holds a copy;
-  run the check, and usually nothing moves.
-- `lockstep` means the consumer cannot stay behind. Every lockstep edge carries
-  its evidence - a gate that fails the build, or a stated policy that the two
-  are tagged together.
-- `derived` means the consumer holds no copy at all. dfe-docker renders its
-  pins from dfe-infra at build time, so there is nothing to drift. Recorded so
-  the tooling knows to walk past it.
+- `potential` is the default. The consumer declares a range or holds a copy. Run the check, and usually nothing moves.
+- `lockstep` means the consumer can't stay behind. Every lockstep edge carries its evidence: a gate that fails the build, or a stated policy that the two are tagged together.
+- `derived` means the consumer holds no copy at all. dfe-docker renders its pins from dfe-infra at build time, so there's nothing to drift. It's recorded so the tooling knows to walk past it.
 
-The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the
-check and the gates once per kind. Every edge cites the consumer's own file at
-a line where a line is meaningful - a whole-file vendored copy cites the file,
-because no one line of it is the evidence. A `cargo-dep` or `python-dep` edge
-cites the consumer's manifest alone: the tooling reads it as TOML and finds
-every declaration of the producer's `package`, so a dependency added above the
-declaration cannot move the citation off it. That citation is `evidence` and it
-is always the consumer's side; where the producer keeps its own copy of the
-same content, that copy is the edge's `source`, and it is the only second
-reference an edge carries. An edge nobody could cite from the consumer side is
-not in the file.
+The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the check and the gates once per kind. Every edge cites the consumer's own file, at a line where one applies. A whole-file vendored copy cites the file, because no one line of it is the evidence. A `cargo-dep` or `python-dep` edge cites the consumer's manifest alone. The tooling reads it as TOML and finds every declaration of the producer's `package`, so a dependency added above the declaration can't move the citation off it. That citation is `evidence` and it's always the consumer's side. Where the producer keeps its own copy of the same content, that copy is the edge's `source`, and it's the only second reference an edge carries. An edge nobody could cite from the consumer side isn't in the file.
 
 ## The build cycles
 
-One diagram per producer whose release puts something in motion - every
-producer in the file has one, so a new producer with no block is an advisory
-the drift check raises rather than a gap nobody sees. Thick arrows are
-lockstep, plain arrows are potential, dotted arrows are derived.
+One diagram per producer whose release puts something in motion. Every producer in the file has one, so a new producer with no block is an advisory the drift check raises, not a gap nobody sees. Thick arrows are lockstep, plain arrows are potential, dotted arrows are derived.
 
 ### scalo-rs
 
-The crate range is the obvious edge. The one that is easy to miss: scalo
-GENERATES each Rust member's Dockerfile and supplies the runtime base image
-inside it, so a scalo-rs release can change a consumer's image with no Cargo
-range moving. Both edges are walked.
+Two edges run from scalo-rs to each Rust member. One is the crate range. The other is that scalo GENERATES each Rust member's Dockerfile and supplies the runtime base image inside it, so a scalo-rs release can change a consumer's image with no Cargo range moving. The tooling walks both.
 
 <!-- suite-graph:begin producer:scalo-rs -->
 ```mermaid
@@ -183,10 +134,7 @@ flowchart LR
 
 ### scalo-py
 
-dfe-engine, culvert and vector-vrl each declare it by range - vector-vrl in its
-build system rather than in the published wheel. dfe-engine also pins the
-runtime base image it inherits from scalo and guards that with its own test,
-which is the lockstep half.
+dfe-engine, culvert and vector-vrl each declare it by range. vector-vrl does it in its build system rather than in the published wheel. dfe-engine also pins the runtime base image it inherits from scalo and guards that with its own test, which is the lockstep half.
 
 <!-- suite-graph:begin producer:scalo-py -->
 ```mermaid
@@ -208,9 +156,7 @@ flowchart LR
 
 ### dfe-engine
 
-Its image tag sits in two places in this repo (its own chart and the hyperdx
-chart's init container), and the drift check holds both. dfe-ui vendors the
-engine's API spec and generates its scopes file from an engine module.
+Its image tag sits in two places in this repo (its own chart and the hyperdx chart's init container), and the drift check holds both. dfe-ui vendors the engine's API spec and generates its scopes file from an engine module.
 
 <!-- suite-graph:begin producer:dfe-engine -->
 ```mermaid
@@ -228,9 +174,7 @@ flowchart LR
 
 ### dfe-infra
 
-The app catalogue goes OUT to dfe-engine before any library moves, which is why
-dfe-infra opens a pass as well as closing it. dfe-deploy pins the certified
-stack; dfe-docker renders and holds nothing.
+The app catalogue goes OUT to dfe-engine before any library moves, which is why dfe-infra opens a pass as well as closing it. dfe-deploy pins the certified stack. dfe-docker renders and holds nothing.
 
 <!-- suite-graph:begin producer:dfe-infra -->
 ```mermaid
@@ -249,7 +193,7 @@ flowchart LR
 
 ### dfe-schemas
 
-dfe-engine takes it as a package dependency by range. The one version pin is lockstep by policy rather than by a gate: the content block in `versions.yaml` is tagged with the stack release. dfe-deploy pins none, because the wheel rides inside the dfe-engine image.
+dfe-engine takes it as a package dependency by range. The one version pin is lockstep by policy, not by a gate: the content block in `versions.yaml` is tagged with the stack release. dfe-deploy pins none, because the wheel rides inside the dfe-engine image.
 
 <!-- suite-graph:begin producer:dfe-schemas -->
 ```mermaid
@@ -281,10 +225,7 @@ flowchart LR
 
 ### dfe-clickhouse-rs
 
-The crate is `dfe-clickhouse`. dfe-fetcher takes it as an optional dependency, behind its db crate's
-`clickhouse` feature, for the ping and the typed server exception. dfe-loader
-still reaches ClickHouse through the upstream crate with a patch onto the
-clickhouse-rs fork, so a release here moves nothing there.
+The crate is `dfe-clickhouse`. dfe-fetcher takes it as an optional dependency, behind its db crate's `clickhouse` feature, for the ping and the typed server exception. dfe-loader still reaches ClickHouse through the upstream crate with a patch onto the clickhouse-rs fork, so a release here moves nothing there.
 
 <!-- suite-graph:begin producer:dfe-clickhouse-rs -->
 ```mermaid
@@ -299,13 +240,11 @@ flowchart LR
 
 ## The build cycles: the deployed members
 
-The other direction. Every deployed member is a producer too, and what its
-release puts in motion is a pin in this repo.
+The other direction. Every deployed member is a producer too, and what its release puts in motion is a pin in this repo.
 
 ### dfe-ui and dfe-hyperdx
 
-Each moves one image pin in this repo when it releases. dfe-hyperdx also has
-its release tag pinned in the content block.
+Each moves one image pin in this repo when it releases. dfe-hyperdx also has its release tag pinned in the content block.
 
 <!-- suite-graph:begin producer:dfe-ui -->
 ```mermaid
@@ -331,8 +270,7 @@ flowchart LR
 
 ### dfe-deploy
 
-The certified stack's own tag comes back the other way: dfe-deploy is pinned in
-this repo's content block as well as pinning this repo.
+The certified stack's own tag comes back the other way. dfe-deploy is pinned in this repo's content block as well as pinning this repo.
 
 <!-- suite-graph:begin producer:dfe-deploy -->
 ```mermaid
@@ -347,11 +285,7 @@ flowchart LR
 
 ### The components
 
-Every deployed component is a producer too. A component release moves its image
-pin here - the tag, the image digest and the thin chart's digest, every copy
-held by the drift check - and nothing else, with two exceptions: dfe-engine authors the loader's
-and the receiver's configs, so it carries a hand-written copy of each one's
-validation rules that no script can compare.
+Every deployed component is a producer too. A component release moves its image pin here (the tag, the image digest and the thin chart's digest, every copy held by the drift check) and nothing else, with two exceptions. dfe-engine authors the loader's and the receiver's configs, so it carries a hand-written copy of each one's validation rules that no script can compare.
 
 <!-- suite-graph:begin producer:dfe-loader -->
 ```mermaid
@@ -436,17 +370,11 @@ flowchart LR
 
 ## The build-cycle table
 
-`scripts/dfe-stack suite --cycles` prints it from the file: one row per
-producer and edge kind, the consumers merged, with the check text and the gates
-that prove it. The tooling that walks a release walks that table. It is not a
-listing of cycles in the graph - the graph has one, dfe-infra to dfe-engine and
-back, and the lanes are what resolve it.
+`scripts/dfe-stack suite --cycles` prints it from the file: one row per producer and edge kind, the consumers merged, with the check text and the gates that prove it. The tooling that walks a release walks that table. It isn't a listing of cycles in the graph. The graph has one, dfe-infra to dfe-engine and back, and the lanes are what resolve it.
 
 ## What reaches one member
 
-`scripts/dfe-stack suite --consumer <node>` answers the other direction: the
-in-edges, so someone picking up one member sees every producer whose release
-puts work on their desk.
+`scripts/dfe-stack suite --consumer <node>` answers the other direction: the in-edges. Someone picking up one member sees every producer whose release puts work on their desk.
 
 ## Backing-service pins in the members
 
@@ -462,38 +390,16 @@ A member that has to pin something else gets a `pin_waivers:` entry in `suite.ya
 
 ## Lanes
 
-A full suite pass runs the lanes in this order: `toolchain` (dfe-infra,
-dfe-docker), `libraries`, `consumers`, `deployment`. The order is declared in
-the file rather than derived from the edges, because dfe-infra sits at both
-ends - it feeds the catalogue out first and consumes the new app versions last,
-and no sort can place a node at both ends.
+A full suite pass runs the lanes in this order: `toolchain` (dfe-infra, dfe-docker), `libraries`, `consumers`, `deployment`. The order is declared in the file, not derived from the edges, because dfe-infra sits at both ends. It feeds the catalogue out first and consumes the new app versions last, and no sort can place a node at both ends.
 
 ## What is deliberately not here
 
-Runtime dependencies - the UI calling the engine's API, the engine driving the
-components through their management API - sit in `runtime_edges`. They are
-real and recorded so an outside reader sees the whole picture, but a release on
-either side changes no file in the other, so a build pass has nothing to check.
+Runtime dependencies sit in `runtime_edges`: the UI calling the engine's API, the engine driving the components through their management API. They're real, and recorded so an outside reader sees the whole picture. But a release on either side changes no file in the other, so a build pass has nothing to check.
 
-dfe-transform-wasm and dfe-transform-splack are coming, not members: both are
-alpha and neither has a release tag. Their `versions.yaml` pins are commented
-out and neither has a chart here, so each joins the file when its first tag
-exists.
+dfe-transform-wasm and dfe-transform-splack are coming, not members. Both are alpha and neither has a release tag. Their `versions.yaml` pins are commented out and neither has a chart here, so each joins the file when its first tag exists.
 
-dfe-toolbox and dfe-extras are charts this repo builds itself, so neither is a
-member. Both are listed under `non_members` with the reason, because a chart with no
-member is otherwise an advisory on every drift-check run, and an
-advisory nobody can act on trains the reader to skip the ones that mean
-something. The listing is checked rather than trusted: `check_suite_drift.py`
-fails when an entry is also a node, and when an entry names no chart and no
-app pin, so it cannot outlive what it silences.
+dfe-toolbox and dfe-extras are charts this repo builds itself, so neither is a member. Both are listed under `non_members` with the reason, because a chart with no member is otherwise an advisory on every drift-check run, and an advisory nobody can act on trains the reader to skip the ones that mean something. The listing is checked, not trusted: `check_suite_drift.py` fails when an entry is also a node, and when an entry names no chart and no app pin, so it can't outlive what it silences.
 
 ## Swept but not in the graph
 
-`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of
-its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or
-not suite.yaml has a node for it. A repo with a topic and no node is swept for
-open findings and work items, and that is all: it has no edge, no lane and no
-place in a release pass. macbash, which checks and fixes bash scripts for macOS,
-is the one as of 2026-10, tagged `hyperi-tools`. The sweep prints every reason a
-repo is in, so the topic is what says why.
+`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or not suite.yaml has a node for it. A repo with a topic and no node is swept for open findings and work items, and that's all. It has no edge, no lane and no place in a release pass. macbash, which checks and fixes bash scripts for macOS, is the one as of 2026-10, tagged `hyperi-tools`. The sweep prints every reason a repo is in, so the topic says why.

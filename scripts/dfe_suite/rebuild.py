@@ -52,6 +52,7 @@ import shlex
 import shutil
 import tempfile
 from collections.abc import Sequence
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from dfe_suite.artefacts import Artefact
@@ -444,6 +445,7 @@ def rebuild_rust(
     dry_run: bool = False,
     org: str = DEFAULT_ORG,
     release_unoptimized: bool = False,
+    gate_lock: AbstractContextManager[object] | None = None,
 ) -> int:
     """Move one Rust consumer onto a new producer release and ship it.
 
@@ -458,6 +460,8 @@ def rebuild_rust(
         watch: Follow the release after the merge.
         dry_run: Say what would happen, touch nothing.
         org: GitHub org used when the remote cannot be read.
+        gate_lock: Held for the local bump and gate, so concurrent rebuilds
+            run one local build at a time while their CI runs overlap.
         release_unoptimized: Force the consented release, which a consumer
             whose ``.hyperi-ci.yaml`` sets ``build.skip_optimize: true`` takes
             anyway: check its caller workflow can carry the per-run consent
@@ -473,6 +477,7 @@ def rebuild_rust(
             carry the consent.
     """
     require_tools("git", "gh", "cargo")
+    gate_lock = gate_lock or nullcontext()
     repo = Path(repo).expanduser().resolve()
     if not (repo / ".git").exists():
         raise FleetError(f"{repo} is not a git checkout")
@@ -533,61 +538,62 @@ def rebuild_rust(
         say("dry run complete -- nothing changed, nothing pushed")
         return 0
 
-    say(f"bump {package} -> {version}")
-    # The lock may still pin the crate as a PATH source from a local
-    # verification build, and --precise then fails with "did not match any
-    # packages". `cargo fetch` re-resolves it from crates.io first.
-    precise = ["cargo", "update", "-p", package, "--precise", version]
-    if run(precise, cwd=repo, check=False).returncode != 0:
-        run(["cargo", "fetch"], cwd=repo, capture=False)
-        run(precise, cwd=repo, capture=False)
+    with gate_lock:
+        say(f"bump {package} -> {version}")
+        # The lock may still pin the crate as a PATH source from a local
+        # verification build, and --precise then fails with "did not match any
+        # packages". `cargo fetch` re-resolves it from crates.io first.
+        precise = ["cargo", "update", "-p", package, "--precise", version]
+        if run(precise, cwd=repo, check=False).returncode != 0:
+            run(["cargo", "fetch"], cwd=repo, capture=False)
+            run(precise, cwd=repo, capture=False)
 
-    say("regenerate the Dockerfile from the deployment contract")
-    _emit_dockerfile(repo, app)
-    # config-schema is a scalo StandardCommand, so every app spells it the same
-    # way. It writes into docs/, where the fleet commits config-schema.* and
-    # capability-catalog.*.
-    say("regenerate the committed config artefacts")
-    run(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "--bin",
-            app,
-            "--",
-            "config-schema",
-            "--dir",
-            "docs",
-        ],
-        cwd=repo,
-        capture=False,
-    )
-    say("gate: fmt")
-    run(["cargo", "fmt", "--all", "--", "--check"], cwd=repo, capture=False)
-    say("gate: clippy (all targets, gate features, -D warnings)")
-    run(
-        ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
-        cwd=repo,
-        capture=False,
-    )
-    if run_tests:
-        # nextest, not `cargo test`: these apps hold process-global state (the
-        # metrics recorder, the config registry) that cross-talks under cargo
-        # test's in-process parallelism and produces false failures.
-        say("gate: tests (nextest, gate features)")
-        require_tools("cargo-nextest")
+        say("regenerate the Dockerfile from the deployment contract")
+        _emit_dockerfile(repo, app)
+        # config-schema is a scalo StandardCommand, so every app spells it the same
+        # way. It writes into docs/, where the fleet commits config-schema.* and
+        # capability-catalog.*.
+        say("regenerate the committed config artefacts")
         run(
-            ["cargo", "nextest", "run", "--workspace", *features],
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--bin",
+                app,
+                "--",
+                "config-schema",
+                "--dir",
+                "docs",
+            ],
             cwd=repo,
             capture=False,
         )
-    else:
-        # dfe-loader's integration and e2e suites are Docker-bound (ClickHouse
-        # and Redpanda via testcontainers), so the local gate fails on a
-        # Docker-less box for infra reasons rather than code ones. CI runs the
-        # full suite as the publish gate.
-        say("gate: tests SKIPPED (--no-tests) -- CI runs the suite as the publish gate")
+        say("gate: fmt")
+        run(["cargo", "fmt", "--all", "--", "--check"], cwd=repo, capture=False)
+        say("gate: clippy (all targets, gate features, -D warnings)")
+        run(
+            ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
+            cwd=repo,
+            capture=False,
+        )
+        if run_tests:
+            # nextest, not `cargo test`: these apps hold process-global state (the
+            # metrics recorder, the config registry) that cross-talks under cargo
+            # test's in-process parallelism and produces false failures.
+            say("gate: tests (nextest, gate features)")
+            require_tools("cargo-nextest")
+            run(
+                ["cargo", "nextest", "run", "--workspace", *features],
+                cwd=repo,
+                capture=False,
+            )
+        else:
+            # dfe-loader's integration and e2e suites are Docker-bound (ClickHouse
+            # and Redpanda via testcontainers), so the local gate fails on a
+            # Docker-less box for infra reasons rather than code ones. CI runs the
+            # full suite as the publish gate.
+            say("gate: tests SKIPPED (--no-tests) -- CI runs the suite as the publish gate")
 
     # add -u folds in migration work already in the tree, while leaving
     # untracked legacy files (.releaserc.yaml, set-version.py) out.
@@ -709,6 +715,7 @@ def rebuild_python(
     watch: bool = True,
     dry_run: bool = False,
     org: str = DEFAULT_ORG,
+    gate_lock: AbstractContextManager[object] | None = None,
 ) -> int:
     """Move one Python consumer onto a new producer release and ship it.
 
@@ -721,11 +728,14 @@ def rebuild_python(
         watch: Follow the release after the merge.
         dry_run: Say what would happen, touch nothing.
         org: GitHub org used when the remote cannot be read.
+        gate_lock: Held for the local bump and gate, so concurrent rebuilds
+            run one local build at a time while their CI runs overlap.
 
     Returns:
         The process exit code -- non-zero means STOP.
     """
     require_tools("git", "gh", "uv", "hyperi-ci")
+    gate_lock = gate_lock or nullcontext()
     repo = Path(repo).expanduser().resolve()
     if not (repo / ".git").exists():
         raise FleetError(f"{repo} is not a git checkout")
@@ -751,15 +761,16 @@ def rebuild_python(
         say("dry run complete -- nothing changed, nothing pushed")
         return 0
 
-    say(f"bump the {package} constraint -> >={version}")
-    _bump_py_constraint(repo, version, package=package)
+    with gate_lock:
+        say(f"bump the {package} constraint -> >={version}")
+        _bump_py_constraint(repo, version, package=package)
 
-    say(f"refresh the lock for {package} only")
-    run(["uv", "lock", "--upgrade-package", package], cwd=repo, capture=False)
-    _assert_locked(repo, version, package=package)
+        say(f"refresh the lock for {package} only")
+        run(["uv", "lock", "--upgrade-package", package], cwd=repo, capture=False)
+        _assert_locked(repo, version, package=package)
 
-    say("gate: hyperi-ci check (quality + full test suite)")
-    run(["hyperi-ci", "check"], cwd=repo, capture=False)
+        say("gate: hyperi-ci check (quality + full test suite)")
+        run(["hyperi-ci", "check"], cwd=repo, capture=False)
 
     git("add", "-u", cwd=repo)
     if not has_staged_changes(repo):

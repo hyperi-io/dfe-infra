@@ -52,9 +52,10 @@ variable "private_zone_arn" {
 }
 
 variable "dns" {
-  description = "public_zone is the delegated zone the exposed UIs answer on, created when non-empty. Empty means no public names, no public zone, and no DNS-01 identity for cert-manager to assume."
+  description = "public_zone is the delegated zone the exposed UIs answer on, created when non-empty. Empty means no public names, no public zone, and no DNS-01 identity for cert-manager to assume. parent_zone_id is the Route 53 zone in this account that public_zone sits under. When it is set, the apply writes the parent's NS record for public_zone and destroy removes it. Empty leaves the delegation to the deployer."
   type = object({
-    public_zone = string
+    public_zone    = string
+    parent_zone_id = optional(string, "")
   })
 }
 
