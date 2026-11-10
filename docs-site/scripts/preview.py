@@ -120,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first")
     if args.stack:
         chosen = ["--stack", args.stack, "--unreleased"]
+        # The site's copy fills {newest} from a released build, so an unreleased stack brings the newest along.
+        tree = aggregate.yaml_subset.parse(aggregate.VERSIONS_FILE.read_text(encoding="utf-8"))
+        released = aggregate.released_stacks(tree)
+        if released and args.stack not in released:
+            chosen += ["--stack", released[0]]
     elif args.next:
         chosen = ["--next"]
     else:
