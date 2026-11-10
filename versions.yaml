@@ -8619,7 +8619,7 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.86"        # 2026-11-10, amd64 and arm64. Carries v1.22.85's schema_lock fix: dfe-schemas 0.2.24 drops the table's TTL, and the schema phase removes a live TTL on boot, so an idle week no longer wedges the next engine start (dfe-engine #1101). v1.22.86 adds only a dev change, the e2e server running natively on a Mac (#1099).
+      dfe-engine: "v1.22.87"        # 2026-11-10, amd64 and arm64. Names the search console app dfe-hyperdx, matching this stack's apps.yaml (#1110). Shows dead letters in the console (#1105), serves the Components page's metrics, totals and history (#1104), and counts CPU totals per stream (#1106). Locks dfe-schemas 0.2.26.
       dfe-ui: "v1.7.39"              # 2026-11-10, amd64 and arm64. Fixes five console defects (#695) and draws the library tag arrow as an icon (#694). It adds the console journey specs (#693) and a macOS smoke of engine plus console (#696). Still on the engine 2.2.2 API: paged lists and /operations.
       dfe-receiver: "v1.15.66"      # 2026-11-10, amd64 and arm64. Builds its DLQ entries with scalo's DLQ events (#250). scalo-rs 2.14.28: a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
       dfe-loader: "v1.18.68"        # 2026-11-10, amd64 and arm64. Dead letters load into the dlq table (#322), and a refused value is named with its table (#320). scalo-rs 2.14.28: a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
@@ -8637,7 +8637,7 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:e1ef492d8ae7ea4340430127958726ae2254c0baae890d06d1c863036d208de0"
+      dfe-engine: "sha256:a990f823768b7bfb08eb079f9877ebcd8b5877ec12e5a238a45b07f7c2e2ffcf"
       dfe-ui: "sha256:7bdae1a69fc9e18e6419dd442b62ef817c3f4332456b1cc6b3a9e7db55a64b82"
       dfe-receiver: "sha256:9cf243808554b8c936c3cdb179acdd33acb9309517ca1425fe9f6790ca3b16d5"
       dfe-loader: "sha256:91557733574410df2be3d3b3f29ba768777e4e52f3e6a2dfeb785e6b8b7de00d"
@@ -8659,7 +8659,7 @@ stacks:
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
       dfe-archiver: "sha256:937006a9083805035788a13d97b2ac92391318de23d7e5171e6ec70965e94481"           # 1.7.48
-      dfe-engine: "sha256:b3ffd8c2b3434563c76e806053e3d7c92117639e8a3c9dbf0f2f5d67ee69a9dc"             # 1.22.86
+      dfe-engine: "sha256:db8e20bf2e392585e68106293731fae2a684768ce314f7e22ce484bd90ae0a56"             # 1.22.87
       dfe-fetcher: "sha256:7b9e2f1add2873b8dea16d3d753d81da77da3c356bf98b1f44a29c4bf199d66c"            # 1.4.50
       dfe-hyperdx: "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"            # 0.3.21
       dfe-loader: "sha256:8cae1a9e3ec8f9438a502e3b0fce2641f72290ae9aa3c18db77c2a1df4e21cd3"             # 1.18.68
@@ -8699,11 +8699,11 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.23"             # 2026-11-04. The engine applies it at startup and reads its source catalogue. Grants hunt_runner system.replicas. dfe-engine v1.22.81 requires >=0.2.23 and locks 0.2.23.
+      dfe-schemas: "v0.2.26"             # 2026-11-10. The engine applies it at startup and reads its source catalogue. Adds the dlq table the loader loads dead letters into (#104), drops the schema_lock TTL (#102) and keeps CloudTrail service hostnames (#103). dfe-engine v1.22.87 requires >=0.2.26 and locks 0.2.26.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.13"              # 2026-11-10. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2-rc.1 on the rc channel, and its governance gate runs on Python 3.15 and actions/setup-python v7.1.0.
-      # The first dfe-docker release with the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render. It contains bbf19bf1.
-      dfe-docker: "v1.0.3"                # 2026-11-10.
+      # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
+      dfe-docker: "v1.0.4"                # 2026-11-10, tag at 139024c78. Its compose names the search service dfe-hyperdx, matching the app id (#355, #359).
       dfe-hyperdx: "v0.3.21"             # 2026-11-01, amd64 and arm64. Upstream HyperDX 2.43.0. Fixes a SQL injection (#189) and pins follow-redirects 1.16.2 (#188).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.

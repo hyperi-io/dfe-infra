@@ -103,7 +103,7 @@ spec:
             {{- $pins := dict
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
                 "dfe-archiver" "sha256:937006a9083805035788a13d97b2ac92391318de23d7e5171e6ec70965e94481"
-                "dfe-engine" "sha256:b3ffd8c2b3434563c76e806053e3d7c92117639e8a3c9dbf0f2f5d67ee69a9dc"
+                "dfe-engine" "sha256:db8e20bf2e392585e68106293731fae2a684768ce314f7e22ce484bd90ae0a56"
                 "dfe-fetcher" "sha256:7b9e2f1add2873b8dea16d3d753d81da77da3c356bf98b1f44a29c4bf199d66c"
                 "dfe-hyperdx" "sha256:20cc5fe9747a787b73c98a645dfa4ef693d5d902a7357fda3e9733fa95214ea6"
                 "dfe-loader" "sha256:8cae1a9e3ec8f9438a502e3b0fce2641f72290ae9aa3c18db77c2a1df4e21cd3"
