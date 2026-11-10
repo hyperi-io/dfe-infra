@@ -214,6 +214,20 @@ def test_openbao_is_required_only_when_the_backend_is_openbao() -> None:
     assert "DFE_SECRETS_REGION" not in openbao
 
 
+@pytest.mark.parametrize(("mode", "needs_host"), [("", False), ("in_cluster", False), ("external", True)])
+def test_the_clickhouse_host_is_required_only_for_an_external_server(mode: str, needs_host: bool) -> None:
+    """An in-cluster deploy from the wizard's dial leaves both endpoints blank, and nothing reads them."""
+    sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
+    import bridge
+
+    env = {"DFE_SECRETS_BACKEND": "none", "DFE_CLICKHOUSE_MODE": mode}
+    ours = set(dfeops._bootstrap_required(env))
+    theirs = bridge._required_vars(env)
+    assert ("DFE_CLICKHOUSE_HOST" in ours) is needs_host
+    assert ("DFE_CLICKHOUSE_HOST" in theirs) is needs_host
+    assert "DFE_OTEL_ENDPOINT" not in ours | theirs
+
+
 def test_an_unset_or_empty_backend_reads_as_openbao() -> None:
     """bootstrap.sh's own ${DFE_SECRETS_BACKEND:-openbao} -- a present-but-empty
     value must not be read as aws-sm and drop both checks."""
