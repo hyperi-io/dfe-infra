@@ -100,10 +100,18 @@
 }
 
 .tagline {
-  margin: 0 0 var(--dfe-space-8);
+  margin: 0 0 var(--dfe-space-4);
   color: var(--role-body);
   font-size: var(--dfe-text-xl);
   line-height: var(--dfe-leading-snug);
+}
+
+.heroLead {
+  margin: 0 0 var(--dfe-space-8);
+  color: var(--role-body);
+  font-size: var(--dfe-text-lg);
+  line-height: var(--dfe-leading-snug);
+  max-width: 38rem;
 }
 
 .actions {

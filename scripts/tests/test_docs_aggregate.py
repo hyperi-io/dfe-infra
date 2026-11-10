@@ -101,11 +101,21 @@ def remotes(tmp_path: Path) -> tuple[Path, str]:
             "docs/README.md": "# App docs\n",
             "docs/guide.md": "# Guide\n\n[readme](../README.md)\n",
             "openapi-spec/openapi.json": "{}\n",
+            "openapi/openapi.json": "{}\n",
             "src/main.py": "print('not docs')\n",
         },
         "v1.0.0",
     )
     return root, commit
+
+
+def load_build_site():
+    build_spec = importlib.util.spec_from_file_location(
+        "docs_build_site", SCRIPT.with_name("build_site.py")
+    )
+    build_site = importlib.util.module_from_spec(build_spec)
+    build_spec.loader.exec_module(build_site)
+    return build_site
 
 
 # --- which stacks, members and refs -------------------------------------------
@@ -237,6 +247,33 @@ def test_a_dropped_stack_is_never_built(stacks: list[str], expected: list[str] |
     assert [build.name for build in builds] == expected
 
 
+@pytest.mark.parametrize(
+    ("docs_refs", "expected"),
+    [
+        ({}, {}),
+        ({"2.2.1": {"x": "abc123"}}, {"x": "abc123"}),
+        ({"2.2.0": {"x": "abc123"}}, r"docs_refs names no built stack: 2\.2\.0"),
+        ({"9.9.9": {"x": "abc123"}}, r"docs_refs names no built stack: 9\.9\.9"),
+    ],
+)
+def test_a_docs_pin_rides_its_stack_and_names_only_a_built_one(
+    docs_refs: dict, expected: dict | str
+) -> None:
+    release = {"maturity": "release", "support": "standard", "apps": {"x": "v1"}}
+    tree = {"stacks": {"2.2.0": release, "2.2.1": release}}
+    members = [Member("x", "o/x", "consumers", 10)]
+    dropped = frozenset({"2.2.0"})
+    if isinstance(expected, str):
+        with pytest.raises(SystemExit, match=expected):
+            aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
+        return
+    builds = aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
+    assert [(build.name, dict(build.refs), dict(build.docs_refs)) for build in builds] == [
+        ("2.2.1", {"x": "v1"}, expected),
+        ("next", {"x": "HEAD"}, {}),
+    ]
+
+
 # --- publish.yaml ------------------------------------------------------------------
 
 
@@ -280,6 +317,13 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
         ({"internal": {"a": "x.md"}}, "internal a: not a member with a map"),
         ({"internal": {"a": {"../README.md": "why"}}}, r"\.\./README\.md is not a path"),
         ({"internal": {"a": {"/etc/x": "why"}}}, "/etc/x is not a path"),
+        (
+            {"docs_refs": {"2.2.1": {"a": "abc123"}}},
+            aggregate.Policy(docs_refs={"2.2.1": {"a": "abc123"}}),
+        ),
+        ({"docs_refs": {"2.2.1": "abc123"}}, "docs_refs 2.2.1: not a map"),
+        ({"docs_refs": {"2.2.1": {"z": "abc123"}}}, "docs_refs 2.2.1 z: not a member"),
+        ({"docs_refs": {"2.2.1": {"a": ""}}}, "docs_refs 2.2.1 a: not a member with a ref"),
     ],
 )
 def test_load_policy_reads_a_valid_file_and_names_every_problem(
@@ -501,6 +545,50 @@ def test_a_placement_key_places_both_spellings_of_a_page(doc_id: str, expected: 
         check=True,
     )
     assert done.stdout == expected
+
+
+@pytest.mark.parametrize(
+    ("doc_dir", "target", "mount", "expected"),
+    [
+        (
+            "docs",
+            "../docs-site/content-root/coming-from.md#sources-join",
+            "dfe-infra",
+            "../coming-from.md#sources-join",
+        ),
+        (
+            "docs/deployment",
+            "../../docs-site/content-root/coming-from.md",
+            "dfe-infra",
+            "../../coming-from.md",
+        ),
+        (
+            "docs",
+            "../docs-site/content-root/quickstart/aws.md",
+            "dfe-infra",
+            "../quickstart/aws.md",
+        ),
+        (
+            "docs",
+            "../docs-site/content-root/coming-from.md",
+            "",
+            f"https://github.com/{REPO}/blob/2.2.0/docs-site/content-root/coming-from.md",
+        ),
+        (
+            "docs",
+            "../docs-site/README.md",
+            "dfe-infra",
+            f"https://github.com/{REPO}/blob/2.2.0/docs-site/README.md",
+        ),
+    ],
+)
+def test_a_link_to_the_sites_own_pages_stays_on_the_site(
+    doc_dir: str, target: str, mount: str, expected: str
+) -> None:
+    assert aggregate.relink(target, doc_dir=doc_dir, repo=REPO, ref="2.2.0", mount=mount) == (
+        expected,
+        False,
+    )
 
 
 def test_a_link_out_of_the_repository_is_left_and_flagged() -> None:
@@ -797,6 +885,7 @@ def test_a_tag_fetch_checks_out_docs_and_the_spec_at_the_tagged_commit(
         "docs/README.md",
         "docs/guide.md",
         "openapi-spec/openapi.json",
+        "openapi/openapi.json",
     ]
 
 
@@ -858,27 +947,32 @@ def test_a_global_git_config_cannot_redirect_the_fetch(
 # --- one build, end to end ----------------------------------------------------------
 
 
-def test_assemble_lays_out_a_build(remotes: tuple[Path, str], tmp_path: Path) -> None:
+@pytest.mark.parametrize("spec_path", aggregate.SPEC_FILES)
+def test_assemble_lays_out_a_build(
+    remotes: tuple[Path, str], tmp_path: Path, spec_path: str
+) -> None:
     root, _ = remotes
     make_repo(
         root,
         "o/dfe-engine",
         {
             "docs/architecture.md": "# Arch\n\n[root](../README.md)\n",
-            "openapi-spec/openapi.json": json.dumps(
+            spec_path: json.dumps(
                 {"openapi": "3.1.0", "info": {"description": "Poll GET /tasks/{id}."}}
             ),
         },
         "v2.0.0",
     )
     make_repo(root, "o/fork", {"docs/README.md": "#", "docs/UPSTREAM_NAME.md": "#"}, "v3.0.0")
+    make_repo(root, "o/own", {"docs/index.md": "# Own landing\n"}, "v4.0.0")
     members = [
         Member("app", "o/app", "toolchain", 10, "product"),
         Member("dfe-engine", "o/dfe-engine", "consumers", 11, "product"),
         Member("fork", "o/fork", "consumers", 12, "fork"),
         Member("lib", "o/lib", "libraries", 13, "oss"),
+        Member("own", "o/own", "consumers", 14, "product"),
     ]
-    refs = {"app": "v1.0.0", "dfe-engine": "v2.0.0", "fork": "v3.0.0"}
+    refs = {"app": "v1.0.0", "dfe-engine": "v2.0.0", "fork": "v3.0.0", "own": "v4.0.0"}
     build = Build("9.9.9", "/v/9.9.9/", True, refs)
     out = tmp_path / "content"
     out.mkdir()
@@ -907,15 +1001,24 @@ def test_assemble_lays_out_a_build(remotes: tuple[Path, str], tmp_path: Path) ->
         "spec": "_specs/9.9.9/dfe-engine.json",
         "output": "9.9.9/dfe-engine/api",
         "slice": "dfe-engine/api/sidebar.ts",
+        "raw": "_specs/9.9.9/dfe-engine.raw.json",
     }
+    assert "{id}" in (out / "_specs" / "9.9.9" / "dfe-engine.raw.json").read_text()
     link = "(https://github.com/o/dfe-engine/blob/v2.0.0/README.md)"
     assert link in (tree / "dfe-engine" / "architecture.md").read_text()
     assert (tree / "README.md").is_file()
     assert (tree / "quickstart" / "docker.md").is_file()
-    assert [entry["name"] for entry in result.members] == ["app", "dfe-engine", "fork"]
+    assert [entry["name"] for entry in result.members] == ["app", "dfe-engine", "fork", "own"]
+    assert [entry["path"] for entry in result.members] == ["app", "dfe-engine", "fork", "own"]
+    assert (tree / "own" / "index.md").read_text() == "# Own landing\n"
+    assert (tree / "dfe-engine" / "index.md").read_text() == (
+        f"{aggregate.SECTION_INDEX_MARK}\n# dfe-engine\n\nEvery page in the dfe-engine section.\n\n- [Arch](architecture.md)\n"
+    )
+    assert not (tree / "app" / "index.md").exists()
     assert {(f.member, f.path, f.rule) for f in result.findings} == {
         ("dfe-engine", "docs/", Rule.LANDING),
         ("lib", "", Rule.NO_PIN),
+        ("own", "docs/index.md", Rule.INDEX_LANDING),
     }
 
 
@@ -952,6 +1055,39 @@ def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
     pages = [path for path in checkout_files(out / "9.9.9") if path.endswith(".md")]
     assert [page for page in pages if "hd/" in page] == expected
     assert [entry["name"] for entry in result.members] == sorted(refs, key=["ui", "hd"].index)
+
+
+@pytest.mark.parametrize(
+    ("docs_refs", "page"),
+    [
+        ({}, "# Arch at release\n"),
+        ({"dfe-engine": "docs-fix"}, "# Arch fixed\n"),
+    ],
+)
+def test_a_docs_pin_moves_the_docs_and_leaves_the_spec_at_the_release(
+    tmp_path: Path, docs_refs: dict[str, str], page: str
+) -> None:
+    root = tmp_path / "remotes"
+    spec = {"openapi": "3.1.0", "info": {"title": "release"}}
+    files = {"docs/architecture.md": "# Arch at release\n", "openapi-spec/openapi.json": ""}
+    files["openapi-spec/openapi.json"] = json.dumps(spec)
+    make_repo(root, "o/dfe-engine", files, "v2.0.0")
+    repo = root / "o/dfe-engine.git"
+    (repo / "docs" / "architecture.md").write_text("# Arch fixed\n", encoding="utf-8")
+    spec["info"]["title"] = "later"
+    (repo / "openapi-spec" / "openapi.json").write_text(json.dumps(spec), encoding="utf-8")
+    git("-C", str(repo), "add", "-A")
+    git("-C", str(repo), *GIT_IDENTITY, "commit", "-q", "-m", "docs fix")
+    git("-C", str(repo), *GIT_IDENTITY, "tag", "-a", "docs-fix", "-m", "docs-fix")
+    members = [Member("dfe-engine", "o/dfe-engine", "consumers", 11, "product")]
+    build = Build("9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0"}, docs_refs)
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    aggregate.assemble(build, members, fetcher, out)
+    assert (out / "9.9.9" / "dfe-engine" / "architecture.md").read_text() == page
+    placed = json.loads((out / "_specs" / "9.9.9" / "dfe-engine.json").read_text())
+    assert placed["info"]["title"] == "release"
 
 
 @pytest.mark.parametrize(
@@ -997,6 +1133,51 @@ def test_assemble_places_every_published_member_and_skips_a_wholly_internal_one(
     manifest = aggregate.site_manifest([result], (), journeys)
     assert manifest["builds"][0]["placements"] == expected
     assert manifest["journeys"][0] == {"label": "J", "sections": ["S", "T"]}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("---\ntitle: 'From front matter'\n---\n# Heading\n", "From front matter"),
+        ("intro\n\n# First heading #\n\n# Second\n", "First heading"),
+        ("```\n# not a heading\n```\n# Real\n", "Real"),
+        ("~~~\n```\n# inside\n~~~\n", "fallback"),
+        ("## only a subheading\n", "fallback"),
+    ],
+)
+def test_a_page_title_comes_from_front_matter_then_the_first_h1(text: str, expected: str) -> None:
+    assert aggregate.page_title(text, "fallback") == expected
+
+
+def test_a_section_index_lists_every_page_by_title_nested_by_directory(tmp_path: Path) -> None:
+    write_tree(
+        tmp_path,
+        {
+            "guide.md": "# A [guide]\n",
+            "ops/README.md": "# Operations\n",
+            "ops/scale.md": "no heading\n",
+            "ops/deep/tune.mdx": "---\ntitle: Tune\n---\n",
+            "image.png": "",
+        },
+    )
+    aggregate.write_section_index(tmp_path, "svc")
+    lines = (tmp_path / "index.md").read_text().splitlines()
+    assert lines[0] == aggregate.SECTION_INDEX_MARK
+    assert lines[5:] == [
+        "- [A \\[guide\\]](guide.md)",
+        "- [Operations](ops/README.md)",
+        "  - [scale](ops/scale.md)",
+        "    - [Tune](ops/deep/tune.mdx)",
+    ]
+
+
+def test_a_build_fails_a_member_root_that_serves_no_page(tmp_path: Path) -> None:
+    build_site = load_build_site()
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "index.html").write_text("")
+    entry = {"members": [{"path": "a"}, {"path": "b/c"}]}
+    assert build_site.missing_roots(entry, tmp_path) == ["b/c"]
+    assert build_site.missing_roots({}, tmp_path) == []
 
 
 def test_the_report_summarises_each_member_then_lists_every_finding() -> None:
@@ -1047,14 +1228,18 @@ def test_the_manifest_names_the_newest_listed_build() -> None:
 def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
     dropped: list[str], expected: list[str]
 ) -> None:
-    build_spec = importlib.util.spec_from_file_location(
-        "docs_build_site", SCRIPT.with_name("build_site.py")
-    )
-    build_site = importlib.util.module_from_spec(build_spec)
-    build_spec.loader.exec_module(build_site)
-    lines = build_site.redirects("2.2.1", dropped).splitlines()
-    assert lines[:3] == ["/ /v/2.2.1/ 302", "/v /v/2.2.1/ 302", "/v/ /v/2.2.1/ 302"]
-    assert lines[3:] == expected
+    lines = load_build_site().redirects("2.2.1", dropped, ["quickstart"]).splitlines()
+    assert lines[:8] == [
+        "/ /v/2.2.1/ 302",
+        "/v /v/2.2.1/ 302",
+        "/v/ /v/2.2.1/ 302",
+        "/latest /v/2.2.1/ 302",
+        "/latest/ /v/2.2.1/ 302",
+        "/latest/* /v/2.2.1/:splat 302",
+        "/quickstart /v/2.2.1/quickstart/ 302",
+        "/quickstart/* /v/2.2.1/quickstart/:splat 302",
+    ]
+    assert lines[8:] == expected
 
 
 # --- the docs gate -------------------------------------------------------------------
@@ -1078,7 +1263,8 @@ EM_DASH = "\u2014"
         ("Leverage the seam.\n", [(1, "register", "seam"), (1, "register", "leverage")]),
         ("Ships in 2.2.1-rc.7.\n", [(1, "process", "rc.N")]),
         ("It is expected to run.\n", [(1, "hedge", "is expected to")]),
-        ("Elasticsearch output\n", [(1, "elasticsearch", "Elasticsearch")]),
+        ("ElasticSearch output\n", [(1, "elasticsearch", "ElasticSearch")]),
+        ("Elasticsearch output\n", []),
         (f"A {EM_DASH} dash\n", [(1, "ascii", "U+2014 em dash")]),
         ("$$\n\\alpha; \u03b2\n$$\nInline $\\beta;$ fine\n", []),
         ("<!-- a; b\nstill; comment -->\nok\n", []),
@@ -1176,3 +1362,26 @@ def test_the_gate_reads_named_files_without_a_build(tmp_path: Path) -> None:
     write_tree(tmp_path, {"docs/aws.md": "# AWS\n\nGo; now.\n", "docs/x.txt": "a; b"})
     assert gate.main([str(tmp_path / "docs"), "--report-only"]) == 0
     assert gate.main([str(page)]) == 1
+
+
+def test_a_local_member_is_served_from_its_working_tree(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir()
+    members = [aggregate.Member("dfe-infra", "o/dfe-infra", "toolchain", 10)]
+    local = aggregate.parse_local([f"dfe-infra={tmp_path}"], members)
+    fetcher = aggregate.Fetcher(tmp_path / "work", local=local)
+    checkout = fetcher.fetch("o/dfe-infra", "2.2.1")
+    assert (checkout.path, checkout.commit) == (tmp_path.resolve(), "local")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("dfe-infra", id="no_path"),
+        pytest.param("not-a-member=.", id="unknown_member"),
+        pytest.param("dfe-infra={missing}", id="no_docs_dir"),
+    ],
+)
+def test_a_bad_local_value_is_refused(tmp_path: Path, value: str) -> None:
+    members = [aggregate.Member("dfe-infra", "o/dfe-infra", "toolchain", 10)]
+    with pytest.raises(SystemExit):
+        aggregate.parse_local([value.format(missing=tmp_path / "none")], members)

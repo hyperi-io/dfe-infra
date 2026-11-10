@@ -10,11 +10,14 @@ Copyright: HyperI / DFE contributors
 
 # DFE on AWS
 
-DFE on Amazon EKS in your own AWS account. OpenTofu builds the network, the cluster on Graviton, the managed Kafka and the stores. Then the same bootstrap as every other cluster deploys DFE onto it, and sends an event through to ClickHouse to check it.
+DFE on Amazon EKS, in your own AWS account. OpenTofu builds the network, a Graviton cluster, managed Kafka and the stores. Then the same bootstrap every other cluster gets deploys DFE onto it and sends a test event through to ClickHouse.
 
-Kafka comes from Amazon MSK, Confluent Cloud or Redpanda Cloud, or runs in the cluster on Strimzi. ClickHouse runs in the cluster, or you bring ClickHouse Cloud. Every managed backend is the vendor's AWS instance ([managed-backends.md](managed-backends.md)). One file drives the lot: the deployment dial, `deployment.yaml`.
+Kafka is Amazon MSK, Confluent Cloud or Redpanda Cloud, or it runs in the cluster on Strimzi. ClickHouse runs in the cluster, or you bring ClickHouse Cloud. Every managed backend is the vendor's AWS instance ([managed-backends.md](managed-backends.md)). One file drives all of it, the deployment dial, `deployment.yaml`.
 
-Every dial field, sizing lock and backend detail is in [aws-configuration.md](aws-configuration.md). Running it is [aws-operations.md](aws-operations.md), and taking it down [aws-teardown.md](aws-teardown.md).
+> **Coming from Splunk or Elastic?** Your deployment is that one file in your deploy repo, not settings in a vendor console. A `git revert` restores the config, but not deleted data or every infrastructure change. More in [what's different](../../docs-site/content-root/coming-from.md#gitops-by-design-from-the-ground-up).
+
+
+Every dial field, sizing lock and backend detail is in [aws-configuration.md](aws-configuration.md). Running it day to day is [aws-operations.md](aws-operations.md). Taking it down is [aws-teardown.md](aws-teardown.md).
 
 ## Deploy
 
@@ -22,7 +25,7 @@ You need:
 
 - OpenTofu 1.12 or later, the `aws` CLI, `kubectl`, `helm`, `openssl` and Python 3.
 - A shell signed in to the target account. The plan refuses unless `aws sts get-caller-identity` prints the account the dial names.
-- The state bucket, once per account. In `terraform/environments/aws-state`, copy `example.tfvars.json` to `state.auto.tfvars.json`, set the account, region, name, env, `bucket_prefix` and tags, then `tofu init && tofu apply`. Its `state_bucket` output goes in the dial's `state.bucket`, beside a `state.key` no other deployment shares.
+- The state bucket, once per account. In `terraform/environments/aws-state`, copy `example.tfvars.json` to `state.auto.tfvars.json`, set the account, region, name, env, `bucket_prefix`, tags, `noncurrent_version_days` and `incomplete_upload_days`, then `tofu init && tofu apply`. Its `state_bucket` output goes in the dial's `state.bucket`, beside a `state.key` no other deployment shares.
 - A public DNS zone, for public hostnames. The apply creates it in Route 53. When `dns.parent_zone_id` names a same-account Route 53 parent, it writes the delegation too.
 
 `<version>` is the DFE release you are installing.
@@ -43,7 +46,7 @@ You need:
      --out terraform/environments/aws
    ```
 
-   The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank for the smallest shape that runs. It writes `sizing.auto.tfvars.json` into the OpenTofu root and the rest under its `sizing/`. Commit that directory to your deploy repo as the baseline a re-size checks against.
+   The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank and you get the smallest shape that runs. It writes `sizing.auto.tfvars.json` into the OpenTofu root and the rest under its `sizing/`. Commit that directory to your deploy repo. A later re-size checks against it.
 
 3. Render the OpenTofu inputs. This writes `dial.auto.tfvars.json` beside the sizing file.
 
@@ -68,23 +71,23 @@ You need:
      --from-terraform terraform/environments/aws
    ```
 
-`--check-only` on `stack-deploy` runs its offline checks alone, with no cluster contact.
+`--check-only` on `stack-deploy` runs the offline checks and never touches the cluster.
 
-The apply builds the VPC, EKS and its node groups, the managed Kafka when the dial names one, the KMS key, the Route 53 zones and the Secrets Manager store. A managed broker builds beside the cluster and takes longest, so it sets when the apply ends. OpenTofu writes no outputs until then, so the deploy waits on it too.
+The apply builds the VPC, EKS and its node groups, the managed Kafka when the dial names one, the KMS key, the Route 53 zones and the Secrets Manager store. The managed broker builds alongside the cluster and takes longest, so it decides when the apply ends. OpenTofu writes no outputs until then, so the deploy waits too.
 
-`stack-deploy` reads the outputs, checks the pins and renders, then bootstraps. Argo CD syncs the backing services and the apps. A readiness gate and two data checks follow: an event posted to the receiver lands in ClickHouse, and the stack's own logs and metrics land too.
+`stack-deploy` reads the outputs, checks the pins, renders and bootstraps. Argo CD then syncs the backing services and the apps. A readiness gate and two data checks close it out. An event posted to the receiver has to land in ClickHouse, and so do the stack's own logs and metrics.
 
-The run ends on `=== stack-deploy OK ===` and the path of `.tmp/<version>-scale/access-summary.md`, at mode 0600. It holds the console URL, the admin and break-glass passwords and what to do next.
+The run ends on `=== stack-deploy OK ===` and the path of `.tmp/<version>-scale/access-summary.md` (mode 0600). That file has the console URL, the admin and break-glass passwords and what to do next.
 
 ## Tear down
 
-Workloads first, then the OpenTofu state. Load balancers, volumes and DNS records were made through controllers, and `tofu destroy` does not know about them.
+Workloads come down first, then the OpenTofu state. Controllers made the load balancers, volumes and DNS records, and `tofu destroy` doesn't know about them.
 
 ```bash
 python3 scripts/dfe-ops teardown --with-terraform --cloud aws
 ```
 
-Run it where the `aws` CLI is installed, because `tofu destroy` calls it. It runs `bootstrap/destroy.sh`, which asks you to type `yes`. Then `tofu destroy` in `terraform/environments/aws`, then it deletes the secrets dfe-engine wrote to Secrets Manager outside the state. The state bucket is `prevent_destroy`, so removing it is a separate act. [aws-teardown.md](aws-teardown.md) has the order, the lifecycle tags and the sweep for anything left.
+Run it where the `aws` CLI is installed, because `tofu destroy` calls it. It runs `bootstrap/destroy.sh`, which asks you to type `yes`. Then it runs `tofu destroy` in `terraform/environments/aws`, then deletes the secrets dfe-engine wrote to Secrets Manager outside the state. The state bucket is `prevent_destroy`, so removing it is a separate step. [aws-teardown.md](aws-teardown.md) has the order, the lifecycle tags and the sweep for anything left behind.
 
 ## Troubleshooting
 
@@ -101,16 +104,16 @@ Run it where the `aws` CLI is installed, because `tofu destroy` calls it. It run
 
 ## How costs are described
 
-Costs here are T-shirt buckets, never figures. A bucket is relative to the deployment's own compute, never to a currency: XS is negligible beside the cluster's compute, S a small fraction of it, M of the same order as one dedicated node, L of the same order as the whole cluster's compute, and XL larger than the cluster's compute.
+Costs here are T-shirt buckets, not figures. A bucket is relative to the deployment's own compute, never a currency. XS is negligible beside the cluster's compute. S is a small fraction of it. M is about one dedicated node. L is about the whole cluster's compute, and XL is more than that.
 
-A pricing model is named wherever it decides whether an option is safe -- hourly, per GB processed, per request, per LCU-hour, per broker-hour -- but never a rate. Rates move by region, by account and by discount, so price your own account rather than trust a number written down here. Every edge door is priced on this scale in [edge.md](edge.md).
+Where the pricing model decides whether an option is safe, we name it: hourly, per GB processed, per request, per LCU-hour, per broker-hour. We never give a rate. Rates move by region, account and discount, so price your own account. [edge.md](edge.md) puts every edge door on this scale.
 
 ## Receiver ingress
 
-DFE pushes terabytes a day through the receiver, and every AWS front door bills by volume: a Network Load Balancer charges per LCU-hour (1 GB processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB, WAF per request. The receiver's door is its own NLB, the cheapest of those per GB, and no protection with a volume or request charge sits on it.
+The receiver takes terabytes a day, and every AWS front door bills by volume. A Network Load Balancer charges per LCU-hour (1 GB processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB, WAF per request. So the receiver gets its own NLB, and nothing in front of it bills by volume or request.
 
-A fresh deploy renders no NLB at all, and the receiver stays on a ClusterIP. The default is `exposure.groups.ingest.door: loadbalancer` with an empty `allow` list. Name the senders in the deploy repo's `exposure.groups.ingest.allow` and the NLB renders: AWS Load Balancer Controller, IP targets, client address preserved, its frontend security group holding the list. It sits on the Elastic IPs the AWS root allocates, one per public subnet.
+A fresh deploy renders no NLB. The receiver stays on a ClusterIP, because the default is `exposure.groups.ingest.door: loadbalancer` with an empty `allow` list. Name the senders in the deploy repo's `exposure.groups.ingest.allow` and the NLB renders. It uses the AWS Load Balancer Controller with IP targets, keeps the client address, and holds the list in its frontend security group. It sits on the Elastic IPs the AWS root allocates, one per public subnet.
 
-An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load Balancing pricing page). The hourly half is XS. The processing half is the transport cost of ingest on this door. AWS data transfer out still applies to the replies on every path, culvert included.
+An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being 1 GB processed for TCP/UDP (verified 2026-09-15 against AWS's Elastic Load Balancing pricing page). The hourly half is XS. The processing half is what ingest costs to move through this door. AWS data transfer out still applies to the replies on every path, culvert included.
 
-Those Elastic IPs exist, and AWS bills them, while the ingest door is closed and no NLB exists. `edge.aws.receiver_eips: false` turns them off. [ingest-edge.md](../ingest-edge.md) describes the doors, and [edge.md](edge.md) carries the AWS tier table: every door, its group, its tier, the dial key that turns it and its cost bucket.
+AWS bills those Elastic IPs while the ingest door is closed and no NLB exists. `edge.aws.receiver_eips: false` turns them off. [ingest-edge.md](../ingest-edge.md) describes the doors. [edge.md](edge.md) has the AWS tier table: every door, its group, its tier, the dial key that turns it and its cost bucket.

@@ -18,9 +18,11 @@
     "@docusaurus/theme-mermaid": "3.10.2",
     "@easyops-cn/docusaurus-search-local": "0.55.3",
     "@mdx-js/react": "3.1.1",
+    "docusaurus-plugin-llms": "0.6.1",
     "docusaurus-plugin-openapi-docs": "5.2.0",
     "docusaurus-plugin-sass": "0.2.7",
     "docusaurus-theme-openapi-docs": "5.2.0",
+    "js-yaml": "4.3.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "sass": "1.106.1"
@@ -44,6 +46,10 @@
     },
     "miniflare": {
       "undici": "7.30.1"
+    },
+    "docusaurus-plugin-llms": {
+      "minimatch": "11.0.4",
+      "yaml": "2.8.3"
     }
   },
   "browserslist": {

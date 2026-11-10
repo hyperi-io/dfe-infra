@@ -1,6 +1,6 @@
 # Builds the DFE docs site from every released stack's pins, plus the unlisted
 # /next/ preview from each member's default branch, and deploys it to the docs
-# Worker. A pull request that touches the site builds it and deploys nothing.
+# Worker. A pull request that touches the site builds it and uploads a preview, and never deploys.
 name: Docs Site
 
 on:
@@ -68,6 +68,21 @@ jobs:
 
       - name: Build every version and merge them
         run: python3 docs-site/scripts/build_site.py
+
+      # Uploads without deploying, so production traffic never moves. A fork's pull request gets no secret, so no preview.
+      - name: Upload a preview of this pull request
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        working-directory: docs-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-preview.ndjson
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          npx --no-install wrangler versions upload --preview-alias "pr-$PR" --tag "pr-$PR" --message "dfe-infra PR $PR"
+          preview_url="$(jq -r 'select(.type == "version-upload") | .preview_alias_url // .preview_url' "$WRANGLER_OUTPUT_FILE_PATH")"
+          test -n "$preview_url"
+          echo "Docs preview: $preview_url" >> "$GITHUB_STEP_SUMMARY"
 
       # main's own pages, assembled the same way at the same moment, so a member's /next/ change reaches both trees.
       - name: Assemble main's pages for the docs gate

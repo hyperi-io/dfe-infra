@@ -21,5 +21,6 @@
   },
   // With no routes, wrangler turns workers.dev on unless this says otherwise.
   "workers_dev": false,
-  "preview_urls": false
+  // A pull request's upload is served at pr-<n>-dfe-docs.<subdomain>.workers.dev, never on the domain.
+  "preview_urls": true
 }

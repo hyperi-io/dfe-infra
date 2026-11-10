@@ -1,21 +1,13 @@
 # Deployment portability matrix
 
-DFE is ONE product deployed into many estates. Every major component sits behind
-a config-driven seam so a deployment swaps it without a code change -- the seam is
-always an existing k8s abstraction or a chart mode, never a fork. This page is the
-per-target instantiation of that contract. The seam DEFINITIONS (the dial each one
-turns) live in [../architecture.md](../architecture.md) "Swappable components" and
-stay the SSoT.
+DFE is one product deployed into many estates. Most components sit behind a config dial, so a deployment swaps them without a code change. A dial is an existing k8s abstraction or a chart mode, never a fork. A few components are fixed in-cluster and have no dial: the Envoy edge, the identity authority and the document store. This page shows how each target sets the dials. The definitions (what each dial turns) live in [../architecture.md](../architecture.md) "Swappable components", and that stays the SSoT.
 
-RKE2 on-prem is the STANDARD and the tested path. The
-managed-cloud columns are overlays: same charts, same seams, different values +
-credentials. A cloud column is not built until the on-prem path is green, but the
-SEAM must be clean now so the overlay is config, not rework.
+RKE2 on-prem is the reference distribution and the tested path. The cloud columns use the same charts and dials with different values and credentials. A cloud column isn't built until the on-prem path is green.
 
 ## The invariant core vs the swappable edge
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph edge["Swappable edge (per target)"]
         DNS[DNS]:::seam
         SEC[Secrets]:::seam
@@ -40,15 +32,11 @@ flowchart TB
     classDef seam fill:#0b3,stroke:#062,color:#fff;
 ```
 
-One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL
-L7 routing -- there are no per-app cloud LBs and no cloud L7 (ALB/App Gateway).
-dfe-engine (the identity authority), the Envoy edge, and HyperDX's DocumentDB store
-are always in-cluster; Kafka, ClickHouse and object storage can be in-cluster or a
-managed endpoint.
+One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL the L7 routing. There are no per-app cloud LBs and no cloud L7 (ALB/App Gateway). dfe-engine (the identity authority), the Envoy edge and the dfe-hyperdx DocumentDB store are always in-cluster. Kafka, ClickHouse and object storage can be in-cluster or a managed endpoint.
 
 ## The matrix
 
-| Component | Seam (the dial) | On-prem RKE2 | AWS | Azure | GCP |
+| Component | The dial | On-prem RKE2 | AWS | Azure | GCP |
 |---|---|---|---|---|---|
 | Kubernetes | vanilla-cluster contract (preflight) | RKE2 (standard) | EKS | AKS | GKE |
 | External DNS | external-dns provider / estate record | estate CoreDNS record | Route53 | Azure DNS | Cloud DNS |
@@ -73,49 +61,18 @@ managed endpoint.
 
 ## Notes that matter
 
-- **One LB, dumb L4.** The only cloud LB per deployment is the `Service
-  type=LoadBalancer` fronting the gateway (MetalLB provides it on-prem). Cloud L7
-  (routing, WAF, OIDC) is NOT used -- Envoy owns L7 in-cluster, so behaviour is
-  identical everywhere. Cloud-specific LB tuning rides
-  `envoyGateway.service.annotations`.
-- **Workload identity is the credential seam for cloud.** ESO, external-dns and the
-  cloud LB controller reach their cloud APIs via IRSA / Workload Identity, annotated
-  onto the ServiceAccount. On-prem there is no cloud API -- creds come from OpenBao
-  through ESO. Nothing hardcodes a static cloud key.
-- **etcd-at-rest is a cluster seam, not an app one.** dfe-engine (and every
-  `secrets` consumer) inherits whatever the cluster's EncryptionConfiguration uses -- cloud
-  KMS on managed clusters, secretbox/aescbc on-prem. No app couples to a KMS.
-- **Data services are in-cluster OR managed, per deployment.** Kafka and ClickHouse
-  default to in-cluster (Strimzi, CH operator) and swap to a managed endpoint by
-  pointing the chart's `*.host` / `bootstrapServers` at it. The DocumentDB store's
-  PostgreSQL stays in-cluster (it is HyperDX's store, not a general PG).
-- **ClickHouse on cloud:** ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse
-  in-k8s (the operator) is equally ACCEPTABLE on any cloud -- the `clickhouse.mode`
-  seam supports both everywhere, so it is a per-deployment call, not a hard rule.
-- **Nothing cloud-specific is assumed by a chart.** A component reachable through
-  only one provider is a bug (architecture.md). The 443/6443 API-egress fix and the
-  local-signer-over-OpenBao correction are the kind of on-prem assumption a
-  de-hardcoding audit exists to catch.
-- **Choosing an external service changes the cluster's network posture, on
-  purpose.** The baseline is default-deny egress, so `network-policies` derives an
-  egress allow for each external dependency the deployment DECLARES --
-  `clickhouse.mode: external` opens the ClickHouse clients on the ClickHouse ports,
-  `kafka.mode: external` the Kafka clients, and likewise for an external OIDC
-  issuer, secret backend, index server or OTel destination. There is no separate
-  acknowledgement flag and there will not be one: the declaration IS the decision.
-  The trade is accepted -- pointing the loader at ClickHouse Cloud widens egress
-  with no second choice made anywhere -- because the alternative is a pod that
-  cannot reach the datastore it was just pointed at, crashlooping with nothing in
-  the policy set to explain why. Each purpose gets only the ports that dependency
-  speaks, and any purpose pins to a known endpoint CIDR
-  (`externalEgress.<purpose>.allowCIDRs`) where one is fixed.
+- One LB, dumb L4. The only cloud LB per deployment is the `Service type=LoadBalancer` fronting the gateway (MetalLB provides it on-prem). We don't use cloud L7 (routing, WAF, OIDC). Envoy owns L7 in-cluster, so behaviour is identical everywhere. Cloud-specific LB tuning rides `envoyGateway.service.annotations`.
+- Workload identity is how the cloud credentials work. ESO, external-dns and the cloud LB controller reach their cloud APIs through IRSA / Workload Identity, annotated onto the ServiceAccount. On-prem there's no cloud API, so credentials come from OpenBao through ESO. Nothing hardcodes a static cloud key.
+- etcd-at-rest belongs to the cluster, not the app. dfe-engine (and every `secrets` consumer) inherits whatever the cluster's EncryptionConfiguration uses: cloud KMS on managed clusters, secretbox/aescbc on-prem. No app couples to a KMS.
+- Data services are in-cluster OR managed, per deployment. Kafka and ClickHouse default to in-cluster (Strimzi, the CH operator) and swap to a managed endpoint when you point the chart's `*.host` or `bootstrapServers` at it. The DocumentDB store's PostgreSQL stays in-cluster, because it's the dfe-hyperdx store and not a general PG.
+- ClickHouse on cloud: ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse in-k8s (the operator) is equally ACCEPTABLE on any cloud. The `clickhouse.mode` dial supports both everywhere, so it's a per-deployment call and not a hard rule.
+- A chart never assumes anything cloud-specific. A component reachable through only one provider is a bug (architecture.md).
+- Declaring an external dependency also configures its clients' egress rules. The baseline is default-deny egress, so `network-policies` derives an egress allow for each external dependency the deployment declares. `clickhouse.mode: external` opens the ClickHouse clients on the ClickHouse ports, `kafka.mode: external` opens the Kafka clients, and likewise for an external OIDC issuer, secret backend, index server or OTel destination. There's no separate acknowledgement flag. Without the allow, a pod pointed at the datastore couldn't reach it, and would crashloop with nothing in the policy set to explain why. Each purpose gets only the ports that dependency speaks, and any purpose pins to a known endpoint CIDR (`externalEgress.<purpose>.allowCIDRs`) where one is fixed.
 
 ## Node autoscaling
 
-A pools interface, with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler: Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../autoscaling.md](../autoscaling.md) has the per-target table.
+It's a pools interface with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler. That's Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../autoscaling.md](../autoscaling.md) has the per-target table.
 
 ## Status
 
-DESIGN ARTIFACT for review (2026-08-18). The de-hardcoding CODE AUDIT across charts
-\+ bootstrap, and the actual EKS/AKS/GKE overlays, are the deferred follow-up -- to
-be sequenced after this matrix is signed off.
+This is a design artifact for review (2026-08-18). The de-hardcoding code audit across charts and bootstrap, and the actual EKS/AKS/GKE overlays, are the deferred follow-up. They come after this matrix is signed off.

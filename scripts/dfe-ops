@@ -378,10 +378,10 @@ BOOTSTRAP_REQUIRED = (
     "DFE_TARGET_REVISION",
     "DFE_STORAGE_CLASS",
     "DFE_NAMESPACE",
-    "DFE_CLICKHOUSE_HOST",
-    "DFE_OTEL_ENDPOINT",
     "DFE_WORKLOAD_IDENTITY_ANNOTATIONS",
 )
+# Read only on an external server: an in-cluster ClickHouse is the charts' own service.
+BOOTSTRAP_REQUIRED_EXTERNAL_CLICKHOUSE = ("DFE_CLICKHOUSE_HOST",)
 
 # The two that depend on which secrets backend the deployment declared, the same
 # split bootstrap.sh and bridge.py already make. DFE_VAULT_ADDR and
@@ -417,12 +417,15 @@ def _bootstrap_required(env: Mapping[str, str]) -> tuple[str, ...]:
     -- a plain ``get(..., default)`` would read a present-but-empty value as
     none of the three and drop every store check.
     """
+    required = BOOTSTRAP_REQUIRED
+    if env.get("DFE_CLICKHOUSE_MODE") == "external":
+        required += BOOTSTRAP_REQUIRED_EXTERNAL_CLICKHOUSE
     backend = env.get("DFE_SECRETS_BACKEND") or _default_store_backend(env)
     if backend == "openbao":
-        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_OPENBAO
+        return required + BOOTSTRAP_REQUIRED_OPENBAO
     if backend == "aws-sm":
-        return BOOTSTRAP_REQUIRED + BOOTSTRAP_REQUIRED_AWS_SM
-    return BOOTSTRAP_REQUIRED
+        return required + BOOTSTRAP_REQUIRED_AWS_SM
+    return required
 
 # A representative set of apps whose dfe-extras objects are rendered alongside the
 # mode's backing-service charts, so an app-side profile break is caught before deploy.

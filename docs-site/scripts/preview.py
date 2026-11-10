@@ -18,8 +18,9 @@ Runs aggregate.py for the newest release, generates its API pages, then
 `docusaurus start`. The build reads a copy of content-root/, so every second this
 copies a saved, added or deleted page across and Docusaurus reloads it.
 
-Member pages come from each repository at the tag the release pins, so an edit
-to a member's docs/ does not show here.
+Member pages come from each repository at the tag the release pins. To see your
+own edits to a member's docs/, name its working tree with --local, such as
+--local dfe-infra=.. from docs-site/.
 
 Needs the site's npm dependencies installed (npm ci). Ctrl-C stops it.
 """
@@ -97,13 +98,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-aggregate", action="store_true", help="serve docs-site/content/ as it stands"
     )
+    parser.add_argument(
+        "--local",
+        action="append",
+        default=[],
+        metavar="MEMBER=PATH",
+        help="read a member's docs/ from a working tree (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     if not DOCUSAURUS.is_file():
         raise SystemExit(f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first")
     if not args.no_aggregate:
         work = ["--work-dir", str(args.work_dir)] if args.work_dir else []
-        run(sys.executable, str(Path(aggregate.__file__)), *work)
+        local = [arg for value in args.local for arg in ("--local", value)]
+        run(sys.executable, str(Path(aggregate.__file__)), *work, *local)
     site = json.loads((aggregate.DEFAULT_OUT / aggregate.SITE_FILE).read_text(encoding="utf-8"))
     name = site["newest"]
     if not name:

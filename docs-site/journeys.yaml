@@ -38,6 +38,7 @@ sidebar:
     HTTP API: ""
     Query API: ""
     Schemas: ""
+    Using the docs with an AI agent: ""
     The event header: ""
     ClickHouse: ""
     Fetcher: ""
@@ -54,6 +55,7 @@ placement:
   content-root:
     default: "Deploy / Choose a target"
     README.md: ""
+    history.md: "Evaluate / How DFE fits together"
     quickstart/demo.md: "Evaluate / Try the demo"
     quickstart/docker.md: "Evaluate / Try the demo"
     quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"
@@ -65,6 +67,7 @@ placement:
     operate/detections-and-hunts.md: "Operate / Detections and hunts"
     operate/monitoring.md: "Operate / Monitoring"
     operate/day-to-day.md: "Operate / Day to day and troubleshooting"
+    ai-agents.md: "Reference / Using the docs with an AI agent"
   culvert:
     default: "Deploy / Remote access (culvert, optional)"
   dfe-archiver:
