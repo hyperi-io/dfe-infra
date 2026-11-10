@@ -65,6 +65,7 @@ placement:
     operate/detections-and-hunts.md: "Operate / Detections and hunts"
     operate/monitoring.md: "Operate / Monitoring"
     operate/day-to-day.md: "Operate / Day to day and troubleshooting"
+    ingest-cost.md: "Evaluate / Elastic Beats alongside or swapped"
   culvert:
     default: "Deploy / Remote access (culvert, optional)"
   dfe-archiver:
