@@ -7,7 +7,7 @@
 tasks:
   Run DFE under Docker on one host:
     page: "quickstart/docker.md"
-    expect: "make up"
+    expect: "hyperi-io/dfe-docker"
   Deploy DFE on Kubernetes on-premises:
     page: "quickstart/kubernetes.md"
     expect: "dfe-ops stack-deploy"

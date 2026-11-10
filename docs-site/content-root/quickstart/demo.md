@@ -7,6 +7,7 @@ sidebar_label: The demo
 
 Raw firewall syslog in, one parsed ClickHouse table per vendor out, on one host.
 
+<!-- docker-quickstart: demo -->
 You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
 
 <!-- landing -->
@@ -26,6 +27,7 @@ make demo-stop    # stop the stream
 make down         # stop the stack too, keep the data
 make clean        # stop everything and DELETE the volumes, ClickHouse included
 ```
+<!-- /docker-quickstart -->
 
 Next:
 
