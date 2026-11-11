@@ -51,7 +51,7 @@ An app with no published release is HELD, not fatal. The alpha transforms have n
 
 ## A released stack is frozen
 
-Once a stack's git tag exists, its block in `versions.yaml` and its `constraints/<version>.yaml` are the record of what shipped. `dfe-stack refresh-digests`, `dfe-stack bump-app` and `resolve_pins.py --write` refuse to write to it, and `scripts/tests/test_stack_freeze.py` fails on any other edit. A digest or app move goes into the next cut.
+Once a stack's git tag exists, its block in `versions.yaml` and its `constraints/<version>.yaml` are the record of what shipped. `dfe-stack refresh-digests`, `dfe-stack bump-app` and `resolve_pins.py --write` refuse to write to it, and `scripts/tests/test_stack_freeze.py` fails on any other edit. A digest or app move goes into the next cut. Renovate's propagate job runs `refresh-digests --skip-released`, which prints one line and exits 0 while `current` is tagged, so third-party digest moves wait for that cut too.
 
 ## Withdrawn stacks
 

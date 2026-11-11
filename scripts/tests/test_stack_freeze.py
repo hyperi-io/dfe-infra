@@ -412,10 +412,10 @@ stacks:
 """
 
 
-def _refresh(monkeypatch, repo: Path, digest: str, check: bool = False) -> int:
+def _refresh(monkeypatch, repo: Path, digest: str, check: bool = False, skip_released: bool = False) -> int:
     monkeypatch.setattr(dfe, "REPO_ROOT", repo)
     monkeypatch.setattr(dfe.registry_pins, "ref_digest", lambda ref: (digest, ""))
-    return dfe.cmd_refresh_digests(argparse.Namespace(stack=None, check=check))
+    return dfe.cmd_refresh_digests(argparse.Namespace(stack=None, check=check, skip_released=skip_released))
 
 
 def test_refresh_digests_refuses_to_move_a_digest_in_a_released_stack(tmp_path, monkeypatch):
@@ -425,9 +425,17 @@ def test_refresh_digests_refuses_to_move_a_digest_in_a_released_stack(tmp_path, 
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
 
 
-def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatch):
+def test_refresh_digests_skip_released_leaves_a_released_stack_and_says_so(tmp_path, monkeypatch, capsys):
+    repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.2")
+    assert _refresh(monkeypatch, repo, "sha256:new", skip_released=True) == 0
+    assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
+    assert "stack 9.9.0-rc.2 is released" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("skip_released", [False, True])
+def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatch, skip_released):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.1")
-    assert _refresh(monkeypatch, repo, "sha256:new") == 0
+    assert _refresh(monkeypatch, repo, "sha256:new", skip_released=skip_released) == 0
     text = (repo / "versions.yaml").read_text(encoding="utf-8")
     assert text.split("9.9.0-rc.2:")[1].count('"sha256:new"') == 1
     assert text.split("9.9.0-rc.2:")[0].count("sha256:new") == 0
