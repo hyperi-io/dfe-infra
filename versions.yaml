@@ -9247,7 +9247,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.26"             # 2026-11-10. The engine applies it at startup and reads its source catalogue. Adds the dlq table the loader loads dead letters into (#104), drops the schema_lock TTL (#102) and keeps CloudTrail service hostnames (#103). dfe-engine v1.22.87 requires >=0.2.26 and locks 0.2.26.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.16"              # 2026-11-10. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2-rc.3 on the rc channel (#25).
+      dfe-deploy: "v1.0.17"              # 2026-11-11. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2-rc.4 on the rc channel (#26).
       # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
       dfe-docker: "v1.0.4"                # 2026-11-10, tag at 139024c78. Its compose names the search service dfe-hyperdx, matching the app id (#355, #359).
       dfe-hyperdx: "v0.3.22"             # 2026-11-10, amd64 and arm64. Still upstream HyperDX 2.43.0. Exports the process start time (#195), which the engine's Components CPU totals read.
