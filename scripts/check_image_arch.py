@@ -116,6 +116,8 @@ VERDICT_CACHE_SCHEMA = 1
 DIGEST_PINNED = {
     "services.nginx-unprivileged": "nginxinc/nginx-unprivileged",
     "services.git-sync": "registry.k8s.io/git-sync/git-sync",
+    # dfe-fetcher's container Vector extractor, through extractors.vector.image.
+    "services.vector": "timberio/vector",
     "services.forgejo": "code.forgejo.org/forgejo/forgejo",
     # helm/charts/clickhouse-cluster's KeeperCluster.
     "services.clickhouse-keeper": "docker.io/clickhouse/clickhouse-keeper",

@@ -9135,6 +9135,8 @@ stacks:
       nginx-unprivileged: "1.31.7-trixie"  # 2026-10-14. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
       git-sync: "v4.8.0"             # 2026-10-24. Pulls the deploy repo's hunts and rules into the hunt runner pod.
+      # image: timberio/vector
+      vector: "0.61.0-alpine"        # 2026-10-29, amd64, arm64 and arm. The image dfe-fetcher's container Vector extractor runs, handed to it as extractors.vector.image, and the release dfe-transform-vector bakes into its image (VECTOR_VERSION in src/deployment.rs), so the two move together.
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
       aws-msk-iam-auth: "2.3.9"      # 2026-09-24. A jar, not an image: the MSK bootstrap Job downloads it and checks its sha256.
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
@@ -9228,6 +9230,7 @@ stacks:
       nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"   # nginxinc/nginx-unprivileged:1.31.7-trixie
       otel-collector: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"       # otel/opentelemetry-collector-contrib:0.163.2
       git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"            # registry.k8s.io/git-sync/git-sync:v4.8.0
+      vector: "sha256:3bb7ed5152910ed51729e256937b1d8a4bf67ff624e9d565e8e5877bffd015c7"              # timberio/vector:0.61.0-alpine
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
