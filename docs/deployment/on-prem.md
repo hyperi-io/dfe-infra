@@ -21,6 +21,7 @@ Pick the tier first, because it decides whether you need a secrets store.
 - Nodes for DFE to run on, labelled `dfe.hyperi.io/workload=dfe`. The `local` overlay (`argocd/values/local.yaml`) pins DFE to them with a hard nodeSelector and tolerates a matching `NoSchedule` taint, so a pool tainted at provisioning keeps other workloads off it. Bootstrap labels every node on this target (`DFE_LABEL_WORKLOAD_NODES`, default `true` for `local`). On a shared cluster, label the DFE nodes yourself and set it to `false`.
 - You decide where data is stored at the first deploy, and it's locked after that. Read [storage.md](storage.md) first.
 - For `scale`, an OpenBao: its address, plus an AppRole for External Secrets or a token OpenTofu can create one with ([README.md](README.md#secrets-store)).
+- An air-gapped cluster pulls every image from a registry inside the site. `dfe-stack images` lists a release's DFE-owned images, and its signed manifest verifies offline ([stack-versioning.md](stack-versioning.md#cutting-a-release)). A full air gap usually needs HyperI professional services as well, for the parts each site does its own way: moving images across, the local registry, cross-domain rules and accreditation.
 
 ## Deploy
 
