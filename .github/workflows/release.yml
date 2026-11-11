@@ -52,12 +52,18 @@ jobs:
         with:
           fetch-depth: 0   # full history: dfe-stack + tag existence checks
 
+      # A hotfix stack always needs its recorded hotfix-minimum gate. The repo variable
+      # DFE_REQUIRE_GA_GATE=true also makes a release need a recorded ga-full gate.
       - name: Gate -- drift + compatibility + release-gate
+        env:
+          REQUIRE_GA_GATE: ${{ vars.DFE_REQUIRE_GA_GATE }}
         run: |
           set -euo pipefail
           python3 scripts/check_versions_drift.py
           python3 scripts/dfe-stack compat-check --strict
-          python3 scripts/dfe-stack release-gate
+          gate=()
+          if [ "${REQUIRE_GA_GATE:-}" = "true" ]; then gate=(--require-ga-gate); fi
+          python3 scripts/dfe-stack release-gate "${gate[@]}"
 
       # The chart-installed add-ons take their image tags from their chart's
       # appVersion, which --resolve-charts reads with helm.

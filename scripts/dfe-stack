@@ -317,6 +317,56 @@ def dfe_owned_pins(v: dict) -> dict[str, str]:
     return pins
 
 
+# A stack's `gates:` entry kinds: the minimum gate a hotfix stack needs before its
+# tag, and the full gate a release runs on its promoted digests.
+GATE_KINDS = ("hotfix-minimum", "ga-full")
+
+
+def gate_digests(v: dict, kind: str) -> dict[str, str]:
+    """The image -> digest set a gate of `kind` must have checked for this stack.
+
+    hotfix-minimum covers the hotfix apps. ga-full covers every DFE image the stack
+    pins a digest for, the apps and the content images both.
+    """
+    digests = v.get("digests", {})
+    names = v.get("hotfix", {}) if kind == "hotfix-minimum" else set(v.get("apps", {})) | set(digests)
+    return {name: digests.get(name, "") for name in sorted(names)}
+
+
+def gate_finding(v: dict, kind: str) -> str | None:
+    """Why the stack lacks a passing `kind` gate over its pinned digests, or None."""
+    want = gate_digests(v, kind)
+    missing = [app for app, digest in want.items() if not digest]
+    if missing:
+        return f"no digest pinned for {', '.join(missing)}, so no {kind} gate can name it"
+    for entry in v.get("gates", {}).values():
+        if (
+            isinstance(entry, dict)
+            and entry.get("kind") == kind
+            and entry.get("result") == "pass"
+            and entry.get("digests") == want
+        ):
+            return None
+    names = ", ".join(f"{app}@{digest}" for app, digest in want.items())
+    return f"no passing {kind} gate names exactly {names} (dfe-stack record-gate)"
+
+
+def hotfix_findings(v: dict) -> list[str]:
+    """Every way a hotfix stack's `hotfix:` block disagrees with its pins or its gate."""
+    found = []
+    for app, fix in sorted(v.get("hotfix", {}).items()):
+        tag = fix.get("tag", "") if isinstance(fix, dict) else ""
+        if v.get("apps", {}).get(app) != tag:
+            found.append(f"hotfix {app} {tag or '(no tag)'} is not the pinned {app} tag")
+        if not (isinstance(fix, dict) and fix.get("reason")):
+            found.append(f"hotfix {app} records no reason")
+    if v.get("hotfix"):
+        gate = gate_finding(v, "hotfix-minimum")
+        if gate:
+            found.append(gate)
+    return found
+
+
 def non_release_pins(v: dict) -> list[str]:
     """`section.name tag` for every DFE-owned pin that is not a plain vX.Y.Z.
 
@@ -1517,7 +1567,15 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
     else:
         print(f"release-gate {name}: {detail}")
+    for detail in hotfix_findings(v):
+        pins_failed = True
+        print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
     maturity = v.get("maturity", "")
+    if args.require_ga_gate and maturity == "release":
+        detail = gate_finding(v, "ga-full")
+        if detail:
+            pins_failed = True
+            print(f"release-gate FAIL: {name} {detail}", file=sys.stderr)
     unp = unpublished_apps(v)
     if maturity != "release":
         print(
@@ -1556,10 +1614,111 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _last_content_line(lines: list[str], start: int, end: int) -> int:
+    """Index just past the last non-blank line in [start, end), so an insert lands before trailing blanks."""
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return end
+
+
+def _drop_sub_block(block: list[str], key: str) -> None:
+    """Remove a stack block's own `key:` map, if it has one."""
+    head = next((i for i, ln in enumerate(block) if re.match(rf"^    {re.escape(key)}:\s*(?:#.*)?$", ln)), None)
+    if head is None:
+        return
+    _, end = _sub_block_span(block, head, len(block), key)
+    del block[head:end]
+
+
+def _parse_hotfixes(args: argparse.Namespace, from_pins: dict, maturity: str) -> dict[str, str]:
+    """`--hotfix app=tag` values as {app: tag}, refused unless they make a valid hotfix release."""
+    hotfixes: dict[str, str] = {}
+    for spec in args.hotfix or []:
+        app, sep, tag = spec.partition("=")
+        if not sep or not app or not tag:
+            raise SystemExit(f"error: --hotfix takes app=vX.Y.Z, got {spec!r}")
+        if app not in from_pins.get("apps", {}):
+            raise SystemExit(f"error: --hotfix {app}: no apps.{app} pin to replace")
+        key = semver_key(tag)
+        if key is None or key[3] != 1:
+            raise SystemExit(f"error: --hotfix {app}={tag}: a hotfix is a plain vX.Y.Z release")
+        hotfixes[app] = tag
+    if not hotfixes:
+        if args.reason:
+            raise SystemExit("error: --reason only goes with --hotfix")
+        return hotfixes
+    if not args.reason:
+        raise SystemExit("error: --hotfix needs --reason, the CVE or incident it fixes")
+    if '"' in args.reason:
+        raise SystemExit("error: --reason cannot contain a double quote")
+    if args.apps:
+        raise SystemExit("error: --hotfix moves only the hotfix apps, so it cannot take --apps")
+    if maturity != "release":
+        raise SystemExit(f"error: a hotfix stack is a release, but this cut is maturity={maturity}")
+    return hotfixes
+
+
+def _published_tag(org: str, app: str, tag: str) -> tuple[str, str]:
+    """One named tag and its digest, refused when the registry does not serve it."""
+    try:
+        digest = registry_pins.resolve_digest(org, app, tag)
+    except registry_pins.RegistryError as exc:
+        raise SystemExit(f"error: cannot read {org}/{app}:{tag} from the registry: {exc}") from exc
+    if digest is None:
+        raise SystemExit(f"error: {org}/{app}:{tag} is not published")
+    return tag, digest
+
+
+def cmd_record_gate(args: argparse.Namespace) -> int:
+    """Write one `gates:` entry: what ran, against which pinned digests, and the result.
+
+    The digest set comes from the stack itself, the hotfix apps for hotfix-minimum and
+    every app for ga-full, so the entry can only name what the stack pins now.
+    release-gate accepts a passing entry only while those digests are unchanged.
+    """
+    root = load_root()
+    name, v = stack_pins(root, args.stack)
+    stack_freeze.refuse_if_tagged(name, REPO_ROOT, "record-gate")
+    if args.kind == "hotfix-minimum" and not v.get("hotfix"):
+        raise SystemExit(f"error: stack {name} has no `hotfix:` block, so there is no hotfix to gate")
+    digests = gate_digests(v, args.kind)
+    missing = [app for app, digest in digests.items() if not digest]
+    if missing:
+        raise SystemExit(f"error: {name} pins no digest for {', '.join(missing)}, so a gate cannot name it")
+    if '"' in args.run:
+        raise SystemExit("error: --run cannot contain a double quote")
+    date = args.date or datetime.datetime.now(datetime.UTC).date().isoformat()
+    existing = v.get("gates", {})
+    entry_id = f"{args.kind}-{sum(1 for e in existing.values() if isinstance(e, dict) and e.get('kind') == args.kind) + 1}"
+
+    entry = [
+        f"      {entry_id}:\n",
+        f'        kind: "{args.kind}"\n',
+        f'        result: "{args.result}"\n',
+        f'        run: "{args.run}"\n',
+        f'        date: "{date}"\n',
+        "        digests:\n",
+        *(f'          {app}: "{digest}"\n' for app, digest in digests.items()),
+    ]
+    path = REPO_ROOT / "versions.yaml"
+    lines = path.read_text().splitlines(keepends=True)
+    start, end = _block_span(lines, name)
+    if existing:
+        _, gates_end = _sub_block_span(lines, start, end, "gates")
+        at = _last_content_line(lines, start, gates_end)
+    else:
+        at = _last_content_line(lines, start, end)
+        entry.insert(0, "    gates:\n")
+    lines[at:at] = entry
+    path.write_text("".join(lines))
+    print(f"recorded {entry_id} on {name}: {args.result}, {len(digests)} digest(s), run {args.run}")
+    return 0
+
+
 def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[int, int]:
     """Line span of a `key:` map nested inside an already-bounded block."""
     head = next(
-        (i for i in range(start, end) if re.match(rf"^(\s+){re.escape(key)}:\s*$", lines[i])),
+        (i for i in range(start, end) if re.match(rf"^(\s+){re.escape(key)}:\s*(?:#.*)?$", lines[i])),
         None,
     )
     if head is None:
@@ -1903,15 +2062,24 @@ def cmd_cut(args: argparse.Namespace) -> int:
     _, from_pins = stack_pins(root, from_name)
     maturity = args.maturity or stacks[from_name].get("maturity", "")
     want_rc = maturity != "release"
+    hotfixes = _parse_hotfixes(args, from_pins, maturity)
     wanted = set(args.apps.split(",")) if args.apps else None
+    if hotfixes:
+        wanted = set(hotfixes)
     moved: list[str] = []
     held: list[str] = []
+    # Gate evidence and a hotfix record describe the stack they were written for.
+    _drop_sub_block(block, "gates")
+    _drop_sub_block(block, "hotfix")
 
     for app, current in sorted(from_pins.get("apps", {}).items()):
         if wanted is not None and app not in wanted:
-            held.append(f"{app} {current} (not in --apps)")
+            held.append(f"{app} {current} ({'not the hotfix' if hotfixes else 'not in --apps'})")
             continue
-        found = _latest_published(args.org, app, prerelease=want_rc)
+        if app in hotfixes:
+            found = _published_tag(args.org, app, hotfixes[app])
+        else:
+            found = _latest_published(args.org, app, prerelease=want_rc)
         if found is None:
             kind = "rc or release" if want_rc else "release"
             held.append(f"{app} {current} (no published {kind})")
@@ -1932,10 +2100,23 @@ def cmd_cut(args: argparse.Namespace) -> int:
             )
         moved.append(f"{app} {current} -> {tag}")
 
-    moved += _stamp_git_content(block, from_pins, args.org, held)
-    # After the tags move, so each chart is read at the version its tag now names.
+    if hotfixes:
+        record = ["    hotfix:\n"]
+        for app, tag in sorted(hotfixes.items()):
+            record += [f"      {app}:\n", f'        tag: "{tag}"\n', f'        reason: "{args.reason}"\n']
+        at = _last_content_line(block, 0, len(block))
+        block[at:at] = record
+
     host = args.registry.partition("/")[0]
-    moved += repin_charts(block, args.org, host, held)
+    if hotfixes:
+        # The hotfix gate checks only the hotfix digests, so nothing else may move.
+        held.append("content and every other chart (hotfix cut)")
+        for app in sorted(hotfixes):
+            moved += repin_charts(block, args.org, host, held, only=app)
+    else:
+        moved += _stamp_git_content(block, from_pins, args.org, held)
+        # After the tags move, so each chart is read at the version its tag now names.
+        moved += repin_charts(block, args.org, host, held)
 
     # A held, --apps-excluded or cloned content pin carries over as it was, which may be an rc.
     if not want_rc:
@@ -2126,6 +2307,13 @@ def main() -> int:
         ),
     )
     p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+    p.add_argument(
+        "--hotfix",
+        action="append",
+        metavar="APP=vX.Y.Z",
+        help="cut a hotfix release: pin this app at this release, hold every other pin (repeatable)",
+    )
+    p.add_argument("--reason", default=None, help="the CVE or incident id a --hotfix fixes")
     p.set_defaults(func=cmd_cut)
 
     p = sub.add_parser(
@@ -2134,7 +2322,20 @@ def main() -> int:
     )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.add_argument("--org", default="hyperi-io", help="GH org owning the engine repository")
+    p.add_argument(
+        "--require-ga-gate",
+        action="store_true",
+        help="a release must carry a passing ga-full gate over every pinned app digest",
+    )
     p.set_defaults(func=cmd_release_gate)
+
+    p = sub.add_parser("record-gate", help="record a gate run against a stack's pinned digests")
+    p.add_argument("--stack", help="stack version (default: `current`)")
+    p.add_argument("--kind", required=True, choices=GATE_KINDS)
+    p.add_argument("--run", required=True, help="where the run's evidence lives: a CI run URL or a cycle id")
+    p.add_argument("--result", required=True, choices=["pass", "fail"])
+    p.add_argument("--date", default=None, help="YYYY-MM-DD the run finished (default: today, UTC)")
+    p.set_defaults(func=cmd_record_gate)
 
     args = parser.parse_args()
     return args.func(args)
