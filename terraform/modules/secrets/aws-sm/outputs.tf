@@ -26,7 +26,12 @@ output "engine_role_arn" {
 
 output "receiver_role_arn" {
   description = "The role dfe-receiver's service account assumes. Reads the ingest bearer-token secrets under engine_name_prefix and nothing else, with the key used only through Secrets Manager."
-  value       = aws_iam_role.receiver.arn
+  value       = aws_iam_role.reader["receiver"].arn
+}
+
+output "hunt_runner_role_arn" {
+  description = "The role dfe-hunt-runner's service account assumes. Reads the hunt alert-destination secrets under engine_name_prefix and nothing else, with the key used only through Secrets Manager."
+  value       = aws_iam_role.reader["hunt-runner"].arn
 }
 
 output "engine_name_prefix" {

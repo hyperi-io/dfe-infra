@@ -31,6 +31,8 @@ provider "registry.opentofu.org/confluentinc/confluent" {
     "zh:cac64a51f1f923467145680f1deac9df428c7d9f5c8ca540918982d23e3c9e38",
     "zh:d0756e7099cd785d957b0a2b8b92c3ab39709c8096efa9ed8d7b3870edee90aa",
     "zh:d1e3017038dcb4a9513a783f937cdb7b21671fc48842f2a71e29b4889bf5f42e",
+    "zh:df4c262fc61c3ad5f41ebe0430d174c3828510f7c8e9568c599fc2bb2ebdbb11",
+    "zh:ea60d96b77ce5040b35e81ea1e940d19dc14890e0d691cb5826ee313852d9363",
   ]
 }
 

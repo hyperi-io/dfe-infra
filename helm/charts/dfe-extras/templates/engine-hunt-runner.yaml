@@ -44,9 +44,11 @@ disk on every reload tick, and the engine governs them in that repo.
 {{- $gs := .Values.huntRunner.gitSync }}
 {{- /* No deploy repo means nothing to sync, so the sidecar needs both switches. */}}
 {{- $gitSync := and $gs.enabled .Values.gitops.enabled }}
-{{- /* The engine's config claim only exists while its config volume is persistent. */}}
-{{- $ad := .Values.huntRunner.alertDestinations }}
-{{- $alerts := and $ad.enabled (dig "config" "persistence" "enabled" true (.Values.writablePaths | default dict)) }}
+{{- /* Off a Secrets Manager store, alert destinations arrive in the Secret the engine mirrors them into. */}}
+{{- $alertSecret := "" }}
+{{- if not (include "dfe-engine.secretsOnAws" .) }}
+{{- $alertSecret = required "alertDestinations.secretName is empty: dfe-hunt-runner mounts the Secret the engine writes hunt alert destinations into" (dig "secretName" "" (.Values.alertDestinations | default dict)) }}
+{{- end }}
 {{- $gsImage := printf "%s:%s" $gs.image.repository $gs.image.tag }}
 {{- with $gs.image.digest }}{{- $gsImage = printf "%s@%s" $gsImage . }}{{- end }}
 {{- /* Where both git-sync passes agree: same repo, same ref, same worktree.
@@ -92,18 +94,6 @@ spec:
       # land under that same DFE_ENGINE_ prefix.
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
-      {{- if $alerts }}
-      # The engine's claim is ReadWriteOnce, so the pod sharing it must land on the
-      # engine's node. Required, not preferred: a preferred spread would hit a
-      # Multi-Attach error on any other node.
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchLabels:
-                  {{- toYaml $ad.engineSelector | nindent 18 }}
-      {{- end }}
       {{- /* The helper renders the initContainers key itself, so git-sync-init
              joins its list, or opens one when the wait is switched off. */}}
       {{- $waitForEngine := include "dfe-common.waitForEngine" . }}
@@ -169,11 +159,8 @@ spec:
             - name: DFE_ENGINE_HUNTS_RULES_DIR
               value: {{ .Values.config.mountPath }}/rules
             {{- end }}
-            {{- if $alerts }}
-            # Where the engine API writes alert destinations, mounted below.
-            - name: DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR
-              value: {{ .Values.config.mountPath }}/alerts
-            {{- end }}
+            # Alert destination URLs, read by name from the engine's secrets store.
+            {{- include "dfe-engine.secretsStoreEnv" . | nindent 12 }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             # No DFE_ENGINE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
@@ -192,11 +179,11 @@ spec:
             # needs this emptyDir.
             - name: tmp
               mountPath: /tmp
-            {{- if $alerts }}
-            # Read-only: the engine API is the only writer.
+            {{- if $alertSecret }}
+            # Where the file provider reads alert-destinations/<name>. A directory
+            # mount, never subPath, so a key the engine rewrites reaches the pod.
             - name: alert-destinations
-              mountPath: {{ .Values.config.mountPath }}/alerts
-              subPath: alerts
+              mountPath: {{ .Values.config.mountPath }}/.secrets/alert-destinations
               readOnly: true
             {{- end }}
             {{- if $gitSync }}
@@ -238,11 +225,13 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
-        {{- if $alerts }}
+        {{- if $alertSecret }}
+        # optional: a missing Secret leaves the runner delivering to
+        # hunts.alert_channels alone, rather than stuck in ContainerCreating.
         - name: alert-destinations
-          persistentVolumeClaim:
-            claimName: {{ $ad.claimName }}
-            readOnly: true
+          secret:
+            secretName: {{ $alertSecret }}
+            optional: true
         {{- end }}
         {{- if $gitSync }}
         # Written by the git-sync sidecar, read by the runner.

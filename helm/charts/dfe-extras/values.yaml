@@ -22,17 +22,17 @@ extras:
   # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
   # scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.87"
-    dfe-ui: "v1.7.40"
-    dfe-receiver: "v1.15.66"
-    dfe-loader: "v1.18.68"
-    dfe-archiver: "v1.7.48"
-    dfe-fetcher: "v1.4.50"
-    dfe-transform-vrl: "v1.1.46"
-    dfe-transform-vector: "v1.0.63"
-    dfe-transform-elastic: "v1.1.29"
+    dfe-engine: "v1.22.89"
+    dfe-ui: "v1.7.43"
+    dfe-receiver: "v1.15.67"
+    dfe-loader: "v1.18.70"
+    dfe-archiver: "v1.7.50"
+    dfe-fetcher: "v1.4.53"
+    dfe-transform-vrl: "v1.1.47"
+    dfe-transform-vector: "v1.0.64"
+    dfe-transform-elastic: "v1.1.31"
     culvert: "v2.1.30"
-    dfe-hyperdx: "v0.3.22"
+    dfe-hyperdx: "v0.3.24"
 
   # Each component's defaults for the keys its objects read. A layer that sets a
   # key wins, false and empty included.
@@ -286,11 +286,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:a990f823768b7bfb08eb079f9877ebcd8b5877ec12e5a238a45b07f7c2e2ffcf"
+        digest: "sha256:253936974ac7ab3c1674dba8512ffffcd6f134e5cd2c72adc855c23b838e348f"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.40"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.43"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
@@ -401,6 +401,10 @@ extras:
       # Secrets Manager store (argocd/values/common.yaml's ingestBearer).
       ingestBearer:
         secretName: dfe-ingest-bearer-tokens
+      # The Secret the engine mirrors hunt alert destinations into off a Secrets
+      # Manager store (argocd/values/common.yaml's alertDestinations).
+      alertDestinations:
+        secretName: dfe-alert-destinations
       networkModel:
         podCIDR: ""
       authConfig:
@@ -427,16 +431,6 @@ extras:
           passwordSecretKey: password
           passwordSecretCreate: true
           password: ""
-        # Alert destinations the API writes land on the engine's config claim, not
-        # in git (their Apprise URLs are credentials). The runner mounts that
-        # claim's alerts subdirectory read-only and runs on the engine's node,
-        # because the claim is ReadWriteOnce. Off, the runner sees no API-created
-        # destination and delivers only to hunts.alert_channels.
-        alertDestinations:
-          enabled: true
-          claimName: dfe-engine-config
-          engineSelector:
-            app.kubernetes.io/name: dfe-engine
         autoscaling:
           enabled: false
           minReplicaCount: 1
