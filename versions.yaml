@@ -9135,6 +9135,8 @@ stacks:
       nginx-unprivileged: "1.31.7-trixie"  # 2026-10-14. Serves the k8s links page and the Cruise Control UI. Upstream rebuilds tags in place, so the digest is what pins it.
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
       git-sync: "v4.8.0"             # 2026-10-24. Pulls the deploy repo's hunts and rules into the hunt runner pod.
+      # image: timberio/vector
+      vector: "0.61.0-alpine"        # 2026-10-29, amd64, arm64 and arm. The image dfe-fetcher's container Vector extractor runs, handed to it as extractors.vector.image, and the release dfe-transform-vector bakes into its image (VECTOR_VERSION in src/deployment.rs), so the two move together.
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
       aws-msk-iam-auth: "2.3.9"      # 2026-09-24. A jar, not an image: the MSK bootstrap Job downloads it and checks its sha256.
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
@@ -9165,15 +9167,15 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.88"        # 2026-11-11, amd64 and arm64. The hunt runner reads alert destinations from the secrets store, mirrored into a Secret off AWS, and no longer mounts the engine's claim (#1113). The KEDA shim reads pressure over 120s, not 60s (#1111). Settings refuse an unknown secrets provider (#1114). Locks dfe-schemas 0.2.26.
-      dfe-ui: "v1.7.41"              # 2026-11-11, amd64 and arm64. Holds alert destination names to the engine's rule (#704), previews alert volume (#705) and fixes the History card width (#706). Still on the engine 2.2.2 API: paged lists and /operations.
-      dfe-receiver: "v1.15.66"      # 2026-11-10, amd64 and arm64. Builds its DLQ entries with scalo's DLQ events (#250). scalo-rs 2.14.28: a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
-      dfe-loader: "v1.18.68"        # 2026-11-10, amd64 and arm64. Dead letters load into the dlq table (#322), and a refused value is named with its table (#320). scalo-rs 2.14.28: a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
-      dfe-archiver: "v1.7.49"       # 2026-11-10, amd64 and arm64. scalo-rs 2.14.29: topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh. Failed receives no longer count as archive errors (#169).
-      dfe-fetcher: "v1.4.50"        # 2026-11-10, amd64 and arm64. A stopped file tailer keeps its last committed checkpoint (#279). scalo-rs 2.14.28: a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
-      dfe-transform-vrl: "v1.1.46"   # 2026-11-10, amd64 and arm64. Rebuilt on scalo-rs 2.14.28 (#140): a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
-      dfe-transform-vector: "v1.0.63"  # 2026-11-10, amd64 and arm64. Rebuilt on scalo-rs 2.14.28 (#149): a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
-      dfe-transform-elastic: "v1.1.29" # 2026-11-10, amd64 and arm64. Rebuilt on scalo-rs 2.14.28 (#166): a DLQ entry is written as a DFE event with its original under _json, and OTel exports one steady stream per metric with its units kept.
+      dfe-engine: "v1.22.89"        # 2026-11-11, amd64 and arm64. Renders source tables, indexes, type tables and limits from dfe-schemas (#1115 #1131 #1133), serves the column vocabulary (#1127) and names the seed database and tables in its /hyperdx/connection read (#1119), which dfe-ui v1.7.43 and dfe-hyperdx 0.3.24 read. Types CEL _json hunt filters (#1120), reads mixed-type JSON view columns (#1116), renders profile caps as constraints (#1129), keeps profile paths under their schemas root (#1134) and takes app config defaults from each app's contract (#1130). The hunt runner reads alert destinations from the secrets store, mirrored into a Secret off AWS, and no longer mounts the engine's claim (#1113). The KEDA shim reads pressure over 120s, not 60s (#1111). Settings refuse an unknown secrets provider (#1114). Locks dfe-schemas 0.2.29.
+      dfe-ui: "v1.7.43"              # 2026-11-11, amd64 and arm64. Holds alert destination names to the engine's rule (#704), previews alert volume (#705), fixes the History card width (#706) and gives the Components usage range its own menu (#703). Reads the schema column vocabulary (#707) and the source form's limits (#711) from the engine, so it needs this stack's engine. Still on the engine 2.2.2 API: paged lists and /operations.
+      dfe-receiver: "v1.15.67"      # 2026-11-11, amd64 and arm64. Rebuilt on scalo-rs 2.14.29 (#252): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh. Its other change is test-only.
+      dfe-loader: "v1.18.70"        # 2026-11-11, amd64 and arm64. Takes dfe-clickhouse 0.1.11, so a date-like string at a _json path stays a string, and reads risk scoring and topic discovery suffixes from config (#327). Rebuilt on scalo-rs 2.14.29 (#325): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh.
+      dfe-archiver: "v1.7.50"       # 2026-11-11, amd64 and arm64. Sizes the staged, free-space and quarantine caps from config or the spool volume limit rather than fixed 8, 1 and 1 GiB (#170). scalo-rs 2.14.29: topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh. Failed receives no longer count as archive errors (#169).
+      dfe-fetcher: "v1.4.53"        # 2026-11-11, amd64 and arm64. A container Vector instance takes its image from its own `image` or extractors.vector.image, which a deployment running container instances sets from services.vector, and fails to load with neither, where it ran a hardcoded 0.58.0 (#282). Ships the ODBC driver manager and the PostgreSQL, MariaDB/MySQL and SQLite drivers in the default image, and refuses a SQL Server instance until odbc.mssql.accept_eula is true (#274). Rebuilt on scalo-rs 2.14.29 (#281) with the topic_exclude defaults.
+      dfe-transform-vrl: "v1.1.47"   # 2026-11-11, amd64 and arm64. Rebuilt on scalo-rs 2.14.29 (#141): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh.
+      dfe-transform-vector: "v1.0.64"  # 2026-11-11, amd64 and arm64. Rebuilt on scalo-rs 2.14.29 (#150): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh.
+      dfe-transform-elastic: "v1.1.31" # 2026-11-11, amd64 and arm64. Generates its detection labels and markers from the pinned dfe-schemas wheel, with a drift check, where they were hand-kept tables, and labels are unchanged (#169). Rebuilt on scalo-rs 2.14.29 (#167): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh.
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -9183,16 +9185,16 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:5d79971dd26787be3f08731708df6b4b36f2f35106011a6b284123eca8c05d37"
-      dfe-ui: "sha256:6f14381cd727c7f1d9115a8d330d4bd16c2de833230c1e76a3c188968734c339"
-      dfe-receiver: "sha256:9cf243808554b8c936c3cdb179acdd33acb9309517ca1425fe9f6790ca3b16d5"
-      dfe-loader: "sha256:91557733574410df2be3d3b3f29ba768777e4e52f3e6a2dfeb785e6b8b7de00d"
-      dfe-archiver: "sha256:fb26a66411fe6ded284ef0b06285cb4d84f5ef4e977b63301c506da70d780eee"
-      dfe-fetcher: "sha256:c4ed7f546b411d49b4e19cf2d0d0e8003775e0766eab53c968dac56da06246a0"
-      dfe-transform-vrl: "sha256:f5f7d474145d0a23b8ea374e2683ae2921cfb54185bcc44eb350e794cd38a491"
-      dfe-transform-vector: "sha256:7a4ef378394b53a0e862107c3da4cd267826a4ba6b45483076e18de972bf1c45"
-      dfe-transform-elastic: "sha256:91213b89d1922f64e611092df0b40a497cf3ee8f85229360a42f8a72ee7f3299"
-      dfe-hyperdx: "sha256:c263f50667fd2eb7c2981551a50db354c9b769bc452e28dec01179b04dba4dbe"
+      dfe-engine: "sha256:253936974ac7ab3c1674dba8512ffffcd6f134e5cd2c72adc855c23b838e348f"
+      dfe-ui: "sha256:49b9ba32cb998a63fb44bdc0bfd3c76f94b6d6385c99b0b44bb6daf5281d9675"
+      dfe-receiver: "sha256:da1796fc161d774d86bd3cbd1ad4a06f92b35157d8920d17ad62fe60979f37fb"
+      dfe-loader: "sha256:c3560f0904c8d5bebf36be8918ba127ef47ea54c290bfa6056d83a49bb3524fb"
+      dfe-archiver: "sha256:661b906c929ae89d8f592b4178abd4e5475c2895874ba43a33de81e80b045773"
+      dfe-fetcher: "sha256:a7c4e0d86eaaea31318ba8ee73af796ab4c74c08ce47937372a007a7965ad73a"
+      dfe-transform-vrl: "sha256:fcda52d7199fd2d62374efcb0bfd05421eecfcd10f90e5637fadca2be214ef51"
+      dfe-transform-vector: "sha256:cba4fc00ba2e04ab8c5bc6682bee7e84f4a6809444fe36340a1828a8cf027074"
+      dfe-transform-elastic: "sha256:48d4f891245b12bc5c2f6bb5f5075700f9d704398f236f329745c37b3a16921c"
+      dfe-hyperdx: "sha256:ecb74a710bac6c80276ea23447616944a48276bb4e1ecc304ecb3a813920c416"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       # Tagged by toolbox.dfe-toolbox.
       dfe-toolbox-base: "sha256:bd633946e6defb53dbe29d046543330782d8f2f97260e7288e69692281079d15"
@@ -9204,16 +9206,16 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
-      dfe-archiver: "sha256:2f22d109147a8ba05821570370b3714647ad094ea34882663ae3f95de1625f54"           # 1.7.49
-      dfe-engine: "sha256:e8bddea54c62828265450189a297d2579cd399b14f0e131dbce5d1d247fc4364"             # 1.22.88
-      dfe-fetcher: "sha256:7b9e2f1add2873b8dea16d3d753d81da77da3c356bf98b1f44a29c4bf199d66c"            # 1.4.50
-      dfe-hyperdx: "sha256:7dd46fd8640197aa4a9d65a37a82ce95c456bedaeb3a29b89baece1ee1c409ad"            # 0.3.22
-      dfe-loader: "sha256:8cae1a9e3ec8f9438a502e3b0fce2641f72290ae9aa3c18db77c2a1df4e21cd3"             # 1.18.68
-      dfe-receiver: "sha256:d70a0ad9681ff5ae2d704de1f4723f451273cf7184b9e16ae7a98b2b3a6ad63f"           # 1.15.66
-      dfe-transform-elastic: "sha256:3815aaf34ef1f69f89c427e5f5649fff941e43f7f55facee304ec658e81e8aa7"  # 1.1.29
-      dfe-transform-vector: "sha256:d6360506a3fdc2e6bc863259e8e97aba5955c5c64bd71f67edee0cc3fe077753"   # 1.0.63
-      dfe-transform-vrl: "sha256:19684ecd5058348625507f9d749ca6ab4532a17a61ea3c63351868c9dbcdda61"      # 1.1.46
-      dfe-ui: "sha256:fc9760624e876c35cbc6354c9b275222e095d3bea1099ccc75fa6d9cf28e2a15"                # 1.7.41
+      dfe-archiver: "sha256:c79e4531c1726caa6a5411670a6da6cdd7cc183a8f9500d8d12874f718be13d0"           # 1.7.50
+      dfe-engine: "sha256:5b4ff1ac48de2d1496ff4806252ecdf1e650a491ca843afd9252beaadf7401f6"             # 1.22.89
+      dfe-fetcher: "sha256:523b764360b7f0bb0fe3ddfc1b7dff75de742e6cf1daadc04087e3e8e0e2333d"            # 1.4.53
+      dfe-hyperdx: "sha256:e012495aa7903b9e637127efe309c30a495f028cef3b2023144662b589463b5a"            # 0.3.24
+      dfe-loader: "sha256:ab8c820b375a5572cc8f163e2f94a1705d258566563b279114df42285d840478"             # 1.18.70
+      dfe-receiver: "sha256:12dcf2a497750cd65f29a2a6a90406df062a27e5a78fe040e576541ecef06397"           # 1.15.67
+      dfe-transform-elastic: "sha256:f7455320b97baafbe777c4e9dac18e0c21eaf5d8a008b0588c6e11752e3a24f8"  # 1.1.31
+      dfe-transform-vector: "sha256:fb512bc95f378f4ac92ccb8bb447786f28d1076fc298f0471af6defa8456ae04"   # 1.0.64
+      dfe-transform-vrl: "sha256:1924b953dd277c958cc22033e5f236d1c8f19c353547a4247c850d28644e0fb6"      # 1.1.47
+      dfe-ui: "sha256:bef01ac0491a797458cd7de905b64621b0d6c87010336bdf93fa67cd710dea7d"                # 1.7.43
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
@@ -9228,6 +9230,7 @@ stacks:
       nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"   # nginxinc/nginx-unprivileged:1.31.7-trixie
       otel-collector: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"       # otel/opentelemetry-collector-contrib:0.163.2
       git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"            # registry.k8s.io/git-sync/git-sync:v4.8.0
+      vector: "sha256:3bb7ed5152910ed51729e256937b1d8a4bf67ff624e9d565e8e5877bffd015c7"              # timberio/vector:0.61.0-alpine
       busybox: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"             # docker.io/library/busybox:1.38.0
       forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"             # code.forgejo.org/forgejo/forgejo:15.0.9
       valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"              # valkey/valkey:8.1.10-alpine
@@ -9245,12 +9248,12 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.26"             # 2026-11-10. The engine applies it at startup and reads its source catalogue. Adds the dlq table the loader loads dead letters into (#104), drops the schema_lock TTL (#102) and keeps CloudTrail service hostnames (#103). dfe-engine v1.22.87 requires >=0.2.26 and locks 0.2.26.
+      dfe-schemas: "v0.2.29"             # 2026-11-11. The engine applies it at startup and reads its source catalogue. Renders tables and indexes from one DDL catalogue, with nullable dimension indexes as bloom_filter (#107), adds the Spamhaus DROP and Feodo Tracker meta schemas (#99) and enforces query caps as profile constraints (#111). dfe-engine v1.22.89 locks 0.2.29.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.17"              # 2026-11-11. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2-rc.4 on the rc channel (#26).
       # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
       dfe-docker: "v1.0.4"                # 2026-11-10, tag at 139024c78. Its compose names the search service dfe-hyperdx, matching the app id (#355, #359).
-      dfe-hyperdx: "v0.3.22"             # 2026-11-10, amd64 and arm64. Still upstream HyperDX 2.43.0. Exports the process start time (#195), which the engine's Components CPU totals read.
+      dfe-hyperdx: "v0.3.24"             # 2026-11-11, amd64 and arm64. Still upstream HyperDX 2.43.0. Pins mongoose 6.13.12 for GHSA-8332, a cross-org denial of service from one PATCH to /dashboards or /saved-search (#198), and passes request bodies on only as parsed, with inherited keys stripped (#201). Serves every UI font subset from the image, so the build fetches nothing from Google (#199, #200). Compares JSON numbers in SQL as numbers (#202), reads its seed sources from the engine's /hyperdx/connection, which needs this stack's engine (#203), and takes DFE_ENGINE_TIMEOUT_MS (#204). Labels the Live Tail control (#197).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.

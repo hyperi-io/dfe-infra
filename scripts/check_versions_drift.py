@@ -1047,6 +1047,7 @@ UNCONSUMED: dict[str, str] = {
     "services.clickhouse-replicas": "replica count, overridden per profile",
     "services.hyperdx": "upstream HyperDX's own version, recorded for the fork-update workstream; the chart's appVersion tracks content.dfe-hyperdx instead, because the fork publishes its own tags and never one of upstream's",
     "services.envoy-proxy": "docker path only; the k8s gateway runs services.envoy-gateway-proxy, a different (distroless) tag",
+    "services.vector": "handed to dfe-fetcher as extractors.vector.image by a deployment that runs container Vector instances, and the release dfe-transform-vector bakes in; neither tier here sets it",
     "digests.*": "the immutable half of an app pin: its published thin chart carries it, dfe-stack render writes it into the docker .env, and dfe-stack verify holds it to the registry; the engine content refs and the dfe-extras engine image are checked individually",
     "services-digests.*": "the immutable half of a tag@sha256 pin, rendered by dfe-stack for the docker path; the k8s consumers that have one are checked individually, and bootstrap.sh reads local-path-provisioner's at runtime",
     "content.*": "lockstep content repos; PENDING until the first release stamps them",

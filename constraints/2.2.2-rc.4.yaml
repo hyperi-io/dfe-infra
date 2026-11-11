@@ -78,7 +78,26 @@ rules:
     reason: "bootstrap.sh starts cert-manager with Gateway API support over the Gateway API CRDs it lays from Envoy Gateway's own chart at operators.envoy-gateway, before cert-manager installs. cert-manager v1.21.2 builds against gateway-api v1.6.0, and Envoy Gateway v1.9.2 ships Gateway API v1.6.1 on the experimental channel. Error severity: a cert-manager bump leaves this guard dead and a gateway bump fails the requirement, so either one fails --strict until the pairing is re-checked."
     source: "https://github.com/cert-manager/cert-manager/blob/v1.21.2/go.mod and oci://registry-1.docker.io/envoyproxy/gateway-helm:v1.9.2 charts/crds/crds/gatewayapi-crds.yaml"
 
+  hyperdx-engine-connection-read:
+    severity: "error"
+    when-key: "content.dfe-hyperdx"
+    when-range: ">=0.3.24"
+    require-key: "apps.dfe-engine"
+    require-range: ">=1.22.89"
+    reason: "dfe-hyperdx 0.3.24 reads its seed sources from the engine's /hyperdx/connection (dfe-hyperdx #203), which names the seed database and tables from dfe-engine v1.22.89 (#1119)."
+    source: "https://github.com/hyperi-io/dfe-hyperdx/pull/203 and https://github.com/hyperi-io/dfe-engine/pull/1119"
+
+  ui-engine-schema-reads:
+    severity: "error"
+    when-key: "apps.dfe-ui"
+    when-range: ">=1.7.43"
+    require-key: "apps.dfe-engine"
+    require-range: ">=1.22.89"
+    reason: "dfe-ui v1.7.43 reads the schema column vocabulary and the source form's limits from the engine (dfe-ui #707 #711), which dfe-engine serves from v1.22.89 (#1127 #1131)."
+    source: "https://github.com/hyperi-io/dfe-ui/pull/707 and https://github.com/hyperi-io/dfe-engine/pull/1127"
+
 # Accepted, tracked exceptions the check must not fail on yet. A waiver names a
 # rule id it suppresses (or a free scope), a reason, an expiry, and a ref.
 # None currently.
 waivers:
+
