@@ -57,8 +57,9 @@ jobs:
 
       # Before the propagation: refresh-digests writes versions.yaml only, so a
       # digest it moves reaches the chart copies that read it only through --fix.
+      # A tagged `current` is a released record, so its digests hold until the next cut.
       - name: Re-resolve third-party digests
-        run: python3 scripts/dfe-stack refresh-digests
+        run: python3 scripts/dfe-stack refresh-digests --skip-released
 
       # Refuses rather than guessing when a pattern stops matching, so a chart
       # that changed shape is never written at a guessed offset. A refusal still

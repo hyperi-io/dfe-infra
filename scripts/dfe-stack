@@ -1107,6 +1107,9 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
     path = REPO_ROOT / "versions.yaml"
     text = path.read_text(encoding="utf-8")
     name, pins = stack_pins(parse_simple_yaml(text), args.stack)
+    if getattr(args, "skip_released", False) and stack_freeze.is_tagged(name, REPO_ROOT):
+        print(f"skip  stack {name} is released (git tag {name} exists): digest moves wait for the next cut")
+        return 0
     recorded = pins.get("services-digests", {})
     # Annotations from the TARGET stack's block: each stack carries its own
     # `services:` tags, and reading the file whole resolves the last stack's tag.
@@ -2004,6 +2007,11 @@ def main() -> int:
         "--check",
         action="store_true",
         help="report staleness and exit 1 without writing (for CI)",
+    )
+    p.add_argument(
+        "--skip-released",
+        action="store_true",
+        help="exit 0 with one line when the stack's git tag exists, instead of refusing a digest move",
     )
     p.set_defaults(func=cmd_refresh_digests)
 
