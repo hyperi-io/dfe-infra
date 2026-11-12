@@ -8,6 +8,8 @@ The kafka chart refuses to render Redpanda without `kafka.redpanda.acceptLicense
 
 ## Turning it on
 
+Pick the provider at the first deploy. Switching a live deployment to the other broker leaves every message already written on the old one, and DFE 2.2.x has no way to move them. [storage.md](../storage.md) covers what else is fixed at the first deploy.
+
 Set the provider in the env file you deploy with:
 
 ```bash
@@ -22,7 +24,7 @@ kafka:
     acceptLicense: true
 ```
 
-The `single` profile then runs one Redpanda broker as a plain StatefulSet, with no operator. The `scale` profile runs a multi-broker cluster through the Redpanda operator, and needs two more steps:
+The `single` profile then runs one Redpanda broker as a plain StatefulSet, with no operator. The `scale` profile runs a multi-broker cluster through the Redpanda operator 26.2.5, on broker v26.2.6. That cluster setup hasn't been proven on a live cluster yet, so test it at your target size before you rely on it. It needs two more steps:
 
 1. Label the cluster secret, which is what installs the operator. Bootstrap doesn't set this label.
 
@@ -47,7 +49,7 @@ Both run SASL/SCRAM-SHA-512 from first boot, with TLS off on the in-cluster list
 | `single` profile | One Apache Kafka broker, no operator | One Redpanda broker, no operator |
 | `scale` profile | Strimzi operator, installed with the profile | Redpanda operator, installed only when the cluster secret carries the label |
 | JVM | Yes | No |
-| Broker autoscaling with KEDA | Yes ([autoscaling.md](autoscaling.md)) | No, set `kafka.replicas` |
+| Broker autoscaling with KEDA | On `scale`, once the chart has a trigger: a landing source, or the Prometheus trigger. Check with `kubectl -n strimzi get scaledobject` ([autoscaling.md](autoscaling.md)) | No, set `kafka.replicas` |
 | Kafka metadata version holds during upgrades | Yes | No, Redpanda has none |
 
 Redpanda's own gaps against Apache Kafka are in [its Kafka compatibility notes](https://docs.redpanda.com/current/develop/kafka-clients/). None of them touches what DFE does: it produces, consumes and runs consumer groups, and creates its topics through the admin API.
