@@ -9,7 +9,7 @@ License:   see repository LICENSE
 Copyright: HyperI / DFE contributors
 -->
 
-# DFE Kafka defaults and per-platform config guides
+# Kafka providers
 
 DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. On top of that the credential rules (dfe-engine#98) set one policy: SASL over TLS everywhere, SCRAM-SHA-512 on brokers DFE owns, PLAIN only where the platform forbids SCRAM (Confluent Cloud), IAM only where the platform mandates it (MSK Serverless).
 
@@ -98,14 +98,14 @@ Changing the model on a live cluster strands the segments already written. So th
 
 ## Wiring a managed cluster back to DFE
 
-1. Stand up the cluster with the guide's Terraform snippet. It has the right auth for the platform and whatever DFE defaults the platform lets you set.
+1. Stand up the cluster with the guide's OpenTofu snippet. It has the right auth for the platform and whatever DFE defaults the platform lets you set.
 2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>` and `kafka.securityProtocol=SASL_SSL`, because every managed cloud here serves TLS only. Every app chart and dfe-engine read the wire protocol from that one dial, never from a provider key. On the bootstrap path you set none of the three by hand: `DFE_KAFKA_PROVIDER` of `msk`, `confluent-cloud` or `redpanda-cloud` puts them on the Argo cluster secret, and the layer 2 appsets hand them to the charts.
 3. Get the client config for that provider from the CLI: `dfe kafka client-config --provider <msk|msk_iam|confluent-cloud|redpanda-cloud>`. It prints the transport settings from the canonical provider table (scalo `providers.rs`), so nobody hand-picks the mechanism.
 4. Supply credentials through the external-secret hook (`kafka.external.auth`). That's a Vault-backed SCRAM or PLAIN secret. MSK Serverless needs no static secret at all, because IAM comes through IRSA or workload identity and the consumer ServiceAccounts carry the role.
 
 ## Version pinning note
 
-The Terraform snippets in these guides use external providers DFE doesn't vendor. The versions cited (hashicorp/aws 6.54.0 verified 2026-07-08, confluentinc/confluent ~> 2.x, redpanda-data/redpanda ~> 1.0, Mongey/kafka 0.13.1) were current when we wrote them. Our dependency rules are a 7-day cooldown, prefer the LTS or stable line, then pin. Pin exact provider versions in your root module before applying these templates.
+The OpenTofu snippets in these guides use external providers DFE doesn't vendor. The versions cited (hashicorp/aws 6.54.0 verified 2026-07-08, confluentinc/confluent ~> 2.x, redpanda-data/redpanda ~> 1.0, Mongey/kafka 0.13.1) were current when we wrote them. Our dependency rules are a 7-day cooldown, prefer the LTS or stable line, then pin. Pin exact provider versions in your root module before applying these templates.
 
 ## Sources (2026 research)
 

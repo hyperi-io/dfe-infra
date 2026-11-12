@@ -56,7 +56,7 @@ MSK Serverless hides the broker entirely. There's no `aws_msk_configuration`, so
 | `log.segment.bytes` | Locked and managed. |
 | Per-partition storage | Hard cap of 250 GB/partition. Add partitions for more storage, and don't lengthen single-partition retention. |
 
-## Terraform / OpenTofu -- MSK Provisioned (SASL/SCRAM-512)
+## OpenTofu: MSK Provisioned (SASL/SCRAM-512)
 
 This is the DFE `msk` provider path. It's a provisioned cluster with a custom configuration carrying the DFE broker defaults, SASL/SCRAM auth backed by Secrets Manager, and the SCRAM secret associated to the cluster. Your tfvars set the Kafka version, broker count, broker type and volume size. They're never literals in the `.tf`.
 
@@ -150,7 +150,7 @@ output "bootstrap_brokers_sasl_scram" {
 
 Point DFE at the `bootstrap_brokers_sasl_scram` endpoint with provider `msk` (see "Wiring back to DFE" below).
 
-## Terraform / OpenTofu -- MSK Serverless (IAM)
+## OpenTofu: MSK Serverless (IAM)
 
 This is the DFE `msk_iam` provider path. It's a minimal cluster, and AWS manages capacity. Auth is IAM only, so there's NO Secrets Manager secret and NO `aws_msk_configuration`.
 
