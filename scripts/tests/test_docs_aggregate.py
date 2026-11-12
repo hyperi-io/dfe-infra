@@ -1365,10 +1365,16 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     [
         ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, [], 1),
         ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, ["--report-only"], 0),
-        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, ["--report-only", "--fail-on", "register"], 1),
+        (
+            {"dfe-ui/a.md": "# A\n\nA deployment seam.\n"},
+            ["--report-only", "--fail-on", "register"],
+            1,
+        ),
         ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, ["--report-only", "--fail-on", "register"], 0),
         (
-            {"dfe-ui/a.md": "# A\n\nSign in with Seam. <!-- docs-gate: allow register -- the vendor's name -->\n"},
+            {
+                "dfe-ui/a.md": "# A\n\nSign in with Seam. <!-- docs-gate: allow register -- the vendor's name -->\n"
+            },
             ["--report-only", "--fail-on", "register"],
             0,
         ),
@@ -1380,6 +1386,43 @@ def test_a_planted_register_word_fails_the_gate(
     """A register word fails a pull request as new, and --fail-on fails it on main too."""
     content = write_content(tmp_path / "pr", pages)
     assert gate.main(["--content", str(content), *args]) == exit_code
+
+
+SCOPED = ["--report-only", "--fail-on", "register", "--fail-on-build", "next,newest"]
+
+
+@pytest.mark.parametrize(
+    ("seam_in", "args", "outcome"),
+    [
+        ("2.2.1", SCOPED, 0),
+        ("2.2.2", SCOPED, 1),
+        ("next", SCOPED, 1),
+        ("2.2.1", ["--report-only", "--fail-on", "register"], 1),
+        ("2.2.1", [*SCOPED[:-1], "2.2.1"], 1),
+        ("2.2.1", [*SCOPED[:-1], "next,2.2.9"], "not a build"),
+    ],
+    ids=["old-release", "newest", "next", "unscoped", "named", "unknown-build"],
+)
+def test_fail_on_build_reads_only_the_builds_named(
+    tmp_path: Path, seam_in: str, args: list[str], outcome: int | str
+) -> None:
+    members = [{"name": "dfe-ui", "repo": "o/dfe-ui"}]
+    names = ["2.2.2", "2.2.1", "next"]
+    site = {
+        "newest": "2.2.2",
+        "builds": [{"name": n, "members": members, "openapi": None} for n in names],
+    }
+    pages = {
+        f"{n}/dfe-ui/a.md": "# A\n\nA deployment seam.\n" if n == seam_in else "# A\n"
+        for n in names
+    }
+    content = tmp_path / "content"
+    write_tree(content, {"site.json": json.dumps(site), **pages})
+    if isinstance(outcome, str):
+        with pytest.raises(SystemExit, match=outcome):
+            gate.main(["--content", str(content), *args])
+    else:
+        assert gate.main(["--content", str(content), *args]) == outcome
 
 
 def test_fail_on_refuses_an_unknown_rule(tmp_path: Path) -> None:
@@ -1420,18 +1463,20 @@ def test_a_bad_local_value_is_refused(tmp_path: Path, value: str) -> None:
 
 QUICKSTART = {
     "schema": 1,
+    "kind": "compose",
+    "min_engine": "27.0",
     "min_compose": "2.26.0",
     "console_url": "http://localhost:3000",
-    "login": "docker run --rm img login",
     "profiles": [{"name": "single-kafka", "default": True}],
     "up": {
-        "latest": ["docker run img:latest init", "docker compose up -d"],
-        "pinned": ["docker run img:1.0.3 init", "docker compose up -d"],
+        "latest": ["docker compose -f oci://img:latest up -d"],
+        "pinned": ["docker compose -f oci://img:1.0.5 up -d"],
     },
     "demo": {
-        "latest": ["docker run img:latest init", "x demo"],
-        "pinned": ["docker run img:1.0.3 init", "y demo"],
+        "latest": ["docker compose -f oci://img-demo:latest up -d"],
+        "pinned": ["docker compose -f oci://img-demo:1.0.5 up -d"],
     },
+    "notes": {"up": "Then point your browser to http://localhost:3000.", "demo": "Demo note."},
 }
 QUICKSTART_PAGE = (
     "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
@@ -1440,23 +1485,63 @@ QUICKSTART_PAGE = (
 
 
 @pytest.mark.parametrize(
-    ("form", "first"),
-    [("latest", "docker run img:latest init"), ("pinned", "docker run img:1.0.3 init")],
+    ("form", "line"),
+    [
+        ("latest", "docker compose -f oci://img:latest up -d"),
+        ("pinned", "docker compose -f oci://img:1.0.5 up -d"),
+    ],
 )
-def test_a_release_quickstart_replaces_the_pages_make_region(form: str, first: str) -> None:
+def test_a_compose_release_replaces_the_pages_make_region(form: str, line: str) -> None:
     text = aggregate.fill_quickstart(QUICKSTART_PAGE, {**QUICKSTART, "form": form})
-    assert "make up" not in text
-    assert "You need make" not in text
-    assert f"<!-- landing -->\n```bash\n{first}\ndocker compose up -d\n```" in text
-    assert "You need Docker with Compose 2.26.0 or later." in text
-    assert "`single-kafka`" in text
-    assert "http://localhost:3000" in text
-    assert text.startswith("Intro.\n")
-    assert text.endswith("After.\n")
+    assert text == (
+        "Intro.\n\n<!-- docker-quickstart: up -->\n"
+        "You need Docker Engine 27.0 or later with Compose 2.26.0 or later.\n\n"
+        f"<!-- landing -->\n```bash\n{line}\n```\n\n"
+        "Then point your browser to http://localhost:3000.\n"
+        "<!-- /docker-quickstart -->\n\nAfter.\n"
+    )
 
 
 def test_a_build_without_a_release_keeps_the_page_as_written() -> None:
     assert aggregate.fill_quickstart(QUICKSTART_PAGE, None) == QUICKSTART_PAGE
+
+
+OLD_QUICKSTART = {
+    "schema": 1,
+    "min_compose": "2.26.0",
+    "console_url": "http://localhost:3000",
+    "login": "docker run --rm img login",
+    "up": {"latest": ['docker run --rm -v "${PWD}:/dfe" img init', "docker compose up -d"]},
+    "demo": {"latest": ["docker run -v /var/run/docker.sock:/var/run/docker.sock img demo"]},
+}
+
+
+@pytest.mark.parametrize(
+    ("served", "outcome"),
+    [
+        (QUICKSTART, "compose"),
+        (OLD_QUICKSTART, None),
+        ({**QUICKSTART, "notes": {"up": "x"}}, "without min_engine"),
+        ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "without min_engine"),
+        ({**QUICKSTART, "schema": 2}, "not a schema 1"),
+    ],
+    ids=["compose", "init-and-docker-run", "no-demo-note", "no-engine-minimum", "schema-2"],
+)
+def test_only_a_compose_release_fills_the_install_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, served: dict, outcome: str | None
+) -> None:
+    write_tree(tmp_path, {"download/v1.0.5/quickstart.json": json.dumps(served)})
+    monkeypatch.setattr(aggregate, "DOCKER_RELEASES", tmp_path.as_uri())
+    build = aggregate.Build(
+        name="2.2.3", base_url="/v/2.2.3/", listed=True, refs={"dfe-docker": "v1.0.5"}
+    )
+    if outcome is None:
+        assert aggregate.docker_quickstart(build, "2.2.3") is None
+    elif outcome == "compose":
+        assert aggregate.docker_quickstart(build, "2.2.3")["form"] == "latest"
+    else:
+        with pytest.raises(aggregate.FetchError, match=outcome):
+            aggregate.docker_quickstart(build, "2.2.3")
 
 
 @pytest.mark.parametrize("ref", ["bbf19bf1251aab1062276d2683baefdd894e4d7e", "main", ""])
