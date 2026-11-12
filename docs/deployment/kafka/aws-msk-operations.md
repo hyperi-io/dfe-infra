@@ -38,11 +38,9 @@ ACL has to exist yet, then:
 It creates no topic: dfe-engine creates the bootstrap topic set at its own
 startup, which is why the grant includes Create.
 
-**One principal, one ACL set, for the whole fleet.** This is deliberate
-on-prem parity, not a regression -- and a roadmap item toward per-app
-principals (one SCRAM user per DFE service, scoped to the topics it
-touches), so a compromised app credential reaches only its own topics
-rather than every topic on the cluster, ahead of the product going public.
+**One principal, one ACL set, for the whole fleet.** One SCRAM principal
+holds the ACLs for every DFE app, as on-prem. A compromised app credential
+therefore reaches every topic.
 
 **The IAM identity exists for this bootstrap path alone.** Every DFE app still
 authenticates with SASL/SCRAM-512 on 9096; the cluster enables both mechanisms so
@@ -98,7 +96,7 @@ The alarm's metric query reads the `Average` statistic, not `Sum`.
 `BytesInPerSec` is already a per-second rate, published once a minute, so a
 300s evaluation period holds five of those samples -- summing them inflates
 the reading roughly fivefold against `autoscaling_threshold_bytes_per_sec`,
-a genuine bytes-per-second figure, and fires the alarm at about a fifth of
+a bytes-per-second figure, and fires the alarm at about a fifth of
 the traffic it was sized for. The outer `SUM()` in the metric-math
 expression is a different aggregation and is correct as-is: it is the
 spatial sum across brokers that `SEARCH` discovers, not a sum over time.

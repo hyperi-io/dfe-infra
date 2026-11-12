@@ -32,7 +32,7 @@ The residual quantum exposure is the asymmetric layer. There are two risks. Harv
 
 ## Profiles
 
-DFE ships two profiles. A deployment selects one and every component inherits its floor.
+`prod` and `highsec` are target postures, not a switch. 2.2.2 has no profile key. The gateway ships the `prod` floor (`tls.edge.minVersion: "1.2"` and `ui.tls.min_version: "1.2"` in `helm/edge/gateway`), and a deployment that needs TLS 1.3 only sets both to `"1.3"` in its gateway overlay.
 
 | Layer | `prod` (default, commercial-safe) | `highsec` (national-security) |
 |---|---|---|
@@ -43,14 +43,15 @@ DFE ships two profiles. A deployment selects one and every component inherits it
 | Key establishment | ECDHE P-384 + hybrid ML-KEM where offered | hybrid ML-KEM required, ML-KEM-1024 target |
 | SSH | Ed25519, ML-KEM hybrid KEX | Ed25519, ML-KEM hybrid KEX |
 
-`prod` is the corporate default. Its TLS 1.2 floor is deliberate. TLS 1.3 is universal in modern browsers, but 1.3-*only* breaks a long tail of enterprise middleboxes and legacy API clients. So `prod` requires 1.2 as a floor (removing SSLv3/TLS 1.0/1.1) with 1.3 preferred, and holds AES-256-GCM at the 1.2 layer via an explicit cipher list. `highsec` raises the floor to TLS 1.3-only. Both offer hybrid post-quantum key exchange where the peer supports it.
+`prod` is what the gateway ships. Its TLS 1.2 floor is deliberate. TLS 1.3 is universal in modern browsers, but 1.3-*only* breaks a long tail of enterprise middleboxes and legacy API clients. So `prod` requires 1.2 as a floor (removing SSLv3/TLS 1.0/1.1) with 1.3 preferred, and holds AES-256-GCM at the 1.2 layer via an explicit cipher list. `highsec` raises the floor to TLS 1.3-only. Both offer hybrid post-quantum key exchange where the peer supports it.
 
 Protocol floors, curves, cipher policy and signing algorithms are configuration, not code, so raising a profile or adopting a PQC primitive is a config change.
 
 ## Transport (TLS)
 
 - Edge. The single Envoy front layer terminates TLS (1.2 floor in `prod`, 1.3-only in `highsec`), offers `TLS_AES_256_GCM_SHA384` (with `ECDHE-ECDSA-AES256-GCM-SHA384` at the 1.2 layer), and negotiates ECDHE on P-384. It also offers the hybrid X25519MLKEM768 group (a TLS 1.3 group, see the migration section). A post-quantum-capable client gets PQC key agreement and classical clients fall back to P-384, with no protocol break.
-- Backing services. ClickHouse, Kafka, the metadata store and the telemetry pipeline speak TLS with certificates issued by the internal certificate authority. Broker authentication is SASL over TLS using SCRAM-SHA-512.
+- Backing services, target. Every backing service speaks TLS with certificates from the internal certificate authority, and broker authentication is SCRAM-SHA-512 over TLS.
+- Backing services, in 2.2.2. ClickHouse speaks TLS where the deployment carries a CA (the edge module on, or `clickhouse.tls.issuerRef`), with 8123 and 9000 still open beside it (`clickhouse.tls.required: false`). The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`kafka.securityProtocol: SASL_PLAINTEXT`), and Keeper has no TLS. Managed brokers are SASL over TLS. [threat-model.md](threat-model.md#in-cluster-transport) lists each hop.
 - Federation. Outbound connections to external OIDC identity providers use TLS and verify the provider's certificate, but negotiate whatever cipher and group the provider supports. The federation leg doesn't require CNSA ciphers, so interoperability with Google, Okta, Entra ID and ADFS is preserved.
 
 ### Managed-service caveat
@@ -65,8 +66,8 @@ Where a deployment fronts DFE with a managed load balancer or CDN (AWS ALB/Cloud
 
 ## Data at rest
 
-- Secrets are held in the secrets backend (OpenBao under Kubernetes, an encrypted file store in the single-container profile) and never written to disk in the clear. Any local secret cache is sealed with AES-256-GCM.
-- Signing keys. The JWT signing private key is AES-256 wrapped at rest and released through the secrets backend.
+- Secrets. Off AWS the engine keeps the secrets it mints as files on its own volume, and slim and single deploy no secrets store at all. On AWS they sit in Secrets Manager under `<path>/engine/`, encrypted with the deployment key ([threat-model.md](threat-model.md#secrets-dfe-engine-mints)). Kubernetes Secrets get whatever encryption at rest the cluster applies.
+- Signing keys. The ES384 signing private key is a PEM the engine mints into that same store. Nothing wraps it beyond the store's own encryption. The OIDC session-cookie key (`api.jwt_secret`) is a Kubernetes Secret that an External Secrets Password generator writes once.
 - Randomness. Key material and tokens come from a CSPRNG at 256-bit strength or above.
 
 ## Hashing
@@ -89,7 +90,7 @@ CNSA 2.0's asymmetric end-state is ML-KEM-1024 (FIPS 203) for key establishment 
 
 ## CI checks
 
-CI enforces this standard. The deployment pipeline gates on policy checks (conftest / checkov / tfsec over the helm + terraform + ArgoCD manifests) so drift fails the build. Every TLS listener sets the profile floor, at-rest encryption is AES-256, and the internal mTLS profile is a P-384 chain.
+No CI policy gate checks this standard in 2.2.2. The floors, curves and cipher list are chart values, so a reviewer checks them in the gateway and cert-manager values a deployment sets.
 
 ## References
 

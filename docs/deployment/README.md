@@ -8,8 +8,8 @@ Tier and every default live in values files. You override single dials, never te
 
 ```mermaid
 flowchart LR
-    B[bootstrap.sh<br/>detect-or-install: StorageClass, cert-manager, ESO, Argo CD] --> L1[Layer 1 - backing services<br/>ClickHouse, DocumentDB, dfe-hyperdx, Kafka when tiered in]
-    L1 --> L2[Layer 2 - dfe-* apps<br/>base charts + deploy-repo overlays]
+    B[bootstrap.sh<br/>detect-or-install: StorageClass, cert-manager, ESO, Argo CD] --> L1[Layer 1 - backing services<br/>ClickHouse, DocumentDB, Kafka when tiered in]
+    L1 --> L2[Layer 2 - dfe-* apps, dfe-hyperdx included<br/>base charts + deploy-repo overlays]
 ```
 
 - Bootstrap (`bootstrap/bootstrap.sh`) probes each dependency. A healthy controller already on the cluster is adopted, otherwise we install our own copy. The Argo CD we installed (release `argocd` in namespace `argocd`) is upgraded in place on every re-run, so a chart pin or an install flag reaches a live cluster. An adopted Argo is never reconfigured.
@@ -41,7 +41,7 @@ What each tier is proven to do:
 |---|---|---|
 | `single`, `scale` | Kafka between every stage | Supported and proven. They need Kafka: a broker in the cluster, or a managed one ([managed-backends.md](managed-backends.md)). |
 | `slim` | gRPC, stage to stage, one replica each | Supported and proven without archiving. A source with archive on routes a copy to the archiver as a second gRPC destination, and that fan-out is not yet proven. |
-| `mesh` | gRPC through a balancer per stage pool, no Kafka | Present in the charts, never run against a live cluster, and not supported in 2.2.1: `dfe-ops`, `bootstrap.sh` and the terraform `profile` variable refuse it with `use scale`. The work to make it a tier is tracked in [#875](https://github.com/hyperi-io/dfe-infra/issues/875). |
+| `mesh` | gRPC through a balancer per stage pool, no Kafka | Present in the charts, never run against a live cluster, and not supported in this release: `dfe-ops`, `bootstrap.sh` and the terraform `profile` variable refuse it with `use scale`. |
 
 gRPC itself is proven app to app: receiver to loader, and receiver to transform to loader, on the docker stack's `*-grpc` profiles and on `slim`.
 
@@ -62,7 +62,7 @@ Which apps a tier deploys comes from `apps.yaml`, not the profile file. [composi
 
 ### The mesh tier
 
-Not supported in 2.2.1. The pieces below render and pass their chart tests, but no mesh deploy has run against a live cluster ([#875](https://github.com/hyperi-io/dfe-infra/issues/875)).
+Not supported in this release. The pieces below render and pass their chart tests, but no mesh deploy has run against a live cluster.
 
 `mesh` is `scale` without a broker. The stages hand records to each other over gRPC. `mesh.enabled` puts a Gateway API listener in front of every stage pool. A Kubernetes Service balances per connection and gRPC holds one open, so without the listener a sender pins itself to one pod however many replicas KEDA adds. Each pool's route carries its own policy (`mesh.routePolicy`): a request timeout at or above the sender's 30 s deadline, retries only on connect failure and resource exhausted, and ejection of a pod that keeps answering unavailable.
 
@@ -107,9 +107,11 @@ The Kafka landing topic moves with the source name, from `default_land` to `main
 
 `versions.yaml` is the one place chart, operator and image versions are set. `scripts/check_versions_drift.py` checks it. Images are pinned as `name:tag@sha256`. The tag lives in `apps:` and the immutable digest in `digests:`. `scripts/dfe-stack` renders the combined form and `dfe-stack verify` re-checks the digests against GHCR.
 
+Every DFE Rust app links its C libraries statically. librdkafka and OpenSSL are compiled in, so an image needs nothing C beyond libc. The one exception is dfe-fetcher's unixODBC driver manager (`libodbc.so.2`, LGPL-2.1), which is linked dynamically and loads each ODBC driver at run time (https://github.com/hyperi-io/dfe-fetcher/blob/main/docs/reference/db-drivers.md).
+
 A dfe-infra release tag certifies the whole set as one stack version (`stack:` metadata plus lockstep `content:` repo tags). The full release model is in [stack-versioning.md](stack-versioning.md).
 
-`content:` also records the dfe-docker ref that runs each stack. dfe-docker cuts no per-stack tag, so the entry is a commit rather than a version, and `dfe-stack cut` re-resolves it from dfe-docker main at cut time. To reproduce an old stack's docker path, check dfe-docker out at that stack's recorded ref. For the current stack, main is the ref.
+`content.dfe-docker` records the dfe-docker release tag that runs the stack. To reproduce an old stack's docker path, check dfe-docker out at that stack's recorded tag.
 
 The engine also serves authored files an app ships: the reference transform pipelines and each app's config contract. The engine chart's `content.entries` turns each into one init container that fills `/etc/dfe-engine/content` from the pinned app image. The engine reads that directory through `DFE_ENGINE_LIBRARY_SEED_DIR` and `DFE_ENGINE_APP_CONTRACT_DIR`. The files never travel through a value or a ConfigMap, because either form re-serialises them into etcd on every Argo sync. The source catalogue the console offers isn't one of them. It's dfe-schemas package data, installed with the engine.
 
@@ -117,7 +119,7 @@ The engine also serves authored files an app ships: the reference transform pipe
 
 Every DFE service boots with a release check you can turn off. It's one POST of `{product, current_version, os, arch, instance_id}` to the HyperI releases endpoint, and it logs whether a newer version exists. The id is a one-way UUIDv5 derived from the platform. Deployment names are never sent. Any failure costs one WARN line and nothing else.
 
-The `versionCheck` values key overrides it. The `dfe-common.versionCheckEnv` helper renders it into every app. Set it fleet-wide in `argocd/values/common.yaml`, or per app in its overlay:
+The `versionCheck` values key overrides it. The `dfe-common.versionCheckEnv` helper renders it into every app. Set it in your deploy repo's `infra/common.yaml`, or per app in its overlay. `argocd/values/common.yaml` is the pinned default, not a file to edit:
 
 ```yaml
 versionCheck:
@@ -134,6 +136,7 @@ If your mirror needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SECRE
 
 - [architecture.md](../architecture.md) - where this repo sits in the suite
 - [wizard.md](wizard.md) - `dfe-ops init`, the prompt-driven wizard that writes a deployment.yaml dial
+- `python3 scripts/dfe-ops --help` - every `dfe-ops` subcommand in one list, and `dfe-ops <subcommand> --help` for its flags
 - [composition.md](composition.md) - which apps a profile deploys by default, how apps.yaml's `default_in` reaches Argo and Compose, and what an app with nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x storage model, with the status and evidence behind every cell
 - [edge.md](edge.md) - the edge module: every door into a deployment, and the dial key that turns each one on
@@ -153,5 +156,5 @@ If your mirror needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SECRE
 - [deploy-tls-trust.md](../deploy-tls-trust.md) - which CA signs the gateway certificate
 - [kafka/](kafka/README.md) - managed-Kafka alternatives and the Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator or ClickHouse Cloud, Altinity untested) and operator history
-- [upgrades.md](upgrades.md#migrating-from-dfe-2x-before-22) - migrating a pre-2.2 private-cloud deployment off the retired ClickHouse fork onto cached-object
+- [migrating-from-2.1.md](migrating-from-2.1.md) - migrating a pre-2.2 private-cloud deployment off the retired ClickHouse fork onto cached-object
 - [deployment-logs/](deployment-logs/template.md) - record every deploy

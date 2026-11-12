@@ -54,7 +54,7 @@ import tempfile
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -86,6 +86,7 @@ RAW_GITHUB = "https://raw.githubusercontent.com"
 RELEASE = "release"
 WITHDRAWN = "withdrawn"
 NEXT = "next"
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 HEAD = "HEAD"
 # release.yml cuts the stack version as this repo's own tag.
 STACK_REPO_MEMBER = "dfe-infra"
@@ -99,7 +100,13 @@ SPEC_MEMBER = "dfe-engine"
 SPEC_FILES = ("openapi/openapi.json", "openapi-spec/openapi.json")
 API_DIR = "api"
 API_LABEL = "HTTP API reference"
-SPARSE_PATTERNS = ("/docs/", *(f"/{path}" for path in SPEC_FILES))
+# Tables dfe-infra generates from its charts: page region name -> the file that fills it.
+GENERATED_REGIONS = {"dfe-keda-table": "docs-site/generated/keda-table.md"}
+SPARSE_PATTERNS = (
+    "/docs/",
+    *(f"/{path}" for path in SPEC_FILES),
+    *(f"/{path}" for path in GENERATED_REGIONS.values()),
+)
 # The root pages hold the sidebar positions below this one, and members follow in lane order.
 FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
@@ -318,6 +325,7 @@ class BuildResult:
     Attributes:
         build: The build assembled.
         members: One site.json entry per member included.
+        fetched: Member name -> the commit fetched, for every member fetched, docs or not.
         findings: Every stray and every member left out.
         openapi: The OpenAPI paths for docusaurus.config.js, when the engine has a spec.
         placements: Doc id or id prefix -> "Journey / Section", for the sidebar.
@@ -325,6 +333,7 @@ class BuildResult:
 
     build: Build
     members: list[dict[str, str]] = field(default_factory=list)
+    fetched: dict[str, str] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
     openapi: dict[str, str] | None = None
     placements: dict[str, str] = field(default_factory=dict)
@@ -397,7 +406,11 @@ class Fetcher:
             return self._done[key]
         dest = self._work / f"{repo.replace('/', '__')}@{ref}"
         marker = dest / ".git" / "dfe-docs-commit"
-        if ref != HEAD and marker.is_file():
+        sparse = dest / ".git" / "info" / "sparse-checkout"
+        same_paths = sparse.is_file() and sparse.read_text(encoding="utf-8").split() == list(
+            SPARSE_PATTERNS
+        )
+        if ref != HEAD and marker.is_file() and same_paths:
             checkout = Checkout(dest, marker.read_text(encoding="utf-8").strip())
         else:
             if dest.exists():
@@ -1091,6 +1104,7 @@ def assemble(
     root = out / build.name
     root.mkdir(parents=True)
     included: set[str] = set()
+    tables: dict[str, str] = {}
     for member in members:
         ref = build.refs.get(member.name)
         if ref is None:
@@ -1103,6 +1117,9 @@ def assemble(
         except RefusedError:
             result.findings.append(Finding(member.name, "", Rule.REFUSED, f"{member.repo}@{ref}"))
             continue
+        result.fetched[member.name] = checkout.commit
+        if member.name == STACK_REPO_MEMBER:
+            tables = generated_tables(checkout.path)
         docs = checkout.path / "docs"
         if docs.is_symlink():
             result.findings.append(Finding(member.name, "docs", Rule.SYMLINK))
@@ -1153,6 +1170,13 @@ def assemble(
     if quickstart is not None:
         write_json(out / QUICKSTART_DIR / f"{build.name}.json", quickstart)
     copy_root(root, {member.name for member in members}, quickstart)
+    if tables:
+        for page in root.rglob("*"):
+            if page.is_file() and page.name.lower().endswith(MARKDOWN):
+                text = page.read_text(encoding="utf-8")
+                filled = fill_generated(text, tables)
+                if filled != text:
+                    page.write_text(filled, encoding="utf-8", newline="\n")
     if journeys:
         result.placements |= journeys.keys_for(ROOT_PAGES, "")
     return result
@@ -1280,7 +1304,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
 
     The newest release and /next/ show the latest form, any other build the form
     pinned to its own release. A build whose stack pins dfe-docker by commit gets
-    None and keeps the commands its pages carry.
+    None and keeps the commands its pages carry, and so does a release whose file
+    is not the one-line compose install: its init and docker-run lines need more
+    than Docker on the reader's machine.
 
     Args:
         build: The build.
@@ -1290,7 +1316,8 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         The file's object with a "form" key added, or None.
 
     Raises:
-        FetchError: The release has no quickstart.json of schema 1.
+        FetchError: The release has no quickstart.json of schema 1, or a compose
+            one without its Docker Engine minimum and up and demo notes.
     """
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
@@ -1308,6 +1335,15 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     commands = [(data.get(kind) or {}).get(form) for kind in ("up", "demo")]
     if data.get("schema") != 1 or not all(isinstance(lines, list) for lines in commands):
         raise FetchError(f"{url}: not a schema 1 quickstart.json with up and demo commands")
+    if data.get("kind") != "compose":
+        return None
+    notes = data.get("notes") or {}
+    if not isinstance(data.get("min_engine"), str) or not all(
+        isinstance(notes.get(kind), str) for kind in ("up", "demo")
+    ):
+        raise FetchError(
+            f"{url}: a compose quickstart.json without min_engine and up and demo notes"
+        )
     return {**data, "form": form}
 
 
@@ -1323,34 +1359,61 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
     """
     if quickstart is None:
         return text
-    default = next((p["name"] for p in quickstart.get("profiles", []) if p.get("default")), "")
-    console, login = quickstart["console_url"], quickstart["login"]
+    need = (
+        f"You need Docker Engine {quickstart['min_engine']} or later with Compose "
+        f"{quickstart['min_compose']} or later."
+    )
 
     def region(match: re.Match[str]) -> str:
         kind = match.group(1)
         commands = "\n".join(quickstart[kind][quickstart["form"]])
-        after = {
-            "up": (
-                f"`init` writes the stack's compose file and settings into this directory, on the "
-                f"`{default}` profile, and `docker compose up -d` starts it. The console is at "
-                f"{console}, and `{login}` prints its login.\n\n"
-                "`init --profile <name>` picks another profile from this table."
-            ),
-            "demo": (
-                "The last command replays Cisco ASA and FortiGate logs as raw syslog, and "
-                "dfe-transform-elastic lands each line in `dfe.cisco-asa` or `dfe.fortinet`. Watch "
-                f"it in the console at {console}. `{login}` prints its login.\n\n"
-                "`docker compose down` stops the stack and keeps the data."
-            ),
-        }[kind]
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
-            f"You need Docker with Compose {quickstart['min_compose']} or later.\n\n"
-            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{after}\n"
+            f"{need}\n\n"
+            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{quickstart['notes'][kind]}\n"
             "<!-- /docker-quickstart -->\n"
         )
 
     return _QUICKSTART_REGION.sub(region, text)
+
+
+def generated_tables(checkout: Path) -> dict[str, str]:
+    """The generated tables a dfe-infra checkout carries, by region name.
+
+    Args:
+        checkout: The dfe-infra checkout.
+
+    Returns:
+        Region name -> table, for each file the checkout has. A ref older than a
+        table has none for it, and its regions keep the text the page carries.
+    """
+    tables = {}
+    for name, path in GENERATED_REGIONS.items():
+        source = checkout / path
+        if source.is_file() and not source.is_symlink():
+            tables[name] = source.read_text(encoding="utf-8")
+    return tables
+
+
+def fill_generated(text: str, tables: Mapping[str, str]) -> str:
+    """Rewrite each `<!-- name -->` ... `<!-- /name -->` region of a page from its table.
+
+    Args:
+        text: The page's markdown.
+        tables: Region name -> the table that fills it.
+
+    Returns:
+        The page.
+    """
+    for name, table in tables.items():
+        region = re.compile(
+            rf"<!-- {re.escape(name)} -->\n.*?<!-- /{re.escape(name)} -->\n", re.DOTALL
+        )
+        body = table if table.endswith("\n") else table + "\n"
+        filled = f"<!-- {name} -->\n{body}<!-- /{name} -->\n"
+        # A callable keeps a backslash in the table literal, where a template would expand it.
+        text = region.sub(lambda _, filled=filled: filled, text)
+    return text
 
 
 def copy_root(root: Path, member_names: set[str], quickstart: dict | None = None) -> None:
@@ -1506,6 +1569,7 @@ def site_manifest(
             "base_url": result.build.base_url,
             "listed": result.build.listed,
             "members": result.members,
+            "fetched": result.fetched,
             "openapi": result.openapi,
             "placements": result.placements,
         }
@@ -1535,6 +1599,40 @@ def prepare_out(out: Path) -> None:
             raise SystemExit(f"error: refusing to clear {out}: it holds no {SITE_FILE}")
         shutil.rmtree(out)
     out.mkdir(parents=True)
+
+
+def pin_next(builds: list[Build], site_file: Path) -> list[Build]:
+    """Point the /next/ build at the member commits another assembly recorded.
+
+    A docs pull request's gate compares its tree with main's. Both fetch every member's
+    default branch, so a member merging between the two clones reads as new findings.
+
+    Args:
+        builds: The planned builds.
+        site_file: A site.json whose /next/ build recorded each member's commit.
+
+    Returns:
+        The builds, /next/ fetching every member at its recorded commit.
+
+    Raises:
+        SystemExit: The file holds no /next/ build, or no commit for a member /next/ fetches.
+    """
+    site = json.loads(site_file.read_text(encoding="utf-8"))
+    recorded = next((b for b in site.get("builds", []) if b.get("name") == NEXT), None)
+    if recorded is None:
+        raise SystemExit(f"error: {site_file} records no {NEXT} build")
+    fetched = recorded.get("fetched", {})
+    next_build = next((b for b in builds if b.name == NEXT), None)
+    if next_build is None:
+        return builds
+    unpinned = sorted(n for n in next_build.refs if not _COMMIT.fullmatch(str(fetched.get(n, ""))))
+    if unpinned:
+        raise SystemExit(
+            f"error: {site_file} recorded no commit for {', '.join(unpinned)}, "
+            "so /next/ cannot be built at the same commits"
+        )
+    pinned = replace(next_build, refs={name: fetched[name] for name in next_build.refs})
+    return [pinned if build is next_build else build for build in builds]
 
 
 def plan_builds(
@@ -1652,6 +1750,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="MEMBER=PATH",
         help="read a member's docs/ from a working tree, uncommitted edits included (repeatable)",
     )
+    parser.add_argument(
+        "--next-refs",
+        type=Path,
+        metavar="SITE_JSON",
+        help="fetch /next/ at the member commits this site.json recorded, so two trees match",
+    )
     args = parser.parse_args(argv)
 
     text = VERSIONS_FILE.read_text(encoding="utf-8")
@@ -1664,6 +1768,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
     builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
+    if args.next_refs:
+        builds = pin_next(builds, args.next_refs)
     newest = next(iter(released_stacks(tree)), None)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:

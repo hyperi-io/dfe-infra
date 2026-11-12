@@ -1360,6 +1360,77 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     assert report_only == 0
 
 
+@pytest.mark.parametrize(
+    ("pages", "args", "exit_code"),
+    [
+        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, [], 1),
+        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, ["--report-only"], 0),
+        (
+            {"dfe-ui/a.md": "# A\n\nA deployment seam.\n"},
+            ["--report-only", "--fail-on", "register"],
+            1,
+        ),
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, ["--report-only", "--fail-on", "register"], 0),
+        (
+            {
+                "dfe-ui/a.md": "# A\n\nSign in with Seam. <!-- docs-gate: allow register -- the vendor's name -->\n"
+            },
+            ["--report-only", "--fail-on", "register"],
+            0,
+        ),
+    ],
+)
+def test_a_planted_register_word_fails_the_gate(
+    tmp_path: Path, pages: dict[str, str], args: list[str], exit_code: int
+) -> None:
+    """A register word fails a pull request as new, and --fail-on fails it on main too."""
+    content = write_content(tmp_path / "pr", pages)
+    assert gate.main(["--content", str(content), *args]) == exit_code
+
+
+SCOPED = ["--report-only", "--fail-on", "register", "--fail-on-build", "next,newest"]
+
+
+@pytest.mark.parametrize(
+    ("seam_in", "args", "outcome"),
+    [
+        ("2.2.1", SCOPED, 0),
+        ("2.2.2", SCOPED, 1),
+        ("next", SCOPED, 1),
+        ("2.2.1", ["--report-only", "--fail-on", "register"], 1),
+        ("2.2.1", [*SCOPED[:-1], "2.2.1"], 1),
+        ("2.2.1", [*SCOPED[:-1], "next,2.2.9"], "not a build"),
+    ],
+    ids=["old-release", "newest", "next", "unscoped", "named", "unknown-build"],
+)
+def test_fail_on_build_reads_only_the_builds_named(
+    tmp_path: Path, seam_in: str, args: list[str], outcome: int | str
+) -> None:
+    members = [{"name": "dfe-ui", "repo": "o/dfe-ui"}]
+    names = ["2.2.2", "2.2.1", "next"]
+    site = {
+        "newest": "2.2.2",
+        "builds": [{"name": n, "members": members, "openapi": None} for n in names],
+    }
+    pages = {
+        f"{n}/dfe-ui/a.md": "# A\n\nA deployment seam.\n" if n == seam_in else "# A\n"
+        for n in names
+    }
+    content = tmp_path / "content"
+    write_tree(content, {"site.json": json.dumps(site), **pages})
+    if isinstance(outcome, str):
+        with pytest.raises(SystemExit, match=outcome):
+            gate.main(["--content", str(content), *args])
+    else:
+        assert gate.main(["--content", str(content), *args]) == outcome
+
+
+def test_fail_on_refuses_an_unknown_rule(tmp_path: Path) -> None:
+    content = write_content(tmp_path / "pr", {"dfe-ui/a.md": "# A\n"})
+    with pytest.raises(SystemExit, match="unknown rule"):
+        gate.main(["--content", str(content), "--fail-on", "registr"])
+
+
 def test_the_gate_reads_named_files_without_a_build(tmp_path: Path) -> None:
     page = tmp_path / "docs" / "aws.md"
     write_tree(tmp_path, {"docs/aws.md": "# AWS\n\nGo; now.\n", "docs/x.txt": "a; b"})
@@ -1392,18 +1463,20 @@ def test_a_bad_local_value_is_refused(tmp_path: Path, value: str) -> None:
 
 QUICKSTART = {
     "schema": 1,
+    "kind": "compose",
+    "min_engine": "27.0",
     "min_compose": "2.26.0",
     "console_url": "http://localhost:3000",
-    "login": "docker run --rm img login",
     "profiles": [{"name": "single-kafka", "default": True}],
     "up": {
-        "latest": ["docker run img:latest init", "docker compose up -d"],
-        "pinned": ["docker run img:1.0.3 init", "docker compose up -d"],
+        "latest": ["docker compose -f oci://img:latest up -d"],
+        "pinned": ["docker compose -f oci://img:1.0.5 up -d"],
     },
     "demo": {
-        "latest": ["docker run img:latest init", "x demo"],
-        "pinned": ["docker run img:1.0.3 init", "y demo"],
+        "latest": ["docker compose -f oci://img-demo:latest up -d"],
+        "pinned": ["docker compose -f oci://img-demo:1.0.5 up -d"],
     },
+    "notes": {"up": "Then point your browser to http://localhost:3000.", "demo": "Demo note."},
 }
 QUICKSTART_PAGE = (
     "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
@@ -1412,23 +1485,63 @@ QUICKSTART_PAGE = (
 
 
 @pytest.mark.parametrize(
-    ("form", "first"),
-    [("latest", "docker run img:latest init"), ("pinned", "docker run img:1.0.3 init")],
+    ("form", "line"),
+    [
+        ("latest", "docker compose -f oci://img:latest up -d"),
+        ("pinned", "docker compose -f oci://img:1.0.5 up -d"),
+    ],
 )
-def test_a_release_quickstart_replaces_the_pages_make_region(form: str, first: str) -> None:
+def test_a_compose_release_replaces_the_pages_make_region(form: str, line: str) -> None:
     text = aggregate.fill_quickstart(QUICKSTART_PAGE, {**QUICKSTART, "form": form})
-    assert "make up" not in text
-    assert "You need make" not in text
-    assert f"<!-- landing -->\n```bash\n{first}\ndocker compose up -d\n```" in text
-    assert "You need Docker with Compose 2.26.0 or later." in text
-    assert "`single-kafka`" in text
-    assert "http://localhost:3000" in text
-    assert text.startswith("Intro.\n")
-    assert text.endswith("After.\n")
+    assert text == (
+        "Intro.\n\n<!-- docker-quickstart: up -->\n"
+        "You need Docker Engine 27.0 or later with Compose 2.26.0 or later.\n\n"
+        f"<!-- landing -->\n```bash\n{line}\n```\n\n"
+        "Then point your browser to http://localhost:3000.\n"
+        "<!-- /docker-quickstart -->\n\nAfter.\n"
+    )
 
 
 def test_a_build_without_a_release_keeps_the_page_as_written() -> None:
     assert aggregate.fill_quickstart(QUICKSTART_PAGE, None) == QUICKSTART_PAGE
+
+
+OLD_QUICKSTART = {
+    "schema": 1,
+    "min_compose": "2.26.0",
+    "console_url": "http://localhost:3000",
+    "login": "docker run --rm img login",
+    "up": {"latest": ['docker run --rm -v "${PWD}:/dfe" img init', "docker compose up -d"]},
+    "demo": {"latest": ["docker run -v /var/run/docker.sock:/var/run/docker.sock img demo"]},
+}
+
+
+@pytest.mark.parametrize(
+    ("served", "outcome"),
+    [
+        (QUICKSTART, "compose"),
+        (OLD_QUICKSTART, None),
+        ({**QUICKSTART, "notes": {"up": "x"}}, "without min_engine"),
+        ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "without min_engine"),
+        ({**QUICKSTART, "schema": 2}, "not a schema 1"),
+    ],
+    ids=["compose", "init-and-docker-run", "no-demo-note", "no-engine-minimum", "schema-2"],
+)
+def test_only_a_compose_release_fills_the_install_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, served: dict, outcome: str | None
+) -> None:
+    write_tree(tmp_path, {"download/v1.0.5/quickstart.json": json.dumps(served)})
+    monkeypatch.setattr(aggregate, "DOCKER_RELEASES", tmp_path.as_uri())
+    build = aggregate.Build(
+        name="2.2.3", base_url="/v/2.2.3/", listed=True, refs={"dfe-docker": "v1.0.5"}
+    )
+    if outcome is None:
+        assert aggregate.docker_quickstart(build, "2.2.3") is None
+    elif outcome == "compose":
+        assert aggregate.docker_quickstart(build, "2.2.3")["form"] == "latest"
+    else:
+        with pytest.raises(aggregate.FetchError, match=outcome):
+            aggregate.docker_quickstart(build, "2.2.3")
 
 
 @pytest.mark.parametrize("ref", ["bbf19bf1251aab1062276d2683baefdd894e4d7e", "main", ""])
@@ -1437,3 +1550,115 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
         name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
+
+
+KEDA_PAGE = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n<!-- /dfe-keda-table -->\n\nAfter.\n"
+KEDA_TABLE = "| App | Profile |\n|---|---|\n| `dfe-loader` | `scale` |\n"
+KEDA_FILLED = f"Intro.\n\n<!-- dfe-keda-table -->\n{KEDA_TABLE}<!-- /dfe-keda-table -->\n\nAfter.\n"
+KEDA_UNCLOSED = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n\nAfter.\n"
+
+
+@pytest.mark.parametrize(
+    ("page", "tables", "expected"),
+    [
+        (KEDA_PAGE, {"dfe-keda-table": KEDA_TABLE}, KEDA_FILLED),
+        (KEDA_PAGE, {"dfe-keda-table": KEDA_TABLE.rstrip("\n")}, KEDA_FILLED),
+        (KEDA_PAGE, {}, KEDA_PAGE),
+        ("No region here.\n", {"dfe-keda-table": KEDA_TABLE}, "No region here.\n"),
+        (KEDA_UNCLOSED, {"dfe-keda-table": KEDA_TABLE}, KEDA_UNCLOSED),
+        (
+            KEDA_PAGE,
+            {"dfe-keda-table": "a \\1 b\n"},
+            "Intro.\n\n<!-- dfe-keda-table -->\na \\1 b\n<!-- /dfe-keda-table -->\n\nAfter.\n",
+        ),
+    ],
+    ids=["fills", "adds-newline", "no-tables", "no-region", "unclosed", "backslash"],
+)
+def test_a_generated_table_fills_only_a_closed_region(
+    page: str, tables: dict[str, str], expected: str
+) -> None:
+    assert aggregate.fill_generated(page, tables) == expected
+
+
+@pytest.mark.parametrize(("with_table", "expected"), [(True, KEDA_FILLED), (False, KEDA_PAGE)])
+def test_a_member_page_takes_the_table_from_dfe_infra_at_the_builds_ref(
+    remotes: tuple[Path, str], tmp_path: Path, with_table: bool, expected: str
+) -> None:
+    root, _ = remotes
+    make_repo(root, "o/dfe-engine", {"docs/keda.md": KEDA_PAGE}, "v2.0.0")
+    infra = {"docs/README.md": "# Infra\n"}
+    if with_table:
+        infra["docs-site/generated/keda-table.md"] = KEDA_TABLE
+    make_repo(root, "o/dfe-infra", infra, "9.9.9")
+    members = [
+        Member("dfe-engine", "o/dfe-engine", "consumers", 10, "product"),
+        Member("dfe-infra", "o/dfe-infra", "deploy", 11, "product"),
+    ]
+    build = Build("9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0", "dfe-infra": "9.9.9"})
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    aggregate.assemble(build, members, fetcher, out)
+    assert (out / "9.9.9" / "dfe-engine" / "keda.md").read_text(encoding="utf-8") == expected
+
+
+def test_a_dfe_infra_ref_older_than_a_table_fills_nothing(tmp_path: Path) -> None:
+    assert aggregate.generated_tables(tmp_path) == {}
+    write_tree(tmp_path, {"docs-site/generated/keda-table.md": KEDA_TABLE})
+    assert aggregate.generated_tables(tmp_path) == {"dfe-keda-table": KEDA_TABLE}
+
+
+def test_the_real_keda_table_is_in_the_sparse_fetch() -> None:
+    assert "/docs-site/generated/keda-table.md" in aggregate.SPARSE_PATTERNS
+    assert (aggregate.REPO_ROOT / "docs-site" / "generated" / "keda-table.md").is_file()
+
+
+def test_a_checkout_made_with_other_sparse_paths_is_fetched_again(
+    remotes: tuple[Path, str], tmp_path: Path
+) -> None:
+    root, _ = remotes
+    work = tmp_path / "work"
+    first = aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
+    (first.path / ".git" / "info" / "sparse-checkout").write_text("/docs/\n", encoding="utf-8")
+    (root / "o" / "app.git").rename(root / "o" / "gone.git")
+    with pytest.raises(aggregate.FetchError):
+        aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
+
+
+def _pin(tmp_path: Path, fetched: dict[str, str]) -> list:
+    site = {"builds": [{"name": "next", "members": [], "fetched": fetched}]}
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps(site), encoding="utf-8")
+    builds = [
+        aggregate.Build(name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}),
+        aggregate.Build(
+            name="next", base_url="/next/", listed=False, refs={"x": "HEAD", "y": "HEAD"}
+        ),
+    ]
+    return aggregate.pin_next(builds, site_file)
+
+
+def test_pin_next_fetches_every_member_at_its_recorded_commit(tmp_path: Path) -> None:
+    pinned = _pin(tmp_path, {"x": "a" * 40, "y": "b" * 40})
+    assert dict(pinned[0].refs) == {"x": "v1"}
+    assert dict(pinned[1].refs) == {"x": "a" * 40, "y": "b" * 40}
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [{"x": "a" * 40}, {"x": "a" * 40, "y": "local"}, {}],
+    ids=["member_missing", "not_a_commit", "nothing_recorded"],
+)
+def test_pin_next_refuses_a_member_with_no_recorded_commit(
+    tmp_path: Path, fetched: dict[str, str]
+) -> None:
+    """A member left on HEAD is the race the pin exists to close, so it fails rather than floats."""
+    with pytest.raises(SystemExit, match="recorded no commit for"):
+        _pin(tmp_path, fetched)
+
+
+def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None:
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps({"builds": []}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="records no next build"):
+        aggregate.pin_next([], site_file)

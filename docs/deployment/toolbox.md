@@ -37,7 +37,7 @@ toolbox:
 
 ```bash
 dfe-ops bastion up [--ttl MIN]      # read the newest AL2023 AMI, apply, wait for Online
-dfe-ops bastion join [--ttl MIN]    # REFUSED until hyperi-io/culvert#40 lands
+dfe-ops bastion join [--ttl MIN]    # not available in this release
 dfe-ops bastion peers               # the hub's peers and their last handshake
 dfe-ops bastion hub <peer>          # reach one appliance through the tunnel
 dfe-ops bastion shell               # a logged interactive shell
@@ -45,7 +45,7 @@ dfe-ops bastion forward <t> <port>  # a tunnel to a named target
 dfe-ops bastion down                # revoke anything joined, then terminate
 ```
 
-The four tunnel verbs exist only where a deployment runs the edge-fleet VPN. `hub` is the one that reaches an appliance today, and it routes the client range at the culvert pod rather than dialling in. `join` mints an admin PEER, which culvert drops before any rule naming it is reached. So it refuses until hyperi-io/culvert#40 lands, and `down` has nothing to revoke. [edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) holds the mechanism and what the appliance has to accept.
+The four tunnel verbs exist only where a deployment runs the edge-fleet VPN. `hub` is the way to reach an appliance, and it routes the client range at the culvert pod rather than dialling in. `join` is not available in this release, because culvert drops an admin peer before any rule naming it is reached, so `down` has nothing to revoke. [edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) holds the mechanism and what the appliance has to accept.
 
 `forward` reaches a named target `bastion status` lists: the EKS API, one `kafka` target reaching a single bootstrap broker, `kafka-iam` on MSK's own SASL/IAM listener, and ClickHouse when the dial names a host OUTSIDE the cluster. A Kubernetes Service name is never a target, because it resolves through CoreDNS and the instance sits outside the cluster. So an in-cluster ClickHouse is reached with `kubectl port-forward` from `bastion shell`, over the EKS API grant below.
 

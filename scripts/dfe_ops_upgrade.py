@@ -289,7 +289,9 @@ RENAMED_SERVICES = {"hyperdx": "dfe-hyperdx"}
 # The first stack whose receiver door is exposure.groups.ingest; below it the door is exposure.mode.
 INGEST_GROUP_STACK = "2.2.1-rc.7"
 INGEST_GROUP_PATH = ("exposure", "groups", "ingest")
-FROM_220_DOC = "docs/deployment/upgrades.md#from-220"
+INGEST_DOOR_DOC = "docs/ingest-edge.md"
+WEB_PLANE_DOC = "docs/edge-auth-cloud.md#internet-facing-defaults"
+VALUES_DOC = "docs/deployment/upgrades.md#migrate-values"
 
 # The deploy repo's gateway overlay, layered after infra/common.yaml by argocd/appsets/layer2-edge.yaml.
 GATEWAY_OVERLAY = Path("infra") / "envoy-gateway-config.yaml"
@@ -1442,7 +1444,7 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
         f"Under {to_stack} the cloud's own door applies, and door loadbalancer with an empty allow renders no "
         "load balancer at all. Set exposure.groups.ingest.door (loadbalancer, gateway or tunnel) and "
         f"exposure.groups.ingest.allow (the senders' CIDRs) in {COMMON_OVERLAY.as_posix()}. "
-        f"An explicit block, even allow: [], passes. See {FROM_220_DOC}."
+        f"An explicit block, even allow: [], passes. See {INGEST_DOOR_DOC}."
     )
 
 
@@ -1668,7 +1670,7 @@ def check_web_plane(
             return False, (
                 f"{crossing}, and {unset} {' or '.join(listed)}. Whether this gateway is internet-facing depends on "
                 f"the deployment's cloud, and {why}. Pass --cloud, or set {' and '.join(listed)} in "
-                f"{COMMON_OVERLAY.as_posix()}. See {FROM_220_DOC}."
+                f"{COMMON_OVERLAY.as_posix()}. See {WEB_PLANE_DOC}."
             )
     if not _CLOUD_NAME.match(cloud):
         return False, f"the cloud {cloud!r} is not a cloud name, so no argocd/values file can be read for it"
@@ -1700,7 +1702,7 @@ def check_web_plane(
         f"{'.'.join(INTERNET_FACING_PATH)}: true), and {unset} {' or '.join(web.name for web in closed)}. "
         f"Under {from_stack} the gateway fenced no web route by address. Under {to_stack} these answer 403 to "
         f"{reach} from the first sync: {served}. {remedy} "
-        f"A /0 admits every address, as {from_stack} did. See {FROM_220_DOC}."
+        f"A /0 admits every address, as {from_stack} did. See {WEB_PLANE_DOC}."
     )
 
 
@@ -1766,7 +1768,7 @@ def check_values_migration(deploy: Path, from_stack: str, to_stack: str) -> tupl
         return False, (
             f"{len(refused)} 2.2.0 value key(s) need a hand edit before the move across {migration.since}: "
             f"{listed}{extra}. `dfe-ops upgrade migrate-values --deploy <dir> --check` lists every key. "
-            f"See {FROM_220_DOC}."
+            f"See {VALUES_DOC}."
         )
     carried = [hit for hit in hits if hit.state == values_migration.MIGRATE]
     files = len({hit.file for hit in carried})

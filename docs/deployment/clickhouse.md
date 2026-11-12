@@ -9,7 +9,7 @@ ClickHouse is the DFE data layer. Which ClickHouse, and which operator if any, i
 | **Official ClickHouse operator** (clickhouse.com CRDs) | `mode: cluster` -- ClickHouseCluster CR + DFE-owned Keeper, ReplicatedMergeTree | Public default for the scale tier |
 | **ClickHouse Cloud** (or any BYO endpoint) | `mode: external` -- deploy nothing, connect to the supplied endpoint | Public default for managed deployments |
 | Standalone server | `mode: single` -- plain StatefulSet, no operator, Keeper embedded, a cluster of one | Small/test tiers |
-| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22) |
+| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md) |
 | Altinity operator | -- | **NOT tested.** Nothing in this stack has run under it |
 
 An external ClickHouse must run 24.10 or later. The collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server refuses, so the collector can't insert.
@@ -34,7 +34,7 @@ In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, a
 
 Until ClickHouse published an operator of its own, the Kubernetes options were the Altinity operator or building your own. HyperI built its own: an internal operator paired with a custom ClickHouse fork whose engine put an SSD cache in front of bulk storage, run on private-cloud deployments. HyperI maintained that pairing for two years.
 
-DFE 2.2 retires the pairing for less code to maintain, lower operational risk, and a storage model held in common across on-prem and cloud deployments. The official ClickHouse operator plus the `cached-object` storage model replaces it as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's now the default wherever an object-store endpoint exists. A deployment still on the retired pairing migrates onto DFE 2.2 by following [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22).
+DFE 2.2 retires the pairing for less code to maintain, lower operational risk, and a storage model held in common across on-prem and cloud deployments. The official ClickHouse operator plus the `cached-object` storage model replaces it as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's now the default wherever an object-store endpoint exists. A deployment still on the retired pairing migrates onto DFE 2.2 by following [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
 
 When ClickHouse Inc shipped its official operator, DFE 2.2 adopted it as the public on-cluster default. The decision record (versions.yaml, `operators.clickhouse-operator`): greenfield stack, single-shard topology, DFE owns its own DDL, safe Keeper consensus, and ClickHouse partner support. None of that needed Altinity's extra machinery. ClickHouse Cloud is the other main public target via `mode: external`.
 
@@ -58,7 +58,7 @@ Changing the model on a live deployment strands every part already written. So t
 
 ## Retention
 
-Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, an engine carrying dfe-engine#652 takes `PUT /api/v1/system/retention` from an admin and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
+Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, `PUT /api/v1/system/retention` (admin) changes the default TTL and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
 
 The server's own system log tables are a separate dial, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart. It's 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the dfe-hyperdx ClickHouse log source searches) and `part_log`, and 30 for `query_log`, in both cluster and single mode.
 
@@ -89,7 +89,7 @@ disk >= (D x T + F) / 0.85
 - `F` -- about 2.4 GiB: the system log tables at their TTLs plus the server log's 400 MiB cap.
 - `0.85` -- 15% free. Merges write the new part before dropping the old ones, and on a node-local volume the kubelet evicts at its own threshold (by default 10% free on the node filesystem, 15% on the image filesystem).
 
-Measured on an idle mesh-tier stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment shape, so measure your own.
+Measured on one idle stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment shape, so measure your own.
 
 | Volume per replica | Idle telemetry at 90 days uses | Most `D` it carries at 90 days | Most `D` at 30 days |
 | --- | --- | --- | --- |

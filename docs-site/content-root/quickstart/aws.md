@@ -33,6 +33,8 @@ python3 scripts/dfe-ops stack-deploy --stack <version> --mode scale \
 
 The apply builds the VPC, EKS and its node groups, the managed Kafka, the KMS key, the Route 53 zones and the Secrets Manager store. `stack-deploy` reads its outputs, deploys the stack at `<version>`, and finishes by sending an event through to ClickHouse and checking the stack's own telemetry landed.
 
+The gateway is internet-facing, so the console and the engine API answer 403 to every outside address from the first sync until you name who may reach them. Set `exposure.groups.console.allow` and `exposure.groups.api.allow` in your deploy repo's `infra/common.yaml` ([internet-facing defaults](../dfe-infra/edge-auth-cloud.md#internet-facing-defaults)).
+
 Next:
 
 1. Every sizing dial, lock and choice: [DFE on AWS](../dfe-infra/deployment/aws.md).

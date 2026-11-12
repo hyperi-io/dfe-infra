@@ -72,7 +72,7 @@ bash bootstrap/deploy.sh --cloud local
 
 ```mermaid
 flowchart LR
-  W1["AppProjects"] --> W2["operators<br/>cert-mgr, ESO, Envoy, DocumentDB, Strimzi, ..."]
+  W1["AppProjects"] --> W2["operators<br/>Envoy, DocumentDB, Strimzi, ..."]
   W2 --> W4["data platform<br/>DocumentDB, Kafka, ClickHouse, OTel"]
   W4 --> W5["DFE services<br/>engine, ui, receiver, loader, archiver, fetcher"]
 ```

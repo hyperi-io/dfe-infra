@@ -138,6 +138,7 @@ placement:
     deployment/state-and-repos.md: "Deploy / The deploy repo"
     deployment/toolbox.md: "Operate / Day to day and troubleshooting"
     deployment/upgrades.md: "Operate / Upgrade"
+    deployment/migrating-from-2.1.md: "Operate / Upgrade"
     deployment/upgrade-rollback.md: "Operate / Upgrade"
   dfe-loader:
     default: "Operate / Day to day and troubleshooting"

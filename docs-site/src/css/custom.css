@@ -11,11 +11,11 @@
 /* Roles follow hyperi-graphics docs/web-style-reference.md. Each fallback is the token's value in tokens.css. */
 :root {
   --role-canvas: var(--hyperi-light-canvas, #ffffff);
-  --role-raised: var(--hyperi-light-raised, #f5f5f8);
-  --role-border: var(--hyperi-light-border, #d9dae3);
-  --role-ink: var(--hyperi-light-ink, #000647);
-  --role-body: var(--hyperi-light-body, #000000);
-  --role-muted: var(--hyperi-light-muted, #666a91);
+  --role-raised: #f6f7f8;
+  --role-border: #dadde1;
+  --role-ink: #1c1e21;
+  --role-body: #1c1e21;
+  --role-muted: #606770;
   --role-link: var(--hyperi-light-link, #1e6db9);
   --role-plate: var(--hyperi-light-plate, #000647);
   --role-on-plate: var(--hyperi-light-on-plate, #ffffff);
@@ -23,12 +23,10 @@
   --role-accent-ink: var(--hyperi-light-accent-ink, #177a68);
   --role-chrome: var(--role-canvas);
   --role-card: var(--role-canvas);
-  --role-tint: color-mix(in srgb, var(--dfe-blue) 9%, transparent);
-  --role-card-border: color-mix(in srgb, var(--dfe-blue) 35%, var(--role-border));
-  --role-glow: color-mix(in srgb, var(--dfe-blue) 28%, transparent);
-  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 20%, transparent), transparent 70%),
-    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 16%, transparent), transparent 70%),
-    var(--role-raised);
+  --role-tint: color-mix(in srgb, var(--role-link) 8%, transparent);
+  --role-card-border: var(--role-border);
+  --role-glow: transparent;
+  --role-band: var(--role-raised);
 
   --dfe-navy: var(--hyperi-navy, #000647);
   --dfe-blue: var(--hyperi-blue, #2ea4f6);
@@ -97,25 +95,23 @@
 /* Every surface follows the colour mode. The footer alone is a navy band in both, as on hyperi.io. */
 html[data-theme='dark'],
 .footer--dark {
-  --role-canvas: var(--hyperi-dark-canvas, #000324);
-  --role-raised: var(--hyperi-dark-raised, #000647);
-  --role-border: var(--hyperi-dark-border, #17559f);
+  --role-canvas: #1b1b1d;
+  --role-raised: #242526;
+  --role-border: #444950;
   --role-ink: var(--hyperi-dark-ink, #ffffff);
-  --role-body: var(--hyperi-dark-body, #d9dae3);
-  --role-muted: var(--hyperi-dark-muted, #999bb5);
+  --role-body: #e3e3e3;
+  --role-muted: #a8acb3;
   --role-link: var(--hyperi-dark-link, #2ea4f6);
   --role-plate: var(--hyperi-dark-plate, #2ea4f6);
   --role-on-plate: var(--hyperi-dark-on-plate, #000647);
   --role-plate-hover: var(--hyperi-dark-plate-hover, #6dbff9);
   --role-accent-ink: var(--hyperi-dark-accent-ink, #2ded88);
-  --role-chrome: var(--dfe-navy);
-  --role-card: color-mix(in srgb, var(--dfe-navy) 70%, transparent);
-  --role-tint: color-mix(in srgb, var(--dfe-blue) 14%, transparent);
-  --role-card-border: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
-  --role-glow: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
-  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 32%, transparent), transparent 70%),
-    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 12%, transparent), transparent 70%),
-    linear-gradient(180deg, var(--dfe-navy), var(--hyperi-dark-canvas, #000324));
+  --role-chrome: #242526;
+  --role-card: #242526;
+  --role-tint: color-mix(in srgb, var(--role-link) 12%, transparent);
+  --role-card-border: var(--role-border);
+  --role-glow: transparent;
+  --role-band: var(--role-raised);
   color-scheme: dark;
 }
 
@@ -186,7 +182,18 @@ h6 {
 }
 
 code {
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border: 0;
+}
+
+/* A table wraps its cells to the content width instead of scrolling sideways. */
+.markdown table {
+  display: table;
+  width: 100%;
+}
+
+.markdown td code,
+.markdown th code {
+  overflow-wrap: anywhere;
 }
 
 pre code,
@@ -328,8 +335,9 @@ html[data-theme='dark'] {
   margin-right: var(--dfe-space-2);
   padding: 0 var(--dfe-space-2);
   border-radius: var(--dfe-radius-pill);
-  background: var(--dfe-navy);
-  color: var(--dfe-accent);
+  background: transparent;
+  color: var(--role-muted);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
   font-size: var(--dfe-text-xs);
   font-weight: 700;
   letter-spacing: var(--dfe-tracking-eyebrow);
@@ -339,10 +347,11 @@ html[data-theme='dark'] {
 
 div[class*='announcementBar'] {
   font-size: var(--dfe-text-sm);
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
 }
 
 div[class*='announcementBar'] a {
-  color: inherit;
+  color: var(--role-link);
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 0.15em;
@@ -351,6 +360,11 @@ div[class*='announcementBar'] a {
 div[class*='announcementBar'] svg {
   margin-left: var(--dfe-space-1);
   vertical-align: -0.125em;
+}
+
+/* The close button does not inherit the bar's text colour and renders black. */
+div[class*='announcementBar'] button {
+  color: var(--role-body);
 }
 
 /* The footer is a navy band in both modes. */
@@ -392,11 +406,13 @@ div[class*='announcementBar'] svg {
   font-size: var(--dfe-text-xs);
 }
 
-/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas instead. */
+/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas
+   instead, in the page's ink: mid-render a label is black, which vanishes on the dark canvas. */
 .docusaurus-mermaid-container .edgeLabel,
 .docusaurus-mermaid-container .edgeLabel p,
 .docusaurus-mermaid-container .labelBkg {
   background-color: var(--role-canvas) !important;
+  color: var(--role-body) !important;
 }
 
 .docusaurus-mermaid-container .edgeLabel rect {
