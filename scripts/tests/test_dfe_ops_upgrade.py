@@ -5146,3 +5146,92 @@ def test_an_undeclared_rollback_points_at_the_rollback_verb_not_the_backup_marke
     err = capsys.readouterr().err
     assert "dfe-ops upgrade rollback --to" in err
     assert "backup marker" not in err
+
+
+# ---------------------------------------------------------------------------
+# An rc's GA: every pin equal, so only the stack name moves.
+# ---------------------------------------------------------------------------
+
+# 1.0.1 pins exactly what 1.0.0 does, the way a GA pins what its last rc did.
+SAME_PINS_VERSIONS_YAML = VERSIONS_YAML + """  1.0.1:
+    bootstrap:
+      cert-manager: "v1.0.0"
+    operators:
+      strimzi-kafka-operator: "0.51.0"
+    services:
+      kafka-version: "4.2.0"
+      clickhouse-version: "26.3.17.56"
+"""
+
+
+@pytest.fixture
+def same_pins_versions(tmp_path: Path) -> Path:
+    path = tmp_path / "versions-same-pins.yaml"
+    path.write_text(SAME_PINS_VERSIONS_YAML, encoding="utf-8")
+    return path
+
+
+def test_apply_to_a_stack_with_the_same_pins_dry_run_names_the_pin_and_the_retarget(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, same_pins_versions: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", same_pins_versions)
+    before = (deploy / "pins.yaml").read_text(encoding="utf-8")
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="1.0.1", push=True))
+
+    out, err = capsys.readouterr()
+    assert rc == u.EXIT_OK, err
+    assert "nothing to apply" not in out
+    assert '[dry-run] set pins.yaml base.dfe-infra = "1.0.1"' in err
+    assert "[dry-run] if secret/dfe-cluster targets 1.0.0: kubectl -n argocd annotate" in err
+    assert (deploy / "pins.yaml").read_text(encoding="utf-8") == before
+
+
+def test_apply_to_a_stack_with_the_same_pins_moves_the_pin_then_retargets(
+    monkeypatch: pytest.MonkeyPatch, pushed_deploy: tuple[Path, Path], order_path: Path,
+    same_pins_versions: Path, capsys: pytest.CaptureFixture,
+) -> None:
+    deploy, remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", same_pins_versions)
+    live = {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"}
+    events = _ga_cluster(monkeypatch, live)
+
+    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=True))
+
+    err = capsys.readouterr().err
+    assert rc == u.EXIT_OK, err
+    assert 'dfe-infra: "1.0.1"' in _remote_file(remote, "main", "pins.yaml")
+    assert events == [("retarget", "1.0.1"), ("argo", "1.0.0")]
+    assert "apply OK: 1.0.0 -> 1.0.1 (no pinned key moved)" in err
+
+
+@pytest.mark.parametrize(
+    ("current", "push", "rc", "expect"),
+    [
+        ("1.0.0", False, u.EXIT_BLOCKED, "needs --push"),
+        ("a" * 40, True, u.EXIT_BLOCKED, "pins a commit"),
+        ("main", True, u.EXIT_OK, "tracks a branch"),
+    ],
+)
+def test_apply_to_a_stack_with_the_same_pins_judges_the_cluster_secret(
+    monkeypatch: pytest.MonkeyPatch, pushed_deploy: tuple[Path, Path], order_path: Path,
+    same_pins_versions: Path, capsys: pytest.CaptureFixture, current: str, push: bool, rc: int, expect: str,
+) -> None:
+    """A refusal leaves pins.yaml where it was, and a branch-tracking secret is never retargeted."""
+    deploy, _remote = pushed_deploy
+    monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
+    monkeypatch.setattr(u, "VERSIONS_FILE", same_pins_versions)
+    events = _ga_cluster(monkeypatch, {"target_revision": current, "kafka": "4.2.0", "metadata": "4.2-IV1"})
+    before = (deploy / "pins.yaml").read_text(encoding="utf-8")
+
+    got = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=push))
+
+    err = capsys.readouterr().err
+    assert got == rc, err
+    assert expect in err
+    assert events == []
+    if rc == u.EXIT_BLOCKED:
+        assert (deploy / "pins.yaml").read_text(encoding="utf-8") == before

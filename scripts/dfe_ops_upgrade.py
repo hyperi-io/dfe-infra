@@ -3012,6 +3012,66 @@ def _wait_line(args: argparse.Namespace, *, leaving: str = "", reconciled: str =
     )
 
 
+def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_name: str) -> int:
+    """Name TO on a deployment whose pins already equal it, as an rc's GA does.
+
+    No pin moves, so no stage runs. pins.yaml still moves to TO and the cluster
+    secret still retargets, or the deployment keeps naming FROM.
+    """
+    ref = args.target_revision or to_name
+    if args.dry_run:
+        print(f"dfe-ops upgrade apply: {from_name} pins every key {to_name} does -- only the stack name moves", file=sys.stderr)
+        print(f"[dry-run] set pins.yaml base.dfe-infra = \"{to_name}\"", file=sys.stderr)
+        print(f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): {to_name} -- no pinned key moved'", file=sys.stderr)
+        if args.push:
+            print(f"[dry-run] git -C {deploy} push", file=sys.stderr)
+        print(f"[dry-run] if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}", file=sys.stderr)
+        print(f"[dry-run] {_wait_line(args, leaving=from_name, reconciled='the retarget')}", file=sys.stderr)
+        return EXIT_OK
+
+    rollout_namespace = args.namespace or ""
+    try:
+        if not rollout_namespace:
+            rollout_namespace = read_dfe_namespace(args.kubeconfig, args.argocd_namespace)
+        current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
+        retarget, why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
+    except UpgradeError as err:
+        print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
+        return EXIT_BLOCKED
+    print(f"  target_revision: {why}", file=sys.stderr)
+    if retarget and not args.push:
+        print(
+            f"dfe-ops upgrade apply: REFUSED -- moving {TARGET_REVISION_ANNOTATION} to {retarget} needs --push, "
+            "so Argo reads the pin commit with it",
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
+
+    bump_pin_file(deploy, to_name)
+    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} -- no pinned key moved", push=args.push)
+    if failure:
+        print(f"dfe-ops upgrade apply: {failure}", file=sys.stderr)
+        return EXIT_BLOCKED
+    print(f"  pins.yaml base.dfe-infra = {to_name}: {done}", file=sys.stderr)
+    if retarget:
+        retargeted_at = change_moment()
+        ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
+        print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
+        if not ok:
+            print("dfe-ops upgrade apply: the cluster secret did not take the new target_revision", file=sys.stderr)
+            return EXIT_BLOCKED
+        ok, detail = wait_for_argo(
+            args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
+            stale_revision=current_ref, rollout_namespace=rollout_namespace, reconciled_after=retargeted_at,
+        )
+        print(f"  argo: {detail}", file=sys.stderr)
+        if not ok:
+            print(f"dfe-ops upgrade apply: Argo and the rollouts did not settle on {retarget}", file=sys.stderr)
+            return EXIT_BLOCKED
+    print(f"dfe-ops upgrade apply OK: {from_name} -> {to_name} (no pinned key moved)", file=sys.stderr)
+    return EXIT_OK
+
+
 def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
@@ -3027,8 +3087,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
     if not moves:
-        print(f"dfe-ops upgrade apply: {from_name} already matches {to_name} -- nothing to apply")
-        return EXIT_OK
+        if _norm_ref(from_name) == _norm_ref(to_name):
+            print(f"dfe-ops upgrade apply: {from_name} already matches {to_name} -- nothing to apply")
+            return EXIT_OK
+        return _rename_stack(args, deploy, from_name, to_name)
 
     compat_ok, compat_out = run_compat_check(to_name)
     if not compat_ok:
