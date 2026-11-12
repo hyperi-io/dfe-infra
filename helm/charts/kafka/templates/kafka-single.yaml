@@ -26,7 +26,7 @@ spec:
       targetPort: 9092
 {{- if eq .Values.kafka.provider "redpanda" }}
 {{- if not .Values.kafka.redpanda.acceptLicense }}
-{{- fail "Redpanda is BSL (source-available): set kafka.redpanda.acceptLicense=true. Single-broker Redpanda still needs commercial licences from HyperI + Redpanda Data for service use -- see docs/REDPANDA-LIMITATIONS.md." }}
+{{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
 ---
 # Redpanda standalone (provider=redpanda). Single node, SASL/SCRAM-SHA-512.

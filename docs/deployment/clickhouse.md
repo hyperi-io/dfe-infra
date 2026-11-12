@@ -58,7 +58,7 @@ Changing the model on a live deployment strands every part already written. So t
 
 ## Retention
 
-Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, an engine carrying dfe-engine#652 takes `PUT /api/v1/system/retention` from an admin and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
+Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not the ones already deployed. On a running deployment, `PUT /api/v1/system/retention` (admin) changes the default TTL and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
 
 The server's own system log tables are a separate dial, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart. It's 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the dfe-hyperdx ClickHouse log source searches) and `part_log`, and 30 for `query_log`, in both cluster and single mode.
 
@@ -89,7 +89,7 @@ disk >= (D x T + F) / 0.85
 - `F` -- about 2.4 GiB: the system log tables at their TTLs plus the server log's 400 MiB cap.
 - `0.85` -- 15% free. Merges write the new part before dropping the old ones, and on a node-local volume the kubelet evicts at its own threshold (by default 10% free on the node filesystem, 15% on the image filesystem).
 
-Measured on an idle mesh-tier stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment shape, so measure your own.
+Measured on one idle stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment shape, so measure your own.
 
 | Volume per replica | Idle telemetry at 90 days uses | Most `D` it carries at 90 days | Most `D` at 30 days |
 | --- | --- | --- | --- |

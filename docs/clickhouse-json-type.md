@@ -1,6 +1,6 @@
 # ClickHouse native JSON type
 
-> **Coming from Splunk or Elastic?** The `_json` columns in DFE's tables (`dfe.default._json`, for example) are this native type. A path nobody has mapped yet is queryable by name from the first event, and a type hint added through the `dfe-schemas` meta-schema gives it a fixed type. More in [what's different](../docs-site/content-root/coming-from.md#nothing-breaks-when-a-source-changes).
+> **Coming from Splunk or Elastic?** The `_json` columns in DFE's tables (`dfe.main._json`, for example) are this native type. A path nobody has mapped yet is queryable by name from the first event, and a type hint added through the `dfe-schemas` meta-schema gives it a fixed type. More in [what's different](../docs-site/content-root/coming-from.md#nothing-breaks-when-a-source-changes).
 
 This is the current native `JSON` type, the one that replaced the experimental `Object('json')` in ClickHouse 25.x. The two behave very differently. `Object('json')` unified every path to a single least-common-type and used `col['key']` map access. The native type stores each path as its own typed sub-column with dot access. A lot of older docs, blog posts and answers still describe the old one, so double-check anything you carry over. Facts here are from the live ClickHouse docs. Re-verify the version-specific numbers against your server before relying on them.
 

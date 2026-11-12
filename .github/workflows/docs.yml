@@ -90,7 +90,12 @@ jobs:
         run: |
           git fetch --no-tags --depth 1 origin main
           git worktree add "$RUNNER_TEMP/main" FETCH_HEAD
-          python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --next --out "$RUNNER_TEMP/content-main"
+          # The member commits this pull request's tree was built at, so a member merging between the two clones adds nothing.
+          pin=()
+          if python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --help | grep -q -- --next-refs; then
+            pin=(--next-refs docs-site/content/site.json)
+          fi
+          python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --next "${pin[@]}" --out "$RUNNER_TEMP/content-main"
 
       # A pull request fails only on findings main's pages do not already carry, so a page awaiting its rewrite blocks nobody. Elsewhere the gate reports.
       - name: Docs gate
