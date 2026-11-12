@@ -1579,6 +1579,36 @@ def _checkout_state(repo: str) -> tuple[str, bool]:
     return described.strip(), " ".join(tags.split())
 
 
+def _head_is_origin_tag(repo: str, tag: str) -> bool:
+    """Whether a clean checkout's HEAD is the commit *tag* names on origin.
+
+    A CI checkout of one ref carries no tags, so `git tag --points-at` cannot see the release it is.
+
+    Args:
+        repo: Path to the checkout.
+        tag: The release tag to resolve.
+
+    Returns:
+        True only when the tree is clean, the tag is absent locally, and origin peels it to HEAD.
+    """
+    rc_head, head, _ = _run_text(["git", "-C", repo, "rev-parse", "HEAD"])
+    rc_dirty, dirty, _ = _run_text(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"])
+    if rc_head != 0 or rc_dirty != 0 or dirty.strip():
+        return False
+    rc_local, _, _ = _run_text(["git", "-C", repo, "rev-parse", "--verify", "-q", f"refs/tags/{tag}"])
+    if rc_local == 0:
+        return False
+    rc, listed, _ = _run_text(["git", "-C", repo, "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"])
+    if rc != 0:
+        return False
+    peeled = {}
+    for line in listed.splitlines():
+        sha, _, ref = line.partition("\t")
+        peeled[ref.strip()] = sha.strip()
+    commit = peeled.get(f"refs/tags/{tag}^{{}}") or peeled.get(f"refs/tags/{tag}", "")
+    return commit == head.strip()
+
+
 def _checkout_gate(repo: str, app: str, stack: str, dev: bool, why: str) -> int:
     """Refuse a checkout that is not the release the stack under test pins for *app*.
 
@@ -1599,7 +1629,7 @@ def _checkout_gate(repo: str, app: str, stack: str, dev: bool, why: str) -> int:
     stack = stack or _current_stack()
     pin = _stack_app_pin(stack, app)
     described, tags_at_head = _checkout_state(repo)
-    if pin and pin in tags_at_head.split():
+    if pin and (pin in tags_at_head.split() or _head_is_origin_tag(repo, pin)):
         print(f"  {app} checkout {repo} is {pin}, the release stack {stack} pins", file=sys.stderr)
         return 0
     seen = f"{described} ({repo})"

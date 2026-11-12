@@ -77,15 +77,24 @@ def _git(repo: Path, *argv: str) -> None:
     )
 
 
-def _engine_checkout(tmp_path: Path, *, tag: str = "v1.0.0", past: bool = False, dirty: bool = False) -> Path:
-    """A git tree with one commit tagged *tag*, optionally a commit past it or with a modified tracked file."""
+def _engine_checkout(
+    tmp_path: Path, *, tag: str = "v1.0.0", past: bool = False, dirty: bool = False, unfetched: bool = False
+) -> Path:
+    """A git tree with one commit tagged *tag*, optionally a commit past it or with a modified tracked file.
+
+    *unfetched* returns a clone made without tags, as a CI checkout of one ref is, its origin the tagged tree.
+    """
     repo = tmp_path / "dfe-engine"
     repo.mkdir()
     _git(repo, "init", "-q")
     (repo / "f.txt").write_text("one\n", encoding="utf-8")
     _git(repo, "add", "f.txt")
     _git(repo, "commit", "-q", "-m", "one")
-    _git(repo, "tag", tag)
+    _git(repo, "tag", "-a", "-m", tag, tag)
+    if unfetched:
+        clone = tmp_path / "clone"
+        _git(tmp_path, "clone", "-q", "--no-tags", str(repo), str(clone))
+        repo = clone
     if past:
         (repo / "f.txt").write_text("two\n", encoding="utf-8")
         _git(repo, "commit", "-q", "-am", "two")
@@ -105,8 +114,15 @@ def _engine_checkout(tmp_path: Path, *, tag: str = "v1.0.0", past: bool = False,
         ({}, "", False, 2, ["pins no dfe-engine"], False),
         ({"past": True}, "v1.0.0", True, 0, ["WARNING", "v1.0.0-1-g", "pins dfe-engine v1.0.0"], True),
         ({"dirty": True}, "v1.0.0", True, 0, ["WARNING", "-dirty", "pins dfe-engine v1.0.0"], True),
+        ({"unfetched": True}, "v1.0.0", True, 0, ["is v1.0.0, the release stack S pins"], False),
+        ({"unfetched": True, "past": True}, "v1.0.0", False, 2, ["pins dfe-engine v1.0.0"], False),
+        ({"unfetched": True, "dirty": True}, "v1.0.0", False, 2, ["-dirty", "pins dfe-engine v1.0.0"], False),
+        ({"unfetched": True}, "v2.0.0", False, 2, ["pins dfe-engine v2.0.0"], False),
     ],
-    ids=["on-pin", "on-pin-dev", "past-pin", "other-tag", "dirty", "no-pin", "past-pin-dev", "dirty-dev"],
+    ids=[
+        "on-pin", "on-pin-dev", "past-pin", "other-tag", "dirty", "no-pin", "past-pin-dev", "dirty-dev",
+        "unfetched-on-pin-dev", "unfetched-past-pin", "unfetched-dirty", "unfetched-other-pin",
+    ],
 )
 def test_the_engine_checkout_must_be_the_pinned_release_unless_dev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, tree: dict, pin: str, dev: bool, rc: int, said: list[str],
