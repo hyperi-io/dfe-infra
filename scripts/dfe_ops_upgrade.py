@@ -717,7 +717,7 @@ def check_upgrade_path(from_stack: str, to_stack: str, *, allow_unverified: bool
         return True, verdict
     if allow_unverified:
         return True, f"{verdict} -- run anyway: --allow-unverified-path"
-    return False, f"{verdict}. --allow-unverified-path runs it anyway"
+    return False, f"{verdict}. Upgrades step one release at a time. --allow-unverified-path runs it anyway"
 
 
 # --- the sizing locked-change classifier --------------------------------------
