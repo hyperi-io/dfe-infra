@@ -119,3 +119,8 @@ jobs:
           version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$WRANGLER_OUTPUT_FILE_PATH")"
           test -n "$version_id"
           npx --no-install wrangler versions deploy --version-id "$version_id" --percentage 100 --yes
+
+      # /next/ reads every member's main, which no gate here guards, so a register word fails the run only after the site has deployed. Older releases read frozen tags and only report.
+      - name: Register words on /next/ and the newest release
+        if: ${{ github.event_name != 'pull_request' }}
+        run: python3 docs-site/scripts/gate.py --report-only --fail-on register --fail-on-build next,newest
