@@ -362,7 +362,7 @@ module.exports = {
   ],
   themeConfig: {
     // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
-    colorMode: {defaultMode: 'light', disableSwitch: false, respectPrefersColorScheme: true},
+    colorMode: {respectPrefersColorScheme: true, disableSwitch: true},
     announcementBar: siteCopy.announcement && releaseNotes
       ? {
           // Keyed on the release, so a reader who closed one sees the next.
