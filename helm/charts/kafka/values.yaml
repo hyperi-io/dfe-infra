@@ -30,7 +30,7 @@ kafka:
   # scale -> cluster).
   mode: disabled
   # Broker provider when deployed: strimzi (default, Apache-2.0) or redpanda
-  # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
+  # (opt-in, BSL -- see docs/deployment/kafka/redpanda-limitations.md; requires redpanda.acceptLicense).
   provider: strimzi
   name: dfe-kafka
   version: "4.3.1"

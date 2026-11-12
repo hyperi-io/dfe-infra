@@ -269,6 +269,18 @@ def test_the_cluster_secret_carries_the_protocol() -> None:
            "annotation missing from the cluster-secret template")
 
 
+def test_the_redpanda_operator_selector_matches_a_label_bootstrap_sets() -> None:
+    """layer-scale installs the Redpanda operator by cluster LABEL, which bootstrap must write."""
+    appset = (APPSETS / "layer-scale.yaml").read_text(encoding="utf-8")
+    expect("the Redpanda operator appset selects on the provider label",
+           "dfe.hyperi.io/kafka-provider: redpanda" in appset,
+           "selector changed: update the label this test checks")
+    labels = CLUSTER_SECRET.read_text(encoding="utf-8").split("  annotations:")[0]
+    expect("the cluster secret labels the provider",
+           'dfe.hyperi.io/kafka-provider: "${DFE_KAFKA_PROVIDER}"' in labels,
+           "label missing from the cluster-secret template's labels block")
+
+
 def test_every_appset_reads_the_mode_back() -> None:
     """A fact on the cluster secret that no appset reads is a fact nothing uses."""
     for name in ("layer2-apps.yaml", "layer2-data.yaml", "layer2-platform.yaml"):
