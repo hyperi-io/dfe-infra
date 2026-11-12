@@ -140,6 +140,7 @@ placement:
     deployment/upgrades.md: "Operate / Upgrade"
     deployment/migrating-from-2.1.md: "Operate / Upgrade"
     deployment/upgrade-rollback.md: "Operate / Upgrade"
+    integrations/: "Operate / Sources"
   dfe-loader:
     default: "Operate / Day to day and troubleshooting"
     CONFIGURATION.md: "Reference / Configuration"
