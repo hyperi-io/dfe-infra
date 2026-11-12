@@ -319,6 +319,7 @@ class BuildResult:
     Attributes:
         build: The build assembled.
         members: One site.json entry per member included.
+        fetched: Member name -> the commit fetched, for every member fetched, docs or not.
         findings: Every stray and every member left out.
         openapi: The OpenAPI paths for docusaurus.config.js, when the engine has a spec.
         placements: Doc id or id prefix -> "Journey / Section", for the sidebar.
@@ -326,6 +327,7 @@ class BuildResult:
 
     build: Build
     members: list[dict[str, str]] = field(default_factory=list)
+    fetched: dict[str, str] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
     openapi: dict[str, str] | None = None
     placements: dict[str, str] = field(default_factory=dict)
@@ -1104,6 +1106,7 @@ def assemble(
         except RefusedError:
             result.findings.append(Finding(member.name, "", Rule.REFUSED, f"{member.repo}@{ref}"))
             continue
+        result.fetched[member.name] = checkout.commit
         docs = checkout.path / "docs"
         if docs.is_symlink():
             result.findings.append(Finding(member.name, "docs", Rule.SYMLINK))
@@ -1507,6 +1510,7 @@ def site_manifest(
             "base_url": result.build.base_url,
             "listed": result.build.listed,
             "members": result.members,
+            "fetched": result.fetched,
             "openapi": result.openapi,
             "placements": result.placements,
         }
@@ -1549,22 +1553,27 @@ def pin_next(builds: list[Build], site_file: Path) -> list[Build]:
         site_file: A site.json whose /next/ build recorded each member's commit.
 
     Returns:
-        The builds, /next/ fetching each recorded member at its commit.
+        The builds, /next/ fetching every member at its recorded commit.
 
     Raises:
-        SystemExit: The file holds no /next/ build.
+        SystemExit: The file holds no /next/ build, or no commit for a member /next/ fetches.
     """
     site = json.loads(site_file.read_text(encoding="utf-8"))
     recorded = next((b for b in site.get("builds", []) if b.get("name") == NEXT), None)
     if recorded is None:
         raise SystemExit(f"error: {site_file} records no {NEXT} build")
-    commits = {m["name"]: m["commit"] for m in recorded["members"] if _COMMIT.fullmatch(m.get("commit", ""))}
-    return [
-        replace(build, refs={**build.refs, **{n: c for n, c in commits.items() if n in build.refs}})
-        if build.name == NEXT
-        else build
-        for build in builds
-    ]
+    fetched = recorded.get("fetched", {})
+    next_build = next((b for b in builds if b.name == NEXT), None)
+    if next_build is None:
+        return builds
+    unpinned = sorted(n for n in next_build.refs if not _COMMIT.fullmatch(str(fetched.get(n, ""))))
+    if unpinned:
+        raise SystemExit(
+            f"error: {site_file} recorded no commit for {', '.join(unpinned)}, "
+            "so /next/ cannot be built at the same commits"
+        )
+    pinned = replace(next_build, refs={name: fetched[name] for name in next_build.refs})
+    return [pinned if build is next_build else build for build in builds]
 
 
 def plan_builds(

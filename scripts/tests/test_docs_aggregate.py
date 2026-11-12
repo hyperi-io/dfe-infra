@@ -1439,28 +1439,32 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
     assert aggregate.docker_quickstart(build, "2.2.1") is None
 
 
-@pytest.mark.parametrize(
-    ("recorded", "expected"),
-    [
-        ({"x": "a" * 40}, {"x": "a" * 40}),
-        ({"x": "local"}, {"x": "HEAD"}),
-        ({"y": "b" * 40}, {"x": "HEAD"}),
-    ],
-)
-def test_pin_next_fetches_next_at_the_recorded_commits(
-    tmp_path: Path, recorded: dict[str, str], expected: dict[str, str]
-) -> None:
-    """A recorded 40-hex commit replaces HEAD for a member /next/ fetches. Anything else is left."""
-    site = {"builds": [{"name": "next", "members": [{"name": n, "commit": c} for n, c in recorded.items()]}]}
+def _pin(tmp_path: Path, fetched: dict[str, str]) -> list:
+    site = {"builds": [{"name": "next", "members": [], "fetched": fetched}]}
     site_file = tmp_path / "site.json"
     site_file.write_text(json.dumps(site), encoding="utf-8")
     builds = [
         aggregate.Build(name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}),
-        aggregate.Build(name="next", base_url="/next/", listed=False, refs={"x": "HEAD"}),
+        aggregate.Build(name="next", base_url="/next/", listed=False, refs={"x": "HEAD", "y": "HEAD"}),
     ]
-    pinned = aggregate.pin_next(builds, site_file)
+    return aggregate.pin_next(builds, site_file)
+
+
+def test_pin_next_fetches_every_member_at_its_recorded_commit(tmp_path: Path) -> None:
+    pinned = _pin(tmp_path, {"x": "a" * 40, "y": "b" * 40})
     assert dict(pinned[0].refs) == {"x": "v1"}
-    assert dict(pinned[1].refs) == expected
+    assert dict(pinned[1].refs) == {"x": "a" * 40, "y": "b" * 40}
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [{"x": "a" * 40}, {"x": "a" * 40, "y": "local"}, {}],
+    ids=["member_missing", "not_a_commit", "nothing_recorded"],
+)
+def test_pin_next_refuses_a_member_with_no_recorded_commit(tmp_path: Path, fetched: dict[str, str]) -> None:
+    """A member left on HEAD is the race the pin exists to close, so it fails rather than floats."""
+    with pytest.raises(SystemExit, match="recorded no commit for"):
+        _pin(tmp_path, fetched)
 
 
 def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None:
