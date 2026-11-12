@@ -14,11 +14,6 @@ dropped_versions:
 docs_refs:
   2.2.2:
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
-    dfe-docker: "008a825bc11f20086c2f5c75df3f3d0adcd5ddd0"
-    dfe-engine: "977684978a501ac3cf7f2f0a1706ffd9bbaf383a"
-    dfe-fetcher: "bebb9b192e1b5229eedbd7b107caf6d4e573517a"
-    dfe-infra: "ef668360b222e14dd28ccad6e29c0ce61e42d50a"
-    dfe-loader: "cdb7081dd54742368d3463ba5c776dfb29d8b792"
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
     dfe-schemas: "704e7dcecadd8721730be10a6bf764468a315474"
     dfe-transform-elastic: "4809783d58673f7d67ee6af5d131926b167c1409"
