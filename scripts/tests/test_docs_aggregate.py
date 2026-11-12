@@ -1437,3 +1437,49 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
         name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
+
+
+def test_a_docs_ref_overrides_the_stack_pin_for_the_quickstart() -> None:
+    """publish.yaml's docs_refs pick the dfe-docker release a released stack's install comes from."""
+    build = aggregate.Build(
+        name="2.2.2", base_url="/v/2.2.2/", listed=True,
+        refs={"dfe-docker": "v1.0.4"}, docs_refs={"dfe-docker": "main"},
+    )
+    assert aggregate.docker_quickstart(build, "2.2.2") is None
+
+
+QUICKSTART_COMPOSE = {
+    "schema": 1,
+    "kind": "compose",
+    "min_compose": "2.34.0",
+    "min_engine": "26.0",
+    "console_url": "http://localhost:3000",
+    "login": "admin / dfe-first-login",
+    "profiles": [{"name": "single-kafka", "default": True}],
+    "up": {
+        "latest": ["docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d"],
+        "pinned": ["docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose-1.0.5 up -d"],
+    },
+    "demo": {
+        "latest": ["docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d"],
+        "pinned": ["docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-1.0.5 up -d"],
+    },
+    "notes": {"up": "Point your browser to http://localhost:3000.", "demo": "A throwaway stack."},
+}
+
+
+@pytest.mark.parametrize(
+    ("form", "kind", "line", "note"),
+    [
+        ("latest", "up", "oci://ghcr.io/hyperi-io/dfe-docker:compose up -d", "Point your browser"),
+        ("pinned", "up", "oci://ghcr.io/hyperi-io/dfe-docker:compose-1.0.5 up -d", "Point your browser"),
+        ("latest", "demo", "oci://ghcr.io/hyperi-io/dfe-docker:demo up -d", "A throwaway stack."),
+    ],
+)
+def test_a_compose_quickstart_fills_one_command_and_its_notes(form: str, kind: str, line: str, note: str) -> None:
+    page = QUICKSTART_PAGE.replace("docker-quickstart: up", f"docker-quickstart: {kind}")
+    text = aggregate.fill_quickstart(page, {**QUICKSTART_COMPOSE, "form": form})
+    assert f"<!-- landing -->\n```bash\ndocker compose -f {line}\n```\n\n{note}" in text
+    assert "You need Docker Engine 26.0 or later with Compose 2.34.0 or later." in text
+    assert "init" not in text
+    assert "${PWD}" not in text

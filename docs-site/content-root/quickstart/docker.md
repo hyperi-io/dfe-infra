@@ -19,7 +19,6 @@ make up     # pull, start, self test, print the console login
 `make up` runs the newest DFE release with every image pinned, on the `single-kafka` profile. It ends with a self test that sends marked events through and prints `PASS` as each check lands. `VERSION=` pins another release.
 
 `make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
-<!-- /docker-quickstart -->
 
 | Profile | Transport | Runs |
 |---|---|---|
@@ -27,6 +26,7 @@ make up     # pull, start, self test, print the console login
 | `slim-kafka` | Kafka message bus | The same core path over Kafka, plus a Kafka UI. |
 | `single-grpc` | gRPC, low latency | The core path plus the fetcher and the transforms. |
 | `single-kafka` | Kafka message bus | The core path over Kafka, plus the archiver, the fetcher and the transforms. The default. |
+<!-- /docker-quickstart -->
 
 Then send it an event of your own:
 
@@ -40,7 +40,7 @@ curl -X POST http://localhost:8080/ingest \
 
 > **Coming from Splunk or Elastic?** You didn't create an index or a mapping first, and you won't need to. `main` takes whatever fields you send and they all work straight away, so a sender adding or changing a field breaks nothing. You tune the fields that matter later. More in [what's different](../coming-from.md#nothing-breaks-when-a-source-changes).
 
-Where to find it: the console is at http://localhost:3000, ClickHouse HTTP at http://localhost:8123 and the engine API at http://localhost:8003. `single-kafka` adds the Kafka UI at http://localhost:8081. The ingest ports listen on every interface, and everything else on this host only.
+Where to find it: the console is at http://localhost:3000, ClickHouse HTTP at http://localhost:8123 and the engine API at http://localhost:8003. `single-kafka` adds the Kafka UI at http://localhost:8081.
 
 Next:
 

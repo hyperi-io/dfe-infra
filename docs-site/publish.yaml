@@ -12,6 +12,8 @@ dropped_versions:
 # tag or commit its docs/ is read at. A member with no entry reads docs/ at the
 # ref the stack pins, and the engine's API reference always does.
 docs_refs:
+  2.2.2:
+    dfe-docker: "v1.0.5"
 
 # A member whose docs mount inside another member's section rather than at the
 # top of the sidebar: member -> the member it mounts under. The parent mounts at

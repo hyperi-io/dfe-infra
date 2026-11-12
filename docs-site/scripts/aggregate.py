@@ -1295,7 +1295,7 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
     else:
-        ref = build.refs.get(DOCKER_MEMBER, "")
+        ref = build.docs_refs.get(DOCKER_MEMBER) or build.refs.get(DOCKER_MEMBER, "")
         if not _RELEASE_TAG.fullmatch(ref):
             return None
         url = f"{DOCKER_RELEASES}/download/{ref}/{DOCKER_QUICKSTART}"
@@ -1308,6 +1308,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     commands = [(data.get(kind) or {}).get(form) for kind in ("up", "demo")]
     if data.get("schema") != 1 or not all(isinstance(lines, list) for lines in commands):
         raise FetchError(f"{url}: not a schema 1 quickstart.json with up and demo commands")
+    notes = data.get("notes") or {}
+    if data.get("kind") == "compose" and not all(isinstance(notes.get(k), str) for k in ("up", "demo")):
+        raise FetchError(f"{url}: a compose quickstart.json without up and demo notes")
     return {**data, "form": form}
 
 
@@ -1325,11 +1328,18 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         return text
     default = next((p["name"] for p in quickstart.get("profiles", []) if p.get("default")), "")
     console, login = quickstart["console_url"], quickstart["login"]
+    compose = quickstart.get("kind") == "compose"
+    need = (
+        f"You need Docker Engine {quickstart['min_engine']} or later with Compose {quickstart['min_compose']} or later."
+        if compose
+        else f"You need Docker with Compose {quickstart['min_compose']} or later."
+    )
 
     def region(match: re.Match[str]) -> str:
         kind = match.group(1)
         commands = "\n".join(quickstart[kind][quickstart["form"]])
-        after = {
+        # A compose release words its own follow-up. Older releases ran init and printed the login.
+        after = quickstart["notes"][kind] if compose else {
             "up": (
                 f"`init` writes the stack's compose file and settings into this directory, on the "
                 f"`{default}` profile, and `docker compose up -d` starts it. The console is at "
@@ -1345,7 +1355,7 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         }[kind]
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
-            f"You need Docker with Compose {quickstart['min_compose']} or later.\n\n"
+            f"{need}\n\n"
             f"<!-- landing -->\n```bash\n{commands}\n```\n\n{after}\n"
             "<!-- /docker-quickstart -->\n"
         )

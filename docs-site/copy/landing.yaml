@@ -134,11 +134,15 @@ quickstart:
       label: Demo
       blocks:
         - text: "See DFE working on your laptop, with sample firewall logs already flowing in."
+        - code_from: quickstart/demo.md
+        - text: "Then point your browser to http://localhost:3000."
       guide: {label: The demo, to: /quickstart/demo/}
     - value: docker
       label: Docker
       blocks:
         - text: "The whole DFE stack on one machine, ready for your own data."
+        - code_from: quickstart/docker.md
+        - text: "Then point your browser to http://localhost:3000."
       guide: {label: Docker quickstart, to: /quickstart/docker/}
     - value: kubernetes
       label: Kubernetes
