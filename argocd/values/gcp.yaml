@@ -16,4 +16,4 @@ storageClass: standard-rwo
 
 # The engine's runtime store is a PVC against the cluster's default
 # StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
-# storage seam needed.
+# storage setting needed.

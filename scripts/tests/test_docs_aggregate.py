@@ -439,7 +439,7 @@ def test_placements_are_keyed_by_doc_id_under_the_member_mount(
         ("mailto:sales@example.com", "mailto:sales@example.com"),
         ("#anchor", "#anchor"),
         ("aws.md", "aws.md"),
-        ("../architecture.md#seams", "../architecture.md#seams"),
+        ("../architecture.md#sources", "../architecture.md#sources"),
         ("/docs/architecture.md", "../architecture.md"),
         ("/docs/kafka/", "../kafka/"),
         ("../../README.md", f"https://github.com/{REPO}/blob/2.2.0/README.md"),

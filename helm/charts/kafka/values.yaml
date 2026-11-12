@@ -593,7 +593,7 @@ user:
     # (terraform/modules/tf-secrets `seed_kafka_user`); ESO only reads it, into both
     # this namespace and the app namespace. See kafka-user-credential.yaml.
     #
-    # WHY the store rather than an in-cluster generator: it is the one seam that swaps
+    # WHY the store rather than an in-cluster generator: it is the one piece that swaps
     # for a public-cloud deploy (ClusterSecretStore provider -> aws/gcp/azure on EKS).
     # Generating straight into a Secret would leave cloud needing a different
     # mechanism and the store path unexercised on-prem.

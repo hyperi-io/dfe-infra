@@ -308,7 +308,7 @@ thin chart's env.
             # Stable named team logins, reconciled on every boot -- config wins,
             # so a teardown+rebuild restores the exact shared logins (#106).
             # Only referenced when the overlay supplies accounts, so an absent
-            # Secret never wedges the pod in CreateContainerConfigError (same
+            # Secret never holds the pod in CreateContainerConfigError (same
             # guard idiom as the hyperdx chart's passwordSecretName).
             - name: DFE_ENGINE_AUTH_LOCAL_SEED_ACCOUNTS
               valueFrom:
@@ -339,7 +339,7 @@ thin chart's env.
                   fieldPath: metadata.namespace
             {{- with .Values.auth.adminSecretPath }}
             # Set = the rotate-password endpoint writes through the scalo secrets
-            # seam instead of answering 501 with the kubectl patch command.
+            # provider instead of answering 501 with the kubectl patch command.
             - name: DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD_SECRET_PATH
               value: {{ . | quote }}
             {{- end }}

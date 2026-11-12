@@ -824,7 +824,7 @@ docker:
 ## ---------------------------------------------------------------------------
 ## k8s SLICE -- consumed by this repo's render_dial. Each field maps to one DFE_*
 ## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap dials are
-## the DeployContext seam -- change the cloud, change these, everything else is
+## the DeployContext fields -- change the cloud, change these, everything else is
 ## the same orchestrator.
 ## ---------------------------------------------------------------------------
 k8s:

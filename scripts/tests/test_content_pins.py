@@ -29,7 +29,7 @@ Eight things are checked, beside those two:
 4. Every content init container in a deployed render runs an image its entry pins.
 5. Content is not profile-dependent -- every tier renders the same init containers.
 6. Nothing carries the content through .Values or a ConfigMap.
-7. An `emit` contract entry cannot wedge the engine's pod: the app writes its own
+7. An `emit` contract entry cannot block the engine's pod: the app writes its own
    contract, and an image that carries none reports the absence and exits 0.
 
     python3 scripts/tests/test_content_pins.py

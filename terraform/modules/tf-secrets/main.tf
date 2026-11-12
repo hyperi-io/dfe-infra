@@ -63,7 +63,7 @@ resource "vault_kv_secret_v2" "seed_argocd" {
 # tried and is refused by that policy -- 403 on PUT secret/metadata/... -- which is
 # the policy working as designed, not a bug to route around.)
 #
-# The store is also the ONE seam that swaps for a public-cloud deploy: on EKS this
+# The store is also the ONE piece that swaps for a public-cloud deploy: on EKS this
 # resource becomes aws_secretsmanager_secret_version and the ClusterSecretStore's
 # provider flips to aws, while every reader downstream is unchanged.
 #

@@ -3,7 +3,7 @@
 #  File:         test_culvert_edge_vpn.py
 #  Purpose:      Prove the edge-fleet VPN reaches the receiver and nothing else,
 #                that its tunnels sit in the reserved client range, and that the
-#                receiver's exposure seam has a third rendering for it.
+#                receiver's exposure setting has a third rendering for it.
 #  Language:     Python
 #
 #  License:      BUSL-1.1

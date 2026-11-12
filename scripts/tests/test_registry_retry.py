@@ -12,7 +12,7 @@
 
 A fake registry stands in for docker and helm: each tool gets a script of the
 results its calls return, in order, so a registry that answers 429 twice and then
-serves the manifest is a three-entry list. `subprocess.run` is the only seam
+serves the manifest is a three-entry list. `subprocess.run` is the only call
 faked, so the real command lines, the retry loop and the messages all run. The
 sleeps are captured instead of taken.
 

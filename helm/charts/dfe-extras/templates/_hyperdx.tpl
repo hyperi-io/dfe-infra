@@ -53,7 +53,7 @@ MONGO_URI, which the kubelet expands, stay in the thin chart's env.
             # THIRD PARTY. DFE is a product other organisations deploy into their own
             # estates; their telemetry is theirs, and nobody opted into that by
             # installing DFE. The stack already self-monitors into the deployer's own
-            # ClickHouse via the telemetry seam, so this buys them nothing.
+            # ClickHouse via its own OTel pipeline, so this buys them nothing.
             # Deployers who WANT to support upstream can set usageStats.enabled: true.
             - name: USAGE_STATS_ENABLED
               value: {{ .Values.usageStats.enabled | default false | quote }}

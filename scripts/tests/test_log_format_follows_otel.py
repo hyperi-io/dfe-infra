@@ -10,7 +10,7 @@
 """The scalo chassis logs JSON when an OTLP endpoint is configured and lines when not.
 
 The deploy layer owns the endpoint (argocd/values/apps/_common.yaml, through the
-dfe-common seam) and nothing else. A chart or values file that also named a format
+dfe-common library chart) and nothing else. A chart or values file that also named a format
 would override the chassis rule per component and bring back the sprawl the rule
 removed. Two checks hold that:
 

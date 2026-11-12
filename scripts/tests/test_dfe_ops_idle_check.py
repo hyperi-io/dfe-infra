@@ -15,7 +15,7 @@ app and undeploys an instance no source uses. A fresh deploy therefore carries
 neither, and requiring them failed the acceptance idle check on single.
 
 The cluster side is a stand-in kubectl that answers from a fixed Deployment set,
-and the metrics seams report an idle app, so no cluster or port-forward is used.
+and the faked metrics reads report an idle app, so no cluster or port-forward is used.
 
     python3 -m pytest scripts/tests/test_dfe_ops_idle_check.py -q
 """

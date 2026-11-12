@@ -27,7 +27,7 @@ DFE is cake and eat it too. Here's what most people do, and what we do instead.
 | Generic, sub-optimised everything | Heavily optimised, opinionated bookends in `dfe-receiver`, `dfe-fetcher` and `dfe-loader` instead of poor-performing generics. Generics stay where they're *required and beneficial*. See [purpose-built bookends](#purpose-built-bookends). |
 | An all-in walled garden | Components that each do one thing *completely*, and mix and match with other technology without friction. |
 | Medium scale, then try to scale up | Designed and proven at PB scale *first*, then *scaled down* for medium and small workloads. That's usually the secret sauce a SaaS provider keeps to itself. |
-| GitOps wedging square apps into round pods | Built for Kubernetes autoscaling from the ground up, with self-regulating vertically scaling pods. |
+| GitOps that pins every app to a fixed pod size | Built for Kubernetes autoscaling from the ground up, with self-regulating vertically scaling pods. |
 | Cloud and infra spend is the deployer's problem | Efficiency on the hot path is core to every component, and that cuts your spend. It's lean enough to run in the field or a theatre data centre, not only a cloud region. |
 | Constant serde, re-processing and row processing, which burns CPU cycles for no value | serde is the enemy. What can be zero copy, batched, SIMD and collapsed into a single app or cycle is. |
 | Wire in and babysit your own enrichment | GeoIP, ASN, IP reputation and risk, Community ID and user-agent parsing are built in, with the reference data kept current for you. Opt in per source. No fragile DIY feeds and cron jobs to maintain. |

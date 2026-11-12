@@ -18,7 +18,7 @@ over them, so its Application goes Unknown, no broker starts and the readiness
 gate times out -- while the cluster preflight passed.
 
 The preflight and stack-deploy halves drive `dfe-ops preflight` and `dfe-ops
-stack-deploy` through their one subprocess seam, `_run_text`. The teardown half
+stack-deploy` through their one subprocess call, `_run_text`. The teardown half
 runs bootstrap/destroy.sh against a fake `kubectl` first on PATH that logs every
 call. No cluster is involved.
 

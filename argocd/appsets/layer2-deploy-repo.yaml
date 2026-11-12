@@ -2,8 +2,8 @@
 #
 # Deployed ONLY when no external git (GitHub/GitLab) is supplied -- gated on the
 # cluster label dfe.hyperi.io/bundled-deploy-repo: "true" (bootstrap.sh sets it
-# true when DFE_CONFIG_REPO_URL is unset). The deploy repo is a provider-agnostic
-# seam (external git is PRIMARY, ~95%); Forgejo is the ~5% tyre-kicking/air-gapped
+# true when DFE_CONFIG_REPO_URL is unset). The deploy repo is any git provider the
+# deployer names (external git is PRIMARY, ~95%); Forgejo is the ~5% tyre-kicking/air-gapped
 # fallback and is NEVER a hard dependency -- the substrate (layer2-data) does not
 # depend on it. SINGLE source (base chart + profile/cloud values only): it hosts
 # the config repo, so it must NOT itself reference the config repo (that was the

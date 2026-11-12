@@ -210,7 +210,7 @@ tls:
       # per challenge and can match the wrong zone where names overlap.
       hostedZoneID: ""
 
-  # Vault/OpenBao PKI issuer mode -- the private-CA swap seam. vault.server
+  # Vault/OpenBao PKI issuer mode -- where a private CA swaps in. vault.server
   # set renders the issuerName ClusterIssuer Vault-backed; acme.email set
   # renders it ACME (set exactly one). AppRole SecretID Secret is seeded by
   # bootstrap.sh from DFE_CERTMANAGER_SECRET_ID.
