@@ -497,6 +497,41 @@ def report(
     return console, summary
 
 
+def fail_scope(content: Path, named: Iterable[str]) -> set[str]:
+    """The builds --fail-on reads, with `newest` as the release site.json names newest.
+
+    Args:
+        content: A tree aggregate.py wrote, holding site.json.
+        named: Build names, or `newest`.
+
+    Returns:
+        The build names.
+
+    Raises:
+        SystemExit: A name is not a build in the tree, or `newest` finds no release.
+    """
+    site_file = content / aggregate.SITE_FILE
+    if not site_file.is_file():
+        raise SystemExit(f"error: {content} holds no site.json: run aggregate.py first")
+    site = json.loads(site_file.read_text(encoding="utf-8"))
+    builds = [build["name"] for build in site["builds"]]
+    scope = set()
+    for name in named:
+        if name == "newest":
+            if not site.get("newest"):
+                raise SystemExit(
+                    f"error: --fail-on-build newest: {content} holds no listed release"
+                )
+            scope.add(site["newest"])
+        elif name in builds:
+            scope.add(name)
+        else:
+            raise SystemExit(
+                f"error: --fail-on-build {name}: not a build in {content} ({', '.join(builds)})"
+            )
+    return scope
+
+
 def main(argv: list[str] | None = None) -> int:
     """Gate the assembled pages, or the files named.
 
@@ -522,10 +557,17 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="comma-separated rules that fail on any finding, old or new, even with --report-only",
     )
+    parser.add_argument(
+        "--fail-on-build",
+        default="",
+        help="comma-separated builds --fail-on reads, `newest` for the newest release; default every build",
+    )
     args = parser.parse_args(argv)
     fail_on = {rule.strip() for rule in args.fail_on.split(",") if rule.strip()}
     if unknown := fail_on - RULES:
         raise SystemExit(f"error: --fail-on names unknown rule(s): {', '.join(sorted(unknown))}")
+    named = [build.strip() for build in args.fail_on_build.split(",") if build.strip()]
+    scope = fail_scope(args.content, named) if named and not args.paths else None
 
     text = GATE_FILE.read_text(encoding="utf-8")
     phrases = load_phrases(aggregate.yaml_subset.parse(text, source=str(GATE_FILE)))
@@ -545,7 +587,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(summary) + "\n")
-    if any(finding.rule in fail_on for finding in findings):
+    # A finding with no build (the copy files, a named file) holds for every build.
+    in_scope = [f for f in findings if scope is None or not f.build or f.build in scope]
+    if any(finding.rule in fail_on for finding in in_scope):
         return 1
     return 1 if new and not args.report_only else 0
 
