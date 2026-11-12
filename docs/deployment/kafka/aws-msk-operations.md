@@ -38,11 +38,9 @@ ACL has to exist yet, then:
 It creates no topic: dfe-engine creates the bootstrap topic set at its own
 startup, which is why the grant includes Create.
 
-**One principal, one ACL set, for the whole fleet.** This is deliberate
-on-prem parity, not a regression -- and a roadmap item toward per-app
-principals (one SCRAM user per DFE service, scoped to the topics it
-touches), so a compromised app credential reaches only its own topics
-rather than every topic on the cluster, ahead of the product going public.
+**One principal, one ACL set, for the whole fleet.** One SCRAM principal
+holds the ACLs for every DFE app, as on-prem. A compromised app credential
+therefore reaches every topic.
 
 **The IAM identity exists for this bootstrap path alone.** Every DFE app still
 authenticates with SASL/SCRAM-512 on 9096; the cluster enables both mechanisms so

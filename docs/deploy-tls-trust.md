@@ -19,7 +19,7 @@ python3 scripts/dfe-ops ca --install   # writes the file, does the non-root half
 
 `--install` writes `.tmp/dfe-internal-ca.crt` and branches on `platform.system()`. On Linux it adds the certificate to the Chromium-family NSS store at `~/.pki/nssdb` (Brave and Chrome read that, not the system store, and it needs `libnss3-tools`) and prints `sudo cp <file> /usr/local/share/ca-certificates/` plus `sudo update-ca-certificates`. On macOS Chrome and Safari read the system keychain, so nothing runs without root and the one line printed is `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <file>`. Plain `dfe-ops ca` prints both.
 
-With `tls.internalCA.persist.enabled` on, the root persists across a rebuild (#238), so that trust is a one-off. The gateway chart pushes the minted root to the deployment's secret store once (`PushSecret`, `updatePolicy: IfNotExists`) and restores it before cert-manager can mint (`ExternalSecret`, `refreshPolicy: CreatedOnce`). bootstrap.sh renders that same pair ahead of Argo, so the restore is ordered before the Certificate rather than racing it. The root is reused and the leaf lifetimes rotate.
+With `tls.internalCA.persist.enabled` on, the root persists across a rebuild, so that trust is a one-off. The gateway chart pushes the minted root to the deployment's secret store once (`PushSecret`, `updatePolicy: IfNotExists`) and restores it before cert-manager can mint (`ExternalSecret`, `refreshPolicy: CreatedOnce`). bootstrap.sh renders that same pair ahead of Argo, so the restore is ordered before the Certificate rather than racing it. The root is reused and the leaf lifetimes rotate.
 
 | Setting | Where | Effect |
 |---|---|---|

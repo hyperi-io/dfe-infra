@@ -34,13 +34,13 @@ MSK Provisioned gives you a real `server.properties` through an `aws_msk_configu
 | KRaft (no ZooKeeper) | Yes. MSK manages KRaft and there's nothing to set. |
 | `default.replication.factor=3` | Settable, and MSK FORCES topic RF to 3 anyway (a create with RF != 3 is coerced to 3). That matches DFE. |
 | `min.insync.replicas=2` | Settable at the broker level (`server_properties`). The topic-level override is PROTECTED, so you can't weaken it per topic. |
-| `unclean.leader.election.enable=false` | Settable at the broker level. Topic-level override PROTECTED. |
+| `unclean.leader.election.enable=false` (Kafka 4.x default) | Settable at the broker level. Topic-level override PROTECTED. |
 | `num.partitions=12` | Settable at the broker level (applies to auto-created topics). |
-| `compression.type=producer` | Settable. |
-| `log.retention.hours=72` | Settable. |
+| `compression.type=producer` | dfe-engine sets it on each topic it creates, so there's nothing to set on the broker. |
+| `log.retention.hours=72` | Settable. 72 hours is what `dfe-ops init` writes to the dial's `kafka.msk.log_retention_ms` for a managed broker. |
 | `log.retention.bytes` (unset) | Settable (leave off / -1). |
-| `log.segment.bytes=512 MiB` | Settable. |
-| `message.max.bytes` (default) | Settable. Keep it in step with `replica.fetch.max.bytes`. |
+| `log.segment.bytes` (Kafka default, 1 GiB) | Settable. DFE leaves it at the default. |
+| `message.max.bytes=16777216` | Settable. Keep it in step with `replica.fetch.max.bytes`. |
 
 Locked: MSK protects the topic-level overrides of `min.insync.replicas`, `unclean.leader.election.enable` and the replication factor. The DFE defaults for those three (2, false and 3) are the values you set at broker level, so nothing needs a topic-level override.
 
@@ -65,7 +65,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0" # VERIFY latest + PIN exact (6.54.0 seen 2026-07-08); see README pinning note.
+      version = "~> 6.0" # PIN exact. versions.yaml providers.hashicorp-aws is what DFE's roots run. See README pinning note.
     }
   }
 }
@@ -79,11 +79,10 @@ resource "aws_msk_configuration" "dfe" {
     auto.create.topics.enable=false
     default.replication.factor=3
     min.insync.replicas=2
-    unclean.leader.election.enable=false
     num.partitions=12
-    compression.type=producer
-    log.retention.hours=72
-    log.segment.bytes=536870912
+    log.retention.ms=259200000
+    message.max.bytes=16777216
+    replica.fetch.max.bytes=16777216
     replica.lag.time.max.ms=30000
   PROPERTIES
 }
@@ -168,8 +167,8 @@ resource "aws_msk_serverless_cluster" "dfe" {
   }
 }
 
-# IAM policy the DFE consumer/producer role needs (attach to the IRSA role that
-# the DFE ServiceAccounts assume -- there is no static credential).
+# IAM policy the DFE consumer/producer role needs (attach to the role EKS Pod
+# Identity binds to the DFE ServiceAccounts -- there is no static credential).
 data "aws_iam_policy_document" "dfe_kafka" {
   statement {
     actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]
@@ -204,7 +203,7 @@ Neither `aws_msk_cluster` nor `aws_msk_serverless_cluster` creates topics, and o
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap endpoint>`.
 - `kafka.securityProtocol=SASL_SSL`. The SCRAM listener on 9096 is TLS only, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand. `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
 - `kafka.external.provider` is the identity the chart derives the SASL mechanism from:
-  - Provisioned: `msk` gives `SASL_SSL` and `SCRAM-SHA-512`. Credentials come from the Vault-backed external secret (`kafka.external.auth.type=scram`).
+  - Provisioned: `msk` gives `SASL_SSL` and `SCRAM-SHA-512`. Credentials come from the external secret in the deployment's secrets store, Secrets Manager on AWS (`kafka.external.auth.type=scram`).
   - Serverless: `msk_iam` gives `SASL_SSL` and `OAUTHBEARER`. Set `kafka.external.auth.type=msk_iam`, and NO static secret is rendered.
 - Client config: `dfe kafka client-config --provider msk` (or `msk_iam`) prints the derived settings from the canonical provider table.
 
@@ -218,11 +217,11 @@ Confirmed by 2026 research (sources in the README):
 - Serverless caps at 2400 leader partitions and 250 GB/partition, and honours only `cleanup.policy`, `compression.type`, `max.message.bytes`, `retention.bytes` and `retention.ms` per topic.
 - The `aws_msk_configuration`, `aws_msk_scram_secret_association`, `aws_msk_serverless_cluster` and IAM SASL resources are all current in the provider.
 
-The bootstrap Job's pinned jar is verified. `aws-msk-iam-auth` v2.3.8 was published 2026-09-05, and the sha256 in `values.yaml` matches both the release's own `.sha256` asset and a hand-computed sum of the downloaded jar.
+The bootstrap Job's pinned jar is verified. `versions.yaml` pins `services.aws-msk-iam-auth`, and the Job checks the downloaded jar against the sha256 in `values.yaml`.
 
 NOT verified:
 
-- That the bootstrap Job authenticates end to end. The Pod Identity credential reaching the IAM login module, and `kafka-acls.sh` writing an ACL over SASL/IAM, haven't been run against a real cluster.
+- The bootstrap Job on any release after 2.2.1, the one DFE ran on MSK. It carries the same jar pin as that run.
 - The `broker_instance_type` and `broker_volume_gib` sizing for your throughput.
 - That every `server.properties` key above is permitted on the Kafka version you pick. The allowed set varies by version, so check the AWS "Custom MSK configurations" page.
 

@@ -34,9 +34,9 @@ This is Redpanda's MANAGED cloud, which isn't the self-hosted Redpanda DFE can d
 | `unclean.leader.election` off | N/A. Raft never elects a non-quorum leader | N/A (Raft) |
 | `num.partitions=12` | Per-topic (`partition_count`), auto-scales | Per-topic (`partition_count=12`) |
 | `compression.type=producer` | Per-topic (`compression.type`), and Redpanda defaults to `producer` | Per-topic, default `producer` |
-| `log.retention.hours=72` | Per-topic `retention.ms` | Per-topic `retention.ms`, or cluster `log_retention_ms` |
+| `log.retention.hours=72`, what `dfe-ops init` writes to the dial for a managed broker | Per-topic `retention.ms` | Per-topic `retention.ms`, or cluster `log_retention_ms` |
 | `log.retention.bytes` (unset) | Per-topic `retention.bytes` | Per-topic `retention.bytes`, or cluster `retention_bytes` |
-| `log.segment.bytes=512 MiB` | Managed | Cluster `log_segment_size` (Redpanda property name) |
+| `log.segment.bytes` (left at the default) | Managed | Cluster `log_segment_size` (Redpanda property name), left at the default |
 | `cleanup.policy=delete` | Per-topic (default `delete`) | Per-topic (default `delete`) |
 | `message.max.bytes` (default) | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
 
@@ -137,13 +137,13 @@ output "cluster_api_url" {
 }
 ```
 
-For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_segment_size = 536870912`, `log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's own self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
+For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's own self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
 
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<the SASL bootstrap host:port>`. That's the seed brokers. It isn't the HTTP `cluster_api_url`, which is the admin/REST plane the Terraform provider uses. The client bootstrap is the Kafka SASL endpoint from the cluster's connectivity details.
 - `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. Redpanda Cloud serves SCRAM-SHA-512 over TLS only. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
-- Credentials: the `redpanda_user` name (username) and password go in the Vault-backed external secret, with `kafka.external.auth.type=scram`.
+- Credentials: the `redpanda_user` name (username) and password go in the external secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere), with `kafka.external.auth.type=scram`.
 - Client config: `dfe kafka client-config --provider redpanda-cloud`.
 
 ## Verification: what is and isn't confirmed
@@ -155,9 +155,8 @@ Confirmed by 2026 research (sources in the README):
 - The Redpanda cluster property names `log_segment_size`, `log_retention_ms`, `default_topic_partitions` and `default_topic_replications` are confirmed.
 - The DFE `redpanda-cloud` provider is SASL_SSL SCRAM-SHA-512 (scalo `providers.rs`).
 
-NOT verified, because we have no Redpanda Cloud account here and can't deploy:
+NOT verified for the hand-written snippet above, which the `managed-kafka/redpanda-cloud` module path does not exercise:
 
-- The exact provider version to pin.
 - The precise `serverless_region`, `throughput_tier` and `zones` strings for your account.
 - Whether Serverless honours per-topic `replication_factor`. It may manage RF and ignore the field.
 - The exact Kafka SASL bootstrap host to feed `kafka.external.bootstrap`. Read it from the cluster's connectivity details after apply.
