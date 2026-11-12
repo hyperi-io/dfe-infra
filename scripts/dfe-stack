@@ -292,6 +292,42 @@ def unpublished_apps(v: dict) -> list[str]:
     return sorted(set(v.get("apps", {})) - set(v.get("digests", {})))
 
 
+# DFE-owned pins a release takes as they are: dfe-docker cuts no release tag, so
+# the stack pins the commit that ran it.
+COMMIT_PINNED = ("content.dfe-docker",)
+DIGEST_SECTIONS = ("digests", "chart-digests", "services-digests")
+
+
+def dfe_owned_pins(v: dict) -> dict[str, str]:
+    """`section.name` -> tag for every DFE-owned versioned pin in a stack.
+
+    Every app is DFE's. Elsewhere a pin is DFE's when suite.yaml names it, as a
+    member or a non-member, so a new member is checked the day it is pinned.
+    Third-party upstream tags carry names suite.yaml never lists.
+    """
+    graph = suite_graph.load()
+    names = set(graph.get("nodes", {})) | set(graph.get("non_members") or {})
+    pins = {f"apps.{app}": str(tag) for app, tag in v.get("apps", {}).items()}
+    for section, body in v.items():
+        if section == "apps" or section in DIGEST_SECTIONS or not isinstance(body, dict):
+            continue
+        for name, tag in body.items():
+            if name in names and isinstance(tag, str) and f"{section}.{name}" not in COMMIT_PINNED:
+                pins[f"{section}.{name}"] = tag
+    return pins
+
+
+def non_release_pins(v: dict) -> list[str]:
+    """`section.name tag` for every DFE-owned pin that is not a plain vX.Y.Z.
+
+    A release must ship none of them.
+    """
+    return [
+        f"{name} {tag}" for name, tag in sorted(dfe_owned_pins(v).items())
+        if (key := semver_key(tag)) is None or key[3] != 1
+    ]
+
+
 def untagged_digests(v: dict) -> list[str]:
     """`digests:` keys with no tag to build a ref from, which app_images drops."""
     return sorted(name for name in v.get("digests", {}) if not image_tag(v, name))
@@ -1493,6 +1529,14 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         )
         return 1 if pins_failed else 0
     failed = pins_failed
+    rc_pins = non_release_pins(v)
+    if rc_pins:
+        print(
+            f"release-gate FAIL: {name} is maturity=release but these DFE pins are not "
+            f"plain vX.Y.Z releases: {', '.join(rc_pins)}",
+            file=sys.stderr,
+        )
+        failed = True
     if unp:
         print(
             f"release-gate FAIL: {name} is maturity=release but these apps are "
@@ -1533,18 +1577,29 @@ def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[i
     return head + 1, end
 
 
-def _latest_published(org: str, app: str) -> tuple[str, str] | None:
-    """The highest published tag for an app and its digest, or None if it has none.
+# semver_key's first prerelease identifier for an -rc.N tag.
+_RC_IDS = ((1, "rc"),)
 
-    Only version-shaped tags are considered, so `latest`/`main` never win a cut. A
-    package with no tags is an app that has never shipped, so its pin holds.
+
+def _latest_published(org: str, app: str, *, prerelease: bool = False) -> tuple[str, str] | None:
+    """The highest published tag of one kind for an app and its digest, or None if it has none.
+
+    `prerelease` ranks vX.Y.Z-rc.N and plain vX.Y.Z together, so an rc stack takes
+    a changed app's rc and an untouched app's last release. Without it only plain
+    vX.Y.Z count, so a release stack never pins an rc. Only version-shaped tags are
+    considered, so `latest`/`main` never win a cut. A package with no tags of those
+    kinds holds its pin.
     """
+    wanted = {(), _RC_IDS} if prerelease else {()}
     try:
         tags = registry_pins.package_tags(org, app)
-        candidates = [t for t in tags if re.match(r"^v?\d+\.\d+\.\d+$", t)]
+        candidates = [
+            t for t in tags
+            if (key := semver_key(t)) is not None and key[4][:1] in wanted
+        ]
         if not candidates:
             return None
-        best = max(candidates, key=registry_pins.version_key)
+        best = max(candidates, key=semver_key)
         digest = registry_pins.resolve_digest(org, app, best)
     except registry_pins.RegistryError as exc:
         # A network failure must not read as "unpublished".
@@ -1769,8 +1824,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
     Clones the `--from` block as the SHAPE, so a key cannot be dropped by
-    omission, then moves each DFE-owned app to its newest published release and
-    repins the matching image digest, then repins every thin chart at the version
+    omission, then moves each DFE-owned app to its newest published tag of the
+    kinds the new stack's maturity takes (vX.Y.Z-rc.N or plain vX.Y.Z below
+    `release`, plain vX.Y.Z only at `release`) and repins the matching image digest, then repins every thin chart at the version
     its tag names (repin_charts). Third-party pins carry over untouched: those are
     Renovate's to move, and several are deliberately held below a ceiling (the
     ClickHouse LTS line, the Kafka version strimzi supports).
@@ -1848,6 +1904,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
         raise SystemExit(f"error: no stack.previous in {from_name} to re-point at the source")
 
     _, from_pins = stack_pins(root, from_name)
+    maturity = args.maturity or stacks[from_name].get("maturity", "")
+    want_rc = maturity != "release"
     wanted = set(args.apps.split(",")) if args.apps else None
     moved: list[str] = []
     held: list[str] = []
@@ -1856,9 +1914,10 @@ def cmd_cut(args: argparse.Namespace) -> int:
         if wanted is not None and app not in wanted:
             held.append(f"{app} {current} (not in --apps)")
             continue
-        found = _latest_published(args.org, app)
+        found = _latest_published(args.org, app, prerelease=want_rc)
         if found is None:
-            held.append(f"{app} {current} (no published release)")
+            kind = "rc or release" if want_rc else "release"
+            held.append(f"{app} {current} (no published {kind})")
             continue
         tag, digest = found
         if _norm_version(tag) == _norm_version(current):
@@ -1881,6 +1940,15 @@ def cmd_cut(args: argparse.Namespace) -> int:
     host = args.registry.partition("/")[0]
     moved += repin_charts(block, args.org, host, held)
 
+    # A held, --apps-excluded or cloned content pin carries over as it was, which may be an rc.
+    if not want_rc:
+        rc_pins = non_release_pins(parse_simple_yaml("".join(block)).get(new, {}))
+        if rc_pins:
+            raise SystemExit(
+                f"error: a release stack must pin plain vX.Y.Z DFE builds, but {new} would "
+                f"carry {', '.join(rc_pins)} -- promote those builds first"
+            )
+
     print(f"cut {new} from {from_name}")
     if from_withdrawn:
         print(f"  support {WITHDRAWN} -> standard (cloned from a withdrawn stack)")
@@ -1889,7 +1957,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
     for line in held:
         print(f"  held   {line}")
     if not moved:
-        print("  nothing moved -- every app was already at its latest published release")
+        print("  nothing moved -- every app was already at its latest published tag")
 
     if args.dry_run:
         for _, todo, what in replacing:

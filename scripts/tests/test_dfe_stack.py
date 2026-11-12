@@ -496,6 +496,65 @@ def test_release_gate_passes_a_release_that_carries_both() -> None:
     expect("and says how many images it read", "all 2 image(s)" in out, out)
 
 
+def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
+    """However the stack was produced, a release ships promoted builds only."""
+    both = lambda ref: ({"linux/amd64", "linux/arm64"}, "")  # noqa: E731
+    for maturity, tag, want in (("release", "v1.0.0-rc.1", 1), ("release", "v1.0.0", 0), ("rc", "v1.0.0-rc.1", 0)):
+        block = (
+            f"    maturity: {maturity}\n"
+            f'    apps:\n      an-app: "{tag}"\n'
+            '    content:\n      a-fork: "v0.2.7"\n'
+            '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
+        )
+        rc, out = _run_release_gate(block, both)
+        expect(f"{maturity} pinning {tag} exits {want}", rc == want, f"exit {rc}\n{out}")
+        if want:
+            expect("and names the app and its tag", "an-app v1.0.0-rc.1" in out, out)
+
+    for label, content, service, want in (
+        ("a hand-edited prerelease dfe-hyperdx", 'dfe-hyperdx: "v0.3.0-rc.1"', "26.3.17.56", 1),
+        ("a hand-edited prerelease dfe-toolbox",
+         'dfe-hyperdx: "v0.3.0-rc.1"\n    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"', "26.3.17.56", 1),
+        ("a released dfe-hyperdx, a dfe-docker commit and a four-part upstream tag",
+         'dfe-hyperdx: "v0.3.0"\n      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"', "26.3.17.56", 0),
+    ):
+        block = (
+            "    maturity: release\n"
+            '    apps:\n      an-app: "v1.0.0"\n'
+            f"    content:\n      {content}\n"
+            f'    services:\n      clickhouse-version: "{service}"\n'
+            '    digests:\n      an-app: "sha256:aaa"\n      dfe-hyperdx: "sha256:bbb"\n'
+        )
+        rc, out = _run_release_gate(block, both)
+        expect(f"{label}: release-gate exits {want}", rc == want, f"exit {rc}\n{out}")
+        if want:
+            expect(f"{label}: and names it", "dfe-hyperdx v0.3.0-rc.1" in out, out)
+            if "toolbox" in content:
+                expect(f"{label}: and the toolbox pin", "toolbox.dfe-toolbox v1.0.7-rc.1" in out, out)
+
+
+def test_every_dfe_owned_versioned_pin_is_release_checked() -> None:
+    """A versions.yaml key suite.yaml names is either checked at release or exempt by name."""
+    import suite_graph
+
+    graph = suite_graph.load()
+    names = set(graph.get("nodes", {})) | set(graph.get("non_members") or {})
+    root = stack.load_root()
+    unchecked = set()
+    for v in root.get("stacks", {}).values():
+        checked = set(stack.dfe_owned_pins(v)) | set(stack.COMMIT_PINNED)
+        for section, body in v.items():
+            if section in stack.DIGEST_SECTIONS or not isinstance(body, dict):
+                continue
+            unchecked |= {f"{section}.{key}" for key in body if key in names} - checked
+    expect("no DFE-owned pin escapes the release check", not unchecked, f"{sorted(unchecked)}")
+    expect(
+        "and the toolbox family is among the checked",
+        "toolbox.dfe-toolbox" in stack.dfe_owned_pins(stack.stack_pins(root)[1]),
+        "dfe-toolbox is a suite non-member pinned under toolbox:",
+    )
+
+
 def test_release_gate_fails_closed_when_the_registry_cannot_be_read() -> None:
     rc, out = _release_gate_over("release", lambda ref: (None, "403 Forbidden"))
     expect("an unread registry fails the gate", rc == 1, f"exit {rc}\n{out}")
@@ -1494,7 +1553,7 @@ def _cut_into(
     )
     stack.REPO_ROOT = tmp
     # Offline: no published release, so every app pin holds and no registry is hit.
-    stack._latest_published = lambda org, app: None
+    stack._latest_published = lambda org, app, prerelease=False: None
     stack.registry_pins.head_commit = head
     stack.registry_pins.commit_summary = summary
     try:
@@ -1831,7 +1890,7 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
         original_root, original_published = stack.REPO_ROOT, stack._latest_published
         stack.REPO_ROOT = tmp
         # The app has just published, so the tag moves and the digest has no home.
-        stack._latest_published = lambda org, app: ("v3.0.0", "sha256:ccc")
+        stack._latest_published = lambda org, app, prerelease=False: ("v3.0.0", "sha256:ccc")
         try:
             stack.cmd_cut(
                 argparse.Namespace(
@@ -1885,7 +1944,7 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
         asked.append((org, package, tag))
         return served.get((package, tag))
 
-    def latest(org: str, app: str) -> tuple[str, str] | None:
+    def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
         return ("v3.0.0", "sha256:img-three") if app == "an-app" else None
 
     with tempfile.TemporaryDirectory() as td:
@@ -2122,6 +2181,7 @@ def _withdrawn_cut(
     maturity: str | None = None,
     replace: bool = False,
     dry_run: bool = False,
+    kinds: list[bool] | None = None,
 ) -> tuple[str | None, str, list[str]]:
     """Run a cut over the replace fixture with the registry stubbed out.
 
@@ -2140,8 +2200,10 @@ def _withdrawn_cut(
         )
     asked: list[str] = []
 
-    def latest(org: str, app: str) -> tuple[str, str] | None:
+    def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
         asked.append(app)
+        if kinds is not None:
+            kinds.append(prerelease)
         return None
 
     original = (stack.REPO_ROOT, stack._latest_published)
@@ -2535,7 +2597,11 @@ def _published_engine():
     from _oci import FakeRegistry
 
     registry = FakeRegistry(page_size=2)
-    for tag, digest in (("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b")):
+    published = (
+        ("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b"),
+        ("v1.11.0-rc.2", "e"),
+    )
+    for tag, digest in published:
         registry.add("hyperi-io/dfe-engine", tag, "sha256:" + digest * 64)
     registry.add("hyperi-io/dfe-engine", "sha-1a2b3c4", "sha256:" + "d" * 64)
     return registry
@@ -2545,10 +2611,137 @@ def test_cut_takes_the_highest_release_and_its_own_digest() -> None:
     registry = _published_engine()
     with registry.serving():
         found = stack._latest_published("hyperi-io", "dfe-engine")
-    expect("v1.10.0 outranks v1.9.9 and the build tags", found == ("v1.10.0", "sha256:" + "b" * 64),
+    expect("v1.10.0 outranks v1.9.9, the build tags and an rc", found == ("v1.10.0", "sha256:" + "b" * 64),
            f"{found}")
     expect("no token request carried a credential",
            all(r.authorization == "" for r in registry.token_requests()), "a token was sent")
+
+
+def test_an_rc_cut_takes_the_newest_rc_or_release_and_a_release_cut_releases_only() -> None:
+    """An app untouched since its last release has no rc, so an rc stack pins that release."""
+    from _oci import FakeRegistry
+
+    cases = (
+        ("an untouched app keeps its release", True, ("v1.15.64",), "v1.15.64"),
+        ("a changed app takes its newest rc", True,
+         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0-rc.10", "v1.17.0-beta.1"), "v1.16.0-rc.10"),
+        ("a release published above its rcs wins", True,
+         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0"), "v1.16.0"),
+        ("a release cut never takes an rc", False,
+         ("v1.15.64", "v1.16.0-rc.2"), "v1.15.64"),
+    )
+    for label, prerelease, tags, want in cases:
+        registry = FakeRegistry(page_size=2)
+        for index, tag in enumerate(tags):
+            registry.add("hyperi-io/dfe-engine", tag, f"sha256:{index:064d}")
+        with registry.serving():
+            found = stack._latest_published("hyperi-io", "dfe-engine", prerelease=prerelease)
+        expect(label, found is not None and found[0] == want, f"{found}")
+
+
+_RC_STACK_FIXTURE = """\
+schema: 2
+current: "9.9.1-rc.4"
+
+stacks:
+
+  9.9.1-rc.4:
+    maturity: rc
+    support: standard
+    apps:
+      app-a: "v1.1.0-rc.2"
+      app-b: "v2.0.0-rc.1"
+    digests:
+      app-a: "sha256:aaa"
+      app-b: "sha256:bbb"
+    stack:
+      previous: "9.9.0"
+      upgrade-order: "app-a, app-b"
+"""
+
+
+def _release_cut_from_rc(
+    apps: str | None, published: dict[str, str], fixture: str = _RC_STACK_FIXTURE
+) -> tuple[str | None, str]:
+    """Cut 9.9.1 at release maturity from an rc stack, and return the refusal and the file after."""
+    import argparse
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        (tmp / "versions.yaml").write_text(fixture, encoding="utf-8", newline="\n")
+
+        def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
+            tag = published.get(app)
+            return (tag, f"sha256:{app}") if tag else None
+
+        original = (stack.REPO_ROOT, stack._latest_published)
+        stack.REPO_ROOT, stack._latest_published = tmp, latest
+        refusal = None
+        try:
+            stack.cmd_cut(
+                argparse.Namespace(
+                    version="9.9.1", from_stack=None, maturity="release", apps=apps,
+                    org="test-org", dry_run=False, registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
+                )
+            )
+        except SystemExit as exc:
+            refusal = str(exc)
+        finally:
+            stack.REPO_ROOT, stack._latest_published = original
+        return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8")
+
+
+def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
+    """A held pin or an --apps-excluded one keeps its rc, so the cut checks every app."""
+    for label, apps, published, named in (
+        ("no release published for app-b", None, {"app-a": "v1.1.0"}, ["app-b v2.0.0-rc.1"]),
+        ("--apps leaves app-b out", "app-a", {"app-a": "v1.1.0", "app-b": "v2.0.0"}, ["app-b v2.0.0-rc.1"]),
+        ("nothing promoted at all", None, {}, ["app-a v1.1.0-rc.2", "app-b v2.0.0-rc.1"]),
+    ):
+        refusal, text = _release_cut_from_rc(apps, published)
+        expect(f"{label}: the cut refuses", refusal is not None, "it wrote a release with an rc pin")
+        expect(
+            f"{label}: and names each rc pin",
+            refusal is not None and all(n in refusal for n in named),
+            f"{refusal}",
+        )
+        expect(f"{label}: and writes nothing", "9.9.1:" not in text, text)
+    refusal, text = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"})
+    expect("every app promoted: the release cut writes", refusal is None, f"{refusal}")
+
+    with_content = _RC_STACK_FIXTURE.replace(
+        "    digests:\n",
+        '    content:\n      dfe-hyperdx: "v0.3.0-rc.1"\n'
+        '    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"\n      kubectl: "v1.34.1-rc.0"\n'
+        "    digests:\n",
+    )
+    refusal, _ = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"}, with_content)
+    expect(
+        "a cloned prerelease content or toolbox pin refuses the cut, an upstream toolbox tag does not",
+        refusal is not None
+        and "content.dfe-hyperdx v0.3.0-rc.1" in refusal
+        and "toolbox.dfe-toolbox v1.0.7-rc.1" in refusal
+        and "kubectl" not in refusal,
+        f"{refusal}",
+    )
+
+
+def test_the_new_stack_maturity_picks_rc_or_release_app_tags() -> None:
+    """An rc stack pins app rcs. Only a release stack pins promoted vX.Y.Z builds."""
+    import tempfile
+
+    for maturity, want in ((None, True), ("beta", True), ("release", False)):
+        kinds: list[bool] = []
+        with tempfile.TemporaryDirectory() as td:
+            _withdrawn_cut(Path(td), "9.9.1-rc.3", "9.9.1-rc.2", maturity=maturity, kinds=kinds)
+        label = f"--maturity {maturity}" if maturity else "an inherited rc maturity"
+        expect(
+            f"{label} asks the registry for {'rc' if want else 'release'} tags",
+            bool(kinds) and all(k is want for k in kinds),
+            f"got {kinds}",
+        )
 
 
 def test_cut_holds_an_app_that_never_shipped() -> None:

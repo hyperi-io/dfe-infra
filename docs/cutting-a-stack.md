@@ -22,7 +22,9 @@ Cut one with:
 
 ## What `cut` does
 
-It clones the `--from` block (default: `current`) as the SHAPE, so a key can't be dropped by omission. Then for each DFE-owned app it resolves the newest published release and repins the matching digest.
+It clones the `--from` block (default: `current`) as the SHAPE, so a key can't be dropped by omission. Then for each DFE-owned app it resolves the newest published tag the new stack's maturity takes and repins the matching digest.
+
+Below `release`, that's the newest of the app's `vX.Y.Z-rc.N` and plain `vX.Y.Z` tags. A changed app gets its rc, and an untouched app keeps its last release. At `release`, only plain `vX.Y.Z` count, because a release ships promoted builds.
 
 `stack.previous` is derived, not cloned. The `--from` block is the new version's predecessor, so `cut` re-points it there and `check-upgrade` reports the consecutive path as verified without a hand edit.
 
@@ -46,6 +48,7 @@ Output names every app as MOVED or held, with the reason, so you review the cut 
 - `--replace-withdrawn` on a version that is missing or not withdrawn, or with `--from` naming the withdrawn stack itself.
 - An app whose `apps.<name>` pin is missing from the source block.
 - Writing anything when the `current:` pointer can't be moved, so a cut is never half-written.
+- A release cut that would carry any DFE-owned pin that is not a plain `vX.Y.Z`. That covers every app and every pin suite.yaml names, held and cloned ones too. dfe-docker's commit pin is exempt.
 
 An app with no published release is HELD, not fatal. The alpha transforms have never shipped to GHCR and a cut mustn't stall on them. A registry failure that isn't a missing package DOES stop the cut, so auth or network trouble never reads as "unpublished".
 
@@ -91,7 +94,7 @@ The freeze test allows that `stack.previous` rewrite in a tagged block and no ot
 
 - `compat-check` validates the interdependency locks in `constraints/<version>.yaml`. `cut` clones that file from the source stack, so it exists already. Review the rules rather than recreating them, because a lock is a property of the components and only a component move invalidates one. An existing file is never overwritten.
 - `check_versions_drift.py --fix` propagates the SSoT into the pin mirrors that Renovate can't reach (appset pins, `Chart.yaml` appVersions).
-- `release-gate` fails a release-maturity stack that still has unpublished apps, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other. It also fails an image whose `linux/arm64` SLSA provenance names a builder other than `linux/arm64`, because that half was built under QEMU emulation, and one with no provenance to show either way.
+- `release-gate` fails a release-maturity stack that still has unpublished apps, a DFE-owned pin that is not a plain `vX.Y.Z`, or a DFE image whose pinned index lacks `linux/amd64` or `linux/arm64`. A deployment schedules onto arm64 (the AWS node pools) or amd64 (most on-prem nodes), and an image missing either pulls fine and dies at exec on the other. It also fails an image whose `linux/arm64` SLSA provenance names a builder other than `linux/arm64`, because that half was built under QEMU emulation, and one with no provenance to show either way.
 
 At every maturity `release-gate` also fails when `content.dfe-schemas` differs from the dfe-schemas the pinned dfe-engine's `uv.lock` locks. Move `content.dfe-schemas` to that locked version.
 
