@@ -27,7 +27,7 @@ Confluent Cloud manages the broker fleet, the KRaft metadata plane, segment sizi
 | `replication.factor=3` | LOCKED. Fixed at 3 across three availability zones, platform-wide. You can't set it, and it already matches the DFE default. |
 | `min.insync.replicas=2` | Settable PER TOPIC, but only 1 or 2. Set 2 (the DFE default). |
 | `unclean.leader.election.enable=false` | Managed and not exposed. Confluent doesn't do unclean election, so the DFE intent already holds. |
-| `num.partitions=12` | PER TOPIC (`partitions_count`, and the Terraform default is 6, so set 12). Increase-only, so you can't shrink later. |
+| `num.partitions=12` | PER TOPIC (`partitions_count`, and the provider's default is 6, so set 12). Increase-only, so you can't shrink later. |
 | `compression.type=producer` | Settable per topic. |
 | `log.retention.hours=72` | PER TOPIC as `retention.ms` (72h = 259200000). |
 | `log.retention.bytes` (unset) | PER TOPIC as `retention.bytes` (leave unset for time-only). |
@@ -38,7 +38,7 @@ Confluent Cloud manages the broker fleet, the KRaft metadata plane, segment sizi
 
 Some topic configs can't be edited after create. dfe-engine creates every topic at startup, so it sets them at creation from its settings (see Wiring back to DFE).
 
-## Terraform / OpenTofu -- Confluent Cloud (API-key PLAIN)
+## OpenTofu: Confluent Cloud (API-key PLAIN)
 
 A Standard cluster (multi-AZ, RF3) with the DFE service account, its cluster-scoped API key, and the ACLs a manager account writes for it. The `confluent` provider needs a CLOUD API key (org-level, for management) and DFE needs a KAFKA API key (cluster-level, for the data plane). Both are shown. There's no topic resource, because dfe-engine creates every topic.
 

@@ -42,7 +42,7 @@ This is Redpanda's MANAGED cloud, which isn't the self-hosted Redpanda DFE can d
 
 Redpanda's Raft consensus makes `unclean.leader.election` moot, because a leader always holds a committed quorum. It gives you the RF3 durability equivalent through majority acknowledgement when the client sends `acks=all` (the scalo default). Set `min.insync.replicas` per topic if you want a stricter explicit floor.
 
-## Terraform / OpenTofu -- Redpanda Cloud (SCRAM-SHA-512)
+## OpenTofu: Redpanda Cloud (SCRAM-SHA-512)
 
 The `redpanda` provider authenticates with a Redpanda Cloud service-account client ID and secret (Organization IAM). There are two shapes below, Serverless (fewest dials) and Dedicated/BYOC (full topic and cluster config). The SCRAM user is a `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the cluster's Data Plane API URL (`dataplane_api.url`). There's no topic resource, because dfe-engine creates every topic.
 

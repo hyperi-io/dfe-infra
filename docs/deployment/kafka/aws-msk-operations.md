@@ -9,9 +9,9 @@ License:   see repository LICENSE
 Copyright: HyperI / DFE contributors
 -->
 
-Module and inputs (provisioning, Terraform, wiring): [aws-msk.md](aws-msk.md).
+# Running DFE on AWS MSK
 
-# DFE on AWS MSK -- Operations
+Module and inputs (provisioning, OpenTofu, wiring): [aws-msk.md](aws-msk.md).
 
 ## The bootstrap Job -- ACLs
 
