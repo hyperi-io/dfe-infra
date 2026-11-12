@@ -16,7 +16,7 @@ hero:
     - {label: "What's different", to: /coming-from/}
     - {label: Install, to: /dfe-infra/deployment/}
   badges:
-    - {label: Useful from day one, to: "/coming-from/#nothing-breaks-when-a-source-changes"}
+    - {label: Effective from day one, to: "/coming-from/#nothing-breaks-when-a-source-changes"}
     - {label: Gigabytes to petabytes, to: "/coming-from/#it-runs-on-your-infrastructure"}
     - {label: "Your environment, your control", to: "/coming-from/#it-runs-on-your-infrastructure"}
     - {label: GitOps from the start, to: "/coming-from/#gitops-by-design-from-the-ground-up"}
@@ -42,7 +42,7 @@ differences:
   link: {label: Coming from Splunk or Elastic, to: /coming-from/}
   cards:
     - eyebrow: Day one
-      title: Useful from day one
+      title: Effective from day one
       text: Schemas, pipelines and dashboards come ready. Your data works when it arrives, and you tune from there.
       to: /coming-from/#nothing-breaks-when-a-source-changes
     - eyebrow: Context
