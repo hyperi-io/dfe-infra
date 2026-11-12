@@ -13,7 +13,8 @@ dropped_versions:
 # ref the stack pins, and the engine's API reference always does.
 docs_refs:
   2.2.2:
-    dfe-engine: "1c4880da2c77cb9aef5692128ac876b540e8b160"
+    dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
+    dfe-engine: "ec8cad51e7155a4dd1ffe1cb9b3e10ac55d13f4f"
     dfe-infra: "4341b2f8c4c8b929d75b31c57bf62ec656cbf479"
     dfe-loader: "7e2fd4500a7eea89611b0e6599bc9231382c8f8c"
     dfe-receiver: "9f8daea5a11181e187cd782f2dd485b6c0730cc4"
