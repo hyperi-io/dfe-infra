@@ -9,7 +9,7 @@ ClickHouse is the DFE data layer. Which ClickHouse, and which operator if any, i
 | **Official ClickHouse operator** (clickhouse.com CRDs) | `mode: cluster` -- ClickHouseCluster CR + DFE-owned Keeper, ReplicatedMergeTree | Public default for the scale tier |
 | **ClickHouse Cloud** (or any BYO endpoint) | `mode: external` -- deploy nothing, connect to the supplied endpoint | Public default for managed deployments |
 | Standalone server | `mode: single` -- plain StatefulSet, no operator, Keeper embedded, a cluster of one | Small/test tiers |
-| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22) |
+| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md) |
 | Altinity operator | -- | **NOT tested.** Nothing in this stack has run under it |
 
 An external ClickHouse must run 24.10 or later. The collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server refuses, so the collector can't insert.
@@ -34,7 +34,7 @@ In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, a
 
 Until ClickHouse published an operator of its own, the Kubernetes options were the Altinity operator or building your own. HyperI built its own: an internal operator paired with a custom ClickHouse fork whose engine put an SSD cache in front of bulk storage, run on private-cloud deployments. HyperI maintained that pairing for two years.
 
-DFE 2.2 retires the pairing for less code to maintain, lower operational risk, and a storage model held in common across on-prem and cloud deployments. The official ClickHouse operator plus the `cached-object` storage model replaces it as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's now the default wherever an object-store endpoint exists. A deployment still on the retired pairing migrates onto DFE 2.2 by following [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22).
+DFE 2.2 retires the pairing for less code to maintain, lower operational risk, and a storage model held in common across on-prem and cloud deployments. The official ClickHouse operator plus the `cached-object` storage model replaces it as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's now the default wherever an object-store endpoint exists. A deployment still on the retired pairing migrates onto DFE 2.2 by following [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
 
 When ClickHouse Inc shipped its official operator, DFE 2.2 adopted it as the public on-cluster default. The decision record (versions.yaml, `operators.clickhouse-operator`): greenfield stack, single-shard topology, DFE owns its own DDL, safe Keeper consensus, and ClickHouse partner support. None of that needed Altinity's extra machinery. ClickHouse Cloud is the other main public target via `mode: external`.
 
