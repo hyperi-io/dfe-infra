@@ -17,7 +17,7 @@ docs_refs:
     dfe-engine: "ec8cad51e7155a4dd1ffe1cb9b3e10ac55d13f4f"
     dfe-infra: "4341b2f8c4c8b929d75b31c57bf62ec656cbf479"
     dfe-loader: "7e2fd4500a7eea89611b0e6599bc9231382c8f8c"
-    dfe-receiver: "9f8daea5a11181e187cd782f2dd485b6c0730cc4"
+    dfe-receiver: "51aec2ba16e46393800a80731c308d531566f8ad"
     dfe-transform-vector: "13cb87ef8ac025e8c8c946d62a54e2f063c43875"
     dfe-transform-vrl: "01ed6768130469a62de42311c467f9b9e85e82af"
 
