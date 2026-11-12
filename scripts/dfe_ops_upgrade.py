@@ -709,6 +709,17 @@ def run_compat_check(stack: str) -> tuple[bool, str]:
     return result.returncode == 0, output
 
 
+def check_upgrade_path(from_stack: str, to_stack: str, *, allow_unverified: bool = False) -> tuple[bool, str]:
+    """`dfe-stack check-upgrade`: whether TO declares FROM as a stack it was tested from."""
+    result = _run([sys.executable, str(DFE_STACK), "check-upgrade", "--from", from_stack, "--to", to_stack])
+    verdict = _last_line(result.stdout) or _last_line(result.stderr) or "check-upgrade printed no verdict"
+    if result.returncode == 0:
+        return True, verdict
+    if allow_unverified:
+        return True, f"{verdict} -- run anyway: --allow-unverified-path"
+    return False, f"{verdict}. --allow-unverified-path runs it anyway"
+
+
 # --- the sizing locked-change classifier --------------------------------------
 
 
@@ -1952,10 +1963,15 @@ def run_preflight(
     clickhouse_credentials: str = DEFAULT_CLICKHOUSE_CREDENTIALS,
     nodes_file: Path | None = None,
     backup_marker: str = DEFAULT_BACKUP_MARKER,
+    allow_unverified_path: bool = False,
 ) -> list[tuple[str, bool, str]]:
     """Every preflight check, in report order. Does not print -- the caller
     (cmd_upgrade_preflight, or apply before it acts) owns presentation."""
     checks: list[tuple[str, bool, str]] = []
+    checks.append((
+        "verified upgrade path",
+        *check_upgrade_path(from_stack, to_stack, allow_unverified=allow_unverified_path),
+    ))
     checks.append(("deploy repo clean", *check_deploy_clean(deploy)))
     checks += exposure_checks(
         deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
@@ -2900,6 +2916,7 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
         clickhouse_credentials=args.clickhouse_credentials,
         nodes_file=Path(args.nodes_file) if args.nodes_file else None,
         backup_marker=args.backup_marker,
+        allow_unverified_path=args.allow_unverified_path,
     )
     failed = _print_checks(checks)
     print()
@@ -3029,6 +3046,11 @@ def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_nam
         print(f"[dry-run] {_wait_line(args, leaving=from_name, reconciled='the retarget')}", file=sys.stderr)
         return EXIT_OK
 
+    ok, why = check_upgrade_path(from_name, to_name, allow_unverified=args.allow_unverified_path)
+    print(f"  upgrade path: {why}", file=sys.stderr)
+    if not ok:
+        print(f"dfe-ops upgrade apply: REFUSED -- {why}", file=sys.stderr)
+        return EXIT_BLOCKED
     rollout_namespace = args.namespace or ""
     try:
         if not rollout_namespace:
@@ -3113,6 +3135,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             clickhouse_credentials=args.clickhouse_credentials,
             nodes_file=Path(args.nodes_file) if args.nodes_file else None,
             backup_marker=args.backup_marker,
+            allow_unverified_path=args.allow_unverified_path,
         )
         failed = _print_checks(checks)
         if failed:
@@ -3763,6 +3786,11 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         help="the checks apply refuses to run without",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    preflight.add_argument(
+        "--allow-unverified-path",
+        action="store_true",
+        help="upgrade even when TO does not list FROM in its stack.previous",
+    )
     _add_deploy_target_args(preflight)
     _add_preflight_args(preflight)
     _add_cloud_arg(preflight)
@@ -3810,6 +3838,11 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         "(finalise after the soak, or resume an apply) (default: pins.yaml's base.dfe-infra)",
     )
     _add_target_revision_arg(apply_)
+    apply_.add_argument(
+        "--allow-unverified-path",
+        action="store_true",
+        help="upgrade even when TO does not list FROM in its stack.previous",
+    )
     _add_bundled_args(apply_)
     apply_.set_defaults(func=_with_bundled_repo(cmd_upgrade_apply))
 
