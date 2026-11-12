@@ -96,7 +96,7 @@ The alarm's metric query reads the `Average` statistic, not `Sum`.
 `BytesInPerSec` is already a per-second rate, published once a minute, so a
 300s evaluation period holds five of those samples -- summing them inflates
 the reading roughly fivefold against `autoscaling_threshold_bytes_per_sec`,
-a genuine bytes-per-second figure, and fires the alarm at about a fifth of
+a bytes-per-second figure, and fires the alarm at about a fifth of
 the traffic it was sized for. The outer `SUM()` in the metric-math
 expression is a different aggregation and is correct as-is: it is the
 spatial sum across brokers that `SEARCH` discovers, not a sum over time.
