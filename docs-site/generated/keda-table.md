@@ -1,23 +1,9 @@
-| App | Profile | Replicas (min-max) | CPU target | Pressure trigger | Other triggers |
+| App | Replicas, slim | Replicas, single | Replicas, scale | CPU target | Pressure trigger on |
 |---|---|---|---|---|---|
-| `dfe-archiver` | `slim` | 1-2 | 70% | no |  |
-| `dfe-archiver` | `single` | 1-3 | 70% | yes |  |
-| `dfe-archiver` | `scale` | 2-12 | 70% | yes |  |
-| `dfe-loader` | `slim` | 1-2 | 70% | no |  |
-| `dfe-loader` | `single` | 1-3 | 70% | yes |  |
-| `dfe-loader` | `scale` | 2-12 | 70% | yes |  |
-| `dfe-receiver` | `slim` | 1-2 | 70% | no |  |
-| `dfe-receiver` | `single` | 1-3 | 70% | yes |  |
-| `dfe-receiver` | `scale` | 2-12 | 70% | yes |  |
-| `dfe-transform-elastic` | `slim` | 1-2 | 70% | no |  |
-| `dfe-transform-elastic` | `single` | 1-3 | 70% | yes |  |
-| `dfe-transform-elastic` | `scale` | 2-12 | 70% | yes |  |
-| `dfe-transform-vector` | `slim` | 1-2 | 70% | no |  |
-| `dfe-transform-vector` | `single` | 1-3 | 70% | no |  |
-| `dfe-transform-vector` | `scale` | 2-12 | 70% | no |  |
-| `dfe-transform-vrl` | `slim` | 1-2 | 70% | no |  |
-| `dfe-transform-vrl` | `single` | 1-3 | 70% | yes |  |
-| `dfe-transform-vrl` | `scale` | 2-12 | 70% | yes |  |
-| `dfe-ui` | `slim` | 1-2 | 70% | no |  |
-| `dfe-ui` | `single` | 1-3 | 70% | no |  |
-| `dfe-ui` | `scale` | 2-12 | 70% | no |  |
+| `dfe-archiver` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
+| `dfe-loader` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
+| `dfe-receiver` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
+| `dfe-transform-elastic` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
+| `dfe-transform-vector` | 1-2 | 1-3 | 2-12 | 70% | no |
+| `dfe-transform-vrl` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
+| `dfe-ui` | 1-2 | 1-3 | 2-12 | 70% | no |
