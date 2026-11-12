@@ -14,6 +14,7 @@ dropped_versions:
 docs_refs:
   2.2.2:
     dfe-engine: "1c4880da2c77cb9aef5692128ac876b540e8b160"
+    dfe-infra: "3dd862176d37e7150e7df0de0664da0b69ad3e46"
     dfe-loader: "1155a1c9e9e50fd7bcae9580613923a48e3ea06d"
 
 # A member whose docs mount inside another member's section rather than at the
