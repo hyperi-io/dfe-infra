@@ -9,10 +9,10 @@ RKE2 on-prem is the reference distribution and the tested path. The cloud column
 ```mermaid
 flowchart LR
     subgraph edge["Swappable edge (per target)"]
-        DNS[DNS]:::seam
-        SEC[Secrets]:::seam
-        CA[CA / TLS]:::seam
-        LB[L4 LoadBalancer]:::seam
+        DNS[DNS]:::swappable
+        SEC[Secrets]:::swappable
+        CA[CA / TLS]:::swappable
+        LB[L4 LoadBalancer]:::swappable
     end
     subgraph core["In-cluster, every target"]
         GW["Envoy Gateway<br/>(all L7 routing)"]
@@ -21,15 +21,15 @@ flowchart LR
         APPS["dfe-* apps + UIs"]
     end
     subgraph data["Data plane (in-cluster OR managed)"]
-        KAF[Kafka]:::seam
-        CH[ClickHouse]:::seam
-        OBJ[Object store]:::seam
+        KAF[Kafka]:::swappable
+        CH[ClickHouse]:::swappable
+        OBJ[Object store]:::swappable
     end
     LB --> GW --> APPS
     GW --> ENG
     APPS --> KAF
     APPS --> CH
-    classDef seam fill:#0b3,stroke:#062,color:#fff;
+    classDef swappable fill:#0b3,stroke:#062,color:#fff;
 ```
 
 One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL the L7 routing. There are no per-app cloud LBs and no cloud L7 (ALB/App Gateway). dfe-engine (the identity authority), the Envoy edge and the dfe-hyperdx DocumentDB store are always in-cluster. Kafka, ClickHouse and object storage can be in-cluster or a managed endpoint.
