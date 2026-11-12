@@ -99,7 +99,13 @@ SPEC_MEMBER = "dfe-engine"
 SPEC_FILES = ("openapi/openapi.json", "openapi-spec/openapi.json")
 API_DIR = "api"
 API_LABEL = "HTTP API reference"
-SPARSE_PATTERNS = ("/docs/", *(f"/{path}" for path in SPEC_FILES))
+# Tables dfe-infra generates from its charts: page region name -> the file that fills it.
+GENERATED_REGIONS = {"dfe-keda-table": "docs-site/generated/keda-table.md"}
+SPARSE_PATTERNS = (
+    "/docs/",
+    *(f"/{path}" for path in SPEC_FILES),
+    *(f"/{path}" for path in GENERATED_REGIONS.values()),
+)
 # The root pages hold the sidebar positions below this one, and members follow in lane order.
 FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
@@ -397,7 +403,11 @@ class Fetcher:
             return self._done[key]
         dest = self._work / f"{repo.replace('/', '__')}@{ref}"
         marker = dest / ".git" / "dfe-docs-commit"
-        if ref != HEAD and marker.is_file():
+        sparse = dest / ".git" / "info" / "sparse-checkout"
+        same_paths = sparse.is_file() and sparse.read_text(encoding="utf-8").split() == list(
+            SPARSE_PATTERNS
+        )
+        if ref != HEAD and marker.is_file() and same_paths:
             checkout = Checkout(dest, marker.read_text(encoding="utf-8").strip())
         else:
             if dest.exists():
@@ -1091,6 +1101,7 @@ def assemble(
     root = out / build.name
     root.mkdir(parents=True)
     included: set[str] = set()
+    tables: dict[str, str] = {}
     for member in members:
         ref = build.refs.get(member.name)
         if ref is None:
@@ -1103,6 +1114,8 @@ def assemble(
         except RefusedError:
             result.findings.append(Finding(member.name, "", Rule.REFUSED, f"{member.repo}@{ref}"))
             continue
+        if member.name == STACK_REPO_MEMBER:
+            tables = generated_tables(checkout.path)
         docs = checkout.path / "docs"
         if docs.is_symlink():
             result.findings.append(Finding(member.name, "docs", Rule.SYMLINK))
@@ -1153,6 +1166,13 @@ def assemble(
     if quickstart is not None:
         write_json(out / QUICKSTART_DIR / f"{build.name}.json", quickstart)
     copy_root(root, {member.name for member in members}, quickstart)
+    if tables:
+        for page in root.rglob("*"):
+            if page.is_file() and page.name.lower().endswith(MARKDOWN):
+                text = page.read_text(encoding="utf-8")
+                filled = fill_generated(text, tables)
+                if filled != text:
+                    page.write_text(filled, encoding="utf-8", newline="\n")
     if journeys:
         result.placements |= journeys.keys_for(ROOT_PAGES, "")
     return result
@@ -1351,6 +1371,45 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         )
 
     return _QUICKSTART_REGION.sub(region, text)
+
+
+def generated_tables(checkout: Path) -> dict[str, str]:
+    """The generated tables a dfe-infra checkout carries, by region name.
+
+    Args:
+        checkout: The dfe-infra checkout.
+
+    Returns:
+        Region name -> table, for each file the checkout has. A ref older than a
+        table has none for it, and its regions keep the text the page carries.
+    """
+    tables = {}
+    for name, path in GENERATED_REGIONS.items():
+        source = checkout / path
+        if source.is_file() and not source.is_symlink():
+            tables[name] = source.read_text(encoding="utf-8")
+    return tables
+
+
+def fill_generated(text: str, tables: Mapping[str, str]) -> str:
+    """Rewrite each `<!-- name -->` ... `<!-- /name -->` region of a page from its table.
+
+    Args:
+        text: The page's markdown.
+        tables: Region name -> the table that fills it.
+
+    Returns:
+        The page.
+    """
+    for name, table in tables.items():
+        region = re.compile(
+            rf"<!-- {re.escape(name)} -->\n.*?<!-- /{re.escape(name)} -->\n", re.DOTALL
+        )
+        body = table if table.endswith("\n") else table + "\n"
+        filled = f"<!-- {name} -->\n{body}<!-- /{name} -->\n"
+        # A callable keeps a backslash in the table literal, where a template would expand it.
+        text = region.sub(lambda _, filled=filled: filled, text)
+    return text
 
 
 def copy_root(root: Path, member_names: set[str], quickstart: dict | None = None) -> None:

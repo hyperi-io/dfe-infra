@@ -1437,3 +1437,76 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
         name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
+
+
+KEDA_PAGE = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n<!-- /dfe-keda-table -->\n\nAfter.\n"
+KEDA_TABLE = "| App | Profile |\n|---|---|\n| `dfe-loader` | `scale` |\n"
+KEDA_FILLED = f"Intro.\n\n<!-- dfe-keda-table -->\n{KEDA_TABLE}<!-- /dfe-keda-table -->\n\nAfter.\n"
+KEDA_UNCLOSED = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n\nAfter.\n"
+
+
+@pytest.mark.parametrize(
+    ("page", "tables", "expected"),
+    [
+        (KEDA_PAGE, {"dfe-keda-table": KEDA_TABLE}, KEDA_FILLED),
+        (KEDA_PAGE, {"dfe-keda-table": KEDA_TABLE.rstrip("\n")}, KEDA_FILLED),
+        (KEDA_PAGE, {}, KEDA_PAGE),
+        ("No region here.\n", {"dfe-keda-table": KEDA_TABLE}, "No region here.\n"),
+        (KEDA_UNCLOSED, {"dfe-keda-table": KEDA_TABLE}, KEDA_UNCLOSED),
+        (
+            KEDA_PAGE,
+            {"dfe-keda-table": "a \\1 b\n"},
+            "Intro.\n\n<!-- dfe-keda-table -->\na \\1 b\n<!-- /dfe-keda-table -->\n\nAfter.\n",
+        ),
+    ],
+    ids=["fills", "adds-newline", "no-tables", "no-region", "unclosed", "backslash"],
+)
+def test_a_generated_table_fills_only_a_closed_region(
+    page: str, tables: dict[str, str], expected: str
+) -> None:
+    assert aggregate.fill_generated(page, tables) == expected
+
+
+@pytest.mark.parametrize(("with_table", "expected"), [(True, KEDA_FILLED), (False, KEDA_PAGE)])
+def test_a_member_page_takes_the_table_from_dfe_infra_at_the_builds_ref(
+    remotes: tuple[Path, str], tmp_path: Path, with_table: bool, expected: str
+) -> None:
+    root, _ = remotes
+    make_repo(root, "o/dfe-engine", {"docs/keda.md": KEDA_PAGE}, "v2.0.0")
+    infra = {"docs/README.md": "# Infra\n"}
+    if with_table:
+        infra["docs-site/generated/keda-table.md"] = KEDA_TABLE
+    make_repo(root, "o/dfe-infra", infra, "9.9.9")
+    members = [
+        Member("dfe-engine", "o/dfe-engine", "consumers", 10, "product"),
+        Member("dfe-infra", "o/dfe-infra", "deploy", 11, "product"),
+    ]
+    build = Build("9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0", "dfe-infra": "9.9.9"})
+    out = tmp_path / "content"
+    out.mkdir()
+    fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
+    aggregate.assemble(build, members, fetcher, out)
+    assert (out / "9.9.9" / "dfe-engine" / "keda.md").read_text(encoding="utf-8") == expected
+
+
+def test_a_dfe_infra_ref_older_than_a_table_fills_nothing(tmp_path: Path) -> None:
+    assert aggregate.generated_tables(tmp_path) == {}
+    write_tree(tmp_path, {"docs-site/generated/keda-table.md": KEDA_TABLE})
+    assert aggregate.generated_tables(tmp_path) == {"dfe-keda-table": KEDA_TABLE}
+
+
+def test_the_real_keda_table_is_in_the_sparse_fetch() -> None:
+    assert "/docs-site/generated/keda-table.md" in aggregate.SPARSE_PATTERNS
+    assert (aggregate.REPO_ROOT / "docs-site" / "generated" / "keda-table.md").is_file()
+
+
+def test_a_checkout_made_with_other_sparse_paths_is_fetched_again(
+    remotes: tuple[Path, str], tmp_path: Path
+) -> None:
+    root, _ = remotes
+    work = tmp_path / "work"
+    first = aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
+    (first.path / ".git" / "info" / "sparse-checkout").write_text("/docs/\n", encoding="utf-8")
+    (root / "o" / "app.git").rename(root / "o" / "gone.git")
+    with pytest.raises(aggregate.FetchError):
+        aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
