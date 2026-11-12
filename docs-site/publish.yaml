@@ -33,6 +33,7 @@ internal:
     supply-chain.md: "developer docs: design, internals or dev setup"
   dfe-archiver:
     DESIGN.md: "developer docs: design, internals or dev setup"
+    testing.md: "how the archiver is tested"
   dfe-clickhouse-rs:
     all-pages: "a library's developer docs"
   dfe-docker:
@@ -46,11 +47,13 @@ internal:
     control-plane/type-safety-sync.md: "developer docs: design, internals or dev setup"
     control-plane/ui-api-guide.md: "developer docs: design, internals or dev setup"
     data-evolution-acceptance.md: "the end-to-end test steps"
+    data-plane/schema-classes.md: "developer docs: design, internals or dev setup"
     data-plane/schema-sync.md: "developer docs: design, internals or dev setup"
     deployment/e2e-acceptance.md: "how a change is signed off"
     deployment/supply-chain-pinning.md: "how the suite picks and pins dependency versions"
     integrations/: "keeping dfe-ui and the HyperDX fork in step with the engine"
     LOCAL-DEV.md: "developer docs: design, internals or dev setup"
+    reference/api-route-map.md: "the engine's internal route map"
   dfe-fetcher:
     DESIGN.md: "developer docs: design, internals or dev setup"
   dfe-hyperdx:
@@ -98,6 +101,7 @@ internal:
     transport/README.md: "developer docs: design, internals or dev setup"
   dfe-receiver:
     DESIGN.md: "developer docs: design, internals or dev setup"
+    testing.md: "how the receiver is tested"
     METRICS.md: "a historical planning doc, out of date"
     LOG-SPAMMING.md: "developer docs: design, internals or dev setup"
     PERFORMANCE.md: "developer docs: design, internals or dev setup"
