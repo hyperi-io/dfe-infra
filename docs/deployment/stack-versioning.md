@@ -10,7 +10,7 @@ A stack release is a dfe-infra tag, so `versions.yaml` frozen at tag `X.Y.Z` is 
 
 ```mermaid
 flowchart LR
-    PINS["deploy repo pins.yaml<br/>base.dfe-infra: 2.2.1"] -->|"one pin selects the lot"| MANIFEST["versions.yaml at that tag"]
+    PINS["deploy repo pins.yaml<br/>base.dfe-infra: 2.2.2"] -->|"one pin selects the lot"| MANIFEST["versions.yaml at that tag"]
     MANIFEST --> APPS["dfe-* images, tag@sha256"]
     MANIFEST --> DATA["ClickHouse, Kafka, PostgreSQL, operators, charts"]
     MANIFEST --> TPL["dfe-deploy template tag"]
@@ -41,7 +41,7 @@ Each release's `versions.yaml` carries `stack.previous`, the verified from-versi
 
 `stack.upgrade-order` sets the rollout order between component groups: schemas, engine, data plane, then UI. [Upgrades](upgrades.md) walks an upgrade and [rollback](upgrade-rollback.md) undoes one.
 
-Within a minor (2.2.z) patches are cumulative and must not change configs, deprecate APIs, change schemas or break backward compatibility. We support the latest patch of the two most recent minors.
+Patches are cumulative. The components of one stack are tested together and move together. A patch can move an API between dfe-engine, dfe-ui and dfe-hyperdx, so upgrade all three at once.
 
 ## Cutting a release
 

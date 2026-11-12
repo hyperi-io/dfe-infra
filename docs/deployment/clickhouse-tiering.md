@@ -8,7 +8,7 @@ This page is the walkthrough for one model. [storage.md](storage.md) has the ful
 
 ## Pick a storage model
 
-`clickhouse.storageModel` is one dial with three settings, plus empty, which is what it ships as. Empty derives the model from whether an object store is supplied: `clickhouse.objectStore.endpoint` set means `cached-object`, nothing means `local`. Writing a value here overrides that. There's no second dial, because the model decides the disks, the policy and the volumes together. The names are `<family>-<bulk>`, where the family says whether parts MOVE to the bulk store or are COPIED to it. (Previously `tiered` and `s3backed`.)
+`clickhouse.storageModel` is one dial with three settings, plus empty, which is what it ships as. Empty derives the model from whether an object store is supplied: `clickhouse.objectStore.endpoint` set means `cached-object`, nothing means `local`. Writing a value here overrides that. There's no second dial, because the model decides the disks, the policy and the volumes together. The names are `<family>-<bulk>`, where the family says whether parts MOVE to the bulk store or are COPIED to it.
 
 | Model | Bulk data lives on | Fast tier is | Use when |
 | --- | --- | --- | --- |
@@ -111,5 +111,3 @@ Left at the server defaults, a read against an unreachable store blocked for ove
 Against GCS, set `supportBatchDelete: false`. GCS rejects the batch-delete call ClickHouse otherwise makes.
 
 Azure Blob, `local_blob_storage` and a dedicated cache PVC are proven or partly proven and deliberately not surfaced as values. They're follow-up cells with their evidence and their blocking work in [storage.md](storage.md), alongside the unbuilt `tiered-object` and `cached-block` models.
-
-Benchmarks, per-platform cost modelling and workload identity in place of static keys are all still open.
