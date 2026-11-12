@@ -58,21 +58,55 @@ def describe(so: dict | None) -> tuple[str, str, str, str]:
     return replicas, f"{cpu}%" if cpu else "", "yes" if pressure else "no", ", ".join(other)
 
 
+def per_profile(values: dict[str, str]) -> str:
+    """One value when every profile that scales shares it, else each profile's own.
+
+    Args:
+        values: profile -> its value, for the profiles where the app scales.
+
+    Returns:
+        The cell.
+    """
+    if len(set(values.values())) <= 1:
+        return next(iter(values.values()), "")
+    return ", ".join(f"{profile} {value}" for profile, value in values.items() if value)
+
+
+def app_row(app: str, described: dict[str, tuple[str, str, str, str]]) -> list[str]:
+    """One app's cells: replicas per profile, CPU target, pressure profiles, other triggers.
+
+    Args:
+        app: The app's name.
+        described: profile -> describe()'s result, in PROFILES order.
+
+    Returns:
+        The cells, before the table drops an empty Other triggers column.
+    """
+    replicas = [described[profile][0] for profile in PROFILES]
+    scaling = [profile for profile in PROFILES if described[profile][0] != "off"]
+    cpu = per_profile({profile: described[profile][1] for profile in scaling})
+    pressured = [profile for profile in scaling if described[profile][2] == "yes"]
+    other = per_profile({profile: described[profile][3] for profile in scaling})
+    return [f"`{app}`", *replicas, cpu, ", ".join(pressured) or "no", other]
+
+
 def table() -> str:
     """The markdown table, one row per app that scales in any profile."""
-    lines = [
-        "| App | Profile | Replicas (min-max) | CPU target | Pressure trigger | Other triggers |",
-        "|---|---|---|---|---|---|",
-    ]
+    rows = []
     for app in sorted(p.name for p in GOLDENS.iterdir() if p.is_dir()):
-        rows = [
-            (profile, describe(scaled_object(GOLDENS / app / f"{profile}-local.yaml")))
+        described = {
+            profile: describe(scaled_object(GOLDENS / app / f"{profile}-local.yaml"))
             for profile in PROFILES
-        ]
-        if all(row[1][0] == "off" for row in rows):
+        }
+        if all(value[0] == "off" for value in described.values()):
             continue
-        for profile, (replicas, cpu, pressure, other) in rows:
-            lines.append(f"| `{app}` | `{profile}` | {replicas} | {cpu} | {pressure} | {other} |")
+        rows.append(app_row(app, described))
+    header = ["App", *(f"Replicas, {profile}" for profile in PROFILES), "CPU target"]
+    header += ["Pressure trigger on", "Other triggers"]
+    if not any(row[-1] for row in rows):
+        header, rows = header[:-1], [row[:-1] for row in rows]
+    lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    lines += ["| " + " | ".join(row) + " |" for row in rows]
     return "\n".join(lines) + "\n"
 
 
