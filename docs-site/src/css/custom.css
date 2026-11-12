@@ -362,6 +362,11 @@ div[class*='announcementBar'] svg {
   vertical-align: -0.125em;
 }
 
+/* The close button does not inherit the bar's text colour and renders black. */
+div[class*='announcementBar'] button {
+  color: var(--role-body);
+}
+
 /* The footer is a navy band in both modes. */
 .footer--dark {
   --ifm-footer-background-color: var(--dfe-navy);
