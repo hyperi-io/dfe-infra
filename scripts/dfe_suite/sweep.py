@@ -876,9 +876,9 @@ def _error_line(stderr: str, stdout: str) -> str:
 
 GH_RETRIES = 2
 # GitHub answers an overloaded request with an HTML error page, which gh reports as a
-# JSON parse error with no status, or with a 5xx.
+# JSON parse error with no status, or with a 5xx, and a cut-off body as unexpected end.
 _TRANSIENT_STATUS = {502, 503, 504}
-_TRANSIENT_TEXT = ("invalid character '<'", "not JSON: <")
+_TRANSIENT_TEXT = ("invalid character '<'", "not JSON: <", "unexpected end of JSON input")
 
 
 def _transient(exc: GhError) -> bool:
