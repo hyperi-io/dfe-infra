@@ -286,7 +286,10 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
     versions = aggregate.yaml_subset.parse((REPO_ROOT / "versions.yaml").read_text())
     builds = aggregate.plan_builds(versions, members, [], False, policy.dropped)
     assert "2.2.0" in policy.dropped
-    assert builds[0].name == versions["latest"]
+    # `latest` moves in its own PR after the release tags, so it can trail the newest release.
+    released = [name for name in aggregate.released_stacks(versions) if name not in policy.dropped]
+    assert builds[0].name == released[0]
+    assert versions["latest"] in [build.name for build in builds]
     assert policy.mounts == {"dfe-hyperdx": "dfe-ui"}
     assert "docs/testing-cycle.md" in policy.internal_to("dfe-infra")
 
