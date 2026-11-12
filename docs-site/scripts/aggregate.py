@@ -1304,7 +1304,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
 
     The newest release and /next/ show the latest form, any other build the form
     pinned to its own release. A build whose stack pins dfe-docker by commit gets
-    None and keeps the commands its pages carry.
+    None and keeps the commands its pages carry, and so does a release whose file
+    is not the one-line compose install: its init and docker-run lines need more
+    than Docker on the reader's machine.
 
     Args:
         build: The build.
@@ -1314,7 +1316,8 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         The file's object with a "form" key added, or None.
 
     Raises:
-        FetchError: The release has no quickstart.json of schema 1.
+        FetchError: The release has no quickstart.json of schema 1, or a compose
+            one without its Docker Engine minimum and up and demo notes.
     """
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
@@ -1332,6 +1335,15 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     commands = [(data.get(kind) or {}).get(form) for kind in ("up", "demo")]
     if data.get("schema") != 1 or not all(isinstance(lines, list) for lines in commands):
         raise FetchError(f"{url}: not a schema 1 quickstart.json with up and demo commands")
+    if data.get("kind") != "compose":
+        return None
+    notes = data.get("notes") or {}
+    if not isinstance(data.get("min_engine"), str) or not all(
+        isinstance(notes.get(kind), str) for kind in ("up", "demo")
+    ):
+        raise FetchError(
+            f"{url}: a compose quickstart.json without min_engine and up and demo notes"
+        )
     return {**data, "form": form}
 
 
@@ -1347,30 +1359,18 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
     """
     if quickstart is None:
         return text
-    default = next((p["name"] for p in quickstart.get("profiles", []) if p.get("default")), "")
-    console, login = quickstart["console_url"], quickstart["login"]
+    need = (
+        f"You need Docker Engine {quickstart['min_engine']} or later with Compose "
+        f"{quickstart['min_compose']} or later."
+    )
 
     def region(match: re.Match[str]) -> str:
         kind = match.group(1)
         commands = "\n".join(quickstart[kind][quickstart["form"]])
-        after = {
-            "up": (
-                f"`init` writes the stack's compose file and settings into this directory, on the "
-                f"`{default}` profile, and `docker compose up -d` starts it. The console is at "
-                f"{console}, and `{login}` prints its login.\n\n"
-                "`init --profile <name>` picks another profile from this table."
-            ),
-            "demo": (
-                "The last command replays Cisco ASA and FortiGate logs as raw syslog, and "
-                "dfe-transform-elastic lands each line in `dfe.cisco-asa` or `dfe.fortinet`. Watch "
-                f"it in the console at {console}. `{login}` prints its login.\n\n"
-                "`docker compose down` stops the stack and keeps the data."
-            ),
-        }[kind]
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
-            f"You need Docker with Compose {quickstart['min_compose']} or later.\n\n"
-            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{after}\n"
+            f"{need}\n\n"
+            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{quickstart['notes'][kind]}\n"
             "<!-- /docker-quickstart -->\n"
         )
 
