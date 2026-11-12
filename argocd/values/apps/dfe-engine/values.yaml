@@ -391,7 +391,7 @@ content:
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.70@sha256:c3560f0904c8d5bebf36be8918ba127ef47ea54c290bfa6056d83a49bb3524fb"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.71@sha256:0d5681b6cc68e93c2917b8c288c2ae0d3547630aa5ee88b702fbad232c2f55dd"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
@@ -401,7 +401,7 @@ content:
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.53@sha256:a7c4e0d86eaaea31318ba8ee73af796ab4c74c08ce47937372a007a7965ad73a"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.54@sha256:fec585cb49dcfa6d3f988dd19ed5d6455e48188783a93bb3b0c6cc686378d9fa"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract

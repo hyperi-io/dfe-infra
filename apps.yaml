@@ -90,6 +90,16 @@
 #   the rest, so one app can declare both halves. Only on a hot_reload app: on
 #   any other every change is a restart already.
 #
+# shared_instance
+#   How a target that runs a fixed container set (docker) hosts a per_config app:
+#   ONE container serves every instance from one config file at the app's own
+#   directory, the instances' blocks at this config. path merged into it. The
+#   rest of their config must agree, because one process reads one value, so an
+#   instance that differs or sets a merged key another already set is reported
+#   and not run. Kubernetes ignores it and still runs one deployment per
+#   instance. Absent means one process runs one instance, so such a target
+#   refuses a source that needs one.
+#
 # endpoints
 #   The listeners the app runs, by name. `push` is the scalo Push service a
 #   direct-transport stage sends records to, and declaring it is ALSO how the
@@ -468,21 +478,22 @@ apps:
     # ceiling is 0 without that and unbounded with it: dfe-engine
     # appmgmt/scaling.py, instance_ceiling.
     default_in: [docker-single]
+    # One process polls many sources (instance_id prefixes each cursor key), so
+    # docker merges every instance's sources into the one container's file.
+    shared_instance: config.sources
     # Anything that can produce a record is work; the ingest listener defaults
     # off, so an instance that wants it sets config.ingest.enabled true.
     idle_when:
       - config.sources
       - config.extractors.containers
       - config.ingest.enabled
-    # A per-source filter and the scheduler intervals are re-read in place; the
+    # A per-source filter and the scheduler intervals are re-read in place. The
     # rest of the stanza binds a connection, a topic or the concurrency
     # semaphore, all established once at startup (its config.example.yaml).
     hot_reload: true
-    # Whole blocks: a reload re-reads a source's filter and interval but adds no
-    # source, re-resolves no credential and rebuilds no output (dfe-fetcher#134),
-    # so a filter-only edit reports a restart it does not need.
+    # A reload starts, stops and rebuilds sources (dfe-fetcher#286). The output,
+    # the container extractors and the ingest listener are built once at startup.
     restart_paths:
-      - config.sources
       - config.output
       - config.extractors
       - config.ingest
