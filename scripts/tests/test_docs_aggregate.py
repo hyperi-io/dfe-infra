@@ -1388,6 +1388,43 @@ def test_a_planted_register_word_fails_the_gate(
     assert gate.main(["--content", str(content), *args]) == exit_code
 
 
+SCOPED = ["--report-only", "--fail-on", "register", "--fail-on-build", "next,newest"]
+
+
+@pytest.mark.parametrize(
+    ("seam_in", "args", "outcome"),
+    [
+        ("2.2.1", SCOPED, 0),
+        ("2.2.2", SCOPED, 1),
+        ("next", SCOPED, 1),
+        ("2.2.1", ["--report-only", "--fail-on", "register"], 1),
+        ("2.2.1", [*SCOPED[:-1], "2.2.1"], 1),
+        ("2.2.1", [*SCOPED[:-1], "next,2.2.9"], "not a build"),
+    ],
+    ids=["old-release", "newest", "next", "unscoped", "named", "unknown-build"],
+)
+def test_fail_on_build_reads_only_the_builds_named(
+    tmp_path: Path, seam_in: str, args: list[str], outcome: int | str
+) -> None:
+    members = [{"name": "dfe-ui", "repo": "o/dfe-ui"}]
+    names = ["2.2.2", "2.2.1", "next"]
+    site = {
+        "newest": "2.2.2",
+        "builds": [{"name": n, "members": members, "openapi": None} for n in names],
+    }
+    pages = {
+        f"{n}/dfe-ui/a.md": "# A\n\nA deployment seam.\n" if n == seam_in else "# A\n"
+        for n in names
+    }
+    content = tmp_path / "content"
+    write_tree(content, {"site.json": json.dumps(site), **pages})
+    if isinstance(outcome, str):
+        with pytest.raises(SystemExit, match=outcome):
+            gate.main(["--content", str(content), *args])
+    else:
+        assert gate.main(["--content", str(content), *args]) == outcome
+
+
 def test_fail_on_refuses_an_unknown_rule(tmp_path: Path) -> None:
     content = write_content(tmp_path / "pr", {"dfe-ui/a.md": "# A\n"})
     with pytest.raises(SystemExit, match="unknown rule"):
