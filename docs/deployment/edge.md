@@ -46,8 +46,8 @@ Buckets are [aws.md](aws.md#how-costs-are-described)'s: relative to the cluster'
 | Elastic IPs for the receiver's NLB | d | 1 | on | `edge.aws.receiver_eips` | XS hourly, while closed too |
 | Receiver on ClusterIP, tunnel-reached | d | 1 | off | `edge.groups.ingest.door: tunnel` | none |
 | Tunnel on a NodePort | d | 1 once on | off | the engine's instance values file | none |
-| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` is unproven, [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
-| Admin reach-back to one appliance | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
+| An Elastic IP forwarder in front of it | d | 2 | `byo` | `edge.ingest.tunnel.address.mode` (`forwarder` is not tested in this release, [edge-vpn.md](edge-vpn.md#the-tunnels-address-on-aws)) | XS hourly |
+| Admin reach-back to one appliance, not tested in this release | d | 1 | on | `edge.ingest.tunnel.admin_peer` | XS hourly |
 | OTLP ingress on `otel.<domain>`, bearer token only | d | 2 | off | `edge.ingest.otel.enabled` | no spend |
 | A CDN or managed WAF in front | a | 2 | `none` | `edge.product.waf.mode` | S, per GB and per request |
 | Shield Advanced, Global Accelerator | a | 3 | absent | -- | -- |
@@ -126,7 +126,7 @@ On with `remoteKey` empty is refused by `render_dial.py`, the gateway chart and 
 
 Appliances DIAL IN and hold the tunnel open, so nothing on an appliance's own network is ever exposed. `exposure.loadBalancerSourceRanges` starts empty, which means every source address on earth. That's the normal case for a fleet. Per-client PKI, WireGuard peer keys and tls-crypt-v2 authenticate a client, and `peers.classes.appliance.isolation` stops one compromised appliance reaching the fleet through the hub.
 
-culvert's client-to-client verdict drops an admin that dials in, so you reach one appliance with a route. `dfe-ops bastion hub <peer>` programs the tunnel's client range at the culvert pod and opens the logged Session Manager shell. `down` removes the range. The appliance accepts ssh on 22 and https on 443 on its tunnel interface. Run the isolation regression on every change to the class policy, because one appliance peer must still not reach another. None of it has been exercised against a cluster. [edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries the VPC routing, what bounds it, and the `hyperi-io/culvert#40` peer shape that replaces it.
+culvert's client-to-client verdict drops an admin that dials in, so you reach one appliance with a route. `dfe-ops bastion hub <peer>` programs the tunnel's client range at the culvert pod and opens the logged Session Manager shell. `down` removes the range. The appliance must accept ssh on 22 and https on 443 on its tunnel interface. Run the isolation regression on every change to the class policy, because one appliance peer must still not reach another. `dfe-ops bastion join` is not available in this release, and `hub` is the way to reach an appliance. [edge-vpn.md](edge-vpn.md#reaching-an-appliance-from-the-bastion) carries the VPC routing and what bounds it.
 
 ## Proving it
 

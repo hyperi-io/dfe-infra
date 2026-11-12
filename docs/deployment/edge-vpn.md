@@ -23,7 +23,7 @@ A client on a network that blocks UDP outright needs the OpenVPN TCP fallback. A
 
 A NodePort has no address of its own, so on AWS the dial decides where one comes from. `edge.ingest.tunnel.address.mode` is `byo` (an address you already hold in front of the cluster) or `forwarder`, the tier-2 opt-in where `terraform/modules/edge/aws` builds one.
 
-**The forwarder hasn't been proven against a live cluster. `byo` is the default.** The instance lands in a public subnet, so the Elastic IP receives, and the nodePort it rewrites each packet to is admitted on the group the nodes carry. A live run has to show two things: the DNAT path working (a client dialling the address reaches culvert's pod), and the zone placement holding, with that pod scheduled onto a node in the forwarder's own availability zone.
+`byo` is the default. The instance lands in a public subnet, so the Elastic IP receives, and the nodePort it rewrites each packet to is admitted on the group the nodes carry.
 
 The forwarder is a small SSM-managed instance holding an Elastic IP, with no inbound ssh rule of any kind. It admits the tunnel's own UDP listeners from `edge.ingest.tunnel.loadBalancerSourceRanges` (empty is 0.0.0.0/0, as everywhere else here) and DNATs each to the nodePort culvert's `defaultListeners` pin in `argocd/values/apps/culvert/values.yaml`, across whichever nodes are running. It reads that node list from `ec2:DescribeInstances`, its only grant, once a minute. That's why the flavour overlay sets `externalTrafficPolicy: Cluster`: any node has to forward, whichever one holds the pod.
 
@@ -73,11 +73,11 @@ An appliance holds its own tunnel open, so an operator reaches it through the hu
 ```bash
 dfe-ops bastion hub <peer>      # route the client range at the pod, then shell
 dfe-ops bastion peers           # name, tunnel address and last handshake
-dfe-ops bastion join            # refused until hyperi-io/culvert#40 lands
+dfe-ops bastion join            # not available in this release
 dfe-ops bastion down            # revoke anything joined, THEN terminate
 ```
 
-`edge.ingest.tunnel.admin_peer.ttl_minutes` and `peer_cidr` both belong to the admin PEER, which waits on `hyperi-io/culvert#40`, so neither reaches a rendered resource today. `render_dial.py` refuses a dial that sets either to anything but its default and names that issue. The culvert chart likewise refuses `exposure.loadBalancerSourceRanges` on a NodePort. What ends a session is `dfe-ops bastion down`, which revokes and then terminates.
+`dfe-ops bastion join` is not available in this release, and `hub` is the way to reach an appliance. `edge.ingest.tunnel.admin_peer.ttl_minutes` and `peer_cidr` both belong to the admin peer `join` would mint, so neither reaches a rendered resource. `render_dial.py` refuses a dial that sets either to anything but its default. The culvert chart likewise refuses `exposure.loadBalancerSourceRanges` on a NodePort. What ends a session is `dfe-ops bastion down`, which revokes and then terminates.
 
 ### How wide the hole is
 
@@ -87,14 +87,9 @@ A `/32` goes stale on its own, because the instance is terminated and rebuilt on
 
 So there's no hole at all while no bastion is up, and the one that exists names a single address. A packet only reaches an appliance if something ROUTES the client range at the culvert pod, which takes the host network namespace. An ordinary pod can't do it from inside its own, and node root can. Behind that stands the appliance's own ssh and TLS authentication.
 
-### What a live run still has to prove
+### What the appliance has to accept
 
-None of this has been exercised against a cluster. Two things to check:
-
-- culvert's pinned image honours `CULVERT_DOWNSTREAM_ADMIN_CIDRS` with an ethernet-side ACCEPT and a NAT RETURN beside it, ahead of nothing that drops it first.
-- An appliance accepts ssh on 22 and https on 443 on its tunnel interface from the admin's address. **That's an assumption to confirm with the EdgeStream Hub team**, not a fact this repo can check.
-
-Run the isolation regression in the same window, and on every change to `peers.classes`. One appliance peer must still not reach another.
+The appliance must accept ssh on 22 and https on 443 on its tunnel interface from the admin's address. Run the isolation regression on every change to `peers.classes`. One appliance peer must still not reach another.
 
 ## One replica, and why
 

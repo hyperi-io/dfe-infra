@@ -149,6 +149,15 @@ def plan_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
+REAL_CHECK_UPGRADE_PATH = u.check_upgrade_path
+
+
+@pytest.fixture(autouse=True)
+def _every_path_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fixture stacks are not in the repo's versions.yaml, so the path check passes unless a test restores it."""
+    monkeypatch.setattr(u, "check_upgrade_path", lambda *_a, **_k: (True, "verified (stubbed)"))
+
+
 @pytest.fixture(autouse=True)
 def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail any test whose kubectl or helm call reaches the real subprocess
@@ -1416,7 +1425,7 @@ def _apply_args(**overrides: object) -> _Args:
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
         nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
         yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None, cloud=None,
+        from_stack=None, target_revision=None, namespace=None, cloud=None, allow_unverified_path=False,
     )
     base.update(overrides)
     return _Args(**base)
@@ -5235,3 +5244,20 @@ def test_apply_to_a_stack_with_the_same_pins_judges_the_cluster_secret(
     assert events == []
     if rc == u.EXIT_BLOCKED:
         assert (deploy / "pins.yaml").read_text(encoding="utf-8") == before
+
+
+@pytest.mark.parametrize(
+    ("frm", "to", "allow", "ok", "says"),
+    [
+        ("2.2.2-rc.4", "2.2.2", False, True, "SUPPORTED"),
+        ("2.2.1", "2.2.2", False, False, "--allow-unverified-path runs it anyway"),
+        ("2.2.1", "2.2.2", True, True, "run anyway: --allow-unverified-path"),
+    ],
+)
+def test_the_upgrade_path_check_reads_the_stacks_declared_previous(
+    frm: str, to: str, allow: bool, ok: bool, says: str
+) -> None:
+    """Released stacks in the repo's versions.yaml: 2.2.2 lists only 2.2.2-rc.4 as its previous."""
+    got_ok, why = REAL_CHECK_UPGRADE_PATH(frm, to, allow_unverified=allow)
+    assert got_ok is ok, why
+    assert says in why

@@ -9,9 +9,9 @@ License:   see repository LICENSE
 Copyright: HyperI / DFE contributors
 -->
 
-# DFE Kafka defaults and per-platform config guides
+# Kafka providers
 
-DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. On top of that the credential rules (dfe-engine#98) set one policy: SASL over TLS everywhere, SCRAM-SHA-512 on brokers DFE owns, PLAIN only where the platform forbids SCRAM (Confluent Cloud), IAM only where the platform mandates it (MSK Serverless).
+DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`SASL_PLAINTEXT`). Every managed broker is SASL over TLS: SCRAM-SHA-512 on MSK Provisioned and Redpanda Cloud, PLAIN on Confluent Cloud, which offers no SCRAM, and IAM on MSK Serverless, which mandates it. A deployment on a TLS listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`.
 
 The charts take `security.protocol` and `sasl.mechanism` from one table, `helm/library/dfe-common/templates/_kafka.tpl`. Nobody sets a mechanism by hand. The table has two extra keys, `strimzi-no-tls` and `redpanda-no-tls`, for a DFE-owned broker on the TLS-off listener the charts stand up in-cluster. Every other key matches scalo's canonical table.
 
@@ -35,31 +35,20 @@ Each row gives the default, one value per line, and the reason for it. Sources a
 | `replication.factor` | 3 (clamped to broker count on single/small) | RF3 survives one broker loss with the data intact. `min(RF, replicas)` clamps it so single and small tiers still render. |
 | `min.insync.replicas` | 2 | With RF3 and `acks=all`, a write is acknowledged only once 2 replicas hold it, so one broker dying loses nothing. `RF - 1` is the balance point. |
 | Producer `acks` | `all` (client) | scalo turns on the idempotent producer by default, which forces `acks=all`. Nothing to do on the broker. |
-| `unclean.leader.election.enable` | `false` | Consistency over availability. A data-forensics engine must never surface a leader that lost committed writes. Kafka 4.x already defaults this to false, and we pin it so it's auditable. |
-| `num.partitions` (default) | 12 | 12 divides by 2, 3, 4 and 6, so leadership stays balanced as brokers grow, and consumer groups have room to parallelise. You can't repartition a keyed topic later without breaking `hash(key) % partitions`, so we over-provision a little on purpose. KRaft removed the old 200k/4k partition ceilings. |
-| `compression.type` | `producer` | Store whatever codec the client sent, so the broker never decompresses and recompresses on the ingest hot path. scalo's client sizing profile picks the codec (lz4 by default, zstd opt-in for storage-bound topics). A broker codec that differs from the producer's forces a re-compress on every produce. |
+| `unclean.leader.election.enable` | `false` (Kafka 4.x default, not set) | Consistency over availability. A data-forensics engine must never surface a leader that lost committed writes. Kafka 4.x already defaults this to false, so DFE leaves it alone. |
+| `num.partitions` (default) | Derived: 12 on scale, 3 on single | One count from the broker count and the KEDA consumer ceiling (`kafka.sizing.*`), so leadership stays balanced and no consumer idles. You can't repartition a keyed topic later without breaking `hash(key) % partitions`, so the resolver only ever raises it. KRaft removed the old 200k/4k partition ceilings. |
+| `compression.type` | `producer`, on each topic | dfe-engine sets it on every topic it creates (`kafka.topic_compression_type`), so a broker whose own default differs never recompresses. Store whatever codec the client sent, so the broker never decompresses and recompresses on the ingest hot path. scalo's client sizing profile picks the codec (lz4 by default, zstd opt-in for storage-bound topics). |
 | `log.retention.ms` | 24 hours | `(kafka.retention.assumedConsumerDowntimeH + archiverLagH)` hours, which is how long a consumer can be down before an event is lost. dfe-archiver also copies to object storage, so time retention is the durable, portable default. |
 | `log.retention.bytes` | PVC x 0.85 / partition replicas a broker holds for ONE topic | Each topic gets the full per-partition allowance, so any one topic can use the whole volume and the size cap never deletes unread data ahead of the time window. The broker disk is sized for the busy topics. The resolver counts every event on `_land`, and the dial's `sizing.transformed_share` of them again on `_load`. The `kafka.diskAlert` PrometheusRule warns at 70% and goes critical at 85%, before a disk fills. A full disk stops the broker, and the receiver spools through that. A deleted record is silent loss. |
-| `log.segment.bytes` | 512 MiB | Finer retention than the 1 GiB default, because a segment can only be deleted once it's closed, without pushing open-file counts up. Raise it toward 1 GiB on brokers with very many partitions. |
+| `log.segment.bytes` | 1 GiB (Kafka default, not set) | 512 MiB doubles the mmap count against `vm.max_map_count` at DFE's partition counts, so the 1 GiB default stays. |
 | `cleanup.policy` | `delete` (default) | Our topics are append-only event streams, not compacted key/state topics. We leave the broker default alone. |
-| `message.max.bytes` | ~1 MiB (Kafka default) | Matches the scalo client settings: producer `batch.size` 128 KiB < broker `message.max.bytes` 1 MiB <= the smallest client per-partition fetch budget (low-latency `max.partition.fetch.bytes` = 1 MiB). See the alignment section below. |
+| `message.max.bytes` | 16 MiB (`kafka.messageMaxBytes`) | One figure for the whole chain, so a produce is never rejected and a follower never stalls. See below. |
 
-### message.max.bytes: keep four layers in step
+### message.max.bytes: one figure for the chain
 
-The receiver caps a record at 8,000,000 bytes, so every broker DFE deploys accepts at least 8 MiB (8,388,608 bytes).
+DFE sets broker `message.max.bytes`, broker `replica.fetch.max.bytes` and every topic's `max.message.bytes` to one figure, 16 MiB by default (`kafka.messageMaxBytes`, overridden by the resolved sizing's `event.message_chain_bytes`). Raise one alone and a produce is rejected or a follower stalls. The receiver's request-body cap is 8,000,000 bytes (`maxBodySize`), below that figure.
 
-`message.max.bytes` (broker) and `max.message.bytes` (topic) set the largest record batch AFTER compression. Four layers have to agree or you get producer rejects or consumer stalls:
-
-```text
-producer max.request.size / batch.size   (scalo throughput: batch 128 KiB)
-  <=  broker  message.max.bytes           (~1 MiB default)
-  ==  topic   max.message.bytes           (inherits the broker default)
-  <=  broker  replica.fetch.max.bytes     (~1 MiB default -- replication)
-  <=  consumer max.partition.fetch.bytes  (scalo: low_latency 1 MiB, balanced 5 MiB, throughput 10 MiB)
-      consumer fetch.max.bytes            (scalo: 10-100 MiB, must exceed the per-partition value)
-```
-
-We leave all of it at the Kafka default. The smallest scalo consumer profile (low-latency) fetches only 1 MiB per partition, which equals the broker message ceiling, so a producer can never write a message a consumer can't read. If you need larger messages, raise ALL the layers together: broker `message.max.bytes`, topic `max.message.bytes`, broker `replica.fetch.max.bytes`, and client `max.partition.fetch.bytes` and `fetch.max.bytes`. For the odd large blob, send a pointer to object storage instead.
+The figure is the largest record batch AFTER compression. filebeat truncates at its own 10 MiB, and enrichment re-enters Kafka at about 1.48 times the source event, hence 16 MiB. For the odd large blob, send a pointer to object storage instead.
 
 ## Settable vs locked, per platform
 
@@ -70,13 +59,13 @@ Settable means you can set it to the DFE default. Locked means the platform fixe
 | Auth | SCRAM-SHA-512 | SASL/SCRAM-512 (Secrets Manager) | IAM only (OAUTHBEARER, port 9098) | API-key PLAIN over TLS | SCRAM-SHA-512 |
 | `replication.factor` | Settable (3) | Locked -- forced to 3 (topic RF other than 3 is silently made 3) | Locked -- managed (2 hidden replicas, not counted, not settable) | Locked -- fixed 3 across 3 AZs | Settable per-topic (3) on Dedicated/BYOC, managed on Serverless |
 | `min.insync.replicas` | Settable (2) | Broker-level settable, topic-level PROTECTED | Locked -- managed | Settable per-topic but ONLY 1 or 2 (use 2) | Per-topic settable, else Raft quorum |
-| `unclean.leader.election.enable` | Settable (false) | Broker-level settable, topic-level PROTECTED | Locked -- managed | Locked -- managed (not exposed) | N/A -- Raft never elects a non-quorum leader |
-| `num.partitions` default | Settable (12) | Broker default settable (12) | Locked, no broker config. Per-topic only, quota 2400 leader partitions/cluster | Per-topic (Terraform default 6, set 12), increase-only | Per-topic settable. Serverless auto-scales |
-| `compression.type` | Settable (`producer`) | Broker settable (`producer`) | Per-topic (`compression.type`) | Per-topic settable | Per-topic (`producer` default) |
-| `log.retention.hours/ms` | Settable (72h) | Broker settable (72h) | Per-topic `retention.ms`, 250 GB/partition hard cap | Per-topic `retention.ms` | Per-topic `retention.ms`, cluster `log_retention_ms` on Dedicated |
+| `unclean.leader.election.enable` | Kafka default (false) | Broker-level settable, topic-level PROTECTED | Locked -- managed | Locked -- managed (not exposed) | N/A -- Raft never elects a non-quorum leader |
+| `num.partitions` default | Derived (12 on scale, 3 on single) | Broker default settable (12) | Locked, no broker config. Per-topic only, quota 2400 leader partitions/cluster | Per-topic (Terraform default 6, set 12), increase-only | Per-topic settable. Serverless auto-scales |
+| `compression.type` | Per-topic, set by dfe-engine (`producer`) | Per-topic, set by dfe-engine (`producer`) | Per-topic (`compression.type`) | Per-topic settable | Per-topic (`producer` default) |
+| `log.retention.hours/ms` | Settable (24h) | Broker settable (72h from the dial's `kafka.msk.log_retention_ms`) | Per-topic `retention.ms`, 250 GB/partition hard cap | Per-topic `retention.ms` | Per-topic `retention.ms`, cluster `log_retention_ms` on Dedicated |
 | `log.retention.bytes` | Settable (unset) | Broker settable | Per-topic `retention.bytes` | Per-topic `retention.bytes` | Per-topic `retention.bytes` |
-| `log.segment.bytes` | Settable (512 MiB) | Broker settable | Locked -- managed | Locked -- not exposed | Cluster `log_segment_size` on Dedicated, managed on Serverless |
-| `message.max.bytes` | Settable (default) | Broker settable | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
+| `log.segment.bytes` | Kafka default (1 GiB) | Broker settable | Locked -- managed | Locked -- not exposed | Cluster `log_segment_size` on Dedicated, managed on Serverless |
+| `message.max.bytes` | Settable (16 MiB) | Broker settable | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
 
 The more managed the platform, the fewer broker dials it exposes. The DFE default is then either already enforced (RF3, KRaft) or has to be set per topic. MSK Provisioned is closest to self-hosted, with the full `server.properties`. MSK Serverless and Confluent Cloud hide almost all broker config. Redpanda Cloud sits between them, with per-topic control and cluster config on the Dedicated tier only.
 
@@ -98,14 +87,14 @@ Changing the model on a live cluster strands the segments already written. So th
 
 ## Wiring a managed cluster back to DFE
 
-1. Stand up the cluster with the guide's Terraform snippet. It has the right auth for the platform and whatever DFE defaults the platform lets you set.
+1. Stand up the cluster with the guide's OpenTofu snippet. It has the right auth for the platform and whatever DFE defaults the platform lets you set.
 2. Point DFE at it: `kafka.mode=external`, `kafka.external.bootstrap=<endpoint>` and `kafka.securityProtocol=SASL_SSL`, because every managed cloud here serves TLS only. Every app chart and dfe-engine read the wire protocol from that one dial, never from a provider key. On the bootstrap path you set none of the three by hand: `DFE_KAFKA_PROVIDER` of `msk`, `confluent-cloud` or `redpanda-cloud` puts them on the Argo cluster secret, and the layer 2 appsets hand them to the charts.
 3. Get the client config for that provider from the CLI: `dfe kafka client-config --provider <msk|msk_iam|confluent-cloud|redpanda-cloud>`. It prints the transport settings from the canonical provider table (scalo `providers.rs`), so nobody hand-picks the mechanism.
-4. Supply credentials through the external-secret hook (`kafka.external.auth`). That's a Vault-backed SCRAM or PLAIN secret. MSK Serverless needs no static secret at all, because IAM comes through IRSA or workload identity and the consumer ServiceAccounts carry the role.
+4. Supply credentials through the external-secret hook (`kafka.external.auth`). That's a SCRAM or PLAIN secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere). MSK Serverless needs no static secret at all, because IAM comes through EKS Pod Identity, bound to the consumer ServiceAccounts.
 
 ## Version pinning note
 
-The Terraform snippets in these guides use external providers DFE doesn't vendor. The versions cited (hashicorp/aws 6.54.0 verified 2026-07-08, confluentinc/confluent ~> 2.x, redpanda-data/redpanda ~> 1.0, Mongey/kafka 0.13.1) were current when we wrote them. Our dependency rules are a 7-day cooldown, prefer the LTS or stable line, then pin. Pin exact provider versions in your root module before applying these templates.
+The OpenTofu snippets in these guides use external providers DFE doesn't vendor. The constraints DFE's own roots run are in `versions.yaml` under `providers` (`hashicorp-aws`, `confluentinc-confluent`, `redpanda-data-redpanda`). Pin exact provider versions in your root module before applying these templates.
 
 ## Sources (2026 research)
 

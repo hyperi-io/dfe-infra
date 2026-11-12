@@ -10,7 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # RKE2 - a primer (the DFE reference distribution)
 
-DFE targets any CNCF-conformant Kubernetes. RKE2 is the reference distribution, and the one we provision when a customer has no cluster (on-prem, bare IaaS). EKS, AKS and GKE Standard are full targets that DFE deploys onto.
+DFE targets any CNCF-conformant Kubernetes. RKE2 is the reference distribution, and the one we provision when a customer has no cluster (on-prem, bare IaaS). RKE2 on-prem and Amazon EKS are the tested targets. Azure and GCP have values overlays (`argocd/values/azure.yaml`, `gcp.yaml`) and no cloud root, so a deployment there brings its own cluster and sets the values by hand.
 
 This page covers RKE2: what it is, how it sits under DFE, and why it's our reference.
 
@@ -78,7 +78,6 @@ A few STIG controls need infrastructure beyond the distro: MFA / CAC-PIV, SIEM a
 
 See also:
 
-- Multi-cloud and E2E plan: `docs/superpowers/plans/2026-07-12-e2e-acceptance-and-multicloud.md`
 - Crypto standard: `docs/cnsa-standard.md`
 - Official: RKE2 architecture (`docs.rke2.io/architecture`), FIPS support
   (`docs.rke2.io/security/fips_support`), the DISA RKE2 STIG (NIST NCP checklist 1040).

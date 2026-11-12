@@ -2,7 +2,7 @@
 
 DFE is one product deployed into many estates. Most components sit behind a config dial, so a deployment swaps them without a code change. A dial is an existing k8s abstraction or a chart mode, never a fork. A few components are fixed in-cluster and have no dial: the Envoy edge, the identity authority and the document store. This page shows how each target sets the dials. The definitions (what each dial turns) live in [../architecture.md](../architecture.md) "Swappable components", and that stays the SSoT.
 
-RKE2 on-prem is the reference distribution and the tested path. The cloud columns use the same charts and dials with different values and credentials. A cloud column isn't built until the on-prem path is green.
+RKE2 on-prem is the reference distribution and the tested path. The cloud columns use the same charts and dials with different values and credentials. RKE2 and AWS are built and tested. Azure and GCP are values overlays only (`argocd/values/azure.yaml`, `gcp.yaml`) with no cloud root, so a deployment there brings its own cluster and sets the values by hand.
 
 ## The invariant core vs the swappable edge
 
@@ -62,7 +62,7 @@ One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL 
 ## Notes that matter
 
 - One LB, dumb L4. The only cloud LB per deployment is the `Service type=LoadBalancer` fronting the gateway (MetalLB provides it on-prem). We don't use cloud L7 (routing, WAF, OIDC). Envoy owns L7 in-cluster, so behaviour is identical everywhere. Cloud-specific LB tuning rides `envoyGateway.service.annotations`.
-- Workload identity is how the cloud credentials work. ESO, external-dns and the cloud LB controller reach their cloud APIs through IRSA / Workload Identity, annotated onto the ServiceAccount. On-prem there's no cloud API, so credentials come from OpenBao through ESO. Nothing hardcodes a static cloud key.
+- Workload identity is how the cloud credentials work. ESO, external-dns and the cloud LB controller reach their cloud APIs through workload identity: EKS Pod Identity on AWS, which needs no annotation, and Workload Identity annotated onto the ServiceAccount on Azure and GCP. On-prem there's no cloud API, so credentials come from OpenBao through ESO. Nothing hardcodes a static cloud key.
 - etcd-at-rest belongs to the cluster, not the app. dfe-engine (and every `secrets` consumer) inherits whatever the cluster's EncryptionConfiguration uses: cloud KMS on managed clusters, secretbox/aescbc on-prem. No app couples to a KMS.
 - Data services are in-cluster OR managed, per deployment. Kafka and ClickHouse default to in-cluster (Strimzi, the CH operator) and swap to a managed endpoint when you point the chart's `*.host` or `bootstrapServers` at it. The DocumentDB store's PostgreSQL stays in-cluster, because it's the dfe-hyperdx store and not a general PG.
 - ClickHouse on cloud: ClickHouse Cloud is PREFERRED, but self-hosted ClickHouse in-k8s (the operator) is equally ACCEPTABLE on any cloud. The `clickhouse.mode` dial supports both everywhere, so it's a per-deployment call and not a hard rule.
@@ -71,8 +71,4 @@ One cloud L4 LoadBalancer backs the single in-k8s Envoy Gateway, which does ALL 
 
 ## Node autoscaling
 
-It's a pools interface with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler. That's Karpenter on AWS today, and AKS Node Auto Provisioning and GKE ComputeClass plus OpenTofu node pools in dfe-infra#806. On-prem runs a static node pool and renders no pool object. [../autoscaling.md](../autoscaling.md) has the per-target table.
-
-## Status
-
-This is a design artifact for review (2026-08-18). The de-hardcoding code audit across charts and bootstrap, and the actual EKS/AKS/GKE overlays, are the deferred follow-up. They come after this matrix is signed off.
+It's a pools interface with one renderer per cloud. The resolver writes a pool class per workload, and `helm/charts/node-pools` renders the classes for the cluster's node autoscaler. That's Karpenter on AWS. Azure and GCP have no renderer in this release. On-prem runs a static node pool and renders no pool object. [../autoscaling.md](../autoscaling.md) has the per-target table.
