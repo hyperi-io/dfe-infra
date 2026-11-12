@@ -13,12 +13,12 @@ You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE 
 <!-- landing -->
 ```bash
 git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make demo      # start the stack, self test, then stream firewall syslog until make demo-stop
+make demo      # start the stack, self test, stream firewall syslog
 ```
 
 `make demo` starts the stack first, and its self test prints `PASS` as each check's events reach ClickHouse. Then it replays Cisco ASA and FortiGate logs as raw syslog, 20 lines a second over TCP. dfe-transform-elastic works out which device sent each line, parses it, and lands it in `dfe.cisco-asa` or `dfe.fortinet`. A line no vendor claims goes to `dfe.demo-syslog`.
 
-It returns once every vendor table has rows, and the stream keeps going. Each vendor has about 6,000 sample lines, so it runs roughly ten minutes before a line repeats. Watch it in the console at http://localhost:3000 with the login `make up` printed (`make creds` prints it again).
+It returns once every vendor table has rows, and the stream keeps going. Each vendor has about 6,000 sample lines, so it runs roughly ten minutes before a line repeats. Watch it in the console at http://localhost:3000 with the login `make demo` printed (`make creds` prints it again).
 
 When you're done:
 
