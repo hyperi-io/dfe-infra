@@ -86,7 +86,7 @@ def serve(monkeypatch: pytest.MonkeyPatch, registry: FakeRegistry) -> FakeRegist
 
 def gate_budget() -> pins.RetryBudget:
     """The budget check_image_arch.main gives a run: patient waits, capped in total."""
-    return pins.RetryBudget(arch.RETRY_BUDGET_SECONDS)
+    return pins.RetryBudget(pins.RUN_RETRY_SECONDS)
 
 
 def test_an_image_read_waits_out_two_429s_and_then_answers(monkeypatch, slept) -> None:

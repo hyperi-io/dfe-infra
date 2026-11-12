@@ -1133,10 +1133,11 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
 
     changes: list[tuple[str, str]] = []
     stalled: list[str] = []
+    budget = registry_pins.RetryBudget(registry_pins.RUN_RETRY_SECONDS)
     for key in sorted(recorded):
         ref, tag = images[key]
         full = f"{ref}:{tag}"
-        digest, err = registry_pins.ref_digest(full)
+        digest, err = registry_pins.ref_digest(full, budget)
         if digest is None:
             print(f"ERROR {key}: {full}: {err}")
             stalled.append(key)
