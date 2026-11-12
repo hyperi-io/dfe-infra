@@ -25,10 +25,10 @@
     "js-yaml": "4.3.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "sass": "1.106.1"
+    "sass": "1.107.1"
   },
   "devDependencies": {
-    "wrangler": "4.153.0"
+    "wrangler": "4.157.0"
   },
   "overrides": {
     "tinypool": "2.2.0",
