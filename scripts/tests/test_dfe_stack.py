@@ -2478,7 +2478,7 @@ def test_refresh_rewrites_a_digest_repeated_across_stacks() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        rc, text = _run_refresh(tmp, lambda ref: ("sha256:new", ""))
+        rc, text = _run_refresh(tmp, lambda ref, budget=None: ("sha256:new", ""))
         rc1 = text.split("9.9.0-rc.2:")[0]
         rc2 = text.split("9.9.0-rc.2:")[1]
 
@@ -2508,7 +2508,7 @@ def test_refresh_writes_the_healthy_pins_when_one_cannot_resolve() -> None:
     """
     import tempfile
 
-    def resolver(ref: str) -> tuple[str | None, str]:
+    def resolver(ref: str, budget: object = None) -> tuple[str | None, str]:
         return (None, "no such manifest") if "floating" in ref else ("sha256:new", "")
 
     with tempfile.TemporaryDirectory() as td:

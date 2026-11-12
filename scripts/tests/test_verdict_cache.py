@@ -245,7 +245,7 @@ def test_the_read_count_names_each_registry_and_counts_retries_and_chart_reads(m
         helm=[(0, "name: karpenter\nappVersion: 1.14.1\n", "")],
     )
     monkeypatch.setattr(subprocess, "run", registry)
-    budget = pins.RetryBudget(arch.RETRY_BUDGET_SECONDS)
+    budget = pins.RetryBudget(pins.RUN_RETRY_SECONDS)
 
     arch.chart_app_version(KARPENTER, None, "1.14.1", budget)
     pins.ref_platforms(OTHER_PINNED, budget)

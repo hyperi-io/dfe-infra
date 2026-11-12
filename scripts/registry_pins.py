@@ -94,6 +94,10 @@ _RATE_LIMITED = re.compile(r"\b429\b|toomanyrequests", re.IGNORECASE)
 _QUICK_WAITS = (1.0, 2.0)
 PATIENT_WAITS = (4.0, 8.0, 16.0, 32.0)
 
+# Backoff one run may spend on retried registry reads, so a registry that stays
+# rate limited fails the run in minutes rather than once per image.
+RUN_RETRY_SECONDS = 240.0
+
 # Module attributes so tests replace them with instant, deterministic stand-ins.
 _sleep = time.sleep
 _random = random.random
@@ -309,13 +313,13 @@ def is_absent(err: str) -> bool:
     return bool(_ABSENT.search(err))
 
 
-def ref_digest(ref: str) -> tuple[str | None, str]:
+def ref_digest(ref: str, budget: RetryBudget | None = None) -> tuple[str | None, str]:
     """(digest, error) for a full image ref, read with `docker buildx imagetools`.
 
     The multi-arch INDEX digest -- what a pin records -- never one platform's
-    manifest.
+    manifest. A `budget` retries a rate-limited read on its patient schedule.
     """
-    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}")
+    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}", budget=budget)
     if out is None:
         return None, err
     digest = out.strip()

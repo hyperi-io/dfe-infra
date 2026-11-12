@@ -62,7 +62,7 @@ Network-dependent by design, so it is NOT part of the offline drift check.
 
 A read a registry rate limits (429) or fails with a 5xx is retried with jittered
 backoff by registry_pins.run_with_retry, at most five attempts a read and
-RETRY_BUDGET_SECONDS of backoff across the run. A registry that still refuses then
+registry_pins.RUN_RETRY_SECONDS of backoff across the run. A registry that still refuses then
 fails that read with a message naming the registry and the rate limit.
 
 --verdict-cache names a JSON file of verdicts an earlier run proved. A reference
@@ -99,10 +99,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import registry_pins
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-
-# Backoff the whole run may spend on retried registry reads, so a registry that
-# stays rate limited fails the gate in minutes rather than once per image.
-RETRY_BUDGET_SECONDS = 240.0
 
 # A reference that names its digest, the only kind whose verdict cannot change.
 DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}$")
@@ -1012,7 +1008,7 @@ def main() -> int:
     args = parser.parse_args()
 
     required = {item.strip() for item in args.require.split(",") if item.strip()}
-    budget = registry_pins.RetryBudget(RETRY_BUDGET_SECONDS)
+    budget = registry_pins.RetryBudget(registry_pins.RUN_RETRY_SECONDS)
     cache = VerdictCache()
     if args.verdict_cache:
         cache, note = load_verdicts(args.verdict_cache)

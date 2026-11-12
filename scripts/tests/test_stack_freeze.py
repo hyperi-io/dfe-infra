@@ -412,9 +412,17 @@ stacks:
 """
 
 
-def _refresh(monkeypatch, repo: Path, digest: str, check: bool = False, skip_released: bool = False) -> int:
+def _refresh(
+    monkeypatch, repo: Path, digest: str, check: bool = False, skip_released: bool = False, budgets: list | None = None
+) -> int:
     monkeypatch.setattr(dfe, "REPO_ROOT", repo)
-    monkeypatch.setattr(dfe.registry_pins, "ref_digest", lambda ref: (digest, ""))
+
+    def resolve(ref, budget=None):
+        if budgets is not None:
+            budgets.append(budget)
+        return digest, ""
+
+    monkeypatch.setattr(dfe.registry_pins, "ref_digest", resolve)
     return dfe.cmd_refresh_digests(argparse.Namespace(stack=None, check=check, skip_released=skip_released))
 
 
@@ -435,10 +443,16 @@ def test_refresh_digests_skip_released_leaves_a_released_stack_and_says_so(tmp_p
 @pytest.mark.parametrize("skip_released", [False, True])
 def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatch, skip_released):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.1")
-    assert _refresh(monkeypatch, repo, "sha256:new", skip_released=skip_released) == 0
+    budgets: list = []
+    assert _refresh(monkeypatch, repo, "sha256:new", skip_released=skip_released, budgets=budgets) == 0
     text = (repo / "versions.yaml").read_text(encoding="utf-8")
     assert text.split("9.9.0-rc.2:")[1].count('"sha256:new"') == 1
     assert text.split("9.9.0-rc.2:")[0].count("sha256:new") == 0
+    # Every read shares one patient budget, so a rate-limited registry backs off rather than giving up in 3s.
+    assert budgets
+    assert all(b is budgets[0] for b in budgets)
+    assert isinstance(budgets[0], dfe.registry_pins.RetryBudget)
+    assert budgets[0].waits == dfe.registry_pins.PATIENT_WAITS
 
 
 def test_refresh_digests_leaves_a_released_stack_alone_when_nothing_moved(tmp_path, monkeypatch):
