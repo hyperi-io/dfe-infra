@@ -5,7 +5,7 @@
        a render that ships nothing. Single mode carries its own check, beside the
        StatefulSet it deploys (kafka-single.yaml). */}}
 {{- if not .Values.kafka.redpanda.acceptLicense }}
-{{- fail "Redpanda is BSL-licensed (source-available, not OSS): set kafka.redpanda.acceptLicense=true to proceed. Running DFE+redpanda as a service needs a commercial licence from BOTH HyperI (DFE) and Redpanda Data (redpanda) -- see docs/REDPANDA-LIMITATIONS.md." }}
+{{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
