@@ -59,7 +59,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
           package-manager-cache: false
 
       # npm ci fails on a lockfile that disagrees with package.json and checks every
