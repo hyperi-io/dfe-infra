@@ -54,7 +54,7 @@ import tempfile
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -86,6 +86,7 @@ RAW_GITHUB = "https://raw.githubusercontent.com"
 RELEASE = "release"
 WITHDRAWN = "withdrawn"
 NEXT = "next"
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 HEAD = "HEAD"
 # release.yml cuts the stack version as this repo's own tag.
 STACK_REPO_MEMBER = "dfe-infra"
@@ -1537,6 +1538,35 @@ def prepare_out(out: Path) -> None:
     out.mkdir(parents=True)
 
 
+def pin_next(builds: list[Build], site_file: Path) -> list[Build]:
+    """Point the /next/ build at the member commits another assembly recorded.
+
+    A docs pull request's gate compares its tree with main's. Both fetch every member's
+    default branch, so a member merging between the two clones reads as new findings.
+
+    Args:
+        builds: The planned builds.
+        site_file: A site.json whose /next/ build recorded each member's commit.
+
+    Returns:
+        The builds, /next/ fetching each recorded member at its commit.
+
+    Raises:
+        SystemExit: The file holds no /next/ build.
+    """
+    site = json.loads(site_file.read_text(encoding="utf-8"))
+    recorded = next((b for b in site.get("builds", []) if b.get("name") == NEXT), None)
+    if recorded is None:
+        raise SystemExit(f"error: {site_file} records no {NEXT} build")
+    commits = {m["name"]: m["commit"] for m in recorded["members"] if _COMMIT.fullmatch(m.get("commit", ""))}
+    return [
+        replace(build, refs={**build.refs, **{n: c for n, c in commits.items() if n in build.refs}})
+        if build.name == NEXT
+        else build
+        for build in builds
+    ]
+
+
 def plan_builds(
     tree: Mapping[str, object],
     members: list[Member],
@@ -1652,6 +1682,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="MEMBER=PATH",
         help="read a member's docs/ from a working tree, uncommitted edits included (repeatable)",
     )
+    parser.add_argument(
+        "--next-refs",
+        type=Path,
+        metavar="SITE_JSON",
+        help="fetch /next/ at the member commits this site.json recorded, so two trees match",
+    )
     args = parser.parse_args(argv)
 
     text = VERSIONS_FILE.read_text(encoding="utf-8")
@@ -1664,6 +1700,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
     builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
+    if args.next_refs:
+        builds = pin_next(builds, args.next_refs)
     newest = next(iter(released_stacks(tree)), None)
     prepare_out(args.out)
     with tempfile.TemporaryDirectory(prefix="dfe-docs-") as scratch:

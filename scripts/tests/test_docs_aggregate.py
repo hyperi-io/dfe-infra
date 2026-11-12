@@ -1437,3 +1437,34 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
         name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        ({"x": "a" * 40}, {"x": "a" * 40}),
+        ({"x": "local"}, {"x": "HEAD"}),
+        ({"y": "b" * 40}, {"x": "HEAD"}),
+    ],
+)
+def test_pin_next_fetches_next_at_the_recorded_commits(
+    tmp_path: Path, recorded: dict[str, str], expected: dict[str, str]
+) -> None:
+    """A recorded 40-hex commit replaces HEAD for a member /next/ fetches. Anything else is left."""
+    site = {"builds": [{"name": "next", "members": [{"name": n, "commit": c} for n, c in recorded.items()]}]}
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps(site), encoding="utf-8")
+    builds = [
+        aggregate.Build(name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}),
+        aggregate.Build(name="next", base_url="/next/", listed=False, refs={"x": "HEAD"}),
+    ]
+    pinned = aggregate.pin_next(builds, site_file)
+    assert dict(pinned[0].refs) == {"x": "v1"}
+    assert dict(pinned[1].refs) == expected
+
+
+def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None:
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps({"builds": []}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="records no next build"):
+        aggregate.pin_next([], site_file)
