@@ -21,7 +21,7 @@ Every app also serves Prometheus `/metrics`, whatever its OTLP push is set to. S
 
 To send telemetry somewhere else, set the destination:
 
-- Kubernetes: `telemetry.mode` in `argocd/values/common.yaml` takes `hyperdx` (the default), `receiver`, `external` or `prometheus`. `external` needs `telemetry.externalEndpoint`.
+- Kubernetes: `telemetry.mode` in your deploy repo's `infra/common.yaml` takes `hyperdx` (the default), `receiver`, `external` or `prometheus`. `external` needs `telemetry.externalEndpoint`.
 - Docker: `DFE_OTEL_EXPORTER_ENDPOINT`. Empty exports nothing.
 
 A misspelt `telemetry.mode` fails silently, because nothing rejects an unknown value. An app with an empty endpoint exports nothing.

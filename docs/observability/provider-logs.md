@@ -1,6 +1,6 @@
 # Provider logs in dfe-hyperdx
 
-Self-monitoring has two feeds. The stack's own OTLP was always in dfe-hyperdx. The infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log) were not. Now they are.
+Self-monitoring has two feeds: the stack's own OTLP, and the infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log). Both land in dfe-hyperdx.
 
 Receivers in the otel collector read the provider's cloud log service, or the Rancher audit file, and send the rows through the collector gateway to the otel database dfe-hyperdx reads. They bypass DFE ingest: no fetcher source, no customer table.
 
@@ -46,7 +46,7 @@ Turning API server auditing on is the operator's job. RKE2 writes that file only
 
 ## Why this path
 
-We looked at a reserved dfe-fetcher source on the normal data path first. dfe-fetcher reads only a static AWS key pair, so it can't use Pod Identity. It would also put self-monitoring on the managed ingest path, and self-monitoring has to keep reporting when ingest breaks.
+A dfe-fetcher source on the normal data path doesn't fit. dfe-fetcher reads only a static AWS key pair, so it can't use Pod Identity. It would also put self-monitoring on the managed ingest path, and self-monitoring has to keep reporting when ingest breaks.
 
 The collector already ships a receiver per cloud, and its Go SDK picks up Pod Identity natively.
 

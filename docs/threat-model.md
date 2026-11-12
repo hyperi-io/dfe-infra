@@ -54,10 +54,11 @@ A deployment that carries a CA runs its in-cluster hops over TLS with verificati
 | dfe-loader -> ClickHouse | HTTPS 8443, verified |
 | dfe-hyperdx -> ClickHouse | HTTPS on the connection the engine hands it, verified |
 | dfe-hyperdx -> its DocumentDB store | TLS on 10260, verified against the store's own cert-manager CA, SCRAM-SHA-256. The gateway serves no plaintext |
-| OTel collector -> ClickHouse | Native 9000, plaintext. Backlog: moves to 9440 |
-| Smoke tests and `scripts/` -> ClickHouse | HTTP 8123, plaintext. Backlog |
+| OTel collector -> ClickHouse | Native TLS 9440, verified, under the same CA rule as the apps |
+| Smoke tests and `scripts/` -> ClickHouse | HTTP 8123, plaintext |
+| Apps -> in-cluster Kafka | SCRAM-SHA-512 over a plaintext listener (`kafka.securityProtocol: SASL_PLAINTEXT`) |
 
-8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`) until the last two rows move. Kafka and Keeper aren't covered yet. The DocumentDB store's PostgreSQL on 5432 serves its replicas over client-certificate TLS and its own gateway over localhost. CloudNativePG's last pg_hba rule takes a SCRAM password from any address, so the chart takes the password off the superuser the operator creates with a published one (`helm/charts/documentdb/templates/documentdb.yaml`). That leaves dfe-hyperdx's own login the only password role. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace. The apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [deploy-tls-trust.md](deploy-tls-trust.md).
+8123 and 9000 stay open beside 8443 and 9440 (`clickhouse.tls.required: false`), because the smoke tests still dial plaintext. Keeper has no TLS. A deployment on a TLS Kafka listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`, and every managed broker is SASL over TLS already. The DocumentDB store's PostgreSQL on 5432 serves its replicas over client-certificate TLS and its own gateway over localhost. CloudNativePG's last pg_hba rule takes a SCRAM password from any address, so the chart takes the password off the superuser the operator creates with a published one (`helm/charts/documentdb/templates/documentdb.yaml`). That leaves dfe-hyperdx's own login the only password role. The server keypair (`dfe-clickhouse-tls`, with `tls.key`) is readable only from the clickhouse namespace. The apps get a CA-only copy, through a ClusterSecretStore that serves only the namespaces it copies into. Issuer choice: [deploy-tls-trust.md](deploy-tls-trust.md).
 
 ## Secrets dfe-engine mints
 

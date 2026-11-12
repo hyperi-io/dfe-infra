@@ -14,7 +14,7 @@ flowchart LR
 
 The suite rule is **dfe-infra deploys, dfe-engine configures.** The engine never installs backing services or authors Argo Applications. This repo never reads or writes engine config. The whole-suite map lives in the dfe-engine repo (`docs/architecture.md` there). This page covers the infra side only.
 
-One exception to "this repo owns its charts": dfe-engine controls dfe-hyperdx, the search fork embedded in the DFE console (dfe-engine is the SSoT and integrates most closely). Anything dfe-hyperdx needs, whether the fork, the image or this repo's hyperdx chart, goes through a GitHub issue on dfe-engine first. If it's time-critical, security-urgent, or a small change that clearly can't affect dfe-engine, make it here directly and raise a dfe-engine issue saying so, for politeness.
+One exception to "this repo owns its charts": dfe-engine is the controlling repository for dfe-hyperdx, the search fork embedded in the DFE console.
 
 This repo owns:
 
@@ -34,17 +34,17 @@ Why it works this way is in [design principles](design-principles.md#your-cluste
 
 | Component | Switch | Dial | Swap targets |
 |---|---|---|---|
-| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 (built when there is no cluster), EKS, AKS, GKE Standard |
+| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 (built when there is no cluster) and EKS, tested. AKS and GKE Standard, values overlays only |
 | DNS | external-dns / estate-managed | provider config, or the deployment's own DNS | CoreDNS record (on-prem), Route53, ... |
 | Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI, cloud CA issuer later |
-| Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+IRSA), ... |
+| Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+EKS Pod Identity), ... |
 | Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
 | ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
 | Document store | mongo-protocol endpoint | documentdb chart (a DocumentDB CR on the DocumentDB operator's CloudNativePG -- the stack's only postgres), `mongodb.uri` in the hyperdx values | bundled DocumentDB, external mongo-protocol service |
 | Edge / LB | Gateway API + EnvoyProxy CR | `envoyGateway.service.*` (type, class, annotations, externalIPs) | MetalLB, cloud NLB, NodePort behind HW LB, externalIPs with no LB controller |
 | Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
 
-Two files hold the shared facts (the hyperi-ci versions.yaml pattern). `versions.yaml` holds every pin. `argocd/values/common.yaml` holds every shared deploy-config fact, including the canonical `hostnames:` map (role-named service subdomains: `dfe`, `hyperdx`, `auth` for the issuer, `argocd`, `git`, `kafbat`, `links`, `otel`) that the gateway routes, links page and dfe-ui embed URLs all resolve from. A shared fact defined anywhere else is config sprawl, and we merge it into one of those two.
+Two files hold the shared facts (the hyperi-ci versions.yaml pattern). `versions.yaml` holds every pin. `argocd/values/common.yaml` holds every shared deploy-config fact, including the canonical `hostnames:` map (role-named service subdomains: `dfe`, `hyperdx`, `argocd`, `git`, `kafbat`, `cruiseControl`, `links`, `otel`, `receiver`, `vpn`) that the gateway routes, links page and dfe-ui embed URLs all resolve from. A shared fact defined anywhere else is config sprawl, and we merge it into one of those two.
 
 ## Schema and topics: dfe-engine is the only controller
 
@@ -65,7 +65,7 @@ What that leaves this repo:
 
 Every k8s-deployed app dead-letters to a Kafka topic dfe-engine creates: `dfe_receiver_dlq`, `dfe_loader_dlq`, `dfe_archiver_dlq`, `dfe_fetcher_dlq`, and one shared `dfe_transform_dlq` for the transforms (a transform overrides only when it really needs its own). Kafka is the DEFAULT DLQ target because the file fallback can't work under the charts' read-only rootfs and silently drops. In dfe-docker, DLQs are opt-IN per component, EXCEPT the single-node full deploy, which carries the same DLQ topics as k8s.
 
-The five names and their retention are declared in dfe-schemas and created by dfe-engine at its own startup, on every tier and every provider. A DLQ write happens AT failure time, the one moment nothing can be creating topics, so the engine's wave-5 sync is what guarantees they're there before an app can poison one. DLQ topics keep 7 days, against the 72h data-topic default. A poisoned message is exactly the record an operator must still find days later, and once its source offset commits it exists nowhere else. Chart env points the four fleet apps at their topic (the same `DLQ_TOPIC` / `DLQ_MODE` on every app, each in the app's own env regime). Chart env doesn't point the transforms at `dfe_transform_dlq`. dfe-transform-vrl#30 and dfe-transform-vector#46 track that wiring.
+The five names and their retention are declared in dfe-schemas and created by dfe-engine at its own startup, on every tier and every provider. A DLQ write happens AT failure time, the one moment nothing can be creating topics, so the engine's wave-5 sync is what guarantees they're there before an app can poison one. DLQ topics keep 7 days, against the in-cluster broker's 24-hour data-topic default. A poisoned message is exactly the record an operator must still find days later, and once its source offset commits it exists nowhere else. Chart env points the four fleet apps at their topic (the same `DLQ_TOPIC` / `DLQ_MODE` on every app, each in the app's own env regime). Chart env doesn't point the transforms at `dfe_transform_dlq` in this release.
 
 ## How engine dials land here
 

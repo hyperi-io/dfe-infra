@@ -20,6 +20,6 @@ Scale-in has a precondition. The leaving brokers' data must fit on the remaining
 
 Argo: KEDA owns the `KafkaNodePool`'s `spec.replicas` once scaling, so Argo's `selfHeal` must not revert it as drift. It's the same `ignoreDifferences` plus `RespectIgnoreDifferences=true` pattern `dfe-layer2-apps` uses for Deployment replicas. The kafka chart's Application lives in `argocd/appsets/layer2-data.yaml` (`dfe-layer2-data`), not `layer-scale.yaml` (Strimzi operator only), and carries that `ignoreDifferences` entry on `KafkaNodePool`'s `/spec/replicas`.
 
-Redpanda: the Redpanda CRD (operator v26.2.3, `cluster.redpanda.com/v1alpha2`) declares no scale subresource, so Kubernetes' HPA can't target it. `spec.clusterSpec.statefulset.replicas` exists as a plain field, and scaling it stays manual until Redpanda ships one.
+Redpanda: the Redpanda CRD (the operator `versions.yaml` pins as `redpanda-operator`, `cluster.redpanda.com/v1alpha2`) declares no scale subresource, so Kubernetes' HPA can't target it. `spec.clusterSpec.statefulset.replicas` exists as a plain field, and scaling it stays manual until Redpanda ships one.
 
 MSK: [`aws-msk-operations.md`](aws-msk-operations.md#broker-count-autoscaling) covers its own CloudWatch-alarm-and-Lambda scaler.

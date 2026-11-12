@@ -1510,3 +1510,42 @@ def test_a_checkout_made_with_other_sparse_paths_is_fetched_again(
     (root / "o" / "app.git").rename(root / "o" / "gone.git")
     with pytest.raises(aggregate.FetchError):
         aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
+
+
+def _pin(tmp_path: Path, fetched: dict[str, str]) -> list:
+    site = {"builds": [{"name": "next", "members": [], "fetched": fetched}]}
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps(site), encoding="utf-8")
+    builds = [
+        aggregate.Build(name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}),
+        aggregate.Build(
+            name="next", base_url="/next/", listed=False, refs={"x": "HEAD", "y": "HEAD"}
+        ),
+    ]
+    return aggregate.pin_next(builds, site_file)
+
+
+def test_pin_next_fetches_every_member_at_its_recorded_commit(tmp_path: Path) -> None:
+    pinned = _pin(tmp_path, {"x": "a" * 40, "y": "b" * 40})
+    assert dict(pinned[0].refs) == {"x": "v1"}
+    assert dict(pinned[1].refs) == {"x": "a" * 40, "y": "b" * 40}
+
+
+@pytest.mark.parametrize(
+    "fetched",
+    [{"x": "a" * 40}, {"x": "a" * 40, "y": "local"}, {}],
+    ids=["member_missing", "not_a_commit", "nothing_recorded"],
+)
+def test_pin_next_refuses_a_member_with_no_recorded_commit(
+    tmp_path: Path, fetched: dict[str, str]
+) -> None:
+    """A member left on HEAD is the race the pin exists to close, so it fails rather than floats."""
+    with pytest.raises(SystemExit, match="recorded no commit for"):
+        _pin(tmp_path, fetched)
+
+
+def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None:
+    site_file = tmp_path / "site.json"
+    site_file.write_text(json.dumps({"builds": []}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="records no next build"):
+        aggregate.pin_next([], site_file)

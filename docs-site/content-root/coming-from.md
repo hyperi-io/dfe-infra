@@ -110,7 +110,7 @@ Two limits to know. Elastic Agent isn't tested yet. And DFE doesn't write back i
 
 dfe-transform-elastic is built to carry Elastic data across unchanged, from the shipper to the ECS fields. Beats data arrives in its own protocol, and dfe-transform-elastic runs the Elastic ingest pipelines for each supported Beats and Elastic Agent integration, with the same ECS field mapping, type coercion and enrichment Elastic's own pipeline gives it ([parity](dfe-transform-elastic/parity.md)). For the integrations it covers, anything downstream that expects ECS fields finds them.
 
-Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on their own, so each becomes ClickHouse SQL, and one that alerts becomes a rule on its source. Sigma rules are the shortcut where you have them: the Sigma pipeline turns a selected rule into a DFE rule and a hunt (off by default in 2.2.1, see [detections and hunts](operate/detections-and-hunts.md)).
+Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on their own, so each becomes ClickHouse SQL, and one that alerts becomes a rule on its source. Sigma rules are the shortcut where you have them: the Sigma pipeline turns a selected rule into a DFE rule and a hunt (off by default in this release, see [detections and hunts](operate/detections-and-hunts.md)).
 
 ## Doing it the DFE way
 

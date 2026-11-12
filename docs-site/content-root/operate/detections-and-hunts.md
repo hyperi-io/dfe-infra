@@ -24,7 +24,7 @@ Rules and Hunts sit under Detect. Matches are under Observe, in Hunt Results. A 
 
 ## Sigma
 
-Sigma is off in 2.2.1. Every path under `/api/v1/sigma` answers 404 until the engine runs with `DFE_SIGMA_ENABLED=true`. A `sigma` entry in a source's `views` is a field-map view and deploys either way. Turned on, [the Sigma pipeline](../dfe-engine/data-plane/sigma.md) pulls community rule feeds into a catalogue you curate, and each rule you select becomes a DFE rule and a hunt. [Field mapping](../dfe-engine/data-plane/field-mapping.md) says how Sigma's field names reach your columns.
+Sigma is off by default in this release. Every path under `/api/v1/sigma` answers 404 until `sigma.enabled` is set (`DFE_ENGINE_SIGMA_ENABLED=true`). A `sigma` entry in a source's `views` is a field-map view and deploys either way. Turned on, [the Sigma pipeline](../dfe-engine/data-plane/sigma.md) pulls community rule feeds into a catalogue you curate, and each rule you select becomes a DFE rule and a hunt. [Field mapping](../dfe-engine/data-plane/field-mapping.md) says how Sigma's field names reach your columns.
 
 ## Running the hunts
 

@@ -25,7 +25,7 @@ Provisioning (the dial, sizing, Kafka and ClickHouse choices) is in [aws.md](aws
 
 ## Image checks
 
-- We check every image for both `linux/amd64` and `linux/arm64` manifests, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` does it with no registry credential, on every pin change (`helm-lint.yml`) and in the stack release gate (`release.yml`). `dfe-stack release-gate` reads the DFE images by digest before a release-maturity stack ships. A digest-pinned verdict is cached (`--verdict-cache`), so only unproven references are read.
+- Every image a stack pins is checked for both `linux/amd64` and `linux/arm64` manifests before the stack ships, because an image missing either pulls fine and only fails at container start. `scripts/check_image_arch.py --third-party-only --resolve-charts` runs the same check with no registry credential.
 - Every third-party image a pin tags deploys as tag@sha256, and the check reads it by that digest. Forgejo's curl helper comes from the chart values that pin it. Dex, MetalLB's FRR pair and Karpenter's digest-pinned controller come from their chart's own values at the pinned version. `services-digests.karpenter` and `services.aws-load-balancer-controller-image` move Karpenter's chart and the load balancer controller to digests too, once a stack pins them.
 - Two pinned images still deploy by tag. One is the cluster-mode Redpanda broker, whose operator chart accepts only a bare semver tag. The other is Strimzi's broker, which its operator resolves.
 - Some images are named in a chart render but never pulled, so we don't check them. Envoy Gateway's rate-limit image is one, because the gateway uses only `rateLimit.local`. cert-manager's ACME HTTP-01 solver is another, because every issuer here solves DNS-01. The last group is Strimzi's Kafka Bridge, Kafka Connect build and other-version Kafka images. No chart renders a KafkaBridge or KafkaConnect, and the Kafka resource names only `services.kafka-version`.
@@ -47,7 +47,7 @@ Each Karpenter pool gets one budget per reason from its class, setting how many 
 
 ## Registry cache
 
-Every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through an ECR pull-through cache in the deployment's own account, which keeps the pulls off those registries' rate limits. None of the three needs a credential. Earlier DFE 2.1 customer deployments ran the same pattern. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
+Every node pulls its quay.io, registry.k8s.io and public.ecr.aws images through an ECR pull-through cache in the deployment's own account, which keeps the pulls off those registries' rate limits. None of the three needs a credential. Design: [registry-cache/CONTRACT.md](../../terraform/modules/registry-cache/CONTRACT.md).
 
 - It's on by default. `registry_cache.enabled: "false"` in the dial turns it off, and `tofu output registry_cache` lists what is cached.
 - docker.io and ghcr.io images pull straight from upstream, anonymously, because no image the stack pulls needs a credential to read. A Docker Official Image comes from its `public.ecr.aws/docker/library/` mirror instead of docker.io, so the cache covers it.
