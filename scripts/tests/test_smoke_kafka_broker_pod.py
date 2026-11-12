@@ -164,7 +164,7 @@ def test_a_broker_is_found_when_the_first_kafka_named_pod_is_not_one() -> None:
     expect("the broker is used", execs(counts, strimzi_broker(0)["name"]) > 0, str(counts))
     expect("Cruise Control is not", execs(counts, CRUISE_CONTROL["name"]) == 0, str(counts))
     core_3 = stdout.split("=== CORE 3")[1].split("=== Ancillary")[0]
-    expect("so the seam passes", "[FAIL]" not in core_3, stdout)
+    expect("so the kafka path passes", "[FAIL]" not in core_3, stdout)
 
 
 def test_no_broker_fails_a_tier_that_runs_one() -> None:
@@ -187,7 +187,7 @@ def test_no_broker_skips_a_brokerless_tier() -> None:
     stdout, _ = smoke(NO_BROKER, profile="slim")
 
     expect(
-        "the seam is skipped", "[SKIP] kafka seam -- no broker pod in ns/strimzi" in stdout, stdout
+        "the kafka path is skipped", "[SKIP] kafka path -- no broker pod in ns/strimzi" in stdout, stdout
     )
 
 

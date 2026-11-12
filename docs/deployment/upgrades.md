@@ -27,7 +27,7 @@ On a verified path, bump `pins.yaml` in the deployment repo. One pin selects the
 2. The data services, Keeper before ClickHouse, then the Kafka brokers under the operator's rolling update, with `metadata.version` finalised after a soak.
 3. The apps.
 
-Moving the Argo CD ref by hand isn't a supported upgrade. Every chart and operator Application renders from the cluster secret's `dfe.hyperi.io/target_revision`, and `pins.yaml` reaches only `dfe-stack resolve`, so a pin bump alone leaves a tag-pinned deployment on its old charts. `dfe-ops upgrade apply` rewrites that annotation, with `dfe.hyperi.io/stack_version` beside it. A hand retarget across the Strimzi 0.x to 1.x lift also wedges Kafka, so `preflight` and `apply` refuse while any of the ten Strimzi CRDs stores a pre-v1 version.
+Moving the Argo CD ref by hand isn't a supported upgrade. Every chart and operator Application renders from the cluster secret's `dfe.hyperi.io/target_revision`, and `pins.yaml` reaches only `dfe-stack resolve`, so a pin bump alone leaves a tag-pinned deployment on its old charts. `dfe-ops upgrade apply` rewrites that annotation, with `dfe.hyperi.io/stack_version` beside it. A hand retarget across the Strimzi 0.x to 1.x lift also breaks Kafka: the 1.x operator's chart won't apply over a CRD that still stores a pre-v1 version. So `preflight` and `apply` refuse while any of the ten Strimzi CRDs stores one.
 
 ## dfe-ops upgrade
 

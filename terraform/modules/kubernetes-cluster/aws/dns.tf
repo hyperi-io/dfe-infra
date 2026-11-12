@@ -68,7 +68,7 @@ resource "terraform_data" "private_zone_teardown" {
   // been writing into the zone.
   provisioner "local-exec" {
     when = destroy
-    // A zone already emptied or already deleted by hand must not wedge the
+    // A zone already emptied or already deleted by hand must not fail the
     // destroy: whatever this cannot clear still surfaces as the zone's own
     // HostedZoneNotEmpty, which names the remaining records.
     on_failure = continue

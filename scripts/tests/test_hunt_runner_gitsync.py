@@ -400,14 +400,14 @@ def test_disabled_restores_the_single_container_pod() -> None:
 def test_no_deploy_repo_means_no_sidecar() -> None:
     """gitops.enabled=false leaves no repo to sync and no credential Secret.
 
-    Rendering the sidecar anyway would wedge the pod in
+    Rendering the sidecar anyway would hold the pod in
     CreateContainerConfigError on a Secret nothing creates.
     """
     doc = render({"gitops": {"enabled": False}})
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("the sidecar is not rendered", names == ["hunt-runner"], f"{names}")
     expect(
-        "nor the init container that would wedge the pod on it",
+        "nor the init container that would block the pod on it",
         init_names(doc) == ["wait-for-engine"],
         f"{init_names(doc)}",
     )

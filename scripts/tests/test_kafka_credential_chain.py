@@ -551,7 +551,7 @@ def test_an_unnamed_external_provider_renders_the_pre_contract_shape() -> None:
     expect("only the password is read", written == {"password"}, f"got {sorted(written)}")
 
 
-def test_iam_stays_quarantined_at_the_external_seam() -> None:
+def test_iam_stays_confined_to_external_mode() -> None:
     """msk_iam mints no static credential, so half-naming it renders a broken deploy."""
     err = render_error(
         KAFKA,

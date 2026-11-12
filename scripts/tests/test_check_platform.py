@@ -23,7 +23,7 @@ pair exists to catch.
 
 The ImageVolume gate is read through a fake `kubectl` first on PATH. The preflight
 cases drive `dfe-ops preflight` itself: its other cluster reads are answered
-in-process (the `_run_text` seam test_strimzi_stored_versions.py drives) and the
+in-process (through `_run_text`, as test_strimzi_stored_versions.py does) and the
 gate read still goes out through the fake, which answers only the argv aimed at
 the cluster preflight was given.
 

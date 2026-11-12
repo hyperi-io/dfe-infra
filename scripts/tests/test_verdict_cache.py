@@ -11,7 +11,7 @@
 """The verdict cache behind scripts/check_image_arch.py --verdict-cache.
 
 A fake registry stands in for docker and helm, as in test_registry_retry.py:
-`subprocess.run` is the only seam faked, so the gate's own reads, its verdicts and
+`subprocess.run` is the only call faked, so the gate's own reads, its verdicts and
 the file it writes all run for real. A call past the end of a tool's script fails
 the test, which is how a test proves a reference was NOT read.
 

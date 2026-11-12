@@ -1054,7 +1054,7 @@ def quorum_parts(last_part: str) -> list[tuple[str, int, int]]:
     return found
 
 
-def check_schema_lock_wedge(
+def check_schema_lock_quorum(
     kubeconfig: str | None,
     namespace: str = DEFAULT_CLICKHOUSE_NAMESPACE,
     selector: str = DEFAULT_CLICKHOUSE_SELECTOR,
@@ -1094,7 +1094,7 @@ def check_schema_lock_wedge(
     tables = [line.split("\t") for line in out.splitlines() if line.count("\t") == 2]
     if not tables:
         return True, "no replicated schema_lock table"
-    wedged: list[str] = []
+    lost: list[str] = []
     unproven: list[str] = []
     for database, zk_path, total in tables:
         ok, out = ask(
@@ -1127,11 +1127,11 @@ def check_schema_lock_wedge(
         if total.isdigit() and len(pods) < int(total):
             unproven.append(f"{database} ({len(pods)} of {total} replicas read)")
             continue
-        wedged.append(database)
-    if wedged:
-        drops = "; ".join(schema_lock_remedy.schema_lock_drop(db) for db in wedged)
+        lost.append(database)
+    if lost:
+        drops = "; ".join(schema_lock_remedy.schema_lock_drop(db) for db in lost)
         return False, (
-            f"schema_lock's quorum names a part no replica holds ({', '.join(wedged)}), so no engine can "
+            f"schema_lock's quorum names a part no replica holds ({', '.join(lost)}), so no engine can "
             f"take the schema lease. With no engine holding it, run once on one replica: {drops} "
             "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)"
         )
@@ -1989,8 +1989,8 @@ def run_preflight(
         ),
     ))
     checks.append((
-        "schema lock not wedged",
-        *check_schema_lock_wedge(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_credentials),
+        "schema lock quorum part held",
+        *check_schema_lock_quorum(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_credentials),
     ))
     conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
     if conversion is not None:

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
-#  File:         test_smoke_hyperdx_seams.py
+#  File:         test_smoke_hyperdx.py
 #  Purpose:      Prove bootstrap/smoke-test-hyperdx.sh probes from inside a pod that has
 #                node and neither curl nor wget, and never passes on an unread answer.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""The HyperDX seam smoke test against a pod shaped like the dfe-hyperdx image.
+"""The HyperDX smoke test against a pod shaped like the dfe-hyperdx image.
 
 The image ships node and neither curl nor wget. A fake `kubectl` first on PATH
 runs `kubectl exec` commands locally with a PATH holding only `env`, `sh` and
@@ -22,7 +22,7 @@ The embed checks must only run on headers that were read: a probe that fails pri
 nothing, and an error message from a missing tool used to count as headers, so
 "X-Frame-Options NOT set" passed on a pod that had answered nothing.
 
-    python3 scripts/tests/test_smoke_hyperdx_seams.py
+    python3 scripts/tests/test_smoke_hyperdx.py
 
 Needs node on PATH, as the CI runner has. No third-party deps and no test runner.
 """
@@ -266,7 +266,7 @@ def verdict(out: subprocess.CompletedProcess, tag: str, name: str) -> bool:
     return any(line.strip().startswith(f"[{tag}] {name}") for line in out.stdout.splitlines())
 
 
-def test_a_node_only_pod_passes_all_three_seams() -> None:
+def test_a_node_only_pod_passes_all_three_checks() -> None:
     expect("node is on PATH for the probes", shutil.which("node") is not None)
     out, seen = run_smoke()
 

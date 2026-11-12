@@ -1014,7 +1014,7 @@ class TestTheVectorCase:
         assert "filebeat.yaml" in driver.detail("upload-program")
 
     def test_without_a_program_repo_a_case_still_reads_the_corpus_one(self):
-        """Every other case keeps one checkout, so the seam must default away."""
+        """Every other case keeps one checkout, so programs() must fall back to the corpus."""
         run = a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "fbdeadbeef", Path("/corpus"))
 
         assert run.programs() == Path("/corpus")

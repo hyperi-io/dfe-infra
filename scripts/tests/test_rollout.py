@@ -271,7 +271,7 @@ def test_a_multi_replica_workload_carries_a_budget() -> None:
 
 
 def test_a_budget_never_blocks_a_drain_the_autoscaler_can_cause() -> None:
-    """KEDA floor 1 means the workload can reach one pod, where minAvailable wedges."""
+    """KEDA floor 1 means the workload can reach one pod, where minAvailable blocks every drain."""
     profile, cloud = DIAL_CELL
     overlay = {"replicaCount": 2, "keda": {"enabled": True, "minReplicaCount": 1}}
     for app in sorted(APPS):

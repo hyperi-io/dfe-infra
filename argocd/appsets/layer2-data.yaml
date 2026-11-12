@@ -43,7 +43,7 @@ spec:
                 # It is the deploy-repo FALLBACK, deployed ONLY when no external git
                 # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
                 # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
-                # deploy repo is a seam (external git PRIMARY); never a hard dep.
+                # deploy repo is pluggable (external git PRIMARY); never a hard dep.
                 # Kafka substrate -- mode-driven: disabled on slim -> nothing;
                 # non-operator single broker on single; cluster on scale. The
                 # cluster (scale) path with provider strimzi (default) needs the

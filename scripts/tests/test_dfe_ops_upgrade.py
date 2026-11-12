@@ -895,15 +895,15 @@ LOCK_QUORUM = _proc(0, stdout="version: 2\nparts count: 1\nall\tall_77_77_1\n")
             "ch-0-1: Code: 210. Connection refused",
         ),
     ],
-    ids=["wedged", "one-replica-lagging", "no-lock-table", "no-quorum-state", "not-every-replica-read", "pod-error"],
+    ids=["quorum-part-lost", "one-replica-lagging", "no-lock-table", "no-quorum-state", "not-every-replica-read", "pod-error"],
 )
-def test_check_schema_lock_wedge_fails_only_when_every_replica_lost_the_quorum_part(
+def test_check_schema_lock_quorum_fails_only_when_every_replica_lost_the_quorum_part(
     monkeypatch: pytest.MonkeyPatch, replies: list, ok: bool, detail: str
 ) -> None:
     calls = _mock_run(
         monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"), *replies
     )
-    assert u.check_schema_lock_wedge("kc") == (ok, detail)
+    assert u.check_schema_lock_quorum("kc") == (ok, detail)
     assert _no_argv_carries(calls, CH_PASSWORD)
 
 
@@ -912,7 +912,7 @@ def test_a_merged_quorum_part_still_counts_as_held(monkeypatch: pytest.MonkeyPat
         monkeypatch, _ch_pods("ch-0-0"), _ch_password(), _proc(0, stdout="1\n"),
         _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t1\n"), LOCK_QUORUM, _proc(0, stdout="1\n"),
     )
-    assert u.check_schema_lock_wedge("kc")[0] is True
+    assert u.check_schema_lock_quorum("kc")[0] is True
     query = calls[-1][calls[-1].index("-q") + 1]
     assert "partition_id = 'all' AND min_block_number <= 77 AND max_block_number >= 77" in query
 
@@ -3415,7 +3415,7 @@ def test_preflight_runs_the_conversion_check_with_the_operator_move(monkeypatch:
         return False, "1 CRD(s) still store a pre-v1 version"
 
     for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
-                 "check_clickhouse_merges", "check_schema_lock_wedge", "check_node_capacity"):
+                 "check_clickhouse_merges", "check_schema_lock_quorum", "check_node_capacity"):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "check_strimzi_conversion_before", fake_before)
     step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="x stored-version conversion y")
@@ -4344,7 +4344,7 @@ def _ingest_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Pat
     monkeypatch.setattr(u, "VERSIONS_FILE", versions)
     (deploy / "pins.yaml").write_text(PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8")
     for name in ("check_deploy_clean", "check_web_plane", "check_cluster_reachable", "check_argo_apps",
-                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_schema_lock_wedge", "check_node_capacity", "check_backup_marker"):
+                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_schema_lock_quorum", "check_node_capacity", "check_backup_marker"):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
 
 

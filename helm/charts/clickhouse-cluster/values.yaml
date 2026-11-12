@@ -215,7 +215,7 @@ clickhouse:
   # Object bulk store, for any model whose bulk half is `object`. Credentials
   # NEVER appear here -- the server reads them from the environment, wired from
   # a Secret the secrets store materialises (externalsecret-object-store.yaml),
-  # the same seam mode=external uses.
+  # the same path mode=external uses.
   objectStore:
     # Full disk endpoint including bucket and path prefix, trailing slash
     # required, e.g. https://my-bucket.s3.ap-southeast-2.amazonaws.com/clickhouse/

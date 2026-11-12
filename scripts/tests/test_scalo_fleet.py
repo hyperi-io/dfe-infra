@@ -4,7 +4,7 @@ Real git repositories in temp dirs with a local bare remote, and real stand-in
 binaries the tool really execs (no mocks, per the project policy). Nothing here
 touches the network or GitHub: every test runs with a scratch PATH whose ``gh``
 and ``cargo`` fail by default, so an unexpected call fails offline rather than
-reaching out. The one seam is a fake clock for the registry wait, so its
+reaching out. The one fake is a clock for the registry wait, so its
 15-minute ceiling can be proven without spending it.
 """
 
@@ -185,7 +185,7 @@ class _FakeClock:
     """A monotonic clock that only moves when the code under test sleeps.
 
     The registry wait spends up to 15 real minutes, so the ceiling can only be
-    proven by owning the clock. Nothing else in the tool takes this seam.
+    proven by owning the clock. Nothing else in the tool is faked.
     """
 
     def __init__(self) -> None:

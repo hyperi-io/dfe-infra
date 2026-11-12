@@ -88,7 +88,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-receiver"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-receiver config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -119,7 +119,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-loader"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-loader config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -148,7 +148,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-archiver"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-archiver config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -177,7 +177,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-fetcher"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-fetcher config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -206,7 +206,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vrl"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-vrl config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -235,7 +235,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vector"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-vector config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -264,7 +264,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-elastic"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-elastic config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --

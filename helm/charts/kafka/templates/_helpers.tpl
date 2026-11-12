@@ -277,8 +277,8 @@ mode; the guards are no-ops outside kafka.mode=cluster + kafka.provider=strimzi
 {{- end }}
 
 {{/*
-dfe-kafka.validateExternalProvider -- keep the IAM credential shape quarantined
-at the mode=external seam.
+dfe-kafka.validateExternalProvider -- keep the IAM credential shape confined
+to mode=external.
 
 msk_iam is the one identity with no username/password pair: it authenticates
 through IRSA/workload-identity, so it renders no credential Secret. Naming it on

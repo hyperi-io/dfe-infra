@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         test_schema_lock_remedy.py
-#  Purpose:      Pin the remedy dfe-ops upgrade preflight prints for a wedged
-#                engine schema lock.
+#  Purpose:      Pin the remedy dfe-ops upgrade preflight prints for an
+#                engine schema lock whose quorum part is lost.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
