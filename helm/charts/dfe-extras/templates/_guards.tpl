@@ -251,7 +251,7 @@ they are, which Argo CD 3.5.x does for any source that fails to render.
 {{- $stale = and (not (empty $old)) (ne (toJson $old) (toJson $new)) -}}
 {{- end -}}
 {{- if $stale -}}
-{{- fail (printf "%s: %s is set and %s is not -- the overlay was written for the charts before %s, and the charts from %s read %s in its place. Run dfe-ops upgrade migrate-values --deploy <deploy repo checkout>, then commit and push (docs/deployment/upgrades.md#from-220)" $service $rule.from $rule.to (toString $map.since) (toString $map.since) $rule.to) -}}
+{{- fail (printf "%s: %s is set and %s is not -- the overlay was written for the charts before %s, and the charts from %s read %s in its place. Run dfe-ops upgrade migrate-values --deploy <deploy repo checkout>, then commit and push (docs/deployment/upgrades.md#migrate-values)" $service $rule.from $rule.to (toString $map.since) (toString $map.since) $rule.to) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

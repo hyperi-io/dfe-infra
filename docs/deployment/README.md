@@ -156,5 +156,5 @@ If your mirror needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SECRE
 - [deploy-tls-trust.md](../deploy-tls-trust.md) - which CA signs the gateway certificate
 - [kafka/](kafka/README.md) - managed-Kafka alternatives and the Redpanda gate
 - [clickhouse.md](clickhouse.md) - CH target matrix (official operator or ClickHouse Cloud, Altinity untested) and operator history
-- [upgrades.md](upgrades.md#migrating-from-dfe-2x-before-22) - migrating a pre-2.2 private-cloud deployment off the retired ClickHouse fork onto cached-object
+- [migrating-from-2.1.md](migrating-from-2.1.md) - migrating a pre-2.2 private-cloud deployment off the retired ClickHouse fork onto cached-object
 - [deployment-logs/](deployment-logs/template.md) - record every deploy
