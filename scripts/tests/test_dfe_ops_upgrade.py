@@ -4304,7 +4304,7 @@ def test_an_upgrade_from_220_without_an_ingest_block_is_refused_naming_the_keys(
     assert "a LoadBalancer open to every address on the receiver's public ports" in detail
     assert "exposure.groups.ingest.door" in detail
     assert "exposure.groups.ingest.allow" in detail
-    assert "docs/deployment/upgrades.md#from-220" in detail
+    assert "See docs/ingest-edge.md." in detail
 
 
 @pytest.mark.parametrize(("overlay", "keys"), INGEST_BLOCKS)
@@ -4508,7 +4508,7 @@ def test_an_upgrade_from_220_on_a_cloud_without_web_groups_is_refused_naming_the
     assert (
         "Set exposure.groups.<group>.allow to the CIDRs that may reach them, for console and api, in infra/common.yaml."
     ) in detail
-    assert detail.endswith("See docs/deployment/upgrades.md#from-220.")
+    assert detail.endswith("See docs/edge-auth-cloud.md#internet-facing-defaults.")
 
 
 @pytest.mark.parametrize("overlay", NO_WEB_BLOCK)
