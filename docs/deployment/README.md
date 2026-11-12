@@ -107,6 +107,8 @@ The Kafka landing topic moves with the source name, from `default_land` to `main
 
 `versions.yaml` is the one place chart, operator and image versions are set. `scripts/check_versions_drift.py` checks it. Images are pinned as `name:tag@sha256`. The tag lives in `apps:` and the immutable digest in `digests:`. `scripts/dfe-stack` renders the combined form and `dfe-stack verify` re-checks the digests against GHCR.
 
+Every DFE Rust app links its C libraries statically. librdkafka and OpenSSL are compiled in, so an image needs nothing C beyond libc. The one exception is dfe-fetcher's unixODBC driver manager (`libodbc.so.2`, LGPL-2.1), which is linked dynamically and loads each ODBC driver at run time (https://github.com/hyperi-io/dfe-fetcher/blob/main/docs/reference/db-drivers.md).
+
 A dfe-infra release tag certifies the whole set as one stack version (`stack:` metadata plus lockstep `content:` repo tags). The full release model is in [stack-versioning.md](stack-versioning.md).
 
 `content.dfe-docker` records the dfe-docker release tag that runs the stack. To reproduce an old stack's docker path, check dfe-docker out at that stack's recorded tag.
