@@ -406,11 +406,13 @@ div[class*='announcementBar'] button {
   font-size: var(--dfe-text-xs);
 }
 
-/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas instead. */
+/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas
+   instead, in the page's ink: mid-render a label is black, which vanishes on the dark canvas. */
 .docusaurus-mermaid-container .edgeLabel,
 .docusaurus-mermaid-container .edgeLabel p,
 .docusaurus-mermaid-container .labelBkg {
   background-color: var(--role-canvas) !important;
+  color: var(--role-body) !important;
 }
 
 .docusaurus-mermaid-container .edgeLabel rect {
