@@ -1360,6 +1360,34 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     assert report_only == 0
 
 
+@pytest.mark.parametrize(
+    ("pages", "args", "exit_code"),
+    [
+        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, [], 1),
+        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, ["--report-only"], 0),
+        ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, ["--report-only", "--fail-on", "register"], 1),
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, ["--report-only", "--fail-on", "register"], 0),
+        (
+            {"dfe-ui/a.md": "# A\n\nSign in with Seam. <!-- docs-gate: allow register -- the vendor's name -->\n"},
+            ["--report-only", "--fail-on", "register"],
+            0,
+        ),
+    ],
+)
+def test_a_planted_register_word_fails_the_gate(
+    tmp_path: Path, pages: dict[str, str], args: list[str], exit_code: int
+) -> None:
+    """A register word fails a pull request as new, and --fail-on fails it on main too."""
+    content = write_content(tmp_path / "pr", pages)
+    assert gate.main(["--content", str(content), *args]) == exit_code
+
+
+def test_fail_on_refuses_an_unknown_rule(tmp_path: Path) -> None:
+    content = write_content(tmp_path / "pr", {"dfe-ui/a.md": "# A\n"})
+    with pytest.raises(SystemExit, match="unknown rule"):
+        gate.main(["--content", str(content), "--fail-on", "registr"])
+
+
 def test_the_gate_reads_named_files_without_a_build(tmp_path: Path) -> None:
     page = tmp_path / "docs" / "aws.md"
     write_tree(tmp_path, {"docs/aws.md": "# AWS\n\nGo; now.\n", "docs/x.txt": "a; b"})
