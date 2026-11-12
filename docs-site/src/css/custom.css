@@ -335,8 +335,9 @@ html[data-theme='dark'] {
   margin-right: var(--dfe-space-2);
   padding: 0 var(--dfe-space-2);
   border-radius: var(--dfe-radius-pill);
-  background: var(--dfe-navy);
-  color: var(--dfe-accent);
+  background: transparent;
+  color: var(--role-muted);
+  border: var(--dfe-stroke-hairline) solid var(--role-border);
   font-size: var(--dfe-text-xs);
   font-weight: 700;
   letter-spacing: var(--dfe-tracking-eyebrow);
@@ -346,10 +347,11 @@ html[data-theme='dark'] {
 
 div[class*='announcementBar'] {
   font-size: var(--dfe-text-sm);
+  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
 }
 
 div[class*='announcementBar'] a {
-  color: inherit;
+  color: var(--role-link);
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 0.15em;
