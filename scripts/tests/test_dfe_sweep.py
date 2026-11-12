@@ -909,9 +909,21 @@ def test_a_pending_status_check_never_gates() -> None:
     assert sweep.dashboard_items(body) == []
 
 
-def test_a_github_error_page_is_retried_and_a_real_refusal_is_not(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("error", "retried"),
+    [
+        (sweep.GhError("x", None, "invalid character '<' looking for beginning of value"), True),
+        (sweep.GhError("x", None, "unexpected end of JSON input"), True),
+        (sweep.GhError("x", 502, "Bad Gateway (HTTP 502)"), True),
+        (sweep.GhError("x", 404, "Not Found (HTTP 404)"), False),
+    ],
+    ids=["error-page", "cut-off-body", "bad-gateway", "not-found"],
+)
+def test_a_transient_github_error_is_retried_and_a_real_refusal_is_not(
+    monkeypatch, error: sweep.GhError, retried: bool
+) -> None:
     calls: list[str] = []
-    errors = [sweep.GhError("x", None, "invalid character '<' looking for beginning of value")]
+    errors = [error]
 
     def once(argv: list[str], label: str, timeout: float) -> list:
         calls.append(label)
@@ -921,14 +933,13 @@ def test_a_github_error_page_is_retried_and_a_real_refusal_is_not(monkeypatch) -
 
     monkeypatch.setattr(sweep, "_run_gh_once", once)
     monkeypatch.setattr(sweep.time, "sleep", lambda seconds: None)
-    assert sweep._run_gh(["gh"], "q", 1.0) == [{"ok": True}]
-    assert calls == ["q", "q"]
-
-    calls.clear()
-    errors.append(sweep.GhError("x", 404, "Not Found (HTTP 404)"))
-    with pytest.raises(sweep.GhError):
-        sweep._run_gh(["gh"], "q", 1.0)
-    assert calls == ["q"]
+    if retried:
+        assert sweep._run_gh(["gh"], "q", 1.0) == [{"ok": True}]
+        assert calls == ["q", "q"]
+    else:
+        with pytest.raises(sweep.GhError):
+            sweep._run_gh(["gh"], "q", 1.0)
+        assert calls == ["q"]
 
 
 def test_a_dashboard_comment_is_stripped_however_it_ends() -> None:
