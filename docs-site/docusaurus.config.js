@@ -370,8 +370,8 @@ module.exports = {
           content:
             `<span class="announcement-tag">${siteCopy.announcement.tag}</span>${siteCopy.announcement.text} ` +
             `<a href="${releaseNotes}">${siteCopy.announcement.link}${ARROW_SVG}</a>`,
-          backgroundColor: 'var(--dfe-accent)',
-          textColor: 'var(--dfe-navy)',
+          backgroundColor: 'var(--role-raised)',
+          textColor: 'var(--role-body)',
           isCloseable: true,
         }
       : undefined,
