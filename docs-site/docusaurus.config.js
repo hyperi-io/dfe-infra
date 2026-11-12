@@ -97,31 +97,27 @@ function loadCopy(name) {
   return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
 }
 
-// The landing tab's lines from this build's copy of a quickstart page: the first sentence of its
-// "You need" line, and the fenced block after its <!-- landing --> marker.
-// Inline # notes stay on the page, and a make line pins this build's stack when it is not the newest.
-function landingFrom(page) {
+// The landing tab's "You need" sentence, the block after <!-- landing -->, then the block's `then`.
+// Only aggregate.py's one-line compose fill writes that marker, so other builds show no command.
+function landingFrom({code_from: page, then}) {
   const file = path.join(CONTENT, build.name, page);
   const text = fs.readFileSync(file, 'utf8');
   const match = text.match(/<!-- landing -->\s*```[^\n]*\n([\s\S]*?)\n```/);
   if (!match) {
-    throw new Error(`copy/landing.yaml: ${file} has no <!-- landing --> marker before a code block`);
+    return [];
   }
   const need = text.slice(0, match.index).match(/^You need ([^\n]*?\.)(?: |$)/m);
   const code = match[1]
     .split('\n')
     .map((line) => line.replace(/\s+#.*$/, ''))
-    .map((line) => (line.startsWith('make ') ? `${line}${versionArg}` : line))
     .join('\n');
-  return need ? [{text: `Needs ${need[1]}`}, {code}] : [{code}];
+  return [...(need ? [{text: `Needs ${need[1]}`}] : []), {code}, ...(then ? [{text: then}] : [])];
 }
 
 const siteCopy = loadCopy('site');
 const landingCopy = loadCopy('landing');
 for (const tab of landingCopy.quickstart.tabs) {
-  tab.blocks = tab.blocks.flatMap((block) =>
-    block.code_from === undefined ? [block] : landingFrom(block.code_from),
-  );
+  tab.blocks = tab.blocks.flatMap((block) => (block.code_from === undefined ? [block] : landingFrom(block)));
 }
 
 // Markdown links and backticks as the plain text another site can show.
