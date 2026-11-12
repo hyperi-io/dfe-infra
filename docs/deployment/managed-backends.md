@@ -89,8 +89,8 @@ The same like-for-like rule picks the rest of an AWS deployment.
 | ClickHouse without ClickHouse Cloud | in the cluster | deliberate |
 | Images | GHCR | deliberate, not ECR |
 
-## Next steps, not built
+## Not supported
 
-Same region. A service in another region of the same provider still costs inter-region data transfer. MSK sits in the VPC, and both SaaS modules place their cluster in the deployment's own region, so only ClickHouse Cloud can differ. Its host carries the region, and `managed-backends` could refuse one that isn't `provision.region`. The trade-off is reach. ClickHouse Cloud and Redpanda Serverless run in fewer regions than AWS, so a deployment in a region without one loses that backend and doesn't reach across.
+Same-region enforcement for ClickHouse Cloud. MSK sits in the VPC, and both SaaS Kafka modules place their cluster in the deployment's own region. Nothing refuses a ClickHouse Cloud host in another region, and that costs inter-region data transfer, so pick the service's region to match `provision.region`.
 
-Private connectivity. Over NAT, every byte to a SaaS backend is also billed as NAT gateway data processing. Confluent (Private Network Interface on Freight, PrivateLink on Enterprise) and Redpanda (PrivateLink) are built and are the default `kafka.connectivity`. A cloud cycle runs public, because tofu writes their ACLs from outside the VPC. ClickHouse Cloud PrivateLink isn't built. It needs an interface endpoint to the service's endpoint service, a private Route 53 zone for `<region>.vpce.aws.clickhouse.cloud`, the endpoint id on the service's allow list, and a security group admitting 443, 8443 and 9440. The vendor offers it on its Scale plan and above. The trade-off is the interface endpoint's own hourly and per-GB charges against the NAT charge they replace, so compare the two charges at your volume.
+ClickHouse Cloud PrivateLink. Traffic to ClickHouse Cloud goes through NAT, and every byte is also billed as NAT gateway data processing. Confluent (Private Network Interface on Freight, PrivateLink on Enterprise) and Redpanda (PrivateLink) private connectivity is built and is the default `kafka.connectivity`.

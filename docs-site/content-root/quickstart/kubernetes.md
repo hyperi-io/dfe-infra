@@ -7,7 +7,7 @@ sidebar_label: Kubernetes on-premises
 
 DFE on a Kubernetes cluster you run. We test on RKE2, but the charts don't need any particular distribution.
 
-You need Kubernetes 1.35 or later, `kubectl` pointed at the cluster, and `helm`, `openssl` and Python 3. `<version>` is the DFE release you're installing, the one in the version menu at the top of this page.
+You need Kubernetes 1.34 to 1.36, `kubectl` pointed at the cluster, and `helm`, `openssl` and Python 3. On 1.34 turn the `ImageVolume` feature gate on. 1.37 is untested, and the preflight warns on it. `<version>` is the DFE release you're installing, the one in the version menu at the top of this page.
 
 ```bash
 git clone --branch <version> https://github.com/hyperi-io/dfe-infra && cd dfe-infra
