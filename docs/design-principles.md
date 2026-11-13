@@ -109,8 +109,6 @@ So three things are core design in every app that touches records, not tuning do
 
 Other people's parsers give us ideas, not code or patterns. Most open source parsers we've looked at, GPL and LGPL ones included, don't work this way. They don't need to. They're built for one host's stream or one analyst's file, where a regex or a clone per event costs nothing anyone notices. At mega scale those same patterns are the bottleneck.
 
-So we read them for ideas: the edge cases they found, the formats they decode, the bugs in their issue trackers. We don't take their code, and we don't take their core patterns. Licensing rules out GPL and LGPL code in a BUSL app anyway, but a permissive parser still gets rebuilt to the rules above before it touches the hot path.
-
 Example: dfe-receiver #238 (auditd) takes its edge cases from Laurel and its design from here.
 
 ## Break the parser down by usage pattern
