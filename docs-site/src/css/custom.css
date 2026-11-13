@@ -378,9 +378,25 @@ div[class*='announcementBar'] button {
   --ifm-footer-color: var(--role-muted);
   --ifm-footer-link-color: var(--role-body);
   --ifm-footer-link-hover-color: var(--dfe-accent);
-  --ifm-footer-title-color: var(--role-ink);
-  padding-block: var(--dfe-space-12);
+  padding-block: var(--dfe-space-4);
   border-top: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+/* Two short rows: the links, then the mark and the copyright side by side. */
+.footer__links {
+  margin-bottom: var(--dfe-space-3);
+  font-size: var(--dfe-text-sm);
+}
+
+.footer__bottom {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--dfe-space-4);
+}
+
+.footer__bottom > div {
+  margin-bottom: 0;
 }
 
 .footer > .container {
@@ -390,21 +406,17 @@ div[class*='announcementBar'] button {
 
 /* The theme dims the footer logo to half, and a mark is never shown recoloured. */
 .footer a[class*='footerLogoLink'] {
+  display: flex;
   opacity: 1;
 }
 
 .footer__logo {
-  height: var(--dfe-space-8);
+  height: var(--dfe-space-6);
+  margin-top: 0;
 }
 
-.footer__title {
-  font-family: var(--dfe-font-sans);
-  font-size: var(--dfe-text-sm);
-  font-weight: 600;
-}
-
-.footer__item {
-  font-size: var(--dfe-text-sm);
+.footer__copyright {
+  font-size: var(--dfe-text-xs);
 }
 
 .footer__copyright {
