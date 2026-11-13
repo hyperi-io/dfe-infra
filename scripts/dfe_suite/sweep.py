@@ -797,6 +797,13 @@ def gh_graphql(
     return _run_gh([*argv, "--jq", jq], "graphql", timeout)
 
 
+def projects_unreadable(org: str, projects: ProjectIndex | None) -> list[Unreadable]:
+    """Return one org-level entry when the org's projects could not be listed, else none."""
+    if projects is None or not projects.error:
+        return []
+    return [Unreadable(org, "backlog", f"projects not readable: {projects.error}")]
+
+
 def project_index(org: str, limit: int, *, timeout: float = GH_TIMEOUT) -> ProjectIndex:
     """The org's open projects by title; a refusal is kept, never read as no projects."""
     argv = ["gh", "project", "list", "--owner", org, "--format", "json", "--limit", str(limit)]
@@ -1763,14 +1770,14 @@ def _backlog(
 
     Returns:
         The project number with its rows, NO_PROJECT when the org has none titled after the
-        repo, or NOT_READ, with an unreadable entry, when the projects could not be read.
+        repo, or NOT_READ when the projects could not be read. NOT_READ adds an unreadable
+        entry, except for an org list that failed, which projects_unreadable reports once.
     """
     repo = member.repo
     if projects is None or graphql is None:
         unreadable.append(Unreadable(repo, "backlog", "projects not listed"))
         return NOT_READ, []
     if projects.error:
-        unreadable.append(Unreadable(repo, "backlog", f"projects not readable: {projects.error}"))
         return NOT_READ, []
     number = projects.numbers.get(repo.rsplit("/", 1)[-1])
     if number is None:
@@ -1909,6 +1916,7 @@ def build_report(
     tools: Iterable[str],
     bridge: dict | None = None,
     generated_at: str | None = None,
+    org_unreadable: Iterable[Unreadable] = (),
 ) -> dict:
     """The sweep as one JSON-ready mapping.
 
@@ -1918,6 +1926,7 @@ def build_report(
         tools: The tools that ran, for the per-tool totals.
         bridge: The bridge check's outcome, when it ran.
         generated_at: An RFC 3339 timestamp, or None for now.
+        org_unreadable: Entries for an org-wide read, listed before the members' own.
 
     Returns:
         ``generated_at``, ``stack``, ``members``, the severity-ranked ``findings``, the work
@@ -1927,7 +1936,8 @@ def build_report(
         each unreadable tool unreadable_gates names.
     """
     findings = rank(all_findings(results))
-    unreadable = list(chain.from_iterable(result.unreadable for result in results))
+    member_unreadable = chain.from_iterable(result.unreadable for result in results)
+    unreadable = [*org_unreadable, *member_unreadable]
     wanted = set(tools) - set(WORK_TOOLS)
     enabled = [tool for tool in TOOLS if tool in wanted]
     issues = list(chain.from_iterable(result.issues for result in results))

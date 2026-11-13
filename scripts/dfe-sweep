@@ -166,7 +166,8 @@ finding does:
   ``<repo>:<workflow file>:<jobs>:<hash>`` of its level, file, title and message. Never the run
   or job URL, which changes every run.
 - a Renovate dashboard entry ``<repo>:renovate_dashboard:<hash>`` of its section and text.
-- a tool that was not readable: ``<repo>:<tool>``.
+- a tool that was not readable: ``<repo>:<tool>``, or ``<org>:backlog`` once when the org's
+  projects could not be listed.
 
 A hash is the first 12 hex digits of a SHA-256 of normalised text. CI text loses temp paths,
 UUIDs, SHAs, runner names, durations and every other number, run ids and timestamps included,
@@ -663,7 +664,13 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         bridge = sweep.bridge_section(missing, len(alerts) - len(outside))
         gap = bool(missing)
 
-    report = sweep.build_report(stack, results, options.config.tools, bridge)
+    report = sweep.build_report(
+        stack,
+        results,
+        options.config.tools,
+        bridge,
+        org_unreadable=sweep.projects_unreadable(options.org, projects),
+    )
     text = sweep.render_text(report, options.config.backlog)
     # Written before stdout, so a run that cannot write it prints nothing a poster would post.
     _write_report(options.report_file, text)

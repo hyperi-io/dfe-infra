@@ -1064,14 +1064,27 @@ def test_no_project_is_a_normal_state_not_unreadable() -> None:
 def test_projects_the_token_cannot_list_are_unreadable() -> None:
     api, _ = _answers()
     missing = "your authentication token is missing required scopes [read:project]"
-    result = _collect(api, projects=sweep.ProjectIndex(error=missing))
+    projects = sweep.ProjectIndex(error=missing)
+    result = _collect(api, projects=projects)
     assert result.project == sweep.NOT_READ
-    assert [(u.tool, u.reason) for u in result.unreadable] == [
-        ("backlog", f"projects not readable: {missing}")
-    ]
+    assert result.unreadable == [], "the org list failing is not this member's to report"
     assert result.drift == [], "drift cannot be judged without the project"
     assert [issue["number"] for issue in result.issues] == [31, 35, 36]
     assert [row["number"] for row in result.backlog] == [32, 33, 34]
+
+    report = sweep.build_report(
+        "2.2.0",
+        [result, result],
+        CONFIG.tools,
+        generated_at="t",
+        org_unreadable=sweep.projects_unreadable(CONFIG.org, projects),
+    )
+    assert report["unreadable"] == [
+        {"repo": "example-org", "tool": "backlog", "reason": f"projects not readable: {missing}"}
+    ], "one entry for the org, however many members"
+    assert report["totals"]["gating"]["unreadable"] == 0, "a backlog never gates"
+    assert sweep.projects_unreadable(CONFIG.org, None) == []
+    assert sweep.projects_unreadable(CONFIG.org, sweep.ProjectIndex(numbers={})) == []
 
 
 @pytest.mark.parametrize(
