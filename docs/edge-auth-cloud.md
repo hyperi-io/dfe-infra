@@ -30,7 +30,7 @@ One Service carries every listener, so the load balancer can't tell the groups a
 
 ## The client address the fence judges
 
-The fence judges the TCP peer. No listener believes `X-Forwarded-For` unless `ui.trusted_proxy_cidrs` names the hops in front. So neither a client nor a host beside the load balancer, such as the tunnel forwarder in an AWS public subnet, can claim a listed address. With no client-IP detection, Envoy Gateway v1.9.2 sets `use_remote_address` and trusts no hop (`internal/xds/translator/listener.go`).
+The fence judges the TCP peer. No listener believes `X-Forwarded-For` unless `ui.trusted_proxy_cidrs` names the hops in front. So neither a client nor a host beside the load balancer, such as the tunnel forwarder in an AWS public subnet, can claim a listed address. With no client-IP detection, Envoy Gateway sets `use_remote_address` and trusts no hop (`internal/xds/translator/listener.go`).
 
 | Flavour | Load balancer | Envoy's TCP peer |
 |---|---|---|

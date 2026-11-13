@@ -13,12 +13,8 @@ A stack version is one certified set of pins: every DFE app, every backing servi
 
 Cut one with:
 
-<!-- docs-gate: off process -- the commands name real stack tags -->
-
-    python3 scripts/dfe-stack cut 2.2.0-rc.7 --dry-run
-    python3 scripts/dfe-stack cut 2.2.0-rc.7
-
-<!-- docs-gate: on process -->
+    python3 scripts/dfe-stack cut <version> --dry-run
+    python3 scripts/dfe-stack cut <version>
 
 ## What `cut` does
 
@@ -61,11 +57,7 @@ A cut FROM a withdrawn stack is `support: standard`. The comments on its `maturi
 
 Cutting the withdrawn version again under the same name needs `--replace-withdrawn`:
 
-<!-- docs-gate: off process -- the command names a real stack tag -->
-
-    python3 scripts/dfe-stack cut 2.3.0 --from 2.3.0-rc.4 --maturity release --replace-withdrawn --dry-run
-
-<!-- docs-gate: on process -->
+    python3 scripts/dfe-stack cut <version> --from <version>-rc.<n> --maturity release --replace-withdrawn --dry-run
 
 Before the normal cut it:
 
@@ -81,13 +73,9 @@ The freeze test allows that `stack.previous` rewrite in a tagged block and no ot
 
 `cut` moves the pins and the `current` pointer. Three checks finish the job:
 
-<!-- docs-gate: off process -- the commands name real stack tags -->
-
-    python3 scripts/dfe-stack compat-check --stack 2.2.0-rc.7
+    python3 scripts/dfe-stack compat-check --stack <version>
     python3 scripts/check_versions_drift.py --fix
-    python3 scripts/dfe-stack release-gate --stack 2.2.0-rc.7
-
-<!-- docs-gate: on process -->
+    python3 scripts/dfe-stack release-gate --stack <version>
 
 - `compat-check` validates the interdependency locks in `constraints/<version>.yaml`. `cut` clones that file from the source stack, so it exists already. Review the rules rather than recreating them, because a lock is a property of the components and only a component move invalidates one. An existing file is never overwritten.
 - `check_versions_drift.py --fix` propagates the SSoT into the pin mirrors that Renovate can't reach (appset pins, `Chart.yaml` appVersions).
@@ -99,11 +87,7 @@ The architecture check reads each index from the registry by digest, through `do
 
 `dfe-stack platforms --stack <version>` prints the same per-image verdict for any stack and exits 1 on a gap:
 
-<!-- docs-gate: off process -- the command names a real stack tag -->
-
-    python3 scripts/dfe-stack platforms --stack 2.2.0-rc.14
-
-<!-- docs-gate: on process -->
+    python3 scripts/dfe-stack platforms --stack <version>
 
 ## How a cut reaches each target
 

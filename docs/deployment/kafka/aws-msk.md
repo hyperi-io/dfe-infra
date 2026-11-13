@@ -65,7 +65,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0" # PIN exact. versions.yaml providers.hashicorp-aws is what DFE's roots run. See README pinning note.
+      version = "<exact pin>" # versions.yaml providers.hashicorp-aws is what DFE's roots run. See README pinning note.
     }
   }
 }

@@ -47,7 +47,7 @@ terraform {
   required_providers {
     confluent = {
       source  = "confluentinc/confluent"
-      version = "~> 2.0" # PIN exact. versions.yaml providers.confluentinc-confluent is what DFE's roots run. See README pinning note.
+      version = "<exact pin>" # versions.yaml providers.confluentinc-confluent is what DFE's roots run. See README pinning note.
     }
   }
 }

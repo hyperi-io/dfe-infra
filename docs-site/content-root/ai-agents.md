@@ -9,7 +9,7 @@ Point your agent at https://dfe.docs.hyperi.io/llms.txt.
 | `/latest/llms/<section>.txt` | The prose pages of one section in one file, such as `dfe-engine` or `overview` |
 | `/latest/openapi/dfe-engine.json` | The engine's HTTP API as an OpenAPI spec, in place of the API reference pages |
 
-`/latest/` redirects to the newest release. To hold an agent to the release you run, swap `latest` for `v/<release>`, as in `/v/2.2.2/llms.txt`. Each prose page also names its markdown copy in a `<link rel="alternate" type="text/markdown">` tag.
+`/latest/` redirects to the newest release. To hold an agent to the release you run, swap `latest` for `v/<release>`, as in `/v/<release>/llms.txt`. Each prose page also names its markdown copy in a `<link rel="alternate" type="text/markdown">` tag.
 
 ## An instruction to paste
 
@@ -21,7 +21,7 @@ https://dfe.docs.hyperi.io/v/<release>/openapi/dfe-engine.json.
 Answer from those files, and say which page each answer came from.
 ```
 
-Replace `<release>` with the version you deploy, such as `2.2.2`.
+Replace `<release>` with the version you deploy, as the version menu at the top of this page names it.
 
 ## What the agent gets
 
