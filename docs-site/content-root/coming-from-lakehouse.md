@@ -18,13 +18,13 @@ DFE lands every field from the first event. A field with no mapping yet lands in
 
 BigQuery on demand and Athena bill by the bytes a query scans, Snowflake by the seconds a virtual warehouse runs, and Databricks SQL by DBUs ([BigQuery pricing](https://cloud.google.com/bigquery/pricing), [Athena pricing](https://aws.amazon.com/athena/pricing/), [Snowflake pricing](https://www.snowflake.com/en/pricing-options/), [Databricks SQL pricing](https://www.databricks.com/product/pricing/databricks-sql), read 2026-11-13). On machine data that model points one way: the analyst learns to scan less, and the dashboard that used to refresh every minute refreshes every hour.
 
-DFE stores each source as ClickHouse columns on hardware you size once, in your cluster or ClickHouse Cloud. A query costs CPU you already own. The sort key prunes the parts a time range touches, columns compress to a fraction of the raw bytes, and a dashboard refreshing every minute costs nothing extra. In the August 2025 tests with AWS and ClickHouse, DFE kept 270 days queryable where the index engine beside it kept 14, on 10 to 25 percent of the resources ([the test](coming-from-splunk-elastic.md#stored-as-clickhouse-columns)). That was against OpenSearch, not a warehouse, and your data's shape sets your own number.
+DFE stores each source as ClickHouse columns on hardware you size once, in your cluster or ClickHouse Cloud. A query costs CPU you already own. The sort key prunes the parts a time range touches, columns compress to a fraction of the raw bytes, and a dashboard refreshing every minute costs nothing extra. In the August 2025 tests with AWS and ClickHouse, DFE kept 270 days queryable where the index engine beside it kept 14, on 10 to 25 percent of the resources ([the test](coming-from.md#stored-as-clickhouse-columns)). That was against OpenSearch, not a warehouse, and your data's shape sets your own number.
 
 ## ELT and dbt, or promote in place
 
 In a lakehouse, raw data lands in bronze, a dbt model or a Spark job rebuilds silver and gold on a schedule, and a change to the model means a rebuild over the history. DFE parses once, at the edge: dfe-receiver and dfe-fetcher turn the transport into JSON on the first hop, the transforms parse vendor message bodies after that, and the loader writes typed columns. Promoting a field changes the table forward. There is no silver layer to rebuild, and the question is answered from the table the data landed in.
 
-Context joins the same way it does in a warehouse. Fact tables hold the events, logs and metrics, dimension tables hold the inventory, the identity directory and the CMDB, and you join them in ClickHouse SQL ([sources join](coming-from-splunk-elastic.md#sources-join)).
+Context joins the same way it does in a warehouse. Fact tables hold the events, logs and metrics, dimension tables hold the inventory, the identity directory and the CMDB, and you join them in ClickHouse SQL ([sources join](coming-from.md#sources-join)).
 
 ## Minutes, or seconds
 
