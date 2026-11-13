@@ -13,24 +13,17 @@
 // category stays whole, keyed by its directory.
 function flatten(items, out = []) {
   for (const item of items) {
-    if (item.type === "doc") {
-      out.push({ key: item.id, item });
-    } else if (
-      item.type === "category" &&
-      item.customProps &&
-      item.customProps.apiDir
-    ) {
-      out.push({ key: `${item.customProps.apiDir}/`, item });
-    } else if (item.type === "category") {
-      if (item.link && item.link.type === "doc") {
-        out.push({
-          key: item.link.id,
-          item: { type: "doc", id: item.link.id },
-        });
+    if (item.type === 'doc') {
+      out.push({key: item.id, item});
+    } else if (item.type === 'category' && item.customProps && item.customProps.apiDir) {
+      out.push({key: `${item.customProps.apiDir}/`, item});
+    } else if (item.type === 'category') {
+      if (item.link && item.link.type === 'doc') {
+        out.push({key: item.link.id, item: {type: 'doc', id: item.link.id}});
       }
       flatten(item.items, out);
     } else {
-      out.push({ key: "", item });
+      out.push({key: '', item});
     }
   }
   return out;
@@ -44,12 +37,9 @@ function placeOf(docId, placements) {
   let best = null;
   for (const candidate of Object.keys(placements)) {
     const folded = candidate.toLowerCase();
-    const fits =
-      folded === key ||
-      (folded.endsWith("/") && key.startsWith(folded)) ||
-      folded === "";
+    const fits = folded === key || (folded.endsWith('/') && key.startsWith(folded)) || folded === '';
     if (fits && (best === null || folded.length > best.folded.length)) {
-      best = { candidate, folded };
+      best = {candidate, folded};
     }
   }
   if (best === null) {
@@ -59,7 +49,7 @@ function placeOf(docId, placements) {
 }
 
 // The journey that lists each component whole, after the reader journeys.
-const COMPONENTS = "Components";
+const COMPONENTS = 'Components';
 
 /**
  * The sidebar as top-level pages, each journey with its non-empty sections, then
@@ -77,44 +67,38 @@ const COMPONENTS = "Components";
 function journeySidebar(items, journeys, placements, memberPaths = []) {
   const top = [];
   const bySection = new Map();
-  for (const { key, item } of flatten(items)) {
+  for (const {key, item} of flatten(items)) {
     const place = placeOf(key, placements);
-    if (place === "") {
+    if (place === '') {
       top.push(item);
     } else {
       bySection.set(place, [...(bySection.get(place) || []), item]);
     }
   }
   const journeyItems = journeys
-    .map(({ label, sections }) => ({
-      type: "category",
+    .map(({label, sections}) => ({
+      type: 'category',
       label,
       collapsed: false,
       items: sections
         .filter((section) => bySection.has(`${label} / ${section}`))
         .map((section) => ({
-          type: "category",
+          type: 'category',
           label: section,
           collapsed: true,
           items: bySection.get(`${label} / ${section}`),
         })),
     }))
     .filter((journey) => journey.items.length > 0);
-  const roots = new Set(
-    memberPaths.map((memberPath) => memberPath.split("/")[0]),
-  );
+  const roots = new Set(memberPaths.map((memberPath) => memberPath.split('/')[0]));
   const components = items.filter((item) => {
-    const first = item.type === "category" ? flatten([item])[0] : undefined;
-    return first !== undefined && roots.has(first.key.split("/")[0]);
+    const first = item.type === 'category' ? flatten([item])[0] : undefined;
+    return first !== undefined && roots.has(first.key.split('/')[0]);
   });
   if (components.length === 0) {
     return [...top, ...journeyItems];
   }
-  return [
-    ...top,
-    ...journeyItems,
-    { type: "category", label: COMPONENTS, collapsed: true, items: components },
-  ];
+  return [...top, ...journeyItems, {type: 'category', label: COMPONENTS, collapsed: true, items: components}];
 }
 
-module.exports = { journeySidebar, placeOf, COMPONENTS };
+module.exports = {journeySidebar, placeOf, COMPONENTS};
