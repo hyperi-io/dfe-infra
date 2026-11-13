@@ -19,16 +19,16 @@ Every page here comes from a suite repository's own `docs/`, at the version one 
 ```mermaid
 flowchart LR
   S[JSON over HTTP or HTTPS] --> R[dfe-receiver]
-  R -->|Kafka| K((Kafka))
-  F[dfe-fetcher pulls from APIs, databases and files] --> K
-  K --> L[dfe-loader]
-  K -.-> T[dfe-transform, optional] -.-> K
+  R -->|Kafka| K1[source topic]
+  F[dfe-fetcher pulls from APIs, databases and files] --> K1
+  K1 --> L[dfe-loader]
+  K1 -.-> T[dfe-transform, optional] -.-> K2[transformed topic] -.-> L
   R -->|direct gRPC| L
   L --> C[(ClickHouse)]
   C --> H[DFE console]
 ```
 
-That's the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) sits on the Kafka path only where a source needs grok or your own logic, reading one topic and writing the next, and the rest of the path is unchanged. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
+That's the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) sits on the Kafka path only where a source needs grok or your own logic. It reads the source's topic and writes a second one, and the loader reads that one instead. The rest of the path is unchanged. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
 ## Purpose-built where it's hot, generic where it has to be
 
