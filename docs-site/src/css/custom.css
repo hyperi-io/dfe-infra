@@ -304,11 +304,13 @@ html[data-theme='dark'] {
   display: block;
 }
 
-/* Every navbar text shares that baseline: the row, the left links, the version
-   menu, the GitHub link and the search box all line up with the product name. */
-.navbar__inner,
-.navbar__items {
-  align-items: baseline;
+/* Desktop only: every navbar text shares the product name's baseline, and on a
+   phone the search button must stay centred. */
+@media (min-width: 997px) {
+  .navbar__inner,
+  .navbar__items {
+    align-items: baseline;
+  }
 }
 
 .navbar__title {
