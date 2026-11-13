@@ -12,7 +12,7 @@ DFE 2.2 is the first open-source release of a platform that has run in productio
 
 Under the hood, DFE is a data pipeline you run yourself. Your agents and shippers send events in over HTTP or HTTPS. They travel over a Kafka message bus, or a low-latency gRPC hop, and land in ClickHouse, where you search them in the DFE console. It runs on any Kubernetes cluster, on-premises or in your cloud account, or on Docker on one host.
 
-> **Coming from Splunk or Elastic?** DFE takes every field without a mapping first, so a source changing upstream breaks nothing. It doesn't index every byte or keep a raw copy of every event either, and every record carries an `_org_id`, so who sees what is built in. [Coming from Splunk, Elastic or a Lakehouse](coming-from.md) says what's different, why, and what it does for you. Read it before the rest.
+> **Coming from Splunk or Elastic?** DFE takes every field without a mapping first, so a source changing upstream breaks nothing. It doesn't index every byte or keep a raw copy of every event either, and every record carries an `_org_id`, so who sees what is built in. [Coming from Splunk or Elastic](coming-from.md) says what's different, why, and what it does for you, and [coming from a lakehouse](coming-from-lakehouse.md) does the same for Snowflake, Databricks, BigQuery and Athena. Read yours before the rest.
 
 Every page here comes from a suite repository's own `docs/`, at the version one DFE release pins. The version menu switches the whole suite between releases. Each repository has its own section in the sidebar.
 
