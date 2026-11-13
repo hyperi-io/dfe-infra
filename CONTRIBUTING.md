@@ -77,8 +77,9 @@ and dfe-extras copies. dfe-schemas and dfe-deploy arrive on `version-pin` edges
 instead.
 
 dfe-engine is the one two-way neighbour: it pins its image here like the rest,
-AND this repo's `apps.yaml` is vendored into the engine as a byte copy, so a
-catalogue entry the engine does not carry is not reflected by its management API.
+AND this repo's `apps.yaml` is vendored into the engine as a byte copy, the last
+resort in its resolution order, so a deployment on that fallback does not reflect a
+catalogue entry the copy lacks.
 
 **Outbound.** `dfe-infra -> dfe-docker` is a `derived-pins` edge whose check is
 explicitly *nothing*: there is no second copy that can drift, and the graph

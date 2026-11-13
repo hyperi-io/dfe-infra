@@ -18,7 +18,7 @@ dfe-infra deploys the backing services and the apps. dfe-engine, the control pla
 
 ## Quick start
 
-A Kubernetes cluster you run, 1.34 to 1.36, with `kubectl` pointed at it, plus `helm`, `openssl` and Python 3. The stack version is a release tag of this repo, 2.2.2 at the time of writing:
+A Kubernetes cluster you run, 1.34 to 1.36, with `kubectl` pointed at it, plus `helm`, `openssl` and Python 3. The stack version is a release tag of this repo. This example uses 2.2.2, and `versions.yaml` on `main` names the current one:
 
 ```bash
 STACK=2.2.2
