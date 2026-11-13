@@ -15,7 +15,7 @@
 For each build content/site.json lists: generate the engine's API pages from its
 spec (`docusaurus gen-api-docs`), then `docusaurus build` with DFE_DOCS_BUILD naming
 the build, into build/<its base path>, and finish its markdown side for agents
-(agent_layer.py). Then write build/_redirects so /, /latest/ and every
+(agent_layer.py). Then write build/_headers, and build/_redirects so /, /latest/ and every
 dropped stack's paths reach the newest release, copy that release's 404 page to the root, and count the files
 against the Workers static-asset limits. Each build also gets structured data on its
 pages and a noindex 404 page, and the merged tree gets robots.txt and a root sitemap
@@ -38,6 +38,11 @@ import page_meta
 SITE_ROOT = Path(__file__).resolve().parents[1]
 CONTENT = SITE_ROOT / "content"
 BUILD = SITE_ROOT / "build"
+# The Workers _headers file: other sites read quickstart.json from a browser.
+HEADERS = "".join(
+    f"{path}\n  Access-Control-Allow-Origin: *\n"
+    for path in ("/quickstart.json", "/v/*/quickstart.json")
+)
 DOCUSAURUS = SITE_ROOT / "node_modules" / ".bin" / "docusaurus"
 # Workers static assets on the Free plan: files per deployed version, and bytes per file.
 FILE_LIMIT = 20_000
@@ -202,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         text = redirects(site["newest"], site.get("dropped", []), sections)
         (BUILD / "_redirects").write_text(text, encoding="utf-8", newline="\n")
+        (BUILD / "_headers").write_text(HEADERS, encoding="utf-8", newline="\n")
     page_meta.write_root_files(site, BUILD)
 
     pages, files, largest = count(BUILD)

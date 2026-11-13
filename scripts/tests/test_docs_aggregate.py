@@ -1478,26 +1478,64 @@ QUICKSTART = {
     },
     "notes": {"up": "Then point your browser to http://localhost:3000.", "demo": "Demo note."},
 }
+QUICKSTART_PACKS = [
+    {
+        "name": "theatre",
+        "title": "Theatre and battlespace",
+        "use_case": "/solutions/theatre-and-battlespace/",
+        "latest": ["docker compose -f oci://img:demo-theatre up -d"],
+        "pinned": ["docker compose -f oci://img:demo-theatre-1.0.6 up -d"],
+    }
+]
 QUICKSTART_PAGE = (
     "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
     "<!-- /docker-quickstart -->\n\nAfter.\n"
 )
+NEED = "You need Docker Engine 27.0 or later with Compose 2.26.0 or later.\n\n"
+THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-battlespace/): "
 
 
 @pytest.mark.parametrize(
-    ("form", "line"),
+    ("kind", "form", "packs", "region"),
     [
-        ("latest", "docker compose -f oci://img:latest up -d"),
-        ("pinned", "docker compose -f oci://img:1.0.5 up -d"),
+        (
+            "up",
+            "latest",
+            [],
+            "```bash\ndocker compose -f oci://img:latest up -d\n```\n\n"
+            "Then point your browser to http://localhost:3000.\n",
+        ),
+        (
+            "up",
+            "pinned",
+            QUICKSTART_PACKS,
+            "```bash\ndocker compose -f oci://img:1.0.5 up -d\n```\n\n"
+            "Then point your browser to http://localhost:3000.\n",
+        ),
+        (
+            "demo",
+            "latest",
+            [],
+            "```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\nDemo note.\n",
+        ),
+        (
+            "demo",
+            "pinned",
+            QUICKSTART_PACKS,
+            "```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\nDemo note.\n"
+            "\nOther demo use cases:\n\n"
+            f"{THEATRE}`docker compose -f oci://img:demo-theatre-1.0.6 up -d`\n",
+        ),
     ],
+    ids=["up", "up-ignores-packs", "demo-schema-1", "demo-schema-2-packs"],
 )
-def test_a_compose_release_replaces_the_pages_make_region(form: str, line: str) -> None:
-    text = aggregate.fill_quickstart(QUICKSTART_PAGE, {**QUICKSTART, "form": form})
+def test_a_compose_release_replaces_the_pages_make_region(
+    kind: str, form: str, packs: list, region: str
+) -> None:
+    page = QUICKSTART_PAGE.replace("docker-quickstart: up", f"docker-quickstart: {kind}")
+    text = aggregate.fill_quickstart(page, {**QUICKSTART, "packs": packs, "form": form})
     assert text == (
-        "Intro.\n\n<!-- docker-quickstart: up -->\n"
-        "You need Docker Engine 27.0 or later with Compose 2.26.0 or later.\n\n"
-        f"<!-- landing -->\n```bash\n{line}\n```\n\n"
-        "Then point your browser to http://localhost:3000.\n"
+        f"Intro.\n\n<!-- docker-quickstart: {kind} -->\n{NEED}<!-- landing -->\n{region}"
         "<!-- /docker-quickstart -->\n\nAfter.\n"
     )
 
@@ -1523,9 +1561,21 @@ OLD_QUICKSTART = {
         (OLD_QUICKSTART, None),
         ({**QUICKSTART, "notes": {"up": "x"}}, "without min_engine"),
         ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "without min_engine"),
-        ({**QUICKSTART, "schema": 2}, "not a schema 1"),
+        ({**QUICKSTART, "schema": 2, "packs": QUICKSTART_PACKS}, "compose"),
+        ({**QUICKSTART, "schema": 2, "packs": [{"name": "x"}]}, "a pack without"),
+        ({**QUICKSTART, "schema": 2, "packs": "cyber"}, "a pack without"),
+        ({**QUICKSTART, "schema": 3}, "not a schema 1 or 2"),
     ],
-    ids=["compose", "init-and-docker-run", "no-demo-note", "no-engine-minimum", "schema-2"],
+    ids=[
+        "compose",
+        "init-and-docker-run",
+        "no-demo-note",
+        "no-engine-minimum",
+        "schema-2",
+        "schema-2-bad-pack",
+        "schema-2-packs-not-a-list",
+        "schema-3",
+    ],
 )
 def test_only_a_compose_release_fills_the_install_pages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, served: dict, outcome: str | None

@@ -1291,8 +1291,12 @@ DOCKER_MEMBER = "dfe-docker"
 DOCKER_RELEASES = "https://github.com/hyperi-io/dfe-docker/releases"
 # Each dfe-docker release from v1.0.3 attaches the Docker-only install commands here.
 DOCKER_QUICKSTART = "quickstart.json"
-# Where a build's copy of that file is kept beside the builds, for preview.py.
+# Where a build's copy of that file is kept beside the builds, for preview.py and /quickstart.json.
 QUICKSTART_DIR = "_quickstart"
+# Schema 2 adds `packs`, the demo packs beside the default demo.
+QUICKSTART_SCHEMAS = (1, 2)
+# A pack's use_case is a path on this site.
+WEBSITE = "https://hyperi.io"
 _RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
 _QUICKSTART_REGION = re.compile(
     r"<!-- docker-quickstart: (up|demo) -->\n.*?<!-- /docker-quickstart -->\n", re.DOTALL
@@ -1316,8 +1320,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         The file's object with a "form" key added, or None.
 
     Raises:
-        FetchError: The release has no quickstart.json of schema 1, or a compose
-            one without its Docker Engine minimum and up and demo notes.
+        FetchError: The release has no quickstart.json of schema 1 or 2, a compose
+            one without its Docker Engine minimum and up and demo notes, or a pack
+            without its name, title, use case and command.
     """
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
@@ -1333,8 +1338,10 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     except (OSError, ValueError) as exc:
         raise FetchError(f"{url}: {exc}") from exc
     commands = [(data.get(kind) or {}).get(form) for kind in ("up", "demo")]
-    if data.get("schema") != 1 or not all(isinstance(lines, list) for lines in commands):
-        raise FetchError(f"{url}: not a schema 1 quickstart.json with up and demo commands")
+    if data.get("schema") not in QUICKSTART_SCHEMAS or not all(
+        isinstance(lines, list) for lines in commands
+    ):
+        raise FetchError(f"{url}: not a schema 1 or 2 quickstart.json with up and demo commands")
     if data.get("kind") != "compose":
         return None
     notes = data.get("notes") or {}
@@ -1344,7 +1351,21 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         raise FetchError(
             f"{url}: a compose quickstart.json without min_engine and up and demo notes"
         )
-    return {**data, "form": form}
+    packs = data.get("packs", [])
+    if not isinstance(packs, list) or not all(_is_pack(pack, form) for pack in packs):
+        raise FetchError(f"{url}: a pack without its name, title, use_case and {form} command")
+    return {**data, "packs": packs, "form": form}
+
+
+def _is_pack(pack: object, form: str) -> bool:
+    """Whether a quickstart.json pack carries what the demo page lists."""
+    return (
+        isinstance(pack, dict)
+        and all(isinstance(pack.get(key), str) for key in ("name", "title", "use_case"))
+        and pack["use_case"].startswith("/")
+        and isinstance(pack.get(form), list)
+        and bool(pack[form])
+    )
 
 
 def fill_quickstart(text: str, quickstart: dict | None) -> str:
@@ -1364,13 +1385,21 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         f"{quickstart['min_compose']} or later."
     )
 
+    form = quickstart["form"]
+    packs = "".join(
+        f"- [{pack['title']}]({WEBSITE}{pack['use_case']}): `{' && '.join(pack[form])}`\n"
+        for pack in quickstart.get("packs", [])
+    )
+    others = {"up": "", "demo": f"\nOther demo use cases:\n\n{packs}" if packs else ""}
+
     def region(match: re.Match[str]) -> str:
         kind = match.group(1)
-        commands = "\n".join(quickstart[kind][quickstart["form"]])
+        commands = "\n".join(quickstart[kind][form])
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
             f"{need}\n\n"
             f"<!-- landing -->\n```bash\n{commands}\n```\n\n{quickstart['notes'][kind]}\n"
+            f"{others[kind]}"
             "<!-- /docker-quickstart -->\n"
         )
 

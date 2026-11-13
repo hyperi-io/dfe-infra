@@ -125,9 +125,26 @@ function plainText(text) {
   return text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '');
 }
 
+// The demo packs of the dfe-docker release this build pins, as aggregate.py saved it.
+function demoPacks() {
+  const file = path.join(CONTENT, '_quickstart', `${build.name}.json`);
+  if (!fs.existsSync(file)) {
+    return [];
+  }
+  const release = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return (release.packs || []).map((pack) => ({
+    id: pack.name,
+    title: pack.title,
+    use_case: pack.use_case,
+    commands: pack[release.form],
+  }));
+}
+
 // The hero's quickstart tabs as /quickstart.json, so other sites show the same commands.
 // A note between two code blocks rides into the next command as a shell comment.
+// A tab with `packs: true` lists the release's demo packs, each use_case a path on hyperi.io.
 function quickstartJson(siteUrl, baseUrl) {
+  const packs = demoPacks();
   const tabs = landingCopy.quickstart.tabs.map((tab) => {
     const texts = [];
     const commands = [];
@@ -149,6 +166,7 @@ function quickstartJson(siteUrl, baseUrl) {
       commands,
       then: pending,
       guide: tab.guide ? `${siteUrl}${baseUrl}${tab.guide.to.replace(/^\//, '')}` : null,
+      packs: tab.packs ? packs : [],
     };
   });
   return {stack, tabs};
