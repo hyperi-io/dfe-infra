@@ -18,17 +18,23 @@ dfe-infra deploys the backing services and the apps. dfe-engine, the control pla
 
 ## Quick start
 
-A Kubernetes cluster you run, 1.34 to 1.36, with `kubectl` pointed at it, plus `helm`, `openssl` and Python 3:
+A Kubernetes cluster you run, 1.34 to 1.36, with `kubectl` pointed at it, plus `helm`, `openssl` and Python 3. The stack version is a release tag of this repo, 2.2.2 at the time of writing:
 
 ```bash
-git clone --branch <version> https://github.com/hyperi-io/dfe-infra && cd dfe-infra
+STACK=2.2.2
+git clone --branch "$STACK" https://github.com/hyperi-io/dfe-infra && cd dfe-infra
 (umask 077 && cp bootstrap/local.env.example bootstrap/local.env)
-python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env
-python3 scripts/dfe-ops stack-deploy --stack <version> --mode single \
-  --target-revision <version> --env-file bootstrap/local.env
 ```
 
-Set two things in `bootstrap/local.env` first: `DFE_DOMAIN`, the domain every hostname sits under, and `DFE_REPO_URL`, the git repository Argo CD reads the charts from. The preflight is read-only and says whether the cluster is fit for the tier. `stack-deploy` installs or adopts the base, then hands over to Argo CD. The full walk-through, AWS and the one-host Docker install are on the published site, https://dfe.docs.hyperi.io/quickstart/.
+Edit `bootstrap/local.env` before going on: `DFE_DOMAIN`, the domain every hostname sits under, `DFE_REPO_URL`, the git repository Argo CD reads the charts from, and `DFE_STORAGE_CLASS`, a StorageClass the cluster has (bootstrap installs `local-path` only when the cluster has no default StorageClass). Then:
+
+```bash
+python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env
+python3 scripts/dfe-ops stack-deploy --stack "$STACK" --mode single \
+  --target-revision "$STACK" --env-file bootstrap/local.env
+```
+
+The preflight is read-only and says whether the cluster is fit for the tier. `stack-deploy` installs or adopts the base, then hands over to Argo CD. The full walk-through, AWS and the one-host Docker install are on the published site, https://dfe.docs.hyperi.io/quickstart/.
 
 ## Configuration
 
