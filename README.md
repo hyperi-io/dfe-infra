@@ -34,7 +34,7 @@ python3 scripts/dfe-ops stack-deploy --stack "$STACK" --mode single \
   --target-revision "$STACK" --env-file bootstrap/local.env
 ```
 
-The preflight is read-only and says whether the cluster is fit for the tier. `stack-deploy` installs or adopts the base, then hands over to Argo CD. The full walk-through, AWS and the one-host Docker install are on the published site, https://dfe.docs.hyperi.io/quickstart/.
+The preflight is read-only and says whether the cluster is fit for the tier. `stack-deploy` installs or adopts the base, then hands over to Argo CD. The full walk-through, AWS and the one-host Docker install are on the published site, <https://dfe.docs.hyperi.io/quickstart/>.
 
 ## Configuration
 
