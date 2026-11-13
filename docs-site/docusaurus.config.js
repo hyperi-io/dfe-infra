@@ -201,7 +201,7 @@ async function sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
   if (journeys.length === 0 || Object.keys(placements).length === 0) {
     return items;
   }
-  return journeySidebar(items, journeys, placements);
+  return journeySidebar(items, journeys, placements, build.members.map((member) => member.path));
 }
 
 // Every doc's route, title, description and source file, for scripts/agent_layer.py.

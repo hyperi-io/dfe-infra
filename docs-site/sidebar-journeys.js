@@ -48,15 +48,23 @@ function placeOf(docId, placements) {
   return placements[best.candidate];
 }
 
+// The journey that lists each component whole, after the reader journeys.
+const COMPONENTS = 'Components';
+
 /**
- * The sidebar as top-level pages, then each journey with its non-empty sections.
+ * The sidebar as top-level pages, each journey with its non-empty sections, then
+ * Components: the generated categories as they came, one per component, opening on
+ * its landing page. A page sits in its journey section and under its component.
  *
  * @param {object[]} items The generated sidebar, API slice already spliced in.
  * @param {{label: string, sections: string[]}[]} journeys The journeys, in order.
  * @param {Object<string, string>} placements Doc id or prefix -> "Journey / Section".
+ * @param {string[]} memberPaths Where each member's pages sit in the build, such as
+ *   `dfe-ui/dfe-hyperdx`. A top-level category outside them (a content-root directory)
+ *   is not a component.
  * @returns {object[]} The sidebar items.
  */
-function journeySidebar(items, journeys, placements) {
+function journeySidebar(items, journeys, placements, memberPaths = []) {
   const top = [];
   const bySection = new Map();
   for (const {key, item} of flatten(items)) {
@@ -82,7 +90,15 @@ function journeySidebar(items, journeys, placements) {
         })),
     }))
     .filter((journey) => journey.items.length > 0);
-  return [...top, ...journeyItems];
+  const roots = new Set(memberPaths.map((memberPath) => memberPath.split('/')[0]));
+  const components = items.filter((item) => {
+    const first = item.type === 'category' ? flatten([item])[0] : undefined;
+    return first !== undefined && roots.has(first.key.split('/')[0]);
+  });
+  if (components.length === 0) {
+    return [...top, ...journeyItems];
+  }
+  return [...top, ...journeyItems, {type: 'category', label: COMPONENTS, collapsed: true, items: components}];
 }
 
-module.exports = {journeySidebar, placeOf};
+module.exports = {journeySidebar, placeOf, COMPONENTS};
