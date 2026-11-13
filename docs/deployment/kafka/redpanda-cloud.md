@@ -51,7 +51,7 @@ terraform {
   required_providers {
     redpanda = {
       source  = "redpanda-data/redpanda"
-      version = "~> 2.3" # the line managed-kafka/redpanda-cloud pins
+      version = "<pin>" # the line managed-kafka/redpanda-cloud pins
     }
   }
 }

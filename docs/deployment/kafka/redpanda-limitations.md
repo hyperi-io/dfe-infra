@@ -8,7 +8,7 @@ The kafka chart refuses to render Redpanda without `kafka.redpanda.acceptLicense
 
 ## Turning it on
 
-Pick the provider at the first deploy. Switching a live deployment to the other broker leaves every message already written on the old one, and DFE 2.2.x has no way to move them. [storage.md](../storage.md) covers what else is fixed at the first deploy.
+Pick the provider at the first deploy. Switching a live deployment to the other broker leaves every message already written on the old one, and DFE has no way to move them. [storage.md](../storage.md) covers what else is fixed at the first deploy.
 
 Set the provider in the env file you deploy with:
 
@@ -24,7 +24,7 @@ kafka:
     acceptLicense: true
 ```
 
-The `single` profile then runs one Redpanda broker as a plain StatefulSet, with no operator. The `scale` profile runs a multi-broker cluster through the Redpanda operator 26.2.5, on broker v26.2.6. That cluster setup hasn't been proven on a live cluster yet, so test it at your target size before you rely on it. It needs two more steps:
+The `single` profile then runs one Redpanda broker as a plain StatefulSet, with no operator. The `scale` profile runs a multi-broker cluster through the Redpanda operator and broker versions `versions.yaml` pins (`operators.redpanda-operator`, `services.redpanda-version`). That cluster setup hasn't been proven on a live cluster yet, so test it at your target size before you rely on it. It needs two more steps:
 
 1. Label the cluster secret, which is what installs the operator. Bootstrap doesn't set this label.
 

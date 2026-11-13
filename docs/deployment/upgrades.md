@@ -8,7 +8,7 @@ Every upgrade is a committed diff in the deployment repo, applied in a declared 
 
 ## Stack upgrade
 
-Between 2.2.x releases you deploy fresh. A 2.2.2 deployment is a fresh install, not an upgraded 2.2.1 one, because no path from one release to the next is verified. `dfe-stack check-upgrade` reads each release's `stack.previous` ([stack versioning](stack-versioning.md#overrides-and-upgrades)) and exits 0 for `SUPPORTED`:
+Between patch releases you deploy fresh. Each release is a fresh install, not an upgrade of the one before, because no path from one release to the next is verified. `dfe-stack check-upgrade` reads each release's `stack.previous` ([stack versioning](stack-versioning.md#overrides-and-upgrades)) and exits 0 for `SUPPORTED`:
 
 ```text
 $ dfe-stack check-upgrade --from 2.2.1 --to 2.2.2

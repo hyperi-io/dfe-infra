@@ -10,7 +10,7 @@ A stack release is a dfe-infra tag, so `versions.yaml` frozen at tag `X.Y.Z` is 
 
 ```mermaid
 flowchart LR
-    PINS["deploy repo pins.yaml<br/>base.dfe-infra: 2.2.2"] -->|"one pin selects the lot"| MANIFEST["versions.yaml at that tag"]
+    PINS["deploy repo pins.yaml<br/>base.dfe-infra: #lt;stack version#gt;"] -->|"one pin selects the lot"| MANIFEST["versions.yaml at that tag"]
     MANIFEST --> APPS["dfe-* images, tag@sha256"]
     MANIFEST --> DATA["ClickHouse, Kafka, PostgreSQL, operators, charts"]
     MANIFEST --> TPL["dfe-deploy template tag"]
@@ -28,7 +28,7 @@ Need one component ahead of the set, or held behind it? List it under `overrides
 ```yaml
 overrides:
   apps:
-    dfe-receiver: "v1.16.0@sha256:..."
+    dfe-receiver: "v<version>@sha256:..."
 ```
 
 An override beats the certified manifest, and everything not listed stays on the certified version. It must be a `tag@sha256` digest, and `dfe-stack resolve` rejects a floating tag.

@@ -32,7 +32,7 @@ The residual quantum exposure is the asymmetric layer. There are two risks. Harv
 
 ## Profiles
 
-`prod` and `highsec` are target postures, not a switch. 2.2.2 has no profile key. The gateway ships the `prod` floor (`tls.edge.minVersion: "1.2"` and `ui.tls.min_version: "1.2"` in `helm/edge/gateway`), and a deployment that needs TLS 1.3 only sets both to `"1.3"` in its gateway overlay.
+`prod` and `highsec` are target postures, not a switch. The stack has no profile key. The gateway ships the `prod` floor (`tls.edge.minVersion: "1.2"` and `ui.tls.min_version: "1.2"` in `helm/edge/gateway`), and a deployment that needs TLS 1.3 only sets both to `"1.3"` in its gateway overlay.
 
 | Layer | `prod` (default, commercial-safe) | `highsec` (national-security) |
 |---|---|---|
@@ -51,7 +51,7 @@ Protocol floors, curves, cipher policy and signing algorithms are configuration,
 
 - Edge. The single Envoy front layer terminates TLS (1.2 floor in `prod`, 1.3-only in `highsec`), offers `TLS_AES_256_GCM_SHA384` (with `ECDHE-ECDSA-AES256-GCM-SHA384` at the 1.2 layer), and negotiates ECDHE on P-384. It also offers the hybrid X25519MLKEM768 group (a TLS 1.3 group, see the migration section). A post-quantum-capable client gets PQC key agreement and classical clients fall back to P-384, with no protocol break.
 - Backing services, target. Every backing service speaks TLS with certificates from the internal certificate authority, and broker authentication is SCRAM-SHA-512 over TLS.
-- Backing services, in 2.2.2. ClickHouse speaks TLS where the deployment carries a CA (the edge module on, or `clickhouse.tls.issuerRef`), with 8123 and 9000 still open beside it (`clickhouse.tls.required: false`). The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`kafka.securityProtocol: SASL_PLAINTEXT`), and Keeper has no TLS. Managed brokers are SASL over TLS. [threat-model.md](threat-model.md#in-cluster-transport) lists each hop.
+- Backing services today. ClickHouse speaks TLS where the deployment carries a CA (the edge module on, or `clickhouse.tls.issuerRef`), with 8123 and 9000 still open beside it (`clickhouse.tls.required: false`). The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`kafka.securityProtocol: SASL_PLAINTEXT`), and Keeper has no TLS. Managed brokers are SASL over TLS. [threat-model.md](threat-model.md#in-cluster-transport) lists each hop.
 - Federation. Outbound connections to external OIDC identity providers use TLS and verify the provider's certificate, but negotiate whatever cipher and group the provider supports. The federation leg doesn't require CNSA ciphers, so interoperability with Google, Okta, Entra ID and ADFS is preserved.
 
 ### Managed-service caveat
@@ -90,7 +90,7 @@ CNSA 2.0's asymmetric end-state is ML-KEM-1024 (FIPS 203) for key establishment 
 
 ## CI checks
 
-No CI policy gate checks this standard in 2.2.2. The floors, curves and cipher list are chart values, so a reviewer checks them in the gateway and cert-manager values a deployment sets.
+No CI policy gate checks this standard yet. The floors, curves and cipher list are chart values, so a reviewer checks them in the gateway and cert-manager values a deployment sets.
 
 ## References
 
