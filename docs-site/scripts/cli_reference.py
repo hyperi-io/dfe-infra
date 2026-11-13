@@ -36,7 +36,21 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
 class RenderError(RuntimeError):
-    """docker could not render the page from the engine image."""
+    """The engine image ran and did not render the page: an older engine, or no command group."""
+
+
+class ImageError(RenderError):
+    """docker itself failed, before the engine ran: no image, no pull, no daemon."""
+
+
+# docker's own exit codes. Anything lower came from the command inside the image.
+_DOCKER_EXIT = 125
+
+
+def _reason(stderr: str) -> str:
+    """The line of docker's or Python's stderr that names the error."""
+    lines = stderr.strip().splitlines() or ["no command group rendered"]
+    return next((line for line in reversed(lines) if "rror" in line), lines[-1]).strip()
 
 
 def image_tag(ref: str, head: str) -> str:
@@ -55,13 +69,14 @@ def render(tag: str, run: Runner) -> str:
         The page, one h2 per command group.
 
     Raises:
-        RenderError: docker failed, or printed no command group.
+        ImageError: docker could not run the image.
+        RenderError: the engine in the image did not render the page.
     """
     done = run(["docker", "run", "--rm", "--entrypoint", "sh", f"{IMAGE}:{tag}", "-c", _SCRIPT])
+    if done.returncode >= _DOCKER_EXIT:
+        raise ImageError(f"{IMAGE}:{tag}: {_reason(done.stderr)}")
     if done.returncode != 0 or "\n## " not in done.stdout:
-        # docker's first stderr line is the error, its last the --help hint.
-        lines = done.stderr.strip().splitlines() or ["no command group rendered"]
-        raise RenderError(f"{IMAGE}:{tag}: {lines[0]}")
+        raise RenderError(f"{IMAGE}:{tag}: {_reason(done.stderr)}")
     return done.stdout
 
 

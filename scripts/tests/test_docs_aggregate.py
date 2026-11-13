@@ -1580,24 +1580,33 @@ def fake_run(
     return run
 
 
-@pytest.mark.parametrize(
-    ("stdout", "returncode", "stderr", "error"),
-    [
-        (CLI_RENDERED, 0, "", None),
-        ("", 125, "manifest unknown\nRun 'docker run --help'", "manifest unknown"),
-        ("usage: typer\n", 0, "", "no command group rendered"),
-    ],
-    ids=["rendered", "docker-failed", "no-groups"],
+DOCKER_STDERR = (
+    "Unable to find image 'x' locally\n"
+    "docker: Error response from daemon: manifest unknown\nRun 'docker run --help'"
 )
-def test_cli_render_wants_a_command_group(
-    stdout: str, returncode: int, stderr: str, error: str | None
+OLD_ENGINE_STDERR = "Traceback\nImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "returncode", "stderr", "error", "match"),
+    [
+        (CLI_RENDERED, 0, "", None, ""),
+        ("", 125, DOCKER_STDERR, cli_reference.ImageError, "Error response from daemon"),
+        ("", 1, OLD_ENGINE_STDERR, cli_reference.RenderError, "ImportError: cannot import"),
+        ("usage: typer\n", 0, "", cli_reference.RenderError, "no command group rendered"),
+    ],
+    ids=["rendered", "docker-failed", "older-engine", "no-groups"],
+)
+def test_cli_render_tells_docker_failures_from_engine_ones(
+    stdout: str, returncode: int, stderr: str, error: type[Exception] | None, match: str
 ) -> None:
     run = fake_run(stdout, returncode, stderr)
     if error is None:
         assert cli_reference.render("v1.22.89", run) == CLI_RENDERED
-    else:
-        with pytest.raises(cli_reference.RenderError, match=error):
-            cli_reference.render("v1.22.89", run)
+        return
+    with pytest.raises(error, match=match) as raised:
+        cli_reference.render("v1.22.89", run)
+    assert isinstance(raised.value, cli_reference.ImageError) == (error is cli_reference.ImageError)
 
 
 @pytest.mark.parametrize(
@@ -1629,14 +1638,23 @@ def test_cli_page_is_rendered_from_the_pinned_image(
     assert "$ dfe alerts apply <name>\n" in text
 
 
-def test_cli_page_waits_for_docker_and_refuses_a_committed_copy(
+def test_cli_page_is_a_finding_without_docker_or_a_rendering_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "2.2.3"
     dest = root / "dfe-engine"
     write_tree(dest, {"reference/README.md": "# Reference\n"})
-    monkeypatch.setattr(aggregate.shutil, "which", lambda name: None)
     findings: list[Finding] = []
+    monkeypatch.setattr(aggregate, "_run", fake_run("", 1, OLD_ENGINE_STDERR))
+    assert place_cli("v1.22.89", root, dest, findings) is None
+    reason = f"{cli_reference.IMAGE}:v1.22.89: ImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+    assert findings == [Finding("dfe-engine", "reference/cli.md", Rule.NO_CLI, reason)]
+    assert not (dest / "reference" / "cli.md").exists()
+    monkeypatch.setattr(aggregate, "_run", fake_run("", 125, DOCKER_STDERR))
+    with pytest.raises(aggregate.FetchError, match="Error response from daemon: manifest unknown"):
+        place_cli("v1.22.89", root, dest, [])
+    monkeypatch.setattr(aggregate.shutil, "which", lambda name: None)
+    findings = []
     assert place_cli("v1.22.89", root, dest, findings) is None
     assert findings == [Finding("dfe-engine", "reference/cli.md", Rule.NO_DOCKER)]
     write_tree(dest, {"reference/cli.md": "# A committed copy\n"})

@@ -162,6 +162,7 @@ class Rule(StrEnum):
     NO_DOCS = "no docs/ at the pinned ref"
     NO_SPEC = "no committed OpenAPI spec at the pinned ref"
     NO_DOCKER = "no docker on this host, so no CLI reference page"
+    NO_CLI = "the engine image at the pinned ref renders no CLI reference page"
     ALL_INTERNAL = "every page is internal, so nothing is published"
 
 
@@ -1288,14 +1289,14 @@ def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dic
         ref: The engine's pinned ref, which names its image tag.
         root: The build's root.
         dest: The engine's docs in the build.
-        findings: Where a host with no docker is recorded.
+        findings: Where a host with no docker, or an engine that renders no page, is recorded.
 
     Returns:
-        The page's path in the build and the image it came from, or None without docker.
+        The page's path in the build and the image it came from, or None without a page.
 
     Raises:
         SystemExit: The engine's docs/ carries the generated page's path.
-        FetchError: docker could not render the page.
+        FetchError: docker could not run the image.
     """
     page = dest / cli_reference.PAGE
     if page.exists():
@@ -1309,8 +1310,11 @@ def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dic
     tag = cli_reference.image_tag(ref, HEAD)
     try:
         rendered = cli_reference.render(tag, _run)
-    except cli_reference.RenderError as exc:
+    except cli_reference.ImageError as exc:
         raise FetchError(str(exc)) from exc
+    except cli_reference.RenderError as exc:
+        findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_CLI, str(exc)))
+        return None
     page.parent.mkdir(parents=True, exist_ok=True)
     text = mdx_safe(cli_reference.page_text(rendered, tag))
     page.write_text(text, encoding="utf-8", newline="\n")
