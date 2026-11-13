@@ -4,13 +4,13 @@ sidebar_label: Coming from Splunk or Elastic
 slug: /coming-from
 ---
 
-# Coming from Splunk, Elastic or a Lakehouse
+# Coming from Splunk or Elastic
 
-If you've run Splunk, Elastic, OpenSearch or a lakehouse, or several of them, you'll bring assumptions about how a data platform works. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them.
+If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
 
 ## Nothing breaks when a source changes
 
-Index engines will take a field you never mapped, but it has a cost. Unplanned fields grow the index, and the hardware under it grows with them. A lakehouse wants the model before the data arrives. DFE lands every field from day one, and a field with no mapping yet lands in automatic typed columns.
+Index engines will take a field you never mapped, but it has a cost. Unplanned fields grow the index, and the hardware under it grows with them. DFE lands every field from day one, and a field with no mapping yet lands in automatic typed columns.
 
 We built it that way because you rarely control your sources. Vendors change formats in an update, and partners change feeds without telling you. So there's no data contract to negotiate or police upstream, and a supplier adding or renaming a field doesn't cost you events.
 
@@ -142,4 +142,3 @@ Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on th
 | SPL, KQL or Lucene queries | SQL on ClickHouse, and search in the DFE console |
 | A saved search that alerts | A rule (a SQL query on a source), run on a schedule by a hunt |
 | Hot, warm and cold tiers | ClickHouse storage tiering ([guide](dfe-infra/deployment/clickhouse-tiering.md)) |
-| dbt models over a lake | The `dfe-schemas` definition, compiled to tables by dfe-engine |
