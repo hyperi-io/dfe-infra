@@ -34,7 +34,7 @@ Snowpipe loads staged files and Auto Loader processes micro-batches, so an event
 
 A warehouse earns its place for finance, product and business analytics, where the data is modelled, the volume is modest and the joins are wide. Keep it. DFE takes the high-volume operational and security data a warehouse bills by the scan: device events, application logs, metrics, audit trails.
 
-The two meet in object storage. dfe-archiver writes every record's payload as JSON lines to S3, GCS or Azure Blob, zstd by default, or gzip where the reader wants it, so a Spark job or a warehouse external table reads the files as they stand ([archiving](dfe-archiver/archiving.md)). ClickHouse reads Parquet and Iceberg in object storage directly, so a dimension table the warehouse owns is a query away from the events. And the DFE console, or any SQL client, reads the ClickHouse tables themselves.
+The two meet in object storage. dfe-archiver writes every record's payload as JSON lines to S3, GCS or Azure Blob, zstd by default, or gzip where the reader wants it, so a Spark job or a warehouse external table reads the files as they stand ([archiving](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/archiving.md)). ClickHouse reads Parquet and Iceberg in object storage directly, so a dimension table the warehouse owns is a query away from the events. And the DFE console, or any SQL client, reads the ClickHouse tables themselves.
 
 ## Doing it the DFE way
 
