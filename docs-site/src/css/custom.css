@@ -288,8 +288,9 @@ html[data-theme='dark'] {
 }
 
 /* The hound sits before the product name, set in the HyperI wordmark face,
-   its feet on the name's baseline. */
-.navbar__brand {
+   its feet on the name's baseline. Infima centres the brand, so the selector
+   carries the navbar to outrank it. */
+.navbar .navbar__brand {
   gap: var(--dfe-space-3);
   align-items: baseline;
 }
@@ -303,8 +304,10 @@ html[data-theme='dark'] {
   display: block;
 }
 
-/* The menu links share that baseline, so they line up with the product name. */
-.navbar__items:not(.navbar__items--right) {
+/* Every navbar text shares that baseline: the row, the left links, the version
+   menu, the GitHub link and the search box all line up with the product name. */
+.navbar__inner,
+.navbar__items {
   align-items: baseline;
 }
 
