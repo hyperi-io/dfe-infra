@@ -2,6 +2,8 @@
 # sections, and the section every published page sits in. Pages keep their URLs.
 # scripts/aggregate.py checks it and hands it to docusaurus.config.js through
 # content/site.json. Nested maps and quoted scalars only (scripts/yaml_subset.py).
+# sidebar-journeys.js adds a fifth journey, Components, listing each member's pages
+# whole under its own name, so a page also sits under its component.
 
 # Journeys and their sections, in sidebar order. A section no page lands in is
 # left out of the sidebar.

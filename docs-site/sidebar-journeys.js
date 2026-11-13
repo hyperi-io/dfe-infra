@@ -48,8 +48,13 @@ function placeOf(docId, placements) {
   return placements[best.candidate];
 }
 
+// The journey that lists each component whole, after the reader journeys.
+const COMPONENTS = 'Components';
+
 /**
- * The sidebar as top-level pages, then each journey with its non-empty sections.
+ * The sidebar as top-level pages, each journey with its non-empty sections, then
+ * Components: the generated categories as they came, one per component, opening on
+ * its landing page. A page sits in its journey section and under its component.
  *
  * @param {object[]} items The generated sidebar, API slice already spliced in.
  * @param {{label: string, sections: string[]}[]} journeys The journeys, in order.
@@ -82,7 +87,11 @@ function journeySidebar(items, journeys, placements) {
         })),
     }))
     .filter((journey) => journey.items.length > 0);
-  return [...top, ...journeyItems];
+  const components = items.filter((item) => item.type === 'category');
+  if (components.length === 0) {
+    return [...top, ...journeyItems];
+  }
+  return [...top, ...journeyItems, {type: 'category', label: COMPONENTS, collapsed: true, items: components}];
 }
 
-module.exports = {journeySidebar, placeOf};
+module.exports = {journeySidebar, placeOf, COMPONENTS};
