@@ -1,182 +1,62 @@
 # dfe-infra
 
+Helm charts, Argo CD ApplicationSets and OpenTofu that stand up and test a DFE deployment on Kubernetes.
+
 [![Helm Lint](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/helm-lint.yml)
 [![Stack Release](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml/badge.svg)](https://github.com/hyperi-io/dfe-infra/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-BUSL--1.1-blue)](LICENSE)
 
-The deploy layer of DFE: the charts, Argo CD ApplicationSets, OpenTofu modules and cluster bootstrap that stand a full DFE deployment up on any Kubernetes, on-prem, AWS, GCP or Azure. It deploys the backing services as well as the DFE apps, and a release tag here is a certified stack version.
-
-## What it gives you
-
-- `versions.yaml`, one pin set for the whole stack: every chart, operator and image, with the image digests beside them.
-- `scripts/dfe-stack`, which renders the stack manifest, lists the DFE-owned images to mirror for an air-gapped install (third-party chart images are mirrored separately), derives the upgrade graph from the stacks declared in `versions.yaml` and checks a customer's pins.
-- A signed stack manifest on each release: the manifest, image list and upgrade graph attached to the GitHub release and pushed as a cosign-signed OCI artifact.
-- One two-layer model on every cluster: a cloud-specific base laid by `bootstrap/` and OpenTofu, then the DFE platform, the same everywhere, managed by Argo CD.
-- ClickHouse, Kafka on Strimzi or Redpanda, dfe-hyperdx's DocumentDB on CloudNativePG, Envoy Gateway with OIDC, KEDA and External Secrets, deployed and wired for you.
-- `DFE_REGISTRY` to point a deployment at its own image mirror.
-- `scripts/dfe-ops` to deploy, verify, tear down and run the acceptance tests against a cluster, or a local kind one.
-
-## A product suite, not our internal infra
-
-DFE is a product suite that any organisation deploys to run its own data-fusion
-engine. This repo is the deploy layer of that suite, and like every core DFE repo
-(engine, schemas, ui, hyperdx, the Rust data-plane apps) it is public by design.
-Our own hosted instance is just ONE deployment, not "the product".
-
-So this repo stays GENERIC:
-
-- **No environment-specifics live here** - no cluster IDs, hostnames,
-  credentials, or private-fleet assumptions. Those live in each deployment's own
-  PRIVATE config repo (a per-env overlay), never in this repo.
-- **Every deployment choice is a parameter.** A dev preview, a customer's
-  bring-your-own cluster, and an AWS-marketplace install differ only by the inputs
-  they pass - not by the code that runs.
-- **Test WITH a real cluster, never code FOR one.** We validate against our own
-  on-prem reference cluster, but nothing here may assume that cluster is ours.
-
 ## What it does
 
-A two-layer model, identical on any Kubernetes:
+- One pin set for the whole stack in `versions.yaml`: every chart, operator and image, with the image digests beside them. A release tag here is a certified stack version, and each release carries its signed manifest, image list and upgrade graph.
+- Two layers on any Kubernetes, on-premises or in your cloud account. `bootstrap/bootstrap.sh` lays the base (cert-manager, External Secrets, Argo CD, adopting healthy ones already there), then Argo CD reconciles the backing services and the DFE apps from the same charts everywhere.
+- The backing services deployed and wired: ClickHouse, Kafka on Strimzi or Redpanda, DocumentDB on CloudNativePG for the console, Envoy Gateway with OIDC, KEDA and External Secrets.
+- `scripts/dfe-stack` renders the stack manifest, lists the DFE images to mirror for an air-gapped install, derives the upgrade graph from the stacks `versions.yaml` declares and checks a customer's pins. `scripts/dfe-ops` deploys, verifies, tears down and runs the acceptance tests against a cluster, or a local kind one.
+- `DFE_REGISTRY` points a deployment at its own image mirror.
 
-- **Layer 1** - base infra (cloud-specific): `bootstrap/bootstrap.sh` lays the
-  cluster baseline (detect-or-install), with OpenTofu handling the
-  cloud-side prep (secrets/IAM) where a cloud needs it.
-- **Layer 2** - the DFE platform (identical everywhere), managed by ArgoCD.
+dfe-infra deploys the backing services and the apps. dfe-engine, the control plane, never does: it decides what the apps are configured to do and writes that to git. Everything here is generic, and a deployment's own values live in its private deploy repo.
 
-A cluster-secret annotation bridge carries Layer-1 outputs into the GitOps layer.
+## Quick start
 
-dfe-infra is the **master deploy layer** of the suite: it deploys a VERSION-SET
-given as explicit input (which ref or digest of each DFE repo to use), never "its
-own checkout". That single rule lets ONE orchestrator drive dev previews,
-production installs, and the marketplace wizard from the same code - and it is
-why dfe-infra deploying dfe-infra is not a paradox. The deploy-context schema that
-carries those inputs is specified in
-[docs/deployment/README.md](docs/deployment/README.md).
-
-## Tech
-
-- IaC: OpenTofu, the canonical tool. Terraform is being retired (see
-  hyperi-io/hyperi-developer#11), and HCL under `terraform/` runs on either.
-- GitOps: ArgoCD ApplicationSets (matrix generator).
-- Registry: released images on GHCR (`ghcr.io/hyperi-io`). `DFE_REGISTRY`
-  points a deployment at its own mirror (Harbor, ECR, ACR, GAR).
-- Ingress and auth: Envoy Gateway + OIDC SecurityPolicy.
-- Data: ClickHouse, DocumentDB on CloudNativePG (dfe-hyperdx's state), Strimzi Kafka (KRaft,
-  SASL/SCRAM), OTel -> ClickHouse -> dfe-hyperdx.
-- Secrets: ESO + OpenBao (on-prem) or cloud secret managers.
-- Autoscaling: KEDA from OTel metrics.
-
-## Layout
-
-See [docs/architecture.md](docs/architecture.md) for where this repo sits in
-the suite (and the hard dfe-engine boundary),
-[docs/deployment/README.md](docs/deployment/README.md) for layers, tiers, and
-the values cascade, and [docs/suite-graph.md](docs/suite-graph.md) for which
-repos are suite members and what moves when one of them releases
-(`suite.yaml` is the source).
-
-- `terraform/` - reusable HCL modules (OpenTofu).
-- `helm/charts/` - the backing-service and platform charts and `dfe-extras`
-  (+ `helm/library/dfe-common` shared templates). Each DFE service deploys
-  from its own published thin chart.
-- `argocd/` - ApplicationSets, AppProjects, tier + cloud values.
-- `bootstrap/` - idempotent cluster bootstrap.
-- `versions.yaml` - single source for chart/operator/image pins, plus the
-  image `digests:`, lockstep `content:` repo tags, and `stack:` release
-  metadata (upgrade order, previous-version pointer).
-
-## Stack releases
-
-A dfe-infra release tag IS a certified DFE stack version: `versions.yaml` at
-that tag names every component, and `scripts/dfe-stack` operates on it
-(render the manifest, list the DFE-owned images for air-gap mirroring, derive the upgrade
-graph from the stacks `versions.yaml` declares, check an upgrade path, resolve a customer `pins.yaml` -
-optionally emitting a helm values fragment - and verify digests against
-GHCR). On each release tag the `stack-manifest` workflow renders the
-manifest + image list + upgrade graph, attaches them to the GitHub release,
-pushes them as an OCI artifact, and cosign-signs it keyless. Full model:
-[docs/deployment/stack-versioning.md](docs/deployment/stack-versioning.md).
-
-## Context
-
-### What this is
-
-The GitOps source of truth for a DFE deployment, and the thing that stands one
-up: charts, ApplicationSets, OpenTofu modules and cluster bootstrap. A release
-tag here IS a certified stack version.
-
-**The boundary that gets crossed most often: dfe-infra DEPLOYS the backing
-services; dfe-engine never does.** The engine is the config control plane -- it
-decides what components are configured to do and writes that to git. Anything
-that creates a broker, a datastore or a cluster object belongs here.
-
-Design and the repo-by-repo map: [docs/architecture.md](docs/architecture.md).
-
-### Where things live
-
-| path | what |
-|---|---|
-| `suite.yaml` | Membership and the edge graph. Every other repo's "where this sits" is generated from it, so it is the SSoT for what a release moves. |
-| `apps.yaml` | What an app IS: multiplicity, scaling, the files it consumes, its source binding. Adding an app is a manifest edit plus a chart, NEVER an engine release. |
-| `versions.yaml` | Every chart, operator and image pin, plus `digests:`, lockstep `content:` tags and `stack:` release metadata. |
-| `helm/charts/` | The backing-service and platform charts, over `helm/library/dfe-common`, and `dfe-extras`, the DFE-only objects beside each service's published thin chart. |
-| `argocd/appsets/` | The layer ApplicationSets. `argocd/values/` holds the cascade: `common.yaml`, then the environment file, then the profile. |
-| `bootstrap/` | Idempotent cluster bootstrap, including the templates that WRITE the Argo cluster secret. |
-| `scripts/dfe-stack` | The stack CLI: render, pins, upgrade graph, release gate. |
-| `scripts/dfe-ops` | The cluster CLI: kubeconfig, deploy, teardown, verify, acceptance, and a local kind cluster (`kind up/status/down`). |
-
-### Commands that prove a change
+A Kubernetes cluster you run, 1.34 to 1.36, with `kubectl` pointed at it, plus `helm`, `openssl` and Python 3. The stack version is a release tag of this repo. This example uses 2.2.2, and `versions.yaml` on `main` names the current one:
 
 ```bash
-python3 scripts/dfe-stack suite --cycles        # the build graph and its gates
-python3 scripts/dfe-stack render                # the stack manifest
-bash scripts/validate-charts.sh                 # chart lint and render
-python3 scripts/check_versions_drift.py         # pins vs charts vs digests
-python3 scripts/dfe-ops preflight               # READ-ONLY: is this cluster fit
+STACK=2.2.2
+git clone --branch "$STACK" https://github.com/hyperi-io/dfe-infra && cd dfe-infra
+(umask 077 && cp bootstrap/local.env.example bootstrap/local.env)
 ```
 
-**Argo reporting `Synced` is not health.** A Synced app can be `Degraded` with
-every pod unable to pull an image: the manifests applied exactly as written, and
-what was written was wrong. Read the pod state, never the sync status.
+Edit `bootstrap/local.env` before going on: `DFE_DOMAIN`, the domain every hostname sits under, `DFE_REPO_URL`, the git repository Argo CD reads the charts from, and `DFE_STORAGE_CLASS`, a StorageClass the cluster has (bootstrap installs `local-path` only when the cluster has no default StorageClass). Then:
 
-### What tends to bite
+```bash
+python3 scripts/dfe-ops preflight --mode single --env-file bootstrap/local.env
+python3 scripts/dfe-ops stack-deploy --stack "$STACK" --mode single \
+  --target-revision "$STACK" --env-file bootstrap/local.env
+```
 
-| Don't | Do | Why |
-|---|---|---|
-| Trust that a chart change reached the cluster | Check the Argo app's rendered parameters | A Helm parameter with a `name` and no `value` still OVERRIDES the values files. An appset that templates a parameter from a missing annotation emits exactly that, silently. |
-| Assume the cluster secret follows the repo | Re-run bootstrap after changing what reads it | `bootstrap/templates/cluster-secret.yaml.tpl` writes the Argo cluster secret and **Argo does not reconcile it**. Appsets move forward, the secret does not, and nothing reports the gap. This is why a correct registry fix sat dead for three days (#368). |
-| Read a pull failure as a credentials problem | Check the image reference has a registry HOST | `dfe-common.image` renders a registry-less ref when `global.registry` is empty rather than failing. containerd then resolves it against Docker Hub and reports `insufficient_scope`, which reads as a bad pull secret and is not. |
-| Hardcode an app's shape in a chart | Put it in `apps.yaml` | Multiplicity and scaling are INDEPENDENT axes -- `single` vs `per_config` says how many, `scale_deployed` says whether KEDA drives it. |
-| Cite a `suite.yaml` evidence line number | Cite the edge and its kind | The file carries a `verified:` date and the LINE NUMBERS have rotted, while every kind, note and direction still holds. |
-| Use the `terraform` binary | Use `tofu` | OpenTofu is the tool; `.tf` is its format too. Terraform is being retired across HyperI. |
+The preflight is read-only and says whether the cluster is fit for the tier. `stack-deploy` installs or adopts the base, then hands over to Argo CD. The full walk-through, AWS and the one-host Docker install are on the published site, https://dfe.docs.hyperi.io/quickstart/.
 
-### Where this sits
+## Configuration
 
-Generated from `python3 scripts/dfe-stack suite --consumer dfe-infra` and the
-same with `--producer dfe-infra`. Read those rather than trusting this summary.
+The cluster secret's `dfe.hyperi.io/profile` label picks the tier: `slim`, `single` or `scale`. Values merge from the chart defaults, then `argocd/values/common.yaml`, the per-cloud file, the profile file, and last the deploy repo's own overlays, so you override single dials and never templates. [docs/deployment/README.md](docs/deployment/README.md) has the cascade and the per-target guides.
 
-**Inbound, and it is the interesting direction.** Nearly every app repo is a
-producer INTO dfe-infra on an `image-pin` edge: dfe-engine, dfe-loader,
-dfe-receiver, dfe-fetcher, dfe-archiver, the three transforms, dfe-ui and
-dfe-hyperdx all pin their released image here, in `versions.yaml`, beside the
-digest of the thin chart published at that tag. Lockstep -- `dfe-stack
-bump-app` moves the tag and repins the chart, `resolve_pins.py` re-resolves the
-image digest, and `check_versions_drift.py --fix` carries both into the appset
-and dfe-extras copies. dfe-schemas and dfe-deploy arrive on `version-pin` edges
-instead.
+## Documentation
 
-dfe-engine is the one two-way neighbour: it pins its image here like the rest,
-AND this repo's `apps.yaml` is vendored into the engine as a byte copy, so a
-catalogue entry the engine does not carry is not reflected by its management API.
+- [docs/deployment/](docs/deployment/README.md): the guides per target (on-premises, RKE2, AWS), upgrades and rollback, storage, Kafka, managed backends, the portability matrix.
+- [docs/architecture.md](docs/architecture.md): where this repo sits in the suite and the boundary with dfe-engine.
+- [docs/deployment/stack-versioning.md](docs/deployment/stack-versioning.md): what a stack release is and how `dfe-stack` reads it.
+- [docs/suite-graph.md](docs/suite-graph.md): which repos are suite members and what moves when one releases (`suite.yaml` is the source).
+- [docs/testing-cycle.md](docs/testing-cycle.md) and [docs/threat-model.md](docs/threat-model.md): how a stack is proven, and what is exposed to whom.
+- [docs/README.md](docs/README.md) lists every page.
 
-**Outbound.** `dfe-infra -> dfe-docker` is a `derived-pins` edge whose check is
-explicitly *nothing*: there is no second copy that can drift, and the graph
-records that deliberately rather than leaving it unstated. `dfe-infra ->
-dfe-deploy` is a version pin.
+The suite's published docs are at https://dfe.docs.hyperi.io.
 
-So a change to `versions.yaml` or a chart is a DEPLOYMENT move, not a code one,
-and the repos above find out about it only when they next release into it.
+## Help and contributing
 
-## Issues
+How to work in this repo, the commands that prove a change and what tends to bite are in [CONTRIBUTING.md](CONTRIBUTING.md). A question that is not a bug goes in a new issue.
 
 Open bugs: [this repo](https://github.com/hyperi-io/dfe-infra/issues?q=is%3Aopen+is%3Aissue+type%3ABug+-label%3Abacklog+-label%3Anext-minor) | [whole DFE suite](https://github.com/search?type=issues&q=is%3Aopen+is%3Aissue+type%3ABug+-label%3Abacklog+-label%3Anext-minor+repo%3Ahyperi-io%2Fdfe-infra+repo%3Ahyperi-io%2Fdfe-docker+repo%3Ahyperi-io%2Fdfe-deploy+repo%3Ahyperi-io%2Fdfe-engine+repo%3Ahyperi-io%2Fdfe-loader+repo%3Ahyperi-io%2Fdfe-receiver+repo%3Ahyperi-io%2Fdfe-fetcher+repo%3Ahyperi-io%2Fdfe-archiver+repo%3Ahyperi-io%2Fdfe-transform-vrl+repo%3Ahyperi-io%2Fdfe-transform-vector+repo%3Ahyperi-io%2Fdfe-transform-elastic+repo%3Ahyperi-io%2Fdfe-ui+repo%3Ahyperi-io%2Fdfe-hyperdx+repo%3Ahyperi-io%2Fscalo-rs+repo%3Ahyperi-io%2Fscalo-py+repo%3Ahyperi-io%2Flogreducer+repo%3Ahyperi-io%2Fdfe-schemas+repo%3Ahyperi-io%2Fvector-vrl+repo%3Ahyperi-io%2Fculvert+repo%3Ahyperi-io%2Fdfe-clickhouse-rs+repo%3Ahyperi-io%2Ffactbook-rs)
+
+## License
+
+BUSL-1.1, see [LICENSE](LICENSE).
