@@ -29,7 +29,7 @@ flowchart LR
   C --> H[DFE console]
 ```
 
-That's the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional and runs on either path where a source needs grok or your own logic. On Kafka it reads the source's topic and writes a second one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader. The rest of the path is unchanged. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
+That's the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's topic and writes a second one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. The rest of the path is unchanged. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
 ## Purpose-built where it's hot, generic where it has to be
 
