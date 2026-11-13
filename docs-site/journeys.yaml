@@ -106,6 +106,7 @@ placement:
     deployment/: "Deploy / Choose a target"
     deployment/observability-standard.md: "Operate / Monitoring"
     reference/api-route-map.md: "Reference / HTTP API"
+    reference/cli.md: "Reference / HTTP API"
   dfe-fetcher:
     default: "Operate / Sources"
     cloud-setup/aws.md: "Evaluate / AWS logs through the fetcher"

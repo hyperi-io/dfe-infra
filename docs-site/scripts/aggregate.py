@@ -63,6 +63,9 @@ SITE_ROOT = REPO_ROOT / "docs-site"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import yaml_subset  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cli_reference  # noqa: E402
+
 VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 DFE_STACK = REPO_ROOT / "scripts" / "dfe-stack"
 CONTENT_ROOT = SITE_ROOT / "content-root"
@@ -158,6 +161,8 @@ class Rule(StrEnum):
     REFUSED = "an anonymous fetch was refused"
     NO_DOCS = "no docs/ at the pinned ref"
     NO_SPEC = "no committed OpenAPI spec at the pinned ref"
+    NO_DOCKER = "no docker on this host, so no CLI reference page"
+    NO_CLI = "the engine image at the pinned ref renders no CLI reference page"
     ALL_INTERNAL = "every page is internal, so nothing is published"
 
 
@@ -328,6 +333,7 @@ class BuildResult:
         fetched: Member name -> the commit fetched, for every member fetched, docs or not.
         findings: Every stray and every member left out.
         openapi: The OpenAPI paths for docusaurus.config.js, when the engine has a spec.
+        cli: The generated CLI reference page and the image it came from, when rendered.
         placements: Doc id or id prefix -> "Journey / Section", for the sidebar.
     """
 
@@ -336,6 +342,7 @@ class BuildResult:
     fetched: dict[str, str] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
     openapi: dict[str, str] | None = None
+    cli: dict[str, str] | None = None
     placements: dict[str, str] = field(default_factory=dict)
 
 
@@ -1166,6 +1173,7 @@ def assemble(
             if ref != released_ref:
                 spec_checkout = fetcher.fetch(member.repo, released_ref)
             result.openapi = _place_spec(spec_checkout, build, dest, out, result.findings)
+            result.cli = _place_cli(released_ref, root, dest, result.findings)
     quickstart = docker_quickstart(build, newest)
     if quickstart is not None:
         write_json(out / QUICKSTART_DIR / f"{build.name}.json", quickstart)
@@ -1272,6 +1280,45 @@ def _place_spec(
         "slice": slice_path,
         "raw": raw.relative_to(out).as_posix(),
     }
+
+
+def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dict[str, str] | None:
+    """Render the dfe CLI reference from the engine image into the engine's docs.
+
+    Args:
+        ref: The engine's pinned ref, which names its image tag.
+        root: The build's root.
+        dest: The engine's docs in the build.
+        findings: Where a host with no docker, or an engine that renders no page, is recorded.
+
+    Returns:
+        The page's path in the build and the image it came from, or None without a page.
+
+    Raises:
+        SystemExit: The engine's docs/ carries the generated page's path.
+        FetchError: docker could not run the image.
+    """
+    page = dest / cli_reference.PAGE
+    if page.exists():
+        raise SystemExit(
+            f"error: {SPEC_MEMBER}'s docs/ carries {cli_reference.PAGE.as_posix()},"
+            " the generated CLI page"
+        )
+    if shutil.which("docker") is None:
+        findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_DOCKER))
+        return None
+    tag = cli_reference.image_tag(ref, HEAD)
+    try:
+        rendered = cli_reference.render(tag, _run)
+    except cli_reference.ImageError as exc:
+        raise FetchError(str(exc)) from exc
+    except cli_reference.RenderError as exc:
+        findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_CLI, str(exc)))
+        return None
+    page.parent.mkdir(parents=True, exist_ok=True)
+    text = mdx_safe(cli_reference.page_text(rendered, tag))
+    page.write_text(text, encoding="utf-8", newline="\n")
+    return {"page": page.relative_to(root).as_posix(), "image": f"{cli_reference.IMAGE}:{tag}"}
 
 
 def root_pages() -> dict[str, Path]:
@@ -1571,6 +1618,7 @@ def site_manifest(
             "members": result.members,
             "fetched": result.fetched,
             "openapi": result.openapi,
+            "cli": result.cli,
             "placements": result.placements,
         }
         for result in results

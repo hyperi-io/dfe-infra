@@ -34,6 +34,9 @@ aggregate = importlib.util.module_from_spec(spec)
 sys.modules["docs_aggregate"] = aggregate
 spec.loader.exec_module(aggregate)
 
+cli_reference = aggregate.cli_reference
+place_cli = aggregate._place_cli
+
 Build = aggregate.Build
 BuildResult = aggregate.BuildResult
 Finding = aggregate.Finding
@@ -88,6 +91,12 @@ def checkout_files(path: Path) -> list[str]:
         for found in path.rglob("*")
         if found.is_file() and ".git" not in found.relative_to(path).parts
     )
+
+
+@pytest.fixture(autouse=True)
+def no_cli_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    """assemble never runs docker here. The CLI page has its own tests on place_cli."""
+    monkeypatch.setattr(aggregate, "_place_cli", lambda ref, root, dest, findings: None)
 
 
 @pytest.fixture
@@ -1550,6 +1559,110 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
         name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
+
+
+CLI_RENDERED = (
+    "# `dfe`\n\ndfe - the CLI.\n\n**Options**:\n\n"
+    "* `--query <str>`: JMESPath applied to {answer}.\n"
+    "* `--body <str>`: JSON, or `file://&lt;path&gt;`. The API&#x27;s body.\n\n"
+    "## `dfe alerts apply`\n\nExample: dfe alerts apply <name>\n\n"
+    "Calls PUT /api/v1/alerts/{name}.\n\n```console\n$ dfe alerts apply <name>\n```\n"
+)
+
+
+def fake_run(
+    stdout: str = CLI_RENDERED, returncode: int = 0, stderr: str = "", tag: str = "v1.22.89"
+) -> object:
+    def run(cmd: list[str]) -> subprocess.CompletedProcess:
+        assert cmd[:4] == ["docker", "run", "--rm", "--entrypoint"]
+        assert cmd[5] == f"{cli_reference.IMAGE}:{tag}"
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    return run
+
+
+DOCKER_STDERR = (
+    "Unable to find image 'x' locally\n"
+    "docker: Error response from daemon: manifest unknown\nRun 'docker run --help'"
+)
+OLD_ENGINE_STDERR = "Traceback\nImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "returncode", "stderr", "error", "match"),
+    [
+        (CLI_RENDERED, 0, "", None, ""),
+        ("", 125, DOCKER_STDERR, cli_reference.ImageError, "Error response from daemon"),
+        ("", 1, OLD_ENGINE_STDERR, cli_reference.RenderError, "ImportError: cannot import"),
+        ("usage: typer\n", 0, "", cli_reference.RenderError, "no command group rendered"),
+    ],
+    ids=["rendered", "docker-failed", "older-engine", "no-groups"],
+)
+def test_cli_render_tells_docker_failures_from_engine_ones(
+    stdout: str, returncode: int, stderr: str, error: type[Exception] | None, match: str
+) -> None:
+    run = fake_run(stdout, returncode, stderr)
+    if error is None:
+        assert cli_reference.render("v1.22.89", run) == CLI_RENDERED
+        return
+    with pytest.raises(error, match=match) as raised:
+        cli_reference.render("v1.22.89", run)
+    assert isinstance(raised.value, cli_reference.ImageError) == (error is cli_reference.ImageError)
+
+
+@pytest.mark.parametrize(
+    ("ref", "tag"), [("v1.22.89", "v1.22.89"), (aggregate.HEAD, cli_reference.HEAD_TAG)]
+)
+def test_cli_page_is_rendered_from_the_pinned_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ref: str, tag: str
+) -> None:
+    monkeypatch.setattr(aggregate, "_run", fake_run(tag=tag))
+    root = tmp_path / "2.2.3"
+    dest = root / "dfe-engine"
+    write_tree(dest, {"reference/README.md": "# Reference\n"})
+    findings: list[Finding] = []
+    placed = place_cli(ref, root, dest, findings)
+    assert placed == {
+        "page": "dfe-engine/reference/cli.md",
+        "image": f"{cli_reference.IMAGE}:{tag}",
+    }
+    assert findings == []
+    text = (dest / "reference" / "cli.md").read_text(encoding="utf-8")
+    assert text.startswith(
+        f"# dfe CLI reference\n\nRendered from the `dfe` command tree of `{cli_reference.IMAGE}:{tag}`.\n"
+    )
+    assert "\n# `dfe`\n" not in text
+    # Prose is made MDX-safe, code is left as written.
+    assert "Example: dfe alerts apply &lt;name>" in text
+    assert "Calls PUT /api/v1/alerts/&#123;name&#125;." in text
+    assert "* `--query <str>`: JMESPath applied to &#123;answer&#125;." in text
+    assert "$ dfe alerts apply <name>\n" in text
+    # typer's own character references are decoded, so a code span shows the characters.
+    assert "* `--body <str>`: JSON, or `file://<path>`. The API's body." in text
+
+
+def test_cli_page_is_a_finding_without_docker_or_a_rendering_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "2.2.3"
+    dest = root / "dfe-engine"
+    write_tree(dest, {"reference/README.md": "# Reference\n"})
+    findings: list[Finding] = []
+    monkeypatch.setattr(aggregate, "_run", fake_run("", 1, OLD_ENGINE_STDERR))
+    assert place_cli("v1.22.89", root, dest, findings) is None
+    reason = f"{cli_reference.IMAGE}:v1.22.89: ImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+    assert findings == [Finding("dfe-engine", "reference/cli.md", Rule.NO_CLI, reason)]
+    assert not (dest / "reference" / "cli.md").exists()
+    monkeypatch.setattr(aggregate, "_run", fake_run("", 125, DOCKER_STDERR))
+    with pytest.raises(aggregate.FetchError, match="Error response from daemon: manifest unknown"):
+        place_cli("v1.22.89", root, dest, [])
+    monkeypatch.setattr(aggregate.shutil, "which", lambda name: None)
+    findings = []
+    assert place_cli("v1.22.89", root, dest, findings) is None
+    assert findings == [Finding("dfe-engine", "reference/cli.md", Rule.NO_DOCKER)]
+    write_tree(dest, {"reference/cli.md": "# A committed copy\n"})
+    with pytest.raises(SystemExit, match="generated CLI page"):
+        place_cli("v1.22.89", root, dest, [])
 
 
 KEDA_PAGE = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n<!-- /dfe-keda-table -->\n\nAfter.\n"
