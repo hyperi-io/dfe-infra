@@ -17,6 +17,7 @@ aggregate.py makes MDX-safe and writes beside the engine's docs. A build at HEAD
 renders from the newest release's image, because main publishes none.
 """
 
+import html
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -88,9 +89,10 @@ def page_text(rendered: str, tag: str) -> str:
         tag: The engine image tag it came from.
 
     Returns:
-        The page, not yet MDX-safe.
+        The page, not yet MDX-safe. typer writes help text with HTML character
+        references, which a code span would show as written, so they are decoded.
     """
-    first, _, rest = rendered.partition("\n")
+    first, _, rest = html.unescape(rendered).partition("\n")
     body = rest if first.startswith("# ") else rendered
     lead = f"Rendered from the `dfe` command tree of `{IMAGE}:{tag}`.\n"
     return f"{TITLE}\n\n{lead}{body}"

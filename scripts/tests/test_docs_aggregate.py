@@ -1563,7 +1563,8 @@ def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
 
 CLI_RENDERED = (
     "# `dfe`\n\ndfe - the CLI.\n\n**Options**:\n\n"
-    "* `--query <str>`: JMESPath applied to {answer}.\n\n"
+    "* `--query <str>`: JMESPath applied to {answer}.\n"
+    "* `--body <str>`: JSON, or `file://&lt;path&gt;`. The API&#x27;s body.\n\n"
     "## `dfe alerts apply`\n\nExample: dfe alerts apply <name>\n\n"
     "Calls PUT /api/v1/alerts/{name}.\n\n```console\n$ dfe alerts apply <name>\n```\n"
 )
@@ -1636,6 +1637,8 @@ def test_cli_page_is_rendered_from_the_pinned_image(
     assert "Calls PUT /api/v1/alerts/&#123;name&#125;." in text
     assert "* `--query <str>`: JMESPath applied to &#123;answer&#125;." in text
     assert "$ dfe alerts apply <name>\n" in text
+    # typer's own character references are decoded, so a code span shows the characters.
+    assert "* `--body <str>`: JSON, or `file://<path>`. The API's body." in text
 
 
 def test_cli_page_is_a_finding_without_docker_or_a_rendering_engine(
