@@ -113,6 +113,8 @@ Example: dfe-receiver #238 (auditd) takes its edge cases from Laurel and its des
 
 ## Break the parser down by usage pattern
 
+> If you want to spot an at scale amateur, look for a regex or grok on the hot path. -- Derek
+
 Most people speed up parsing by swapping in a faster regex engine, or by writing one parser per log format. We don't. We look at which patterns real data actually uses, then pull each one apart.
 
 1. Count. Rank every pattern in a real corpus by how often it's hit. In dfe-transform-elastic one `%{GREEDYDATA}` form is 202 of the 4,299 grok call sites, so one native parser covers 4.7% of them.
