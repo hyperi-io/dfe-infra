@@ -136,6 +136,7 @@ quickstart:
         - text: "See DFE working on your laptop, with sample firewall logs already flowing in."
         - {code_from: quickstart/demo.md, then: "Then point your browser to http://localhost:3000."}
       guide: {label: The demo, to: /quickstart/demo/}
+      packs: true
     - value: docker
       label: Docker
       blocks:
