@@ -39,7 +39,7 @@ sidebar:
     Query API: ""
     Schemas: ""
     Using the docs with an AI agent: ""
-    The event header: ""
+    Common header: ""
     ClickHouse: ""
     Fetcher: ""
     Kafka client settings: ""
@@ -148,7 +148,7 @@ placement:
     clickhouse/TYPES.md: "Reference / Schemas"
     clickhouse/TLS.md: "Deploy / Exposure and access"
     pipeline/: "Operate / Sources"
-    transport/COMMON-HEADER.md: "Reference / The event header"
+    transport/COMMON-HEADER.md: "Reference / Common header"
   dfe-receiver:
     default: "Operate / Sources"
     HARDENING.md: "Deploy / Exposure and access"
