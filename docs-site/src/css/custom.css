@@ -352,7 +352,16 @@ html[data-theme='dark'] {
 
 div[class*='announcementBar'] {
   font-size: var(--dfe-text-sm);
+}
+
+/* The bar alone: its placeholder and content divs share the class prefix, and a border on the 1 px placeholder draws a stray dash. */
+.theme-announcement-bar {
   border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+/* Without the theme's 5 px padding the content fits the 30 px bar. */
+div[class*='announcementBarContent'] {
+  padding: 0;
 }
 
 div[class*='announcementBar'] a {
