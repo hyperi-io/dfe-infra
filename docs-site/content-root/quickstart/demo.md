@@ -5,7 +5,7 @@ sidebar_label: The demo
 
 # Quickstart: the demo
 
-Raw firewall syslog in, one parsed ClickHouse table per vendor out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each DFE component.
+Raw firewall syslog in, one parsed ClickHouse table per vendor out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each public DFE component.
 
 <!-- docker-quickstart: demo -->
 You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
