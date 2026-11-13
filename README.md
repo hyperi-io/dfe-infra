@@ -49,7 +49,7 @@ The cluster secret's `dfe.hyperi.io/profile` label picks the tier: `slim`, `sing
 - [docs/testing-cycle.md](docs/testing-cycle.md) and [docs/threat-model.md](docs/threat-model.md): how a stack is proven, and what is exposed to whom.
 - [docs/README.md](docs/README.md) lists every page.
 
-The suite's published docs are at https://dfe.docs.hyperi.io.
+The suite's published docs are at <https://dfe.docs.hyperi.io>, and this repository's pages at <https://dfe.docs.hyperi.io/dfe-infra/>.
 
 ## Help and contributing
 
