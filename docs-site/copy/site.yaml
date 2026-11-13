@@ -21,20 +21,12 @@ announcement:
   link: Release notes
 
 footer:
-  columns:
-    - title: Docs
-      items:
-        - {label: Overview, to: /overview/}
-        - {label: Quickstarts, to: /quickstart/}
-        - {label: Coming from Splunk or Elastic, to: /coming-from/}
-        - {label: HTTP API reference, to: "{api_path}"}
-        - {label: Release notes, href: "{release_notes}"}
-    - title: Source
-      items:
-        - {label: GitHub, href: "https://github.com/hyperi-io"}
-        - {label: dfe-infra, href: "https://github.com/hyperi-io/dfe-infra"}
-        - {label: dfe-docker, href: "https://github.com/hyperi-io/dfe-docker"}
-    - title: HyperI
-      items:
-        - {label: hyperi.io, href: "https://hyperi.io"}
+  links:
+    - {label: Overview, to: /overview/}
+    - {label: Quickstarts, to: /quickstart/}
+    - {label: Coming from Splunk or Elastic, to: /coming-from/}
+    - {label: HTTP API reference, to: "{api_path}"}
+    - {label: Release notes, href: "{release_notes}"}
+    - {label: GitHub, href: "https://github.com/hyperi-io"}
+    - {label: hyperi.io, href: "https://hyperi.io"}
   copyright: "Copyright (c) {year} HYPERI PTY LIMITED"

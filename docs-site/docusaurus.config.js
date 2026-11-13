@@ -398,7 +398,7 @@ module.exports = {
         src: `${GRAPHICS}/hyperi-horizontal/dark/hyperi-horizontal_bare.svg`,
         href: 'https://hyperi.io',
       },
-      links: siteCopy.footer.columns,
+      links: siteCopy.footer.links,
       copyright: siteCopy.footer.copyright,
     },
     mermaid: {theme: {light: 'neutral', dark: 'dark'}},
