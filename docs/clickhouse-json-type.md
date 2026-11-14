@@ -8,7 +8,9 @@ The `JSON` type stores semi-structured data column-wise. Every JSON path is infe
 
 **Current as of ClickHouse 25.3+**, the release that marked the type GA.
 
-## Why it exists (vs the old `Object('json')`)
+## Why it exists (vs `Object('json')` in DFE 2.0)
+
+DFE 2.0 ran the old `Object('json')` on HyperI's own ClickHouse fork, with extra hardening of our own around it. DFE now uses the upstream native `JSON` type this page describes.
 
 The old `Object('json')` unified every value seen for a path into a single **least-common-type** for the whole column. A path that saw both `42` and `"hello"` collapsed to `String`, and a new incompatible value could force a whole-column rewrite. It had known bugs that won't be fixed.
 
