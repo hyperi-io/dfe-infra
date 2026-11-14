@@ -46,7 +46,7 @@ You need:
      --out terraform/environments/aws
    ```
 
-   The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank and you get the smallest shape that runs. It writes `sizing.auto.tfvars.json` into the OpenTofu root and the rest under its `sizing/`. Commit that directory to your deploy repo. A later re-size checks against it.
+   The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank and you get the smallest size that runs. It writes `sizing.auto.tfvars.json` into the OpenTofu root and the rest under its `sizing/`. Commit that directory to your deploy repo. A later re-size checks against it.
 
 3. Render the OpenTofu inputs. This writes `dial.auto.tfvars.json` beside the sizing file.
 

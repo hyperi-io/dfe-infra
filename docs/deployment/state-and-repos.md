@@ -75,7 +75,7 @@ Never fork it. A fork of a public repository can't be made private, and the depl
 
 Every deployed app is an ApplicationSet that fans out one multi-source Application per file under `values/`. The chart comes from dfe-infra at the pinned revision and the deploy repo's instance file is layered last, so it wins over every default. The deploy repo's URL comes from the cluster secret's `dfe.hyperi.io/config_repo_url` annotation, and an app with no instance file yet runs on the chart defaults. Singleton apps (receiver, loader, engine, UI) are one file each, and a per-config app such as the fetcher is one file per instance. Delete the file and Argo prunes the Application.
 
-The apps declare their shape in dfe-infra's `apps.yaml`, which the engine reflects, so the engine learns which dials an app carries without reading chart internals. [Composition](composition.md) lists the default app set per profile.
+The apps declare how they deploy in dfe-infra's `apps.yaml`, which the engine reflects, so the engine learns which dials an app carries without reading chart internals. [Composition](composition.md) lists the default app set per profile.
 
 State reaches a running component by exactly one of three routes:
 

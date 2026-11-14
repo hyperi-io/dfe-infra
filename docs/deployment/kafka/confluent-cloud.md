@@ -159,7 +159,7 @@ The API key `id` is the SASL username and its `secret` is the SASL password. DFE
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>`. Strip the `SASL_SSL://` scheme if your endpoint output includes it.
-- `kafka.external.provider=confluent-cloud`. The chart derives `SASL_SSL` and `PLAIN` from it and puts the mechanism in the credential Secret beside the API key. So that Secret has the same `username`, `password` and `sasl.mechanism` shape a DFE-owned broker's does.
+- `kafka.external.provider=confluent-cloud`. The chart derives `SASL_SSL` and `PLAIN` from it and puts the mechanism in the credential Secret beside the API key. So that Secret has the same `username`, `password` and `sasl.mechanism` keys a DFE-owned broker's does.
 - `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. PLAIN never crosses a cleartext transport. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=confluent-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
 - Credentials: put the Kafka API key (username) and secret (password) in the external secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere). `kafka.external.auth.type=scram` still works as the user/password carrier. The mechanism itself is PLAIN, derived from the provider and not from `auth.type`.
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
