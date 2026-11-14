@@ -10,7 +10,7 @@
 
 `enabled: false` renders no public door on any `door`, and takes the gateway's ingest routes (the receiver's and otel's) off too.
 
-`exposure.public` carries the load balancer's shape: `annotations` and `loadBalancerClass` for the load balancer controller, `externalTrafficPolicy`, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. Each cloud's file under `argocd/values/apps/dfe-receiver/` sets it: AWS Load Balancer Controller annotations (`external`, IP targets, internet-facing, client address preserved, backend security group rules managed) on AWS, and `externalTrafficPolicy: Local` on GCP and Azure, whose load balancers target nodes.
+`exposure.public` carries the load balancer's settings: `annotations` and `loadBalancerClass` for the load balancer controller, `externalTrafficPolicy`, `serviceType`, and `loadBalancerIP`, which the cluster secret's `dfe.hyperi.io/receiver_address` overrides when set. Each cloud's file under `argocd/values/apps/dfe-receiver/` sets it: AWS Load Balancer Controller annotations (`external`, IP targets, internet-facing, client address preserved, backend security group rules managed) on AWS, and `externalTrafficPolicy: Local` on GCP and Azure, whose load balancers target nodes.
 
 On AWS the TCP load balancer also takes the Elastic IPs the cloud root allocates, one per public subnet (`terraform/modules/edge/aws/receiver.tf`, the dial's `edge.aws.receiver_eips`), which reach the chart as `exposure.public.eipAllocations` and `exposure.public.subnets` through the cluster secret. The UDP load balancer, which renders only when a UDP listener is on, takes AWS-assigned addresses.
 

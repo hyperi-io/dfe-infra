@@ -51,7 +51,7 @@ differences:
       to: /coming-from/#sources-join
     - eyebrow: Edge
       title: Do the work at the edge
-      text: Filter, shape and enrich data where it is born, so you move and store only what is worth it.
+      text: Filter, parse and enrich data where it is born, so you move and store only what is worth it.
       to: /coming-from/#parsed-once-at-the-edge
     - eyebrow: Efficiency
       title: Efficiency, efficiency, efficiency

@@ -44,7 +44,7 @@ Redpanda's Raft consensus makes `unclean.leader.election` moot, because a leader
 
 ## OpenTofu: Redpanda Cloud (SCRAM-SHA-512)
 
-The `redpanda` provider authenticates with a Redpanda Cloud service-account client ID and secret (Organization IAM). There are two shapes below, Serverless (fewest dials) and Dedicated/BYOC (full topic and cluster config). The SCRAM user is a `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the cluster's Data Plane API URL (`dataplane_api.url`). There's no topic resource, because dfe-engine creates every topic.
+The `redpanda` provider authenticates with a Redpanda Cloud service-account client ID and secret (Organization IAM). There are two kinds of cluster below, Serverless (fewest dials) and Dedicated/BYOC (full topic and cluster config). The SCRAM user is a `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the cluster's Data Plane API URL (`dataplane_api.url`). There's no topic resource, because dfe-engine creates every topic.
 
 ```hcl
 terraform {

@@ -58,7 +58,7 @@ Every cell below carries one status and one proof level. Both lists are closed.
 | `single` | **default** (single tier), live-proven | **opt-in**, render-verified | **opt-in**, render-verified |
 | `external` | **opt-in**. The model is forced, the supplied ClickHouse owns its storage | **refused** | **refused** |
 
-**Preference order.** ClickHouse Cloud runs SharedMergeTree by default and is the reference shape. `cached-object` is our best-effort equivalent of it, and is the preferred model wherever an object store exists: always on Kubernetes in a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied. `local` is the last resort: on-prem with no object store, and the slim and single tiers, where one volume is the point. A deployment migrating off the retired private-cloud ClickHouse fork lands here too. See [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
+**Preference order.** ClickHouse Cloud runs SharedMergeTree by default and is the reference setup. `cached-object` is our best-effort equivalent of it, and is the preferred model wherever an object store exists: always on Kubernetes in a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied. `local` is the last resort: on-prem with no object store, and the slim and single tiers, where one volume is the point. A deployment migrating off the retired private-cloud ClickHouse fork lands here too. See [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
 
 That order is a three-value dial, `sizing.storage_model`: `auto`, `cached-object` or `local`. The chart key `clickhouse.storageModel` takes those three, `auto` being the chart default and what an empty value means too, and also `tiered-block`, which only a deploy repo overlay sets. On `auto`, `dfe-clickhouse.storageModel` reads `cached-object` from a set `clickhouse.objectStore.endpoint` and `local` from nothing. The other two are explicit overrides that win outright. `cached-object` refuses to render with no endpoint set, and `local` keeps local storage even with one configured.
 
@@ -108,7 +108,7 @@ The opt-in cell has two further guards. `kafka.tieredObject.className` is requir
 | Placement | Status | Proof | Constraint |
 | --- | --- | --- | --- |
 | `pvc` -- a subdirectory of the data PVC, bounded by `clickhouse.objectStore.cache.maxSizeRatioToTotalSpace` (0.6), or by `clickhouse.objectStore.cacheSize` when that is set | **default** | render-verified | The cache and the part metadata share `clickhouse.storage.size`, and ClickHouse refuses both bounds at once |
-| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse shape, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
+| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse node type, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
 | Dedicated disposable cache PVC | **follow-up** | unverified | A different mechanism to `instance-store` above -- see below |
 
 **Why `instance-store` over a bigger `pvc`.** A gp3 volume provisioned large enough to hold a useful cache is the expensive answer, and it's never what either dial value defaults to. On AWS the Karpenter `clickhouse` pool's shape (`shapes/compute-shapes.yaml`) already carries local NVMe sized for exactly this cache. At about 474 GB an r9gd.2xlarge's NVMe costs what gp3 costs provisioned to the instance's own EBS ceiling, with 14.5x the IOPS.
@@ -168,7 +168,7 @@ Both are refused at render time, so asking for one fails loudly rather than depl
 
 | Cell | Service | What it would be | Blocking work |
 | --- | --- | --- | --- |
-| `tiered-object` | ClickHouse | Parts MOVED to an object store, matching Kafka's shape | A ranked policy whose cold volume is an object disk. No evidence gathered |
+| `tiered-object` | ClickHouse | Parts MOVED to an object store, matching Kafka's tiering | A ranked policy whose cold volume is an object disk. No evidence gathered |
 | `cached-block` | ClickHouse | An SSD cache over a cheap local volume | Needs `local_blob_storage`, which is proven on a rig and not surfaced |
 
 ## Locked at deploy

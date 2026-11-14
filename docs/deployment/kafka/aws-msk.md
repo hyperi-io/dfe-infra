@@ -14,7 +14,7 @@ Copyright: HyperI / DFE contributors
 
 Operations (bootstrap Job, autoscaling, telemetry) are in [aws-msk-operations.md](aws-msk-operations.md).
 
-The aws root builds MSK Provisioned itself under `kafka.provider: msk` (`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up yourself and then point DFE at with `kafka.mode=external`. DFE supports two MSK shapes, as distinct providers:
+The aws root builds MSK Provisioned itself under `kafka.provider: msk` (`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up yourself and then point DFE at with `kafka.mode=external`. DFE supports two kinds of MSK, as distinct providers:
 
 - MSK Provisioned has fixed broker-hour capacity, KRaft and full `server.properties` control. It's DFE provider `msk`, with SASL/SCRAM-SHA-512 auth (Secrets Manager). It's the closest managed cluster to DFE's own self-hosted brokers.
 - MSK Serverless is elastic and IAM-only. It's DFE provider `msk_iam`, with IAM / SASL_SSL OAUTHBEARER auth (port 9098). There's no static secret and almost no broker config.

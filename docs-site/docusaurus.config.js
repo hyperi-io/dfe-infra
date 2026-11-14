@@ -97,8 +97,7 @@ function loadCopy(name) {
   return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
 }
 
-// The landing tab's "Needs" line from the page's <small> requirement, the block after
-// <!-- landing -->, then the block's `then`.
+// The landing tab's block after <!-- landing -->, then the block's `then`.
 // Only aggregate.py's one-line compose fill writes that marker, so other builds show no command.
 function landingFrom({code_from: page, then}) {
   const file = path.join(CONTENT, build.name, page);
@@ -107,12 +106,11 @@ function landingFrom({code_from: page, then}) {
   if (!match) {
     return [];
   }
-  const need = text.slice(match.index).match(/^<small>([^<\n]+)<\/small>$/m);
   const code = match[1]
     .split('\n')
     .map((line) => line.replace(/\s+#.*$/, ''))
     .join('\n');
-  return [...(need ? [{text: `Needs ${need[1]}.`}] : []), {code}, ...(then ? [{text: then}] : [])];
+  return [{code}, ...(then ? [{text: then}] : [])];
 }
 
 const siteCopy = loadCopy('site');

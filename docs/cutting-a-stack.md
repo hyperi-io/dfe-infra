@@ -18,7 +18,7 @@ Cut one with:
 
 ## What `cut` does
 
-It clones the `--from` block (default: `current`) as the SHAPE, so a key can't be dropped by omission. Then for each DFE-owned app it resolves the newest published release and repins the matching digest.
+It clones the `--from` block (default: `current`) as the TEMPLATE, so a key can't be dropped by omission. Then for each DFE-owned app it resolves the newest published release and repins the matching digest.
 
 `stack.previous` is derived, not cloned. The `--from` block is the new version's predecessor, so `cut` re-points it there and `check-upgrade` reports the consecutive path as verified without a hand edit.
 
@@ -28,7 +28,7 @@ Third-party pins carry over untouched. Those are Renovate's to move, and several
 
 | flag | effect |
 |---|---|
-| `--from` | stack to clone the shape from (default `current`) |
+| `--from` | stack to clone from (default `current`) |
 | `--maturity` | alpha, beta, rc or release (default: inherit) |
 | `--apps` | move only these, the rest hold at their `--from` pins |
 | `--replace-withdrawn` | re-cut a withdrawn version under the same name (see below) |
