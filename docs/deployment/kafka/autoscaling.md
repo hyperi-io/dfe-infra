@@ -12,7 +12,18 @@ The default, always-available triggers are one per `kafka.landingTopics.sources`
 
 ## Scale-in
 
-Scale-in is off by default, on purpose. `kafka.autoscaling.scaleIn.enabled` disables the underlying HPA's scale-down direction outright (`autoscaling/v2` `selectPolicy: Disabled`) until you set it true. Shrinking the pool means Strimzi has to evacuate the departing broker's partitions first (the `remove-brokers` auto-rebalance template), and that's worth proving safe before it runs unattended. Once enabled, `kafka.autoscaling.scaleIn.cooldownSeconds` (default 1800, capped at 3600 by the Kubernetes HPA API) sets the scale-down stabilisation window.
+Scale-in is off by default, on purpose. Until it's on, the HPA's scale-down direction is disabled outright (`autoscaling/v2` `selectPolicy: Disabled`). Shrinking the pool means Strimzi has to evacuate the departing broker's partitions first (the `remove-brokers` auto-rebalance template), and that's worth proving safe before it runs unattended.
+
+Turn it on in `deployment.yaml`, for `kafka.provider: strimzi` only:
+
+```yaml
+kafka:
+  broker_scale_in:
+    enabled: true
+    cooldown_seconds: 1800   # the HPA scale-down window, 1 to 3600
+```
+
+`scripts/resolve_sizing.py` writes it into the kafka chart as `kafka.autoscaling.scaleIn.enabled` and `kafka.autoscaling.scaleIn.cooldownSeconds`. Off, it writes neither, and the chart's own off default holds.
 
 Scale-in has a precondition. The leaving brokers' data must fit on the remaining ones under Cruise Control's `DiskCapacityGoal` (hard, 0.80 default utilization threshold). `skipHardGoalCheck: true` does NOT lift that check, because it reports a real infeasibility and not a preference. A low `retention.ms` won't free room fast enough on its own either. Kafka never expires an open, active log segment, so `segment.bytes` must be small enough for the active segment to roll, and for retention to then delete it, before you attempt a scale-in.
 

@@ -660,6 +660,14 @@ kafka:
   ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
   ## refuses the move without --migrate.
   controller_pool: combined
+  ## Strimzi only. Lets KEDA remove brokers it added once load falls, after
+  ## Strimzi moves their partitions off. Off by default: the leaving brokers'
+  ## data must fit on the rest under Cruise Control's DiskCapacityGoal (80%),
+  ## and a segment must roll before retention frees its space.
+  ## docs/deployment/kafka/autoscaling.md.
+  broker_scale_in:
+    enabled: false
+    cooldown_seconds: 1800   # the HPA scale-down window once enabled, 1 to 3600
   ## The two SaaS bodies read these six. Leave one out and render_dial.py or the
   ## aws root's own default applies; a value outside its list, or an id in the
   ## wrong vendor's shape, is refused at render (scripts/render_dial.py).

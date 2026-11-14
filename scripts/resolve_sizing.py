@@ -268,6 +268,9 @@ CHART_DEFAULTS = {
     ),
 }
 
+# The kafka chart's own kafka.autoscaling.scaleIn.cooldownSeconds default.
+BROKER_SCALE_IN_COOLDOWN_S = 1800
+
 # Use cases whose IO is CONTINUOUS, so a burstable instance size cannot carry
 # them. A shape entry that declares `sustained` of its own overrides this.
 SUSTAINED_USE_CASES = ("kafka-broker", "clickhouse", "keeper")
@@ -583,6 +586,8 @@ class Dial:
     node_pools: dict[str, dict[str, object]] = field(default_factory=dict)
     # k8s.disruption -- the posture and maintenance window every Karpenter pool's budgets follow.
     disruption: Disruption = field(default_factory=Disruption)
+    # kafka.broker_scale_in: the HPA scale-down window in seconds when on, None when off.
+    broker_scale_in: int | None = None
 
 
 def _dial_number(tree: object, *path: str) -> float | None:
@@ -594,6 +599,34 @@ def _dial_number(tree: object, *path: str) -> float | None:
         return float(raw)
     except ValueError as err:
         raise ResolveError(f"{'.'.join(path)} must be a number, got {raw!r}") from err
+
+
+def _broker_scale_in(tree: object, provider: str) -> int | None:
+    """kafka.broker_scale_in: its cooldown in seconds when enabled, None when off.
+
+    Raises:
+        ResolveError: enabled is not true or false, the cooldown is outside
+            1-3600 (the HPA API's cap), or the provider is not strimzi.
+    """
+    enabled = (_scalar(tree, "kafka", "broker_scale_in", "enabled") or "false").lower()
+    if enabled not in ("true", "false"):
+        raise ResolveError(
+            f"kafka.broker_scale_in.enabled must be true or false, got {enabled!r}"
+        )
+    raw = _dial_number(tree, "kafka", "broker_scale_in", "cooldown_seconds")
+    cooldown = int(raw) if raw is not None else BROKER_SCALE_IN_COOLDOWN_S
+    if not 1 <= cooldown <= 3600:
+        raise ResolveError(
+            "kafka.broker_scale_in.cooldown_seconds must be 1 to 3600, the HPA "
+            f"scale-down window's range, got {cooldown}"
+        )
+    if enabled == "false":
+        return None
+    if provider != "strimzi":
+        raise ResolveError(
+            f"kafka.broker_scale_in applies to strimzi only, not {provider}"
+        )
+    return cooldown
 
 
 def _transformed_share(tree: object) -> float | None:
@@ -664,6 +697,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         disruption = read_disruption(tree)
     except DialError as err:
         raise ResolveError(str(err)) from err
+    broker_scale_in = _broker_scale_in(tree, kafka_provider)
     return Dial(
         path=path,
         tier=_scalar(tree, "profile") or "single",
@@ -691,6 +725,7 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
         overrides=_read_overrides(tree),
         node_pools=_read_node_pools(tree),
         disruption=disruption,
+        broker_scale_in=broker_scale_in,
     )
 
 
@@ -3360,6 +3395,7 @@ def build_values(
     storage_model: str = "auto",
     controller_pool: str = "combined",
     disruption: Disruption | None = None,
+    broker_scale_in: int | None = None,
 ) -> dict[str, object]:
     """The chart values overlay -- only keys the charts declare today.
 
@@ -3379,6 +3415,10 @@ def build_values(
 
     `disruption` is the dial's own k8s.disruption, which every Karpenter pool's
     budgets follow (build_pool_classes).
+
+    `broker_scale_in` is the dial's own kafka.broker_scale_in cooldown. None
+    writes no kafka.autoscaling.scaleIn key, so the chart's own off default
+    holds; a number turns scale-in on with that HPA scale-down window.
     """
     broker = core.nodes.get("kafka-broker")
     controller = core.nodes.get("kraft-controller")
@@ -3419,7 +3459,15 @@ def build_values(
         # for its own NodePool limits, capped at the partition count so a
         # broker added at the ceiling still gets a share (partitions is always
         # a multiple of brokers, so it is never below broker.count either).
-        kafka["autoscaling"] = {"maxBrokers": min(core.partitions, broker.count * 2)}
+        autoscaling: dict[str, object] = {
+            "maxBrokers": min(core.partitions, broker.count * 2)
+        }
+        if broker_scale_in is not None:
+            autoscaling["scaleIn"] = {
+                "enabled": True,
+                "cooldownSeconds": broker_scale_in,
+            }
+        kafka["autoscaling"] = autoscaling
     if controller and controller_pool == "separate":
         kafka["controllerPool"] = {
             # Written only for the dial that asked for a separate pool: the
@@ -4156,6 +4204,7 @@ def run_resolve(args: argparse.Namespace) -> int:
         dial.storage_model,
         dial.controller_pool,
         dial.disruption,
+        dial.broker_scale_in,
     )
     header = [
         "## Written by scripts/resolve_sizing.py -- do not edit by hand.",
