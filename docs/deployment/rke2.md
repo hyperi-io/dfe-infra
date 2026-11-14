@@ -66,7 +66,7 @@ flowchart LR
 
 One distro means one Kubernetes version matrix, one CNI/CSI, one hardening profile, one identity pattern, one debugging surface and one set of docs. The alternative is three divergent managed distros, because EKS, AKS and GKE differ on CNI, add-ons, auth and upgrade cadence. RKE2 runs on bare metal, any cloud's VMs and the edge, which is the widest customer reach, and Rancher handles the fleet lifecycle (etcd snapshots, rolling upgrades). The cost is that, on clusters we provision, we own etcd backup/restore, node OS patching, control-plane upgrades and the per-cloud OIDC webhook. That's real work, but it's bounded and single-path.
 
-RKE2 also meets the federal and regulated requirements, which is a large part of the "why". Verify version specifics with Rancher Government per deployment (as of 2026-07):
+RKE2 also meets the federal and regulated requirements, which is a large part of the "why". Verify version specifics with Rancher Government per deployment:
 
 - FIPS 140-2 validated crypto (Go + BoringCrypto, CMVP certificate 4691), the first NIST-FIPS-140-2-validated Kubernetes distribution. The STIG requires 140-2 or 140-3 modules, so confirm 140-3 module status for your build.
 - DISA STIG. RKE2 is the only Kubernetes distribution with an official DISA-published STIG (Rancher Government Solutions RKE2 STIG, V2R3), derived from NIST SP 800-53. That's what lets the DoD run it on network systems.

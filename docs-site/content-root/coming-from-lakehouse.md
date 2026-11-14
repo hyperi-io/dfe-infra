@@ -1,28 +1,28 @@
 ---
 sidebar_position: 1.6
-sidebar_label: Coming from a lakehouse
+sidebar_label: Coming from a Lakehouse
 slug: /coming-from-lakehouse
 ---
 
-# Coming from a lakehouse
+# Coming from a Lakehouse
 
 If you've run Snowflake, Databricks, BigQuery, or Athena over Iceberg or Delta tables, you'll bring a warehouse's assumptions about how data lands and what a query costs. DFE is built for a different job: high-volume machine data, landed in seconds, kept for months and queried without a bill per scan. This page says where the two differ and where DFE sits beside a warehouse you keep.
 
 ## Schema first, or land then promote
 
-A warehouse wants the model before the data arrives. Databricks Auto Loader stops the stream on a new column and picks the change up on restart, with mismatched values parked in a `_rescued_data` JSON column ([Auto Loader schema docs](https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/schema), read 2026-11-13). Snowflake evolves a table's schema only on `COPY INTO` and Snowpipe loads, ten new columns per load by default, and a `VARIANT` column answers `NULL` for a path that isn't there ([Snowflake schema evolution](https://docs.snowflake.com/en/user-guide/data-load-schema-evolution), read 2026-11-13). Either way somebody owns the model, and a supplier renaming a field is a ticket.
+A warehouse wants the model before the data arrives. Databricks Auto Loader stops the stream on a new column and picks the change up on restart, with mismatched values parked in a `_rescued_data` JSON column ([Auto Loader schema docs](https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/schema)). Snowflake evolves a table's schema only on `COPY INTO` and Snowpipe loads, ten new columns per load by default, and a `VARIANT` column answers `NULL` for a path that isn't there ([Snowflake schema evolution](https://docs.snowflake.com/en/user-guide/data-load-schema-evolution)). Either way somebody owns the model, and a supplier renaming a field is a ticket.
 
 DFE lands every field from the first event. A field with no mapping yet lands in automatic typed columns and is queryable at once, as `_json.a.b`. When a field earns a column, promote it in the meta schema (`dfe-schemas`) and new records land in it, while older ones stay readable where they were. Nothing stops, nothing restarts, and no pipeline re-runs. You spend schema effort only where it pays back.
 
 ## Pay per scan, or a column store you run
 
-BigQuery on demand and Athena bill by the bytes a query scans, Snowflake by the seconds a virtual warehouse runs, and Databricks SQL by DBUs ([BigQuery pricing](https://cloud.google.com/bigquery/pricing), [Athena pricing](https://aws.amazon.com/athena/pricing/), [Snowflake pricing](https://www.snowflake.com/en/pricing-options/), [Databricks SQL pricing](https://www.databricks.com/product/pricing/databricks-sql), read 2026-11-13). On machine data that model points one way: the analyst learns to scan less, and the dashboard that used to refresh every minute refreshes every hour.
+BigQuery on demand and Athena bill by the bytes a query scans, Snowflake by the seconds a virtual warehouse runs, and Databricks SQL by DBUs ([BigQuery pricing](https://cloud.google.com/bigquery/pricing), [Athena pricing](https://aws.amazon.com/athena/pricing/), [Snowflake pricing](https://www.snowflake.com/en/pricing-options/), [Databricks SQL pricing](https://www.databricks.com/product/pricing/databricks-sql)). On machine data that model points one way: the analyst learns to scan less, and the dashboard that used to refresh every minute refreshes every hour.
 
-DFE stores each source as ClickHouse columns on hardware you size once, in your cluster or ClickHouse Cloud. A query costs CPU you already own. The sort key prunes the parts a time range touches, columns compress to a fraction of the raw bytes, and a dashboard refreshing every minute costs nothing extra. In the August 2025 tests with AWS and ClickHouse, DFE kept 270 days queryable where the index engine beside it kept 14, on 10 to 25 percent of the resources ([the test](coming-from.md#stored-as-clickhouse-columns)). That was against OpenSearch, not a warehouse, and your own columns and volume set your number.
+DFE stores each source as ClickHouse columns on hardware you size once, in your cluster or ClickHouse Cloud. A query costs CPU you already own. The sort key prunes the parts a time range touches, columns compress to a fraction of the raw bytes, and a dashboard refreshing every minute costs nothing extra. Your own columns and volume set your number.
 
 ## ELT and dbt, or promote in place
 
-In a lakehouse, raw data lands in bronze, a dbt model or a Spark job rebuilds silver and gold on a schedule, and a change to the model means a rebuild over the history. DFE parses once, at the edge: dfe-receiver and dfe-fetcher turn the transport into JSON on the first hop, the transforms parse vendor message bodies after that, and the loader writes typed columns. Promoting a field changes the table forward. There is no silver layer to rebuild, and the question is answered from the table the data landed in.
+In a lakehouse, raw data lands in bronze, a dbt model or a Spark job rebuilds silver and gold on a schedule, and a change to the model means a rebuild over the history. DFE parses once, at the edge: dfe-receiver and dfe-fetcher turn the transport into JSON on the first hop, the transforms parse the message body each product writes after that, and the loader writes typed columns. Promoting a field changes the table forward. There is no silver layer to rebuild, and the question is answered from the table the data landed in.
 
 Context joins the same way it does in a warehouse. Fact tables hold the events, logs and metrics, dimension tables hold the inventory, the identity directory and the CMDB, and you join them in ClickHouse SQL ([sources join](coming-from.md#sources-join)).
 

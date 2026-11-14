@@ -12,7 +12,7 @@ Copyright: HyperI / DFE contributors
 
 # DFE cryptographic standard
 
-DFE targets the NSA Commercial National Security Algorithm (CNSA) family, because national-security deployment is in scope. It also has to deploy in ordinary commercial environments. Algorithm choices favour compliance over throughput because the user base is small.
+DFE targets the NSA Commercial National Security Algorithm (CNSA) family for the same reason the stack is built for big and scaled down: it is a lot easier to build sensibly secure up front than to shoehorn security into something that is not (cue your cyber security team here). National-security deployment is in scope. Algorithm choices favour strength and future proofing: crypto requirements only increase year on year, so strong now means less remediation later.
 
 DFE's symmetric and hash primitives are at CNSA 2.0. Its asymmetric primitives (key establishment and signatures) are the CNSA 1.0 classical suite (the Suite B successor), which is what CNSA 2.0 is migrating away from. So the accurate description is: **a CNSA 1.0-aligned classical baseline, with AES-256/SHA-384 already meeting CNSA 2.0, a hybrid post-quantum key-exchange layer enabled on the wire today, and a documented migration to full CNSA 2.0 (ML-KEM-1024, ML-DSA-87)**.
 
@@ -87,6 +87,8 @@ CNSA 2.0's asymmetric end-state is ML-KEM-1024 (FIPS 203) for key establishment 
 
 - Key establishment (live today). DFE offers the hybrid X25519MLKEM768 group at the edge. It ships in mainstream TLS stacks (Chrome, Firefox, OpenSSL 3.5, Go 1.24, BoringSSL/aws-lc-rs) and gives real harvest-now-decrypt-later protection with no custom code. Two caveats. Its post-quantum strength is ML-KEM-768 (NIST level 3), below CNSA 2.0's ML-KEM-1024. And its classical half is X25519, not a NIST curve. The CNSA-pure hybrid is SecP384r1MLKEM1024 (P-384 + ML-KEM-1024), which is specified but has far thinner deployment. X25519MLKEM768 is enabled now because it interoperates widely, and SecP384r1MLKEM1024 becomes the preferred group once BoringSSL and Envoy support it. The key-exchange group is a config value, so that's a one-line change.
 - Signatures (roadmap). ES384 is current across the chain. ML-DSA-87 replaces it once its JOSE binding standardises and the verifiers (Envoy, server and browser libraries) support it. With `kid`-tagged keys and a config-driven `alg`, the change is a key rotation.
+
+The state of commercial and open-source crypto is reviewed periodically against the full CNSA 2.0 target, and the floors, groups and algorithms on this page move up as the libraries, verifiers and managed services mature.
 
 ## CI checks
 
