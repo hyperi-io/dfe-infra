@@ -90,6 +90,10 @@ register:
   foster: "say the mechanism"
   facilitate: "say the mechanism"
   posture: "use the term the context needs"
+
+# Words the house style replaces that a released snapshot may still carry, so the
+# deploy reports them without failing.
+style:
   shape: "name the thing: the columns, the layout, the form"
   shaped: "name the thing: the columns, the layout, the form"
   shapes: "name the thing: the columns, the layout, the form"

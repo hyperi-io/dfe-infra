@@ -20,6 +20,8 @@ make up     # pull, start, self test, print the console login
 `make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
 <!-- /docker-quickstart -->
 
+The default stack idles at about 2.5 GB of RAM, and its memory limits are sized for a 16 GB box.
+
 | Profile | Transport | Runs |
 |---|---|---|
 | `slim-grpc` | gRPC, low latency | The core path alone: receiver, loader and ClickHouse, with the engine and the console. |

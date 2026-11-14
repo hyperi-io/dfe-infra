@@ -22,10 +22,10 @@ pinned fingerprint and be valid for more than WARN_DAYS, the AWS CLI key on the
 install docs page must be the one vendored, and aws-network-policy-agent #686 (the
 gen-8 hold in shapes/compute-shapes.yaml) must still be open.
 
+A finding in HELD prints as HELD and does not fail until its date.
+
 Needs gpg. --online also needs network and an authenticated gh.
 """
-
-from __future__ import annotations
 
 import argparse
 import datetime
@@ -42,9 +42,20 @@ AWS_DOCS = (
     "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 )
 NPA_ISSUE = "aws/aws-network-policy-agent/issues/686"
-PGP_BLOCK = re.compile(
-    r"-----BEGIN PGP PUBLIC KEY BLOCK-----.*?-----END PGP PUBLIC KEY BLOCK-----", re.S
+# A finding already in hand: text it contains, the day it fails again, and why.
+HELD = (
+    (
+        "key DE15B14486CD377B9E876E1A234654DA9A296436 expires",
+        datetime.date(2026, 12, 15),
+        "kubernetes/release#4552. In 2024 this key got a new expiry under the same fingerprint (kubernetes/release#3818)",
+    ),
+    (
+        f"{NPA_ISSUE} is closed",
+        datetime.date(2026, 11, 24),
+        "vpc-cni v1.23.3 carries the fix, pinned once its 7-day cooldown ends 2026-11-17",
+    ),
 )
+PGP_BLOCK = re.compile(r"-----BEGIN PGP PUBLIC KEY BLOCK-----.*?-----END PGP PUBLIC KEY BLOCK-----", re.S)
 TAG = re.compile(r"<[^>]+>")
 
 
@@ -182,6 +193,14 @@ def npa_findings() -> list[str]:
     return []
 
 
+def held(finding: str, today: datetime.date) -> str | None:
+    """Why a finding does not fail yet, or None once its HELD date has passed."""
+    for text, until, reason in HELD:
+        if text in finding and today <= until:
+            return f"until {until}: {reason}"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -194,14 +213,17 @@ def main(argv: list[str] | None = None) -> int:
     findings = vendored_findings(now)
     if args.online:
         findings += kubernetes_findings(now) + aws_findings(now) + npa_findings()
+    failing = 0
     for finding in findings:
-        print(f"FAIL {finding}")
+        reason = held(finding, now.date())
+        if reason:
+            print(f"HELD {finding} ({reason})")
+        else:
+            print(f"FAIL {finding}")
+            failing += 1
     if not findings:
-        print(
-            "ok: signing keys valid past the warning window"
-            + (", upstream holds unchanged" if args.online else "")
-        )
-    return 1 if findings else 0
+        print("ok: signing keys valid past the warning window" + (", upstream holds unchanged" if args.online else ""))
+    return 1 if failing else 0
 
 
 if __name__ == "__main__":

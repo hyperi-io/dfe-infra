@@ -25,6 +25,7 @@ Rules:
                    candidates (rc.N), rounds, stub and placeholder admonitions
     hedge          a hedge in front of a fact (gate.yaml)
     register       words the house style replaces (gate.yaml)
+    style          more such words, which --fail-on register leaves to the baseline (gate.yaml)
     semicolon      a semicolon in prose
     ascii          non-ASCII typography in prose: dashes, curly quotes, arrows
     elasticsearch  "ElasticSearch", the product's name misspelt
@@ -69,7 +70,7 @@ _COPY_LINE = re.compile(r"^(\s*)(-\s+)?([A-Za-z_][\w-]*):(?:\s+(.*))?$")
 _FLOW_LABEL = re.compile(r"label:\s*([^,}]+)")
 _BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+")
 _NOT_PROSE = frozenset({"to", "href", "icon", "value", "primary", "logo_alt"})
-PHRASE_RULES = ("process", "hedge", "register")
+PHRASE_RULES = ("process", "hedge", "register", "style")
 RULES = frozenset({*PHRASE_RULES, "semicolon", "ascii", "elasticsearch"})
 ALL = "all"
 MARKER_RULE = "marker"
