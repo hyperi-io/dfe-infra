@@ -4,6 +4,6 @@
 | `dfe-loader` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
 | `dfe-receiver` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
 | `dfe-transform-elastic` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
-| `dfe-transform-vector` | 1-2 | 1-3 | 2-12 | 70% | no |
+| `dfe-transform-vector` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
 | `dfe-transform-vrl` | 1-2 | 1-3 | 2-12 | 70% | single, scale |
 | `dfe-ui` | 1-2 | 1-3 | 2-12 | 70% | no |
