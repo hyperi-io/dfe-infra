@@ -109,7 +109,7 @@ extraVolumeMounts:
     readOnly: true
 
 # Keys written into the config file that no overlay beats: the
-# PushEvents server dfe-fetcher sends to on the direct transport, and the buffer
+# gRPC Push listener dfe-fetcher sends to on the direct transport, and the buffer
 # figure the app reads only with acknowledgements off. The app's own default for
 # both is off and auto-detect.
 configOverrides:
