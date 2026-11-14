@@ -12,7 +12,7 @@ Copyright: HyperI / DFE contributors
 
 # DFE cryptographic standard
 
-DFE targets the NSA Commercial National Security Algorithm (CNSA) family, because national-security deployment is in scope. It also has to deploy in ordinary commercial environments. Algorithm choices favour compliance over throughput because the user base is small.
+DFE targets the NSA Commercial National Security Algorithm (CNSA) family for the same reason the stack is built for big and scaled down: it is a lot easier to build sensibly secure up front than to shoehorn security into something that is not (cue your cyber security team here). National-security deployment is in scope, and DFE also has to deploy in ordinary commercial environments. Algorithm choices favour compliance over throughput because the user base is small.
 
 DFE's symmetric and hash primitives are at CNSA 2.0. Its asymmetric primitives (key establishment and signatures) are the CNSA 1.0 classical suite (the Suite B successor), which is what CNSA 2.0 is migrating away from. So the accurate description is: **a CNSA 1.0-aligned classical baseline, with AES-256/SHA-384 already meeting CNSA 2.0, a hybrid post-quantum key-exchange layer enabled on the wire today, and a documented migration to full CNSA 2.0 (ML-KEM-1024, ML-DSA-87)**.
 
