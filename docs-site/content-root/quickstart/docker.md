@@ -20,6 +20,8 @@ make up     # pull, start, self test, print the console login
 `make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
 <!-- /docker-quickstart -->
 
+If `docker compose version` shows a release below 2.34, as Debian's own packages do, install Docker from [Docker's own repository](https://docs.docker.com/engine/install/) first.
+
 The default stack idles at about 2.5 GB of RAM, and its memory limits are sized for a 16 GB box.
 
 | Profile | Transport | Runs |

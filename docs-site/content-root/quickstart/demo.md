@@ -18,6 +18,8 @@ make demo      # start the stack, self test, stream firewall syslog
 Watch it in the console at http://localhost:3000. `make creds` in a terminal prints the login.
 <!-- /docker-quickstart -->
 
+If `docker compose version` shows a release below 2.34, as Debian's own packages do, install Docker from [Docker's own repository](https://docs.docker.com/engine/install/) first.
+
 ## From a checkout
 
 To change the demo's rate or protocol, or to keep the stack afterwards, run it from a dfe-docker checkout. That needs Python 3, git and make as well as Docker.
