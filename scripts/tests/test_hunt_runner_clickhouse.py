@@ -156,8 +156,8 @@ def test_the_password_is_minted_once_by_eso() -> None:
     if gens:
         spec = gens[0]["spec"]
         expect(
-            "alphanumeric, at the 24-character credential length",
-            spec.get("symbols") == 0 and spec.get("length") == 24,
+            "alphanumeric, at the 32-character credential length",
+            spec.get("symbols") == 0 and spec.get("length") == 32,
             f"{spec}",
         )
     if es:

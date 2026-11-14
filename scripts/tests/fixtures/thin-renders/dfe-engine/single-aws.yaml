@@ -1458,8 +1458,8 @@ metadata:
   name: dfe-engine-admin-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0
 ---
@@ -1477,8 +1477,8 @@ metadata:
   name: dfe-engine-breakglass-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0
 ---
@@ -1496,8 +1496,8 @@ metadata:
   name: hunt-runner-clickhouse-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0
 ---
@@ -1534,8 +1534,8 @@ metadata:
   name: loader-clickhouse-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0
 ---
@@ -1553,8 +1553,8 @@ metadata:
   name: otel-writer-clickhouse-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0
 ---
@@ -1572,7 +1572,7 @@ metadata:
   name: query-reader-clickhouse-gen
 spec:
   allowRepeat: true
-  digits: 4
-  length: 24
+  digits: 5
+  length: 32
   noUpper: false
   symbols: 0

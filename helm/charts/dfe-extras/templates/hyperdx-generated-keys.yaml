@@ -18,8 +18,8 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  length: 48
-  digits: 6
+  length: 64
+  digits: 10
   symbols: 0          # alphanumeric -- avoids escaping in env contexts
   noUpper: false
   allowRepeat: true
@@ -61,8 +61,8 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  length: 48
-  digits: 6
+  length: 64
+  digits: 10
   symbols: 0
   noUpper: false
   allowRepeat: true
