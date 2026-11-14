@@ -6,7 +6,7 @@ slug: /coming-from
 
 # Coming from Splunk or Elastic
 
-If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
+If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. Everything this page says about Elastic holds for OpenSearch too. The one difference from DFE's side is licensing: OpenSearch is Apache-2.0, the more permissive of the two. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
 
 ## Nothing breaks when a source changes
 
@@ -43,7 +43,7 @@ Index engines build an index over every event as it arrives, which costs storage
 
 Keeping data around is cheap. Being able to actually use it months later is what counts.
 
-Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. An OpenSearch cluster ran alongside, so we measured it too.
+Working with AWS and ClickHouse in August 2025, we ran two PB-scale tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. An OpenSearch cluster ran alongside, so we measured it too.
 
 At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
 
