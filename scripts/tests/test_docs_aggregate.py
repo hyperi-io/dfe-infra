@@ -1574,6 +1574,7 @@ OLD_QUICKSTART = {
         ({**QUICKSTART, "schema": 2, "packs": [{"name": "x"}]}, "a pack without"),
         ({**QUICKSTART, "schema": 2, "packs": "cyber"}, "a pack without"),
         ({**QUICKSTART, "schema": 3}, "not a schema 1 or 2"),
+        ({**QUICKSTART, "docs_ref": True}, "compose"),
     ],
     ids=[
         "compose",
@@ -1584,6 +1585,7 @@ OLD_QUICKSTART = {
         "schema-2-bad-pack",
         "schema-2-packs-not-a-list",
         "schema-3",
+        "docs-ref-wins-over-the-stack-pin",
     ],
 )
 def test_only_a_compose_release_fills_the_install_pages(
@@ -1591,8 +1593,13 @@ def test_only_a_compose_release_fills_the_install_pages(
 ) -> None:
     write_tree(tmp_path, {"download/v1.0.5/quickstart.json": json.dumps(served)})
     monkeypatch.setattr(aggregate, "DOCKER_RELEASES", tmp_path.as_uri())
+    # Only v1.0.5 is served, so a docs_refs row passes only when the docs pin wins.
+    pins = {"refs": {"dfe-docker": "v1.0.4"}, "docs_refs": {"dfe-docker": "v1.0.5"}}
     build = aggregate.Build(
-        name="2.2.3", base_url="/v/2.2.3/", listed=True, refs={"dfe-docker": "v1.0.5"}
+        name="2.2.3",
+        base_url="/v/2.2.3/",
+        listed=True,
+        **(pins if served.get("docs_ref") else {"refs": {"dfe-docker": "v1.0.5"}}),
     )
     if outcome is None:
         assert aggregate.docker_quickstart(build, "2.2.3") is None

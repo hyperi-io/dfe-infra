@@ -10,9 +10,12 @@ dropped_versions:
 
 # A docs fix for a released version, with no DFE release: stack -> member -> the
 # tag or commit its docs/ is read at. A member with no entry reads docs/ at the
-# ref the stack pins, and the engine's API reference always does.
+# ref the stack pins, and the engine's API reference always does. dfe-docker's
+# entry also picks the release whose quickstart.json fills the install pages.
 docs_refs:
   2.2.2:
+    # Installs 2.2.2 rather than rc.5, and lists the demo packs.
+    dfe-docker: "v1.0.7"
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
     dfe-schemas: "704e7dcecadd8721730be10a6bf764468a315474"
