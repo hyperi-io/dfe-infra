@@ -174,14 +174,7 @@ jobs:
           uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
           python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
 
-      # Nothing ran ruff on scripts/ until now, so six findings sat in files
-      # nobody had reason to open. The version is pinned so a ruff release
-      # cannot fail a PR that changed nothing.
-      #
-      # `ruff format --check` is deliberately NOT here: the scripts are wrapped
-      # by hand at the 100 columns ruff.toml sets, and the formatter rewrites
-      # 2673 lines across 11 of them. Adopting a formatter for this tree is a
-      # decision of its own, not a side effect of clearing a lint backlog.
+      # Pinned, so a ruff release cannot fail a PR that changed nothing. Lint only: scripts/ is not ruff-formatted.
       - name: Ruff (scripts/)
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
