@@ -47,7 +47,7 @@ Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to p
 
 At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
 
-This OpenSearch comparison is based on a fully tuned and resourced cluster with dedicated ingestion, hot, warm and cold tiers and optimised index templates, implemented by Lucene specialists. Results are HyperI's own and imply no endorsement by AWS or ClickHouse. Your mileage will vary depending on your data's shape and volume.
+This OpenSearch comparison is based on a fully tuned and resourced cluster with dedicated ingestion, hot, warm and cold tiers and optimised index templates, implemented by Lucene specialists. Results are HyperI's own and imply no endorsement by AWS or ClickHouse. Your mileage will vary with your data's columns and volume.
 
 That changes what you can ask. A newly disclosed vulnerability (a CVE) may have been exploited in the wild for nine months before anyone published it. With months of data queryable, you check whether it was used against you back then, not only in the last 14 days. A team in a theatre of operations that spots a new pattern today can trace it back the same way, through months of sensor and track data.
 
