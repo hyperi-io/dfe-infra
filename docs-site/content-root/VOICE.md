@@ -12,7 +12,7 @@ How the site's pages read, one rule a line in the form "say X, not Y". It binds 
 - Say OpenTofu, not Terraform.
 - Say the transport as "Kafka message bus" or "gRPC, low latency", not "ClickHouse via Kafka or gRPC". Say where it runs as "Kubernetes, Docker and cloud", not "Kubernetes and Docker Compose". Say "open source" in a hero, and keep the licence names for the pages that explain them.
 - Say what DFE does differently and why, not a verdict on another product.
-- Say a true, checkable fact about a product's behaviour by name ("Splunk keeps `_raw` for every event"). A direct criticism of a supplier needs metrics behind it. Without them, soften it a little by grouping the target ("most stacks", "index engines") rather than naming one vendor, but still make the point.
+- Say a true, checkable fact about a product's behaviour by name ("Splunk keeps `_raw` for every event"). A direct criticism of a supplier needs metrics behind it. Without them, soften it a little by grouping the target ("most stacks", "index engines") rather than naming one product, but still make the point.
 - Say each difference in three beats, what's different, why, and what it does for you, not a pitch. The third beat names the mechanism that does it for you, not a promise.
 - Say "Nothing breaks" or "doesn't break", not that DFE "breaks" a convention or an assumption.
 - Say "the DFE console" on top-level pages, not HyperDX. Low-level deployment pages may say `dfe-hyperdx`.
