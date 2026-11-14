@@ -1,13 +1,6 @@
-# Ruff config for the repo's Python -- the ops scripts under scripts/.
-#
-# dfe-infra ships no Python package, so this is a standalone ruff.toml rather
-# than a [tool.ruff] table. Without it ruff fell back to its 88-column default
-# while the scripts are written at 100, and every local pre-push gate failed on
-# hundreds of pre-existing lines nobody had touched.
-#
-# 100 matches dfe-engine, the sibling Python repo, and the code as written: 18
-# lines here exceed 100 against 84 that exceed 88.
+# Ruff config for scripts/. Standalone, because dfe-infra ships no Python package.
 
+# The scripts are wrapped by hand at 100, and CI runs ruff check only.
 line-length = 100
 target-version = "py314"
 
@@ -28,9 +21,7 @@ extend-exclude = [
 ]
 
 [lint]
-# The same families dfe-engine selects, so a script moving between the repos
-# does not change shape. T20 stays OUT: these scripts ARE command-line tools and
-# printing is what they do.
+# dfe-engine's rule families. No T20: these are command-line tools, so they print.
 select = ["E4", "E7", "E9", "F", "B", "S", "I", "UP", "N", "PT", "RUF", "PIE"]
 ignore = [
     "S101",  # assert -- the drift-guard tests are built on it
@@ -40,10 +31,7 @@ ignore = [
     "S608",  # SQL built by format -- ClickHouse DDL from config, never user input
     "S110",  # try-except-pass, where a probe genuinely has nothing to do on failure
     "S112",  # try-except-continue, where the next candidate IS the handling
-    # urlopen against an endpoint the operator supplied. The rule guards a `file:`
-    # or custom scheme arriving from untrusted input; these URLs are CLI arguments
-    # and config, and the scripts run on an operator's own machine.
-    "S310",
+    "S310",  # urlopen of a URL the operator passed as an argument or config
     "S311",  # seeded random in loadgen -- reproducibility, not cryptography
     "N814",  # a deliberate short local alias for a long ruamel class
 ]
