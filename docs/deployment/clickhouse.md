@@ -89,7 +89,7 @@ disk >= (D x T + F) / 0.85
 - `F` -- about 2.4 GiB: the system log tables at their TTLs plus the server log's 400 MiB cap.
 - `0.85` -- 15% free. Merges write the new part before dropping the old ones, and on a node-local volume the kubelet evicts at its own threshold (by default 10% free on the node filesystem, 15% on the image filesystem).
 
-Measured on one idle stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment shape, so measure your own.
+Measured on one idle stack with no traffic, one replica, `D` for the `otel_*` tables alone is about 0.2 GiB a day, and the system log tables add about 0.18 GiB a day until their TTLs reach it. With the 90-day default an idle replica settles near 20 GiB. That figure is from a short window on one deployment, so measure your own.
 
 | Volume per replica | Idle telemetry at 90 days uses | Most `D` it carries at 90 days | Most `D` at 30 days |
 | --- | --- | --- | --- |

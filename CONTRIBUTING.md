@@ -57,7 +57,7 @@ what was written was wrong. Read the pod state, never the sync status.
 | Trust that a chart change reached the cluster | Check the Argo app's rendered parameters | A Helm parameter with a `name` and no `value` still OVERRIDES the values files. An appset that templates a parameter from a missing annotation emits exactly that, silently. |
 | Assume the cluster secret follows the repo | Re-run bootstrap after changing what reads it | `bootstrap/templates/cluster-secret.yaml.tpl` writes the Argo cluster secret and **Argo does not reconcile it**. Appsets move forward, the secret does not, and nothing reports the gap. This is why a correct registry fix sat dead for three days (#368). |
 | Read a pull failure as a credentials problem | Check the image reference has a registry HOST | `dfe-common.image` renders a registry-less ref when `global.registry` is empty rather than failing. containerd then resolves it against Docker Hub and reports `insufficient_scope`, which reads as a bad pull secret and is not. |
-| Hardcode an app's shape in a chart | Put it in `apps.yaml` | Multiplicity and scaling are INDEPENDENT axes -- `single` vs `per_config` says how many, `scale_deployed` says whether KEDA drives it. |
+| Hardcode an app's multiplicity or scaling in a chart | Put it in `apps.yaml` | Multiplicity and scaling are INDEPENDENT axes -- `single` vs `per_config` says how many, `scale_deployed` says whether KEDA drives it. |
 | Cite a `suite.yaml` evidence line number | Cite the edge and its kind | The file carries a `verified:` date and the LINE NUMBERS have rotted, while every kind, note and direction still holds. |
 | Use the `terraform` binary | Use `tofu` | OpenTofu is the tool, and `.tf` is its format too. Terraform is being retired across HyperI. |
 

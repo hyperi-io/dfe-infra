@@ -118,7 +118,7 @@ compliance need CloudWatch itself satisfies.
 | Broker-count autoscaler Lambda log group | 1 day's retention under both sinks (see "Broker-count autoscaling" above) -- diagnostic-only, and predates the telemetry dial. | Same. | XS; the Lambda fires once per scale-out event. |
 
 `terraform/modules/managed-kafka/CONTRACT.md` is the source of truth for the
-`telemetry` input's shape; this table is the cost summary a deployer reads
+`telemetry` input's fields. This table is the cost summary a deployer reads
 before picking a sink, in the buckets
 [aws.md](../aws.md#how-costs-are-described) defines.
 

@@ -6,7 +6,7 @@ One command does the deploy. `dfe-ops stack-deploy` installs cert-manager, Exter
 
 Pick the tier first, because it decides whether you need a secrets store.
 
-| Tier | Transport | Shape | Secrets store |
+| Tier | Transport | What runs | Secrets store |
 |---|---|---|---|
 | `slim` | gRPC | One replica of each stage, no broker. | None |
 | `single` | Kafka | One replica of each, with a single Kafka broker in the cluster. | None |

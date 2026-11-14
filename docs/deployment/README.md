@@ -140,7 +140,7 @@ If your mirror needs a login, point `DFE_REGISTRY` at it and set `DFE_PULL_SECRE
 - [composition.md](composition.md) - which apps a profile deploys by default, how apps.yaml's `default_in` reaches Argo and Compose, and what an app with nothing to do does instead of crash-looping
 - [storage.md](storage.md) - the storage-deploy matrix: service x mode x storage model, with the status and evidence behind every cell
 - [edge.md](edge.md) - the edge module: every door into a deployment, and the dial key that turns each one on
-- [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on, the private-CA IdP shape, and what Envoy Gateway can't do with a groups claim
+- [gateway-oidc.md](gateway-oidc.md) - edge OIDC: the values that turn it on, the private-CA IdP setup, and what Envoy Gateway can't do with a groups claim
 - [edge-vpn.md](edge-vpn.md) - the opt-in tunnel a field appliance dials in on
 - [toolbox.md](toolbox.md) - the troubleshooting image, the opt-in in-cluster pod, and the on-demand AWS bastion
 - [rke2.md](rke2.md) - the default distribution

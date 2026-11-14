@@ -16,7 +16,7 @@ This page is the walkthrough for one model. [storage.md](storage.md) has the ful
 | `tiered-block` | a second PVC on a cheap class | the data PVC on an SSD class, holding recent parts | Block storage only, no object store |
 | `cached-object` | an S3-compatible object store | a read-through cache -- on the data PVC by default, or on node-local NVMe with `clickhouse.objectStore.cache.volume: instance-store` (see [storage.md](storage.md)) | An object store is available |
 
-The constraint that decides between the two non-default models: **ClickHouse can't cache one local disk on another.** The `cache` disk type only wraps object storage, so over plain block storage the supported shape is a ranked storage policy, not a cache. Try it any other way and the server fails at startup with "cached disk is allowed only on top of object storage". That's also why `cached-block` is a named cell the chart doesn't build.
+The constraint that decides between the two non-default models: **ClickHouse can't cache one local disk on another.** The `cache` disk type only wraps object storage, so over plain block storage the supported setup is a ranked storage policy, not a cache. Try it any other way and the server fails at startup with "cached disk is allowed only on top of object storage". That's also why `cached-block` is a named cell the chart doesn't build.
 
 ```mermaid
 flowchart LR

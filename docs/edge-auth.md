@@ -112,7 +112,7 @@ A public flag on a route with no login of its own (`exposure.groups.admin.tools.
 
 On a cloud deploy with an internet-facing Gateway Service, this defaults off instead. See [edge-auth-cloud.md](edge-auth-cloud.md).
 
-The `exposure:` key is shared with the dfe-receiver chart, which reads `exposure.groups.ingest` for its ingest door and `exposure.public` for its load balancer's shape. One block per deployment, each chart reading the keys it owns.
+The `exposure:` key is shared with the dfe-receiver chart, which reads `exposure.groups.ingest` for its ingest door and `exposure.public` for its load balancer's settings. One block per deployment, each chart reading the keys it owns.
 
 ## Per-surface policy
 

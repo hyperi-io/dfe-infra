@@ -46,7 +46,7 @@ A missing or `/0` allow address is refused before it costs a cluster. `dfe-ops c
 
 ### Choosing the backend for one run
 
-`scripts/cycle_backend.py --dial <file> --backend <name>` picks what a run deploys against without editing the one dial. `default` runs the dial as written. Any other name applies `scripts/cycle-backends/<name>.yaml` over it, so it has to run before the tofu render and the sizing read the dial. An overlay commits only the shape (`msk` sets `kafka.provider: msk` and the `kafka.msk` block), and a value written `env:<NAME>` is read from the environment, so no host or cluster id reaches the repository or its logs.
+`scripts/cycle_backend.py --dial <file> --backend <name>` picks what a run deploys against without editing the one dial. `default` runs the dial as written. Any other name applies `scripts/cycle-backends/<name>.yaml` over it, so it has to run before the tofu render and the sizing read the dial. An overlay commits only the settings (`msk` sets `kafka.provider: msk` and the `kafka.msk` block), and a value written `env:<NAME>` is read from the environment, so no host or cluster id reaches the repository or its logs.
 
 | Backend | What the run deploys against | Read by the overlay |
 |---|---|---|

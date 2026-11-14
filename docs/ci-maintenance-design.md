@@ -23,7 +23,7 @@ The stale two were missing the `_org_id` rename on `detection_checkpoint` and th
 
 The bot is Renovate. It's configured once in the org preset (`github>hyperi-io/renovate-config`), so a repo joins by having a dependency, not by remembering to opt in. It raises a PR under the standing policy: `fix(deps):` so merging ships, a 7-day cooldown for external dependencies, PR-only with no automerge.
 
-The gate is a `check_*_drift.py` in `scripts/`. Each one asserts that a fact resolved in more than one place still agrees, and fails CI when it doesn't. They share a shape: read the SSoT, read every mirror, report each disagreement by name, exit non-zero.
+The gate is a `check_*_drift.py` in `scripts/`. Each one asserts that a fact resolved in more than one place still agrees, and fails CI when it doesn't. They all work the same way: read the SSoT, read every mirror, report each disagreement by name, exit non-zero.
 
 | guard | asserts |
 |---|---|
@@ -41,7 +41,7 @@ They run in `helm-lint.yml` on every PR, and the deploy-affecting ones run again
 - Name what disagreed, not that something did. `dfe-loader: pins dfe-schemas at b7e58c6, 26 commits behind 6586f54` is actionable. "drift detected" isn't.
 - Say how to close it. The submodule guard ends with "Renovate raises the bump PR; merging it is what closes this." <!-- docs-gate: allow semicolon -- quotes the guard's own output -->
 - A skip isn't a pass. When a guard can't verify (no `gh`, no token, a private repo it can't read) it says so loudly and never reports green. `check_governance_drift.py` takes `--require` to turn absence into failure on the CI legs expected to have the checkout.
-- Prove the failure path. A guard nobody has seen fail isn't a guard, so each has a failure-path test that reproduces the defect it exists for. `test_check_namespace_drift.py` feeds it the exact shape of dfe-infra#136.
+- Prove the failure path. A guard nobody has seen fail isn't a guard, so each has a failure-path test that reproduces the defect it exists for. `test_check_namespace_drift.py` feeds it the exact case of dfe-infra#136.
 - Fail on an unverifiable entry. A consumer listed with nothing to compare it against fails instead of passing silently.
 
 ## Propagation, where a mirror cannot be avoided
