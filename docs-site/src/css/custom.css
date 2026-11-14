@@ -196,6 +196,15 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* On a phone a word too long for its cell breaks rather than widening the page.
+   Desktop keeps whole words, which sets the column widths. */
+@media (max-width: 996px) {
+  .markdown td,
+  .markdown th {
+    overflow-wrap: anywhere;
+  }
+}
+
 pre code,
 .theme-code-block code {
   border: 0;
