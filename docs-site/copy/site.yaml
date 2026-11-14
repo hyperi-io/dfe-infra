@@ -15,10 +15,14 @@ navbar:
     - {label: API, to: "{api_path}"}
   github: {label: GitHub, href: "https://github.com/hyperi-io"}
 
-announcement:
-  tag: Latest
-  text: "DFE {newest} is the current release."
-  link: Release notes
+# The navbar label beside the version picker, by what this build is.
+release_label:
+  latest: Latest
+  latest_title: "DFE {newest} is the current release. Release notes"
+  older: Not latest
+  older_title: "Go to DFE {newest}, the current release"
+  next: Unreleased
+  next_title: "Unreleased. Go to DFE {newest}, the current release"
 
 footer:
   links:

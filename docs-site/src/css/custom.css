@@ -31,6 +31,8 @@
   --dfe-navy: var(--hyperi-navy, #000647);
   --dfe-blue: var(--hyperi-blue, #2ea4f6);
   --dfe-accent: var(--hyperi-accent, #2ded88);
+  --dfe-warn: #d97706;
+  --dfe-on-warn: #ffffff;
   --dfe-font-logo: var(--hyperi-font-marketing-logo, Montserrat, "Helvetica Neue", Arial, sans-serif);
   --dfe-font-display: var(--hyperi-font-marketing-display, "Martel Sans", "Helvetica Neue", Arial, sans-serif);
   --dfe-font-sans: var(--hyperi-font-ui-sans, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
@@ -344,50 +346,47 @@ html[data-theme='dark'] {
   background-color: var(--role-canvas);
 }
 
-.announcement-tag {
-  display: inline-block;
-  margin-right: var(--dfe-space-2);
+/* The release label beside the version picker. Latest is a quiet outline, a warning is filled. */
+.release-label {
+  display: inline-flex;
+  align-items: center;
   padding: 0 var(--dfe-space-2);
-  border-radius: var(--dfe-radius-pill);
-  background: transparent;
-  color: var(--role-muted);
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
-  font-size: var(--dfe-text-xs);
-  font-weight: 700;
-  letter-spacing: var(--dfe-tracking-eyebrow);
-  line-height: var(--dfe-space-6);
-  text-transform: uppercase;
-}
-
-div[class*='announcementBar'] {
-  font-size: var(--dfe-text-sm);
-}
-
-/* The bar alone: its placeholder and content divs share the class prefix, and a border on the 1 px placeholder draws a stray dash. */
-.theme-announcement-bar {
-  border-bottom: var(--dfe-stroke-hairline) solid var(--role-border);
-}
-
-/* Without the theme's 5 px padding the content fits the 30 px bar. */
-div[class*='announcementBarContent'] {
-  padding: 0;
-}
-
-div[class*='announcementBar'] a {
-  color: var(--role-link);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-}
-
-div[class*='announcementBar'] svg {
-  margin-left: var(--dfe-space-1);
-  vertical-align: -0.125em;
-}
-
-/* The close button does not inherit the bar's text colour and renders black. */
-div[class*='announcementBar'] button {
+  border-radius: var(--dfe-radius-sm);
+  border: var(--dfe-stroke-hairline) solid var(--dfe-accent);
   color: var(--role-body);
+  font-size: var(--dfe-text-xs);
+  font-weight: 600;
+  line-height: var(--dfe-space-6);
+  white-space: nowrap;
+}
+
+.release-label:hover {
+  color: var(--role-body);
+  text-decoration: none;
+}
+
+.release-label--warn,
+.release-label--warn:hover {
+  border-color: var(--dfe-warn);
+  background: var(--dfe-warn);
+  color: var(--dfe-on-warn);
+}
+
+/* On a phone a warning stays in the bar, where the site name gives way to it. */
+@media (max-width: 996px) {
+  .navbar__items--right:has(.release-item--warn) {
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .navbar__items--right .release-item--warn {
+    display: flex;
+    margin-right: auto;
+  }
+
+  .navbar__inner:has(.release-item--warn) .navbar__title {
+    display: none;
+  }
 }
 
 /* The footer is a navy band in both modes. */
